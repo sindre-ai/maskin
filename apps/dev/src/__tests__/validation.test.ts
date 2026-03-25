@@ -22,12 +22,12 @@ describe('Object validation', () => {
 		expect(result.success).toBe(true)
 	})
 
-	it('rejects invalid type', () => {
+	it('accepts any string as type (validated at route level against enabled modules)', () => {
 		const result = createObjectSchema.safeParse({
-			type: 'invalid',
+			type: 'custom_type',
 			status: 'new',
 		})
-		expect(result.success).toBe(false)
+		expect(result.success).toBe(true)
 	})
 
 	it('accepts all object types', () => {

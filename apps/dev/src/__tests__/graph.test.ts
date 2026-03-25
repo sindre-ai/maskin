@@ -64,11 +64,11 @@ describe('Graph schema validation', () => {
 		expect(result.success).toBe(false)
 	})
 
-	it('rejects invalid object type', () => {
+	it('accepts any string as object type (validated at route level against enabled modules)', () => {
 		const result = createGraphSchema.safeParse({
-			nodes: [{ $id: 'x', type: 'invalid', status: 'new' }],
+			nodes: [{ $id: 'x', type: 'custom_type', status: 'new' }],
 		})
-		expect(result.success).toBe(false)
+		expect(result.success).toBe(true)
 	})
 
 	it('rejects missing $id on nodes', () => {

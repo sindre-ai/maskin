@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { getAllModules } from '@ai-native/module-sdk'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -1123,6 +1124,18 @@ export function createMcpServer(config: McpConfig) {
 			}
 		},
 	)
+
+	// ─── Module Tools ─────────────────────────────────────────
+	for (const mod of getAllModules()) {
+		for (const tool of mod.mcpTools ?? []) {
+			const toolName = `${mod.id}_${tool.name}`
+			const schema = tool.inputSchema as import('zod').ZodObject<import('zod').ZodRawShape>
+			server.tool(toolName, `[${mod.name}] ${tool.description}`, schema.shape, async (args) => {
+				const result = await tool.handler(args)
+				return { ...result }
+			})
+		}
+	}
 
 	return server
 }
