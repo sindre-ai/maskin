@@ -104,14 +104,14 @@ function ObjectsPage() {
 					))}
 				</div>
 				<Select
-					value={statusFilter ?? ''}
-					onValueChange={(v) => setStatusFilter(v || undefined)}
+					value={statusFilter ?? '__all__'}
+					onValueChange={(v) => setStatusFilter(v === '__all__' ? undefined : v)}
 				>
 					<SelectTrigger>
 						<SelectValue placeholder="Any status" />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="">Any status</SelectItem>
+						<SelectItem value="__all__">Any status</SelectItem>
 						{allStatuses.map((s) => (
 							<SelectItem key={s} value={s}>
 								{s.replace(/_/g, ' ')}
@@ -120,14 +120,14 @@ function ObjectsPage() {
 					</SelectContent>
 				</Select>
 				<Select
-					value={ownerFilter ?? ''}
-					onValueChange={(v) => setOwnerFilter(v || undefined)}
+					value={ownerFilter ?? '__all__'}
+					onValueChange={(v) => setOwnerFilter(v === '__all__' ? undefined : v)}
 				>
 					<SelectTrigger>
 						<SelectValue placeholder="Any owner" />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="">Any owner</SelectItem>
+						<SelectItem value="__all__">Any owner</SelectItem>
 						{(actors ?? []).map((a) => (
 							<SelectItem key={a.id} value={a.id}>
 								{a.name}
