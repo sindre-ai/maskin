@@ -9,4 +9,5 @@ dist-mcp/
 .DS_Store
 *.tsbuildinfo
 coverage/
+.mcp.json
 .claude/settings.local.json

@@ -1,11 +1,20 @@
 import { z } from 'zod'
 
+const optionalWorkspaceId = z
+	.string()
+	.uuid()
+	.optional()
+	.describe(
+		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
+	)
+
 export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
 			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|discarded, bet: signal|proposed|active|completed|succeeded|failed|paused, task: todo|in_progress|done|blocked.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			nodes: z
 				.array(
 					z.object({
@@ -47,6 +56,7 @@ export const tools = {
 		description:
 			'Get one or more objects by ID, each with all its relationships and connected objects. Returns the full context around each object including inbound/outbound relationships and details of connected objects.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
 		}),
 	},
@@ -54,6 +64,7 @@ export const tools = {
 		description:
 			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			updates: z
 				.array(
 					z.object({
@@ -88,6 +99,7 @@ export const tools = {
 	delete_object: {
 		description: 'Delete an object by ID',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
@@ -95,6 +107,7 @@ export const tools = {
 		description:
 			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			type: z.enum(['insight', 'bet', 'task']).optional(),
 			status: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
@@ -105,6 +118,7 @@ export const tools = {
 		description:
 			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			q: z
 				.string()
 				.min(1)
@@ -118,6 +132,7 @@ export const tools = {
 	list_relationships: {
 		description: 'List relationships with optional filters',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			source_id: z.string().uuid().optional(),
 			target_id: z.string().uuid().optional(),
 			type: z.string().optional(),
@@ -126,6 +141,7 @@ export const tools = {
 	delete_relationship: {
 		description: 'Delete a relationship by ID',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
@@ -201,13 +217,15 @@ export const tools = {
 		}),
 	},
 	list_workspaces: {
-		description: 'List workspaces accessible to the authenticated actor',
+		description:
+			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter.',
 		inputSchema: z.object({}),
 	},
 	get_workspace_schema: {
 		description:
 			'Get the workspace schema: available statuses per object type, custom metadata field definitions (name, type, required, enum values), display names, and relationship types. Call this before creating or updating objects to know which metadata fields exist, what types they expect, and which values are valid. Optionally filter by object type.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			type: z
 				.enum(['insight', 'bet', 'task'])
 				.optional()
@@ -232,6 +250,7 @@ export const tools = {
 		description:
 			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed).',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			entity_type: z.string().optional(),
 			action: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
@@ -241,6 +260,7 @@ export const tools = {
 		description:
 			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor.",
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			name: z.string(),
 			type: z.enum(['cron', 'event']),
 			config: z
@@ -257,6 +277,7 @@ export const tools = {
 		description:
 			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
 			config: z.record(z.unknown()).optional(),
@@ -268,18 +289,22 @@ export const tools = {
 	delete_trigger: {
 		description: 'Delete a trigger by ID',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
 	list_triggers: {
 		description: 'List all triggers in the workspace',
-		inputSchema: z.object({}),
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
 	},
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
 			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status, get_session_logs to read output. For a blocking alternative that waits for completion, use run_agent instead.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The actor that will run inside the session'),
 			action_prompt: z.string().min(1).describe('The prompt/task for the agent to execute'),
 			config: z
@@ -301,6 +326,7 @@ export const tools = {
 	list_sessions: {
 		description: 'List sessions with optional filters',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			status: z
 				.enum([
 					'pending',
@@ -322,6 +348,7 @@ export const tools = {
 		description:
 			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system).',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 			include_logs: z
 				.boolean()
@@ -339,18 +366,21 @@ export const tools = {
 	stop_session: {
 		description: 'Stop a running session',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
 	pause_session: {
 		description: 'Pause a running session and save a snapshot for later resumption',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
 	resume_session: {
 		description: 'Resume a previously paused session from its snapshot',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
@@ -358,6 +388,7 @@ export const tools = {
 		description:
 			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session + get_session_logs separately if you need non-blocking execution.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),
 			action_prompt: z.string().min(1).describe('The instruction for the agent'),
 			config: z
@@ -389,6 +420,7 @@ export const tools = {
 		description:
 			'Create a notification for a human in the workspace. Use when the agent needs human input (decision, information), wants to share a strategic recommendation, report good news, or raise an alert.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			type: z
 				.enum(['needs_input', 'recommendation', 'good_news', 'alert'])
 				.describe(
@@ -423,6 +455,7 @@ export const tools = {
 	list_notifications: {
 		description: 'List notifications in the workspace, optionally filtered by status or type.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			status: z
 				.enum(['pending', 'seen', 'resolved', 'dismissed'])
 				.optional()
@@ -435,6 +468,7 @@ export const tools = {
 	get_notification: {
 		description: 'Get a single notification by ID',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
@@ -442,6 +476,7 @@ export const tools = {
 		description:
 			'Update a notification by ID. Can change status (pending, seen, resolved, dismissed) and/or metadata.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 			status: z
 				.enum(['pending', 'seen', 'resolved', 'dismissed'])
@@ -453,13 +488,16 @@ export const tools = {
 	delete_notification: {
 		description: 'Delete a notification by ID',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
 		description: 'List integrations connected to the workspace',
-		inputSchema: z.object({}),
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
 	},
 	list_integration_providers: {
 		description: 'List available integration providers and their supported events',
@@ -469,6 +507,7 @@ export const tools = {
 		description:
 			'Start an integration connection flow for a provider (e.g. "github"). Returns an install_url that must be opened in a browser to complete the OAuth/installation flow. The callback is handled automatically by the server.',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			provider: z
 				.string()
 				.describe(
@@ -479,6 +518,7 @@ export const tools = {
 	disconnect_integration: {
 		description: 'Disconnect (revoke) an integration by ID',
 		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
 	},
