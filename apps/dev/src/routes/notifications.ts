@@ -16,6 +16,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -162,6 +163,7 @@ const getNotificationRoute = createRoute({
 
 app.openapi(getNotificationRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
 	const [notification] = await db
@@ -170,7 +172,9 @@ app.openapi(getNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.limit(1)
 
-	if (!notification) return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	if (!notification || !(await isWorkspaceMember(db, actorId, notification.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	}
 
 	return c.json(serialize(notification) as z.infer<typeof notificationResponseSchema>)
 }) as RouteHandler<typeof getNotificationRoute, Env>)

@@ -205,4 +205,16 @@ describe('Notifications Routes', () => {
 			expect(res.status).toBe(404)
 		})
 	})
+
+	describe('Workspace membership enforcement', () => {
+		it('GET /:id returns 404 when actor is not a workspace member', async () => {
+			const notification = buildNotification({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			// Notification found, but membership check returns empty
+			mockResults.selectQueue = [[notification], []]
+
+			const res = await app.request(jsonGet(`/api/notifications/${notification.id}`))
+			expect(res.status).toBe(404)
+		})
+	})
 })
