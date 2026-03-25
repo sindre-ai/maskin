@@ -215,6 +215,17 @@ app.openapi(updateNotificationRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
+	// Verify notification exists and actor is a workspace member
+	const [existing] = await db
+		.select()
+		.from(notifications)
+		.where(eq(notifications.id, id))
+		.limit(1)
+
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	}
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.status) {
 		updateData.status = body.status
@@ -230,7 +241,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.returning()
 
-	if (!updated) return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	if (!updated) return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 500)
 
 	await db.insert(events).values({
 		workspaceId,
@@ -291,7 +302,9 @@ app.openapi(respondNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.limit(1)
 
-	if (!notification) return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	if (!notification || !(await isWorkspaceMember(db, actorId, notification.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	}
 
 	if (notification.status !== 'pending' && notification.status !== 'seen') {
 		return c.json(
@@ -365,7 +378,9 @@ app.openapi(deleteNotificationRoute, (async (c) => {
 
 	const [existing] = await db.select().from(notifications).where(eq(notifications.id, id)).limit(1)
 
-	if (!existing) return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
+	}
 
 	await db.delete(notifications).where(eq(notifications.id, id))
 

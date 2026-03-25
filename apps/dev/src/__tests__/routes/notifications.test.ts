@@ -89,6 +89,8 @@ describe('Notifications Routes', () => {
 		it('returns 200 when notification updated', async () => {
 			const notification = buildNotification({ workspaceId: wsId, status: 'seen' })
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			// First select: existing notification, second: membership check
+			mockResults.selectQueue = [[notification], [buildWorkspaceMember()]]
 			mockResults.update = [notification]
 			mockResults.insert = []
 
@@ -103,7 +105,7 @@ describe('Notifications Routes', () => {
 
 		it('returns 404 when notification not found', async () => {
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
-			mockResults.update = []
+			mockResults.selectQueue = [[]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -123,7 +125,8 @@ describe('Notifications Routes', () => {
 			const notification = buildNotification({ workspaceId: wsId, status: 'pending' })
 			const resolved = { ...notification, status: 'resolved', resolvedAt: new Date() }
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
-			mockResults.select = [notification]
+			// First select: notification lookup, second: membership check
+			mockResults.selectQueue = [[notification], [buildWorkspaceMember()]]
 			mockResults.update = [resolved]
 			mockResults.insert = []
 
@@ -142,7 +145,8 @@ describe('Notifications Routes', () => {
 		it('returns 400 when notification already resolved', async () => {
 			const notification = buildNotification({ workspaceId: wsId, status: 'resolved' })
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
-			mockResults.select = [notification]
+			// First select: notification lookup, second: membership check
+			mockResults.selectQueue = [[notification], [buildWorkspaceMember()]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -178,7 +182,8 @@ describe('Notifications Routes', () => {
 		it('returns 200 when notification deleted', async () => {
 			const notification = buildNotification({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
-			mockResults.select = [notification]
+			// First select: existing notification, second: membership check
+			mockResults.selectQueue = [[notification], [buildWorkspaceMember()]]
 			mockResults.insert = []
 
 			const res = await app.request(
@@ -214,6 +219,47 @@ describe('Notifications Routes', () => {
 			mockResults.selectQueue = [[notification], []]
 
 			const res = await app.request(jsonGet(`/api/notifications/${notification.id}`))
+			expect(res.status).toBe(404)
+		})
+
+		it('PATCH /:id returns 404 when actor is not a workspace member', async () => {
+			const notification = buildNotification({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			// Notification found, but membership check returns empty
+			mockResults.selectQueue = [[notification], []]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/notifications/${notification.id}`, { status: 'seen' }, headers),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('POST /:id/respond returns 404 when actor is not a workspace member', async () => {
+			const notification = buildNotification({ workspaceId: wsId, status: 'pending' })
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			// Notification found, but membership check returns empty
+			mockResults.selectQueue = [[notification], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/notifications/${notification.id}/respond`,
+					{ response: 'Approved' },
+					headers,
+				),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('DELETE /:id returns 404 when actor is not a workspace member', async () => {
+			const notification = buildNotification({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			// Notification found, but membership check returns empty
+			mockResults.selectQueue = [[notification], []]
+
+			const res = await app.request(
+				jsonRequest('DELETE', `/api/notifications/${notification.id}`, undefined, headers),
+			)
 			expect(res.status).toBe(404)
 		})
 	})
