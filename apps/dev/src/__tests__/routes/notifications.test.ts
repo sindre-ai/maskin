@@ -28,7 +28,7 @@ describe('Notifications Routes', () => {
 			expect(body.status).toBe('pending')
 		})
 
-		it('returns 400 when insert fails', async () => {
+		it('returns 500 when insert fails', async () => {
 			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
 			mockResults.insert = []
 
@@ -36,7 +36,7 @@ describe('Notifications Routes', () => {
 				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
 			)
 
-			expect(res.status).toBe(400)
+			expect(res.status).toBe(500)
 		})
 	})
 

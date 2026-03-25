@@ -70,7 +70,7 @@ app.openapi(createRelationshipRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create relationship'), 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create relationship'), 500)
 	}
 
 	await db.insert(events).values({

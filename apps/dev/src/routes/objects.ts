@@ -114,7 +114,7 @@ app.openapi(createObjectRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create object'), 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create object'), 500)
 	}
 
 	// Log event

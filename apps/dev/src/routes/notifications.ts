@@ -78,7 +78,7 @@ app.openapi(createNotificationRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create notification'), 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create notification'), 500)
 	}
 
 	await db.insert(events).values({
@@ -311,7 +311,7 @@ app.openapi(respondNotificationRoute, (async (c) => {
 		.returning()
 
 	if (!updated)
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 500)
 
 	await db.insert(events).values({
 		workspaceId,

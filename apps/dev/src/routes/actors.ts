@@ -87,7 +87,7 @@ app.openapi(createActorRoute, async (c) => {
 		.returning()
 
 	if (!actor) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
 
 	// Auto-create personal workspace (default true for humans, false for agents)

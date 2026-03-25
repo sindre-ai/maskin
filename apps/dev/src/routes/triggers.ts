@@ -73,7 +73,7 @@ app.openapi(createTriggerRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 500)
 	}
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)

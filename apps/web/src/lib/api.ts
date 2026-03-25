@@ -69,7 +69,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 				}
 			}
 		} else if (typeof data.error === 'string') {
-			// Legacy string format
+			// TODO: Remove legacy string format fallback once all API responses use structured errors
 			message = data.error
 		} else {
 			message = data.error?.message || res.statusText
