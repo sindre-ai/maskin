@@ -75,7 +75,7 @@ await storageProvider.ensureBucket()
 
 // Ensure agent-base Docker image exists
 const containers = new ContainerManager()
-await containers.ensureImage('agent-base:latest', '/app/docker/agent-base')
+await containers.ensureImage('agent-base:latest', path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'))
 
 // Agent storage manager for file operations (skills, learnings, memory)
 const agentStorage = new AgentStorageManager(storageProvider, db)

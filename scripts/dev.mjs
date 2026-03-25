@@ -38,7 +38,7 @@ for (let i = 0; i < 30; i++) {
 			console.error('PostgreSQL did not become ready in time')
 			process.exit(1)
 		}
-		execSync('timeout /t 1 /nobreak >nul', { shell: true })
+		execSync('node -e "setTimeout(()=>{},1000)"')
 	}
 }
 console.log('PostgreSQL is ready.')
@@ -56,7 +56,7 @@ for (let i = 0; i < 10; i++) {
 		if (i === 9) {
 			console.warn('Warning: Could not create S3 bucket, SeaweedFS may not be ready')
 		}
-		execSync('timeout /t 1 /nobreak >nul', { shell: true })
+		execSync('node -e "setTimeout(()=>{},1000)"')
 	}
 }
 
