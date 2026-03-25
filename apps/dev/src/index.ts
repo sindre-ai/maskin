@@ -195,6 +195,15 @@ app.post('/mcp', async (c) => {
 	})
 })
 
+// Reject GET/DELETE on /mcp — server doesn't support server-initiated SSE streams
+app.get('/mcp', (c) => {
+	return c.text('Method Not Allowed', 405)
+})
+
+app.delete('/mcp', (c) => {
+	return c.text('Method Not Allowed', 405)
+})
+
 // Auto-generated OpenAPI spec from route definitions
 app.doc31('/api/openapi.json', {
 	openapi: '3.1.0',
