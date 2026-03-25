@@ -24,6 +24,11 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'trigger':
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
 			break
+		case 'session':
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(event.entity_id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.logs(event.entity_id) })
+			break
 		case 'notification':
 			queryClient.invalidateQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
 			break
