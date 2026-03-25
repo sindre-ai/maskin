@@ -42,13 +42,21 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Integrations',
 		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/properties': {
+	'/_authed/$workspaceId/settings/properties/': {
 		label: 'Properties',
 		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/triggers': {
+	'/_authed/$workspaceId/settings/properties/$propertyName': {
+		label: 'Property Details',
+		parent: '/_authed/$workspaceId/settings/properties/',
+	},
+	'/_authed/$workspaceId/settings/triggers/': {
 		label: 'Triggers',
 		parent: '/_authed/$workspaceId/settings/',
+	},
+	'/_authed/$workspaceId/settings/triggers/$triggerId': {
+		label: 'Trigger Details',
+		parent: '/_authed/$workspaceId/settings/triggers/',
 	},
 }
 

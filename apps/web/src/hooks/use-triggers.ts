@@ -15,6 +15,13 @@ export function useTriggers(workspaceId: string) {
 	})
 }
 
+export function useTrigger(id: string, workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.triggers.detail(id),
+		queryFn: () => api.triggers.get(id, workspaceId),
+	})
+}
+
 export function useCreateTrigger(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

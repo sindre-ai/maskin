@@ -14,12 +14,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
-import {
-	useCreateTrigger,
-	useDeleteTrigger,
-	useTriggers,
-	useUpdateTrigger,
-} from '@/hooks/use-triggers'
+import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
 type ConditionOperator =
 	| 'equals'
@@ -33,11 +28,11 @@ type ConditionOperator =
 	| 'is_not_set'
 	| 'contains'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useSearch } from '@tanstack/react-router'
+import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
-export const Route = createFileRoute('/_authed/$workspaceId/settings/triggers')({
+export const Route = createFileRoute('/_authed/$workspaceId/settings/triggers/')({
 	component: TriggersPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 	validateSearch: (search: Record<string, unknown>) => ({
@@ -49,9 +44,7 @@ function TriggersPage() {
 	const { workspaceId, workspace } = useWorkspace()
 	const { data: triggers, isLoading } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
-	const updateTrigger = useUpdateTrigger(workspaceId)
-	const deleteTrigger = useDeleteTrigger(workspaceId)
-	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/triggers' })
+	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/triggers/' })
 	const [showCreate, setShowCreate] = useState(false)
 
 	useEffect(() => {
@@ -85,14 +78,8 @@ function TriggersPage() {
 						<TriggerRow
 							key={trigger.id}
 							trigger={trigger}
+							workspaceId={workspaceId}
 							agentName={agentMap.get(trigger.targetActorId)?.name ?? 'Unknown'}
-							onToggle={() =>
-								updateTrigger.mutate({
-									id: trigger.id,
-									data: { enabled: !trigger.enabled },
-								})
-							}
-							onDelete={() => deleteTrigger.mutate(trigger.id)}
 						/>
 					))}
 				</div>
@@ -103,22 +90,21 @@ function TriggersPage() {
 
 function TriggerRow({
 	trigger,
+	workspaceId,
 	agentName,
-	onToggle,
-	onDelete,
 }: {
 	trigger: TriggerResponse
+	workspaceId: string
 	agentName: string
-	onToggle: () => void
-	onDelete: () => void
 }) {
 	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
-			<button
-				type="button"
-				className={`h-3 w-3 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
-				onClick={onToggle}
-				title={trigger.enabled ? 'Disable' : 'Enable'}
+		<Link
+			to="/$workspaceId/settings/triggers/$triggerId"
+			params={{ workspaceId, triggerId: trigger.id }}
+			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-muted/50 transition-colors"
+		>
+			<span
+				className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
 			/>
 			<div className="flex-1">
 				<p className="text-sm font-medium text-foreground">{trigger.name}</p>
@@ -126,15 +112,7 @@ function TriggerRow({
 					{trigger.type} → {agentName}
 				</p>
 			</div>
-			<Button
-				variant="ghost"
-				size="sm"
-				className="text-muted-foreground hover:text-error"
-				onClick={onDelete}
-			>
-				Delete
-			</Button>
-		</div>
+		</Link>
 	)
 }
 
@@ -348,7 +326,7 @@ function CreateTriggerForm({
 				</div>
 			)}
 			<Input
-				type="text"
+				type='text'
 				value={name}
 				onChange={(e) => setName(e.target.value)}
 				placeholder="Trigger name"
@@ -358,9 +336,9 @@ function CreateTriggerForm({
 				{(['event', 'cron', 'reminder'] as const).map((t) => (
 					<Button
 						key={t}
-						type="button"
+						type='button'
 						variant={type === t ? 'default' : 'secondary'}
-						size="sm"
+						size='sm'
 						onClick={() => setType(t)}
 					>
 						{t}
@@ -383,13 +361,13 @@ function CreateTriggerForm({
 			) : type === 'reminder' ? (
 				<div className="flex gap-2">
 					<Input
-						type="date"
+						type='date'
 						value={scheduledDate}
 						onChange={(e) => setScheduledDate(e.target.value)}
 						className="flex-1"
 					/>
 					<Input
-						type="time"
+						type='time'
 						value={scheduledTime}
 						onChange={(e) => setScheduledTime(e.target.value)}
 						className="w-[130px]"
@@ -471,9 +449,9 @@ function CreateTriggerForm({
 							))}
 							{fieldDefs.length > 0 ? (
 								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
+									type='button'
+									variant='ghost'
+									size='sm'
 									className="text-xs text-muted-foreground"
 									onClick={addCondition}
 								>
@@ -596,7 +574,7 @@ function ConditionEditor({
 			<Button
 				type="button"
 				variant="ghost"
-				size="sm"
+				size='sm'
 				className="h-8 w-8 p-0 text-muted-foreground hover:text-error shrink-0"
 				onClick={onRemove}
 			>
@@ -666,7 +644,7 @@ function ConditionValueInput({
 	if (fieldType === 'date') {
 		return (
 			<Input
-				type="date"
+				type='date'
 				value={String(value ?? '')}
 				onChange={(e) => onChange(e.target.value)}
 				className="w-36 h-8 text-xs"
@@ -698,7 +676,7 @@ function ConditionValueInput({
 
 const HOURS = Array.from({ length: 24 }, (_, i) => ({
 	value: String(i),
-	label: i === 0 ? '12:00 AM' : i < 12 ? `${i}:00 AM` : i === 12 ? '12:00 PM' : `${i - 12}:00 PM`,
+	label: i === 0 ? '12:00 AM' : i < 12 ? '${i}:00 AM' : i === 12 ? '12:00 PM' : '${i - 12}:00 PM',
 }))
 
 const MINUTES = Array.from({ length: 60 }, (_, i) => ({
@@ -750,9 +728,9 @@ function CronScheduleBuilder({
 				{(['hourly', 'daily', 'weekly', 'monthly'] as const).map((f) => (
 					<Button
 						key={f}
-						type="button"
+						type='button'
 						variant={frequency === f ? 'default' : 'secondary'}
-						size="sm"
+						size='sm'
 						onClick={() => onFrequencyChange(f)}
 					>
 						{f.charAt(0).toUpperCase() + f.slice(1)}
