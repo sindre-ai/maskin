@@ -83,6 +83,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - Status badges: `status-{name}-bg` / `status-{name}-text` for each workflow status
 - Type badges: `type-{insight|bet|task}-bg` / `type-{insight|bet|task}-text`
 - Shadows: `shadow-sm`, `shadow-md`, `shadow-lg` — adapt per mode (more visible in light, subtle in dark)
+- **Color token pairing rule**: `bg-X` must pair with `text-X-foreground` — e.g. `bg-accent` + `text-accent-foreground`, `bg-primary` + `text-primary-foreground`. Mismatching (e.g. `bg-accent` + `text-primary-foreground`) causes contrast issues.
 
 ### Visual Style
 - Light/dark mode with full token parity — both are first-class citizens
@@ -103,6 +104,8 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - **Feature components** in `src/components/{feature}/` — objects/, bets/, agents/, activity/, layout/
 - Use `cn()` from `src/lib/cn.ts` (clsx + tailwind-merge) for conditional class merging
 - Icons from `lucide-react`, typically `size={15}` in nav, `size={16}` in content
+- **No raw HTML form elements** — never use `<select>`, always use Radix `Select` from `@/components/ui/select`. DropdownMenu is only for action menus (not form value selection).
+- **No custom size overrides on SelectTrigger** — use the default h-10 bordered trigger everywhere. Layout classes like `flex-1` are fine, but don't override height/border/text-size.
 
 ### Layout
 - Fixed sidebar (w-56) with solid background (`bg-bg-surface`) and right border, left side
