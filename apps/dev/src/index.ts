@@ -251,7 +251,7 @@ if (fs.existsSync(staticDir)) {
 const port = Number(process.env.PORT) || 3000
 logger.info(`Starting server on port ${port}`)
 
-serve({ fetch: app.fetch, port })
+const server = serve({ fetch: app.fetch, port })
 
 // Graceful shutdown on SIGTERM (Coolify/Docker deploy) and SIGINT (Ctrl+C)
 let shuttingDown = false
@@ -261,9 +261,14 @@ const shutdown = async (signal: string) => {
 
 	logger.info(`Received ${signal}, shutting down gracefully...`)
 
-	await sessionManager.stop()
-	await triggerRunner.stop()
-	await notifyBridge.stop()
+	try {
+		server.close()
+		await sessionManager.stop()
+		await triggerRunner.stop()
+		await notifyBridge.stop()
+	} catch (err) {
+		logger.error('Error during shutdown', { error: String(err) })
+	}
 
 	logger.info('Shutdown complete')
 	process.exit(0)

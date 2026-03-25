@@ -106,32 +106,14 @@ export class SessionManager extends EventEmitter {
 					}
 				}
 
-				await this.db
-					.update(sessions)
-					.set({
-						status: 'failed',
-						result: { error: 'Server restarted unexpectedly' },
-						completedAt: new Date(),
-						updatedAt: new Date(),
-					})
-					.where(eq(sessions.id, session.id))
-
-				await this.db.insert(events).values({
-					workspaceId: session.workspaceId,
-					actorId: session.actorId,
-					action: 'session_failed',
-					entityType: 'session',
-					entityId: session.id,
-					data: { error: 'Server restarted unexpectedly' },
-				})
-
-				await this.clearActiveSession(session.id)
+				await this.markSessionFailed(session, 'Server restarted unexpectedly')
 			}
 
 			logger.info(`Startup recovery: marked ${staleSessions.length} session(s) as failed`)
 		}
 
 		// Find and remove any orphaned containers not tracked in DB
+		// Note: Docker name filter is substring-based, not exact prefix match
 		try {
 			const trackedContainerIds = new Set(
 				staleSessions.map((s) => s.containerId).filter(Boolean),
@@ -140,14 +122,16 @@ export class SessionManager extends EventEmitter {
 			const orphaned = allSessionContainers.filter((c) => !trackedContainerIds.has(c.id))
 
 			for (const container of orphaned) {
-				await this.containers.remove(container.id).catch((err) =>
+				try {
+					await this.containers.remove(container.id)
+					logger.info(`Removed orphaned container: ${container.name}`)
+				} catch (err) {
 					logger.warn('Failed to remove orphaned container', {
 						containerId: container.id,
 						name: container.name,
 						error: String(err),
-					}),
-				)
-				logger.info(`Removed orphaned container: ${container.name}`)
+					})
+				}
 			}
 
 			if (orphaned.length > 0) {
@@ -179,6 +163,7 @@ export class SessionManager extends EventEmitter {
 
 		const shutdownTimeout = setTimeout(() => {
 			logger.warn('Graceful shutdown timeout reached (30s), forcing exit')
+			process.exit(1)
 		}, 30_000)
 
 		const results = await Promise.allSettled(
@@ -212,27 +197,7 @@ export class SessionManager extends EventEmitter {
 					)
 				}
 
-				// Update DB
-				await this.db
-					.update(sessions)
-					.set({
-						status: 'failed',
-						result: { error: 'Server shutdown' },
-						completedAt: new Date(),
-						updatedAt: new Date(),
-					})
-					.where(eq(sessions.id, session.id))
-
-				await this.db.insert(events).values({
-					workspaceId: session.workspaceId,
-					actorId: session.actorId,
-					action: 'session_failed',
-					entityType: 'session',
-					entityId: session.id,
-					data: { error: 'Server shutdown' },
-				})
-
-				await this.clearActiveSession(session.id)
+				await this.markSessionFailed(session, 'Server shutdown')
 				await this.cleanupSession(session.id)
 
 				logger.info(`Session stopped on shutdown: ${session.id}`)
@@ -245,6 +210,32 @@ export class SessionManager extends EventEmitter {
 		logger.info(
 			`Graceful shutdown complete: ${results.length - failed} cleaned up, ${failed} failed`,
 		)
+	}
+
+	private async markSessionFailed(
+		session: { id: string; workspaceId: string; actorId: string },
+		reason: string,
+	): Promise<void> {
+		await this.db
+			.update(sessions)
+			.set({
+				status: 'failed',
+				result: { error: reason },
+				completedAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.where(eq(sessions.id, session.id))
+
+		await this.db.insert(events).values({
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'session_failed',
+			entityType: 'session',
+			entityId: session.id,
+			data: { error: reason },
+		})
+
+		await this.clearActiveSession(session.id)
 	}
 
 	async createSession(
