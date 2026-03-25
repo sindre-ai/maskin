@@ -12,6 +12,7 @@ import {
 	exchangeCodeForTokens,
 	getValidOAuthToken,
 } from '../lib/claude-oauth'
+import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 
@@ -90,13 +91,13 @@ app.openapi(exchangeRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, actorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	// Validate state matches what we expect (stored encrypted in session)
 	const expectedState = c.req.header('X-OAuth-State')
 	if (expectedState && expectedState !== state) {
-		return c.json({ error: 'OAuth state mismatch — possible CSRF attack' }, 400)
+		return c.json(createApiError('BAD_REQUEST', 'OAuth state mismatch — possible CSRF attack'), 400)
 	}
 
 	let tokens: import('../lib/claude-oauth').ClaudeOAuthTokens
@@ -104,13 +105,13 @@ app.openapi(exchangeRoute, (async (c) => {
 		tokens = await exchangeCodeForTokens(code, code_verifier, redirect_uri)
 	} catch (err) {
 		logger.error('Claude OAuth token exchange failed', { error: String(err) })
-		return c.json({ error: `Token exchange failed: ${String(err)}` }, 400)
+		return c.json(createApiError('BAD_REQUEST', `Token exchange failed: ${String(err)}`), 400)
 	}
 
 	// Store encrypted tokens in workspace settings
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) {
-		return c.json({ error: 'Workspace not found' }, 400)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 400)
 	}
 
 	const settings = (ws.settings as Record<string, unknown>) ?? {}
@@ -168,12 +169,12 @@ app.openapi(disconnectRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, actorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) {
-		return c.json({ error: 'Workspace not found' }, 400)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 400)
 	}
 
 	const settings = (ws.settings as Record<string, unknown>) ?? {}
@@ -226,7 +227,7 @@ app.openapi(statusRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, actorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
@@ -315,14 +316,14 @@ app.openapi(importRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, actorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	const tokens: ClaudeOAuthTokens = c.req.valid('json')
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) {
-		return c.json({ error: 'Workspace not found' }, 400)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 400)
 	}
 
 	const settings = (ws.settings as Record<string, unknown>) ?? {}
@@ -389,7 +390,7 @@ app.openapi(startRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, actorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	// Generate PKCE pair

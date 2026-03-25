@@ -12,6 +12,7 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
+import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
@@ -42,7 +43,30 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({
+	defaultHook: (result, c) => {
+		if (!result.success) {
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					'Request validation failed',
+					formatZodError(result.error),
+				),
+				400,
+			)
+		}
+		return undefined
+	},
+})
+
+// Global error handler — catches unhandled errors and returns structured responses
+app.onError((err, c) => {
+	if ('status' in err && typeof err.status === 'number') {
+		return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
+	}
+	logger.error('Unhandled error', { error: String(err), stack: err.stack })
+	return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
+})
 
 // Global middleware
 app.use('*', cors())
@@ -75,7 +99,10 @@ await storageProvider.ensureBucket()
 
 // Ensure agent-base Docker image exists
 const containers = new ContainerManager()
-await containers.ensureImage('agent-base:latest', path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'))
+await containers.ensureImage(
+	'agent-base:latest',
+	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
+)
 
 // Agent storage manager for file operations (skills, learnings, memory)
 const agentStorage = new AgentStorageManager(storageProvider, db)

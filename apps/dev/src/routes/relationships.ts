@@ -3,6 +3,7 @@ import { events, relationships } from '@ai-native/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -69,7 +70,7 @@ app.openapi(createRelationshipRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json({ error: 'Failed to create relationship' }, 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create relationship'), 400)
 	}
 
 	await db.insert(events).values({
@@ -150,7 +151,7 @@ app.openapi(deleteRelationshipRoute, (async (c) => {
 
 	const [existing] = await db.select().from(relationships).where(eq(relationships.id, id)).limit(1)
 
-	if (!existing) return c.json({ error: 'Relationship not found' }, 404)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Relationship not found'), 404)
 
 	await db.delete(relationships).where(eq(relationships.id, id))
 

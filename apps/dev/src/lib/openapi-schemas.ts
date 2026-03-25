@@ -18,7 +18,23 @@ export const jsonbField = z
 	)
 	.nullable()
 
-export const errorSchema = z.object({ error: z.string() })
+export const errorSchema = z.object({
+	error: z.object({
+		code: z.string(),
+		message: z.string(),
+		details: z
+			.array(
+				z.object({
+					field: z.string(),
+					message: z.string(),
+					expected: z.string().optional(),
+					received: z.string().optional(),
+				}),
+			)
+			.optional(),
+		suggestion: z.string().optional(),
+	}),
+})
 
 export const idParamSchema = z.object({ id: z.string().uuid() })
 

@@ -4,6 +4,7 @@ import { actors, workspaceMembers, workspaces } from '@ai-native/db/schema'
 import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -72,7 +73,7 @@ app.openapi(createActorRoute, async (c) => {
 		.returning()
 
 	if (!actor) {
-		return c.json({ error: 'Failed to create actor' }, 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 400)
 	}
 
 	// Auto-create personal workspace (default true for humans, false for agents)
@@ -210,7 +211,7 @@ app.openapi(getActorRoute, (async (c) => {
 		.limit(1)
 
 	if (!actor) {
-		return c.json({ error: 'Actor not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
 	return c.json(serialize(actor) as z.infer<typeof actorResponseSchema>)
@@ -276,7 +277,7 @@ app.openapi(updateActorRoute, (async (c) => {
 		})
 
 	if (!updated) {
-		return c.json({ error: 'Actor not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
@@ -316,7 +317,7 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 		.returning({ id: actors.id })
 
 	if (!updated) {
-		return c.json({ error: 'Actor not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
 	return c.json({ api_key: key })

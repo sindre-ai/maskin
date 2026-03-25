@@ -88,6 +88,10 @@ export class SessionManager extends EventEmitter {
 			})
 			.returning()
 
+		if (!session) {
+			throw new Error('Failed to create session')
+		}
+
 		await this.db.insert(events).values({
 			workspaceId,
 			actorId: params.actorId,
@@ -359,7 +363,7 @@ export class SessionManager extends EventEmitter {
 			.from(sessions)
 			.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'running')))
 
-		if (result.count >= maxConcurrent) {
+		if (result && result.count >= maxConcurrent) {
 			throw new Error(
 				`Workspace has reached its concurrent session limit (${maxConcurrent}). Wait for a session to complete or increase the limit.`,
 			)
@@ -546,12 +550,14 @@ export class SessionManager extends EventEmitter {
 						})
 						.returning()
 
-					this.emit('log', {
-						sessionId,
-						logId: log.id,
-						stream: chunk.stream,
-						data: chunk.data,
-					} satisfies SessionLogEvent)
+					if (log) {
+						this.emit('log', {
+							sessionId,
+							logId: log.id,
+							stream: chunk.stream,
+							data: chunk.data,
+						} satisfies SessionLogEvent)
+					}
 				}
 			} catch (err) {
 				logger.error('Log streaming failed', {
@@ -777,12 +783,14 @@ export class SessionManager extends EventEmitter {
 			.values({ sessionId, stream: 'system', content })
 			.returning()
 
-		this.emit('log', {
-			sessionId,
-			logId: log.id,
-			stream: 'system',
-			data: content,
-		} satisfies SessionLogEvent)
+		if (log) {
+			this.emit('log', {
+				sessionId,
+				logId: log.id,
+				stream: 'system',
+				data: content,
+			} satisfies SessionLogEvent)
+		}
 	}
 
 	private async cleanupSession(sessionId: string): Promise<void> {

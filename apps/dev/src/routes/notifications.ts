@@ -8,6 +8,7 @@ import {
 } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -77,7 +78,7 @@ app.openapi(createNotificationRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json({ error: 'Failed to create notification' }, 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create notification'), 400)
 	}
 
 	await db.insert(events).values({
@@ -165,7 +166,7 @@ app.openapi(getNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.limit(1)
 
-	if (!notification) return c.json({ error: 'Notification not found' }, 404)
+	if (!notification) return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 
 	return c.json(serialize(notification) as z.infer<typeof notificationResponseSchema>)
 }) as RouteHandler<typeof getNotificationRoute, Env>)
@@ -221,7 +222,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.returning()
 
-	if (!updated) return c.json({ error: 'Notification not found' }, 404)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 
 	await db.insert(events).values({
 		workspaceId,
@@ -282,10 +283,18 @@ app.openapi(respondNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.limit(1)
 
-	if (!notification) return c.json({ error: 'Notification not found' }, 404)
+	if (!notification) return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 
 	if (notification.status !== 'pending' && notification.status !== 'seen') {
-		return c.json({ error: 'Notification already responded to' }, 400)
+		return c.json(
+			createApiError('BAD_REQUEST', 'Notification already responded to', [
+				{
+					field: 'status',
+					message: `Current status is '${notification.status}', expected 'pending' or 'seen'`,
+				},
+			]),
+			400,
+		)
 	}
 
 	// Store the human's response and mark as resolved
@@ -301,7 +310,8 @@ app.openapi(respondNotificationRoute, (async (c) => {
 		.where(eq(notifications.id, id))
 		.returning()
 
-	if (!updated) return c.json({ error: 'Failed to update notification' }, 400)
+	if (!updated)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 400)
 
 	await db.insert(events).values({
 		workspaceId,
@@ -347,7 +357,7 @@ app.openapi(deleteNotificationRoute, (async (c) => {
 
 	const [existing] = await db.select().from(notifications).where(eq(notifications.id, id)).limit(1)
 
-	if (!existing) return c.json({ error: 'Notification not found' }, 404)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Notification not found'), 404)
 
 	await db.delete(notifications).where(eq(notifications.id, id))
 

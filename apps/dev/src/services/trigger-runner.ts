@@ -123,12 +123,12 @@ export class TriggerRunner {
 							.set({ activeSessionId: session.id, updatedAt: new Date() })
 							.where(eq(objects.id, event.entity_id))
 							.catch((err) =>
-							logger.debug('Could not link object to active session', {
-								sessionId: session.id,
-								entityId: event.entity_id,
-								error: String(err),
-							}),
-						)
+								logger.debug('Could not link object to active session', {
+									sessionId: session.id,
+									entityId: event.entity_id,
+									error: String(err),
+								}),
+							)
 					}
 				})
 				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))

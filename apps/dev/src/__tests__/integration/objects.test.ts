@@ -107,7 +107,7 @@ describe('Objects Integration', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('Invalid status')
+			expect(body.error.message).toContain('Invalid status')
 		})
 	})
 

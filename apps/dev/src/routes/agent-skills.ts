@@ -9,6 +9,7 @@ import {
 } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import type { AgentStorageManager } from '../services/agent-storage'
 
@@ -85,7 +86,7 @@ app.openapi(listSkillsRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	const records = await storage.listFileRecords(actorId, workspaceId, 'skills')
@@ -159,7 +160,7 @@ app.openapi(getSkillRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	try {
@@ -178,7 +179,7 @@ app.openapi(getSkillRoute, (async (c) => {
 			200,
 		)
 	} catch {
-		return c.json({ error: 'Skill not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Skill not found'), 404)
 	}
 }) as RouteHandler<typeof getSkillRoute, Env>)
 
@@ -227,13 +228,19 @@ app.openapi(saveSkillRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	const nameResult = skillNameSchema.safeParse(skillName)
 	if (!nameResult.success) {
 		return c.json(
-			{ error: 'Invalid skill name. Use lowercase letters, numbers, and hyphens only.' },
+			createApiError('VALIDATION_ERROR', 'Invalid skill name', [
+				{
+					field: 'skillName',
+					message: 'Use lowercase letters, numbers, and hyphens only',
+					expected: 'pattern: /^[a-z0-9][a-z0-9-]*$/',
+				},
+			]),
 			400,
 		)
 	}
@@ -297,7 +304,7 @@ app.openapi(deleteSkillRoute, (async (c) => {
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
-		return c.json({ error: 'Not a member of this workspace' }, 403)
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
 	await storage.deleteFile(actorId, workspaceId, 'skills', `${skillName}/SKILL.md`)
