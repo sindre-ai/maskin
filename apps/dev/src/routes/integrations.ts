@@ -16,6 +16,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import type { IntegrationConfig } from '../lib/types'
 
 type Env = {
 	Variables: {
@@ -278,7 +279,10 @@ app.openapi(callbackRoute, (async (c) => {
 			})
 			.returning()
 		if (!newActor) {
-			throw new Error('Failed to create system actor')
+			return c.json(
+				createApiError('INTERNAL_ERROR', 'Failed to create system actor for integration'),
+				500,
+			)
 		}
 		systemActor = newActor
 	}
@@ -439,8 +443,8 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
-	const config = integration.config as Record<string, unknown>
-	const systemActorId = config?.system_actor_id as string
+	const config = integration.config as IntegrationConfig
+	const systemActorId = config?.system_actor_id
 
 	if (!systemActorId) {
 		logger.warn(`Integration ${integration.id} missing system_actor_id in config`)

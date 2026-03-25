@@ -21,6 +21,20 @@ describe('Workspaces Routes', () => {
 			expect(body.id).toBe(ws.id)
 			expect(body.name).toBe(ws.name)
 		})
+
+		it('returns 500 when insert returns empty', async () => {
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insert = [] // empty — insert failed
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.code).toBe('INTERNAL_ERROR')
+			expect(body.error.message).toContain('Failed to create workspace')
+		})
 	})
 
 	describe('GET /api/workspaces', () => {

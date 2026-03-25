@@ -22,47 +22,6 @@ interface TokenResponse {
 }
 
 /**
- * Exchange an authorization code for access + refresh tokens.
- */
-export async function exchangeCodeForTokens(
-	code: string,
-	codeVerifier: string,
-	redirectUri: string,
-): Promise<ClaudeOAuthTokens> {
-	const body = {
-		grant_type: 'authorization_code',
-		code,
-		redirect_uri: redirectUri,
-		client_id: CLAUDE_OAUTH_CLIENT_ID,
-		code_verifier: codeVerifier,
-	}
-
-	const res = await fetch(CLAUDE_TOKEN_URL, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body),
-	})
-
-	if (!res.ok) {
-		const text = await res.text()
-		throw new Error(
-			res.status === 401
-				? 'Authentication failed: Invalid authorization code'
-				: `Token exchange failed (${res.status}): ${text}`,
-		)
-	}
-
-	const data = (await res.json()) as TokenResponse
-	return {
-		accessToken: data.access_token,
-		refreshToken: data.refresh_token ?? '',
-		expiresAt: Date.now() + data.expires_in * 1000,
-		subscriptionType: data.subscription_type,
-		scopes: data.scope?.split(' '),
-	}
-}
-
-/**
  * Refresh an expired access token using the refresh token.
  * Returns updated tokens (new access token, possibly new refresh token).
  */

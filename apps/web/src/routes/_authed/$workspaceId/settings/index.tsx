@@ -14,19 +14,8 @@ import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import {
-	Check,
-	Copy,
-	ExternalLink,
-	Eye,
-	EyeOff,
-	Monitor,
-	Moon,
-	Sun,
-	Unplug,
-	Zap,
-} from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { Check, Copy, Eye, EyeOff, Monitor, Moon, Sun, Unplug } from 'lucide-react'
+import { useCallback, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
 	component: SettingsPage,
@@ -132,9 +121,8 @@ function SettingsPage() {
 
 function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 	const queryClient = useQueryClient()
-	const [mode, setMode] = useState<'idle' | 'browser' | 'paste'>('idle')
+	const [mode, setMode] = useState<'idle' | 'paste'>('idle')
 	const [pasteValue, setPasteValue] = useState('')
-	const [flowId, setFlowId] = useState<string | null>(null)
 	const [parseError, setParseError] = useState('')
 
 	const invalidate = useCallback(
@@ -146,26 +134,6 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 		queryKey: queryKeys.claudeOauth.status(workspaceId),
 		queryFn: () => api.claudeOauth.status(workspaceId),
 	})
-
-	// Poll flow status when browser login is in progress
-	const flowQuery = useQuery({
-		queryKey: ['claude-oauth', 'flow', flowId],
-		queryFn: () => (flowId ? api.claudeOauth.flowStatus(flowId) : Promise.reject()),
-		enabled: mode === 'browser' && !!flowId,
-		refetchInterval: (query) => {
-			const s = query.state.data?.status
-			if (s === 'complete' || s === 'error') return false
-			return 1500
-		},
-	})
-
-	useEffect(() => {
-		if (flowQuery.data?.status === 'complete' && mode === 'browser') {
-			setMode('idle')
-			setFlowId(null)
-			invalidate()
-		}
-	}, [flowQuery.data?.status, mode, invalidate])
 
 	const importMutation = useMutation({
 		mutationFn: (tokens: import('@/lib/api').ClaudeOAuthImportInput) =>
@@ -181,17 +149,6 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 		mutationFn: () => api.claudeOauth.disconnect(workspaceId),
 		onSuccess: invalidate,
 	})
-
-	const handleBrowserLogin = async () => {
-		setMode('browser')
-		try {
-			const { auth_url, flow_id } = await api.claudeOauth.start(workspaceId)
-			setFlowId(flow_id)
-			window.open(auth_url, '_blank', 'width=600,height=700,popup=yes')
-		} catch {
-			setMode('idle')
-		}
-	}
 
 	const handlePasteImport = () => {
 		setParseError('')
@@ -258,9 +215,8 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 						<span>Credentials expired</span>
 					</div>
 					<div className="flex gap-2">
-						<Button variant="outline" size="sm" onClick={handleBrowserLogin}>
-							<Zap size={14} className="mr-1" />
-							Reconnect
+						<Button variant="outline" size="sm" onClick={() => setMode('paste')}>
+							Import credentials
 						</Button>
 						<Button
 							variant="ghost"
@@ -272,32 +228,6 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 							Remove
 						</Button>
 					</div>
-				</div>
-			) : mode === 'browser' ? (
-				<div className="space-y-3">
-					<div className="rounded-lg border border-border bg-bg-surface p-3">
-						<div className="flex items-center gap-2 mb-1">
-							<div className="size-2 rounded-full bg-accent animate-pulse" />
-							<span className="text-sm font-medium">Waiting for login...</span>
-						</div>
-						<p className="text-xs text-muted-foreground">
-							A browser window opened for you to sign in to Claude. Complete the login there, then
-							this will update automatically.
-						</p>
-						{flowQuery.data?.status === 'error' && (
-							<p className="text-xs text-error mt-2">{flowQuery.data.error || 'Login failed'}</p>
-						)}
-					</div>
-					<button
-						type="button"
-						className="text-xs text-muted-foreground hover:text-foreground"
-						onClick={() => {
-							setMode('idle')
-							setFlowId(null)
-						}}
-					>
-						Cancel
-					</button>
 				</div>
 			) : mode === 'paste' ? (
 				<div className="space-y-3">
@@ -340,19 +270,9 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 					</div>
 				</div>
 			) : (
-				<div className="flex gap-2">
-					<Button variant="outline" onClick={handleBrowserLogin}>
-						<ExternalLink size={14} className="mr-1.5" />
-						Log in with Claude
-					</Button>
-					<Button
-						variant="ghost"
-						onClick={() => setMode('paste')}
-						className="text-muted-foreground"
-					>
-						Import credentials
-					</Button>
-				</div>
+				<Button variant="outline" onClick={() => setMode('paste')}>
+					Import credentials
+				</Button>
 			)}
 		</div>
 	)
