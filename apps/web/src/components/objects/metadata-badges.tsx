@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/badge'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
 
@@ -17,10 +18,7 @@ export function MetadataBadgesView({
 	return (
 		<div className="flex flex-wrap gap-1.5">
 			{entries.map(([key, value]) => (
-				<span
-					key={key}
-					className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground group"
-				>
+				<Badge key={key} variant="secondary" className="gap-1 group">
 					<span className="text-muted-foreground">{key}:</span>
 					<span>{formatValue(value)}</span>
 					{onRemove && (
@@ -33,7 +31,7 @@ export function MetadataBadgesView({
 							×
 						</button>
 					)}
-				</span>
+				</Badge>
 			))}
 		</div>
 	)
