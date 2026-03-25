@@ -11,6 +11,7 @@ import {
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import type { WorkspaceSettings } from '../lib/types'
 
 type Env = {
 	Variables: {
@@ -74,7 +75,7 @@ app.openapi(disconnectRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	const settings = (ws.settings as Record<string, unknown>) ?? {}
+	const settings = (ws.settings as WorkspaceSettings) ?? {}
 	const { claude_oauth: _, ...rest } = settings
 
 	await db
@@ -132,7 +133,7 @@ app.openapi(statusRoute, (async (c) => {
 		return c.json({ connected: false, valid: false })
 	}
 
-	const settings = (ws.settings as Record<string, unknown>) ?? {}
+	const settings = (ws.settings as WorkspaceSettings) ?? {}
 	const oauthData = settings.claude_oauth as EncryptedOAuthData | undefined
 
 	if (!oauthData) {
@@ -223,7 +224,7 @@ app.openapi(importRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	const settings = (ws.settings as Record<string, unknown>) ?? {}
+	const settings = (ws.settings as WorkspaceSettings) ?? {}
 	await db
 		.update(workspaces)
 		.set({

@@ -58,6 +58,10 @@ const createWorkspaceRoute = createRoute({
 			description: 'Workspace created',
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
+		500: {
+			description: 'Internal server error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -78,7 +82,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		.returning()
 
 	if (!workspace) {
-		throw new Error('Failed to create workspace')
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
 	}
 
 	// Auto-add creator as owner
