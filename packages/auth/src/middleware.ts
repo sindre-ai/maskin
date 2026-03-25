@@ -1,20 +1,7 @@
 import type { Database } from '@ai-native/db'
+import { createApiError } from '@ai-native/shared'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
-
-function createApiError(
-	code: string,
-	message: string,
-	suggestion?: string,
-) {
-	return {
-		error: {
-			code,
-			message,
-			...(suggestion ? { suggestion } : {}),
-		},
-	}
-}
 
 export function authMiddleware(db: Database) {
 	return createMiddleware(async (c, next) => {
@@ -24,6 +11,7 @@ export function authMiddleware(db: Database) {
 				createApiError(
 					'UNAUTHORIZED',
 					'Missing or invalid Authorization header',
+					undefined,
 					"Provide a Bearer token in the Authorization header: 'Authorization: Bearer ank_...'",
 				),
 				401,
@@ -40,6 +28,7 @@ export function authMiddleware(db: Database) {
 					createApiError(
 						'UNAUTHORIZED',
 						'Invalid API key',
+						undefined,
 						'Check that your API key is correct and has not been regenerated',
 					),
 					401,
@@ -55,6 +44,7 @@ export function authMiddleware(db: Database) {
 			createApiError(
 				'UNAUTHORIZED',
 				'Invalid token format',
+				undefined,
 				"API keys must start with 'ank_'. Use POST /api/actors to create an actor and get an API key.",
 			),
 			401,

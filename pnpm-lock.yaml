@@ -244,6 +244,9 @@ importers:
       '@ai-native/db':
         specifier: workspace:*
         version: link:../db
+      '@ai-native/shared':
+        specifier: workspace:*
+        version: link:../shared
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3

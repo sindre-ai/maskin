@@ -16,6 +16,34 @@ type Env = {
 	}
 }
 
+/**
+ * Creates a mock DB context for unit tests. The returned `db` is a Proxy that
+ * intercepts Drizzle query builder calls (select/insert/update/delete) and
+ * resolves them with data you configure via `mockResults`.
+ *
+ * ## Usage patterns
+ *
+ * **Static results** — every call to the same operation returns the same data:
+ * ```ts
+ * mockResults.select = [row1, row2]   // db.select()...  → [row1, row2]
+ * mockResults.insert = [newRow]       // db.insert()...  → [newRow]
+ * mockResults.update = []             // db.update()...  → [] (no rows matched)
+ * ```
+ *
+ * **Queued results** — each successive call to the same operation shifts the
+ * next value from the queue, falling back to the static result when exhausted:
+ * ```ts
+ * mockResults.selectQueue = [
+ *   [memberRow],   // first  db.select()... → [memberRow]
+ *   [workspaceRow] // second db.select()... → [workspaceRow]
+ * ]
+ * ```
+ *
+ * **Transactions** — `db.transaction(fn)` passes the same mock `db` into the
+ * callback so the same `mockResults` apply inside the transaction.
+ *
+ * **Default** — any operation without configured results resolves to `[]`.
+ */
 export function createTestContext() {
 	const mockResults: Record<string, unknown[]> = {}
 	const queues: Record<string, unknown[][]> = {}

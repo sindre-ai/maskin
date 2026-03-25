@@ -306,6 +306,24 @@ describe('evaluateCondition()', () => {
 		).toBe(true)
 	})
 
+	it('contains: array inclusion', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'tags', operator: 'contains', value: 'urgent' },
+				{ metadata: { tags: ['urgent', 'important'] } },
+			),
+		).toBe(true)
+	})
+
+	it('contains: array exclusion', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'tags', operator: 'contains', value: 'critical' },
+				{ metadata: { tags: ['urgent', 'important'] } },
+			),
+		).toBe(false)
+	})
+
 	it('unknown operator returns false', () => {
 		expect(
 			evaluateCondition(

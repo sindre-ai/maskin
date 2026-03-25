@@ -313,6 +313,9 @@ export function evaluateCondition(condition: TriggerCondition, obj: ObjectData):
 			return diff >= 0 && diff <= days * 86_400_000
 		}
 		case 'contains':
+			if (Array.isArray(fieldValue)) {
+				return fieldValue.includes(condValue)
+			}
 			return String(fieldValue ?? '').includes(String(condValue ?? ''))
 		default:
 			return false

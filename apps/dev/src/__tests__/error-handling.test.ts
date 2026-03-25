@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import {
 	ApiErrorCode,
+	apiErrorSchema,
 	createApiError,
 	formatZodError,
 	mapStatusToCode,
@@ -186,6 +187,41 @@ describe('Error Handling', () => {
 
 		it('maps unknown status to INTERNAL_ERROR', () => {
 			expect(mapStatusToCode(503)).toBe('INTERNAL_ERROR')
+		})
+	})
+
+	describe('apiErrorSchema', () => {
+		it('validates a minimal error response', () => {
+			const result = apiErrorSchema.safeParse(
+				createApiError('BAD_REQUEST', 'Something went wrong'),
+			)
+			expect(result.success).toBe(true)
+		})
+
+		it('validates an error response with details', () => {
+			const result = apiErrorSchema.safeParse(
+				createApiError('VALIDATION_ERROR', 'Validation failed', [
+					{ field: 'title', message: 'Required', expected: 'string', received: 'undefined' },
+					{ field: 'type', message: 'Invalid enum value' },
+				]),
+			)
+			expect(result.success).toBe(true)
+		})
+
+		it('validates an error response with suggestion', () => {
+			const result = apiErrorSchema.safeParse(
+				createApiError('BAD_REQUEST', 'Invalid status', undefined, 'Use one of: todo, done'),
+			)
+			expect(result.success).toBe(true)
+			if (result.success) {
+				expect(result.data.error.suggestion).toBe('Use one of: todo, done')
+			}
+		})
+
+		it('rejects a response missing required fields', () => {
+			expect(apiErrorSchema.safeParse({ error: { code: 'X' } }).success).toBe(false)
+			expect(apiErrorSchema.safeParse({ error: { message: 'X' } }).success).toBe(false)
+			expect(apiErrorSchema.safeParse({}).success).toBe(false)
 		})
 	})
 })

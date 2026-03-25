@@ -111,7 +111,7 @@ app.openapi(exchangeRoute, (async (c) => {
 	// Store encrypted tokens in workspace settings
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 400)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
 	const settings = (ws.settings as Record<string, unknown>) ?? {}
@@ -174,7 +174,7 @@ app.openapi(disconnectRoute, (async (c) => {
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 400)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
 	const settings = (ws.settings as Record<string, unknown>) ?? {}
@@ -323,7 +323,7 @@ app.openapi(importRoute, (async (c) => {
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 400)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
 	const settings = (ws.settings as Record<string, unknown>) ?? {}

@@ -1,49 +1,11 @@
 import { z } from '@hono/zod-openapi'
 import type { ZodError, ZodIssue } from 'zod'
 
-export const ApiErrorCode = {
-	VALIDATION_ERROR: 'VALIDATION_ERROR',
-	NOT_FOUND: 'NOT_FOUND',
-	UNAUTHORIZED: 'UNAUTHORIZED',
-	FORBIDDEN: 'FORBIDDEN',
-	CONFLICT: 'CONFLICT',
-	BAD_REQUEST: 'BAD_REQUEST',
-	INTERNAL_ERROR: 'INTERNAL_ERROR',
-} as const
+// Re-export shared error types and helpers
+export { ApiErrorCode, createApiError, mapStatusToCode } from '@ai-native/shared'
+export type { ApiErrorCode as ApiErrorCodeType, ApiErrorDetail, ApiErrorResponse } from '@ai-native/shared'
 
-export type ApiErrorCode = (typeof ApiErrorCode)[keyof typeof ApiErrorCode]
-
-export interface ApiErrorDetail {
-	field: string
-	message: string
-	expected?: string
-	received?: string
-}
-
-export interface ApiErrorResponse {
-	error: {
-		code: ApiErrorCode
-		message: string
-		details?: ApiErrorDetail[]
-		suggestion?: string
-	}
-}
-
-export function createApiError(
-	code: ApiErrorCode,
-	message: string,
-	details?: ApiErrorDetail[],
-	suggestion?: string,
-): ApiErrorResponse {
-	return {
-		error: {
-			code,
-			message,
-			...(details?.length ? { details } : {}),
-			...(suggestion ? { suggestion } : {}),
-		},
-	}
-}
+import type { ApiErrorDetail } from '@ai-native/shared'
 
 function formatZodIssue(issue: ZodIssue): ApiErrorDetail {
 	const field = issue.path.length > 0 ? issue.path.join('.') : '_root'
@@ -80,23 +42,6 @@ function formatZodIssue(issue: ZodIssue): ApiErrorDetail {
 
 export function formatZodError(error: ZodError): ApiErrorDetail[] {
 	return error.issues.map(formatZodIssue)
-}
-
-export function mapStatusToCode(status: number): ApiErrorCode {
-	switch (status) {
-		case 400:
-			return ApiErrorCode.BAD_REQUEST
-		case 401:
-			return ApiErrorCode.UNAUTHORIZED
-		case 403:
-			return ApiErrorCode.FORBIDDEN
-		case 404:
-			return ApiErrorCode.NOT_FOUND
-		case 409:
-			return ApiErrorCode.CONFLICT
-		default:
-			return ApiErrorCode.INTERNAL_ERROR
-	}
 }
 
 /** Zod schema for OpenAPI documentation of structured error responses */
