@@ -217,7 +217,7 @@ function SkillForm({
 		<div className="rounded-md border border-border bg-bg-surface p-3 space-y-2">
 			<div className="flex gap-2">
 				<div className="flex-1">
-					<Label className="text-xs text-muted-foreground">Name</Label>
+					<Label>Name</Label>
 					<Input
 						value={name}
 						onChange={(e) => setName(e.target.value)}
@@ -229,7 +229,7 @@ function SkillForm({
 			</div>
 
 			<div>
-				<Label className="text-xs text-muted-foreground">Description</Label>
+				<Label>Description</Label>
 				<Input
 					value={description}
 					onChange={(e) => setDescription(e.target.value)}
@@ -239,7 +239,7 @@ function SkillForm({
 			</div>
 
 			<div>
-				<Label className="text-xs text-muted-foreground">Instructions</Label>
+				<Label>Instructions</Label>
 				<Textarea
 					value={content}
 					onChange={(e) => setContent(e.target.value)}
@@ -256,12 +256,12 @@ function SkillForm({
 			{showAdvanced && (
 				<div className="space-y-2 border-t border-border pt-2">
 					<div className="flex items-center justify-between">
-						<Label className="text-xs text-muted-foreground">Manual invocation only</Label>
+						<Label>Manual invocation only</Label>
 						<Switch checked={disableModelInvocation} onCheckedChange={setDisableModelInvocation} />
 					</div>
 
 					<div>
-						<Label className="text-xs text-muted-foreground">Allowed Tools</Label>
+						<Label>Allowed Tools</Label>
 						<Input
 							value={allowedTools}
 							onChange={(e) => setAllowedTools(e.target.value)}
@@ -272,7 +272,7 @@ function SkillForm({
 
 					<div className="flex gap-2">
 						<div className="flex-1">
-							<Label className="text-xs text-muted-foreground">Context</Label>
+							<Label>Context</Label>
 							<Select value={context} onValueChange={(v) => setContext(v as 'none' | 'fork')}>
 								<SelectTrigger>
 									<SelectValue />
@@ -285,7 +285,7 @@ function SkillForm({
 						</div>
 						{context === 'fork' && (
 							<div className="flex-1">
-								<Label className="text-xs text-muted-foreground">Agent Type</Label>
+								<Label>Agent Type</Label>
 								<Input
 									value={agent}
 									onChange={(e) => setAgent(e.target.value)}
@@ -297,7 +297,7 @@ function SkillForm({
 					</div>
 
 					<div>
-						<Label className="text-xs text-muted-foreground">Model Override</Label>
+						<Label>Model Override</Label>
 						<Input
 							value={model}
 							onChange={(e) => setModel(e.target.value)}
