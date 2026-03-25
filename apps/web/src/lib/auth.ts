@@ -1,5 +1,5 @@
-const AUTH_KEY = 'ai-native-api-key'
-const ACTOR_KEY = 'ai-native-actor'
+const AUTH_KEY = 'maskin-api-key'
+const ACTOR_KEY = 'maskin-actor'
 
 export interface StoredActor {
 	id: string

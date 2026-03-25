@@ -14,7 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
 - Agent file storage: `packages/storage` provides abstract `StorageProvider` interface with S3 implementation (`@aws-sdk/client-s3`). `apps/dev/src/services/agent-storage.ts` manages pull/push of agent files.
-- MCP server: `packages/mcp` wraps the API as 38 tools for external agents (stdio + HTTP transport)
+- Database package: `packages/db` — exports Drizzle schema (`@ai-native/db/schema`), connection (`@ai-native/db`), and migration runner
+- MCP server: `packages/mcp` wraps the API as 39 tools for external agents (stdio + HTTP transport)
 - Workspace context passed via `X-Workspace-Id` header on all workspace-scoped routes
 
 ## Prerequisites
@@ -67,6 +68,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `sessions` = container execution sessions, tracks lifecycle (pending → running → completed/paused/failed/timeout)
 - `session_logs` = append-only log output from container sessions (stdout/stderr/system), used for SSE streaming
 - `agent_files` = metadata index for agent files stored in S3 (skills, learnings, memory)
+- `notifications` = inbox items for actors (humans or agents), with status (pending/responded/dismissed) and optional response payload
 
 ## API Routes
 
@@ -134,6 +136,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Webhooks (`/api/webhooks`) — no auth
 - `POST /api/webhooks/:provider` — incoming webhook handler
+
+### Agent Skills (`/api/actors/:actorId/skills`) — mounted under `/api/actors`
+- `GET /api/actors/:actorId/skills` — list skills for an actor
+- `GET /api/actors/:actorId/skills/:name` — get skill content
+- `PUT /api/actors/:actorId/skills/:name` — create or update a skill
+- `DELETE /api/actors/:actorId/skills/:name` — delete a skill
+
+### Notifications (`/api/notifications`)
+- `POST /api/notifications` — create notification (typically from an agent)
+- `GET /api/notifications` — list notifications (filter by status, target actor)
+- `PATCH /api/notifications/:id` — update notification (e.g., mark as responded/dismissed)
+- `POST /api/notifications/:id/respond` — submit a response to a notification
+
+### Auth (`/api/auth`) + Claude OAuth (`/api/claude-oauth`)
+- Standard auth routes handled by `better-auth` library
+- `/api/claude-oauth` — OAuth flow for Claude.ai integration (no auth required on callback)
 
 ### MCP HTTP Transport
 - `POST /mcp` — Streamable HTTP transport for MCP Apps

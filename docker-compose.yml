@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: ai_native_oss
+      POSTGRES_DB: maskin
     ports:
       - "5432:5432"
     volumes:
@@ -32,7 +32,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_native_oss
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/maskin
       BETTER_AUTH_SECRET: dev-secret-change-in-production
       BETTER_AUTH_URL: http://localhost:3000
       PORT: "3000"

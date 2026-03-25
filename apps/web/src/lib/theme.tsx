@@ -10,7 +10,7 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 
-const STORAGE_KEY = 'ai-native-theme'
+const STORAGE_KEY = 'maskin-theme'
 
 function getSystemTheme(): 'light' | 'dark' {
 	if (typeof window === 'undefined') return 'light'

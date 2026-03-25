@@ -1,4 +1,4 @@
-# AI-Native OSS Workspace
+# Maskin
 
 <!-- badges placeholder -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -15,12 +15,22 @@ An open-source workspace where AI agents run product development autonomously. H
 - **Everything is an API** -- UI and agents use the same endpoints. No special agent interface, no separate human interface
 - **Unified object model** -- insights, bets, and tasks are all "objects" with the same schema, connected by relationships
 
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) >= 20
+- [pnpm](https://pnpm.io/) 9.15.0 (`npm install -g pnpm@9.15.0`)
+- [Docker](https://www.docker.com/) (for PostgreSQL + SeaweedFS)
+
 ## Quick Start
 
 ```bash
 # Clone and install
-git clone https://github.com/your-org/ai-native-oss.git && cd ai-native-oss
+git clone https://github.com/sindre-ai/maskin.git && cd maskin
 pnpm install
+
+# Set up environment
+cp .env.example .env
+# Edit .env and set BETTER_AUTH_SECRET (generate with: openssl rand -hex 32)
 
 # Start everything (Docker, migrations, backend + frontend)
 pnpm dev
@@ -39,7 +49,7 @@ Backend starts at `http://localhost:3000` (`/api/health` to verify). Frontend st
 ## Architecture
 
 ```
-ai-native-oss/
+maskin/
 ├── apps/
 │   ├── dev/                    # Backend API server (Hono.js)
 │   │   ├── src/
@@ -135,6 +145,7 @@ All product work is represented as **unified objects** -- insights, bets, and ta
 | **sessions** | Container-based agent execution sessions. Tracks lifecycle: pending -> running -> completed/paused/failed/timeout |
 | **session_logs** | Append-only log output from container sessions (stdout/stderr/system), used for SSE streaming |
 | **agent_files** | Metadata index for agent files stored in S3 (skills, learnings, memory) |
+| **notifications** | Inbox items for actors (humans or agents), with status (pending/responded/dismissed) and optional response payload |
 
 ## API Endpoints
 
@@ -281,7 +292,7 @@ To connect Claude Code (or any MCP client) to the workspace:
    ```json
    {
      "mcpServers": {
-       "ai-native-oss": {
+       "maskin": {
          "command": "npx",
          "args": ["tsx", "packages/mcp/src/server.ts"],
          "env": {
@@ -350,10 +361,23 @@ pnpm db:seed
 
 ### Environment Variables
 
+Copy the example file and edit as needed:
+
+```bash
+cp .env.example .env
+```
+
+For local development the defaults work out of the box — PostgreSQL and SeaweedFS are started by `pnpm dev` via Docker Compose. The only value you must set is `BETTER_AUTH_SECRET`:
+
+```bash
+# Generate a random secret (macOS/Linux)
+openssl rand -hex 32
+```
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | -- | PostgreSQL connection string |
-| `BETTER_AUTH_SECRET` | Yes | -- | Secret for auth token signing |
+| `DATABASE_URL` | Yes | `postgresql://postgres:postgres@localhost:5432/maskin` | PostgreSQL connection string |
+| `BETTER_AUTH_SECRET` | Yes | -- | Secret for auth token signing — generate with `openssl rand -hex 32` |
 | `BETTER_AUTH_URL` | No | `http://localhost:3000` | Base URL for auth callbacks |
 | `PORT` | No | `3000` | Server port |
 | `S3_ENDPOINT` | No | `http://localhost:8333` | S3-compatible storage endpoint (SeaweedFS for dev) |
@@ -361,6 +385,19 @@ pnpm db:seed
 | `S3_ACCESS_KEY` | No | `admin` | S3 access key |
 | `S3_SECRET_KEY` | No | `admin` | S3 secret key |
 | `S3_REGION` | No | `us-east-1` | S3 region |
+
+**GitHub integration** (optional — only needed if using the GitHub integration feature):
+
+| Variable | Description |
+|----------|-------------|
+| `INTEGRATION_ENCRYPTION_KEY` | Key for encrypting stored OAuth tokens |
+| `GITHUB_APP_ID` | GitHub App ID |
+| `GITHUB_CLIENT_ID` | GitHub OAuth App client ID |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
+| `GITHUB_APP_WEBHOOK_SECRET` | Webhook signing secret |
+| `GITHUB_APP_PRIVATE_KEY` | GitHub App private key (PEM format) |
+| `GITHUB_APP_SLUG` | GitHub App slug |
+| `WEBHOOK_BASE_URL` | Public URL for incoming webhooks (e.g. via ngrok in dev) |
 
 ## License
 
