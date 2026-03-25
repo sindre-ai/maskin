@@ -4,6 +4,7 @@ import {
 	buildRelationship,
 	buildUpdateObjectBody,
 	buildWorkspace,
+	buildWorkspaceMember,
 } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -111,7 +112,7 @@ describe('Objects Routes', () => {
 			const existing = buildObject()
 			const updated = { ...existing, title: 'Updated title' }
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing]]
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 
@@ -140,8 +141,8 @@ describe('Objects Routes', () => {
 			const existing = buildObject()
 			const ws = buildWorkspace({ id: existing.workspaceId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select returns the existing object, second returns the workspace
-			mockResults.selectQueue = [[existing], [ws]]
+			// First select: existing object, second: workspace membership, third: workspace settings
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'bogus_status' }),
@@ -210,7 +211,7 @@ describe('Objects Routes', () => {
 		it('returns 200 when deleted', async () => {
 			const existing = buildObject()
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing]]
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
 			mockResults.insert = [{}] // event
 
 			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
@@ -255,8 +256,8 @@ describe('Objects Routes', () => {
 			const updated = { ...existing, status: 'in_progress' }
 			const ws = buildWorkspace({ id: existing.workspaceId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: existing object, second: workspace
-			mockResults.selectQueue = [[existing], [ws]]
+			// First select: existing object, second: workspace membership, third: workspace settings
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 
@@ -284,6 +285,40 @@ describe('Objects Routes', () => {
 			expect(body.object.id).toBe(obj.id)
 			expect(body.relationships).toHaveLength(0)
 			expect(body.connected_objects).toHaveLength(0)
+		})
+	})
+
+	describe('Workspace membership enforcement', () => {
+		it('GET /:id returns 404 when actor is not a workspace member', async () => {
+			const obj = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Object found, but membership check returns empty
+			mockResults.selectQueue = [[obj], []]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+			expect(res.status).toBe(404)
+		})
+
+		it('PATCH /:id returns 404 when actor is not a workspace member', async () => {
+			const existing = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Object found, but membership check returns empty
+			mockResults.selectQueue = [[existing], []]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, buildUpdateObjectBody()),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('DELETE /:id returns 404 when actor is not a workspace member', async () => {
+			const existing = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Object found, but membership check returns empty
+			mockResults.selectQueue = [[existing], []]
+
+			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
+			expect(res.status).toBe(404)
 		})
 	})
 })

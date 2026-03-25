@@ -1,4 +1,4 @@
-import { buildCreateTriggerBody, buildTrigger } from '../factories'
+import { buildCreateTriggerBody, buildTrigger, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -47,6 +47,7 @@ describe('Triggers Routes', () => {
 			const trigger = buildTrigger()
 			const updated = { ...trigger, name: 'Updated Trigger' }
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
 			mockResults.update = [updated]
 
 			const res = await app.request(
@@ -73,7 +74,7 @@ describe('Triggers Routes', () => {
 		it('returns 200 when deleted', async () => {
 			const trigger = buildTrigger()
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
-			mockResults.selectQueue = [[trigger]]
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
 
 			const res = await app.request(jsonDelete(`/api/triggers/${trigger.id}`))
 
@@ -89,6 +90,30 @@ describe('Triggers Routes', () => {
 				jsonDelete('/api/triggers/00000000-0000-0000-0000-000000000099'),
 			)
 
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('Workspace membership enforcement', () => {
+		it('PATCH /:id returns 404 when actor is not a workspace member', async () => {
+			const trigger = buildTrigger()
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			// Trigger found, but membership check returns empty
+			mockResults.selectQueue = [[trigger], []]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { name: 'Updated' }),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('DELETE /:id returns 404 when actor is not a workspace member', async () => {
+			const trigger = buildTrigger()
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			// Trigger found, but membership check returns empty
+			mockResults.selectQueue = [[trigger], []]
+
+			const res = await app.request(jsonDelete(`/api/triggers/${trigger.id}`))
 			expect(res.status).toBe(404)
 		})
 	})

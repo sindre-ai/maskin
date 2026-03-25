@@ -27,14 +27,14 @@ export interface ApiErrorResponse {
 }
 
 export function createApiError(
-	code: ApiErrorCode | string,
+	code: ApiErrorCode,
 	message: string,
 	details?: ApiErrorDetail[],
 	suggestion?: string,
 ): ApiErrorResponse {
 	return {
 		error: {
-			code: code as ApiErrorCode,
+			code,
 			message,
 			...(details?.length ? { details } : {}),
 			...(suggestion ? { suggestion } : {}),

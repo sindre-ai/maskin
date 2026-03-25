@@ -196,10 +196,9 @@ app.openapi(stopSessionRoute, (async (c) => {
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(
-		serialize(updated as NonNullable<typeof updated>) as z.infer<typeof sessionResponseSchema>,
-	)
+	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof stopSessionRoute, Env>)
 
 // POST /:id/pause - Pause and snapshot a session
@@ -245,10 +244,9 @@ app.openapi(pauseSessionRoute, (async (c) => {
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(
-		serialize(updated as NonNullable<typeof updated>) as z.infer<typeof sessionResponseSchema>,
-	)
+	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof pauseSessionRoute, Env>)
 
 // POST /:id/resume - Resume a paused session
@@ -294,10 +292,9 @@ app.openapi(resumeSessionRoute, (async (c) => {
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(
-		serialize(updated as NonNullable<typeof updated>) as z.infer<typeof sessionResponseSchema>,
-	)
+	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof resumeSessionRoute, Env>)
 
 // GET /:id/logs - Paginated log history
