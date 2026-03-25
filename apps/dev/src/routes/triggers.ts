@@ -60,6 +60,7 @@ app.openapi(createTriggerRoute, async (c) => {
 	const [created] = await db
 		.insert(triggers)
 		.values({
+			...(body.id && { id: body.id }),
 			workspaceId,
 			name: body.name,
 			type: body.type,

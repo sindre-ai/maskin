@@ -1,8 +1,4 @@
 import type { SafeJsonValue } from '@ai-native/shared'
-import { PageHeader } from '@/components/layout/page-header'
-import { EmptyState } from '@/components/shared/empty-state'
-import { ListSkeleton } from '@/components/shared/loading-skeleton'
-import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -13,15 +9,14 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useActors } from '@/hooks/use-actors'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
-import {
-	useCreateTrigger,
-	useDeleteTrigger,
-	useTriggers,
-	useUpdateTrigger,
-} from '@/hooks/use-triggers'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
+import { useAutoSave } from '@/hooks/use-auto-save'
+import { Check, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+// --- Types ---
+
 type ConditionOperator =
 	| 'equals'
 	| 'not_equals'
@@ -33,120 +28,6 @@ type ConditionOperator =
 	| 'is_set'
 	| 'is_not_set'
 	| 'contains'
-import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useSearch } from '@tanstack/react-router'
-import { X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-
-export const Route = createFileRoute('/_authed/$workspaceId/settings/triggers')({
-	component: TriggersPage,
-	errorComponent: ({ error }) => <RouteError error={error} />,
-	validateSearch: (search: Record<string, unknown>) => ({
-		create: search.create === 'true' || search.create === true,
-	}),
-})
-
-function TriggersPage() {
-	const { workspaceId, workspace } = useWorkspace()
-	const { data: triggers, isLoading } = useTriggers(workspaceId)
-	const { data: actors } = useActors(workspaceId)
-	const updateTrigger = useUpdateTrigger(workspaceId)
-	const deleteTrigger = useDeleteTrigger(workspaceId)
-	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/triggers' })
-	const [showCreate, setShowCreate] = useState(false)
-
-	useEffect(() => {
-		if (create) setShowCreate(true)
-	}, [create])
-
-	const agentMap = new Map((actors ?? []).filter((a) => a.type === 'agent').map((a) => [a.id, a]))
-
-	return (
-		<div>
-			<PageHeader title="Triggers" />
-
-			{showCreate && (
-				<div className="mb-6 rounded-lg border border-border bg-card p-4">
-					<CreateTriggerForm
-						workspaceId={workspaceId}
-						workspace={workspace}
-						agents={Array.from(agentMap.values())}
-						onClose={() => setShowCreate(false)}
-					/>
-				</div>
-			)}
-
-			{isLoading ? (
-				<ListSkeleton />
-			) : !triggers?.length ? (
-				<EmptyState title="No triggers" description="Create a trigger to automate agent actions" />
-			) : (
-				<div className="space-y-2">
-					{triggers.map((trigger) => (
-						<TriggerRow
-							key={trigger.id}
-							trigger={trigger}
-							agentName={agentMap.get(trigger.targetActorId)?.name ?? 'Unknown'}
-							onToggle={() =>
-								updateTrigger.mutate({
-									id: trigger.id,
-									data: { enabled: !trigger.enabled },
-								})
-							}
-							onDelete={() => deleteTrigger.mutate(trigger.id)}
-						/>
-					))}
-				</div>
-			)}
-		</div>
-	)
-}
-
-function TriggerRow({
-	trigger,
-	agentName,
-	onToggle,
-	onDelete,
-}: {
-	trigger: TriggerResponse
-	agentName: string
-	onToggle: () => void
-	onDelete: () => void
-}) {
-	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
-			<button
-				type="button"
-				className={`h-3 w-3 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
-				onClick={onToggle}
-				title={trigger.enabled ? 'Disable' : 'Enable'}
-			/>
-			<div className="flex-1">
-				<p className="text-sm font-medium text-foreground">{trigger.name}</p>
-				<p className="text-xs text-muted-foreground">
-					{trigger.type} → {agentName}
-				</p>
-			</div>
-			<Button
-				variant="ghost"
-				size="sm"
-				className="text-muted-foreground hover:text-error"
-				onClick={onDelete}
-			>
-				Delete
-			</Button>
-		</div>
-	)
-}
-
-// Internal event definitions (always available)
-const INTERNAL_EVENTS: ProviderEventDefinition[] = [
-	{ entityType: 'insight', actions: ['created', 'updated', 'status_changed'], label: 'Insight' },
-	{ entityType: 'bet', actions: ['created', 'updated', 'status_changed'], label: 'Bet' },
-	{ entityType: 'task', actions: ['created', 'updated', 'status_changed'], label: 'Task' },
-]
-
-const INTERNAL_ENTITY_TYPES = new Set(['insight', 'bet', 'task'])
 
 interface FieldDefinition {
 	name: string
@@ -160,6 +41,25 @@ interface ConditionRow {
 	operator: ConditionOperator
 	value: SafeJsonValue
 }
+
+export interface TriggerFormPayload {
+	name: string
+	type: 'cron' | 'event' | 'reminder'
+	action_prompt: string
+	target_actor_id: string
+	config: Record<string, unknown>
+	enabled?: boolean
+}
+
+// --- Constants ---
+
+const INTERNAL_EVENTS: ProviderEventDefinition[] = [
+	{ entityType: 'insight', actions: ['created', 'updated', 'status_changed'], label: 'Insight' },
+	{ entityType: 'bet', actions: ['created', 'updated', 'status_changed'], label: 'Bet' },
+	{ entityType: 'task', actions: ['created', 'updated', 'status_changed'], label: 'Task' },
+]
+
+const INTERNAL_ENTITY_TYPES = new Set(['insight', 'bet', 'task'])
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [
@@ -199,27 +99,95 @@ const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: strin
 
 const NO_VALUE_OPERATORS = new Set(['is_set', 'is_not_set'])
 
-function CreateTriggerForm({
+const HOURS = Array.from({ length: 24 }, (_, i) => ({
+	value: String(i),
+	label: i === 0 ? '12:00 AM' : i < 12 ? `${i}:00 AM` : i === 12 ? '12:00 PM' : `${i - 12}:00 PM`,
+}))
+
+const MINUTES = Array.from({ length: 60 }, (_, i) => ({
+	value: String(i),
+	label: String(i).padStart(2, '0'),
+}))
+
+const DAYS_OF_WEEK = [
+	{ value: '1', label: 'Monday' },
+	{ value: '2', label: 'Tuesday' },
+	{ value: '3', label: 'Wednesday' },
+	{ value: '4', label: 'Thursday' },
+	{ value: '5', label: 'Friday' },
+	{ value: '6', label: 'Saturday' },
+	{ value: '0', label: 'Sunday' },
+]
+
+const DAYS_OF_MONTH = Array.from({ length: 31 }, (_, i) => ({
+	value: String(i + 1),
+	label: String(i + 1),
+}))
+
+// --- Cron parser ---
+
+function parseCronExpression(expr: string): {
+	frequency: 'hourly' | 'daily' | 'weekly' | 'monthly'
+	minute: string
+	hour: string
+	dayOfWeek: string
+	dayOfMonth: string
+} {
+	const parts = expr.split(' ')
+	const [minute = '0', hour = '9', dayOfMonth = '1', , dayOfWeek = '1'] = parts
+
+	if (dayOfWeek !== '*') return { frequency: 'weekly', minute, hour, dayOfWeek, dayOfMonth: '1' }
+	if (dayOfMonth !== '*') return { frequency: 'monthly', minute, hour, dayOfWeek: '1', dayOfMonth }
+	if (hour !== '*') return { frequency: 'daily', minute, hour, dayOfWeek: '1', dayOfMonth: '1' }
+	return { frequency: 'hourly', minute, hour: '9', dayOfWeek: '1', dayOfMonth: '1' }
+}
+
+// --- Main form ---
+
+export function TriggerForm({
 	workspaceId,
 	workspace,
 	agents,
-	onClose,
+	initialValues,
+	onAutoCreate,
+	onSave,
+	onToggleEnabled,
+	isPending = false,
+	error,
+	isCreated = false,
 }: {
 	workspaceId: string
 	workspace: WorkspaceWithRole
 	agents: { id: string; name: string }[]
-	onClose: () => void
+	initialValues?: TriggerResponse
+	onAutoCreate?: (payload: TriggerFormPayload) => void
+	onSave?: (payload: TriggerFormPayload) => void
+	onToggleEnabled?: () => void
+	isPending?: boolean
+	error?: Error | null
+	isCreated?: boolean
 }) {
-	const createTrigger = useCreateTrigger(workspaceId)
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: providers } = useProviders()
-	const [name, setName] = useState('')
-	const [type, setType] = useState<'cron' | 'event' | 'reminder'>('event')
-	const [frequency, setFrequency] = useState<'hourly' | 'daily' | 'weekly' | 'monthly'>('daily')
-	const [minute, setMinute] = useState('0')
-	const [hour, setHour] = useState('9')
-	const [dayOfWeek, setDayOfWeek] = useState('1')
-	const [dayOfMonth, setDayOfMonth] = useState('1')
+
+	// Parse initial config
+	const initConfig = (initialValues?.config as Record<string, unknown>) ?? {}
+	const initCron =
+		initialValues?.type === 'cron' && initConfig.expression
+			? parseCronExpression(String(initConfig.expression))
+			: null
+
+	const [name, setName] = useState(initialValues?.name ?? '')
+	const [type, setType] = useState<'cron' | 'event' | 'reminder'>(
+		(initialValues?.type as 'cron' | 'event' | 'reminder') ?? 'event',
+	)
+	const [frequency, setFrequency] = useState<'hourly' | 'daily' | 'weekly' | 'monthly'>(
+		initCron?.frequency ?? 'daily',
+	)
+	const [minute, setMinute] = useState(initCron?.minute ?? '0')
+	const [hour, setHour] = useState(initCron?.hour ?? '9')
+	const [dayOfWeek, setDayOfWeek] = useState(initCron?.dayOfWeek ?? '1')
+	const [dayOfMonth, setDayOfMonth] = useState(initCron?.dayOfMonth ?? '1')
 
 	const buildCronExpression = useCallback(() => {
 		switch (frequency) {
@@ -233,15 +201,56 @@ function CreateTriggerForm({
 				return `${minute} ${hour} ${dayOfMonth} * *`
 		}
 	}, [frequency, minute, hour, dayOfWeek, dayOfMonth])
-	const [scheduledDate, setScheduledDate] = useState('')
-	const [scheduledTime, setScheduledTime] = useState('09:00')
-	const [entityType, setEntityType] = useState('insight')
-	const [action, setAction] = useState('created')
-	const [prompt, setPrompt] = useState('')
-	const [targetActorId, setTargetActorId] = useState(agents[0]?.id ?? '')
-	const [fromStatus, setFromStatus] = useState('__any__')
-	const [toStatus, setToStatus] = useState('__any__')
-	const [conditions, setConditions] = useState<ConditionRow[]>([])
+
+	const initScheduledAt =
+		initialValues?.type === 'reminder' && initConfig.scheduled_at
+			? new Date(String(initConfig.scheduled_at))
+			: null
+	const [scheduledDate, setScheduledDate] = useState(
+		initScheduledAt ? initScheduledAt.toISOString().slice(0, 10) : '',
+	)
+	const [scheduledTime, setScheduledTime] = useState(
+		initScheduledAt
+			? `${String(initScheduledAt.getHours()).padStart(2, '0')}:${String(initScheduledAt.getMinutes()).padStart(2, '0')}`
+			: '09:00',
+	)
+
+	const [entityType, setEntityType] = useState(
+		initialValues?.type === 'event' && initConfig.entity_type
+			? String(initConfig.entity_type)
+			: 'insight',
+	)
+	const [action, setAction] = useState(
+		initialValues?.type === 'event' && initConfig.action ? String(initConfig.action) : 'created',
+	)
+	const [prompt, setPrompt] = useState(initialValues?.actionPrompt ?? '')
+	const [targetActorId, setTargetActorId] = useState(
+		initialValues?.targetActorId ?? agents[0]?.id ?? '',
+	)
+	const [enabled, setEnabled] = useState(initialValues?.enabled ?? true)
+	const [fromStatus, setFromStatus] = useState(
+		initialValues?.type === 'event' && initConfig.from_status
+			? String(initConfig.from_status)
+			: '__any__',
+	)
+	const [toStatus, setToStatus] = useState(
+		initialValues?.type === 'event' && initConfig.to_status
+			? String(initConfig.to_status)
+			: '__any__',
+	)
+	const [conditions, setConditions] = useState<ConditionRow[]>(() => {
+		if (initialValues?.type === 'event' && Array.isArray(initConfig.conditions)) {
+			return (initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[]).map(
+				(c) => ({
+					id: crypto.randomUUID(),
+					field: c.field,
+					operator: c.operator as ConditionOperator,
+					value: (c.value ?? '') as SafeJsonValue,
+				}),
+			)
+		}
+		return []
+	})
 
 	// Workspace settings
 	const settings = workspace.settings as Record<string, unknown>
@@ -258,14 +267,79 @@ function CreateTriggerForm({
 		(providers ?? []).filter((p) => connectedProviders.has(p.name)).flatMap((p) => p.events) ?? []
 	const allEvents = [...INTERNAL_EVENTS, ...externalEvents]
 
-	// Get actions for the currently selected entity type
 	const currentEventDef = allEvents.find((e) => e.entityType === entityType)
 	const availableActions = currentEventDef?.actions ?? []
-
 	const isInternal = INTERNAL_ENTITY_TYPES.has(entityType)
 
 	const isValid =
 		name.trim() && prompt.trim() && targetActorId && (type === 'reminder' ? scheduledDate : true)
+
+	// --- Build payload from current form state ---
+	const hasAutoCreatedRef = useRef(false)
+
+	const buildPayload = useCallback((): TriggerFormPayload | null => {
+		if (!name.trim() || !prompt.trim() || !targetActorId) return null
+		if (type === 'reminder' && !scheduledDate) return null
+
+		const validConditions = conditions
+			.filter((c) => c.field && c.operator)
+			.map((c) =>
+				NO_VALUE_OPERATORS.has(c.operator) ? { field: c.field, operator: c.operator } : c,
+			)
+
+		const config =
+			type === 'cron'
+				? { expression: buildCronExpression() }
+				: type === 'reminder'
+					? { scheduled_at: new Date(`${scheduledDate}T${scheduledTime}`).toISOString() }
+					: {
+							entity_type: entityType,
+							action,
+							...(fromStatus && fromStatus !== '__any__' && { from_status: fromStatus }),
+							...(toStatus && toStatus !== '__any__' && { to_status: toStatus }),
+							...(validConditions.length > 0 && { conditions: validConditions }),
+						}
+
+		return {
+			name: name.trim(),
+			type,
+			action_prompt: prompt.trim(),
+			target_actor_id: targetActorId,
+			config,
+			enabled,
+		}
+	}, [
+		name,
+		prompt,
+		targetActorId,
+		enabled,
+		type,
+		scheduledDate,
+		scheduledTime,
+		conditions,
+		buildCronExpression,
+		entityType,
+		action,
+		fromStatus,
+		toStatus,
+	])
+
+	// --- Auto-create: fire once when form first becomes valid ---
+	useEffect(() => {
+		if (!onAutoCreate || hasAutoCreatedRef.current || !isValid) return
+		const payload = buildPayload()
+		if (!payload) return
+		hasAutoCreatedRef.current = true
+		onAutoCreate(payload)
+	}, [isValid, onAutoCreate, buildPayload])
+
+	// --- Debounced auto-save for edits ---
+	const { showSaved: showSaving } = useAutoSave({
+		isActive: isCreated,
+		isValid: !!isValid,
+		buildPayload,
+		onSave,
+	})
 
 	const handleEntityTypeChange = (val: string) => {
 		setEntityType(val)
@@ -294,67 +368,22 @@ function CreateTriggerForm({
 		setConditions(conditions.filter((_, i) => i !== index))
 	}
 
-	const handleSubmit = async (e: React.FormEvent) => {
-		e.preventDefault()
-		if (!isValid) return
-
-		const validConditions = conditions
-			.filter((c) => c.field && c.operator)
-			.map((c) =>
-				NO_VALUE_OPERATORS.has(c.operator) ? { field: c.field, operator: c.operator } : c,
-			)
-
-		const base = {
-			name,
-			action_prompt: prompt,
-			target_actor_id: targetActorId,
-		} as const
-
-		const payload =
-			type === 'cron'
-				? { ...base, type: 'cron' as const, config: { expression: buildCronExpression() } }
-				: type === 'reminder'
-					? {
-							...base,
-							type: 'reminder' as const,
-							config: {
-								scheduled_at: new Date(`${scheduledDate}T${scheduledTime}`).toISOString(),
-							},
-						}
-					: {
-							...base,
-							type: 'event' as const,
-							config: {
-								entity_type: entityType,
-								action,
-								...(fromStatus && fromStatus !== '__any__' && { from_status: fromStatus }),
-								...(toStatus && toStatus !== '__any__' && { to_status: toStatus }),
-								...(validConditions.length > 0 && { conditions: validConditions }),
-							},
-						}
-
-		try {
-			await createTrigger.mutateAsync(payload)
-			onClose()
-		} catch {
-			// error is accessible via createTrigger.error
-		}
-	}
-
 	return (
-		<form onSubmit={handleSubmit} className="space-y-3">
+		<div className="space-y-3">
 			{agents.length === 0 && (
 				<div className="rounded bg-warning/10 px-3 py-2 text-sm text-warning">
 					No agents available. Create an agent first before setting up triggers.
 				</div>
 			)}
+
 			<Input
 				type="text"
 				value={name}
 				onChange={(e) => setName(e.target.value)}
 				placeholder="Trigger name"
-				autoFocus
+				autoFocus={!initialValues}
 			/>
+
 			<div className="flex gap-2">
 				{(['event', 'cron', 'reminder'] as const).map((t) => (
 					<Button
@@ -368,6 +397,7 @@ function CreateTriggerForm({
 					</Button>
 				))}
 			</div>
+
 			{type === 'cron' ? (
 				<CronScheduleBuilder
 					frequency={frequency}
@@ -425,7 +455,6 @@ function CreateTriggerForm({
 						</Select>
 					</div>
 
-					{/* Status transition selectors for status_changed */}
 					{action === 'status_changed' && statuses.length > 0 && (
 						<div className="flex gap-2">
 							<Select value={fromStatus} onValueChange={setFromStatus}>
@@ -458,7 +487,6 @@ function CreateTriggerForm({
 						</div>
 					)}
 
-					{/* Metadata conditions */}
 					{isInternal && (
 						<div className="space-y-2">
 							{conditions.map((condition, index) => (
@@ -490,12 +518,14 @@ function CreateTriggerForm({
 					)}
 				</>
 			)}
+
 			<Textarea
 				value={prompt}
 				onChange={(e) => setPrompt(e.target.value)}
 				placeholder="Action prompt for the agent..."
 				className="min-h-[60px]"
 			/>
+
 			{agents.length > 0 && (
 				<Select value={targetActorId} onValueChange={setTargetActorId}>
 					<SelectTrigger>
@@ -510,22 +540,49 @@ function CreateTriggerForm({
 					</SelectContent>
 				</Select>
 			)}
-			{createTrigger.isError && (
-				<div className="rounded bg-error/10 px-3 py-2 text-sm text-error">
-					{createTrigger.error?.message || 'Failed to create trigger'}
-				</div>
-			)}
-			<div className="flex justify-end gap-2">
-				<Button type="button" variant="ghost" onClick={onClose}>
-					Cancel
-				</Button>
-				<Button type="submit" disabled={!isValid || createTrigger.isPending}>
-					Create
+
+			{/* Enabled toggle */}
+			<div className="flex items-center gap-3">
+				<span
+					className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
+						enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
+					}`}
+				>
+					<span
+						className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`}
+					/>
+					{enabled ? 'Enabled' : 'Disabled'}
+				</span>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={() => {
+						setEnabled(!enabled)
+						if (isCreated && onToggleEnabled) onToggleEnabled()
+					}}
+				>
+					{enabled ? 'Disable' : 'Enable'}
 				</Button>
 			</div>
-		</form>
+
+			{error && (
+				<div className="rounded bg-error/10 px-3 py-2 text-sm text-error">
+					{error.message || 'Something went wrong'}
+				</div>
+			)}
+
+			{showSaving && (
+				<p className="flex items-center gap-1 text-xs text-muted-foreground">
+					<Check size={14} />
+					Saved
+				</p>
+			)}
+		</div>
 	)
 }
+
+// --- Sub-components ---
 
 function ConditionEditor({
 	condition,
@@ -552,7 +609,6 @@ function ConditionEditor({
 
 	return (
 		<div className="flex items-center gap-1.5">
-			{/* Field selector */}
 			<Select value={condition.field} onValueChange={handleFieldChange}>
 				<SelectTrigger className="w-32 h-8 text-xs">
 					<SelectValue />
@@ -566,7 +622,6 @@ function ConditionEditor({
 				</SelectContent>
 			</Select>
 
-			{/* Operator selector */}
 			<Select
 				value={condition.operator}
 				onValueChange={(op) => onChange({ operator: op as ConditionOperator, value: '' })}
@@ -583,7 +638,6 @@ function ConditionEditor({
 				</SelectContent>
 			</Select>
 
-			{/* Value input */}
 			{needsValue && (
 				<ConditionValueInput
 					fieldDef={fieldDef}
@@ -593,7 +647,6 @@ function ConditionEditor({
 				/>
 			)}
 
-			{/* Remove button */}
 			<Button
 				type="button"
 				variant="ghost"
@@ -696,31 +749,6 @@ function ConditionValueInput({
 		/>
 	)
 }
-
-const HOURS = Array.from({ length: 24 }, (_, i) => ({
-	value: String(i),
-	label: i === 0 ? '12:00 AM' : i < 12 ? `${i}:00 AM` : i === 12 ? '12:00 PM' : `${i - 12}:00 PM`,
-}))
-
-const MINUTES = Array.from({ length: 60 }, (_, i) => ({
-	value: String(i),
-	label: String(i).padStart(2, '0'),
-}))
-
-const DAYS_OF_WEEK = [
-	{ value: '1', label: 'Monday' },
-	{ value: '2', label: 'Tuesday' },
-	{ value: '3', label: 'Wednesday' },
-	{ value: '4', label: 'Thursday' },
-	{ value: '5', label: 'Friday' },
-	{ value: '6', label: 'Saturday' },
-	{ value: '0', label: 'Sunday' },
-]
-
-const DAYS_OF_MONTH = Array.from({ length: 31 }, (_, i) => ({
-	value: String(i + 1),
-	label: String(i + 1),
-}))
 
 function CronScheduleBuilder({
 	frequency,

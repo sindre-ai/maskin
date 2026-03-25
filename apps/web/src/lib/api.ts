@@ -96,6 +96,11 @@ export const api = {
 		delete: (id: string) => request<{ deleted: boolean }>(`/objects/${id}`, { method: 'DELETE' }),
 	},
 
+	auth: {
+		login: (data: LoginInput) =>
+			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+	},
+
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
@@ -327,10 +332,16 @@ export interface ActorWithKey extends ActorResponse {
 	api_key: string
 }
 
+export interface LoginInput {
+	email: string
+	password: string
+}
+
 export interface CreateActorInput {
 	type: 'human' | 'agent'
 	name: string
 	email?: string
+	password?: string
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	llm_provider?: string

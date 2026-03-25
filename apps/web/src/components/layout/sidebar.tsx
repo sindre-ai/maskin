@@ -21,6 +21,7 @@ const navItems = [
 	{ label: 'Objects', to: '/$workspaceId/objects' as const, icon: Layers },
 	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
 	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
+	{ label: 'Triggers', to: '/$workspaceId/triggers' as const, icon: Zap },
 ]
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {

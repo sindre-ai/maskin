@@ -16,7 +16,7 @@ import {
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Layers, Plus, Tags, Zap } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
@@ -42,22 +42,63 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Integrations',
 		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/properties': {
+	'/_authed/$workspaceId/settings/properties/': {
 		label: 'Properties',
 		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/triggers': {
+	'/_authed/$workspaceId/settings/properties/$propertyName': {
+		label: 'Property Details',
+		parent: '/_authed/$workspaceId/settings/properties/',
+	},
+	'/_authed/$workspaceId/triggers/': {
 		label: 'Triggers',
-		parent: '/_authed/$workspaceId/settings/',
+	},
+	'/_authed/$workspaceId/triggers/$triggerId': {
+		label: 'Trigger Details',
+		parent: '/_authed/$workspaceId/triggers/',
 	},
 }
 
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
 
-const createItems = [
-	{ label: 'Object', to: '/$workspaceId/objects' as const, icon: Layers },
-	{ label: 'Agent', to: '/$workspaceId/agents' as const, icon: Bot },
-	{ label: 'Trigger', to: '/$workspaceId/settings/triggers' as const, icon: Zap },
+type CreateItem = {
+	label: string
+	icon: typeof Layers
+	navigate: (nav: ReturnType<typeof useNavigate>, workspaceId: string) => void
+}
+
+const createItems: CreateItem[] = [
+	{
+		label: 'Object',
+		icon: Layers,
+		navigate: (nav, workspaceId) =>
+			nav({ to: '/$workspaceId/objects', params: { workspaceId }, search: { create: true } }),
+	},
+	{
+		label: 'Agent',
+		icon: Bot,
+		navigate: (nav, workspaceId) =>
+			nav({ to: '/$workspaceId/agents', params: { workspaceId }, search: { create: true } }),
+	},
+	{
+		label: 'Trigger',
+		icon: Zap,
+		navigate: (nav, workspaceId) =>
+			nav({
+				to: '/$workspaceId/triggers/$triggerId',
+				params: { workspaceId, triggerId: crypto.randomUUID() },
+			}),
+	},
+	{
+		label: 'Property',
+		icon: Tags,
+		navigate: (nav, workspaceId) =>
+			nav({
+				to: '/$workspaceId/settings/properties',
+				params: { workspaceId },
+				search: { create: true },
+			}),
+	},
 ]
 
 export function Header() {
@@ -147,13 +188,7 @@ export function Header() {
 								return (
 									<DropdownMenuItem
 										key={item.label}
-										onClick={() =>
-											navigate({
-												to: item.to,
-												params: { workspaceId },
-												search: { create: true },
-											})
-										}
+										onClick={() => item.navigate(navigate, workspaceId)}
 									>
 										<Icon className="h-4 w-4" />
 										{item.label}
