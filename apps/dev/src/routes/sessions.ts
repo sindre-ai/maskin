@@ -17,7 +17,11 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { SessionError, type SessionLogEvent, type SessionManager } from '../services/session-manager'
+import {
+	SessionError,
+	type SessionLogEvent,
+	type SessionManager,
+} from '../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -29,6 +33,25 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>()
+
+/** Map a SessionError to the appropriate HTTP status and error code. */
+function handleSessionError(c: { json: (data: unknown, status: number) => unknown }, err: unknown) {
+	if (err instanceof SessionError) {
+		const statusMap: Record<string, number> = {
+			not_found: 404,
+			limit_reached: 429,
+		}
+		const codeMap: Record<string, string> = {
+			not_found: 'NOT_FOUND',
+			limit_reached: 'RATE_LIMITED',
+		}
+		const status = statusMap[err.code] ?? 400
+		const code = codeMap[err.code] ?? 'BAD_REQUEST'
+		return c.json(createApiError(code, err.message), status)
+	}
+	const message = err instanceof Error ? err.message : String(err)
+	return c.json(createApiError('INTERNAL_ERROR', message), 500)
+}
 
 /** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
@@ -176,6 +199,10 @@ const stopSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
 		},
+		429: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Rate limited',
+		},
 		500: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Internal server error',
@@ -195,13 +222,7 @@ app.openapi(stopSessionRoute, (async (c) => {
 	try {
 		await sessionManager.stopSession(id)
 	} catch (err) {
-		if (err instanceof SessionError) {
-			const status = err.code === 'not_found' ? 404 : 400
-			const code = err.code === 'not_found' ? 'NOT_FOUND' : 'BAD_REQUEST'
-			return c.json(createApiError(code, err.message), status)
-		}
-		const message = err instanceof Error ? err.message : String(err)
-		return c.json(createApiError('INTERNAL_ERROR', message), 500)
+		return handleSessionError(c, err)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
@@ -233,6 +254,10 @@ const pauseSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
 		},
+		429: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Rate limited',
+		},
 		500: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Internal server error',
@@ -252,13 +277,7 @@ app.openapi(pauseSessionRoute, (async (c) => {
 	try {
 		await sessionManager.pauseSession(id)
 	} catch (err) {
-		if (err instanceof SessionError) {
-			const status = err.code === 'not_found' ? 404 : 400
-			const code = err.code === 'not_found' ? 'NOT_FOUND' : 'BAD_REQUEST'
-			return c.json(createApiError(code, err.message), status)
-		}
-		const message = err instanceof Error ? err.message : String(err)
-		return c.json(createApiError('INTERNAL_ERROR', message), 500)
+		return handleSessionError(c, err)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
@@ -290,6 +309,10 @@ const resumeSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
 		},
+		429: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Rate limited',
+		},
 		500: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Internal server error',
@@ -309,13 +332,7 @@ app.openapi(resumeSessionRoute, (async (c) => {
 	try {
 		await sessionManager.resumeSession(id)
 	} catch (err) {
-		if (err instanceof SessionError) {
-			const status = err.code === 'not_found' ? 404 : 400
-			const code = err.code === 'not_found' ? 'NOT_FOUND' : 'BAD_REQUEST'
-			return c.json(createApiError(code, err.message), status)
-		}
-		const message = err instanceof Error ? err.message : String(err)
-		return c.json(createApiError('INTERNAL_ERROR', message), 500)
+		return handleSessionError(c, err)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)

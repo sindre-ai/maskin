@@ -124,9 +124,7 @@ describe('SessionManager', () => {
 		it('throws when session not found', async () => {
 			mockResults.select = []
 
-			await expect(manager.stopSession('nonexistent')).rejects.toThrow(
-				'not found',
-			)
+			await expect(manager.stopSession('nonexistent')).rejects.toThrow('not found')
 		})
 
 		it('throws when session has no container', async () => {
@@ -187,18 +185,14 @@ describe('SessionManager', () => {
 			const session = buildSession({ status: 'running' })
 			mockResults.select = [session]
 
-			await expect(manager.resumeSession(session.id)).rejects.toThrow(
-				'not in paused state',
-			)
+			await expect(manager.resumeSession(session.id)).rejects.toThrow('not in paused state')
 		})
 
 		it('throws when no snapshot path', async () => {
 			const session = buildSession({ status: 'paused', snapshotPath: null })
 			mockResults.select = [session]
 
-			await expect(manager.resumeSession(session.id)).rejects.toThrow(
-				'not in paused state',
-			)
+			await expect(manager.resumeSession(session.id)).rejects.toThrow('has no snapshot')
 		})
 	})
 

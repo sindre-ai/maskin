@@ -305,7 +305,9 @@ describe('Sessions Routes', () => {
 			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 
 			const res = await app.request(
-				new Request('http://localhost/api/sessions/00000000-0000-0000-0000-000000000001/logs/stream'),
+				new Request(
+					'http://localhost/api/sessions/00000000-0000-0000-0000-000000000001/logs/stream',
+				),
 			)
 
 			expect(res.status).toBe(400)
@@ -315,9 +317,12 @@ describe('Sessions Routes', () => {
 			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 
 			const res = await app.request(
-				new Request('http://localhost/api/sessions/00000000-0000-0000-0000-000000000099/logs/stream', {
-					headers: { 'x-workspace-id': wsId },
-				}),
+				new Request(
+					'http://localhost/api/sessions/00000000-0000-0000-0000-000000000099/logs/stream',
+					{
+						headers: { 'x-workspace-id': wsId },
+					},
+				),
 			)
 
 			expect(res.status).toBe(404)

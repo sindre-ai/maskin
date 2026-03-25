@@ -299,8 +299,11 @@ export class SessionManager extends EventEmitter {
 		if (!session) {
 			throw new SessionError(`Session ${sessionId} not found`, 'not_found')
 		}
-		if (session.status !== 'paused' || !session.snapshotPath) {
-			throw new SessionError(`Session ${sessionId} is not in paused state or has no snapshot`, 'invalid_state')
+		if (session.status !== 'paused') {
+			throw new SessionError(`Session ${sessionId} is not in paused state`, 'invalid_state')
+		}
+		if (!session.snapshotPath) {
+			throw new SessionError(`Session ${sessionId} has no snapshot`, 'invalid_state')
 		}
 
 		await this.db
