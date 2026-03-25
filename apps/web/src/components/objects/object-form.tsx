@@ -48,7 +48,7 @@ export function ObjectFormView({
 	return (
 		<form onSubmit={handleSubmit} className="space-y-4">
 			<div>
-				<Label className="mb-1 text-muted-foreground">Type</Label>
+				<Label>Type</Label>
 				<div className="flex gap-2">
 					{(['insight', 'bet', 'task'] as const).map((t) => (
 						<Button
@@ -66,7 +66,7 @@ export function ObjectFormView({
 			</div>
 
 			<div>
-				<Label className="mb-1 text-muted-foreground">Title</Label>
+				<Label>Title</Label>
 				<Input
 					type="text"
 					value={title}
@@ -78,7 +78,7 @@ export function ObjectFormView({
 			</div>
 
 			<div>
-				<Label className="mb-1 text-muted-foreground">Content (optional)</Label>
+				<Label>Content (optional)</Label>
 				<Textarea
 					value={content}
 					onChange={(e) => setContent(e.target.value)}

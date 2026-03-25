@@ -49,7 +49,7 @@ describe('Graph Routes', () => {
 
 			expect(res.status).toBe(404)
 			const body = await res.json()
-			expect(body.error).toContain('Workspace not found')
+			expect(body.error.message).toContain('Workspace not found')
 		})
 
 		it('returns 400 for duplicate $id values', async () => {
@@ -74,7 +74,7 @@ describe('Graph Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('Duplicate $id')
+			expect(body.error.message).toContain('Duplicate $id')
 		})
 
 		it('returns 400 for invalid edge source reference', async () => {
@@ -96,7 +96,27 @@ describe('Graph Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('not a valid $id or UUID')
+			expect(body.error.message).toContain('not a valid $id or UUID')
+		})
+
+		it('returns generic 500 on transaction failure (does not leak internal details)', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(graphRoutes, '/api/graph')
+			mockResults.selectQueue = [[ws]]
+			// Make insert throw to simulate transaction failure
+			mockResults.insert = []
+			mockResults.insertQueue = [[]] // empty returning → throws "Failed to create node"
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/graph', buildCreateGraphBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.message).toBe('Failed to create graph')
+			expect(body.error.code).toBe('INTERNAL_ERROR')
 		})
 
 		it('returns 400 for invalid status against workspace settings', async () => {
@@ -118,7 +138,7 @@ describe('Graph Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('Invalid status')
+			expect(body.error.message).toContain('Invalid status')
 		})
 	})
 })

@@ -3,6 +3,7 @@ import { triggers } from '@ai-native/db/schema'
 import { createTriggerSchema, updateTriggerSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -10,6 +11,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -46,6 +48,10 @@ const createTriggerRoute = createRoute({
 			description: 'Missing workspace ID',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Internal server error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -72,7 +78,7 @@ app.openapi(createTriggerRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json({ error: 'Failed to create trigger' }, 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 500)
 	}
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
@@ -138,8 +144,15 @@ const updateTriggerRoute = createRoute({
 
 app.openapi(updateTriggerRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	// Verify trigger exists and actor is a workspace member
+	const [trigger] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
+	if (!trigger || !(await isWorkspaceMember(db, actorId, trigger.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
+	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
@@ -150,7 +163,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	const [updated] = await db.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 
-	if (!updated) return c.json({ error: 'Trigger not found' }, 404)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
@@ -178,10 +191,13 @@ const deleteTriggerRoute = createRoute({
 
 app.openapi(deleteTriggerRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
 	const [existing] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
-	if (!existing) return c.json({ error: 'Trigger not found' }, 404)
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
+	}
 
 	await db.delete(triggers).where(eq(triggers.id, id))
 	return c.json({ deleted: true })

@@ -1,4 +1,3 @@
-import type { SafeJsonValue } from '@ai-native/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -9,9 +8,10 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useAutoSave } from '@/hooks/use-auto-save'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
-import { useAutoSave } from '@/hooks/use-auto-save'
+import type { SafeJsonValue } from '@ai-native/shared'
 import { Check, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -240,14 +240,14 @@ export function TriggerForm({
 	)
 	const [conditions, setConditions] = useState<ConditionRow[]>(() => {
 		if (initialValues?.type === 'event' && Array.isArray(initConfig.conditions)) {
-			return (initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[]).map(
-				(c) => ({
-					id: crypto.randomUUID(),
-					field: c.field,
-					operator: c.operator as ConditionOperator,
-					value: (c.value ?? '') as SafeJsonValue,
-				}),
-			)
+			return (
+				initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[]
+			).map((c) => ({
+				id: crypto.randomUUID(),
+				field: c.field,
+				operator: c.operator as ConditionOperator,
+				value: (c.value ?? '') as SafeJsonValue,
+			}))
 		}
 		return []
 	})
@@ -388,7 +388,6 @@ export function TriggerForm({
 				{(['event', 'cron', 'reminder'] as const).map((t) => (
 					<Button
 						key={t}
-						type="button"
 						variant={type === t ? 'default' : 'secondary'}
 						size="sm"
 						onClick={() => setType(t)}
@@ -499,13 +498,7 @@ export function TriggerForm({
 								/>
 							))}
 							{fieldDefs.length > 0 ? (
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									className="text-xs text-muted-foreground"
-									onClick={addCondition}
-								>
+								<Button variant="ghost" size="sm" onClick={addCondition}>
 									+ Add condition
 								</Button>
 							) : conditions.length === 0 ? (
@@ -548,13 +541,10 @@ export function TriggerForm({
 						enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
 					}`}
 				>
-					<span
-						className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`}
-					/>
+					<span className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`} />
 					{enabled ? 'Enabled' : 'Disabled'}
 				</span>
 				<Button
-					type="button"
 					variant="outline"
 					size="sm"
 					onClick={() => {
@@ -610,7 +600,7 @@ function ConditionEditor({
 	return (
 		<div className="flex items-center gap-1.5">
 			<Select value={condition.field} onValueChange={handleFieldChange}>
-				<SelectTrigger className="w-32 h-8 text-xs">
+				<SelectTrigger>
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -626,7 +616,7 @@ function ConditionEditor({
 				value={condition.operator}
 				onValueChange={(op) => onChange({ operator: op as ConditionOperator, value: '' })}
 			>
-				<SelectTrigger className="w-40 h-8 text-xs">
+				<SelectTrigger>
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -648,10 +638,9 @@ function ConditionEditor({
 			)}
 
 			<Button
-				type="button"
 				variant="ghost"
-				size="sm"
-				className="h-8 w-8 p-0 text-muted-foreground hover:text-error shrink-0"
+				size="icon"
+				className="text-muted-foreground hover:text-error shrink-0"
 				onClick={onRemove}
 			>
 				<X size={14} />
@@ -689,7 +678,7 @@ function ConditionValueInput({
 	if (fieldType === 'enum' && fieldDef?.values) {
 		return (
 			<Select value={String(value ?? '')} onValueChange={onChange}>
-				<SelectTrigger className="w-32 h-8 text-xs">
+				<SelectTrigger>
 					<SelectValue placeholder="Select..." />
 				</SelectTrigger>
 				<SelectContent>
@@ -706,7 +695,7 @@ function ConditionValueInput({
 	if (fieldType === 'boolean') {
 		return (
 			<Select value={String(value ?? 'true')} onValueChange={(v) => onChange(v === 'true')}>
-				<SelectTrigger className="w-20 h-8 text-xs">
+				<SelectTrigger>
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -779,7 +768,6 @@ function CronScheduleBuilder({
 				{(['hourly', 'daily', 'weekly', 'monthly'] as const).map((f) => (
 					<Button
 						key={f}
-						type="button"
 						variant={frequency === f ? 'default' : 'secondary'}
 						size="sm"
 						onClick={() => onFrequencyChange(f)}
@@ -794,7 +782,7 @@ function CronScheduleBuilder({
 					<>
 						<span>on day</span>
 						<Select value={dayOfMonth} onValueChange={onDayOfMonthChange}>
-							<SelectTrigger className="w-[70px]">
+							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -812,7 +800,7 @@ function CronScheduleBuilder({
 					<>
 						<span>on</span>
 						<Select value={dayOfWeek} onValueChange={onDayOfWeekChange}>
-							<SelectTrigger className="w-[130px]">
+							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -830,7 +818,7 @@ function CronScheduleBuilder({
 					<>
 						<span>at</span>
 						<Select value={hour} onValueChange={onHourChange}>
-							<SelectTrigger className="w-[120px]">
+							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -848,7 +836,7 @@ function CronScheduleBuilder({
 					<>
 						<span>at minute</span>
 						<Select value={minute} onValueChange={onMinuteChange}>
-							<SelectTrigger className="w-[70px]">
+							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>

@@ -5,9 +5,9 @@ import {
 	createRelationshipSchema,
 	createTriggerSchema,
 	llmConfigSchema,
+	mcpServerSchema,
 	runtimeConfigSchema,
 	safeMetadataSchema,
-	mcpServerSchema,
 	updateActorSchema,
 } from '@ai-native/shared'
 import { describe, expect, it } from 'vitest'

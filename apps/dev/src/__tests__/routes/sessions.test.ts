@@ -120,7 +120,7 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('not running')
+			expect(body.error.message).toContain('not running')
 		})
 	})
 
@@ -194,7 +194,7 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('not paused')
+			expect(body.error.message).toContain('not paused')
 		})
 	})
 
@@ -221,6 +221,63 @@ describe('Sessions Routes', () => {
 
 			const res = await app.request(
 				jsonGet('/api/sessions/00000000-0000-0000-0000-000000000099/logs', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('Session re-fetch null safety', () => {
+		it('POST /stop returns 404 when session disappears after stop', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			// Auth check finds session, but re-fetch after stop returns empty
+			mockResults.selectQueue = [[session], []]
+			;(sessionManager.stopSession as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/stop`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('POST /pause returns 404 when session disappears after pause', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session], []]
+			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('POST /resume returns 404 when session disappears after resume', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session], []]
+			;(sessionManager.resumeSession as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/resume`, undefined, {
 					'x-workspace-id': wsId,
 				}),
 			)

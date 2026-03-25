@@ -12,11 +12,12 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
+import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
-import authRoutes from './routes/auth'
 import agentSkillsRoutes from './routes/agent-skills'
+import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
 import graphRoutes from './routes/graph'
@@ -43,7 +44,30 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({
+	defaultHook: (result, c) => {
+		if (!result.success) {
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					'Request validation failed',
+					formatZodError(result.error),
+				),
+				400,
+			)
+		}
+		return undefined
+	},
+})
+
+// Global error handler — catches unhandled errors and returns structured responses
+app.onError((err, c) => {
+	if ('status' in err && typeof err.status === 'number') {
+		return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
+	}
+	logger.error('Unhandled error', { error: String(err), stack: err.stack })
+	return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
+})
 
 // Global middleware
 app.use('*', cors())
@@ -76,7 +100,10 @@ await storageProvider.ensureBucket()
 
 // Ensure agent-base Docker image exists
 const containers = new ContainerManager()
-await containers.ensureImage('agent-base:latest', path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'))
+await containers.ensureImage(
+	'agent-base:latest',
+	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
+)
 
 // Agent storage manager for file operations (skills, learnings, memory)
 const agentStorage = new AgentStorageManager(storageProvider, db)
@@ -148,9 +175,14 @@ app.post('/mcp', async (c) => {
 	const nodeRes = (c.env as Record<string, unknown>).outgoing as import('node:http').ServerResponse
 	const nodeReq = (c.env as Record<string, unknown>).incoming as import('node:http').IncomingMessage
 
-	const body = await c.req.json()
+	let body: unknown
+	try {
+		body = await c.req.json()
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
+	}
 	const method =
-		body?.method ??
+		(body as Record<string, unknown>)?.method ??
 		(Array.isArray(body) ? body.map((b: { method?: string }) => b.method) : 'unknown')
 	console.log(`[MCP] POST /mcp — method: ${JSON.stringify(method)}`)
 	await mcpServer.connect(transport)
@@ -161,6 +193,15 @@ app.post('/mcp', async (c) => {
 	return new Response(null, {
 		headers: { 'x-hono-already-sent': '1' },
 	})
+})
+
+// Reject GET/DELETE on /mcp — server doesn't support server-initiated SSE streams
+app.get('/mcp', (c) => {
+	return c.text('Method Not Allowed', 405)
+})
+
+app.delete('/mcp', (c) => {
+	return c.text('Method Not Allowed', 405)
 })
 
 // Auto-generated OpenAPI spec from route definitions
@@ -198,8 +239,12 @@ if (fs.existsSync(staticDir)) {
 	)
 	// SPA fallback: serve index.html for non-API, non-file routes
 	app.get('*', (c) => {
-		const html = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8')
-		return c.html(html)
+		try {
+			const html = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8')
+			return c.html(html)
+		} catch {
+			return c.json(createApiError('NOT_FOUND', 'Page not found'), 404)
+		}
 	})
 }
 

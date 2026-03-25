@@ -9,6 +9,7 @@ import {
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
 	sessionLogResponseSchema,
@@ -147,7 +148,7 @@ app.openapi(getSessionRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
-	if (!session) return c.json({ error: 'Session not found' }, 404)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof getSessionRoute, Env>)
@@ -185,20 +186,19 @@ app.openapi(stopSessionRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
-	if (!session) return c.json({ error: 'Session not found' }, 404)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
 	try {
 		await sessionManager.stopSession(id)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
-		return c.json({ error: message }, 400)
+		return c.json(createApiError('BAD_REQUEST', message), 400)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(
-		serialize(updated as NonNullable<typeof updated>) as z.infer<typeof sessionResponseSchema>,
-	)
+	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof stopSessionRoute, Env>)
 
 // POST /:id/pause - Pause and snapshot a session
@@ -234,20 +234,19 @@ app.openapi(pauseSessionRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
-	if (!session) return c.json({ error: 'Session not found' }, 404)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
 	try {
 		await sessionManager.pauseSession(id)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
-		return c.json({ error: message }, 400)
+		return c.json(createApiError('BAD_REQUEST', message), 400)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(
-		serialize(updated as NonNullable<typeof updated>) as z.infer<typeof sessionResponseSchema>,
-	)
+	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof pauseSessionRoute, Env>)
 
 // POST /:id/resume - Resume a paused session
@@ -283,20 +282,19 @@ app.openapi(resumeSessionRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
-	if (!session) return c.json({ error: 'Session not found' }, 404)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
 	try {
 		await sessionManager.resumeSession(id)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
-		return c.json({ error: message }, 400)
+		return c.json(createApiError('BAD_REQUEST', message), 400)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(
-		serialize(updated as NonNullable<typeof updated>) as z.infer<typeof sessionResponseSchema>,
-	)
+	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof resumeSessionRoute, Env>)
 
 // GET /:id/logs - Paginated log history
@@ -329,7 +327,7 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 	const query = c.req.valid('query')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
-	if (!session) return c.json({ error: 'Session not found' }, 404)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
 	const conditions = [eq(sessionLogs.sessionId, id)]
 	if (query.since) conditions.push(gt(sessionLogs.id, query.since))
@@ -354,13 +352,18 @@ app.get('/:id/logs/stream', async (c) => {
 	const lastLogId = c.req.header('Last-Event-ID')
 
 	if (!workspaceId) {
-		return c.json({ error: 'Missing x-workspace-id header' }, 400)
+		return c.json(
+			createApiError('BAD_REQUEST', 'Missing x-workspace-id header', [
+				{ field: 'x-workspace-id', message: 'Required header is missing', expected: 'UUID string' },
+			]),
+			400,
+		)
 	}
 
 	// Verify session belongs to workspace
 	const authSession = await loadSessionWithAuth(db, sessionId, workspaceId)
 	if (!authSession) {
-		return c.json({ error: 'Session not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 	}
 
 	const terminalStatuses = ['completed', 'failed', 'timeout']

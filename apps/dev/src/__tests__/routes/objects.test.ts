@@ -4,6 +4,7 @@ import {
 	buildRelationship,
 	buildUpdateObjectBody,
 	buildWorkspace,
+	buildWorkspaceMember,
 } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -46,7 +47,7 @@ describe('Objects Routes', () => {
 
 			expect(res.status).toBe(404)
 			const body = await res.json()
-			expect(body.error).toContain('Workspace not found')
+			expect(body.error.message).toContain('Workspace not found')
 		})
 
 		it('returns 400 for invalid status', async () => {
@@ -65,7 +66,7 @@ describe('Objects Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('Invalid status')
+			expect(body.error.message).toContain('Invalid status')
 		})
 	})
 
@@ -111,7 +112,7 @@ describe('Objects Routes', () => {
 			const existing = buildObject()
 			const updated = { ...existing, title: 'Updated title' }
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing]]
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
 			mockResults.update = [updated]
 			mockResults.insert = [{}] // event insert
 
@@ -140,8 +141,8 @@ describe('Objects Routes', () => {
 			const existing = buildObject()
 			const ws = buildWorkspace({ id: existing.workspaceId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select returns the existing object, second returns the workspace
-			mockResults.selectQueue = [[existing], [ws]]
+			// First select: existing object, second: workspace membership, third: workspace settings
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'bogus_status' }),
@@ -149,7 +150,7 @@ describe('Objects Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('Invalid status')
+			expect(body.error.message).toContain('Invalid status')
 		})
 	})
 
@@ -210,7 +211,7 @@ describe('Objects Routes', () => {
 		it('returns 200 when deleted', async () => {
 			const existing = buildObject()
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing]]
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
 			mockResults.insert = [{}] // event
 
 			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
@@ -225,6 +226,98 @@ describe('Objects Routes', () => {
 
 			const res = await app.request(jsonDelete('/api/objects/00000000-0000-0000-0000-000000000099'))
 
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/objects - edge cases', () => {
+		it('returns 500 when insert returns empty', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [] // empty — insert failed
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.code).toBe('INTERNAL_ERROR')
+			expect(body.error.message).toContain('Failed to create object')
+		})
+	})
+
+	describe('PATCH /api/objects/:id - status_changed event', () => {
+		it('logs status_changed event when status changes', async () => {
+			const existing = buildObject({ status: 'todo' })
+			const updated = { ...existing, status: 'in_progress' }
+			const ws = buildWorkspace({ id: existing.workspaceId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// First select: existing object, second: workspace membership, third: workspace settings
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}] // event insert
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'in_progress' }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+	})
+
+	describe('GET /api/objects/:id/graph - no relationships', () => {
+		it('returns empty arrays when no relationships exist', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// First select: the object, second: relationships (empty)
+			mockResults.selectQueue = [[obj], []]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.object.id).toBe(obj.id)
+			expect(body.relationships).toHaveLength(0)
+			expect(body.connected_objects).toHaveLength(0)
+		})
+	})
+
+	describe('Workspace membership enforcement', () => {
+		it('GET /:id returns 404 when actor is not a workspace member', async () => {
+			const obj = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Object found, but membership check returns empty
+			mockResults.selectQueue = [[obj], []]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+			expect(res.status).toBe(404)
+		})
+
+		it('PATCH /:id returns 404 when actor is not a workspace member', async () => {
+			const existing = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Object found, but membership check returns empty
+			mockResults.selectQueue = [[existing], []]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, buildUpdateObjectBody()),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('DELETE /:id returns 404 when actor is not a workspace member', async () => {
+			const existing = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Object found, but membership check returns empty
+			mockResults.selectQueue = [[existing], []]
+
+			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
 			expect(res.status).toBe(404)
 		})
 	})

@@ -55,17 +55,25 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const data = await res.json().catch(() => ({ error: res.statusText }))
 
 		let fieldErrors: Record<string, string[]> | undefined
-		if (data.error?.issues && Array.isArray(data.error.issues)) {
-			fieldErrors = {}
-			for (const issue of data.error.issues) {
-				const path = issue.path?.join('.') || '_root'
-				if (!fieldErrors[path]) fieldErrors[path] = []
-				fieldErrors[path].push(issue.message)
-			}
-		}
+		let message: string
 
-		const message =
-			typeof data.error === 'string' ? data.error : data.error?.message || res.statusText
+		if (typeof data.error === 'object' && data.error?.code) {
+			// Structured error format: { error: { code, message, details?, suggestion? } }
+			message = data.error.message
+			if (data.error.details && Array.isArray(data.error.details)) {
+				fieldErrors = {}
+				for (const detail of data.error.details) {
+					const field = detail.field || '_root'
+					if (!fieldErrors[field]) fieldErrors[field] = []
+					fieldErrors[field].push(detail.message)
+				}
+			}
+		} else if (typeof data.error === 'string') {
+			// TODO: Remove legacy string format fallback once all API responses use structured errors
+			message = data.error
+		} else {
+			message = data.error?.message || res.statusText
+		}
 
 		throw new ApiError(res.status, message, fieldErrors)
 	}
@@ -215,30 +223,12 @@ export const api = {
 	},
 
 	claudeOauth: {
-		exchange: (
-			workspaceId: string,
-			data: { code: string; code_verifier: string; redirect_uri: string; state: string },
-		) =>
-			request<ClaudeOAuthExchangeResponse>('/claude-oauth/exchange', {
-				method: 'POST',
-				body: data,
-				workspaceId,
-			}),
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
 				method: 'POST',
 				body: tokens,
 				workspaceId,
 			}),
-		start: (workspaceId: string) =>
-			request<{ auth_url: string; flow_id: string }>('/claude-oauth/start', {
-				method: 'POST',
-				workspaceId,
-			}),
-		flowStatus: (flowId: string) =>
-			request<{ status: 'pending' | 'complete' | 'error'; error?: string }>(
-				`/claude-oauth/flow/${flowId}`,
-			),
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
 		disconnect: (workspaceId: string) =>

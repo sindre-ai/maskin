@@ -123,12 +123,12 @@ export class TriggerRunner {
 							.set({ activeSessionId: session.id, updatedAt: new Date() })
 							.where(eq(objects.id, event.entity_id))
 							.catch((err) =>
-							logger.debug('Could not link object to active session', {
-								sessionId: session.id,
-								entityId: event.entity_id,
-								error: String(err),
-							}),
-						)
+								logger.debug('Could not link object to active session', {
+									sessionId: session.id,
+									entityId: event.entity_id,
+									error: String(err),
+								}),
+							)
 					}
 				})
 				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
@@ -243,12 +243,15 @@ export class TriggerRunner {
 	}
 }
 
-interface ObjectData {
+export interface ObjectData {
 	status?: string
 	metadata?: Record<string, unknown>
 }
 
-function getObjectFromEvent(event: PgEvent): { current?: ObjectData; previous?: ObjectData } {
+export function getObjectFromEvent(event: PgEvent): {
+	current?: ObjectData
+	previous?: ObjectData
+} {
 	const data = event.data as Record<string, unknown> | undefined
 	if (!data) return {}
 
@@ -264,17 +267,17 @@ function getObjectFromEvent(event: PgEvent): { current?: ObjectData; previous?: 
 	return { current: data as ObjectData }
 }
 
-interface TriggerCondition {
+export interface TriggerCondition {
 	field: string
 	operator: string
 	value?: unknown
 }
 
-function evaluateConditions(conditions: TriggerCondition[], obj: ObjectData): boolean {
+export function evaluateConditions(conditions: TriggerCondition[], obj: ObjectData): boolean {
 	return conditions.every((c) => evaluateCondition(c, obj))
 }
 
-function evaluateCondition(condition: TriggerCondition, obj: ObjectData): boolean {
+export function evaluateCondition(condition: TriggerCondition, obj: ObjectData): boolean {
 	const metadata = obj.metadata ?? {}
 	const fieldValue = metadata[condition.field]
 	const condValue = condition.value
@@ -313,6 +316,9 @@ function evaluateCondition(condition: TriggerCondition, obj: ObjectData): boolea
 			return diff >= 0 && diff <= days * 86_400_000
 		}
 		case 'contains':
+			if (Array.isArray(fieldValue)) {
+				return fieldValue.includes(condValue)
+			}
 			return String(fieldValue ?? '').includes(String(condValue ?? ''))
 		default:
 			return false

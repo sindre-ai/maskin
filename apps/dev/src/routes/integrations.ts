@@ -5,6 +5,7 @@ import type { PgNotifyBridge } from '@ai-native/realtime'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../lib/crypto'
+import { createApiError } from '../lib/errors'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import {
@@ -15,6 +16,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import type { IntegrationConfig } from '../lib/types'
 
 type Env = {
 	Variables: {
@@ -123,7 +125,17 @@ app.openapi(connectRoute, (async (c) => {
 	try {
 		provider = getProvider(providerName)
 	} catch {
-		return c.json({ error: `Unknown provider: ${providerName}` }, 400)
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Unknown provider: ${providerName}`,
+				undefined,
+				`Available providers: ${listProviders()
+					.map((p) => p.name)
+					.join(', ')}`,
+			),
+			400,
+		)
 	}
 
 	// Create signed state containing workspace + actor info + one-time nonce
@@ -188,25 +200,28 @@ app.openapi(callbackRoute, (async (c) => {
 	try {
 		provider = getProvider(providerName)
 	} catch {
-		return c.json({ error: `Unknown provider: ${providerName}` }, 400)
+		return c.json(createApiError('BAD_REQUEST', `Unknown provider: ${providerName}`), 400)
 	}
 
 	// Validate state
 	const stateParam = query.state
 	if (!stateParam) {
-		return c.json({ error: 'Missing state parameter' }, 400)
+		return c.json(createApiError('BAD_REQUEST', 'Missing state parameter'), 400)
 	}
 
 	let stateData: { workspaceId: string; actorId: string; ts: number; nonce: string }
 	try {
 		stateData = JSON.parse(decrypt(stateParam))
 	} catch {
-		return c.json({ error: 'Invalid state parameter' }, 400)
+		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
 	}
 
 	// Check state age (max 10 minutes)
 	if (Date.now() - stateData.ts > 10 * 60 * 1000) {
-		return c.json({ error: 'State expired' }, 400)
+		return c.json(
+			createApiError('BAD_REQUEST', 'State expired — please restart the connection flow'),
+			400,
+		)
 	}
 
 	// Verify one-time nonce to prevent replay attacks
@@ -224,7 +239,7 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (!pendingIntegration) {
-		return c.json({ error: 'Invalid or already used state token' }, 400)
+		return c.json(createApiError('BAD_REQUEST', 'Invalid or already used state token'), 400)
 	}
 
 	// Verify actor is still a workspace member
@@ -240,7 +255,7 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (!member) {
-		return c.json({ error: 'Actor is no longer a member of this workspace' }, 400)
+		return c.json(createApiError('FORBIDDEN', 'Actor is no longer a member of this workspace'), 400)
 	}
 
 	// Handle provider-specific callback
@@ -264,7 +279,10 @@ app.openapi(callbackRoute, (async (c) => {
 			})
 			.returning()
 		if (!newActor) {
-			throw new Error('Failed to create system actor')
+			return c.json(
+				createApiError('INTERNAL_ERROR', 'Failed to create system actor for integration'),
+				500,
+			)
 		}
 		systemActor = newActor
 	}
@@ -353,7 +371,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.from(integrations)
 		.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
 		.limit(1)
-	if (!existing) return c.json({ error: 'Integration not found' }, 404)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
 	await db
 		.update(integrations)
@@ -377,7 +395,7 @@ webhookApp.post('/:provider', async (c) => {
 	try {
 		provider = getProvider(providerName)
 	} catch {
-		return c.json({ error: 'Unknown provider' }, 400)
+		return c.json(createApiError('BAD_REQUEST', 'Unknown provider'), 400)
 	}
 
 	// Read raw body for signature verification
@@ -386,7 +404,7 @@ webhookApp.post('/:provider', async (c) => {
 
 	if (!provider.verifyWebhook(body, signature)) {
 		logger.warn(`Webhook signature verification failed for ${providerName}`)
-		return c.json({ error: 'Invalid signature' }, 401)
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 	}
 
 	// Parse and normalize
@@ -394,7 +412,7 @@ webhookApp.post('/:provider', async (c) => {
 	try {
 		payload = JSON.parse(body)
 	} catch {
-		return c.json({ error: 'Invalid JSON payload' }, 400)
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON payload'), 400)
 	}
 	const headers: Record<string, string> = {}
 	for (const [key, value] of Object.entries(c.req.header())) {
@@ -425,8 +443,8 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
-	const config = integration.config as Record<string, unknown>
-	const systemActorId = config?.system_actor_id as string
+	const config = integration.config as IntegrationConfig
+	const systemActorId = config?.system_actor_id
 
 	if (!systemActorId) {
 		logger.warn(`Integration ${integration.id} missing system_actor_id in config`)

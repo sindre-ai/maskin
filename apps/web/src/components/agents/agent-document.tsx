@@ -14,7 +14,7 @@ import { useEvents } from '@/hooks/use-events'
 import type { ActorResponse, EventResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Copy, KeyRound } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
@@ -49,13 +49,7 @@ export function AgentDocumentView({
 	regeneratedApiKey,
 	isRegenerating = false,
 }: AgentDocumentViewProps) {
-	const nameInputRef = useRef<HTMLInputElement>(null)
-	const [editingName, setEditingName] = useState(false)
 	const [nameDraft, setNameDraft] = useState(agent.name)
-
-	useEffect(() => {
-		if (editingName) nameInputRef.current?.focus()
-	}, [editingName])
 	const [systemPromptDraft, setSystemPromptDraft] = useState(agent.systemPrompt ?? '')
 	const [systemPromptDirty, setSystemPromptDirty] = useState(false)
 	const [modelDraft, setModelDraft] = useState(
@@ -75,7 +69,6 @@ export function AgentDocumentView({
 			: false
 
 	const handleNameBlur = useCallback(() => {
-		setEditingName(false)
 		if (nameDraft.trim() && nameDraft !== agent.name) {
 			onUpdateName(nameDraft.trim())
 		}
@@ -117,28 +110,15 @@ export function AgentDocumentView({
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Name */}
-			{editingName ? (
-				<input
-					ref={nameInputRef}
-					type="text"
-					value={nameDraft}
-					onChange={(e) => setNameDraft(e.target.value)}
-					onBlur={handleNameBlur}
-					onKeyDown={(e) => e.key === 'Enter' && handleNameBlur()}
-					className="w-full text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
-				/>
-			) : (
-				<button
-					type="button"
-					className="w-full text-left text-2xl font-semibold tracking-tight text-foreground mb-2 cursor-text bg-transparent border-none outline-none p-0"
-					onClick={() => {
-						setNameDraft(agent.name)
-						setEditingName(true)
-					}}
-				>
-					{agent.name}
-				</button>
-			)}
+			<Input
+				type="text"
+				value={nameDraft}
+				onChange={(e) => setNameDraft(e.target.value)}
+				onBlur={handleNameBlur}
+				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+				placeholder="Agent name"
+				className="w-full text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+			/>
 
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
@@ -173,7 +153,7 @@ export function AgentDocumentView({
 			<Section title="LLM Configuration">
 				<div className="flex gap-3">
 					<div className="flex-1">
-						<Label className="mb-1 text-muted-foreground text-xs">Provider</Label>
+						<Label>Provider</Label>
 						<Select value={agent.llmProvider ?? 'anthropic'} onValueChange={onUpdateLlmProvider}>
 							<SelectTrigger>
 								<SelectValue />
@@ -185,7 +165,7 @@ export function AgentDocumentView({
 						</Select>
 					</div>
 					<div className="flex-1">
-						<Label className="mb-1 text-muted-foreground text-xs">Model</Label>
+						<Label>Model</Label>
 						<Input
 							type="text"
 							value={modelDraft}

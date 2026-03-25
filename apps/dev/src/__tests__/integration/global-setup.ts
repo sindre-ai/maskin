@@ -97,7 +97,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	// Clean all data except the test actor
-	await sql`TRUNCATE events, triggers, integrations, relationships, objects, workspace_members, workspaces CASCADE`
+	await sql`TRUNCATE events, notifications, triggers, integrations, relationships, objects, workspace_members, workspaces CASCADE`
 })
 
 afterAll(async () => {

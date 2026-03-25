@@ -1,3 +1,4 @@
+import { Textarea } from '@/components/ui/textarea'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
@@ -51,7 +52,7 @@ export function MarkdownContent({
 
 	if (editable && editing) {
 		return (
-			<textarea
+			<Textarea
 				ref={textareaRef}
 				className="w-full bg-transparent text-sm text-muted-foreground font-sans resize-none outline-none border-none p-0 focus:outline-none overflow-hidden"
 				style={{ minHeight: containerHeight, lineHeight: '1.7142857' }}
@@ -61,7 +62,6 @@ export function MarkdownContent({
 					autoResize()
 				}}
 				onBlur={handleBlur}
-				// biome-ignore lint/a11y/noAutofocus: editing experience requires focus
 				autoFocus
 			/>
 		)
@@ -69,15 +69,12 @@ export function MarkdownContent({
 
 	if (editable && !content) {
 		return (
-			<button
-				type="button"
-				className={`${className ?? ''} w-full text-left`}
-				onClick={() => startEditing('')}
-			>
-				<p className="text-sm text-muted-foreground italic cursor-text py-4">
-					Click to add content...
-				</p>
-			</button>
+			<Textarea
+				className={`${className ?? ''} w-full min-h-[60px] text-sm text-muted-foreground`}
+				placeholder="Click to add content..."
+				onFocus={() => startEditing('')}
+				readOnly
+			/>
 		)
 	}
 

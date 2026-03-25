@@ -4,6 +4,7 @@ import { actors, workspaceMembers, workspaces } from '@ai-native/db/schema'
 import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -47,6 +48,10 @@ const createActorRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
 	},
 })
 
@@ -57,10 +62,20 @@ app.openapi(createActorRoute, async (c) => {
 	// Human users must provide email and password
 	if (body.type === 'human') {
 		if (!body.email) {
-			return c.json({ error: 'Email is required for human accounts' }, 400)
+			return c.json(
+				createApiError('BAD_REQUEST', 'Email is required for human accounts', [
+					{ field: 'email', message: 'Required for human accounts' },
+				]),
+				400,
+			)
 		}
 		if (!body.password) {
-			return c.json({ error: 'Password is required for human accounts' }, 400)
+			return c.json(
+				createApiError('BAD_REQUEST', 'Password is required for human accounts', [
+					{ field: 'password', message: 'Required for human accounts' },
+				]),
+				400,
+			)
 		}
 	}
 
@@ -86,7 +101,7 @@ app.openapi(createActorRoute, async (c) => {
 		.returning()
 
 	if (!actor) {
-		return c.json({ error: 'Failed to create actor' }, 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
 
 	// Auto-create personal workspace (default true for humans, false for agents)
@@ -224,7 +239,7 @@ app.openapi(getActorRoute, (async (c) => {
 		.limit(1)
 
 	if (!actor) {
-		return c.json({ error: 'Actor not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
 	return c.json(serialize(actor) as z.infer<typeof actorResponseSchema>)
@@ -290,7 +305,7 @@ app.openapi(updateActorRoute, (async (c) => {
 		})
 
 	if (!updated) {
-		return c.json({ error: 'Actor not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
@@ -330,7 +345,7 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 		.returning({ id: actors.id })
 
 	if (!updated) {
-		return c.json({ error: 'Actor not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
 	return c.json({ api_key: key })

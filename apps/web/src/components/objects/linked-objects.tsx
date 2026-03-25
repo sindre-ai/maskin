@@ -1,8 +1,18 @@
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { useObjects } from '@/hooks/use-objects'
 import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relationships'
 import type { CreateRelationshipInput, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
+import { X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
@@ -199,13 +209,9 @@ function LinkedSectionView({
 					<span className="text-muted-foreground">({section.relationships.length})</span>
 				</button>
 				{section.addRelType && (
-					<button
-						type="button"
-						className="text-[11px] text-primary hover:text-primary-hover"
-						onClick={() => setShowAdd(!showAdd)}
-					>
+					<Button variant="ghost" size="sm" onClick={() => setShowAdd(!showAdd)}>
 						+ link
-					</button>
+					</Button>
 				)}
 			</div>
 
@@ -251,14 +257,15 @@ function LinkedSectionView({
 										<StatusBadge status={obj.status} />
 									</Link>
 								)}
-								<button
-									type="button"
-									className="text-[11px] text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity px-1"
+								<Button
+									variant="ghost"
+									size="icon"
+									className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
 									onClick={() => onDeleteRelationship(rel.id)}
 									title="Remove link"
 								>
-									×
-								</button>
+									<X className="h-3 w-3" />
+								</Button>
 							</div>
 						)
 					})}
@@ -302,27 +309,23 @@ function ObjectPicker({
 			/>
 			<div className="max-h-32 overflow-auto space-y-0.5">
 				{candidates.map((obj) => (
-					<button
+					<Button
 						key={obj.id}
-						type="button"
-						className="flex items-center gap-2 w-full text-left rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+						variant="ghost"
+						className="w-full justify-start"
 						onClick={() => onSelect(obj.id)}
 					>
 						<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
 						<TypeBadge type={obj.type} />
-					</button>
+					</Button>
 				))}
 				{candidates.length === 0 && (
 					<p className="text-xs text-muted-foreground py-1 px-2">No objects found</p>
 				)}
 			</div>
-			<button
-				type="button"
-				className="text-[11px] text-muted-foreground hover:text-muted-foreground mt-1"
-				onClick={onCancel}
-			>
+			<Button variant="ghost" size="sm" className="mt-1" onClick={onCancel}>
 				Cancel
-			</button>
+			</Button>
 		</div>
 	)
 }
@@ -373,34 +376,28 @@ function AddLinkForm({
 
 	if (!open) {
 		return (
-			<button
-				type="button"
-				className="text-xs text-muted-foreground hover:text-muted-foreground"
-				onClick={() => setOpen(true)}
-			>
+			<Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
 				+ Add link
-			</button>
+			</Button>
 		)
 	}
 
 	return (
 		<div className="rounded border border-border bg-card p-3 space-y-2">
 			<div className="flex items-center gap-2">
-				<label className="text-xs text-muted-foreground" htmlFor="rel-type-select">
-					Type:
-				</label>
-				<select
-					id="rel-type-select"
-					value={relType}
-					onChange={(e) => setRelType(e.target.value)}
-					className="rounded border border-border bg-background px-2 py-0.5 text-xs text-foreground focus:border-ring outline-none"
-				>
-					{relationshipTypes.map((t) => (
-						<option key={t} value={t}>
-							{t.replace(/_/g, ' ')}
-						</option>
-					))}
-				</select>
+				<Label htmlFor="rel-type-select">Type:</Label>
+				<Select value={relType} onValueChange={setRelType}>
+					<SelectTrigger id="rel-type-select">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{relationshipTypes.map((t) => (
+							<SelectItem key={t} value={t}>
+								{t.replace(/_/g, ' ')}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			</div>
 			<input
 				type="text"
@@ -411,28 +408,24 @@ function AddLinkForm({
 			/>
 			<div className="max-h-32 overflow-auto space-y-0.5">
 				{candidates.map((obj) => (
-					<button
+					<Button
 						key={obj.id}
-						type="button"
-						className="flex items-center gap-2 w-full text-left rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+						variant="ghost"
+						className="w-full justify-start"
 						onClick={() => handleLink(obj.id)}
 					>
 						<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
 						<TypeBadge type={obj.type} />
 						<StatusBadge status={obj.status} />
-					</button>
+					</Button>
 				))}
 				{candidates.length === 0 && (
 					<p className="text-xs text-muted-foreground py-1 px-2">No objects found</p>
 				)}
 			</div>
-			<button
-				type="button"
-				className="text-[11px] text-muted-foreground hover:text-muted-foreground"
-				onClick={() => setOpen(false)}
-			>
+			<Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
 				Cancel
-			</button>
+			</Button>
 		</div>
 	)
 }
