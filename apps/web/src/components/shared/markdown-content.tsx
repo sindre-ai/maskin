@@ -62,7 +62,6 @@ export function MarkdownContent({
 					autoResize()
 				}}
 				onBlur={handleBlur}
-				// biome-ignore lint/a11y/noAutofocus: editing experience requires focus
 				autoFocus
 			/>
 		)
