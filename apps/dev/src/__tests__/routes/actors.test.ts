@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { buildActor, buildCreateActorBody } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -105,6 +106,65 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/actors/:id/api-keys', () => {
+		it('returns 200 with new API key', async () => {
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.update = [{ id: actor.id }]
+
+			const res = await app.request(jsonRequest('POST', `/api/actors/${actor.id}/api-keys`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.api_key).toBeDefined()
+			expect(body.api_key).toMatch(/^ank_/)
+		})
+
+		it('returns 404 when actor not found', async () => {
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors/00000000-0000-0000-0000-000000000099/api-keys'),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/actors - validation', () => {
+		it('returns 400 when human actor has no email', async () => {
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', {
+					type: 'human',
+					name: 'No Email',
+					password: 'testpassword123',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('Email is required')
+		})
+
+		it('returns 400 when human actor has no password', async () => {
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', {
+					type: 'human',
+					name: 'No Password',
+					email: 'test@example.com',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('Password is required')
 		})
 	})
 })

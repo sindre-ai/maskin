@@ -228,4 +228,62 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(404)
 		})
 	})
+
+	describe('POST /api/objects - edge cases', () => {
+		it('returns 500 when insert returns empty', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [] // empty — insert failed
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.code).toBe('INTERNAL_ERROR')
+			expect(body.error.message).toContain('Failed to create object')
+		})
+	})
+
+	describe('PATCH /api/objects/:id - status_changed event', () => {
+		it('logs status_changed event when status changes', async () => {
+			const existing = buildObject({ status: 'todo' })
+			const updated = { ...existing, status: 'in_progress' }
+			const ws = buildWorkspace({ id: existing.workspaceId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// First select: existing object, second: workspace
+			mockResults.selectQueue = [[existing], [ws]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}] // event insert
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'in_progress' }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+	})
+
+	describe('GET /api/objects/:id/graph - no relationships', () => {
+		it('returns empty arrays when no relationships exist', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// First select: the object, second: relationships (empty)
+			mockResults.selectQueue = [[obj], []]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.object.id).toBe(obj.id)
+			expect(body.relationships).toHaveLength(0)
+			expect(body.connected_objects).toHaveLength(0)
+		})
+	})
 })

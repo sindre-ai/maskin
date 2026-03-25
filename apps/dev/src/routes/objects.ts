@@ -17,6 +17,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import type { WorkspaceSettings } from '../lib/types'
 
 type Env = {
 	Variables: {
@@ -81,9 +82,8 @@ app.openapi(createObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	const settings = workspace.settings as Record<string, unknown>
-	const statuses = settings?.statuses as Record<string, string[]> | undefined
-	const validStatuses = statuses?.[body.type]
+	const settings = workspace.settings as WorkspaceSettings
+	const validStatuses = settings?.statuses?.[body.type]
 	if (validStatuses && !validStatuses.includes(body.status)) {
 		return c.json(
 			createApiError(
@@ -376,9 +376,8 @@ app.openapi(updateObjectRoute, async (c) => {
 			.limit(1)
 
 		if (workspace) {
-			const settings = workspace.settings as Record<string, unknown>
-			const statuses = settings?.statuses as Record<string, string[]> | undefined
-			const validStatuses = statuses?.[existing.type]
+			const settings = workspace.settings as WorkspaceSettings
+			const validStatuses = settings?.statuses?.[existing.type]
 			if (validStatuses && !validStatuses.includes(body.status)) {
 				return c.json(
 					createApiError(

@@ -11,6 +11,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import type { WorkspaceSettings } from '../lib/types'
 
 type Env = {
 	Variables: {
@@ -57,6 +58,10 @@ const createGraphRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
 	},
 })
 
@@ -91,8 +96,8 @@ app.openapi(createGraphRoute, async (c) => {
 	}
 
 	// Validate statuses against workspace settings
-	const settings = workspace.settings as Record<string, unknown>
-	const statuses = settings?.statuses as Record<string, string[]> | undefined
+	const settings = workspace.settings as WorkspaceSettings
+	const statuses = settings?.statuses
 	if (statuses) {
 		for (const node of body.nodes) {
 			const validStatuses = statuses[node.type]
@@ -152,82 +157,91 @@ app.openapi(createGraphRoute, async (c) => {
 	}
 
 	// Execute everything in a transaction
-	const result = await db.transaction(async (tx) => {
-		// 1. Create all nodes
-		const idMap = new Map<string, string>()
-		const createdNodes: (typeof objects.$inferSelect & { $id: string })[] = []
+	let result: {
+		nodes: (typeof objects.$inferSelect & { $id: string })[]
+		edges: (typeof relationships.$inferSelect)[]
+	}
+	try {
+		result = await db.transaction(async (tx) => {
+			// 1. Create all nodes
+			const idMap = new Map<string, string>()
+			const createdNodes: (typeof objects.$inferSelect & { $id: string })[] = []
 
-		for (const node of body.nodes) {
-			const [created] = await tx
-				.insert(objects)
-				.values({
+			for (const node of body.nodes) {
+				const [created] = await tx
+					.insert(objects)
+					.values({
+						workspaceId,
+						type: node.type,
+						title: node.title,
+						content: node.content,
+						status: node.status,
+						metadata: node.metadata,
+						owner: node.owner,
+						createdBy: actorId,
+					})
+					.returning()
+
+				if (!created) {
+					throw new Error(`Failed to create node '${node.$id}'`)
+				}
+				idMap.set(node.$id, created.id)
+				createdNodes.push({ ...created, $id: node.$id })
+
+				await tx.insert(events).values({
 					workspaceId,
-					type: node.type,
-					title: node.title,
-					content: node.content,
-					status: node.status,
-					metadata: node.metadata,
-					owner: node.owner,
-					createdBy: actorId,
+					actorId,
+					action: 'created',
+					entityType: node.type,
+					entityId: created.id,
+					data: created,
 				})
-				.returning()
-
-			if (!created) {
-				throw new Error(`Failed to create node '${node.$id}'`)
 			}
-			idMap.set(node.$id, created.id)
-			createdNodes.push({ ...created, $id: node.$id })
 
-			await tx.insert(events).values({
-				workspaceId,
-				actorId,
-				action: 'created',
-				entityType: node.type,
-				entityId: created.id,
-				data: created,
-			})
-		}
+			// 2. Resolve edge references and create relationships
+			const createdEdges: (typeof relationships.$inferSelect)[] = []
 
-		// 2. Resolve edge references and create relationships
-		const createdEdges: (typeof relationships.$inferSelect)[] = []
+			for (const edge of body.edges) {
+				const sourceId = idMap.get(edge.source) ?? edge.source
+				const targetId = idMap.get(edge.target) ?? edge.target
 
-		for (const edge of body.edges) {
-			const sourceId = idMap.get(edge.source) ?? edge.source
-			const targetId = idMap.get(edge.target) ?? edge.target
+				// Look up the type for each side
+				const sourceNode = createdNodes.find((n) => n.id === sourceId)
+				const targetNode = createdNodes.find((n) => n.id === targetId)
 
-			// Look up the type for each side
-			const sourceNode = createdNodes.find((n) => n.id === sourceId)
-			const targetNode = createdNodes.find((n) => n.id === targetId)
+				const [created] = await tx
+					.insert(relationships)
+					.values({
+						sourceType: sourceNode?.type ?? 'object',
+						sourceId,
+						targetType: targetNode?.type ?? 'object',
+						targetId,
+						type: edge.type,
+						createdBy: actorId,
+					})
+					.returning()
 
-			const [created] = await tx
-				.insert(relationships)
-				.values({
-					sourceType: sourceNode?.type ?? 'object',
-					sourceId,
-					targetType: targetNode?.type ?? 'object',
-					targetId,
-					type: edge.type,
-					createdBy: actorId,
+				if (!created) {
+					throw new Error(`Failed to create edge from '${edge.source}' to '${edge.target}'`)
+				}
+				createdEdges.push(created)
+
+				await tx.insert(events).values({
+					workspaceId,
+					actorId,
+					action: 'created',
+					entityType: 'relationship',
+					entityId: created.id,
+					data: created,
 				})
-				.returning()
-
-			if (!created) {
-				throw new Error(`Failed to create edge from '${edge.source}' to '${edge.target}'`)
 			}
-			createdEdges.push(created)
 
-			await tx.insert(events).values({
-				workspaceId,
-				actorId,
-				action: 'created',
-				entityType: 'relationship',
-				entityId: created.id,
-				data: created,
-			})
-		}
-
-		return { nodes: createdNodes, edges: createdEdges }
-	})
+			return { nodes: createdNodes, edges: createdEdges }
+		})
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Transaction failed'
+		return c.json(createApiError('INTERNAL_ERROR', message), 500)
+	}
 
 	const response = {
 		nodes: result.nodes.map((n) => ({

@@ -22,6 +22,7 @@ import { getValidOAuthToken } from '../lib/claude-oauth'
 import { decrypt } from '../lib/crypto'
 import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
+import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager } from './agent-storage'
 import { ContainerManager, type LogChunk } from './container-manager'
 
@@ -355,8 +356,8 @@ export class SessionManager extends EventEmitter {
 			.where(eq(workspaces.id, workspaceId))
 			.limit(1)
 
-		const settings = (workspace?.settings as Record<string, unknown>) ?? {}
-		const maxConcurrent = (settings.max_concurrent_sessions as number) ?? 5
+		const settings = (workspace?.settings as WorkspaceSettings) ?? {}
+		const maxConcurrent = settings.max_concurrent_sessions ?? 5
 
 		const [result] = await this.db
 			.select({ count: countFn() })
@@ -406,8 +407,8 @@ export class SessionManager extends EventEmitter {
 			.from(workspaces)
 			.where(eq(workspaces.id, session.workspaceId))
 			.limit(1)
-		const wsSettings = (ws?.settings as Record<string, unknown>) ?? {}
-		const wsLlmKeys = (wsSettings.llm_keys as Record<string, string>) ?? {}
+		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
 		if (llmConfig.api_key) {
 			if (agent.llmProvider === 'anthropic') {
