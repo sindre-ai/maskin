@@ -13,6 +13,8 @@ function SignupPage() {
 	const { signup } = useAuth()
 	const [name, setName] = useState('')
 	const [email, setEmail] = useState('')
+	const [password, setPassword] = useState('')
+	const [confirmPassword, setConfirmPassword] = useState('')
 	const [error, setError] = useState('')
 	const [loading, setLoading] = useState(false)
 
@@ -22,12 +24,25 @@ function SignupPage() {
 			setError('Name is required')
 			return
 		}
+		if (!email.trim()) {
+			setError('Email is required')
+			return
+		}
+		if (password.length < 8) {
+			setError('Password must be at least 8 characters')
+			return
+		}
+		if (password !== confirmPassword) {
+			setError('Passwords do not match')
+			return
+		}
 		setLoading(true)
 		try {
 			await signup({
 				type: 'human',
 				name: name.trim(),
-				email: email.trim() || undefined,
+				email: email.trim(),
+				password,
 			})
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
@@ -60,12 +75,41 @@ function SignupPage() {
 					</div>
 
 					<div>
-						<Label className="mb-1 text-muted-foreground">Email (optional)</Label>
+						<Label className="mb-1 text-muted-foreground">Email</Label>
 						<Input
 							type="email"
 							value={email}
-							onChange={(e) => setEmail(e.target.value)}
+							onChange={(e) => {
+								setEmail(e.target.value)
+								setError('')
+							}}
 							placeholder="you@example.com"
+						/>
+					</div>
+
+					<div>
+						<Label className="mb-1 text-muted-foreground">Password</Label>
+						<Input
+							type="password"
+							value={password}
+							onChange={(e) => {
+								setPassword(e.target.value)
+								setError('')
+							}}
+							placeholder="At least 8 characters"
+						/>
+					</div>
+
+					<div>
+						<Label className="mb-1 text-muted-foreground">Confirm password</Label>
+						<Input
+							type="password"
+							value={confirmPassword}
+							onChange={(e) => {
+								setConfirmPassword(e.target.value)
+								setError('')
+							}}
+							placeholder="Repeat your password"
 						/>
 					</div>
 
@@ -77,7 +121,7 @@ function SignupPage() {
 				</form>
 
 				<p className="text-center text-xs text-muted-foreground">
-					Already have a key?{' '}
+					Already have an account?{' '}
 					<Link to="/login" className="text-primary hover:text-primary-hover">
 						Sign in
 					</Link>

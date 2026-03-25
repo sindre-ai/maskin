@@ -1,4 +1,4 @@
-import { generateApiKey } from '@ai-native/auth'
+import { generateApiKey, hashPassword } from '@ai-native/auth'
 import type { Database } from '@ai-native/db'
 import { actors, workspaceMembers, workspaces } from '@ai-native/db/schema'
 import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@ai-native/shared'
@@ -54,8 +54,21 @@ app.openapi(createActorRoute, async (c) => {
 	const db = c.get('db')
 	const body = c.req.valid('json')
 
+	// Human users must provide email and password
+	if (body.type === 'human') {
+		if (!body.email) {
+			return c.json({ error: 'Email is required for human accounts' }, 400)
+		}
+		if (!body.password) {
+			return c.json({ error: 'Password is required for human accounts' }, 400)
+		}
+	}
+
 	// Generate API key
 	const { key } = generateApiKey()
+
+	// Hash password if provided
+	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
 	const [actor] = await db
 		.insert(actors)
@@ -64,6 +77,7 @@ app.openapi(createActorRoute, async (c) => {
 			name: body.name,
 			email: body.email,
 			apiKey: key,
+			passwordHash,
 			systemPrompt: body.system_prompt,
 			tools: body.tools,
 			llmProvider: body.llm_provider,

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useSearch } from '@tanstack/react-router'
+import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 
 interface FieldDefinition {
@@ -15,7 +15,7 @@ interface FieldDefinition {
 	values?: string[]
 }
 
-export const Route = createFileRoute('/_authed/$workspaceId/settings/properties')({
+export const Route = createFileRoute('/_authed/$workspaceId/settings/properties/')({
 	component: PropertiesPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 	validateSearch: (search: Record<string, unknown>) => ({
@@ -33,7 +33,7 @@ function PropertiesPage() {
 
 	const objectTypes = ['insight', 'bet', 'task']
 	const [activeType, setActiveType] = useState(objectTypes[0])
-	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/properties' })
+	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/properties/' })
 	const [showAdd, setShowAdd] = useState(false)
 	const [newName, setNewName] = useState('')
 
@@ -74,16 +74,6 @@ function PropertiesPage() {
 		setNewType('text')
 		setNewEnumValues('')
 		setShowAdd(false)
-	}
-
-	const handleRemove = (fieldName: string) => {
-		const updatedDefs = {
-			...fieldDefs,
-			[activeType]: currentFields.filter((f) => f.name !== fieldName),
-		}
-		updateWorkspace.mutate({
-			settings: { ...settings, field_definitions: updatedDefs },
-		})
 	}
 
 	return (
@@ -155,9 +145,12 @@ function PropertiesPage() {
 			) : (
 				<div className="space-y-2">
 					{currentFields.map((field) => (
-						<div
+						<Link
 							key={field.name}
-							className="flex items-center gap-3 rounded-lg border border-border bg-card p-4"
+							to="/$workspaceId/settings/properties/$propertyName"
+							params={{ workspaceId, propertyName: field.name }}
+							search={{ type: activeType }}
+							className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-muted/50 transition-colors"
 						>
 							<div className="flex-1">
 								<p className="text-sm font-medium text-foreground">{field.name}</p>
@@ -166,15 +159,7 @@ function PropertiesPage() {
 									{field.values ? ` · ${field.values.join(', ')}` : ''}
 								</p>
 							</div>
-							<Button
-								variant="ghost"
-								size="sm"
-								className="text-muted-foreground hover:text-error"
-								onClick={() => handleRemove(field.name)}
-							>
-								Delete
-							</Button>
-						</div>
+						</Link>
 					))}
 				</div>
 			)}
