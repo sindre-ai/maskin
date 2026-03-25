@@ -1,3 +1,4 @@
+import type { SafeJsonValue } from '@ai-native/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -37,7 +38,7 @@ interface ConditionRow {
 	id: string
 	field: string
 	operator: ConditionOperator
-	value: unknown
+	value: SafeJsonValue
 }
 
 export interface TriggerFormPayload {
@@ -238,12 +239,12 @@ export function TriggerForm({
 	)
 	const [conditions, setConditions] = useState<ConditionRow[]>(() => {
 		if (initialValues?.type === 'event' && Array.isArray(initConfig.conditions)) {
-			return (initConfig.conditions as { field: string; operator: string; value?: unknown }[]).map(
+			return (initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[]).map(
 				(c) => ({
 					id: crypto.randomUUID(),
 					field: c.field,
 					operator: c.operator as ConditionOperator,
-					value: c.value ?? '',
+					value: (c.value ?? '') as SafeJsonValue,
 				}),
 			)
 		}
@@ -708,8 +709,8 @@ function ConditionValueInput({
 }: {
 	fieldDef?: FieldDefinition
 	operator: string
-	value: unknown
-	onChange: (value: unknown) => void
+	value: SafeJsonValue
+	onChange: (value: SafeJsonValue) => void
 }) {
 	const fieldType = fieldDef?.type ?? 'text'
 

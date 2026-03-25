@@ -4,7 +4,10 @@
       "Bash(xargs grep:*)",
       "Bash(pnpm install:*)",
       "Bash(pnpm type-check:*)",
-      "Bash(pnpm vitest:*)"
+      "Bash(pnpm vitest:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(npx biome:*)",
+      "Bash(pnpm tsc:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

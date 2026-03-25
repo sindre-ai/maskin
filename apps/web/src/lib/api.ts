@@ -1,3 +1,4 @@
+import type { SafeMetadata } from '@ai-native/shared'
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -277,7 +278,7 @@ export interface ObjectResponse {
 	title: string | null
 	content: string | null
 	status: string
-	metadata: Record<string, unknown> | null
+	metadata: SafeMetadata | null
 	owner: string | null
 	activeSessionId: string | null
 	createdBy: string
@@ -290,7 +291,7 @@ export interface CreateObjectInput {
 	title?: string
 	content?: string
 	status: string
-	metadata?: Record<string, unknown>
+	metadata?: SafeMetadata
 	owner?: string
 }
 
@@ -298,7 +299,7 @@ export interface UpdateObjectInput {
 	title?: string
 	content?: string
 	status?: string
-	metadata?: Record<string, unknown>
+	metadata?: SafeMetadata
 	owner?: string | null
 }
 
@@ -455,7 +456,7 @@ export interface NotificationResponse {
 	type: string
 	title: string
 	content: string | null
-	metadata: Record<string, unknown> | null
+	metadata: SafeMetadata | null
 	sourceActorId: string
 	targetActorId: string | null
 	objectId: string | null
@@ -468,7 +469,7 @@ export interface NotificationResponse {
 
 export interface UpdateNotificationInput {
 	status?: 'pending' | 'seen' | 'resolved' | 'dismissed'
-	metadata?: Record<string, unknown>
+	metadata?: SafeMetadata
 }
 
 export interface SkillListItem {

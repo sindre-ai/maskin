@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { safeJsonValue } from './primitives'
 
 export const triggerTypeSchema = z.enum(['cron', 'event', 'reminder'])
 
@@ -22,13 +23,13 @@ export const conditionOperatorSchema = z.enum([
 export const triggerConditionSchema = z.object({
 	field: z.string(),
 	operator: conditionOperatorSchema,
-	value: z.unknown().optional(),
+	value: safeJsonValue.optional(),
 })
 
 export const eventConfigSchema = z.object({
 	entity_type: z.string(),
 	action: z.string(),
-	filter: z.record(z.unknown()).optional(),
+	filter: z.record(z.string(), safeJsonValue).optional(),
 	conditions: z.array(triggerConditionSchema).optional(),
 	from_status: z.string().optional(),
 	to_status: z.string().optional(),

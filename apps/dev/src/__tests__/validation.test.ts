@@ -1,8 +1,14 @@
 import {
+	actorToolsSchema,
 	createActorSchema,
 	createObjectSchema,
 	createRelationshipSchema,
 	createTriggerSchema,
+	llmConfigSchema,
+	runtimeConfigSchema,
+	safeMetadataSchema,
+	mcpServerSchema,
+	updateActorSchema,
 } from '@ai-native/shared'
 import { describe, expect, it } from 'vitest'
 
@@ -99,6 +105,209 @@ describe('Relationship validation', () => {
 			target_type: 'bet',
 			target_id: '550e8400-e29b-41d4-a716-446655440001',
 			type: 'informs',
+		})
+		expect(result.success).toBe(false)
+	})
+})
+
+describe('Actor tools validation', () => {
+	it('accepts valid stdio MCP server', () => {
+		const result = actorToolsSchema.safeParse({
+			mcpServers: {
+				github: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] },
+			},
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('accepts valid HTTP MCP server', () => {
+		const result = actorToolsSchema.safeParse({
+			mcpServers: {
+				platform: { type: 'http', url: 'https://api.example.com/mcp' },
+			},
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('accepts empty mcpServers', () => {
+		const result = actorToolsSchema.safeParse({ mcpServers: {} })
+		expect(result.success).toBe(true)
+	})
+
+	it('defaults mcpServers when omitted', () => {
+		const result = actorToolsSchema.safeParse({})
+		expect(result.success).toBe(true)
+		if (result.success) {
+			expect(result.data.mcpServers).toEqual({})
+		}
+	})
+
+	it('rejects stdio server without command', () => {
+		const result = actorToolsSchema.safeParse({
+			mcpServers: { bad: { args: ['test'] } },
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it('rejects HTTP server without url', () => {
+		const result = actorToolsSchema.safeParse({
+			mcpServers: { bad: { type: 'http' } },
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it('rejects non-object server value', () => {
+		const result = actorToolsSchema.safeParse({
+			mcpServers: { bad: 123 },
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it('strips unknown top-level keys', () => {
+		const result = actorToolsSchema.safeParse({
+			mcpServers: {},
+			extraKey: 'should be stripped',
+		})
+		expect(result.success).toBe(true)
+		if (result.success) {
+			expect('extraKey' in result.data).toBe(false)
+		}
+	})
+})
+
+describe('LLM config validation', () => {
+	it('accepts valid config with api_key and model', () => {
+		const result = llmConfigSchema.safeParse({
+			api_key: 'sk-test',
+			model: 'claude-sonnet-4-20250514',
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('accepts empty config', () => {
+		const result = llmConfigSchema.safeParse({})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects non-string api_key', () => {
+		const result = llmConfigSchema.safeParse({ api_key: 123 })
+		expect(result.success).toBe(false)
+	})
+
+	it('strips unknown keys', () => {
+		const result = llmConfigSchema.safeParse({
+			api_key: 'sk-test',
+			temperature: 0.7,
+		})
+		expect(result.success).toBe(true)
+		if (result.success) {
+			expect('temperature' in result.data).toBe(false)
+		}
+	})
+})
+
+describe('Runtime config validation', () => {
+	it('accepts valid config', () => {
+		const result = runtimeConfigSchema.safeParse({
+			max_turns: 10,
+			approval_mode: 'auto',
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('accepts empty config', () => {
+		const result = runtimeConfigSchema.safeParse({})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects negative max_turns', () => {
+		const result = runtimeConfigSchema.safeParse({ max_turns: -5 })
+		expect(result.success).toBe(false)
+	})
+
+	it('rejects non-integer max_turns', () => {
+		const result = runtimeConfigSchema.safeParse({ max_turns: 1.5 })
+		expect(result.success).toBe(false)
+	})
+
+	it('strips unknown keys', () => {
+		const result = runtimeConfigSchema.safeParse({
+			max_turns: 10,
+			unknown_flag: true,
+		})
+		expect(result.success).toBe(true)
+		if (result.success) {
+			expect('unknown_flag' in result.data).toBe(false)
+		}
+	})
+})
+
+describe('Safe metadata validation', () => {
+	it('accepts primitives', () => {
+		const result = safeMetadataSchema.safeParse({
+			priority: 'high',
+			score: 0.8,
+			active: true,
+			cleared: null,
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('accepts arrays of primitives', () => {
+		const result = safeMetadataSchema.safeParse({
+			tags: ['frontend', 'urgent'],
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects nested objects', () => {
+		const result = safeMetadataSchema.safeParse({
+			nested: { deep: 'object' },
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it('rejects arrays of objects', () => {
+		const result = safeMetadataSchema.safeParse({
+			items: [{ name: 'bad' }],
+		})
+		expect(result.success).toBe(false)
+	})
+})
+
+describe('MCP server schema validation', () => {
+	it('defaults type to stdio when omitted', () => {
+		const result = mcpServerSchema.safeParse({
+			command: 'npx',
+			args: ['-y', 'some-package'],
+		})
+		expect(result.success).toBe(true)
+		if (result.success) {
+			expect(result.data.type).toBe('stdio')
+		}
+	})
+
+	it('accepts explicit HTTP type with url', () => {
+		const result = mcpServerSchema.safeParse({
+			type: 'http',
+			url: 'https://example.com/mcp',
+			headers: { Authorization: 'Bearer token' },
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects HTTP type without url', () => {
+		const result = mcpServerSchema.safeParse({
+			type: 'http',
+			headers: {},
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it('rejects non-string args', () => {
+		const result = mcpServerSchema.safeParse({
+			command: 'npx',
+			args: [123],
 		})
 		expect(result.success).toBe(false)
 	})

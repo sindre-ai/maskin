@@ -1,3 +1,4 @@
+import type { SafeJsonValue, SafeMetadata } from '@ai-native/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
@@ -23,7 +24,7 @@ export function MetadataPropertiesView({
 }: {
 	object: ObjectResponse
 	workspace: WorkspaceWithRole
-	onUpdateMetadata: (id: string, metadata: Record<string, unknown>) => void
+	onUpdateMetadata: (id: string, metadata: SafeMetadata) => void
 	onRemoveMetadata: (id: string, key: string) => void
 	onCreateField?: (
 		workspace: WorkspaceWithRole,
@@ -47,7 +48,7 @@ export function MetadataPropertiesView({
 	const existingKeys = new Set(Object.keys(metadata))
 	const unsetFields = fieldDefs.filter((f) => !existingKeys.has(f.name))
 
-	const handleUpdate = (key: string, value: unknown) => {
+	const handleUpdate = (key: string, value: SafeJsonValue) => {
 		onUpdateMetadata(object.id, { ...metadata, [key]: value })
 	}
 
@@ -163,7 +164,7 @@ export function MetadataProperties({ object }: { object: ObjectResponse }) {
 	const updateObject = useUpdateObject(workspaceId)
 	const updateWorkspace = useUpdateWorkspace(workspace.id)
 
-	const handleUpdateMetadata = (id: string, metadata: Record<string, unknown>) => {
+	const handleUpdateMetadata = (id: string, metadata: SafeMetadata) => {
 		updateObject.mutate({ id, data: { metadata } })
 	}
 
@@ -201,9 +202,9 @@ function PropertyRow({
 	onRemove,
 }: {
 	name: string
-	value: unknown
+	value: SafeJsonValue
 	fieldDef?: FieldDefinition
-	onUpdate: (value: unknown) => void
+	onUpdate: (value: SafeJsonValue) => void
 	onRemove: () => void
 }) {
 	const [editing, setEditing] = useState(false)
@@ -256,9 +257,9 @@ function PropertyEditor({
 	onCancel,
 }: {
 	type: string
-	value: unknown
+	value: SafeJsonValue
 	fieldDef?: FieldDefinition
-	onSave: (value: unknown) => void
+	onSave: (value: SafeJsonValue) => void
 	onCancel: () => void
 }) {
 	const [draft, setDraft] = useState(String(value ?? ''))
@@ -586,7 +587,7 @@ function formatDisplay(value: unknown, type: string): string {
 	return String(value)
 }
 
-function getDefaultValue(field: FieldDefinition): unknown {
+function getDefaultValue(field: FieldDefinition): SafeJsonValue {
 	switch (field.type) {
 		case 'boolean':
 			return false

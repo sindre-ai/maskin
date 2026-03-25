@@ -91,6 +91,41 @@ setup_mcps() {
   fi
 }
 
+# Write Claude OAuth credentials file if OAuth tokens are provided.
+# Claude Code reads auth from ~/.claude/.credentials.json, not env vars.
+setup_claude_credentials() {
+  if [ -z "$CLAUDE_OAUTH_ACCESS_TOKEN" ]; then
+    return
+  fi
+
+  local creds_dir="$HOME/.claude"
+  mkdir -p "$creds_dir"
+
+  local scopes="${CLAUDE_OAUTH_SCOPES:-[]}"
+  local sub_type="${CLAUDE_OAUTH_SUBSCRIPTION_TYPE:-}"
+  local expires_at="${CLAUDE_OAUTH_EXPIRES_AT:-0}"
+
+  # Build the subscription/rateLimitTier fields
+  local sub_fields=""
+  if [ -n "$sub_type" ]; then
+    sub_fields="\"subscriptionType\":\"$sub_type\","
+  fi
+
+  cat > "$creds_dir/.credentials.json" <<CREDS_EOF
+{
+  "claudeAiOauth": {
+    "accessToken": "$CLAUDE_OAUTH_ACCESS_TOKEN",
+    "refreshToken": "$CLAUDE_OAUTH_REFRESH_TOKEN",
+    "expiresAt": $expires_at,
+    ${sub_fields}
+    "scopes": $scopes
+  }
+}
+CREDS_EOF
+
+  echo "[system] Claude OAuth credentials written to $creds_dir/.credentials.json"
+}
+
 # Run the agent
 run_agent() {
   case "$RUNTIME" in
@@ -138,5 +173,6 @@ echo "[system] Runtime: $RUNTIME"
 install_runtime
 build_context
 setup_mcps
+setup_claude_credentials
 
 run_agent

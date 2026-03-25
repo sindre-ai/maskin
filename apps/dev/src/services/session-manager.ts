@@ -416,7 +416,17 @@ export class SessionManager extends EventEmitter {
 			try {
 				const oauthResult = await getValidOAuthToken(this.db, session.workspaceId)
 				if (oauthResult) {
-					envVars.ANTHROPIC_AUTH_TOKEN = oauthResult.accessToken
+					// Claude Code reads OAuth from ~/.claude/.credentials.json, not env vars.
+					// Pass full token set so agent-run.sh can write the credentials file.
+					envVars.CLAUDE_OAUTH_ACCESS_TOKEN = oauthResult.tokens.accessToken
+					envVars.CLAUDE_OAUTH_REFRESH_TOKEN = oauthResult.tokens.refreshToken
+					envVars.CLAUDE_OAUTH_EXPIRES_AT = String(oauthResult.tokens.expiresAt)
+					if (oauthResult.tokens.scopes) {
+						envVars.CLAUDE_OAUTH_SCOPES = JSON.stringify(oauthResult.tokens.scopes)
+					}
+					if (oauthResult.tokens.subscriptionType) {
+						envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
+					}
 				} else if (wsLlmKeys.anthropic) {
 					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
 				}
@@ -490,7 +500,11 @@ export class SessionManager extends EventEmitter {
 			'MCP_SERVERS_JSON',
 			'AGENT_MCP_JSON',
 			'AI_NATIVE_API_KEY',
-			'ANTHROPIC_AUTH_TOKEN',
+			'CLAUDE_OAUTH_ACCESS_TOKEN',
+			'CLAUDE_OAUTH_REFRESH_TOKEN',
+			'CLAUDE_OAUTH_EXPIRES_AT',
+			'CLAUDE_OAUTH_SCOPES',
+			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
 		])
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {

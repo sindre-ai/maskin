@@ -137,7 +137,7 @@ app.post('/mcp', async (c) => {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey:
 			c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? '',
-		workspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
+		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({

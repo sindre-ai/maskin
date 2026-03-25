@@ -1,3 +1,4 @@
+import type { SafeJsonValue } from '@ai-native/shared'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -67,7 +68,7 @@ export function MetadataFieldAdd({
 			}
 		}
 
-		const metadata = { ...(object.metadata ?? {}), [key]: parsedValue }
+		const metadata = { ...(object.metadata ?? {}), [key]: parsedValue as SafeJsonValue }
 		updateObject.mutate({ id: object.id, data: { metadata } })
 		resetForm()
 	}
