@@ -3,6 +3,7 @@ import { events, objects, relationships, workspaces } from '@ai-native/db/schema
 import { createGraphSchema } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
 	objectResponseSchema,
@@ -75,13 +76,18 @@ app.openapi(createGraphRoute, async (c) => {
 		.limit(1)
 
 	if (!workspace) {
-		return c.json({ error: 'Workspace not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
 	// Validate unique $ids
 	const ids = body.nodes.map((n) => n.$id)
 	if (new Set(ids).size !== ids.length) {
-		return c.json({ error: 'Duplicate $id values in nodes' }, 400)
+		return c.json(
+			createApiError('BAD_REQUEST', 'Duplicate $id values in nodes', [
+				{ field: 'nodes.$id', message: 'Each node must have a unique $id' },
+			]),
+			400,
+		)
 	}
 
 	// Validate statuses against workspace settings
@@ -92,9 +98,19 @@ app.openapi(createGraphRoute, async (c) => {
 			const validStatuses = statuses[node.type]
 			if (validStatuses && !validStatuses.includes(node.status)) {
 				return c.json(
-					{
-						error: `Invalid status '${node.status}' for type '${node.type}' on node '${node.$id}'`,
-					},
+					createApiError(
+						'BAD_REQUEST',
+						`Invalid status '${node.status}' for type '${node.type}' on node '${node.$id}'`,
+						[
+							{
+								field: `nodes[${node.$id}].status`,
+								message: `'${node.status}' is not valid for type '${node.type}'`,
+								expected: validStatuses.map((s) => `'${s}'`).join(' | '),
+								received: `'${node.status}'`,
+							},
+						],
+						`Valid statuses for '${node.type}': ${validStatuses.join(', ')}`,
+					),
 					400,
 				)
 			}
@@ -107,13 +123,31 @@ app.openapi(createGraphRoute, async (c) => {
 		const sourceIsRef = nodeIds.has(edge.source)
 		const sourceIsUuid = UUID_REGEX.test(edge.source)
 		if (!sourceIsRef && !sourceIsUuid) {
-			return c.json({ error: `Edge source '${edge.source}' is not a valid $id or UUID` }, 400)
+			return c.json(
+				createApiError('BAD_REQUEST', `Edge source '${edge.source}' is not a valid $id or UUID`, [
+					{
+						field: 'edges.source',
+						message: 'Must reference a node $id or be a valid UUID',
+						received: `'${edge.source}'`,
+					},
+				]),
+				400,
+			)
 		}
 
 		const targetIsRef = nodeIds.has(edge.target)
 		const targetIsUuid = UUID_REGEX.test(edge.target)
 		if (!targetIsRef && !targetIsUuid) {
-			return c.json({ error: `Edge target '${edge.target}' is not a valid $id or UUID` }, 400)
+			return c.json(
+				createApiError('BAD_REQUEST', `Edge target '${edge.target}' is not a valid $id or UUID`, [
+					{
+						field: 'edges.target',
+						message: 'Must reference a node $id or be a valid UUID',
+						received: `'${edge.target}'`,
+					},
+				]),
+				400,
+			)
 		}
 	}
 

@@ -8,6 +8,7 @@ import {
 } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { and, eq, ilike, inArray, or } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -73,7 +74,7 @@ app.openapi(createObjectRoute, async (c) => {
 		.limit(1)
 
 	if (!workspace) {
-		return c.json({ error: 'Workspace not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
 	const settings = workspace.settings as Record<string, unknown>
@@ -81,9 +82,19 @@ app.openapi(createObjectRoute, async (c) => {
 	const validStatuses = statuses?.[body.type]
 	if (validStatuses && !validStatuses.includes(body.status)) {
 		return c.json(
-			{
-				error: `Invalid status '${body.status}' for type '${body.type}'`,
-			},
+			createApiError(
+				'BAD_REQUEST',
+				`Invalid status '${body.status}' for type '${body.type}'`,
+				[
+					{
+						field: 'status',
+						message: `'${body.status}' is not a valid status for type '${body.type}'`,
+						expected: validStatuses.map((s) => `'${s}'`).join(' | '),
+						received: `'${body.status}'`,
+					},
+				],
+				`Valid statuses for '${body.type}': ${validStatuses.join(', ')}`,
+			),
 			400,
 		)
 	}
@@ -103,7 +114,7 @@ app.openapi(createObjectRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json({ error: 'Failed to create object' }, 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create object'), 500)
 	}
 
 	// Log event
@@ -238,7 +249,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.limit(1)
 
 	if (!object) {
-		return c.json({ error: 'Object not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
 	// Fetch all relationships where this object is source or target
@@ -301,7 +312,7 @@ app.openapi(getObjectRoute, async (c) => {
 	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
 	if (!object) {
-		return c.json({ error: 'Object not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
 	return c.json(serialize(object) as z.infer<typeof objectResponseSchema>, 200)
@@ -349,7 +360,7 @@ app.openapi(updateObjectRoute, async (c) => {
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
 	if (!existing) {
-		return c.json({ error: 'Object not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
 	// If status is being updated, validate against workspace settings
@@ -366,9 +377,19 @@ app.openapi(updateObjectRoute, async (c) => {
 			const validStatuses = statuses?.[existing.type]
 			if (validStatuses && !validStatuses.includes(body.status)) {
 				return c.json(
-					{
-						error: `Invalid status '${body.status}' for type '${existing.type}'`,
-					},
+					createApiError(
+						'BAD_REQUEST',
+						`Invalid status '${body.status}' for type '${existing.type}'`,
+						[
+							{
+								field: 'status',
+								message: `'${body.status}' is not a valid status for type '${existing.type}'`,
+								expected: validStatuses.map((s) => `'${s}'`).join(' | '),
+								received: `'${body.status}'`,
+							},
+						],
+						`Valid statuses for '${existing.type}': ${validStatuses.join(', ')}`,
+					),
 					400,
 				)
 			}
@@ -385,7 +406,7 @@ app.openapi(updateObjectRoute, async (c) => {
 		.returning()
 
 	if (!updated) {
-		return c.json({ error: 'Object not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
 	// Log event
@@ -431,7 +452,7 @@ app.openapi(deleteObjectRoute, async (c) => {
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
 	if (!existing) {
-		return c.json({ error: 'Object not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
 	await db.delete(objects).where(eq(objects.id, id))

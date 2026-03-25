@@ -55,7 +55,7 @@ describe('Integrations Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('Unknown provider')
+			expect(body.error.message).toContain('Unknown provider')
 		})
 	})
 

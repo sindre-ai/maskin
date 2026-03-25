@@ -3,9 +3,9 @@
 	"compilerOptions": {
 		"outDir": "dist",
 		"rootDir": "src",
-		"noUnusedLocals": false,
-		"noUnusedParameters": false,
-		"noUncheckedIndexedAccess": false
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noUncheckedIndexedAccess": true
 	},
 	"include": ["src"],
 	"exclude": ["src/__tests__"]

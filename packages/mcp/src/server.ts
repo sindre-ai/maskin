@@ -73,8 +73,32 @@ async function apiCall(
 	})
 
 	if (!response.ok) {
-		const error = await response.text()
-		throw new Error(`API error ${response.status}: ${error}`)
+		const errorText = await response.text()
+		let message: string
+		try {
+			const errorData = JSON.parse(errorText)
+			if (errorData.error?.message) {
+				const parts = [errorData.error.message]
+				if (errorData.error.details?.length) {
+					const fieldInfo = errorData.error.details
+						.map(
+							(d: { field: string; message: string; expected?: string }) =>
+								`${d.field}: ${d.message}${d.expected ? ` (expected: ${d.expected})` : ''}`,
+						)
+						.join('; ')
+					parts.push(`Fields: ${fieldInfo}`)
+				}
+				if (errorData.error.suggestion) {
+					parts.push(`Hint: ${errorData.error.suggestion}`)
+				}
+				message = parts.join('. ')
+			} else {
+				message = errorText
+			}
+		} catch {
+			message = errorText
+		}
+		throw new Error(`API error ${response.status}: ${message}`)
 	}
 
 	return response.json()
@@ -539,9 +563,9 @@ export function createMcpServer(config: McpConfig) {
 				settings: Record<string, unknown>
 			}>
 			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-			const workspace = (effectiveWsId
-				? workspaces.find((w) => w.id === effectiveWsId)
-				: workspaces[0]) ?? workspaces[0]
+			const workspace =
+				(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
+				workspaces[0]
 			if (!workspace) {
 				throw new Error('No workspace found')
 			}

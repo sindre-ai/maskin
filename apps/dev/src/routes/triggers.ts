@@ -3,6 +3,7 @@ import { triggers } from '@ai-native/db/schema'
 import { createTriggerSchema, updateTriggerSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -72,7 +73,7 @@ app.openapi(createTriggerRoute, async (c) => {
 		.returning()
 
 	if (!created) {
-		return c.json({ error: 'Failed to create trigger' }, 400)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 500)
 	}
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
@@ -150,7 +151,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	const [updated] = await db.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 
-	if (!updated) return c.json({ error: 'Trigger not found' }, 404)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
@@ -181,7 +182,7 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const [existing] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
-	if (!existing) return c.json({ error: 'Trigger not found' }, 404)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 
 	await db.delete(triggers).where(eq(triggers.id, id))
 	return c.json({ deleted: true })

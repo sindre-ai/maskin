@@ -46,7 +46,7 @@ describe('Objects Routes', () => {
 
 			expect(res.status).toBe(404)
 			const body = await res.json()
-			expect(body.error).toContain('Workspace not found')
+			expect(body.error.message).toContain('Workspace not found')
 		})
 
 		it('returns 400 for invalid status', async () => {
@@ -65,7 +65,7 @@ describe('Objects Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('Invalid status')
+			expect(body.error.message).toContain('Invalid status')
 		})
 	})
 
@@ -149,7 +149,7 @@ describe('Objects Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('Invalid status')
+			expect(body.error.message).toContain('Invalid status')
 		})
 	})
 
