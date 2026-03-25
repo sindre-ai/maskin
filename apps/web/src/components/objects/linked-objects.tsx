@@ -11,6 +11,7 @@ import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relati
 import type { CreateRelationshipInput, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
+import { X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
@@ -256,14 +257,13 @@ function LinkedSectionView({
 									</Link>
 								)}
 								<Button
-									type="button"
 									variant="ghost"
 									size="icon"
 									className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
 									onClick={() => onDeleteRelationship(rel.id)}
 									title="Remove link"
 								>
-									×
+									<X className="h-3 w-3" />
 								</Button>
 							</div>
 						)
@@ -310,7 +310,6 @@ function ObjectPicker({
 				{candidates.map((obj) => (
 					<Button
 						key={obj.id}
-						type="button"
 						variant="ghost"
 						className="w-full justify-start"
 						onClick={() => onSelect(obj.id)}
@@ -412,7 +411,6 @@ function AddLinkForm({
 				{candidates.map((obj) => (
 					<Button
 						key={obj.id}
-						type="button"
 						variant="ghost"
 						className="w-full justify-start"
 						onClick={() => handleLink(obj.id)}

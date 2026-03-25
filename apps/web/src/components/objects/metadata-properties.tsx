@@ -13,6 +13,7 @@ import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SafeJsonValue, SafeMetadata } from '@ai-native/shared'
+import { X } from 'lucide-react'
 import { useState } from 'react'
 
 interface FieldDefinition {
@@ -123,7 +124,6 @@ export function MetadataPropertiesView({
 			{/* Unset defined fields shown as empty */}
 			{unsetFields.map((field) => (
 				<Button
-					type="button"
 					key={field.name}
 					variant="ghost"
 					className="w-full justify-start gap-2"
@@ -238,14 +238,13 @@ function PropertyRow({
 				)}
 			</div>
 			<Button
-				type="button"
 				variant="ghost"
 				size="icon"
 				className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
 				onClick={onRemove}
 				title="Remove property"
 			>
-				×
+				<X className="h-3 w-3" />
 			</Button>
 		</div>
 	)
@@ -424,7 +423,6 @@ function AddPropertyMenu({
 					{unsetFields.map((field) => (
 						<Button
 							key={field.name}
-							type="button"
 							variant="ghost"
 							className="w-full justify-start"
 							onClick={() => onSelectField(field)}
@@ -437,12 +435,7 @@ function AddPropertyMenu({
 					<Separator className="my-1" />
 				</>
 			)}
-			<Button
-				type="button"
-				variant="ghost"
-				className="w-full justify-start text-primary"
-				onClick={onCreateNew}
-			>
+			<Button variant="ghost" className="w-full justify-start text-primary" onClick={onCreateNew}>
 				+ Create new property
 			</Button>
 			<Button variant="ghost" size="sm" onClick={onClose}>
@@ -518,7 +511,6 @@ function CreateFieldForm({
 				{(['text', 'number', 'date', 'boolean', 'enum'] as const).map((t) => (
 					<Button
 						key={t}
-						type="button"
 						variant={type === t ? 'default' : 'secondary'}
 						size="sm"
 						onClick={() => setType(t)}
@@ -537,10 +529,10 @@ function CreateFieldForm({
 				/>
 			)}
 			<div className="flex justify-end gap-2">
-				<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+				<Button variant="ghost" size="sm" onClick={onCancel}>
 					Cancel
 				</Button>
-				<Button type="button" size="sm" disabled={!name.trim() || isPending} onClick={handleCreate}>
+				<Button size="sm" disabled={!name.trim() || isPending} onClick={handleCreate}>
 					{isPending ? 'Creating...' : 'Create'}
 				</Button>
 			</div>

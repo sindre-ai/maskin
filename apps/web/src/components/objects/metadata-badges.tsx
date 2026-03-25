@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
+import { X } from 'lucide-react'
 
 export function MetadataBadgesView({
 	object,
@@ -24,14 +25,13 @@ export function MetadataBadgesView({
 					<span>{formatValue(value)}</span>
 					{onRemove && (
 						<Button
-							type="button"
 							variant="ghost"
 							size="icon"
 							className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity ml-0.5"
 							onClick={() => onRemove(key)}
 							title="Remove field"
 						>
-							×
+							<X className="h-3 w-3" />
 						</Button>
 					)}
 				</Badge>

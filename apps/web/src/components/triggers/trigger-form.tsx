@@ -388,7 +388,6 @@ export function TriggerForm({
 				{(['event', 'cron', 'reminder'] as const).map((t) => (
 					<Button
 						key={t}
-						type="button"
 						variant={type === t ? 'default' : 'secondary'}
 						size="sm"
 						onClick={() => setType(t)}
@@ -499,7 +498,7 @@ export function TriggerForm({
 								/>
 							))}
 							{fieldDefs.length > 0 ? (
-								<Button type="button" variant="ghost" size="sm" onClick={addCondition}>
+								<Button variant="ghost" size="sm" onClick={addCondition}>
 									+ Add condition
 								</Button>
 							) : conditions.length === 0 ? (
@@ -546,7 +545,6 @@ export function TriggerForm({
 					{enabled ? 'Enabled' : 'Disabled'}
 				</span>
 				<Button
-					type="button"
 					variant="outline"
 					size="sm"
 					onClick={() => {
@@ -640,7 +638,6 @@ function ConditionEditor({
 			)}
 
 			<Button
-				type="button"
 				variant="ghost"
 				size="icon"
 				className="text-muted-foreground hover:text-error shrink-0"
@@ -771,7 +768,6 @@ function CronScheduleBuilder({
 				{(['hourly', 'daily', 'weekly', 'monthly'] as const).map((f) => (
 					<Button
 						key={f}
-						type="button"
 						variant={frequency === f ? 'default' : 'secondary'}
 						size="sm"
 						onClick={() => onFrequencyChange(f)}
