@@ -48,6 +48,10 @@ const createActorRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
 	},
 })
 
@@ -58,10 +62,20 @@ app.openapi(createActorRoute, async (c) => {
 	// Human users must provide email and password
 	if (body.type === 'human') {
 		if (!body.email) {
-			return c.json({ error: 'Email is required for human accounts' }, 400)
+			return c.json(
+				createApiError('BAD_REQUEST', 'Email is required for human accounts', [
+					{ field: 'email', message: 'Required for human accounts' },
+				]),
+				400,
+			)
 		}
 		if (!body.password) {
-			return c.json({ error: 'Password is required for human accounts' }, 400)
+			return c.json(
+				createApiError('BAD_REQUEST', 'Password is required for human accounts', [
+					{ field: 'password', message: 'Required for human accounts' },
+				]),
+				400,
+			)
 		}
 	}
 

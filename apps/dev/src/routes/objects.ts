@@ -57,6 +57,10 @@ const createObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
 	},
 })
 

@@ -1,14 +1,14 @@
 import { EventEmitter } from 'node:events'
+import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
 import { vi } from 'vitest'
-import { buildTrigger } from '../factories'
-import { createTestContext, createMockSessionManager } from '../setup'
 import {
 	TriggerRunner,
 	evaluateCondition,
 	evaluateConditions,
 	getObjectFromEvent,
 } from '../../services/trigger-runner'
-import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
+import { buildTrigger } from '../factories'
+import { createMockSessionManager, createTestContext } from '../setup'
 
 describe('TriggerRunner', () => {
 	let runner: TriggerRunner
@@ -207,20 +207,26 @@ describe('TriggerRunner', () => {
 describe('evaluateCondition()', () => {
 	it('is_set: true when field has value', () => {
 		expect(
-			evaluateCondition({ field: 'priority', operator: 'is_set' }, { metadata: { priority: 'high' } }),
+			evaluateCondition(
+				{ field: 'priority', operator: 'is_set' },
+				{ metadata: { priority: 'high' } },
+			),
 		).toBe(true)
 	})
 
 	it('is_set: false when field is null', () => {
 		expect(
-			evaluateCondition({ field: 'priority', operator: 'is_set' }, { metadata: { priority: null } }),
+			evaluateCondition(
+				{ field: 'priority', operator: 'is_set' },
+				{ metadata: { priority: null } },
+			),
 		).toBe(false)
 	})
 
 	it('is_not_set: true when field missing', () => {
-		expect(
-			evaluateCondition({ field: 'priority', operator: 'is_not_set' }, { metadata: {} }),
-		).toBe(true)
+		expect(evaluateCondition({ field: 'priority', operator: 'is_not_set' }, { metadata: {} })).toBe(
+			true,
+		)
 	})
 
 	it('equals: loose comparison', () => {
@@ -326,10 +332,7 @@ describe('evaluateCondition()', () => {
 
 	it('unknown operator returns false', () => {
 		expect(
-			evaluateCondition(
-				{ field: 'x', operator: 'unknown_op', value: 1 },
-				{ metadata: { x: 1 } },
-			),
+			evaluateCondition({ field: 'x', operator: 'unknown_op', value: 1 }, { metadata: { x: 1 } }),
 		).toBe(false)
 	})
 })
@@ -367,7 +370,7 @@ describe('getObjectFromEvent()', () => {
 				previous: { status: 'todo' },
 				updated: { status: 'done' },
 			},
-		} as any
+		} as unknown as PgEvent
 
 		const result = getObjectFromEvent(event)
 		expect(result.current?.status).toBe('done')
@@ -377,7 +380,7 @@ describe('getObjectFromEvent()', () => {
 	it('extracts current from create event', () => {
 		const event = {
 			data: { status: 'new' },
-		} as any
+		} as unknown as PgEvent
 
 		const result = getObjectFromEvent(event)
 		expect(result.current?.status).toBe('new')
@@ -385,7 +388,7 @@ describe('getObjectFromEvent()', () => {
 	})
 
 	it('returns empty for null data', () => {
-		const event = { data: null } as any
+		const event = { data: null } as unknown as PgEvent
 		const result = getObjectFromEvent(event)
 		expect(result).toEqual({})
 	})

@@ -47,6 +47,10 @@ const createTriggerRoute = createRoute({
 			description: 'Missing workspace ID',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Internal server error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 

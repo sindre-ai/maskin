@@ -18,9 +18,7 @@ await sql`
 `
 
 // Get already-applied migrations
-const applied = new Set(
-	(await sql`SELECT name FROM "_migrations"`).map((r) => r.name),
-)
+const applied = new Set((await sql`SELECT name FROM "_migrations"`).map((r) => r.name))
 
 const files = readdirSync(migrationsDir)
 	.filter((f) => f.endsWith('.sql'))
