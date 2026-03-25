@@ -7,7 +7,8 @@
       "Bash(pnpm vitest:*)",
       "Bash(pnpm lint:*)",
       "Bash(npx biome:*)",
-      "Bash(pnpm tsc:*)"
+      "Bash(pnpm tsc:*)",
+      "Bash(pnpm build:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
