@@ -1,0 +1,38 @@
+import { EventEmitter } from 'node:events'
+import postgres from 'postgres'
+
+export interface PgEvent {
+	workspace_id: string
+	actor_id: string
+	action: string
+	entity_type: string
+	entity_id: string
+	event_id: string
+	data: Record<string, unknown> | null
+}
+
+export class PgNotifyBridge extends EventEmitter {
+	private sql: postgres.Sql
+
+	constructor(databaseUrl: string) {
+		super()
+		this.sql = postgres(databaseUrl, {
+			max: 1,
+		})
+	}
+
+	async start() {
+		await this.sql.listen('events', (payload) => {
+			try {
+				const event = JSON.parse(payload) as PgEvent
+				this.emit('event', event)
+			} catch {
+				// ignore malformed payloads
+			}
+		})
+	}
+
+	async stop() {
+		await this.sql.end()
+	}
+}

@@ -1,0 +1,62 @@
+{
+	"$schema": "https://turbo.build/schema.json",
+	"globalPassThroughEnv": [
+		"DATABASE_URL",
+		"BETTER_AUTH_SECRET",
+		"BETTER_AUTH_URL",
+		"PORT",
+		"INTEGRATION_ENCRYPTION_KEY",
+		"GITHUB_APP_ID",
+		"GITHUB_CLIENT_ID",
+		"GITHUB_CLIENT_SECRET",
+		"GITHUB_APP_WEBHOOK_SECRET",
+		"GITHUB_APP_PRIVATE_KEY",
+		"GITHUB_APP_SLUG",
+		"WEBHOOK_BASE_URL",
+		"S3_ENDPOINT",
+		"S3_BUCKET",
+		"S3_ACCESS_KEY",
+		"S3_SECRET_KEY",
+		"S3_REGION"
+	],
+	"tasks": {
+		"build": {
+			"dependsOn": ["^build"],
+			"outputs": ["dist/**"]
+		},
+		"build:mcp": {
+			"dependsOn": ["^build"],
+			"outputs": ["dist-mcp/**"]
+		},
+		"dev": {
+			"cache": false,
+			"persistent": true
+		},
+		"test": {
+			"dependsOn": ["^build"]
+		},
+		"test:integration": {
+			"dependsOn": ["^build"],
+			"cache": false,
+			"env": ["DATABASE_URL"]
+		},
+		"test:e2e": {
+			"dependsOn": ["^build"],
+			"cache": false,
+			"env": ["DATABASE_URL"]
+		},
+		"type-check": {
+			"dependsOn": ["^build"]
+		},
+		"lint": {},
+		"db:generate": {
+			"cache": false
+		},
+		"db:migrate": {
+			"cache": false
+		},
+		"db:seed": {
+			"cache": false
+		}
+	}
+}

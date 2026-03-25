@@ -1,0 +1,13 @@
+{
+	"mcpServers": {
+		"ai-native": {
+			"command": "node",
+			"args": ["C:/Users/hanse/Desktop/Experiments/ai-native-oss/packages/mcp/dist/server.js"],
+			"env": {
+				"API_BASE_URL": "http://localhost:3000",
+				"API_KEY": "ank_e9b21ac9290a4e409401d10deb32b1ec",
+				"WORKSPACE_ID": "c950f6f2-ea3d-48c7-a536-b260be2121a1"
+			}
+		}
+	}
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-mcp/
+.dist-mcp-tmp/
+.turbo/
+*.env
+.env.*
+!.env.example
+.DS_Store
+*.tsbuildinfo
+coverage/

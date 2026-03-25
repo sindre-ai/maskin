@@ -1,0 +1,29 @@
+{
+	"name": "@ai-native/auth",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./dist/index.js"
+		},
+		"./middleware": {
+			"types": "./src/middleware.ts",
+			"default": "./dist/middleware.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc",
+		"type-check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@ai-native/db": "workspace:*",
+		"better-auth": "^1.2.0",
+		"drizzle-orm": "^0.38.0",
+		"hono": "^4.7.0"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.0"
+	}
+}

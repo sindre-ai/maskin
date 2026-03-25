@@ -1,0 +1,73 @@
+import {
+	Sidebar,
+	SidebarContent,
+	SidebarFooter,
+	SidebarGroup,
+	SidebarHeader,
+	SidebarMenu,
+	SidebarMenuButton,
+	SidebarMenuItem,
+	SidebarRail,
+	SidebarTrigger,
+} from '@/components/ui/sidebar'
+import { useWorkspace } from '@/lib/workspace-context'
+import { Link, useMatchRoute } from '@tanstack/react-router'
+import { Activity, Bot, Layers, Zap } from 'lucide-react'
+import { AgentPulse } from '../agents/agent-pulse'
+import { NavUser } from './nav-user'
+
+const navItems = [
+	{ label: 'Pulse', to: '/$workspaceId' as const, exact: true, icon: Zap },
+	{ label: 'Objects', to: '/$workspaceId/objects' as const, icon: Layers },
+	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
+	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
+]
+
+export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
+	const { workspaceId } = useWorkspace()
+	const matchRoute = useMatchRoute()
+
+	return (
+		<Sidebar collapsible="icon" {...props}>
+			<SidebarHeader className="h-16 justify-center">
+				<SidebarMenu>
+					<SidebarMenuItem>
+						<SidebarTrigger />
+					</SidebarMenuItem>
+				</SidebarMenu>
+			</SidebarHeader>
+			<SidebarContent>
+				<SidebarGroup>
+					<SidebarMenu>
+						{navItems.map((item) => {
+							const Icon = item.icon
+							const isActive = !!matchRoute({
+								to: item.to,
+								params: { workspaceId },
+								fuzzy: !('exact' in item),
+							})
+
+							return (
+								<SidebarMenuItem key={item.to}>
+									<SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
+										<Link to={item.to} params={{ workspaceId }}>
+											<Icon />
+											<span>{item.label}</span>
+										</Link>
+									</SidebarMenuButton>
+								</SidebarMenuItem>
+							)
+						})}
+					</SidebarMenu>
+				</SidebarGroup>
+			</SidebarContent>
+			<SidebarFooter>
+				<div className="px-2 group-data-[collapsible=icon]:hidden">
+					<AgentPulse workspaceId={workspaceId} />
+				</div>
+				<NavUser />
+			</SidebarFooter>
+			<SidebarRail />
+		</Sidebar>
+	)
+}

@@ -1,0 +1,20 @@
+// Re-export all API types from the centralized api module
+export type {
+	ObjectResponse,
+	CreateObjectInput,
+	UpdateObjectInput,
+	ActorListItem,
+	ActorResponse,
+	ActorWithKey,
+	CreateActorInput,
+	WorkspaceResponse,
+	WorkspaceWithRole,
+	UpdateWorkspaceInput,
+	MemberResponse,
+	RelationshipResponse,
+	CreateRelationshipInput,
+	TriggerResponse,
+	CreateTriggerInput,
+	UpdateTriggerInput,
+	EventResponse,
+} from '../lib/api'

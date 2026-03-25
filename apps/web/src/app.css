@@ -1,0 +1,249 @@
+@import "tailwindcss";
+@plugin '@tailwindcss/typography';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+
+	/* Semantic */
+	--color-success: var(--success);
+	--color-warning: var(--warning);
+	--color-error: var(--error);
+
+	/* Status badge colors */
+	--color-status-new-bg: var(--st-new-bg);
+	--color-status-new-text: var(--st-new-text);
+	--color-status-todo-bg: var(--st-todo-bg);
+	--color-status-todo-text: var(--st-todo-text);
+	--color-status-processing-bg: var(--st-processing-bg);
+	--color-status-processing-text: var(--st-processing-text);
+	--color-status-in_progress-bg: var(--st-in_progress-bg);
+	--color-status-in_progress-text: var(--st-in_progress-text);
+	--color-status-active-bg: var(--st-active-bg);
+	--color-status-active-text: var(--st-active-text);
+	--color-status-signal-bg: var(--st-signal-bg);
+	--color-status-signal-text: var(--st-signal-text);
+	--color-status-proposed-bg: var(--st-proposed-bg);
+	--color-status-proposed-text: var(--st-proposed-text);
+	--color-status-clustered-bg: var(--st-clustered-bg);
+	--color-status-clustered-text: var(--st-clustered-text);
+	--color-status-done-bg: var(--st-done-bg);
+	--color-status-done-text: var(--st-done-text);
+	--color-status-completed-bg: var(--st-completed-bg);
+	--color-status-completed-text: var(--st-completed-text);
+	--color-status-succeeded-bg: var(--st-succeeded-bg);
+	--color-status-succeeded-text: var(--st-succeeded-text);
+	--color-status-blocked-bg: var(--st-blocked-bg);
+	--color-status-blocked-text: var(--st-blocked-text);
+	--color-status-failed-bg: var(--st-failed-bg);
+	--color-status-failed-text: var(--st-failed-text);
+	--color-status-paused-bg: var(--st-paused-bg);
+	--color-status-paused-text: var(--st-paused-text);
+	--color-status-discarded-bg: var(--st-discarded-bg);
+	--color-status-discarded-text: var(--st-discarded-text);
+
+	/* Type badge colors */
+	--color-type-insight-bg: var(--tp-insight-bg);
+	--color-type-insight-text: var(--tp-insight-text);
+	--color-type-bet-bg: var(--tp-bet-bg);
+	--color-type-bet-text: var(--tp-bet-text);
+	--color-type-task-bg: var(--tp-task-bg);
+	--color-type-task-text: var(--tp-task-text);
+	--color-sidebar-ring: var(--sidebar-ring);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar: var(--sidebar);
+}
+
+@theme {
+	--font-sans: "Inter", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+	--radius: 0.625rem;
+	--background: oklch(1 0 0);
+	--foreground: oklch(0.145 0.005 285.823);
+	--card: oklch(1 0 0);
+	--card-foreground: oklch(0.145 0.005 285.823);
+	--popover: oklch(1 0 0);
+	--popover-foreground: oklch(0.145 0.005 285.823);
+	--primary: oklch(0.205 0.006 285.885);
+	--primary-foreground: oklch(0.985 0 0);
+	--secondary: oklch(0.965 0.001 286.375);
+	--secondary-foreground: oklch(0.205 0.006 285.885);
+	--muted: oklch(0.965 0.001 286.375);
+	--muted-foreground: oklch(0.556 0.005 286.286);
+	--accent: oklch(0.965 0.001 286.375);
+	--accent-foreground: oklch(0.205 0.006 285.885);
+	--destructive: oklch(0.577 0.245 27.325);
+	--destructive-foreground: oklch(0.577 0.245 27.325);
+	--border: oklch(0.922 0.004 286.32);
+	--input: oklch(0.922 0.004 286.32);
+	--ring: oklch(0.708 0.005 286.344);
+
+	/* Semantic */
+	--success: #16a34a;
+	--warning: #d97706;
+	--error: #dc2626;
+
+	/* Status badges */
+	--st-new-bg: #f4f4f5;
+	--st-new-text: #71717a;
+	--st-todo-bg: #f4f4f5;
+	--st-todo-text: #71717a;
+	--st-processing-bg: #fef3c7;
+	--st-processing-text: #92400e;
+	--st-in_progress-bg: #dbeafe;
+	--st-in_progress-text: #1e40af;
+	--st-active-bg: #dcfce7;
+	--st-active-text: #166534;
+	--st-signal-bg: #f3e8ff;
+	--st-signal-text: #6b21a8;
+	--st-proposed-bg: #e0e7ff;
+	--st-proposed-text: #3730a3;
+	--st-clustered-bg: #ccfbf1;
+	--st-clustered-text: #115e59;
+	--st-done-bg: #d1fae5;
+	--st-done-text: #065f46;
+	--st-completed-bg: #d1fae5;
+	--st-completed-text: #065f46;
+	--st-succeeded-bg: #d1fae5;
+	--st-succeeded-text: #065f46;
+	--st-blocked-bg: #fee2e2;
+	--st-blocked-text: #991b1b;
+	--st-failed-bg: #fee2e2;
+	--st-failed-text: #991b1b;
+	--st-paused-bg: #f4f4f5;
+	--st-paused-text: #71717a;
+	--st-discarded-bg: #f4f4f5;
+	--st-discarded-text: #a1a1aa;
+
+	/* Type badges */
+	--tp-insight-bg: #fef3c7;
+	--tp-insight-text: #92400e;
+	--tp-bet-bg: #e0e7ff;
+	--tp-bet-text: #3730a3;
+	--tp-task-bg: #f4f4f5;
+	--tp-task-text: #71717a;
+	--sidebar: oklch(0.985 0 0);
+	--sidebar-foreground: oklch(0.145 0.005 285.823);
+	--sidebar-primary: oklch(0.205 0.006 285.885);
+	--sidebar-primary-foreground: oklch(0.985 0 0);
+	--sidebar-accent: oklch(0.965 0.001 286.375);
+	--sidebar-accent-foreground: oklch(0.205 0.006 285.885);
+	--sidebar-border: oklch(0.922 0.004 286.32);
+	--sidebar-ring: oklch(0.708 0.005 286.344);
+}
+
+.dark {
+	--background: oklch(0.145 0.005 285.823);
+	--foreground: oklch(0.985 0 0);
+	--card: oklch(0.145 0.005 285.823);
+	--card-foreground: oklch(0.985 0 0);
+	--popover: oklch(0.145 0.005 285.823);
+	--popover-foreground: oklch(0.985 0 0);
+	--primary: oklch(0.985 0 0);
+	--primary-foreground: oklch(0.205 0.006 285.885);
+	--secondary: oklch(0.264 0.006 286.033);
+	--secondary-foreground: oklch(0.985 0 0);
+	--muted: oklch(0.264 0.006 286.033);
+	--muted-foreground: oklch(0.708 0.005 286.344);
+	--accent: oklch(0.264 0.006 286.033);
+	--accent-foreground: oklch(0.985 0 0);
+	--destructive: oklch(0.396 0.141 25.723);
+	--destructive-foreground: oklch(0.637 0.237 25.331);
+	--border: oklch(0.264 0.006 286.033);
+	--input: oklch(0.264 0.006 286.033);
+	--ring: oklch(0.556 0.005 286.286);
+
+	/* Semantic */
+	--success: #22c55e;
+	--warning: #f59e0b;
+	--error: #ef4444;
+
+	/* Status badges */
+	--st-new-bg: #3f3f46;
+	--st-new-text: #d4d4d8;
+	--st-todo-bg: #3f3f46;
+	--st-todo-text: #d4d4d8;
+	--st-processing-bg: #422006;
+	--st-processing-text: #fbbf24;
+	--st-in_progress-bg: #172554;
+	--st-in_progress-text: #93c5fd;
+	--st-active-bg: #052e16;
+	--st-active-text: #86efac;
+	--st-signal-bg: #3b0764;
+	--st-signal-text: #c084fc;
+	--st-proposed-bg: #1e1b4b;
+	--st-proposed-text: #a5b4fc;
+	--st-clustered-bg: #042f2e;
+	--st-clustered-text: #5eead4;
+	--st-done-bg: #022c22;
+	--st-done-text: #6ee7b7;
+	--st-completed-bg: #022c22;
+	--st-completed-text: #6ee7b7;
+	--st-succeeded-bg: #022c22;
+	--st-succeeded-text: #6ee7b7;
+	--st-blocked-bg: #450a0a;
+	--st-blocked-text: #fca5a5;
+	--st-failed-bg: #450a0a;
+	--st-failed-text: #fca5a5;
+	--st-paused-bg: #27272a;
+	--st-paused-text: #a1a1aa;
+	--st-discarded-bg: #27272a;
+	--st-discarded-text: #71717a;
+
+	/* Type badges */
+	--tp-insight-bg: #422006;
+	--tp-insight-text: #fbbf24;
+	--tp-bet-bg: #1e1b4b;
+	--tp-bet-text: #a5b4fc;
+	--tp-task-bg: #3f3f46;
+	--tp-task-text: #d4d4d8;
+	--sidebar: oklch(0.175 0.006 285.823);
+	--sidebar-foreground: oklch(0.985 0 0);
+	--sidebar-primary: oklch(0.985 0 0);
+	--sidebar-primary-foreground: oklch(0.205 0.006 285.885);
+	--sidebar-accent: oklch(0.264 0.006 286.033);
+	--sidebar-accent-foreground: oklch(0.985 0 0);
+	--sidebar-border: oklch(0.264 0.006 286.033);
+	--sidebar-ring: oklch(0.556 0.005 286.286);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	body {
+		@apply bg-background text-foreground font-sans antialiased;
+	}
+}
