@@ -257,18 +257,13 @@ function ServerCard({
 				</div>
 			) : (
 				<div className="flex items-center gap-1">
-					<Button
-						size="icon"
-						variant="ghost"
-						className="h-7 w-7 text-muted-foreground"
-						onClick={onEdit}
-					>
+					<Button size="icon" variant="ghost" className="text-muted-foreground" onClick={onEdit}>
 						<Pencil className="h-3.5 w-3.5" />
 					</Button>
 					<Button
 						size="icon"
 						variant="ghost"
-						className="h-7 w-7 text-muted-foreground hover:text-error"
+						className="text-muted-foreground hover:text-error"
 						onClick={() => setConfirmDelete(true)}
 					>
 						<Trash2 className="h-3.5 w-3.5" />
@@ -457,7 +452,6 @@ function KeyValueEditor({
 				<Button
 					size="sm"
 					variant="ghost"
-					className="h-6 text-xs"
 					onClick={() => {
 						onChange([...pairs, { id: nextId, key: '', value: '' }])
 						onNextId(nextId + 1)
@@ -488,7 +482,7 @@ function KeyValueEditor({
 					<Button
 						size="icon"
 						variant="ghost"
-						className="h-7 w-7 text-muted-foreground hover:text-error shrink-0"
+						className="text-muted-foreground hover:text-error shrink-0"
 						onClick={() => onChange(pairs.filter((p) => p.id !== pair.id))}
 					>
 						<Trash2 className="h-3 w-3" />

@@ -56,11 +56,9 @@ export function ObjectDocumentView({
 	onDelete,
 	isDeleting = false,
 }: ObjectDocumentViewProps) {
-	const [editingTitle, setEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 
 	const handleTitleBlur = useCallback(() => {
-		setEditingTitle(false)
 		if (titleDraft !== object.title) {
 			onUpdateTitle(titleDraft)
 		}
@@ -83,29 +81,15 @@ export function ObjectDocumentView({
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Title */}
-			{editingTitle ? (
-				<input
-					type="text"
-					value={titleDraft}
-					onChange={(e) => setTitleDraft(e.target.value)}
-					onBlur={handleTitleBlur}
-					onKeyDown={(e) => e.key === 'Enter' && handleTitleBlur()}
-					className="w-full text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
-					// biome-ignore lint/a11y/noAutofocus: intentional focus on edit mode activation
-					autoFocus
-				/>
-			) : (
-				<button
-					type="button"
-					className="w-full text-left text-2xl font-semibold tracking-tight text-foreground mb-2 cursor-text bg-transparent border-none outline-none p-0"
-					onClick={() => {
-						setTitleDraft(object.title ?? '')
-						setEditingTitle(true)
-					}}
-				>
-					{object.title || 'Untitled'}
-				</button>
-			)}
+			<Input
+				type="text"
+				value={titleDraft}
+				onChange={(e) => setTitleDraft(e.target.value)}
+				onBlur={handleTitleBlur}
+				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+				placeholder="Untitled"
+				className="w-full text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+			/>
 
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
@@ -228,7 +212,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				<Button
 					variant="ghost"
 					size="icon"
-					className="h-7 w-7 text-muted-foreground hover:text-error"
+					className="text-muted-foreground hover:text-error"
 					onClick={() => setConfirmDelete(true)}
 				>
 					<Trash2 className="h-4 w-4" />
