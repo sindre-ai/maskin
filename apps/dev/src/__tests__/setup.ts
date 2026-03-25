@@ -2,6 +2,7 @@ import type { Database } from '@ai-native/db'
 import type { PgNotifyBridge } from '@ai-native/realtime'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
+import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -11,6 +12,7 @@ type Env = {
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -134,6 +136,19 @@ export function createMockSessionManager(overrides?: Record<string, unknown>) {
 	} as unknown as SessionManager
 }
 
+export function createMockAgentStorage(overrides?: Record<string, unknown>) {
+	return {
+		listFileRecords: vi.fn().mockResolvedValue([]),
+		getFile: vi.fn().mockResolvedValue(Buffer.from('')),
+		uploadFile: vi.fn().mockResolvedValue('key'),
+		deleteFile: vi.fn().mockResolvedValue(undefined),
+		listFiles: vi.fn().mockResolvedValue([]),
+		pullAgentFiles: vi.fn().mockResolvedValue(undefined),
+		pushAgentFiles: vi.fn().mockResolvedValue(undefined),
+		...overrides,
+	} as unknown as AgentStorageManager
+}
+
 /**
  * Creates a test app with sessionManager injected into context.
  * Use for routes that require c.get('sessionManager').
@@ -159,4 +174,31 @@ export function createSessionTestApp(
 
 	app.route(basePath, routeModule)
 	return { app, db, mockResults, sessionManager }
+}
+
+/**
+ * Creates a test app with agentStorage injected into context.
+ * Use for routes that require c.get('agentStorage').
+ */
+export function createSkillsTestApp(
+	routeModule: OpenAPIHono<Env>,
+	basePath = '/',
+	actorId = 'test-actor-id',
+	actorType = 'human',
+) {
+	const app = new CreateOpenAPIHono<Env>()
+	const { db, mockResults } = createTestContext()
+	const agentStorage = createMockAgentStorage()
+
+	app.use('*', async (c, next) => {
+		c.set('db', db)
+		c.set('actorId', actorId)
+		c.set('actorType', actorType)
+		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('agentStorage', agentStorage)
+		await next()
+	})
+
+	app.route(basePath, routeModule)
+	return { app, db, mockResults, agentStorage }
 }

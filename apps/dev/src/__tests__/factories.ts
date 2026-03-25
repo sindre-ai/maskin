@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Database } from '@ai-native/db'
 import {
 	actors,
+	notifications,
 	objects,
 	relationships,
 	triggers,
@@ -229,6 +230,27 @@ export function buildSessionLog(overrides?: Record<string, unknown>) {
 	}
 }
 
+export function buildNotification(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		id: randomUUID(),
+		workspaceId: randomUUID(),
+		type: 'needs_input' as const,
+		title: `Notification ${n}`,
+		content: `Content for notification ${n}`,
+		metadata: null,
+		sourceActorId: randomUUID(),
+		targetActorId: null,
+		objectId: null,
+		sessionId: null,
+		status: 'pending',
+		resolvedAt: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
 export function buildIntegration(overrides?: Record<string, unknown>) {
 	const n = next()
 	return {
@@ -251,6 +273,39 @@ export function buildCreateSessionBody(overrides?: Record<string, unknown>) {
 		actor_id: randomUUID(),
 		action_prompt: 'Run tests and fix issues',
 		auto_start: true,
+		...overrides,
+	}
+}
+
+export function buildCreateNotificationBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		type: 'needs_input',
+		title: `Notification ${n}`,
+		content: `Content ${n}`,
+		source_actor_id: randomUUID(),
+		...overrides,
+	}
+}
+
+export function buildAgentSkill(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		path: `skills/my-skill-${n}/SKILL.md`,
+		sizeBytes: 256,
+		updatedAt: new Date(),
+		actorId: randomUUID(),
+		workspaceId: randomUUID(),
+		fileType: 'skills',
+		...overrides,
+	}
+}
+
+export function buildSaveSkillBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		description: `A test skill ${n}`,
+		content: `Do the thing ${n}`,
 		...overrides,
 	}
 }
@@ -308,6 +363,21 @@ export async function insertRelationship(
 ) {
 	const data = buildRelationship({ createdBy: actorId, ...overrides })
 	const rows = await db.insert(relationships).values(data).returning()
+	return rows[0]
+}
+
+export async function insertNotification(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+	overrides?: Record<string, unknown>,
+) {
+	const data = buildNotification({
+		workspaceId,
+		sourceActorId: actorId,
+		...overrides,
+	})
+	const rows = await db.insert(notifications).values(data).returning()
 	return rows[0]
 }
 
