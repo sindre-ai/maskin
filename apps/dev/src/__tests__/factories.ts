@@ -141,6 +141,7 @@ export function buildCreateActorBody(overrides?: Record<string, unknown>) {
 		type: 'human',
 		name: `Actor ${n}`,
 		email: `actor-${n}@test.com`,
+		password: 'testpassword123',
 		...overrides,
 	}
 }

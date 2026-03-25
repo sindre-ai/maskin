@@ -241,6 +241,9 @@ importers:
       '@ai-native/db':
         specifier: workspace:*
         version: link:../db
+      bcryptjs:
+        specifier: ^2.4.3
+        version: 2.4.3
       better-auth:
         specifier: ^1.2.0
         version: 1.5.5(drizzle-orm@0.38.4(@types/react@19.2.14)(kysely@0.28.14)(postgres@3.4.8)(react@19.2.4))(mongodb@7.1.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vitest@3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2))
@@ -251,6 +254,9 @@ importers:
         specifier: ^4.7.0
         version: 4.12.8
     devDependencies:
+      '@types/bcryptjs':
+        specifier: ^2.4.6
+        version: 2.4.6
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

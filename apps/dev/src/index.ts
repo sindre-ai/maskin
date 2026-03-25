@@ -15,6 +15,7 @@ import { logger as honoLogger } from 'hono/logger'
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
+import authRoutes from './routes/auth'
 import agentSkillsRoutes from './routes/agent-skills'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
@@ -104,6 +105,7 @@ app.use('/api/*', async (c, next) => {
 	const method = c.req.method
 	if (path === '/api/health' || path === '/api/openapi.json') return next()
 	if (path === '/api/actors' && method === 'POST') return next()
+	if (path === '/api/auth/login' && method === 'POST') return next()
 	if (path.startsWith('/api/webhooks/')) return next()
 	if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
@@ -115,6 +117,7 @@ app.use('/api/*', idempotencyMiddleware)
 // Mount routes
 app.route('/api/objects', objectsRoutes)
 app.route('/api/actors', actorsRoutes)
+app.route('/api/auth', authRoutes)
 app.route('/api/actors', agentSkillsRoutes)
 app.route('/api/workspaces', workspacesRoutes)
 app.route('/api/relationships', relationshipsRoutes)

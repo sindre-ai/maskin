@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback } from 'react'
-import { type CreateActorInput, api } from '../lib/api'
+import { type CreateActorInput, type LoginInput, api } from '../lib/api'
 import {
 	clearAuth,
 	getApiKey,
@@ -14,9 +14,17 @@ export function useAuth() {
 	const navigate = useNavigate()
 
 	const login = useCallback(
-		(apiKey: string) => {
-			setApiKey(apiKey)
+		async (data: LoginInput) => {
+			const result = await api.auth.login(data)
+			setApiKey(result.api_key)
+			setStoredActor({
+				id: result.id,
+				name: result.name,
+				type: result.type,
+				email: result.email,
+			})
 			navigate({ to: '/' })
+			return result
 		},
 		[navigate],
 	)
