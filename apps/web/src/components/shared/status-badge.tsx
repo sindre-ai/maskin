@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/cn'
 import { statusColors } from '@/lib/constants'
 
@@ -13,9 +14,9 @@ export function StatusBadge({
 	const colors = statusColors[status] ?? { bg: 'bg-zinc-700', text: 'text-zinc-300' }
 
 	return (
-		<span
+		<Badge
+			variant="outline"
 			className={cn(
-				'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
 				colors.bg,
 				colors.text,
 				onClick && 'cursor-pointer hover:opacity-80',
@@ -33,6 +34,6 @@ export function StatusBadge({
 			tabIndex={onClick ? 0 : undefined}
 		>
 			{status.replace(/_/g, ' ')}
-		</span>
+		</Badge>
 	)
 }
