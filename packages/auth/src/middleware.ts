@@ -39,7 +39,9 @@ export function authMiddleware(db: Database) {
 			c.set('actorId', result.actorId)
 			c.set('actorType', result.type)
 
-			// Verify workspace membership when X-Workspace-Id header is present
+			// Verify workspace membership when X-Workspace-Id header is present.
+			// By-ID routes also check membership via isWorkspaceMember() in workspace-auth.ts
+			// since they derive the workspace from the resource, not the header.
 			const workspaceId = c.req.header('X-Workspace-Id')
 			if (workspaceId) {
 				const [member] = await db
