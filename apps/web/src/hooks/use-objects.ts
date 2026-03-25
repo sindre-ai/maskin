@@ -38,7 +38,7 @@ export function useCreateObject(workspaceId: string) {
 				title: data.title ?? null,
 				content: data.content ?? null,
 				status: data.status,
-				metadata: (data.metadata as Record<string, unknown>) ?? null,
+				metadata: data.metadata ?? null,
 				owner: data.owner ?? null,
 				activeSessionId: null,
 				createdBy: '',

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { safeMetadataSchema } from './primitives'
 
 export const objectTypeSchema = z.enum(['insight', 'bet', 'task'])
 export type ObjectType = z.infer<typeof objectTypeSchema>
@@ -8,7 +9,7 @@ export const createObjectSchema = z.object({
 	title: z.string().optional(),
 	content: z.string().optional(),
 	status: z.string(),
-	metadata: z.record(z.unknown()).optional(),
+	metadata: safeMetadataSchema.optional(),
 	owner: z.string().uuid().optional(),
 })
 
@@ -16,7 +17,7 @@ export const updateObjectSchema = z.object({
 	title: z.string().optional(),
 	content: z.string().optional(),
 	status: z.string().optional(),
-	metadata: z.record(z.unknown()).optional(),
+	metadata: safeMetadataSchema.optional(),
 	owner: z.string().uuid().nullable().optional(),
 })
 

@@ -1,3 +1,4 @@
+export * from './primitives'
 export * from './objects'
 export * from './actors'
 export * from './workspaces'
