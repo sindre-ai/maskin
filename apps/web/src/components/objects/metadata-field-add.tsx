@@ -1,4 +1,11 @@
 import type { SafeJsonValue } from '@ai-native/shared'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -218,29 +225,30 @@ function FieldInput({
 	switch (field.type) {
 		case 'enum':
 			return (
-				<select
-					value={value}
-					onChange={(e) => onChange(e.target.value)}
-					className={`${baseClass} w-24`}
-				>
-					<option value="">Select...</option>
-					{(field.values ?? []).map((v) => (
-						<option key={v} value={v}>
-							{v}
-						</option>
-					))}
-				</select>
+				<Select value={value} onValueChange={onChange}>
+					<SelectTrigger>
+						<SelectValue placeholder="Select..." />
+					</SelectTrigger>
+					<SelectContent>
+						{(field.values ?? []).map((v) => (
+							<SelectItem key={v} value={v}>
+								{v}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			)
 		case 'boolean':
 			return (
-				<select
-					value={value}
-					onChange={(e) => onChange(e.target.value)}
-					className={`${baseClass} w-16`}
-				>
-					<option value="true">Yes</option>
-					<option value="false">No</option>
-				</select>
+				<Select value={value} onValueChange={onChange}>
+					<SelectTrigger>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="true">Yes</SelectItem>
+						<SelectItem value="false">No</SelectItem>
+					</SelectContent>
+				</Select>
 			)
 		case 'number':
 			return (

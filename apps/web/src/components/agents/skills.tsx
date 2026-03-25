@@ -283,7 +283,7 @@ function SkillForm({
 						<div className="flex-1">
 							<Label className="text-xs text-muted-foreground">Context</Label>
 							<Select value={context} onValueChange={(v) => setContext(v as 'none' | 'fork')}>
-								<SelectTrigger className="h-8 text-sm">
+								<SelectTrigger>
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>

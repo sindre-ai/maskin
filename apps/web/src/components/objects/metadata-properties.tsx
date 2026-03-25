@@ -1,6 +1,13 @@
 import type { SafeJsonValue, SafeMetadata } from '@ai-native/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { useUpdateObject } from '@/hooks/use-objects'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
@@ -293,20 +300,25 @@ function PropertyEditor({
 	switch (type) {
 		case 'boolean':
 			return (
-				<select
+				<Select
+					defaultOpen
 					value={draft}
-					onChange={(e) => {
-						setDraft(e.target.value)
-						onSave(e.target.value === 'true')
+					onValueChange={(v) => {
+						setDraft(v)
+						onSave(v === 'true')
 					}}
-					className="h-6 w-16 rounded border border-input bg-background px-2 py-0.5 text-xs outline-none"
-					// biome-ignore lint/a11y/noAutofocus: inline editor requires immediate focus
-					autoFocus
-					onBlur={onCancel}
+					onOpenChange={(open) => {
+						if (!open) onCancel()
+					}}
 				>
-					<option value="true">Yes</option>
-					<option value="false">No</option>
-				</select>
+					<SelectTrigger>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="true">Yes</SelectItem>
+						<SelectItem value="false">No</SelectItem>
+					</SelectContent>
+				</Select>
 			)
 		case 'date':
 			return (
@@ -324,24 +336,28 @@ function PropertyEditor({
 			)
 		case 'enum':
 			return (
-				<select
+				<Select
+					defaultOpen
 					value={draft}
-					onChange={(e) => {
-						setDraft(e.target.value)
-						onSave(e.target.value)
+					onValueChange={(v) => {
+						setDraft(v)
+						onSave(v)
 					}}
-					className="h-6 w-28 rounded border border-input bg-background px-2 py-0.5 text-xs outline-none"
-					// biome-ignore lint/a11y/noAutofocus: inline editor requires immediate focus
-					autoFocus
-					onBlur={onCancel}
+					onOpenChange={(open) => {
+						if (!open) onCancel()
+					}}
 				>
-					<option value="">Select...</option>
-					{(fieldDef?.values ?? []).map((v) => (
-						<option key={v} value={v}>
-							{v}
-						</option>
-					))}
-				</select>
+					<SelectTrigger>
+						<SelectValue placeholder="Select..." />
+					</SelectTrigger>
+					<SelectContent>
+						{(fieldDef?.values ?? []).map((v) => (
+							<SelectItem key={v} value={v}>
+								{v}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			)
 		case 'number':
 			return (

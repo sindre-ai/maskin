@@ -1,3 +1,10 @@
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { useObjects } from '@/hooks/use-objects'
 import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relationships'
 import type { CreateRelationshipInput, ObjectResponse, RelationshipResponse } from '@/lib/api'
@@ -389,18 +396,18 @@ function AddLinkForm({
 				<label className="text-xs text-muted-foreground" htmlFor="rel-type-select">
 					Type:
 				</label>
-				<select
-					id="rel-type-select"
-					value={relType}
-					onChange={(e) => setRelType(e.target.value)}
-					className="rounded border border-border bg-background px-2 py-0.5 text-xs text-foreground focus:border-ring outline-none"
-				>
-					{relationshipTypes.map((t) => (
-						<option key={t} value={t}>
-							{t.replace(/_/g, ' ')}
-						</option>
-					))}
-				</select>
+				<Select value={relType} onValueChange={setRelType}>
+					<SelectTrigger>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{relationshipTypes.map((t) => (
+							<SelectItem key={t} value={t}>
+								{t.replace(/_/g, ' ')}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			</div>
 			<input
 				type="text"
