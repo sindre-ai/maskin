@@ -156,7 +156,7 @@ export function CreateAgentDialogView({
 						</DialogHeader>
 						<form onSubmit={handleSubmit} className="space-y-3">
 							<div>
-								<Label className="mb-1 text-muted-foreground">Name</Label>
+								<Label>Name</Label>
 								<Input
 									type="text"
 									value={name}
@@ -167,7 +167,7 @@ export function CreateAgentDialogView({
 								<FormError error={fieldErrors.name} />
 							</div>
 							<div>
-								<Label className="mb-1 text-muted-foreground">System Prompt</Label>
+								<Label>System Prompt</Label>
 								<Textarea
 									value={systemPrompt}
 									onChange={(e) => setSystemPrompt(e.target.value)}
@@ -177,7 +177,7 @@ export function CreateAgentDialogView({
 							</div>
 							<div className="flex gap-2">
 								<div className="flex-1">
-									<Label className="mb-1 text-muted-foreground">LLM Provider</Label>
+									<Label>LLM Provider</Label>
 									<Select value={llmProvider} onValueChange={handleProviderChange}>
 										<SelectTrigger>
 											<SelectValue />
@@ -191,7 +191,7 @@ export function CreateAgentDialogView({
 									<FormError error={fieldErrors.llm_provider} />
 								</div>
 								<div className="flex-1">
-									<Label className="mb-1 text-muted-foreground">Model</Label>
+									<Label>Model</Label>
 									<Select value={modelName} onValueChange={setModelName}>
 										<SelectTrigger>
 											<SelectValue placeholder="Select model" />

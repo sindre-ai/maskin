@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import {
 	Select,
 	SelectContent,
@@ -384,9 +385,7 @@ function AddLinkForm({
 	return (
 		<div className="rounded border border-border bg-card p-3 space-y-2">
 			<div className="flex items-center gap-2">
-				<label className="text-xs text-muted-foreground" htmlFor="rel-type-select">
-					Type:
-				</label>
+				<Label htmlFor="rel-type-select">Type:</Label>
 				<Select value={relType} onValueChange={setRelType}>
 					<SelectTrigger id="rel-type-select">
 						<SelectValue />

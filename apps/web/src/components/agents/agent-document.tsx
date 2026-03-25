@@ -153,7 +153,7 @@ export function AgentDocumentView({
 			<Section title="LLM Configuration">
 				<div className="flex gap-3">
 					<div className="flex-1">
-						<Label className="mb-1 text-muted-foreground text-xs">Provider</Label>
+						<Label>Provider</Label>
 						<Select value={agent.llmProvider ?? 'anthropic'} onValueChange={onUpdateLlmProvider}>
 							<SelectTrigger>
 								<SelectValue />
@@ -165,7 +165,7 @@ export function AgentDocumentView({
 						</Select>
 					</div>
 					<div className="flex-1">
-						<Label className="mb-1 text-muted-foreground text-xs">Model</Label>
+						<Label>Model</Label>
 						<Input
 							type="text"
 							value={modelDraft}
