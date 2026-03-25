@@ -269,7 +269,7 @@ function StatusSelect({
 }) {
 	return (
 		<Select value={current} onValueChange={onChange}>
-			<SelectTrigger className="h-6 w-auto gap-1 border-none bg-transparent px-2 text-xs">
+			<SelectTrigger>
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>

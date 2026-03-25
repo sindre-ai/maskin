@@ -3,6 +3,13 @@ import { ObjectForm } from '@/components/objects/object-form'
 import { ObjectList } from '@/components/objects/object-list'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { useActors } from '@/hooks/use-actors'
 import { useObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
@@ -96,30 +103,38 @@ function ObjectsPage() {
 						</button>
 					))}
 				</div>
-				<select
-					value={statusFilter ?? ''}
-					onChange={(e) => setStatusFilter(e.target.value || undefined)}
-					className="rounded border border-border bg-card px-2 py-1 text-sm text-muted-foreground focus:border-ring outline-none"
+				<Select
+					value={statusFilter ?? '__all__'}
+					onValueChange={(v) => setStatusFilter(v === '__all__' ? undefined : v)}
 				>
-					<option value="">Any status</option>
-					{allStatuses.map((s) => (
-						<option key={s} value={s}>
-							{s.replace(/_/g, ' ')}
-						</option>
-					))}
-				</select>
-				<select
-					value={ownerFilter ?? ''}
-					onChange={(e) => setOwnerFilter(e.target.value || undefined)}
-					className="rounded border border-border bg-card px-2 py-1 text-sm text-muted-foreground focus:border-ring outline-none"
+					<SelectTrigger>
+						<SelectValue placeholder="Any status" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="__all__">Any status</SelectItem>
+						{allStatuses.map((s) => (
+							<SelectItem key={s} value={s}>
+								{s.replace(/_/g, ' ')}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+				<Select
+					value={ownerFilter ?? '__all__'}
+					onValueChange={(v) => setOwnerFilter(v === '__all__' ? undefined : v)}
 				>
-					<option value="">Any owner</option>
-					{(actors ?? []).map((a) => (
-						<option key={a.id} value={a.id}>
-							{a.name}
-						</option>
-					))}
-				</select>
+					<SelectTrigger>
+						<SelectValue placeholder="Any owner" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="__all__">Any owner</SelectItem>
+						{(actors ?? []).map((a) => (
+							<SelectItem key={a.id} value={a.id}>
+								{a.name}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 				<input
 					type="text"
 					value={search}

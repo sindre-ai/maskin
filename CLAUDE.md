@@ -26,7 +26,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `pnpm dev` — start Docker (postgres + seaweedfs), run migrations, then start all services via Turborepo
 - `pnpm dev:win` — same as above but for cmd/PowerShell on Windows (uses Node script instead of bash)
 - `pnpm build` — build all packages
-- `pnpm build -- --filter=@ai-native/mcp` with `build:mcp` task — build MCP package separately
+- `pnpm --filter=@ai-native/mcp build` — build a specific package (filter goes BEFORE `build`)
+- `pnpm --filter=@ai-native/web build` — build web app only
 - `pnpm test` — run all tests (Vitest)
 - `pnpm test -- --filter=@ai-native/dev` — run tests for a specific package
 - `cd apps/dev && pnpm vitest run src/__tests__/auth.test.ts` — run a single test file

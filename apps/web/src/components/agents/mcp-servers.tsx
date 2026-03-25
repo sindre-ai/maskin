@@ -355,7 +355,7 @@ function ServerForm({
 				<div className="w-28">
 					<Label className="text-xs text-muted-foreground">Transport</Label>
 					<Select value={transport} onValueChange={(v) => setTransport(v as 'stdio' | 'http')}>
-						<SelectTrigger className="h-8 text-sm">
+						<SelectTrigger>
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
