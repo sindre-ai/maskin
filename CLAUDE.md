@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
 - Backend (`apps/dev`): Hono.js + OpenAPIHono + Drizzle ORM + PostgreSQL, runs on port 3000
 - Frontend (`apps/web`): Vite + React 19 + TanStack Router + TanStack Query + Tailwind CSS 4, runs on port 5173, proxies `/api` to backend
-- Auth: API keys (SHA-256 hashed), `ank_` prefix. Bearer token in Authorization header
+- Auth: API keys (plain text, `ank_` prefix). Bearer token in Authorization header
 - Real-time: PG NOTIFY → SSE bridge (packages/realtime) — events table has a DB trigger that fires NOTIFY on insert
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
