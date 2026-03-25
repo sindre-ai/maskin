@@ -99,6 +99,26 @@ describe('Graph Routes', () => {
 			expect(body.error.message).toContain('not a valid $id or UUID')
 		})
 
+		it('returns generic 500 on transaction failure (does not leak internal details)', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(graphRoutes, '/api/graph')
+			mockResults.selectQueue = [[ws]]
+			// Make insert throw to simulate transaction failure
+			mockResults.insert = []
+			mockResults.insertQueue = [[]] // empty returning → throws "Failed to create node"
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/graph', buildCreateGraphBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.message).toBe('Failed to create graph')
+			expect(body.error.code).toBe('INTERNAL_ERROR')
+		})
+
 		it('returns 400 for invalid status against workspace settings', async () => {
 			const ws = buildWorkspace({ id: wsId })
 			const { app, mockResults } = createTestApp(graphRoutes, '/api/graph')

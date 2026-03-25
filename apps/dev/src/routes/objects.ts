@@ -18,6 +18,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -311,11 +312,12 @@ const getObjectRoute = createRoute({
 
 app.openapi(getObjectRoute, async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
 	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!object) {
+	if (!object || !(await isWorkspaceMember(db, actorId, object.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
@@ -363,7 +365,7 @@ app.openapi(updateObjectRoute, async (c) => {
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing) {
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
@@ -454,7 +456,7 @@ app.openapi(deleteObjectRoute, async (c) => {
 
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing) {
+	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 

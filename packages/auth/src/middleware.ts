@@ -1,5 +1,7 @@
 import type { Database } from '@ai-native/db'
+import { workspaceMembers } from '@ai-native/db/schema'
 import { createApiError } from '@ai-native/shared'
+import { and, eq } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
 
@@ -36,6 +38,27 @@ export function authMiddleware(db: Database) {
 			}
 			c.set('actorId', result.actorId)
 			c.set('actorType', result.type)
+
+			// Verify workspace membership when X-Workspace-Id header is present.
+			// By-ID routes also check membership via isWorkspaceMember() in workspace-auth.ts
+			// since they derive the workspace from the resource, not the header.
+			const workspaceId = c.req.header('X-Workspace-Id')
+			if (workspaceId) {
+				const [member] = await db
+					.select({ actorId: workspaceMembers.actorId })
+					.from(workspaceMembers)
+					.where(
+						and(
+							eq(workspaceMembers.actorId, result.actorId),
+							eq(workspaceMembers.workspaceId, workspaceId),
+						),
+					)
+					.limit(1)
+				if (!member) {
+					return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+				}
+			}
+
 			return next()
 		}
 
