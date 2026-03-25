@@ -13,7 +13,11 @@ function createErrorTestApp() {
 		defaultHook: (result, c) => {
 			if (!result.success) {
 				return c.json(
-					createApiError('VALIDATION_ERROR', 'Request validation failed', formatZodError(result.error)),
+					createApiError(
+						'VALIDATION_ERROR',
+						'Request validation failed',
+						formatZodError(result.error),
+					),
 					400,
 				)
 			}
@@ -192,9 +196,7 @@ describe('Error Handling', () => {
 
 	describe('apiErrorSchema', () => {
 		it('validates a minimal error response', () => {
-			const result = apiErrorSchema.safeParse(
-				createApiError('BAD_REQUEST', 'Something went wrong'),
-			)
+			const result = apiErrorSchema.safeParse(createApiError('BAD_REQUEST', 'Something went wrong'))
 			expect(result.success).toBe(true)
 		})
 

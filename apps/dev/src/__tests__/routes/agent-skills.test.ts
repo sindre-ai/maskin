@@ -31,9 +31,7 @@ describe('Agent Skills Routes', () => {
 				Buffer.from(validSkillMd),
 			)
 
-			const res = await app.request(
-				jsonGet(`/api/actors/${actorId}/skills`, headers),
-			)
+			const res = await app.request(jsonGet(`/api/actors/${actorId}/skills`, headers))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
@@ -44,9 +42,7 @@ describe('Agent Skills Routes', () => {
 		it('returns 403 when not a workspace member', async () => {
 			const { app } = createSkillsTestApp(agentSkillsRoutes, '/api/actors')
 
-			const res = await app.request(
-				jsonGet(`/api/actors/${actorId}/skills`, headers),
-			)
+			const res = await app.request(jsonGet(`/api/actors/${actorId}/skills`, headers))
 
 			expect(res.status).toBe(403)
 		})
@@ -63,9 +59,7 @@ describe('Agent Skills Routes', () => {
 				Buffer.from(validSkillMd),
 			)
 
-			const res = await app.request(
-				jsonGet(`/api/actors/${actorId}/skills/my-skill`, headers),
-			)
+			const res = await app.request(jsonGet(`/api/actors/${actorId}/skills/my-skill`, headers))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
@@ -76,9 +70,7 @@ describe('Agent Skills Routes', () => {
 		it('returns 403 when not a workspace member', async () => {
 			const { app } = createSkillsTestApp(agentSkillsRoutes, '/api/actors')
 
-			const res = await app.request(
-				jsonGet(`/api/actors/${actorId}/skills/my-skill`, headers),
-			)
+			const res = await app.request(jsonGet(`/api/actors/${actorId}/skills/my-skill`, headers))
 
 			expect(res.status).toBe(403)
 		})
@@ -89,13 +81,9 @@ describe('Agent Skills Routes', () => {
 				'/api/actors',
 			)
 			mockResults.select = [buildWorkspaceMember()]
-			;(agentStorage.getFile as ReturnType<typeof vi.fn>).mockRejectedValue(
-				new Error('Not found'),
-			)
+			;(agentStorage.getFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Not found'))
 
-			const res = await app.request(
-				jsonGet(`/api/actors/${actorId}/skills/nonexistent`, headers),
-			)
+			const res = await app.request(jsonGet(`/api/actors/${actorId}/skills/nonexistent`, headers))
 
 			expect(res.status).toBe(404)
 		})
@@ -110,12 +98,7 @@ describe('Agent Skills Routes', () => {
 			mockResults.select = [buildWorkspaceMember()]
 
 			const res = await app.request(
-				jsonRequest(
-					'PUT',
-					`/api/actors/${actorId}/skills/my-skill`,
-					buildSaveSkillBody(),
-					headers,
-				),
+				jsonRequest('PUT', `/api/actors/${actorId}/skills/my-skill`, buildSaveSkillBody(), headers),
 			)
 
 			expect(res.status).toBe(200)
@@ -125,10 +108,7 @@ describe('Agent Skills Routes', () => {
 		})
 
 		it('returns 400 for invalid skill name', async () => {
-			const { app, mockResults } = createSkillsTestApp(
-				agentSkillsRoutes,
-				'/api/actors',
-			)
+			const { app, mockResults } = createSkillsTestApp(agentSkillsRoutes, '/api/actors')
 			mockResults.select = [buildWorkspaceMember()]
 
 			const res = await app.request(
@@ -149,12 +129,7 @@ describe('Agent Skills Routes', () => {
 			const { app } = createSkillsTestApp(agentSkillsRoutes, '/api/actors')
 
 			const res = await app.request(
-				jsonRequest(
-					'PUT',
-					`/api/actors/${actorId}/skills/my-skill`,
-					buildSaveSkillBody(),
-					headers,
-				),
+				jsonRequest('PUT', `/api/actors/${actorId}/skills/my-skill`, buildSaveSkillBody(), headers),
 			)
 
 			expect(res.status).toBe(403)
@@ -170,12 +145,7 @@ describe('Agent Skills Routes', () => {
 			mockResults.select = [buildWorkspaceMember()]
 
 			const res = await app.request(
-				jsonRequest(
-					'DELETE',
-					`/api/actors/${actorId}/skills/my-skill`,
-					undefined,
-					headers,
-				),
+				jsonRequest('DELETE', `/api/actors/${actorId}/skills/my-skill`, undefined, headers),
 			)
 
 			expect(res.status).toBe(200)
@@ -188,12 +158,7 @@ describe('Agent Skills Routes', () => {
 			const { app } = createSkillsTestApp(agentSkillsRoutes, '/api/actors')
 
 			const res = await app.request(
-				jsonRequest(
-					'DELETE',
-					`/api/actors/${actorId}/skills/my-skill`,
-					undefined,
-					headers,
-				),
+				jsonRequest('DELETE', `/api/actors/${actorId}/skills/my-skill`, undefined, headers),
 			)
 
 			expect(res.status).toBe(403)

@@ -52,12 +52,7 @@ describe('Notifications Integration', () => {
 
 			// Update
 			const updateRes = await app.request(
-				jsonRequest(
-					'PATCH',
-					`/api/notifications/${created.id}`,
-					{ status: 'seen' },
-					headers,
-				),
+				jsonRequest('PATCH', `/api/notifications/${created.id}`, { status: 'seen' }, headers),
 			)
 			expect(updateRes.status).toBe(200)
 			const updated = await updateRes.json()
@@ -94,9 +89,7 @@ describe('Notifications Integration', () => {
 			expect(deleteRes.status).toBe(200)
 
 			// Verify deleted
-			const getDeletedRes = await app.request(
-				jsonGet(`/api/notifications/${created.id}`),
-			)
+			const getDeletedRes = await app.request(jsonGet(`/api/notifications/${created.id}`))
 			expect(getDeletedRes.status).toBe(404)
 		})
 	})
@@ -118,10 +111,7 @@ describe('Notifications Integration', () => {
 			const created = await createRes.json()
 
 			// Check events were created
-			const auditEvents = await db
-				.select()
-				.from(events)
-				.where(eq(events.entityId, created.id))
+			const auditEvents = await db.select().from(events).where(eq(events.entityId, created.id))
 
 			expect(auditEvents.length).toBeGreaterThanOrEqual(1)
 			expect(auditEvents.some((e) => e.action === 'created')).toBe(true)

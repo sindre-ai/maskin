@@ -9,13 +9,7 @@ await build({
 	outfile: 'dist/index.js',
 	sourcemap: true,
 	// Only externalize packages with native bindings that can't be bundled
-	external: [
-		'dockerode',
-		'postgres',
-		'bcryptjs',
-		'cpu-features',
-		'ssh2',
-	],
+	external: ['dockerode', 'postgres', 'bcryptjs', 'cpu-features', 'ssh2'],
 	banner: {
 		js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
 	},

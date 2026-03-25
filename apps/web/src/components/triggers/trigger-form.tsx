@@ -1,4 +1,3 @@
-import type { SafeJsonValue } from '@ai-native/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -9,9 +8,10 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useAutoSave } from '@/hooks/use-auto-save'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
-import { useAutoSave } from '@/hooks/use-auto-save'
+import type { SafeJsonValue } from '@ai-native/shared'
 import { Check, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -240,14 +240,14 @@ export function TriggerForm({
 	)
 	const [conditions, setConditions] = useState<ConditionRow[]>(() => {
 		if (initialValues?.type === 'event' && Array.isArray(initConfig.conditions)) {
-			return (initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[]).map(
-				(c) => ({
-					id: crypto.randomUUID(),
-					field: c.field,
-					operator: c.operator as ConditionOperator,
-					value: (c.value ?? '') as SafeJsonValue,
-				}),
-			)
+			return (
+				initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[]
+			).map((c) => ({
+				id: crypto.randomUUID(),
+				field: c.field,
+				operator: c.operator as ConditionOperator,
+				value: (c.value ?? '') as SafeJsonValue,
+			}))
 		}
 		return []
 	})
@@ -548,9 +548,7 @@ export function TriggerForm({
 						enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
 					}`}
 				>
-					<span
-						className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`}
-					/>
+					<span className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`} />
 					{enabled ? 'Enabled' : 'Disabled'}
 				</span>
 				<Button

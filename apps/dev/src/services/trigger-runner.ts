@@ -248,7 +248,10 @@ export interface ObjectData {
 	metadata?: Record<string, unknown>
 }
 
-export function getObjectFromEvent(event: PgEvent): { current?: ObjectData; previous?: ObjectData } {
+export function getObjectFromEvent(event: PgEvent): {
+	current?: ObjectData
+	previous?: ObjectData
+} {
 	const data = event.data as Record<string, unknown> | undefined
 	if (!data) return {}
 

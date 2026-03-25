@@ -1,7 +1,7 @@
-import type { SafeJsonValue } from '@ai-native/shared'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import type { SafeJsonValue } from '@ai-native/shared'
 import { useState } from 'react'
 
 interface FieldDefinition {

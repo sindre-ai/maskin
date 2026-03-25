@@ -119,20 +119,14 @@ function PropertyDetailPage() {
 		<>
 			<PageHeader />
 			<div className="max-w-3xl mx-auto">
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground mb-2">
-					{field.name}
-				</h1>
+				<h1 className="text-2xl font-semibold tracking-tight text-foreground mb-2">{field.name}</h1>
 				<p className="text-xs text-muted-foreground mb-6">
 					Applies to <span className="capitalize">{objectType}s</span>
 				</p>
 
 				{/* Name */}
 				<Section title="Name">
-					<Input
-						type="text"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-					/>
+					<Input type="text" value={name} onChange={(e) => setName(e.target.value)} />
 				</Section>
 
 				{/* Type */}

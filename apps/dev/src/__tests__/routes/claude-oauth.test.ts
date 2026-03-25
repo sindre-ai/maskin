@@ -13,10 +13,7 @@ vi.mock('../../lib/claude-oauth', () => ({
 	CLAUDE_OAUTH_CLIENT_ID: 'test-client-id',
 }))
 
-import {
-	exchangeCodeForTokens,
-	getValidOAuthToken,
-} from '../../lib/claude-oauth'
+import { exchangeCodeForTokens, getValidOAuthToken } from '../../lib/claude-oauth'
 import { buildWorkspace, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -95,14 +92,9 @@ describe('Claude OAuth Routes', () => {
 				settings: { claude_oauth: { encrypted: true } },
 			})
 			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-			mockResults.selectQueue = [
-				[buildWorkspaceMember()],
-				[workspace],
-			]
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
 
-			const res = await app.request(
-				jsonRequest('DELETE', '/api/claude-oauth', undefined, headers),
-			)
+			const res = await app.request(jsonRequest('DELETE', '/api/claude-oauth', undefined, headers))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
@@ -112,9 +104,7 @@ describe('Claude OAuth Routes', () => {
 		it('returns 403 when not a workspace member', async () => {
 			const { app } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
 
-			const res = await app.request(
-				jsonRequest('DELETE', '/api/claude-oauth', undefined, headers),
-			)
+			const res = await app.request(jsonRequest('DELETE', '/api/claude-oauth', undefined, headers))
 
 			expect(res.status).toBe(403)
 		})
@@ -127,10 +117,7 @@ describe('Claude OAuth Routes', () => {
 				settings: { claude_oauth: { encrypted: true, subscriptionType: 'pro', expiresAt: 99999 } },
 			})
 			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-			mockResults.selectQueue = [
-				[buildWorkspaceMember()],
-				[workspace],
-			]
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
 			mockGetValid.mockResolvedValue({
 				tokens: { subscriptionType: 'pro', expiresAt: 99999 },
 			})
@@ -146,10 +133,7 @@ describe('Claude OAuth Routes', () => {
 		it('returns not connected when no oauth data', async () => {
 			const workspace = buildWorkspace({ id: wsId, settings: {} })
 			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-			mockResults.selectQueue = [
-				[buildWorkspaceMember()],
-				[workspace],
-			]
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
 
 			const res = await app.request(jsonGet('/api/claude-oauth/status', headers))
 
@@ -178,10 +162,7 @@ describe('Claude OAuth Routes', () => {
 		it('returns 200 when tokens imported', async () => {
 			const workspace = buildWorkspace({ id: wsId })
 			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-			mockResults.selectQueue = [
-				[buildWorkspaceMember()],
-				[workspace],
-			]
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/claude-oauth/import', importBody, headers),

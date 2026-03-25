@@ -155,12 +155,9 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 			{activeTab === 'claude-ai' ? (
 				<div className="space-y-3">
 					<div>
-						<Label className="mb-1 text-xs text-muted-foreground">
-							Custom connector URL
-						</Label>
+						<Label className="mb-1 text-xs text-muted-foreground">Custom connector URL</Label>
 						<p className="text-xs text-muted-foreground mb-2">
-							Go to Profile → Settings → Connectors → Add custom connector, then
-							paste this URL.
+							Go to Profile → Settings → Connectors → Add custom connector, then paste this URL.
 						</p>
 						<div className="relative">
 							<pre className="rounded-md border border-border bg-muted p-3 pr-12 font-mono text-xs overflow-x-auto whitespace-pre break-all">
@@ -182,23 +179,17 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 						</div>
 					</div>
 					<div>
-						<Label className="mb-1 text-xs text-muted-foreground">
-							Required Headers
-						</Label>
+						<Label className="mb-1 text-xs text-muted-foreground">Required Headers</Label>
 						<div className="rounded-md border border-border bg-muted p-3 font-mono text-xs space-y-1">
 							<div>
-								<span className="text-muted-foreground">Authorization:</span>{' '}
-								Bearer {apiKey}
+								<span className="text-muted-foreground">Authorization:</span> Bearer {apiKey}
 							</div>
 							<div>
-								<span className="text-muted-foreground">X-Workspace-Id:</span>{' '}
-								{workspaceId}
+								<span className="text-muted-foreground">X-Workspace-Id:</span> {workspaceId}
 							</div>
 						</div>
 					</div>
-					<p className="text-xs text-muted-foreground">
-						Transport: Streamable HTTP (POST)
-					</p>
+					<p className="text-xs text-muted-foreground">Transport: Streamable HTTP (POST)</p>
 				</div>
 			) : (
 				<div className="space-y-3">
@@ -225,11 +216,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 							<pre className="rounded-md border border-border bg-muted p-3 pr-12 font-mono text-xs overflow-x-auto whitespace-pre">
 								{configJson}
 							</pre>
-							<CopyButton
-								text={configJson ?? ''}
-								label
-								className="absolute top-2 right-2"
-							/>
+							<CopyButton text={configJson ?? ''} label className="absolute top-2 right-2" />
 						</div>
 					</div>
 				</div>
