@@ -88,7 +88,7 @@ export function ObjectDocumentView({
 				onBlur={handleTitleBlur}
 				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Untitled"
-				className="w-full text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+				className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 			/>
 
 			{/* Metadata badges row */}
