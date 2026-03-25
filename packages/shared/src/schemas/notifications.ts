@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { safeJsonValue, safeMetadataSchema } from './primitives'
 
 export const notificationTypeSchema = z.enum([
 	'needs_input',
@@ -13,7 +14,7 @@ export const createNotificationSchema = z.object({
 	type: notificationTypeSchema,
 	title: z.string().min(1),
 	content: z.string().optional(),
-	metadata: z.record(z.unknown()).optional(),
+	metadata: safeMetadataSchema.optional(),
 	source_actor_id: z.string().uuid(),
 	target_actor_id: z.string().uuid().optional(),
 	object_id: z.string().uuid().optional(),
@@ -22,11 +23,11 @@ export const createNotificationSchema = z.object({
 
 export const updateNotificationSchema = z.object({
 	status: notificationStatusSchema.optional(),
-	metadata: z.record(z.unknown()).optional(),
+	metadata: safeMetadataSchema.optional(),
 })
 
 export const respondNotificationSchema = z.object({
-	response: z.unknown(),
+	response: safeJsonValue,
 })
 
 export const notificationQuerySchema = z.object({

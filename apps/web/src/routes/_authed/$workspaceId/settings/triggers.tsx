@@ -1,3 +1,4 @@
+import type { SafeJsonValue } from '@ai-native/shared'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -157,7 +158,7 @@ interface ConditionRow {
 	id: string
 	field: string
 	operator: ConditionOperator
-	value: unknown
+	value: SafeJsonValue
 }
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
@@ -614,8 +615,8 @@ function ConditionValueInput({
 }: {
 	fieldDef?: FieldDefinition
 	operator: string
-	value: unknown
-	onChange: (value: unknown) => void
+	value: SafeJsonValue
+	onChange: (value: SafeJsonValue) => void
 }) {
 	const fieldType = fieldDef?.type ?? 'text'
 

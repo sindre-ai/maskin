@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { objectTypeSchema } from './objects'
+import { safeMetadataSchema } from './primitives'
 
 export const graphNodeSchema = z.object({
 	$id: z.string().describe('Client-side temporary ID for cross-referencing in edges'),
@@ -7,7 +8,7 @@ export const graphNodeSchema = z.object({
 	title: z.string().optional(),
 	content: z.string().optional(),
 	status: z.string(),
-	metadata: z.record(z.unknown()).optional(),
+	metadata: safeMetadataSchema.optional(),
 	owner: z.string().uuid().optional(),
 })
 

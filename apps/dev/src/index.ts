@@ -75,7 +75,7 @@ await storageProvider.ensureBucket()
 
 // Ensure agent-base Docker image exists
 const containers = new ContainerManager()
-await containers.ensureImage('agent-base:latest', '/app/docker/agent-base')
+await containers.ensureImage('agent-base:latest', path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'))
 
 // Agent storage manager for file operations (skills, learnings, memory)
 const agentStorage = new AgentStorageManager(storageProvider, db)
@@ -134,7 +134,7 @@ app.post('/mcp', async (c) => {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey:
 			c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? '',
-		workspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
+		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({

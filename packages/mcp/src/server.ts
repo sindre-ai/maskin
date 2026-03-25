@@ -13,7 +13,7 @@ import { tools } from './tools.js'
 interface McpConfig {
 	apiBaseUrl: string
 	apiKey: string
-	workspaceId: string
+	defaultWorkspaceId: string
 	/** Path to the directory containing built MCP app HTML files */
 	htmlBasePath?: string
 }
@@ -41,16 +41,17 @@ async function apiCall(
 	method: string,
 	path: string,
 	body?: unknown,
-	options?: { skipAuth?: boolean },
+	options?: { skipAuth?: boolean; skipWorkspace?: boolean; workspaceId?: string },
 ): Promise<unknown> {
 	if (!options?.skipAuth && !config.apiKey) {
 		throw new Error(
 			'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
 		)
 	}
-	if (!options?.skipAuth && !config.workspaceId) {
+	const effectiveWorkspaceId = options?.workspaceId ?? config.defaultWorkspaceId
+	if (!options?.skipAuth && !options?.skipWorkspace && !effectiveWorkspaceId) {
 		throw new Error(
-			'No workspace configured. Set the WORKSPACE_ID environment variable and restart the MCP server.',
+			'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
 		)
 	}
 
@@ -61,8 +62,8 @@ async function apiCall(
 	if (config.apiKey) {
 		headers.Authorization = `Bearer ${config.apiKey}`
 	}
-	if (config.workspaceId) {
-		headers['X-Workspace-Id'] = config.workspaceId
+	if (effectiveWorkspaceId) {
+		headers['X-Workspace-Id'] = effectiveWorkspaceId
 	}
 
 	const response = await fetch(url, {
@@ -118,7 +119,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', '/api/graph', args)
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/graph', body, {
+				workspaceId: workspace_id,
+			})
 			return {
 				_meta: { toolName: 'create_objects' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -135,10 +139,13 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			const { workspace_id } = args
 			const results = await Promise.all(
 				args.ids.map(async (id) => {
 					try {
-						const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`)
+						const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
+							workspaceId: workspace_id,
+						})
 						return { id, success: true, result }
 					} catch (error) {
 						return { id, success: false, error: String(error) }
@@ -161,6 +168,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			const { workspace_id } = args
+			const wsOpts = { workspaceId: workspace_id }
 			const results: Array<{
 				type: string
 				id?: string
@@ -174,7 +183,7 @@ export function createMcpServer(config: McpConfig) {
 				const objectResults = await Promise.all(
 					args.updates.map(async ({ id, ...body }) => {
 						try {
-							const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body)
+							const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
 							return { type: 'object' as const, id, success: true, result }
 						} catch (error) {
 							return { type: 'object' as const, id, success: false, error: String(error) }
@@ -189,13 +198,19 @@ export function createMcpServer(config: McpConfig) {
 				const edgeResults = await Promise.all(
 					args.edges.map(async (edge) => {
 						try {
-							const result = await apiCall(config, 'POST', '/api/relationships', {
-								source_type: 'object',
-								source_id: edge.source_id,
-								target_type: 'object',
-								target_id: edge.target_id,
-								type: edge.type,
-							})
+							const result = await apiCall(
+								config,
+								'POST',
+								'/api/relationships',
+								{
+									source_type: 'object',
+									source_id: edge.source_id,
+									target_type: 'object',
+									target_id: edge.target_id,
+									type: edge.type,
+								},
+								wsOpts,
+							)
 							return {
 								type: 'relationship' as const,
 								id: `${edge.source_id}->${edge.target_id}`,
@@ -231,7 +246,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'DELETE', `/api/objects/${args.id}`)
+			const result = await apiCall(config, 'DELETE', `/api/objects/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'delete_object' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -253,7 +270,9 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/objects?${params}`)
+			const result = await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'list_objects' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -276,7 +295,9 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/objects/search?${params}`)
+			const result = await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'search_objects' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -298,7 +319,9 @@ export function createMcpServer(config: McpConfig) {
 			if (args.source_id) params.set('source_id', args.source_id)
 			if (args.target_id) params.set('target_id', args.target_id)
 			if (args.type) params.set('type', args.type)
-			const result = await apiCall(config, 'GET', `/api/relationships?${params}`)
+			const result = await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'list_relationships' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -315,7 +338,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.relationships, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'DELETE', `/api/relationships/${args.id}`)
+			const result = await apiCall(config, 'DELETE', `/api/relationships/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'delete_relationship' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -336,10 +361,11 @@ export function createMcpServer(config: McpConfig) {
 			const { workspace_id, role, ...createBody } = args
 			const result = (await apiCall(config, 'POST', '/api/actors', createBody, {
 				skipAuth: true,
+				skipWorkspace: true,
 			})) as { id: string; [key: string]: unknown }
 
 			// If workspace_id provided, add the new actor as a member
-			const targetWorkspace = workspace_id ?? config.workspaceId
+			const targetWorkspace = workspace_id ?? config.defaultWorkspaceId
 			if (targetWorkspace && !createBody.auto_create_workspace) {
 				try {
 					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
@@ -369,7 +395,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async () => {
-			const result = await apiCall(config, 'GET', '/api/actors')
+			const result = await apiCall(config, 'GET', '/api/actors', undefined, {
+				skipWorkspace: true,
+			})
 			return {
 				_meta: { toolName: 'list_actors' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -386,7 +414,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', `/api/actors/${args.id}`)
+			const result = await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
+				skipWorkspace: true,
+			})
 			return {
 				_meta: { toolName: 'get_actor' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -404,7 +434,9 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/actors/${id}`, body)
+			const result = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
+				skipWorkspace: true,
+			})
 			return {
 				_meta: { toolName: 'update_actor' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -421,7 +453,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/actors/${args.id}/api-keys`)
+			const result = await apiCall(config, 'POST', `/api/actors/${args.id}/api-keys`, undefined, {
+				skipWorkspace: true,
+			})
 			return {
 				_meta: { toolName: 'regenerate_api_key' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -439,7 +473,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', '/api/workspaces', args)
+			const result = await apiCall(config, 'POST', '/api/workspaces', args, {
+				skipWorkspace: true,
+			})
 			return {
 				_meta: { toolName: 'create_workspace' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -457,7 +493,9 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/workspaces/${id}`, body)
+			const result = await apiCall(config, 'PATCH', `/api/workspaces/${id}`, body, {
+				skipWorkspace: true,
+			})
 			return {
 				_meta: { toolName: 'update_workspace' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -474,7 +512,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async () => {
-			const result = await apiCall(config, 'GET', '/api/workspaces')
+			const result = await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				skipWorkspace: true,
+			})
 			return {
 				_meta: { toolName: 'list_workspaces' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -491,12 +531,17 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
-			const workspaces = (await apiCall(config, 'GET', '/api/workspaces')) as Array<{
+			const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				skipWorkspace: true,
+			})) as Array<{
 				id: string
 				name: string
 				settings: Record<string, unknown>
 			}>
-			const workspace = workspaces.find((w) => w.id === config.workspaceId) ?? workspaces[0]
+			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
+			const workspace = (effectiveWsId
+				? workspaces.find((w) => w.id === effectiveWsId)
+				: workspaces[0]) ?? workspaces[0]
 			if (!workspace) {
 				throw new Error('No workspace found')
 			}
@@ -551,6 +596,7 @@ export function createMcpServer(config: McpConfig) {
 				'POST',
 				`/api/workspaces/${args.workspace_id}/members`,
 				{ actor_id: args.actor_id, role: args.role },
+				{ skipWorkspace: true },
 			)
 			return {
 				_meta: { toolName: 'add_workspace_member' },
@@ -573,7 +619,9 @@ export function createMcpServer(config: McpConfig) {
 			if (args.entity_type) params.set('entity_type', args.entity_type)
 			if (args.action) params.set('action', args.action)
 			if (args.limit) params.set('limit', String(args.limit))
-			const result = await apiCall(config, 'GET', `/api/events/history?${params}`)
+			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'get_events' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -591,7 +639,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', '/api/triggers', args)
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/triggers', body, {
+				workspaceId: workspace_id,
+			})
 			return {
 				_meta: { toolName: 'create_trigger' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -607,8 +658,10 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_triggers.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
-		async () => {
-			const result = await apiCall(config, 'GET', '/api/triggers')
+		async (args) => {
+			const result = await apiCall(config, 'GET', '/api/triggers', undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'list_triggers' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -625,8 +678,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
 		async (args) => {
-			const { id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/triggers/${id}`, body)
+			const { id, workspace_id, ...body } = args
+			const result = await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
+				workspaceId: workspace_id,
+			})
 			return {
 				_meta: { toolName: 'update_trigger' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -643,7 +698,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'DELETE', `/api/triggers/${args.id}`)
+			const result = await apiCall(config, 'DELETE', `/api/triggers/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'delete_trigger' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -661,7 +718,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', '/api/notifications', args)
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/notifications', body, {
+				workspaceId: workspace_id,
+			})
 			return {
 				_meta: { toolName: 'create_notification' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -683,7 +743,9 @@ export function createMcpServer(config: McpConfig) {
 			if (args.type) params.set('type', args.type)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/notifications?${params}`)
+			const result = await apiCall(config, 'GET', `/api/notifications?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'list_notifications' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -700,7 +762,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', `/api/notifications/${args.id}`)
+			const result = await apiCall(config, 'GET', `/api/notifications/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'get_notification' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -717,8 +781,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/notifications/${id}`, body)
+			const { id, workspace_id, ...body } = args
+			const result = await apiCall(config, 'PATCH', `/api/notifications/${id}`, body, {
+				workspaceId: workspace_id,
+			})
 			return {
 				_meta: { toolName: 'update_notification' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -735,7 +801,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'DELETE', `/api/notifications/${args.id}`)
+			const result = await apiCall(config, 'DELETE', `/api/notifications/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'delete_notification' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -753,7 +821,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', '/api/sessions', args)
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/sessions', body, {
+				workspaceId: workspace_id,
+			})
 			return {
 				_meta: { toolName: 'create_session' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -775,7 +846,9 @@ export function createMcpServer(config: McpConfig) {
 			if (args.actor_id) params.set('actor_id', args.actor_id)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/sessions?${params}`)
+			const result = await apiCall(config, 'GET', `/api/sessions?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'list_sessions' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -792,12 +865,19 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const session = await apiCall(config, 'GET', `/api/sessions/${args.id}`)
+			const wsOpts = { workspaceId: args.workspace_id }
+			const session = await apiCall(config, 'GET', `/api/sessions/${args.id}`, undefined, wsOpts)
 
 			if (args.include_logs) {
 				const params = new URLSearchParams()
 				if (args.log_limit) params.set('limit', String(args.log_limit))
-				const logs = await apiCall(config, 'GET', `/api/sessions/${args.id}/logs?${params}`)
+				const logs = await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${args.id}/logs?${params}`,
+					undefined,
+					wsOpts,
+				)
 				return {
 					_meta: { toolName: 'get_session' },
 					content: [{ type: 'text' as const, text: JSON.stringify({ session, logs }, null, 2) }],
@@ -820,7 +900,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`)
+			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'stop_session' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -837,7 +919,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`)
+			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'pause_session' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -854,7 +938,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`)
+			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'resume_session' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -871,13 +957,22 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const { workspace_id } = args
+			const wsOpts = { workspaceId: workspace_id }
+
 			// 1. Create session
-			const session = (await apiCall(config, 'POST', '/api/sessions', {
-				actor_id: args.actor_id,
-				action_prompt: args.action_prompt,
-				config: args.config,
-				auto_start: true,
-			})) as { id: string; status: string }
+			const session = (await apiCall(
+				config,
+				'POST',
+				'/api/sessions',
+				{
+					actor_id: args.actor_id,
+					action_prompt: args.action_prompt,
+					config: args.config,
+					auto_start: true,
+				},
+				wsOpts,
+			)) as { id: string; status: string }
 
 			const sessionId = session.id
 			const pollMs = (args.poll_interval_seconds ?? 5) * 1000
@@ -889,12 +984,24 @@ export function createMcpServer(config: McpConfig) {
 			let current = session
 			while (Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, pollMs))
-				current = (await apiCall(config, 'GET', `/api/sessions/${sessionId}`)) as typeof session
+				current = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${sessionId}`,
+					undefined,
+					wsOpts,
+				)) as typeof session
 				if (terminalStatuses.includes(current.status)) break
 			}
 
 			// 3. Fetch logs
-			const logs = await apiCall(config, 'GET', `/api/sessions/${sessionId}/logs?limit=500`)
+			const logs = await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${sessionId}/logs?limit=500`,
+				undefined,
+				wsOpts,
+			)
 
 			return {
 				_meta: { toolName: 'run_agent' },
@@ -914,8 +1021,10 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_integrations.inputSchema.shape,
 			_meta: {},
 		},
-		async () => {
-			const result = await apiCall(config, 'GET', '/api/integrations')
+		async (args) => {
+			const result = await apiCall(config, 'GET', '/api/integrations', undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'list_integrations' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -932,7 +1041,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async () => {
-			const result = await apiCall(config, 'GET', '/api/integrations/providers')
+			const result = await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
+				skipWorkspace: true,
+			})
 			return {
 				_meta: { toolName: 'list_integration_providers' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -953,6 +1064,8 @@ export function createMcpServer(config: McpConfig) {
 				config,
 				'POST',
 				`/api/integrations/${args.provider}/connect`,
+				undefined,
+				{ workspaceId: args.workspace_id },
 			)) as {
 				install_url: string
 			}
@@ -977,7 +1090,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'DELETE', `/api/integrations/${args.id}`)
+			const result = await apiCall(config, 'DELETE', `/api/integrations/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
 			return {
 				_meta: { toolName: 'disconnect_integration' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -993,7 +1108,7 @@ async function main() {
 	const config: McpConfig = {
 		apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
 		apiKey: process.env.API_KEY || '',
-		workspaceId: process.env.WORKSPACE_ID || '',
+		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 	}
 
 	const server = createMcpServer(config)
