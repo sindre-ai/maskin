@@ -608,7 +608,7 @@ function ConditionEditor({
 	return (
 		<div className="flex items-center gap-1.5">
 			<Select value={condition.field} onValueChange={handleFieldChange}>
-				<SelectTrigger className="w-32 h-8 text-xs">
+				<SelectTrigger>
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -624,7 +624,7 @@ function ConditionEditor({
 				value={condition.operator}
 				onValueChange={(op) => onChange({ operator: op as ConditionOperator, value: '' })}
 			>
-				<SelectTrigger className="w-40 h-8 text-xs">
+				<SelectTrigger>
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -687,7 +687,7 @@ function ConditionValueInput({
 	if (fieldType === 'enum' && fieldDef?.values) {
 		return (
 			<Select value={String(value ?? '')} onValueChange={onChange}>
-				<SelectTrigger className="w-32 h-8 text-xs">
+				<SelectTrigger>
 					<SelectValue placeholder="Select..." />
 				</SelectTrigger>
 				<SelectContent>
@@ -704,7 +704,7 @@ function ConditionValueInput({
 	if (fieldType === 'boolean') {
 		return (
 			<Select value={String(value ?? 'true')} onValueChange={(v) => onChange(v === 'true')}>
-				<SelectTrigger className="w-20 h-8 text-xs">
+				<SelectTrigger>
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -792,7 +792,7 @@ function CronScheduleBuilder({
 					<>
 						<span>on day</span>
 						<Select value={dayOfMonth} onValueChange={onDayOfMonthChange}>
-							<SelectTrigger className="w-[70px]">
+							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -810,7 +810,7 @@ function CronScheduleBuilder({
 					<>
 						<span>on</span>
 						<Select value={dayOfWeek} onValueChange={onDayOfWeekChange}>
-							<SelectTrigger className="w-[130px]">
+							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -828,7 +828,7 @@ function CronScheduleBuilder({
 					<>
 						<span>at</span>
 						<Select value={hour} onValueChange={onHourChange}>
-							<SelectTrigger className="w-[120px]">
+							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -846,7 +846,7 @@ function CronScheduleBuilder({
 					<>
 						<span>at minute</span>
 						<Select value={minute} onValueChange={onMinuteChange}>
-							<SelectTrigger className="w-[70px]">
+							<SelectTrigger>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>

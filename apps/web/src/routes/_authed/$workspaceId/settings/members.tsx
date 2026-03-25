@@ -64,7 +64,7 @@ function MembersPage() {
 						autoFocus
 					/>
 					<Select value={role} onValueChange={setRole}>
-						<SelectTrigger className="w-[120px]">
+						<SelectTrigger>
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
