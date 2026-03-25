@@ -3,10 +3,19 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { TriggerForm } from '@/components/triggers/trigger-form'
 import type { TriggerFormPayload } from '@/components/triggers/trigger-form'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
-import { useDeleteTrigger, useTrigger, useUpdateTrigger } from '@/hooks/use-triggers'
+import {
+	useCreateTrigger,
+	useDeleteTrigger,
+	useTrigger,
+	useUpdateTrigger,
+} from '@/hooks/use-triggers'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Trash2 } from 'lucide-react'
+import { useRef } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/triggers/$triggerId')({
 	component: TriggerDetailPage,
@@ -16,15 +25,21 @@ export const Route = createFileRoute('/_authed/$workspaceId/triggers/$triggerId'
 function TriggerDetailPage() {
 	const { triggerId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
-	const { data: trigger, isLoading, error } = useTrigger(triggerId, workspaceId)
+	const { data: trigger, isLoading } = useTrigger(triggerId, workspaceId)
 	const { data: actors } = useActors(workspaceId)
+	const createTrigger = useCreateTrigger(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const deleteTrigger = useDeleteTrigger(workspaceId)
 	const navigate = useNavigate()
+	const isCreatedRef = useRef(false)
 
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
 
-	if (isLoading) {
+	// Once the trigger exists in cache, mark as created
+	if (trigger) isCreatedRef.current = true
+	const isCreated = isCreatedRef.current
+
+	if (isLoading && !isCreated) {
 		return (
 			<div className="max-w-3xl mx-auto space-y-4">
 				<Skeleton className="h-8 w-64" />
@@ -34,17 +49,28 @@ function TriggerDetailPage() {
 		)
 	}
 
-	if (error || !trigger) {
-		return (
-			<div className="flex items-center justify-center py-16">
-				<p className="text-sm text-muted-foreground">{error?.message || 'Trigger not found'}</p>
-			</div>
-		)
+	const handleAutoCreate = async (payload: TriggerFormPayload) => {
+		if (isCreatedRef.current) return
+		isCreatedRef.current = true
+		try {
+			await createTrigger.mutateAsync({
+				id: triggerId,
+				name: payload.name,
+				type: payload.type,
+				action_prompt: payload.action_prompt,
+				target_actor_id: payload.target_actor_id,
+				config: payload.config as never,
+				enabled: payload.enabled,
+			})
+			toast.success('Trigger created')
+		} catch {
+			isCreatedRef.current = false
+		}
 	}
 
-	const handleUpdate = (payload: TriggerFormPayload) => {
+	const handleSave = (payload: TriggerFormPayload) => {
 		updateTrigger.mutate({
-			id: trigger.id,
+			id: triggerId,
 			data: {
 				name: payload.name,
 				action_prompt: payload.action_prompt,
@@ -55,36 +81,49 @@ function TriggerDetailPage() {
 	}
 
 	const handleDelete = () => {
-		deleteTrigger.mutate(trigger.id, {
+		deleteTrigger.mutate(triggerId, {
 			onSuccess: () => {
 				navigate({
 					to: '/$workspaceId/triggers',
 					params: { workspaceId },
-					search: { create: false },
 				})
 			},
 		})
 	}
 
 	const handleToggleEnabled = () => {
-		updateTrigger.mutate({ id: trigger.id, data: { enabled: !trigger.enabled } })
+		if (!trigger) return
+		updateTrigger.mutate({ id: triggerId, data: { enabled: !trigger.enabled } })
 	}
 
 	return (
 		<>
-			<PageHeader />
+			<PageHeader
+				actions={
+					isCreated ? (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7 text-muted-foreground hover:text-error"
+							onClick={handleDelete}
+						>
+							<Trash2 size={15} />
+						</Button>
+					) : undefined
+				}
+			/>
 			<div className="max-w-3xl mx-auto">
 				<TriggerForm
 					workspaceId={workspaceId}
 					workspace={workspace}
 					agents={agents}
 					initialValues={trigger}
-					onSubmit={handleUpdate}
-					onDelete={handleDelete}
-					onToggleEnabled={handleToggleEnabled}
-					submitLabel="Save"
-					isPending={updateTrigger.isPending}
-					error={updateTrigger.error}
+					onAutoCreate={!isCreated ? handleAutoCreate : undefined}
+					onSave={isCreated ? handleSave : undefined}
+					onToggleEnabled={isCreated ? handleToggleEnabled : undefined}
+					isPending={createTrigger.isPending || updateTrigger.isPending}
+					error={createTrigger.error || updateTrigger.error}
+					isCreated={isCreated}
 				/>
 			</div>
 		</>

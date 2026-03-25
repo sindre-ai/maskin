@@ -10,8 +10,8 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
-import { X } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { Check, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 // --- Types ---
 
@@ -99,14 +99,7 @@ const NO_VALUE_OPERATORS = new Set(['is_set', 'is_not_set'])
 
 const HOURS = Array.from({ length: 24 }, (_, i) => ({
 	value: String(i),
-	label:
-		i === 0
-			? '12:00 AM'
-			: i < 12
-				? `${i}:00 AM`
-				: i === 12
-					? '12:00 PM'
-					: `${i - 12}:00 PM`,
+	label: i === 0 ? '12:00 AM' : i < 12 ? `${i}:00 AM` : i === 12 ? '12:00 PM' : `${i - 12}:00 PM`,
 }))
 
 const MINUTES = Array.from({ length: 60 }, (_, i) => ({
@@ -154,34 +147,33 @@ export function TriggerForm({
 	workspace,
 	agents,
 	initialValues,
-	onSubmit,
-	onCancel,
-	onDelete,
+	onAutoCreate,
+	onSave,
 	onToggleEnabled,
-	submitLabel = 'Create',
 	isPending = false,
 	error,
+	isCreated = false,
 }: {
 	workspaceId: string
 	workspace: WorkspaceWithRole
 	agents: { id: string; name: string }[]
 	initialValues?: TriggerResponse
-	onSubmit: (payload: TriggerFormPayload) => void
-	onCancel?: () => void
-	onDelete?: () => void
+	onAutoCreate?: (payload: TriggerFormPayload) => void
+	onSave?: (payload: TriggerFormPayload) => void
 	onToggleEnabled?: () => void
-	submitLabel?: string
 	isPending?: boolean
 	error?: Error | null
+	isCreated?: boolean
 }) {
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: providers } = useProviders()
 
 	// Parse initial config
 	const initConfig = (initialValues?.config as Record<string, unknown>) ?? {}
-	const initCron = initialValues?.type === 'cron' && initConfig.expression
-		? parseCronExpression(String(initConfig.expression))
-		: null
+	const initCron =
+		initialValues?.type === 'cron' && initConfig.expression
+			? parseCronExpression(String(initConfig.expression))
+			: null
 
 	const [name, setName] = useState(initialValues?.name ?? '')
 	const [type, setType] = useState<'cron' | 'event' | 'reminder'>(
@@ -208,9 +200,10 @@ export function TriggerForm({
 		}
 	}, [frequency, minute, hour, dayOfWeek, dayOfMonth])
 
-	const initScheduledAt = initialValues?.type === 'reminder' && initConfig.scheduled_at
-		? new Date(String(initConfig.scheduled_at))
-		: null
+	const initScheduledAt =
+		initialValues?.type === 'reminder' && initConfig.scheduled_at
+			? new Date(String(initConfig.scheduled_at))
+			: null
 	const [scheduledDate, setScheduledDate] = useState(
 		initScheduledAt ? initScheduledAt.toISOString().slice(0, 10) : '',
 	)
@@ -226,14 +219,13 @@ export function TriggerForm({
 			: 'insight',
 	)
 	const [action, setAction] = useState(
-		initialValues?.type === 'event' && initConfig.action
-			? String(initConfig.action)
-			: 'created',
+		initialValues?.type === 'event' && initConfig.action ? String(initConfig.action) : 'created',
 	)
 	const [prompt, setPrompt] = useState(initialValues?.actionPrompt ?? '')
 	const [targetActorId, setTargetActorId] = useState(
 		initialValues?.targetActorId ?? agents[0]?.id ?? '',
 	)
+	const [enabled, setEnabled] = useState(initialValues?.enabled ?? true)
 	const [fromStatus, setFromStatus] = useState(
 		initialValues?.type === 'event' && initConfig.from_status
 			? String(initConfig.from_status)
@@ -280,6 +272,115 @@ export function TriggerForm({
 	const isValid =
 		name.trim() && prompt.trim() && targetActorId && (type === 'reminder' ? scheduledDate : true)
 
+	// --- Auto-create: fire once when form first becomes valid ---
+	const hasAutoCreatedRef = useRef(false)
+
+	const buildPayload = useCallback((): TriggerFormPayload | null => {
+		if (!name.trim() || !prompt.trim() || !targetActorId) return null
+		if (type === 'reminder' && !scheduledDate) return null
+
+		const validConditions = conditions
+			.filter((c) => c.field && c.operator)
+			.map((c) =>
+				NO_VALUE_OPERATORS.has(c.operator) ? { field: c.field, operator: c.operator } : c,
+			)
+
+		const config =
+			type === 'cron'
+				? { expression: buildCronExpression() }
+				: type === 'reminder'
+					? { scheduled_at: new Date(`${scheduledDate}T${scheduledTime}`).toISOString() }
+					: {
+							entity_type: entityType,
+							action,
+							...(fromStatus && fromStatus !== '__any__' && { from_status: fromStatus }),
+							...(toStatus && toStatus !== '__any__' && { to_status: toStatus }),
+							...(validConditions.length > 0 && { conditions: validConditions }),
+						}
+
+		return {
+			name: name.trim(),
+			type,
+			action_prompt: prompt.trim(),
+			target_actor_id: targetActorId,
+			config,
+			enabled,
+		}
+	}, [
+		name,
+		prompt,
+		targetActorId,
+		enabled,
+		type,
+		scheduledDate,
+		scheduledTime,
+		conditions,
+		buildCronExpression,
+		entityType,
+		action,
+		fromStatus,
+		toStatus,
+	])
+
+	useEffect(() => {
+		if (!onAutoCreate || hasAutoCreatedRef.current || !isValid) return
+		const payload = buildPayload()
+		if (!payload) return
+		hasAutoCreatedRef.current = true
+		onAutoCreate(payload)
+	}, [isValid, onAutoCreate, buildPayload])
+
+	// --- Debounced auto-save for edits ---
+	const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+	const onSaveRef = useRef(onSave)
+	onSaveRef.current = onSave
+	const [showSaving, setShowSaving] = useState(false)
+	const savingTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+	// Serialize form values to detect actual changes
+	const formSignature = JSON.stringify([
+		name,
+		type,
+		prompt,
+		targetActorId,
+		enabled,
+		frequency,
+		minute,
+		hour,
+		dayOfWeek,
+		dayOfMonth,
+		scheduledDate,
+		scheduledTime,
+		entityType,
+		action,
+		fromStatus,
+		toStatus,
+		conditions,
+	])
+
+	// Initialize lastSavedRef with the current signature so loading an existing trigger doesn't trigger a save
+	const lastSavedRef = useRef<string>(initialValues ? formSignature : '')
+
+	useEffect(() => {
+		if (!isCreated || !onSaveRef.current) return
+		if (!isValid) return
+		if (formSignature === lastSavedRef.current) return
+
+		clearTimeout(saveTimerRef.current)
+		saveTimerRef.current = setTimeout(() => {
+			const payload = buildPayload()
+			if (payload) {
+				lastSavedRef.current = formSignature
+				onSaveRef.current?.(payload)
+				setShowSaving(true)
+				clearTimeout(savingTimerRef.current)
+				savingTimerRef.current = setTimeout(() => setShowSaving(false), 2000)
+			}
+		}, 500)
+
+		return () => clearTimeout(saveTimerRef.current)
+	}, [isCreated, isValid, formSignature, buildPayload])
+
 	const handleEntityTypeChange = (val: string) => {
 		setEntityType(val)
 		const def = allEvents.find((e) => e.entityType === val)
@@ -307,40 +408,8 @@ export function TriggerForm({
 		setConditions(conditions.filter((_, i) => i !== index))
 	}
 
-	const handleSubmit = (e: React.FormEvent) => {
-		e.preventDefault()
-		if (!isValid) return
-
-		const validConditions = conditions
-			.filter((c) => c.field && c.operator)
-			.map((c) =>
-				NO_VALUE_OPERATORS.has(c.operator) ? { field: c.field, operator: c.operator } : c,
-			)
-
-		const config =
-			type === 'cron'
-				? { expression: buildCronExpression() }
-				: type === 'reminder'
-					? { scheduled_at: new Date(`${scheduledDate}T${scheduledTime}`).toISOString() }
-					: {
-							entity_type: entityType,
-							action,
-							...(fromStatus && fromStatus !== '__any__' && { from_status: fromStatus }),
-							...(toStatus && toStatus !== '__any__' && { to_status: toStatus }),
-							...(validConditions.length > 0 && { conditions: validConditions }),
-						}
-
-		onSubmit({
-			name,
-			type,
-			action_prompt: prompt,
-			target_actor_id: targetActorId,
-			config,
-		})
-	}
-
 	return (
-		<form onSubmit={handleSubmit} className="space-y-3">
+		<div className="space-y-3">
 			{agents.length === 0 && (
 				<div className="rounded bg-warning/10 px-3 py-2 text-sm text-warning">
 					No agents available. Create an agent first before setting up triggers.
@@ -512,26 +581,30 @@ export function TriggerForm({
 				</Select>
 			)}
 
-			{/* Enabled toggle (edit mode only) */}
-			{initialValues && onToggleEnabled && (
-				<div className="flex items-center gap-3">
+			{/* Enabled toggle */}
+			<div className="flex items-center gap-3">
+				<span
+					className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
+						enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
+					}`}
+				>
 					<span
-						className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
-							initialValues.enabled
-								? 'bg-success/10 text-success'
-								: 'bg-muted text-muted-foreground'
-						}`}
-					>
-						<span
-							className={`h-1.5 w-1.5 rounded-full ${initialValues.enabled ? 'bg-success' : 'bg-zinc-600'}`}
-						/>
-						{initialValues.enabled ? 'Enabled' : 'Disabled'}
-					</span>
-					<Button type="button" variant="outline" size="sm" onClick={onToggleEnabled}>
-						{initialValues.enabled ? 'Disable' : 'Enable'}
-					</Button>
-				</div>
-			)}
+						className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`}
+					/>
+					{enabled ? 'Enabled' : 'Disabled'}
+				</span>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={() => {
+						setEnabled(!enabled)
+						if (isCreated && onToggleEnabled) onToggleEnabled()
+					}}
+				>
+					{enabled ? 'Disable' : 'Enable'}
+				</Button>
+			</div>
 
 			{error && (
 				<div className="rounded bg-error/10 px-3 py-2 text-sm text-error">
@@ -539,32 +612,13 @@ export function TriggerForm({
 				</div>
 			)}
 
-			<div className="flex justify-end gap-2">
-				{onCancel && (
-					<Button type="button" variant="ghost" onClick={onCancel}>
-						Cancel
-					</Button>
-				)}
-				<Button type="submit" disabled={!isValid || isPending}>
-					{isPending ? 'Saving...' : submitLabel}
-				</Button>
-			</div>
-
-			{/* Delete (edit mode only) */}
-			{onDelete && (
-				<div className="border-t border-border pt-4">
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="text-error hover:text-error"
-						onClick={onDelete}
-					>
-						Delete trigger
-					</Button>
-				</div>
+			{showSaving && (
+				<p className="flex items-center gap-1 text-xs text-muted-foreground">
+					<Check size={14} />
+					Saved
+				</p>
 			)}
-		</form>
+		</div>
 	)
 }
 

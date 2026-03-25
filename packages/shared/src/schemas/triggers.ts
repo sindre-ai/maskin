@@ -45,6 +45,7 @@ export const triggerConfigSchema = z.union([
 ])
 
 const baseTriggerFields = {
+	id: z.string().uuid().optional(),
 	name: z.string().min(1),
 	action_prompt: z.string().min(1),
 	target_actor_id: z.string().uuid(),

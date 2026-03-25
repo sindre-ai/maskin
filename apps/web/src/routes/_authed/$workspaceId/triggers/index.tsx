@@ -2,75 +2,25 @@ import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { TriggerForm } from '@/components/triggers/trigger-form'
-import type { TriggerFormPayload } from '@/components/triggers/trigger-form'
 import { useActors } from '@/hooks/use-actors'
-import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
+import { useTriggers } from '@/hooks/use-triggers'
 import type { TriggerResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { Link, createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/$workspaceId/triggers/')({
 	component: TriggersPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
-	validateSearch: (search: Record<string, unknown>) => ({
-		create: search.create === 'true' || search.create === true,
-	}),
 })
 
 function TriggersPage() {
-	const { workspaceId, workspace } = useWorkspace()
+	const { workspaceId } = useWorkspace()
 	const { data: triggers, isLoading } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
-	const createTrigger = useCreateTrigger(workspaceId)
-	const navigate = useNavigate()
-	const { create } = useSearch({ from: '/_authed/$workspaceId/triggers/' })
-	const [showCreate, setShowCreate] = useState(false)
-
-	useEffect(() => {
-		if (create) setShowCreate(true)
-	}, [create])
-
-	const agents = (actors ?? []).filter((a) => a.type === 'agent')
-
-	const handleCreate = async (payload: TriggerFormPayload) => {
-		try {
-			const result = await createTrigger.mutateAsync({
-				name: payload.name,
-				type: payload.type,
-				action_prompt: payload.action_prompt,
-				target_actor_id: payload.target_actor_id,
-				config: payload.config as never,
-			})
-			setShowCreate(false)
-			navigate({
-				to: '/$workspaceId/triggers/$triggerId',
-				params: { workspaceId, triggerId: result.id },
-			})
-		} catch {
-			// error accessible via createTrigger.error
-		}
-	}
 
 	return (
 		<div>
 			<PageHeader title="Triggers" />
-
-			{showCreate && (
-				<div className="mb-6 rounded-lg border border-border bg-card p-4">
-					<TriggerForm
-						workspaceId={workspaceId}
-						workspace={workspace}
-						agents={agents}
-						onSubmit={handleCreate}
-						onCancel={() => setShowCreate(false)}
-						submitLabel="Create"
-						isPending={createTrigger.isPending}
-						error={createTrigger.error}
-					/>
-				</div>
-			)}
 
 			{isLoading ? (
 				<ListSkeleton />

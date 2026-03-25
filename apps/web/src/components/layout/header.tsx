@@ -64,7 +64,7 @@ const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$wo
 const createItems = [
 	{ label: 'Object', to: '/$workspaceId/objects' as const, icon: Layers },
 	{ label: 'Agent', to: '/$workspaceId/agents' as const, icon: Bot },
-	{ label: 'Trigger', to: '/$workspaceId/triggers' as const, icon: Zap },
+	{ label: 'Trigger', to: '/$workspaceId/triggers/$triggerId' as const, icon: Zap },
 	{ label: 'Property', to: '/$workspaceId/settings/properties' as const, icon: Tags },
 ]
 
@@ -155,13 +155,20 @@ export function Header() {
 								return (
 									<DropdownMenuItem
 										key={item.label}
-										onClick={() =>
-											navigate({
-												to: item.to,
-												params: { workspaceId },
-												search: { create: true },
-											})
-										}
+										onClick={() => {
+											if (item.label === 'Trigger') {
+												navigate({
+													to: item.to,
+													params: { workspaceId, triggerId: crypto.randomUUID() },
+												})
+											} else {
+												navigate({
+													to: item.to,
+													params: { workspaceId },
+													search: { create: true },
+												})
+											}
+										}}
 									>
 										<Icon className="h-4 w-4" />
 										{item.label}
