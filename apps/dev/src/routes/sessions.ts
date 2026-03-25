@@ -17,7 +17,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import type { SessionLogEvent, SessionManager } from '../services/session-manager'
+import { SessionError, type SessionLogEvent, type SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -176,6 +176,10 @@ const stopSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
 	},
 })
 
@@ -191,8 +195,13 @@ app.openapi(stopSessionRoute, (async (c) => {
 	try {
 		await sessionManager.stopSession(id)
 	} catch (err) {
+		if (err instanceof SessionError) {
+			const status = err.code === 'not_found' ? 404 : 400
+			const code = err.code === 'not_found' ? 'NOT_FOUND' : 'BAD_REQUEST'
+			return c.json(createApiError(code, err.message), status)
+		}
 		const message = err instanceof Error ? err.message : String(err)
-		return c.json(createApiError('BAD_REQUEST', message), 400)
+		return c.json(createApiError('INTERNAL_ERROR', message), 500)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
@@ -224,6 +233,10 @@ const pauseSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
 	},
 })
 
@@ -239,8 +252,13 @@ app.openapi(pauseSessionRoute, (async (c) => {
 	try {
 		await sessionManager.pauseSession(id)
 	} catch (err) {
+		if (err instanceof SessionError) {
+			const status = err.code === 'not_found' ? 404 : 400
+			const code = err.code === 'not_found' ? 'NOT_FOUND' : 'BAD_REQUEST'
+			return c.json(createApiError(code, err.message), status)
+		}
 		const message = err instanceof Error ? err.message : String(err)
-		return c.json(createApiError('BAD_REQUEST', message), 400)
+		return c.json(createApiError('INTERNAL_ERROR', message), 500)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
@@ -272,6 +290,10 @@ const resumeSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
 	},
 })
 
@@ -287,8 +309,13 @@ app.openapi(resumeSessionRoute, (async (c) => {
 	try {
 		await sessionManager.resumeSession(id)
 	} catch (err) {
+		if (err instanceof SessionError) {
+			const status = err.code === 'not_found' ? 404 : 400
+			const code = err.code === 'not_found' ? 'NOT_FOUND' : 'BAD_REQUEST'
+			return c.json(createApiError(code, err.message), status)
+		}
 		const message = err instanceof Error ? err.message : String(err)
-		return c.json(createApiError('BAD_REQUEST', message), 400)
+		return c.json(createApiError('INTERNAL_ERROR', message), 500)
 	}
 
 	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
@@ -344,21 +371,36 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
 
 // GET /:id/logs/stream - SSE stream of live logs
-app.get('/:id/logs/stream', async (c) => {
+const streamSessionLogsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/logs/stream',
+	tags: ['Sessions'],
+	summary: 'Stream live session logs via SSE',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+	},
+	responses: {
+		200: {
+			description: 'SSE stream of session logs',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(streamSessionLogsRoute, (async (c) => {
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
-	const sessionId = c.req.param('id')
-	const workspaceId = c.req.header('x-workspace-id')
+	const { id: sessionId } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const lastLogId = c.req.header('Last-Event-ID')
-
-	if (!workspaceId) {
-		return c.json(
-			createApiError('BAD_REQUEST', 'Missing x-workspace-id header', [
-				{ field: 'x-workspace-id', message: 'Required header is missing', expected: 'UUID string' },
-			]),
-			400,
-		)
-	}
 
 	// Verify session belongs to workspace
 	const authSession = await loadSessionWithAuth(db, sessionId, workspaceId)
@@ -440,6 +482,6 @@ app.get('/:id/logs/stream', async (c) => {
 			await stream.sleep(30000)
 		}
 	})
-})
+}) as RouteHandler<typeof streamSessionLogsRoute, Env>)
 
 export default app

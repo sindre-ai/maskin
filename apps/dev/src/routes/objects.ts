@@ -1,5 +1,5 @@
 import type { Database } from '@ai-native/db'
-import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
+import { objects, relationships, workspaces } from '@ai-native/db/schema'
 import {
 	createObjectSchema,
 	objectQuerySchema,
@@ -9,6 +9,7 @@ import {
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { and, eq, ilike, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logEvent } from '../lib/log-event'
 import {
 	errorSchema,
 	idParamSchema,
@@ -123,7 +124,7 @@ app.openapi(createObjectRoute, async (c) => {
 	}
 
 	// Log event
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'created',
@@ -416,7 +417,7 @@ app.openapi(updateObjectRoute, async (c) => {
 
 	// Log event
 	const action = body.status && body.status !== existing.status ? 'status_changed' : 'updated'
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId: existing.workspaceId,
 		actorId,
 		action,
@@ -462,7 +463,7 @@ app.openapi(deleteObjectRoute, async (c) => {
 
 	await db.delete(objects).where(eq(objects.id, id))
 
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId: existing.workspaceId,
 		actorId,
 		action: 'deleted',

@@ -125,7 +125,7 @@ describe('SessionManager', () => {
 			mockResults.select = []
 
 			await expect(manager.stopSession('nonexistent')).rejects.toThrow(
-				'not found or has no container',
+				'not found',
 			)
 		})
 
@@ -133,7 +133,7 @@ describe('SessionManager', () => {
 			const session = buildSession({ containerId: null })
 			mockResults.select = [session]
 
-			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
+			await expect(manager.stopSession(session.id)).rejects.toThrow('has no container')
 		})
 	})
 
@@ -188,7 +188,7 @@ describe('SessionManager', () => {
 			mockResults.select = [session]
 
 			await expect(manager.resumeSession(session.id)).rejects.toThrow(
-				'not in paused state or no snapshot',
+				'not in paused state',
 			)
 		})
 
@@ -197,7 +197,7 @@ describe('SessionManager', () => {
 			mockResults.select = [session]
 
 			await expect(manager.resumeSession(session.id)).rejects.toThrow(
-				'not in paused state or no snapshot',
+				'not in paused state',
 			)
 		})
 	})

@@ -1,3 +1,4 @@
+import { SessionError } from '../../services/session-manager'
 import { buildCreateSessionBody, buildSession, buildSessionLog } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp } from '../setup'
@@ -101,7 +102,7 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		it('returns 400 when sessionManager throws', async () => {
+		it('returns 400 when sessionManager throws SessionError with invalid_state', async () => {
 			const session = buildSession({ workspaceId: wsId })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
@@ -109,7 +110,7 @@ describe('Sessions Routes', () => {
 			)
 			mockResults.selectQueue = [[session]]
 			;(sessionManager.stopSession as ReturnType<typeof vi.fn>).mockRejectedValue(
-				new Error('Session is not running'),
+				new SessionError('Session has no container', 'invalid_state'),
 			)
 
 			const res = await app.request(
@@ -120,7 +121,30 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error.message).toContain('not running')
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(body.error.message).toContain('no container')
+		})
+
+		it('returns 500 when sessionManager throws an unexpected error', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.stopSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Docker daemon unreachable'),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/stop`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.code).toBe('INTERNAL_ERROR')
 		})
 	})
 
@@ -175,7 +199,7 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
-		it('returns 400 when sessionManager throws', async () => {
+		it('returns 400 when sessionManager throws SessionError with invalid_state', async () => {
 			const session = buildSession({ workspaceId: wsId })
 			const { app, mockResults, sessionManager } = createSessionTestApp(
 				sessionsRoutes,
@@ -183,7 +207,7 @@ describe('Sessions Routes', () => {
 			)
 			mockResults.selectQueue = [[session]]
 			;(sessionManager.resumeSession as ReturnType<typeof vi.fn>).mockRejectedValue(
-				new Error('Session is not paused'),
+				new SessionError('Session is not in paused state', 'invalid_state'),
 			)
 
 			const res = await app.request(
@@ -194,7 +218,30 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error.message).toContain('not paused')
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(body.error.message).toContain('not in paused state')
+		})
+
+		it('returns 500 when sessionManager throws an unexpected error', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.resumeSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Snapshot download failed'),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/resume`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.code).toBe('INTERNAL_ERROR')
 		})
 	})
 
@@ -222,6 +269,54 @@ describe('Sessions Routes', () => {
 			const res = await app.request(
 				jsonGet('/api/sessions/00000000-0000-0000-0000-000000000099/logs', {
 					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/sessions/:id/pause error differentiation', () => {
+		it('returns 500 when sessionManager throws an unexpected error', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Container exec failed'),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.code).toBe('INTERNAL_ERROR')
+		})
+	})
+
+	describe('GET /api/sessions/:id/logs/stream', () => {
+		it('returns 400 when x-workspace-id header is missing', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				new Request('http://localhost/api/sessions/00000000-0000-0000-0000-000000000001/logs/stream'),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 when session not found', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				new Request('http://localhost/api/sessions/00000000-0000-0000-0000-000000000099/logs/stream', {
+					headers: { 'x-workspace-id': wsId },
 				}),
 			)
 

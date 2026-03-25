@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto'
 import type { Database } from '@ai-native/db'
-import { events, actors, integrations, workspaceMembers } from '@ai-native/db/schema'
+import { actors, integrations, workspaceMembers } from '@ai-native/db/schema'
 import type { PgNotifyBridge } from '@ai-native/realtime'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
 import { getProvider, listProviders } from '../lib/integrations/registry'
+import { logEvent } from '../lib/log-event'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -323,7 +324,7 @@ app.openapi(callbackRoute, (async (c) => {
 		.where(eq(integrations.id, integrationId))
 
 	// Log event
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId: stateData.workspaceId,
 		actorId: stateData.actorId,
 		action: 'created',
@@ -452,7 +453,7 @@ webhookApp.post('/:provider', async (c) => {
 	}
 
 	// Insert into events table — PG NOTIFY fires automatically
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId: integration.workspaceId,
 		actorId: systemActorId,
 		action: normalized.action,

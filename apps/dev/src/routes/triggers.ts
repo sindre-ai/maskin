@@ -4,6 +4,7 @@ import { createTriggerSchema, updateTriggerSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logEvent } from '../lib/log-event'
 import {
 	errorSchema,
 	idParamSchema,
@@ -80,6 +81,15 @@ app.openapi(createTriggerRoute, async (c) => {
 	if (!created) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 500)
 	}
+
+	await logEvent(db, {
+		workspaceId,
+		actorId,
+		action: 'created',
+		entityType: 'trigger',
+		entityId: created.id,
+		data: created,
+	})
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -165,6 +175,15 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 
+	await logEvent(db, {
+		workspaceId: trigger.workspaceId,
+		actorId,
+		action: 'updated',
+		entityType: 'trigger',
+		entityId: id,
+		data: { previous: trigger, updated },
+	})
+
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
 
@@ -200,6 +219,16 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	}
 
 	await db.delete(triggers).where(eq(triggers.id, id))
+
+	await logEvent(db, {
+		workspaceId: existing.workspaceId,
+		actorId,
+		action: 'deleted',
+		entityType: 'trigger',
+		entityId: id,
+		data: existing,
+	})
+
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteTriggerRoute, Env>)
 

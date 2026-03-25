@@ -1,9 +1,10 @@
 import type { Database } from '@ai-native/db'
-import { events, objects, relationships } from '@ai-native/db/schema'
+import { objects, relationships } from '@ai-native/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logEvent } from '../lib/log-event'
 import {
 	errorSchema,
 	idParamSchema,
@@ -78,7 +79,7 @@ app.openapi(createRelationshipRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create relationship'), 500)
 	}
 
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'created',
@@ -171,7 +172,7 @@ app.openapi(deleteRelationshipRoute, (async (c) => {
 	await db.delete(relationships).where(eq(relationships.id, id))
 
 	if (workspaceId) {
-		await db.insert(events).values({
+		await logEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'deleted',

@@ -26,6 +26,18 @@ import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager } from './agent-storage'
 import { ContainerManager, type LogChunk } from './container-manager'
 
+export type SessionErrorCode = 'invalid_state' | 'not_found' | 'limit_reached'
+
+export class SessionError extends Error {
+	constructor(
+		message: string,
+		public code: SessionErrorCode,
+	) {
+		super(message)
+		this.name = 'SessionError'
+	}
+}
+
 export interface CreateSessionParams {
 	actorId: string
 	actionPrompt: string
@@ -120,8 +132,11 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || session.status !== 'pending') {
-			throw new Error(`Session ${sessionId} not found or not in pending state`)
+		if (!session) {
+			throw new SessionError(`Session ${sessionId} not found`, 'not_found')
+		}
+		if (session.status !== 'pending') {
+			throw new SessionError(`Session ${sessionId} is not in pending state`, 'invalid_state')
 		}
 
 		// Check workspace concurrency limit
@@ -200,8 +215,11 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || !session.containerId) {
-			throw new Error(`Session ${sessionId} not found or has no container`)
+		if (!session) {
+			throw new SessionError(`Session ${sessionId} not found`, 'not_found')
+		}
+		if (!session.containerId) {
+			throw new SessionError(`Session ${sessionId} has no container`, 'invalid_state')
 		}
 
 		await this.containers.stop(session.containerId)
@@ -215,8 +233,11 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || session.status !== 'running' || !session.containerId) {
-			throw new Error(`Session ${sessionId} not in running state`)
+		if (!session) {
+			throw new SessionError(`Session ${sessionId} not found`, 'not_found')
+		}
+		if (session.status !== 'running' || !session.containerId) {
+			throw new SessionError(`Session ${sessionId} is not in running state`, 'invalid_state')
 		}
 
 		await this.db
@@ -275,8 +296,11 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || session.status !== 'paused' || !session.snapshotPath) {
-			throw new Error(`Session ${sessionId} not in paused state or no snapshot`)
+		if (!session) {
+			throw new SessionError(`Session ${sessionId} not found`, 'not_found')
+		}
+		if (session.status !== 'paused' || !session.snapshotPath) {
+			throw new SessionError(`Session ${sessionId} is not in paused state or has no snapshot`, 'invalid_state')
 		}
 
 		await this.db
@@ -365,8 +389,9 @@ export class SessionManager extends EventEmitter {
 			.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'running')))
 
 		if (result && result.count >= maxConcurrent) {
-			throw new Error(
+			throw new SessionError(
 				`Workspace has reached its concurrent session limit (${maxConcurrent}). Wait for a session to complete or increase the limit.`,
+				'limit_reached',
 			)
 		}
 	}

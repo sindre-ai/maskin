@@ -100,6 +100,18 @@ describe('Workspaces Routes', () => {
 	})
 
 	describe('GET /api/workspaces/:id/members', () => {
+		it('returns 200 with empty list when no members', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = []
+
+			const res = await app.request(jsonGet(`/api/workspaces/${wsId}/members`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(0)
+		})
+
 		it('returns 200 with list of members', async () => {
 			const wsId = randomUUID()
 			const member = {

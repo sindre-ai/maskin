@@ -1,5 +1,5 @@
 import type { Database } from '@ai-native/db'
-import { events, notifications } from '@ai-native/db/schema'
+import { notifications } from '@ai-native/db/schema'
 import {
 	createNotificationSchema,
 	notificationQuerySchema,
@@ -9,6 +9,7 @@ import {
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logEvent } from '../lib/log-event'
 import {
 	errorSchema,
 	idParamSchema,
@@ -86,7 +87,7 @@ app.openapi(createNotificationRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create notification'), 500)
 	}
 
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'created',
@@ -243,7 +244,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 
 	if (!updated) return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 500)
 
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'updated',
@@ -334,7 +335,7 @@ app.openapi(respondNotificationRoute, (async (c) => {
 	if (!updated)
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 500)
 
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'responded',
@@ -384,7 +385,7 @@ app.openapi(deleteNotificationRoute, (async (c) => {
 
 	await db.delete(notifications).where(eq(notifications.id, id))
 
-	await db.insert(events).values({
+	await logEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'deleted',
