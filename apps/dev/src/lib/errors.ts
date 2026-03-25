@@ -3,7 +3,11 @@ import type { ZodError, ZodIssue } from 'zod'
 
 // Re-export shared error types and helpers
 export { ApiErrorCode, createApiError, mapStatusToCode } from '@ai-native/shared'
-export type { ApiErrorCode as ApiErrorCodeType, ApiErrorDetail, ApiErrorResponse } from '@ai-native/shared'
+export type {
+	ApiErrorCode as ApiErrorCodeType,
+	ApiErrorDetail,
+	ApiErrorResponse,
+} from '@ai-native/shared'
 
 import type { ApiErrorDetail } from '@ai-native/shared'
 

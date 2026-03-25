@@ -1,4 +1,3 @@
-import type { SafeJsonValue, SafeMetadata } from '@ai-native/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -13,6 +12,7 @@ import { useUpdateObject } from '@/hooks/use-objects'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import type { SafeJsonValue, SafeMetadata } from '@ai-native/shared'
 import { useState } from 'react'
 
 interface FieldDefinition {

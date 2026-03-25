@@ -307,16 +307,13 @@ function ServerForm({
 	// HTTP fields
 	const [url, setUrl] = useState(initialServer?.url ?? '')
 	const [nextHeaderId, setNextHeaderId] = useState(0)
-	const [headerPairs, setHeaderPairs] = useState<
-		Array<{ id: number; key: string; value: string }>
-	>(
+	const [headerPairs, setHeaderPairs] = useState<Array<{ id: number; key: string; value: string }>>(
 		initialServer?.headers
 			? Object.entries(initialServer.headers).map(([key, value], i) => ({ id: i, key, value }))
 			: [],
 	)
 
-	const canSave =
-		name.trim() && (transport === 'stdio' ? command.trim() : url.trim())
+	const canSave = name.trim() && (transport === 'stdio' ? command.trim() : url.trim())
 
 	const handleSave = () => {
 		if (!canSave) return
@@ -483,9 +480,7 @@ function KeyValueEditor({
 					<Input
 						value={pair.value}
 						onChange={(e) =>
-							onChange(
-								pairs.map((p) => (p.id === pair.id ? { ...p, value: e.target.value } : p)),
-							)
+							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, value: e.target.value } : p)))
 						}
 						placeholder={valuePlaceholder}
 						className="h-7 text-xs font-mono flex-1"

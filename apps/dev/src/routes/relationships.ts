@@ -47,6 +47,10 @@ const createRelationshipRoute = createRoute({
 			description: 'Missing workspace header',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Internal server error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 

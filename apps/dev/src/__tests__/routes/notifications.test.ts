@@ -1,8 +1,4 @@
-import {
-	buildCreateNotificationBody,
-	buildNotification,
-	buildWorkspaceMember,
-} from '../factories'
+import { buildCreateNotificationBody, buildNotification, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -97,12 +93,7 @@ describe('Notifications Routes', () => {
 			mockResults.insert = []
 
 			const res = await app.request(
-				jsonRequest(
-					'PATCH',
-					`/api/notifications/${notification.id}`,
-					{ status: 'seen' },
-					headers,
-				),
+				jsonRequest('PATCH', `/api/notifications/${notification.id}`, { status: 'seen' }, headers),
 			)
 
 			expect(res.status).toBe(200)

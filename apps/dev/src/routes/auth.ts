@@ -2,8 +2,9 @@ import { verifyPassword } from '@ai-native/auth'
 import type { Database } from '@ai-native/db'
 import { actors } from '@ai-native/db/schema'
 import { loginSchema } from '@ai-native/shared'
-import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { OpenAPIHono, createRoute, type z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import { actorWithKeySchema, errorSchema } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 
@@ -51,19 +52,19 @@ app.openapi(loginRoute, async (c) => {
 	const [actor] = await db.select().from(actors).where(eq(actors.email, body.email)).limit(1)
 
 	if (!actor || !actor.passwordHash) {
-		return c.json({ error: 'Invalid credentials' }, 401)
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid credentials'), 401)
 	}
 
 	const valid = await verifyPassword(body.password, actor.passwordHash)
 	if (!valid) {
-		return c.json({ error: 'Invalid credentials' }, 401)
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid credentials'), 401)
 	}
 
 	const { apiKey, passwordHash, ...actorWithoutSecrets } = actor
 	return c.json(
 		{
 			...serialize(actorWithoutSecrets),
-			api_key: actor.apiKey!,
+			api_key: actor.apiKey ?? '',
 		} as z.infer<typeof actorWithKeySchema>,
 		200,
 	)

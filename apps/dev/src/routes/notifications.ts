@@ -52,6 +52,10 @@ const createNotificationRoute = createRoute({
 			description: 'Invalid request',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Internal server error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 

@@ -47,12 +47,7 @@ describe('Triggers Integration', () => {
 
 			// Update (disable)
 			const updateRes = await app.request(
-				jsonRequest(
-					'PATCH',
-					`/api/triggers/${created.id}`,
-					{ enabled: false },
-					headers,
-				),
+				jsonRequest('PATCH', `/api/triggers/${created.id}`, { enabled: false }, headers),
 			)
 			expect(updateRes.status).toBe(200)
 			const updated = await updateRes.json()

@@ -8,8 +8,9 @@ vi.mock('node:fs/promises', () => ({
 }))
 
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import { createTestContext } from '../setup'
+import type { StorageProvider } from '@ai-native/storage'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { createTestContext } from '../setup'
 
 function createMockStorage() {
 	return {
@@ -34,7 +35,7 @@ describe('AgentStorageManager', () => {
 		storage = createMockStorage()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
-		manager = new AgentStorageManager(storage as any, ctx.db)
+		manager = new AgentStorageManager(storage as StorageProvider, ctx.db)
 	})
 
 	describe('pullAgentFiles()', () => {
@@ -120,7 +121,13 @@ describe('AgentStorageManager', () => {
 			mockResults.update = []
 			mockResults.insert = []
 
-			const key = await manager.uploadFile(actorId, workspaceId, 'skills', 'my-skill/SKILL.md', content)
+			const key = await manager.uploadFile(
+				actorId,
+				workspaceId,
+				'skills',
+				'my-skill/SKILL.md',
+				content,
+			)
 
 			expect(key).toBe(`agents/${workspaceId}/${actorId}/skills/my-skill/SKILL.md`)
 			expect(storage.put).toHaveBeenCalledWith(key, content)
@@ -144,9 +151,7 @@ describe('AgentStorageManager', () => {
 
 			const result = await manager.listFiles(actorId, workspaceId, 'skills')
 
-			expect(storage.list).toHaveBeenCalledWith(
-				`agents/${workspaceId}/${actorId}/skills/`,
-			)
+			expect(storage.list).toHaveBeenCalledWith(`agents/${workspaceId}/${actorId}/skills/`)
 			expect(result).toEqual(['key1', 'key2'])
 		})
 
@@ -155,9 +160,7 @@ describe('AgentStorageManager', () => {
 
 			await manager.listFiles(actorId, workspaceId)
 
-			expect(storage.list).toHaveBeenCalledWith(
-				`agents/${workspaceId}/${actorId}/`,
-			)
+			expect(storage.list).toHaveBeenCalledWith(`agents/${workspaceId}/${actorId}/`)
 		})
 	})
 

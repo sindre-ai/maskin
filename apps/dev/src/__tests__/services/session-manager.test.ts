@@ -44,9 +44,10 @@ vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
 
+import type { StorageProvider } from '@ai-native/storage'
+import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
-import { SessionManager } from '../../services/session-manager'
 
 function createMockStorageProvider() {
 	return {
@@ -69,7 +70,7 @@ describe('SessionManager', () => {
 		storageProvider = createMockStorageProvider()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
-		manager = new SessionManager(ctx.db, storageProvider as any)
+		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
 	})
 
 	afterEach(async () => {
@@ -132,9 +133,7 @@ describe('SessionManager', () => {
 			const session = buildSession({ containerId: null })
 			mockResults.select = [session]
 
-			await expect(manager.stopSession(session.id)).rejects.toThrow(
-				'not found or has no container',
-			)
+			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
 		})
 	})
 
