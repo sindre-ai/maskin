@@ -104,15 +104,6 @@ function SettingsPage() {
 						</p>
 					</Link>
 					<Link
-						to="/$workspaceId/settings/triggers"
-						params={{ workspaceId }}
-						search={{ create: false }}
-						className="block rounded-lg border border-border bg-card p-4 hover:border-border transition-colors"
-					>
-						<p className="text-sm font-medium text-foreground">Triggers</p>
-						<p className="text-xs text-muted-foreground mt-1">Manage automation triggers</p>
-					</Link>
-					<Link
 						to="/$workspaceId/settings/members"
 						params={{ workspaceId }}
 						search={{ create: false }}

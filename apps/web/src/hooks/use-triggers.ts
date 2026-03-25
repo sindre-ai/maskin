@@ -16,10 +16,11 @@ export function useTriggers(workspaceId: string) {
 }
 
 export function useTrigger(id: string, workspaceId: string) {
-	return useQuery({
-		queryKey: queryKeys.triggers.detail(id),
-		queryFn: () => api.triggers.get(id, workspaceId),
-	})
+	const { data: triggers, ...rest } = useTriggers(workspaceId)
+	return {
+		...rest,
+		data: triggers?.find((t) => t.id === id),
+	}
 }
 
 export function useCreateTrigger(workspaceId: string) {

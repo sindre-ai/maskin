@@ -32,7 +32,7 @@ import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
-export const Route = createFileRoute('/_authed/$workspaceId/settings/triggers/')({
+export const Route = createFileRoute('/_authed/$workspaceId/triggers/')({
 	component: TriggersPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 	validateSearch: (search: Record<string, unknown>) => ({
@@ -44,7 +44,7 @@ function TriggersPage() {
 	const { workspaceId, workspace } = useWorkspace()
 	const { data: triggers, isLoading } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
-	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/triggers/' })
+	const { create } = useSearch({ from: '/_authed/$workspaceId/triggers/' })
 	const [showCreate, setShowCreate] = useState(false)
 
 	useEffect(() => {
@@ -99,7 +99,7 @@ function TriggerRow({
 }) {
 	return (
 		<Link
-			to="/$workspaceId/settings/triggers/$triggerId"
+			to="/$workspaceId/triggers/$triggerId"
 			params={{ workspaceId, triggerId: trigger.id }}
 			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-muted/50 transition-colors"
 		>

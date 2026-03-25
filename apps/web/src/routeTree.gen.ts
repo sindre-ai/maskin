@@ -16,16 +16,16 @@ import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
 import { Route as AuthedWorkspaceIdActivityRouteImport } from './routes/_authed/$workspaceId/activity'
+import { Route as AuthedWorkspaceIdTriggersIndexRouteImport } from './routes/_authed/$workspaceId/triggers/index'
 import { Route as AuthedWorkspaceIdSettingsIndexRouteImport } from './routes/_authed/$workspaceId/settings/index'
 import { Route as AuthedWorkspaceIdObjectsIndexRouteImport } from './routes/_authed/$workspaceId/objects/index'
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
+import { Route as AuthedWorkspaceIdTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/triggers/$triggerId'
 import { Route as AuthedWorkspaceIdSettingsMembersRouteImport } from './routes/_authed/$workspaceId/settings/members'
 import { Route as AuthedWorkspaceIdSettingsIntegrationsRouteImport } from './routes/_authed/$workspaceId/settings/integrations'
 import { Route as AuthedWorkspaceIdObjectsObjectIdRouteImport } from './routes/_authed/$workspaceId/objects/$objectId'
 import { Route as AuthedWorkspaceIdAgentsAgentIdRouteImport } from './routes/_authed/$workspaceId/agents/$agentId'
-import { Route as AuthedWorkspaceIdSettingsTriggersIndexRouteImport } from './routes/_authed/$workspaceId/settings/triggers/index'
 import { Route as AuthedWorkspaceIdSettingsPropertiesIndexRouteImport } from './routes/_authed/$workspaceId/settings/properties/index'
-import { Route as AuthedWorkspaceIdSettingsTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/settings/triggers/$triggerId'
 import { Route as AuthedWorkspaceIdSettingsPropertiesPropertyNameRouteImport } from './routes/_authed/$workspaceId/settings/properties/$propertyName'
 
 const SignupRoute = SignupRouteImport.update({
@@ -63,6 +63,12 @@ const AuthedWorkspaceIdActivityRoute =
     path: '/activity',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
+const AuthedWorkspaceIdTriggersIndexRoute =
+  AuthedWorkspaceIdTriggersIndexRouteImport.update({
+    id: '/triggers/',
+    path: '/triggers/',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
 const AuthedWorkspaceIdSettingsIndexRoute =
   AuthedWorkspaceIdSettingsIndexRouteImport.update({
     id: '/settings/',
@@ -79,6 +85,12 @@ const AuthedWorkspaceIdAgentsIndexRoute =
   AuthedWorkspaceIdAgentsIndexRouteImport.update({
     id: '/agents/',
     path: '/agents/',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
+const AuthedWorkspaceIdTriggersTriggerIdRoute =
+  AuthedWorkspaceIdTriggersTriggerIdRouteImport.update({
+    id: '/triggers/$triggerId',
+    path: '/triggers/$triggerId',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
 const AuthedWorkspaceIdSettingsMembersRoute =
@@ -105,22 +117,10 @@ const AuthedWorkspaceIdAgentsAgentIdRoute =
     path: '/agents/$agentId',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
-const AuthedWorkspaceIdSettingsTriggersIndexRoute =
-  AuthedWorkspaceIdSettingsTriggersIndexRouteImport.update({
-    id: '/settings/triggers/',
-    path: '/settings/triggers/',
-    getParentRoute: () => AuthedWorkspaceIdRoute,
-  } as any)
 const AuthedWorkspaceIdSettingsPropertiesIndexRoute =
   AuthedWorkspaceIdSettingsPropertiesIndexRouteImport.update({
     id: '/settings/properties/',
     path: '/settings/properties/',
-    getParentRoute: () => AuthedWorkspaceIdRoute,
-  } as any)
-const AuthedWorkspaceIdSettingsTriggersTriggerIdRoute =
-  AuthedWorkspaceIdSettingsTriggersTriggerIdRouteImport.update({
-    id: '/settings/triggers/$triggerId',
-    path: '/settings/triggers/$triggerId',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
 const AuthedWorkspaceIdSettingsPropertiesPropertyNameRoute =
@@ -141,13 +141,13 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/$workspaceId/objects/': typeof AuthedWorkspaceIdObjectsIndexRoute
   '/$workspaceId/settings/': typeof AuthedWorkspaceIdSettingsIndexRoute
+  '/$workspaceId/triggers/': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/$workspaceId/settings/properties/$propertyName': typeof AuthedWorkspaceIdSettingsPropertiesPropertyNameRoute
-  '/$workspaceId/settings/triggers/$triggerId': typeof AuthedWorkspaceIdSettingsTriggersTriggerIdRoute
   '/$workspaceId/settings/properties/': typeof AuthedWorkspaceIdSettingsPropertiesIndexRoute
-  '/$workspaceId/settings/triggers/': typeof AuthedWorkspaceIdSettingsTriggersIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -159,13 +159,13 @@ export interface FileRoutesByTo {
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/$workspaceId/objects': typeof AuthedWorkspaceIdObjectsIndexRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsIndexRoute
+  '/$workspaceId/triggers': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/$workspaceId/settings/properties/$propertyName': typeof AuthedWorkspaceIdSettingsPropertiesPropertyNameRoute
-  '/$workspaceId/settings/triggers/$triggerId': typeof AuthedWorkspaceIdSettingsTriggersTriggerIdRoute
   '/$workspaceId/settings/properties': typeof AuthedWorkspaceIdSettingsPropertiesIndexRoute
-  '/$workspaceId/settings/triggers': typeof AuthedWorkspaceIdSettingsTriggersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -180,13 +180,13 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/_authed/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/_authed/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/_authed/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/_authed/$workspaceId/objects/': typeof AuthedWorkspaceIdObjectsIndexRoute
   '/_authed/$workspaceId/settings/': typeof AuthedWorkspaceIdSettingsIndexRoute
+  '/_authed/$workspaceId/triggers/': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/_authed/$workspaceId/settings/properties/$propertyName': typeof AuthedWorkspaceIdSettingsPropertiesPropertyNameRoute
-  '/_authed/$workspaceId/settings/triggers/$triggerId': typeof AuthedWorkspaceIdSettingsTriggersTriggerIdRoute
   '/_authed/$workspaceId/settings/properties/': typeof AuthedWorkspaceIdSettingsPropertiesIndexRoute
-  '/_authed/$workspaceId/settings/triggers/': typeof AuthedWorkspaceIdSettingsTriggersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -201,13 +201,13 @@ export interface FileRouteTypes {
     | '/$workspaceId/objects/$objectId'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/members'
+    | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents/'
     | '/$workspaceId/objects/'
     | '/$workspaceId/settings/'
+    | '/$workspaceId/triggers/'
     | '/$workspaceId/settings/properties/$propertyName'
-    | '/$workspaceId/settings/triggers/$triggerId'
     | '/$workspaceId/settings/properties/'
-    | '/$workspaceId/settings/triggers/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -219,13 +219,13 @@ export interface FileRouteTypes {
     | '/$workspaceId/objects/$objectId'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/members'
+    | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents'
     | '/$workspaceId/objects'
     | '/$workspaceId/settings'
+    | '/$workspaceId/triggers'
     | '/$workspaceId/settings/properties/$propertyName'
-    | '/$workspaceId/settings/triggers/$triggerId'
     | '/$workspaceId/settings/properties'
-    | '/$workspaceId/settings/triggers'
   id:
     | '__root__'
     | '/_authed'
@@ -239,13 +239,13 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/objects/$objectId'
     | '/_authed/$workspaceId/settings/integrations'
     | '/_authed/$workspaceId/settings/members'
+    | '/_authed/$workspaceId/triggers/$triggerId'
     | '/_authed/$workspaceId/agents/'
     | '/_authed/$workspaceId/objects/'
     | '/_authed/$workspaceId/settings/'
+    | '/_authed/$workspaceId/triggers/'
     | '/_authed/$workspaceId/settings/properties/$propertyName'
-    | '/_authed/$workspaceId/settings/triggers/$triggerId'
     | '/_authed/$workspaceId/settings/properties/'
-    | '/_authed/$workspaceId/settings/triggers/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -305,6 +305,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdActivityRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
+    '/_authed/$workspaceId/triggers/': {
+      id: '/_authed/$workspaceId/triggers/'
+      path: '/triggers'
+      fullPath: '/$workspaceId/triggers/'
+      preLoaderRoute: typeof AuthedWorkspaceIdTriggersIndexRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
     '/_authed/$workspaceId/settings/': {
       id: '/_authed/$workspaceId/settings/'
       path: '/settings'
@@ -324,6 +331,13 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/$workspaceId/agents/'
       preLoaderRoute: typeof AuthedWorkspaceIdAgentsIndexRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
+    '/_authed/$workspaceId/triggers/$triggerId': {
+      id: '/_authed/$workspaceId/triggers/$triggerId'
+      path: '/triggers/$triggerId'
+      fullPath: '/$workspaceId/triggers/$triggerId'
+      preLoaderRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/settings/members': {
@@ -354,25 +368,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdAgentsAgentIdRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
-    '/_authed/$workspaceId/settings/triggers/': {
-      id: '/_authed/$workspaceId/settings/triggers/'
-      path: '/settings/triggers'
-      fullPath: '/$workspaceId/settings/triggers/'
-      preLoaderRoute: typeof AuthedWorkspaceIdSettingsTriggersIndexRouteImport
-      parentRoute: typeof AuthedWorkspaceIdRoute
-    }
     '/_authed/$workspaceId/settings/properties/': {
       id: '/_authed/$workspaceId/settings/properties/'
       path: '/settings/properties'
       fullPath: '/$workspaceId/settings/properties/'
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsPropertiesIndexRouteImport
-      parentRoute: typeof AuthedWorkspaceIdRoute
-    }
-    '/_authed/$workspaceId/settings/triggers/$triggerId': {
-      id: '/_authed/$workspaceId/settings/triggers/$triggerId'
-      path: '/settings/triggers/$triggerId'
-      fullPath: '/$workspaceId/settings/triggers/$triggerId'
-      preLoaderRoute: typeof AuthedWorkspaceIdSettingsTriggersTriggerIdRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/settings/properties/$propertyName': {
@@ -392,13 +392,13 @@ interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdObjectsObjectIdRoute: typeof AuthedWorkspaceIdObjectsObjectIdRoute
   AuthedWorkspaceIdSettingsIntegrationsRoute: typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   AuthedWorkspaceIdSettingsMembersRoute: typeof AuthedWorkspaceIdSettingsMembersRoute
+  AuthedWorkspaceIdTriggersTriggerIdRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   AuthedWorkspaceIdAgentsIndexRoute: typeof AuthedWorkspaceIdAgentsIndexRoute
   AuthedWorkspaceIdObjectsIndexRoute: typeof AuthedWorkspaceIdObjectsIndexRoute
   AuthedWorkspaceIdSettingsIndexRoute: typeof AuthedWorkspaceIdSettingsIndexRoute
+  AuthedWorkspaceIdTriggersIndexRoute: typeof AuthedWorkspaceIdTriggersIndexRoute
   AuthedWorkspaceIdSettingsPropertiesPropertyNameRoute: typeof AuthedWorkspaceIdSettingsPropertiesPropertyNameRoute
-  AuthedWorkspaceIdSettingsTriggersTriggerIdRoute: typeof AuthedWorkspaceIdSettingsTriggersTriggerIdRoute
   AuthedWorkspaceIdSettingsPropertiesIndexRoute: typeof AuthedWorkspaceIdSettingsPropertiesIndexRoute
-  AuthedWorkspaceIdSettingsTriggersIndexRoute: typeof AuthedWorkspaceIdSettingsTriggersIndexRoute
 }
 
 const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
@@ -409,17 +409,16 @@ const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
   AuthedWorkspaceIdSettingsIntegrationsRoute:
     AuthedWorkspaceIdSettingsIntegrationsRoute,
   AuthedWorkspaceIdSettingsMembersRoute: AuthedWorkspaceIdSettingsMembersRoute,
+  AuthedWorkspaceIdTriggersTriggerIdRoute:
+    AuthedWorkspaceIdTriggersTriggerIdRoute,
   AuthedWorkspaceIdAgentsIndexRoute: AuthedWorkspaceIdAgentsIndexRoute,
   AuthedWorkspaceIdObjectsIndexRoute: AuthedWorkspaceIdObjectsIndexRoute,
   AuthedWorkspaceIdSettingsIndexRoute: AuthedWorkspaceIdSettingsIndexRoute,
+  AuthedWorkspaceIdTriggersIndexRoute: AuthedWorkspaceIdTriggersIndexRoute,
   AuthedWorkspaceIdSettingsPropertiesPropertyNameRoute:
     AuthedWorkspaceIdSettingsPropertiesPropertyNameRoute,
-  AuthedWorkspaceIdSettingsTriggersTriggerIdRoute:
-    AuthedWorkspaceIdSettingsTriggersTriggerIdRoute,
   AuthedWorkspaceIdSettingsPropertiesIndexRoute:
     AuthedWorkspaceIdSettingsPropertiesIndexRoute,
-  AuthedWorkspaceIdSettingsTriggersIndexRoute:
-    AuthedWorkspaceIdSettingsTriggersIndexRoute,
 }
 
 const AuthedWorkspaceIdRouteWithChildren =

@@ -16,7 +16,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-export const Route = createFileRoute('/_authed/$workspaceId/settings/triggers/$triggerId')({
+export const Route = createFileRoute('/_authed/$workspaceId/triggers/$triggerId')({
 	component: TriggerDetailPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
@@ -45,7 +45,7 @@ function TriggerDetailPage() {
 	if (error || !trigger) {
 		return (
 			<div className="flex items-center justify-center py-16">
-				<p className="text-sm text-muted-foreground">{error?.message || 'Trigger not found'}</p>
+				<p className="text-sm text-muted-foreground">{error?.message || "Trigger not found"}</p>
 			</div>
 		)
 	}
@@ -58,7 +58,7 @@ function TriggerDetailPage() {
 		deleteTrigger.mutate(trigger.id, {
 			onSuccess: () => {
 				navigate({
-					to: '/$workspaceId/settings/triggers',
+					to: '/$workspaceId/triggers',
 					params: { workspaceId },
 					search: { create: false },
 				})
@@ -86,7 +86,7 @@ function TriggerDetailPage() {
 						}`}
 					>
 						<span
-							className={`h-1.5 w-1.5 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
+							className={`h-1.5 w-1.5 rounded-full ${trigger.enabled ? `bg-success` : `bg-zinc-600`}`}
 						/>
 						{trigger.enabled ? 'Enabled' : 'Disabled'}
 					</span>
@@ -96,8 +96,8 @@ function TriggerDetailPage() {
 				{/* Enabled toggle */}
 				<Section title="Status">
 					<Button
-						variant="outline"
-						size="sm"
+						variant='outline'
+						size='sm'
 						onClick={() => handleUpdate({ enabled: !trigger.enabled })}
 					>
 						{trigger.enabled ? 'Disable trigger' : 'Enable trigger'}
@@ -156,8 +156,8 @@ function TriggerDetailPage() {
 				{/* Delete */}
 				<div className="border-t border-border pt-6">
 					<Button
-						variant="ghost"
-						size="sm"
+						variant='ghost'
+						size='sm'
 						className="text-error hover:text-error"
 						onClick={handleDelete}
 						disabled={deleteTrigger.isPending}
@@ -190,7 +190,7 @@ function EditableName({ value, onSave }: { value: string; onSave: (v: string) =>
 		return (
 			<input
 				ref={inputRef}
-				type="text"
+				type='text'
 				value={draft}
 				onChange={(e) => setDraft(e.target.value)}
 				onBlur={handleBlur}

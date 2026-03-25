@@ -50,13 +50,12 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Property Details',
 		parent: '/_authed/$workspaceId/settings/properties/',
 	},
-	'/_authed/$workspaceId/settings/triggers/': {
+	'/_authed/$workspaceId/triggers/': {
 		label: 'Triggers',
-		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/triggers/$triggerId': {
+	'/_authed/$workspaceId/triggers/$triggerId': {
 		label: 'Trigger Details',
-		parent: '/_authed/$workspaceId/settings/triggers/',
+		parent: '/_authed/$workspaceId/triggers/',
 	},
 }
 
@@ -65,7 +64,7 @@ const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$wo
 const createItems = [
 	{ label: 'Object', to: '/$workspaceId/objects' as const, icon: Layers },
 	{ label: 'Agent', to: '/$workspaceId/agents' as const, icon: Bot },
-	{ label: 'Trigger', to: '/$workspaceId/settings/triggers' as const, icon: Zap },
+	{ label: 'Trigger', to: '/$workspaceId/triggers' as const, icon: Zap },
 	{ label: 'Property', to: '/$workspaceId/settings/properties' as const, icon: Tags },
 ]
 
