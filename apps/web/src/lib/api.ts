@@ -223,30 +223,12 @@ export const api = {
 	},
 
 	claudeOauth: {
-		exchange: (
-			workspaceId: string,
-			data: { code: string; code_verifier: string; redirect_uri: string; state: string },
-		) =>
-			request<ClaudeOAuthExchangeResponse>('/claude-oauth/exchange', {
-				method: 'POST',
-				body: data,
-				workspaceId,
-			}),
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
 				method: 'POST',
 				body: tokens,
 				workspaceId,
 			}),
-		start: (workspaceId: string) =>
-			request<{ auth_url: string; flow_id: string }>('/claude-oauth/start', {
-				method: 'POST',
-				workspaceId,
-			}),
-		flowStatus: (flowId: string) =>
-			request<{ status: 'pending' | 'complete' | 'error'; error?: string }>(
-				`/claude-oauth/flow/${flowId}`,
-			),
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
 		disconnect: (workspaceId: string) =>
