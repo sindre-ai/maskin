@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { buildActor, buildCreateActorBody } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
