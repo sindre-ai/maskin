@@ -499,13 +499,7 @@ export function TriggerForm({
 								/>
 							))}
 							{fieldDefs.length > 0 ? (
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									className="text-xs text-muted-foreground"
-									onClick={addCondition}
-								>
+								<Button type="button" variant="ghost" size="sm" onClick={addCondition}>
 									+ Add condition
 								</Button>
 							) : conditions.length === 0 ? (
@@ -648,8 +642,8 @@ function ConditionEditor({
 			<Button
 				type="button"
 				variant="ghost"
-				size="sm"
-				className="h-8 w-8 p-0 text-muted-foreground hover:text-error shrink-0"
+				size="icon"
+				className="text-muted-foreground hover:text-error shrink-0"
 				onClick={onRemove}
 			>
 				<X size={14} />

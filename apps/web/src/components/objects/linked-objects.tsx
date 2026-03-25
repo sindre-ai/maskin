@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import {
 	Select,
 	SelectContent,
@@ -206,13 +207,9 @@ function LinkedSectionView({
 					<span className="text-muted-foreground">({section.relationships.length})</span>
 				</button>
 				{section.addRelType && (
-					<button
-						type="button"
-						className="text-[11px] text-primary hover:text-primary-hover"
-						onClick={() => setShowAdd(!showAdd)}
-					>
+					<Button variant="ghost" size="sm" onClick={() => setShowAdd(!showAdd)}>
 						+ link
-					</button>
+					</Button>
 				)}
 			</div>
 
@@ -258,14 +255,16 @@ function LinkedSectionView({
 										<StatusBadge status={obj.status} />
 									</Link>
 								)}
-								<button
+								<Button
 									type="button"
-									className="text-[11px] text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity px-1"
+									variant="ghost"
+									size="icon"
+									className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
 									onClick={() => onDeleteRelationship(rel.id)}
 									title="Remove link"
 								>
 									×
-								</button>
+								</Button>
 							</div>
 						)
 					})}
@@ -309,27 +308,24 @@ function ObjectPicker({
 			/>
 			<div className="max-h-32 overflow-auto space-y-0.5">
 				{candidates.map((obj) => (
-					<button
+					<Button
 						key={obj.id}
 						type="button"
-						className="flex items-center gap-2 w-full text-left rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+						variant="ghost"
+						className="w-full justify-start"
 						onClick={() => onSelect(obj.id)}
 					>
 						<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
 						<TypeBadge type={obj.type} />
-					</button>
+					</Button>
 				))}
 				{candidates.length === 0 && (
 					<p className="text-xs text-muted-foreground py-1 px-2">No objects found</p>
 				)}
 			</div>
-			<button
-				type="button"
-				className="text-[11px] text-muted-foreground hover:text-muted-foreground mt-1"
-				onClick={onCancel}
-			>
+			<Button variant="ghost" size="sm" className="mt-1" onClick={onCancel}>
 				Cancel
-			</button>
+			</Button>
 		</div>
 	)
 }
@@ -380,13 +376,9 @@ function AddLinkForm({
 
 	if (!open) {
 		return (
-			<button
-				type="button"
-				className="text-xs text-muted-foreground hover:text-muted-foreground"
-				onClick={() => setOpen(true)}
-			>
+			<Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
 				+ Add link
-			</button>
+			</Button>
 		)
 	}
 
@@ -418,28 +410,25 @@ function AddLinkForm({
 			/>
 			<div className="max-h-32 overflow-auto space-y-0.5">
 				{candidates.map((obj) => (
-					<button
+					<Button
 						key={obj.id}
 						type="button"
-						className="flex items-center gap-2 w-full text-left rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+						variant="ghost"
+						className="w-full justify-start"
 						onClick={() => handleLink(obj.id)}
 					>
 						<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
 						<TypeBadge type={obj.type} />
 						<StatusBadge status={obj.status} />
-					</button>
+					</Button>
 				))}
 				{candidates.length === 0 && (
 					<p className="text-xs text-muted-foreground py-1 px-2">No objects found</p>
 				)}
 			</div>
-			<button
-				type="button"
-				className="text-[11px] text-muted-foreground hover:text-muted-foreground"
-				onClick={() => setOpen(false)}
-			>
+			<Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
 				Cancel
-			</button>
+			</Button>
 		</div>
 	)
 }

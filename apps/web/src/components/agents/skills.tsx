@@ -129,18 +129,13 @@ function SkillCard({
 				</div>
 			) : (
 				<div className="flex items-center gap-1">
-					<Button
-						size="icon"
-						variant="ghost"
-						className="h-7 w-7 text-muted-foreground"
-						onClick={onEdit}
-					>
+					<Button size="icon" variant="ghost" className="text-muted-foreground" onClick={onEdit}>
 						<Pencil className="h-3.5 w-3.5" />
 					</Button>
 					<Button
 						size="icon"
 						variant="ghost"
-						className="h-7 w-7 text-muted-foreground hover:text-error"
+						className="text-muted-foreground hover:text-error"
 						onClick={() => setConfirmDelete(true)}
 					>
 						<Trash2 className="h-3.5 w-3.5" />
@@ -254,13 +249,9 @@ function SkillForm({
 			</div>
 
 			{/* Advanced settings toggle */}
-			<button
-				type="button"
-				className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-				onClick={() => setShowAdvanced(!showAdvanced)}
-			>
+			<Button variant="ghost" size="sm" onClick={() => setShowAdvanced(!showAdvanced)}>
 				{showAdvanced ? 'Hide' : 'Show'} advanced options
-			</button>
+			</Button>
 
 			{showAdvanced && (
 				<div className="space-y-2 border-t border-border pt-2">
