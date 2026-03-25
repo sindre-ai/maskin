@@ -17,7 +17,7 @@ import {
 	workspaces,
 } from '@ai-native/db/schema'
 import type { StorageProvider } from '@ai-native/storage'
-import { and, count as countFn, desc, eq, lt } from 'drizzle-orm'
+import { and, count as countFn, desc, eq, inArray, lt } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { decrypt } from '../lib/crypto'
 import { getProvider } from '../lib/integrations/registry'
@@ -55,6 +55,8 @@ export class SessionManager extends EventEmitter {
 	}
 
 	async start() {
+		await this.reconcileOnStartup()
+
 		// Start watchdog for timeouts and idle sessions
 		this.watchdogInterval = setInterval(() => {
 			this.runWatchdog().catch((err) =>
@@ -64,11 +66,184 @@ export class SessionManager extends EventEmitter {
 		logger.info('Session manager started')
 	}
 
+	/**
+	 * On startup, reconcile DB session state with actual Docker state.
+	 * Marks stale sessions as failed and removes orphaned containers.
+	 */
+	private async reconcileOnStartup(): Promise<void> {
+		const staleSessions = await this.db
+			.select()
+			.from(sessions)
+			.where(inArray(sessions.status, ['running', 'starting', 'snapshotting']))
+
+		if (staleSessions.length > 0) {
+			logger.warn(
+				`Startup recovery: found ${staleSessions.length} stale session(s) from previous instance`,
+			)
+
+			for (const session of staleSessions) {
+				// Try to clean up the container if it still exists
+				if (session.containerId) {
+					try {
+						const status = await this.containers.inspect(session.containerId)
+						if (status.running) {
+							await this.containers.stop(session.containerId, 5)
+						}
+						await this.containers.remove(session.containerId)
+						logger.info(`Removed stale container for session ${session.id}`, {
+							containerId: session.containerId,
+						})
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err)
+						if (!message.includes('No such container') && !message.includes('not found')) {
+							logger.warn('Failed to clean up stale container', {
+								sessionId: session.id,
+								containerId: session.containerId,
+								error: message,
+							})
+						}
+					}
+				}
+
+				await this.db
+					.update(sessions)
+					.set({
+						status: 'failed',
+						result: { error: 'Server restarted unexpectedly' },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(sessions.id, session.id))
+
+				await this.db.insert(events).values({
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					action: 'session_failed',
+					entityType: 'session',
+					entityId: session.id,
+					data: { error: 'Server restarted unexpectedly' },
+				})
+
+				await this.clearActiveSession(session.id)
+			}
+
+			logger.info(`Startup recovery: marked ${staleSessions.length} session(s) as failed`)
+		}
+
+		// Find and remove any orphaned containers not tracked in DB
+		try {
+			const trackedContainerIds = new Set(
+				staleSessions.map((s) => s.containerId).filter(Boolean),
+			)
+			const allSessionContainers = await this.containers.listByPrefix('anko-session-')
+			const orphaned = allSessionContainers.filter((c) => !trackedContainerIds.has(c.id))
+
+			for (const container of orphaned) {
+				await this.containers.remove(container.id).catch((err) =>
+					logger.warn('Failed to remove orphaned container', {
+						containerId: container.id,
+						name: container.name,
+						error: String(err),
+					}),
+				)
+				logger.info(`Removed orphaned container: ${container.name}`)
+			}
+
+			if (orphaned.length > 0) {
+				logger.info(`Startup recovery: removed ${orphaned.length} orphaned container(s)`)
+			}
+		} catch (err) {
+			logger.warn('Failed to scan for orphaned containers', { error: String(err) })
+		}
+	}
+
 	async stop() {
 		if (this.watchdogInterval) {
 			clearInterval(this.watchdogInterval)
 			this.watchdogInterval = null
 		}
+
+		// Gracefully shut down all running sessions
+		const runningSessions = await this.db
+			.select()
+			.from(sessions)
+			.where(inArray(sessions.status, ['running', 'starting']))
+
+		if (runningSessions.length === 0) {
+			logger.info('No active sessions to clean up on shutdown')
+			return
+		}
+
+		logger.info(`Graceful shutdown: stopping ${runningSessions.length} active session(s)`)
+
+		const shutdownTimeout = setTimeout(() => {
+			logger.warn('Graceful shutdown timeout reached (30s), forcing exit')
+		}, 30_000)
+
+		const results = await Promise.allSettled(
+			runningSessions.map(async (session) => {
+				// Try to push agent files before stopping
+				const sessionData = this.activeSessions.get(session.id)
+				if (sessionData && session.containerId) {
+					await this.agentStorage
+						.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir)
+						.catch((err) =>
+							logger.warn('Failed to push agent files on shutdown', {
+								sessionId: session.id,
+								error: String(err),
+							}),
+						)
+				}
+
+				// Stop container
+				if (session.containerId) {
+					await this.containers.stop(session.containerId, 5).catch((err) =>
+						logger.warn('Failed to stop container on shutdown', {
+							sessionId: session.id,
+							error: String(err),
+						}),
+					)
+					await this.containers.remove(session.containerId).catch((err) =>
+						logger.warn('Failed to remove container on shutdown', {
+							sessionId: session.id,
+							error: String(err),
+						}),
+					)
+				}
+
+				// Update DB
+				await this.db
+					.update(sessions)
+					.set({
+						status: 'failed',
+						result: { error: 'Server shutdown' },
+						completedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(sessions.id, session.id))
+
+				await this.db.insert(events).values({
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					action: 'session_failed',
+					entityType: 'session',
+					entityId: session.id,
+					data: { error: 'Server shutdown' },
+				})
+
+				await this.clearActiveSession(session.id)
+				await this.cleanupSession(session.id)
+
+				logger.info(`Session stopped on shutdown: ${session.id}`)
+			}),
+		)
+
+		clearTimeout(shutdownTimeout)
+
+		const failed = results.filter((r) => r.status === 'rejected').length
+		logger.info(
+			`Graceful shutdown complete: ${results.length - failed} cleaned up, ${failed} failed`,
+		)
 	}
 
 	async createSession(

@@ -200,4 +200,18 @@ export class ContainerManager {
 		const container = this.docker.getContainer(containerId)
 		return container.getArchive({ path: srcPath })
 	}
+
+	async listByPrefix(
+		prefix: string,
+	): Promise<Array<{ id: string; name: string; state: string }>> {
+		const containers = await this.docker.listContainers({
+			all: true,
+			filters: { name: [prefix] },
+		})
+		return containers.map((c) => ({
+			id: c.Id,
+			name: c.Names[0]?.replace(/^\//, '') ?? '',
+			state: c.State,
+		}))
+	}
 }

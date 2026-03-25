@@ -208,5 +208,23 @@ logger.info(`Starting server on port ${port}`)
 
 serve({ fetch: app.fetch, port })
 
+// Graceful shutdown on SIGTERM (Coolify/Docker deploy) and SIGINT (Ctrl+C)
+let shuttingDown = false
+const shutdown = async (signal: string) => {
+	if (shuttingDown) return
+	shuttingDown = true
+
+	logger.info(`Received ${signal}, shutting down gracefully...`)
+
+	await sessionManager.stop()
+	await triggerRunner.stop()
+	await notifyBridge.stop()
+
+	logger.info('Shutdown complete')
+	process.exit(0)
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+
 export default app
 export type AppType = typeof app
