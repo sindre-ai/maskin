@@ -120,7 +120,7 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('not running')
+			expect(body.error.message).toContain('not running')
 		})
 	})
 
@@ -194,7 +194,7 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
-			expect(body.error).toContain('not paused')
+			expect(body.error.message).toContain('not paused')
 		})
 	})
 

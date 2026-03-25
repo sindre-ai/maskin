@@ -5,6 +5,7 @@ import { eventQuerySchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import { createApiError } from '../lib/errors'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 
@@ -24,7 +25,13 @@ app.get('/', async (c) => {
 	const db = c.get('db')
 	const bridge = c.get('notifyBridge')
 	const workspaceId = c.req.header('X-Workspace-Id')
-	if (!workspaceId) return c.json({ error: 'X-Workspace-Id header required' }, 400)
+	if (!workspaceId)
+		return c.json(
+			createApiError('BAD_REQUEST', 'X-Workspace-Id header required', [
+				{ field: 'x-workspace-id', message: 'Required header is missing', expected: 'UUID string' },
+			]),
+			400,
+		)
 
 	const lastEventId = c.req.header('Last-Event-ID')
 

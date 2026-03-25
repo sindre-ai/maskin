@@ -19,6 +19,7 @@
 	},
 	"dependencies": {
 		"@ai-native/db": "workspace:*",
+		"@ai-native/shared": "workspace:*",
 		"bcryptjs": "^2.4.3",
 		"better-auth": "^1.2.0",
 		"drizzle-orm": "^0.38.0",

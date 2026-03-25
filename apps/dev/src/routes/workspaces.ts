@@ -7,6 +7,7 @@ import {
 } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
+import { createApiError } from '../lib/errors'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 
@@ -161,7 +162,7 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	if (body.settings) {
 		// Merge settings with existing
 		const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
-		if (!existing) return c.json({ error: 'Workspace not found' }, 404)
+		if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 		updateData.settings = {
 			...(existing.settings as object),
 			...body.settings,
@@ -175,7 +176,7 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		.returning()
 
 	if (!updated) {
-		return c.json({ error: 'Workspace not found' }, 404)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)

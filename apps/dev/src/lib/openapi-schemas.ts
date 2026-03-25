@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi'
+import { apiErrorSchema } from './errors'
 
 /**
  * JSON-compatible schema for JSONB fields in OpenAPI response schemas.
@@ -18,7 +19,7 @@ export const jsonbField = z
 	)
 	.nullable()
 
-export const errorSchema = z.object({ error: z.string() })
+export const errorSchema = apiErrorSchema
 
 export const idParamSchema = z.object({ id: z.string().uuid() })
 
