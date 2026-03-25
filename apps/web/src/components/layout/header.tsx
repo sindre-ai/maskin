@@ -16,7 +16,7 @@ import {
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Layers, Plus, Tags, Zap } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
@@ -58,6 +58,7 @@ const createItems = [
 	{ label: 'Object', to: '/$workspaceId/objects' as const, icon: Layers },
 	{ label: 'Agent', to: '/$workspaceId/agents' as const, icon: Bot },
 	{ label: 'Trigger', to: '/$workspaceId/settings/triggers' as const, icon: Zap },
+	{ label: 'Property', to: '/$workspaceId/settings/properties' as const, icon: Tags },
 ]
 
 export function Header() {
