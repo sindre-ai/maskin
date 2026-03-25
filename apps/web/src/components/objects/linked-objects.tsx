@@ -397,7 +397,7 @@ function AddLinkForm({
 					Type:
 				</label>
 				<Select value={relType} onValueChange={setRelType}>
-					<SelectTrigger>
+					<SelectTrigger id="rel-type-select">
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
