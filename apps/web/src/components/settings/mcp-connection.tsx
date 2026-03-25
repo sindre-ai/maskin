@@ -1,8 +1,9 @@
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getApiKey } from '@/lib/auth'
-import { cn } from '@/lib/cn'
 import { Check, Copy } from 'lucide-react'
+
 import { useCallback, useMemo, useState } from 'react'
 
 type Tab = 'claude-ai' | 'claude-code' | 'claude-desktop' | 'custom'
@@ -131,26 +132,15 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 				workspace.
 			</p>
 
-			<div className="flex gap-1 rounded-lg border border-border bg-background p-1 mb-3">
-				{tabs.map((tab) => {
-					const isActive = activeTab === tab.value
-					return (
-						<button
-							key={tab.value}
-							type="button"
-							onClick={() => setActiveTab(tab.value)}
-							className={cn(
-								'flex flex-1 items-center justify-center rounded-md px-3 py-1.5 text-xs transition-colors',
-								isActive
-									? 'bg-muted text-foreground font-medium shadow-sm'
-									: 'text-muted-foreground hover:text-foreground',
-							)}
-						>
+			<Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)} className="mb-3">
+				<TabsList className="w-full">
+					{tabs.map((tab) => (
+						<TabsTrigger key={tab.value} value={tab.value} className="flex-1 text-xs">
 							{tab.label}
-						</button>
-					)
-				})}
-			</div>
+						</TabsTrigger>
+					))}
+				</TabsList>
+			</Tabs>
 
 			{activeTab === 'claude-ai' ? (
 				<div className="space-y-3">

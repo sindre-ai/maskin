@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import {
 	Select,
 	SelectContent,
@@ -5,6 +6,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -90,13 +92,9 @@ export function MetadataFieldAdd({
 
 	if (!open) {
 		return (
-			<button
-				type="button"
-				className="text-[11px] text-muted-foreground hover:text-muted-foreground"
-				onClick={() => setOpen(true)}
-			>
+			<Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
 				+ add field
-			</button>
+			</Button>
 		)
 	}
 
@@ -104,30 +102,24 @@ export function MetadataFieldAdd({
 		<div className="inline-flex flex-col gap-1.5 rounded border border-border bg-card p-2 text-[11px]">
 			{/* Mode selector: show defined fields or custom */}
 			{availableFields.length > 0 && (
-				<div className="flex gap-1 mb-1">
-					<button
-						type="button"
-						className={`px-1.5 py-0.5 rounded ${mode === 'defined' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-muted-foreground'}`}
-						onClick={() => {
-							setMode('defined')
-							setSelectedField(null)
-							setValue('')
-						}}
-					>
-						Defined fields
-					</button>
-					<button
-						type="button"
-						className={`px-1.5 py-0.5 rounded ${mode === 'custom' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-muted-foreground'}`}
-						onClick={() => {
-							setMode('custom')
-							setSelectedField(null)
-							setValue('')
-						}}
-					>
-						Custom
-					</button>
-				</div>
+				<Tabs
+					value={mode}
+					onValueChange={(v) => {
+						setMode(v as 'defined' | 'custom')
+						setSelectedField(null)
+						setValue('')
+					}}
+					className="mb-1"
+				>
+					<TabsList className="h-auto p-0.5">
+						<TabsTrigger value="defined" className="text-[11px] px-1.5 py-0.5">
+							Defined fields
+						</TabsTrigger>
+						<TabsTrigger value="custom" className="text-[11px] px-1.5 py-0.5">
+							Custom
+						</TabsTrigger>
+					</TabsList>
+				</Tabs>
 			)}
 
 			{mode === 'defined' && availableFields.length > 0 ? (
@@ -136,10 +128,11 @@ export function MetadataFieldAdd({
 					{!selectedField ? (
 						<div className="space-y-0.5">
 							{availableFields.map((field) => (
-								<button
+								<Button
 									key={field.name}
 									type="button"
-									className="flex items-center gap-2 w-full text-left rounded px-1.5 py-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+									variant="ghost"
+									className="w-full justify-start"
 									onClick={() => {
 										setSelectedField(field)
 										if (field.type === 'boolean') setValue('true')
@@ -148,7 +141,7 @@ export function MetadataFieldAdd({
 									<span>{field.name}</span>
 									<span className="text-muted-foreground">({field.type})</span>
 									{field.required && <span className="text-error">*</span>}
-								</button>
+								</Button>
 							))}
 						</div>
 					) : (
@@ -160,13 +153,9 @@ export function MetadataFieldAdd({
 								onChange={setValue}
 								onSubmit={handleAdd}
 							/>
-							<button
-								type="button"
-								className="text-primary hover:text-primary-hover px-1"
-								onClick={handleAdd}
-							>
+							<Button variant="ghost" size="sm" onClick={handleAdd}>
 								Add
-							</button>
+							</Button>
 						</div>
 					)}
 				</>
@@ -187,23 +176,15 @@ export function MetadataFieldAdd({
 						className="w-20 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground focus:border-ring outline-none"
 						onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
 					/>
-					<button
-						type="button"
-						className="text-primary hover:text-primary-hover px-1"
-						onClick={handleAdd}
-					>
+					<Button variant="ghost" size="sm" onClick={handleAdd}>
 						Add
-					</button>
+					</Button>
 				</div>
 			)}
 
-			<button
-				type="button"
-				className="text-muted-foreground hover:text-muted-foreground self-start"
-				onClick={resetForm}
-			>
+			<Button variant="ghost" size="sm" className="self-start" onClick={resetForm}>
 				Cancel
-			</button>
+			</Button>
 		</div>
 	)
 }
