@@ -1,23 +1,34 @@
+import { getAllWebModules } from '@ai-native/module-sdk'
 import type { QueryClient } from '@tanstack/react-query'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
+
+/** Get all object type strings from registered modules */
+function getModuleObjectTypes(): Set<string> {
+	const types = new Set<string>()
+	for (const mod of getAllWebModules()) {
+		for (const tab of mod.objectTypeTabs) {
+			types.add(tab.value)
+		}
+	}
+	return types
+}
 
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
 	// Always invalidate events history
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.history(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(event.entity_id) })
 
-	// Invalidate based on entity type
+	// Check if the entity type is a module object type
+	const objectTypes = getModuleObjectTypes()
+	if (objectTypes.has(event.entity_type)) {
+		queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+		queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
+		return
+	}
+
+	// Invalidate based on core entity types
 	switch (event.entity_type) {
-		case 'insight':
-		case 'bet':
-		case 'task':
-			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
-			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
-			if (event.entity_type === 'bet') {
-				queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
-			}
-			break
 		case 'relationship':
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
 			break

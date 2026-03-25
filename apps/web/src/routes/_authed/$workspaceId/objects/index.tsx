@@ -14,6 +14,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -25,16 +26,16 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	}),
 })
 
-const tabs = [
-	{ label: 'All', value: undefined },
-	{ label: 'Insights', value: 'insight' },
-	{ label: 'Bets', value: 'bet' },
-	{ label: 'Tasks', value: 'task' },
-] as const
-
 function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
 	const { create } = useSearch({ from: '/_authed/$workspaceId/objects/' })
+	const settings = workspace.settings as Record<string, unknown>
+	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const moduleTabs = getEnabledObjectTypeTabs(enabledModules)
+	const tabs = [
+		{ label: 'All', value: undefined as string | undefined },
+		...moduleTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),
+	]
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
@@ -55,7 +56,6 @@ function ObjectsPage() {
 	const { data: objects, isLoading } = useObjects(workspaceId, filters)
 
 	// Derive available statuses for the current type filter
-	const settings = workspace.settings as Record<string, unknown>
 	const allStatuses = useMemo(() => {
 		const statusMap = settings?.statuses as Record<string, string[]> | undefined
 		if (!statusMap) return []

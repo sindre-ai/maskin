@@ -11,22 +11,56 @@ import {
 	SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getEnabledNavItems } from '@ai-native/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import { Activity, Bot, Layers, Zap } from 'lucide-react'
+import { Activity, Bot, CheckSquare, Layers, Lightbulb, Target, Video, Zap } from 'lucide-react'
+import { useMemo } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
 
-const navItems = [
+/** Map of icon names to Lucide components */
+const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
+	layers: Layers,
+	lightbulb: Lightbulb,
+	target: Target,
+	'check-square': CheckSquare,
+	activity: Activity,
+	bot: Bot,
+	zap: Zap,
+	video: Video,
+}
+
+/** Core nav items that are always shown regardless of modules */
+const coreNavItems = [
 	{ label: 'Pulse', to: '/$workspaceId' as const, exact: true, icon: Zap },
-	{ label: 'Objects', to: '/$workspaceId/objects' as const, icon: Layers },
 	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
 	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
 	{ label: 'Triggers', to: '/$workspaceId/triggers' as const, icon: Zap },
 ]
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
-	const { workspaceId } = useWorkspace()
+	const { workspaceId, workspace } = useWorkspace()
 	const matchRoute = useMatchRoute()
+
+	const settings = workspace.settings as Record<string, unknown>
+	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+
+	// Get module nav items and convert to sidebar format
+	const moduleNavItems = useMemo(() => {
+		const items = getEnabledNavItems(enabledModules)
+		return items.map((item) => ({
+			label: item.label,
+			to: `/$workspaceId/${item.path}` as const,
+			icon: iconMap[item.icon] ?? Layers,
+			exact: item.exact,
+		}))
+	}, [enabledModules])
+
+	// Combine: Pulse first, then module items, then core items (Activity, Agents, Triggers)
+	const allNavItems = useMemo(() => {
+		const [pulse, ...restCore] = coreNavItems
+		return [pulse, ...moduleNavItems, ...restCore]
+	}, [moduleNavItems])
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
@@ -40,18 +74,18 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 			<SidebarContent>
 				<SidebarGroup>
 					<SidebarMenu>
-						{navItems.map((item) => {
+						{allNavItems.map((item) => {
 							const Icon = item.icon
 							const isActive = !!matchRoute({
-								to: item.to,
+								to: item.to as string,
 								params: { workspaceId },
-								fuzzy: !('exact' in item),
+								fuzzy: !('exact' in item && item.exact),
 							})
 
 							return (
 								<SidebarMenuItem key={item.to}>
 									<SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-										<Link to={item.to} params={{ workspaceId }}>
+										<Link to={item.to as string} params={{ workspaceId }}>
 											<Icon />
 											<span>{item.label}</span>
 										</Link>

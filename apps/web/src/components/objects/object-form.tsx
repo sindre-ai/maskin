@@ -6,16 +6,11 @@ import { Textarea } from '@/components/ui/textarea'
 import { useCreateObject } from '@/hooks/use-objects'
 import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import type { createObjectSchema } from '@ai-native/shared'
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { z } from 'zod'
-
-const defaultStatuses: Record<string, string> = {
-	insight: 'new',
-	bet: 'signal',
-	task: 'todo',
-}
 
 export function ObjectFormView({
 	onSubmit,
@@ -28,7 +23,13 @@ export function ObjectFormView({
 	isPending?: boolean
 	error?: Error | null
 }) {
-	const [type, setType] = useState<'insight' | 'bet' | 'task'>('bet')
+	const { workspace } = useWorkspace()
+	const wsSettings = workspace.settings as Record<string, unknown>
+	const enabledModules = (wsSettings?.enabled_modules as string[]) ?? ['work']
+	const typeTabs = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
+	const statusMap = (wsSettings?.statuses as Record<string, string[]>) ?? {}
+
+	const [type, setType] = useState(typeTabs[0]?.value ?? 'bet')
 	const [title, setTitle] = useState('')
 	const [content, setContent] = useState('')
 
@@ -36,11 +37,12 @@ export function ObjectFormView({
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
+		const defaultStatus = statusMap[type]?.[0] ?? 'new'
 		const data: z.input<typeof createObjectSchema> = {
 			type,
 			title,
 			content: content || undefined,
-			status: defaultStatuses[type],
+			status: defaultStatus,
 		}
 		await onSubmit(data)
 	}
@@ -50,15 +52,15 @@ export function ObjectFormView({
 			<div>
 				<Label className="mb-1 text-muted-foreground">Type</Label>
 				<div className="flex gap-2">
-					{(['insight', 'bet', 'task'] as const).map((t) => (
+					{typeTabs.map((t) => (
 						<Button
-							key={t}
+							key={t.value}
 							type="button"
-							variant={type === t ? 'default' : 'secondary'}
+							variant={type === t.value ? 'default' : 'secondary'}
 							size="sm"
-							onClick={() => setType(t)}
+							onClick={() => setType(t.value)}
 						>
-							{t}
+							{t.label}
 						</Button>
 					))}
 				</div>

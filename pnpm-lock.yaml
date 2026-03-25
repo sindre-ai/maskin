@@ -35,6 +35,9 @@ importers:
       '@ai-native/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@ai-native/mod-work':
+        specifier: workspace:*
+        version: link:../../modules/work
       '@ai-native/module-sdk':
         specifier: workspace:*
         version: link:../../packages/module-sdk
@@ -114,6 +117,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@ai-native/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
       '@ai-native/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -241,6 +247,16 @@ importers:
       vite-plugin-singlefile:
         specifier: ^2.3.2
         version: 2.3.2(rollup@4.59.0)(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2))
+
+  modules/work:
+    dependencies:
+      '@ai-native/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
   packages/auth:
     dependencies:
