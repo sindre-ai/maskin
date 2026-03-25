@@ -14,7 +14,7 @@ import {
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/triggers/$triggerId')({
@@ -36,8 +36,10 @@ function TriggerDetailPage() {
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
 
 	// Once the trigger exists in cache, mark as created
-	if (trigger) isCreatedRef.current = true
-	const isCreated = isCreatedRef.current
+	useEffect(() => {
+		if (trigger) isCreatedRef.current = true
+	}, [trigger])
+	const isCreated = isCreatedRef.current || !!trigger
 
 	if (isLoading && !isCreated) {
 		return (

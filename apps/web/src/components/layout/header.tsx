@@ -61,11 +61,44 @@ const routeConfig: Record<string, RouteConfig> = {
 
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
 
-const createItems = [
-	{ label: 'Object', to: '/$workspaceId/objects' as const, icon: Layers },
-	{ label: 'Agent', to: '/$workspaceId/agents' as const, icon: Bot },
-	{ label: 'Trigger', to: '/$workspaceId/triggers/$triggerId' as const, icon: Zap },
-	{ label: 'Property', to: '/$workspaceId/settings/properties' as const, icon: Tags },
+type CreateItem = {
+	label: string
+	icon: typeof Layers
+	navigate: (nav: ReturnType<typeof useNavigate>, workspaceId: string) => void
+}
+
+const createItems: CreateItem[] = [
+	{
+		label: 'Object',
+		icon: Layers,
+		navigate: (nav, workspaceId) =>
+			nav({ to: '/$workspaceId/objects', params: { workspaceId }, search: { create: true } }),
+	},
+	{
+		label: 'Agent',
+		icon: Bot,
+		navigate: (nav, workspaceId) =>
+			nav({ to: '/$workspaceId/agents', params: { workspaceId }, search: { create: true } }),
+	},
+	{
+		label: 'Trigger',
+		icon: Zap,
+		navigate: (nav, workspaceId) =>
+			nav({
+				to: '/$workspaceId/triggers/$triggerId',
+				params: { workspaceId, triggerId: crypto.randomUUID() },
+			}),
+	},
+	{
+		label: 'Property',
+		icon: Tags,
+		navigate: (nav, workspaceId) =>
+			nav({
+				to: '/$workspaceId/settings/properties',
+				params: { workspaceId },
+				search: { create: true },
+			}),
+	},
 ]
 
 export function Header() {
@@ -155,20 +188,7 @@ export function Header() {
 								return (
 									<DropdownMenuItem
 										key={item.label}
-										onClick={() => {
-											if (item.label === 'Trigger') {
-												navigate({
-													to: item.to,
-													params: { workspaceId, triggerId: crypto.randomUUID() },
-												})
-											} else {
-												navigate({
-													to: item.to,
-													params: { workspaceId },
-													search: { create: true },
-												})
-											}
-										}}
+										onClick={() => item.navigate(navigate, workspaceId)}
 									>
 										<Icon className="h-4 w-4" />
 										{item.label}

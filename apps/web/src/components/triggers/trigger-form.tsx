@@ -11,6 +11,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
+import { useAutoSave } from '@/hooks/use-auto-save'
 import { Check, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -273,7 +274,7 @@ export function TriggerForm({
 	const isValid =
 		name.trim() && prompt.trim() && targetActorId && (type === 'reminder' ? scheduledDate : true)
 
-	// --- Auto-create: fire once when form first becomes valid ---
+	// --- Build payload from current form state ---
 	const hasAutoCreatedRef = useRef(false)
 
 	const buildPayload = useCallback((): TriggerFormPayload | null => {
@@ -323,6 +324,7 @@ export function TriggerForm({
 		toStatus,
 	])
 
+	// --- Auto-create: fire once when form first becomes valid ---
 	useEffect(() => {
 		if (!onAutoCreate || hasAutoCreatedRef.current || !isValid) return
 		const payload = buildPayload()
@@ -332,55 +334,12 @@ export function TriggerForm({
 	}, [isValid, onAutoCreate, buildPayload])
 
 	// --- Debounced auto-save for edits ---
-	const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
-	const onSaveRef = useRef(onSave)
-	onSaveRef.current = onSave
-	const [showSaving, setShowSaving] = useState(false)
-	const savingTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
-
-	// Serialize form values to detect actual changes
-	const formSignature = JSON.stringify([
-		name,
-		type,
-		prompt,
-		targetActorId,
-		enabled,
-		frequency,
-		minute,
-		hour,
-		dayOfWeek,
-		dayOfMonth,
-		scheduledDate,
-		scheduledTime,
-		entityType,
-		action,
-		fromStatus,
-		toStatus,
-		conditions,
-	])
-
-	// Initialize lastSavedRef with the current signature so loading an existing trigger doesn't trigger a save
-	const lastSavedRef = useRef<string>(initialValues ? formSignature : '')
-
-	useEffect(() => {
-		if (!isCreated || !onSaveRef.current) return
-		if (!isValid) return
-		if (formSignature === lastSavedRef.current) return
-
-		clearTimeout(saveTimerRef.current)
-		saveTimerRef.current = setTimeout(() => {
-			const payload = buildPayload()
-			if (payload) {
-				lastSavedRef.current = formSignature
-				onSaveRef.current?.(payload)
-				setShowSaving(true)
-				clearTimeout(savingTimerRef.current)
-				savingTimerRef.current = setTimeout(() => setShowSaving(false), 2000)
-			}
-		}, 500)
-
-		return () => clearTimeout(saveTimerRef.current)
-	}, [isCreated, isValid, formSignature, buildPayload])
+	const { showSaved: showSaving } = useAutoSave({
+		isActive: isCreated,
+		isValid: !!isValid,
+		buildPayload,
+		onSave,
+	})
 
 	const handleEntityTypeChange = (val: string) => {
 		setEntityType(val)
