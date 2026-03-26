@@ -128,7 +128,7 @@ export function ObjectDocumentView({
 			</div>
 
 			{/* Properties */}
-			<div className="mb-6">
+			<div className="mb-6 w-fit">
 				<MetadataProperties object={object} />
 			</div>
 
