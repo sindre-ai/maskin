@@ -5,7 +5,7 @@ import { registerWebModule } from '@ai-native/module-sdk'
 registerWebModule({
 	id: 'work',
 	name: 'Work',
-	navItems: [{ label: 'Objects', path: 'objects', icon: 'layers' }],
+	navItems: [],
 	objectTypeTabs: WORK_OBJECT_TYPES.map((t) => ({ label: t.pluralLabel, value: t.type })),
 })
 

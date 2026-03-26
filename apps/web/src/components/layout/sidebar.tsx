@@ -11,7 +11,7 @@ import {
 	SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getEnabledNavItems } from '@ai-native/module-sdk'
+import { getEnabledNavItems, getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
 import { Activity, Bot, CheckSquare, Layers, Lightbulb, Target, Video, Zap } from 'lucide-react'
 import { useMemo } from 'react'
@@ -58,11 +58,17 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 		}))
 	}, [enabledModules])
 
-	// Combine: Pulse first, then module items, then core items (Activity, Agents, Triggers)
+	const objectTypeTabs = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
+
+	// Build nav: Pulse, Objects (if any types enabled), module custom nav, then core rest
 	const allNavItems = useMemo(() => {
 		const [pulse, ...restCore] = coreNavItems
-		return [pulse, ...moduleNavItems, ...restCore]
-	}, [moduleNavItems])
+		const objectsNav =
+			objectTypeTabs.length > 0
+				? [{ label: 'Objects', to: '/$workspaceId/objects' as const, icon: Layers }]
+				: []
+		return [pulse, ...objectsNav, ...moduleNavItems, ...restCore]
+	}, [moduleNavItems, objectTypeTabs])
 
 	return (
 		<Sidebar collapsible="icon" {...props}>

@@ -4,6 +4,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { api } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
@@ -12,10 +13,11 @@ import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getAllWebModules } from '@ai-native/module-sdk'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Check, Copy, Eye, EyeOff, Monitor, Moon, Sun, Unplug } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
 	component: SettingsPage,
@@ -26,6 +28,10 @@ function SettingsPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const [name, setName] = useState(workspace.name)
+	const settings = workspace.settings as Record<string, unknown>
+	const enabledModulesRaw = (settings?.enabled_modules as string[]) ?? ['work']
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stabilize array reference from JSONB
+	const enabledModules = useMemo(() => enabledModulesRaw, [JSON.stringify(enabledModulesRaw)])
 
 	const handleSave = () => {
 		if (name !== workspace.name) {
@@ -55,6 +61,45 @@ function SettingsPage() {
 						</Button>
 					</div>
 				</div>
+
+				{/* Modules */}
+				<section className="space-y-4">
+					<div>
+						<h3 className="text-sm font-medium">Modules</h3>
+						<p className="text-sm text-muted-foreground">
+							Enable or disable modules for this workspace.
+						</p>
+					</div>
+					<div className="space-y-3">
+						{getAllWebModules().map((mod) => {
+							const isEnabled = enabledModules.includes(mod.id)
+							return (
+								<div
+									key={mod.id}
+									className="flex items-center justify-between rounded-md border border-border p-3"
+								>
+									<div>
+										<span className="text-sm font-medium">{mod.name}</span>
+										<span className="ml-2 text-sm text-muted-foreground">
+											{mod.objectTypeTabs.map((t) => t.label).join(', ')}
+										</span>
+									</div>
+									<Switch
+										checked={isEnabled}
+										onCheckedChange={(checked) => {
+											const next = checked
+												? [...enabledModules, mod.id]
+												: enabledModules.filter((m) => m !== mod.id)
+											updateWorkspace.mutate({
+												settings: { ...settings, enabled_modules: next },
+											})
+										}}
+									/>
+								</div>
+							)
+						})}
+					</div>
+				</section>
 
 				<div className="border-t border-border pt-6">
 					<ClaudeOAuthSection workspaceId={workspaceId} />
