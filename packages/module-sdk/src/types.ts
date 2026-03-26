@@ -77,6 +77,44 @@ export interface ModuleDefaultSettings {
 	relationship_types?: string[]
 }
 
+/** Narrow interface for session management exposed to modules */
+export interface ISessionManager {
+	createSession(
+		workspaceId: string,
+		params: {
+			actorId: string
+			actionPrompt: string
+			config?: Record<string, unknown>
+			triggerId?: string
+			createdBy: string
+			autoStart?: boolean
+		},
+	): Promise<{ id: string; status: string }>
+	stopSession(sessionId: string): Promise<void>
+	pauseSession(sessionId: string): Promise<void>
+	resumeSession(sessionId: string): Promise<void>
+}
+
+/** Narrow interface for agent file storage exposed to modules */
+export interface IAgentStorage {
+	pullAgentFiles(actorId: string, workspaceId: string, localDir: string): Promise<void>
+	pushAgentFiles(
+		actorId: string,
+		workspaceId: string,
+		sessionId: string,
+		localDir: string,
+	): Promise<void>
+	getFile(actorId: string, workspaceId: string, fileType: string, path: string): Promise<Buffer>
+	uploadFile(
+		actorId: string,
+		workspaceId: string,
+		fileType: string,
+		path: string,
+		content: Buffer,
+	): Promise<string>
+	listFiles(actorId: string, workspaceId: string, fileType?: string): Promise<string[]>
+}
+
 /** Environment passed to module route factories */
 export interface ModuleEnv {
 	/** Drizzle database instance */
@@ -84,7 +122,7 @@ export interface ModuleEnv {
 	/** PG NOTIFY → SSE bridge for real-time events */
 	notifyBridge: PgNotifyBridge
 	/** Session manager for container-based agent execution */
-	sessionManager: unknown
+	sessionManager: ISessionManager
 	/** Agent storage manager for file operations */
-	agentStorage: unknown
+	agentStorage: IAgentStorage
 }
