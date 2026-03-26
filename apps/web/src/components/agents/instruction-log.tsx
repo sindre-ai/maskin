@@ -18,11 +18,11 @@ interface Message {
 	logs: string[]
 }
 
-function findLastMessage(messages: Message[], sessionId: string): Message | undefined {
+function findLastMessageIndex(messages: Message[], sessionId: string): number {
 	for (let i = messages.length - 1; i >= 0; i--) {
-		if (messages[i].sessionId === sessionId) return messages[i]
+		if (messages[i].sessionId === sessionId) return i
 	}
-	return undefined
+	return -1
 }
 
 interface InstructionLogProps {
@@ -66,11 +66,10 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 
 				if (msg.event === 'done') {
 					setMessages((prev) => {
+						const idx = findLastMessageIndex(prev, sessionId)
+						if (idx === -1) return prev
 						const updated = [...prev]
-						const last = findLastMessage(updated, sessionId)
-						if (last) {
-							last.status = 'completed'
-						}
+						updated[idx] = { ...updated[idx], status: 'completed' }
 						return updated
 					})
 					setStreamingSessionId(null)
@@ -79,12 +78,11 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 
 				if (msg.event === 'stdout' || msg.event === 'stderr') {
 					setMessages((prev) => {
+						const idx = findLastMessageIndex(prev, sessionId)
+						if (idx === -1) return prev
 						const updated = [...prev]
-						const last = findLastMessage(updated, sessionId)
-						if (last) {
-							last.logs = [...last.logs, msg.data]
-							last.content = last.logs.join('\n')
-						}
+						const logs = [...updated[idx].logs, msg.data]
+						updated[idx] = { ...updated[idx], logs, content: logs.join('\n') }
 						return updated
 					})
 				}
@@ -95,11 +93,10 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 					if (content.includes('session completed') || content.includes('session failed')) {
 						const failed = content.includes('failed')
 						setMessages((prev) => {
+							const idx = findLastMessageIndex(prev, sessionId)
+							if (idx === -1) return prev
 							const updated = [...prev]
-							const last = findLastMessage(updated, sessionId)
-							if (last) {
-								last.status = failed ? 'failed' : 'completed'
-							}
+							updated[idx] = { ...updated[idx], status: failed ? 'failed' : 'completed' }
 							return updated
 						})
 						setStreamingSessionId(null)
@@ -108,13 +105,14 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 			},
 			onerror() {
 				setMessages((prev) => {
+					const idx = findLastMessageIndex(prev, sessionId)
+					if (idx === -1 || prev[idx].status !== 'streaming') return prev
 					const updated = [...prev]
-					const last = findLastMessage(updated, sessionId)
-					if (last && last.status === 'streaming') {
-						last.status = 'failed'
-						if (last.logs.length === 0) {
-							last.content = 'Connection lost'
-						}
+					const msg = updated[idx]
+					updated[idx] = {
+						...msg,
+						status: 'failed',
+						content: msg.logs.length === 0 ? 'Connection lost' : msg.content,
 					}
 					return updated
 				})
