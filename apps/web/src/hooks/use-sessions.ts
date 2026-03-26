@@ -24,6 +24,14 @@ export function useSessionLatestLog(sessionId: string | null, workspaceId: strin
 	})
 }
 
+export function useWorkspaceSessions(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.sessions.all(workspaceId),
+		queryFn: () => api.sessions.list(workspaceId, { limit: '100' }),
+		enabled: !!workspaceId,
+	})
+}
+
 export function useActiveSessionsForActor(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActor(workspaceId, actorId),
