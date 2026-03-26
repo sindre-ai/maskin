@@ -1,9 +1,11 @@
 import { AgentCard } from '@/components/agents/agent-card'
+import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
-import { useToolResult } from '../shared/mcp-app-provider'
+import { useEffect, useMemo, useState } from 'react'
+import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
-import type { ActorResponse, ActorWithKey } from '../shared/types'
+import type { ActorResponse, ActorWithKey, SessionResponse } from '../shared/types'
 
 function ActorsApp() {
 	const toolResult = useToolResult()
@@ -32,19 +34,39 @@ function ActorsApp() {
 }
 
 function ActorListView({ actors }: { actors: ActorResponse[] }) {
-	if (!actors.length) {
-		return <EmptyState title="No actors" description="No actors found in this workspace" />
-	}
+	const callTool = useCallTool()
+	const [sessions, setSessions] = useState<SessionResponse[]>([])
 
 	const agents = actors.filter((a) => a.type === 'agent')
 	const humans = actors.filter((a) => a.type !== 'agent')
+
+	useEffect(() => {
+		if (!agents.length) return
+		callTool('list_sessions', { limit: 100 }).then((result) => {
+			const text = result.content?.find(
+				(c: { type: string; text?: string }) => c.type === 'text',
+			)?.text
+			if (text) setSessions(JSON.parse(text))
+		})
+	}, [agents.length, callTool])
+
+	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions), [sessions])
+
+	if (!actors.length) {
+		return <EmptyState title="No actors" description="No actors found in this workspace" />
+	}
 
 	return (
 		<div className="p-4 space-y-4">
 			{agents.length > 0 && (
 				<div className="space-y-2">
 					{agents.map((agent) => (
-						<AgentCard key={agent.id} agent={agent} status="idle" />
+						<AgentCard
+							key={agent.id}
+							agent={agent}
+							status={deriveAgentStatus(agent.id, sessionsByAgent)}
+							latestSession={getLatestSession(agent.id, sessionsByAgent)}
+						/>
 					))}
 				</div>
 			)}
