@@ -33,6 +33,7 @@ export const respondNotificationSchema = z.object({
 export const notificationQuerySchema = z.object({
 	status: z.string().optional(),
 	type: z.string().optional(),
+	object_id: z.string().uuid().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
 })

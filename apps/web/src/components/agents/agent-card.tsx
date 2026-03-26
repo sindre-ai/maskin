@@ -43,9 +43,7 @@ export function AgentCard({
 			</div>
 
 			{roleDescription && (
-				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">
-					{roleDescription}
-				</p>
+				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{roleDescription}</p>
 			)}
 
 			<div className="ml-9">
@@ -61,10 +59,7 @@ function StatusIndicator({ status }: { status: AgentStatus }) {
 	}
 	return (
 		<span
-			className={cn(
-				'h-1.5 w-1.5 rounded-full',
-				status === 'failed' ? 'bg-error' : 'bg-text-muted',
-			)}
+			className={cn('h-1.5 w-1.5 rounded-full', status === 'failed' ? 'bg-error' : 'bg-text-muted')}
 		/>
 	)
 }
@@ -84,10 +79,7 @@ function StatusLabel({ status }: { status: AgentStatus }) {
 	)
 }
 
-function ActivityLine({
-	status,
-	session,
-}: { status: AgentStatus; session?: SessionResponse }) {
+function ActivityLine({ status, session }: { status: AgentStatus; session?: SessionResponse }) {
 	if (!session) {
 		return <p className="text-xs text-muted-foreground">No activity yet</p>
 	}

@@ -16,7 +16,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
-import { ActivityItem } from '../activity/activity-item'
+import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
@@ -26,6 +26,7 @@ import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
+import { ObjectActionBanner } from './object-action-banner'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -83,6 +84,9 @@ export function ObjectDocumentView({
 
 	return (
 		<div className="max-w-3xl mx-auto">
+			{/* Action banner for pending decisions */}
+			<ObjectActionBanner objectId={object.id} workspaceId={workspaceId} />
+
 			{/* Title */}
 			<div className="flex items-center gap-2">
 				<Input
@@ -149,19 +153,8 @@ export function ObjectDocumentView({
 				</div>
 			)}
 
-			{/* Activity trail */}
-			{events && events.length > 0 && (
-				<div className="border-t border-border pt-6">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
-						Activity
-					</h3>
-					<div className="space-y-2">
-						{events.map((event) => (
-							<ActivityItem key={event.id} event={event} compact />
-						))}
-					</div>
-				</div>
-			)}
+			{/* Activity */}
+			<ObjectActivity workspaceId={workspaceId} objectId={object.id} events={events} />
 		</div>
 	)
 }

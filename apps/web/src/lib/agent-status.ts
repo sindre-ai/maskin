@@ -16,9 +16,7 @@ export function groupSessionsByAgent<T extends SessionLike>(sessions: T[]): Map<
 		map.set(session.actorId, list)
 	}
 	for (const list of map.values()) {
-		list.sort(
-			(a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime(),
-		)
+		list.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())
 	}
 	return map
 }

@@ -79,14 +79,34 @@ export function NavUser() {
 							<Settings className="mr-2 size-4" />
 							Settings
 						</DropdownMenuItem>
-						{otherWorkspaces.length > 0 && (
-							<>
-								{isMobile ? (
-									<>
-										<DropdownMenuSeparator />
-										<DropdownMenuLabel className="text-xs text-muted-foreground">
-											Switch workspace
-										</DropdownMenuLabel>
+						{otherWorkspaces.length > 0 &&
+							(isMobile ? (
+								<>
+									<DropdownMenuSeparator />
+									<DropdownMenuLabel className="text-xs text-muted-foreground">
+										Switch workspace
+									</DropdownMenuLabel>
+									{otherWorkspaces.map((ws) => (
+										<DropdownMenuItem
+											key={ws.id}
+											onClick={() =>
+												navigate({
+													to: '/$workspaceId',
+													params: { workspaceId: ws.id },
+												})
+											}
+										>
+											{ws.name}
+										</DropdownMenuItem>
+									))}
+								</>
+							) : (
+								<DropdownMenuSub>
+									<DropdownMenuSubTrigger>
+										<UserCircle className="mr-2 size-4" />
+										Switch workspace
+									</DropdownMenuSubTrigger>
+									<DropdownMenuSubContent className="min-w-48">
 										{otherWorkspaces.map((ws) => (
 											<DropdownMenuItem
 												key={ws.id}
@@ -100,32 +120,10 @@ export function NavUser() {
 												{ws.name}
 											</DropdownMenuItem>
 										))}
-									</>
-								) : (
-									<DropdownMenuSub>
-										<DropdownMenuSubTrigger>
-											<UserCircle className="mr-2 size-4" />
-											Switch workspace
-										</DropdownMenuSubTrigger>
-										<DropdownMenuSubContent className="min-w-48">
-											{otherWorkspaces.map((ws) => (
-												<DropdownMenuItem
-													key={ws.id}
-													onClick={() =>
-														navigate({
-															to: '/$workspaceId',
-															params: { workspaceId: ws.id },
-														})
-													}
-												>
-													{ws.name}
-												</DropdownMenuItem>
-											))}
-										</DropdownMenuSubContent>
-									</DropdownMenuSub>
-								)}
-							</>
-						)}
+									</DropdownMenuSubContent>
+								</DropdownMenuSub>
+							))}
+
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							onClick={() => {

@@ -79,6 +79,15 @@ export function useRespondNotification(workspaceId: string) {
 	})
 }
 
+export function useObjectNotifications(workspaceId: string, objectId: string) {
+	const { data, ...rest } = useNotifications(workspaceId, {
+		object_id: objectId,
+		type: 'needs_input',
+	})
+	const pending = data?.filter((n) => n.status === 'pending' || n.status === 'seen')
+	return { data: pending, ...rest }
+}
+
 export function useDeleteNotification(workspaceId: string) {
 	const queryClient = useQueryClient()
 
