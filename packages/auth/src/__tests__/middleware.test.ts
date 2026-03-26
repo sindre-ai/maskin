@@ -2,39 +2,13 @@ import type { Database } from '@ai-native/db'
 import { Hono } from 'hono'
 import { describe, expect, it } from 'vitest'
 import { authMiddleware } from '../middleware'
+import { createMockDb } from './helpers'
 
 type Env = {
 	Variables: {
 		actorId: string
 		actorType: string
 	}
-}
-
-/**
- * Creates a mock DB with queued results. Each db.select() call shifts
- * the next result from the queue, falling back to empty array.
- */
-function createMockDb(queue: unknown[][]) {
-	const remaining = [...queue]
-
-	return new Proxy({} as Database, {
-		get: (_target, prop) => {
-			if (prop === 'select') {
-				return () => {
-					const rows = remaining.shift() ?? []
-					const chain: Record<string, unknown> = {}
-					const methods = ['select', 'from', 'where', 'limit']
-					for (const m of methods) {
-						chain[m] = () => chain
-					}
-					// biome-ignore lint/suspicious/noThenProperty: mock needs .then for Drizzle await
-					chain.then = (resolve: (v: unknown) => void) => resolve(rows)
-					return chain
-				}
-			}
-			return () => ({})
-		},
-	})
 }
 
 /**
