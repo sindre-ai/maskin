@@ -22,7 +22,7 @@ describe('Object validation', () => {
 		expect(result.success).toBe(true)
 	})
 
-	it('accepts any non-empty string type (validation happens at runtime against enabled extensions)', () => {
+	it('accepts valid lowercase slug types (runtime validation checks against enabled extensions)', () => {
 		const result = createObjectSchema.safeParse({
 			type: 'meeting',
 			status: 'scheduled',
@@ -36,6 +36,12 @@ describe('Object validation', () => {
 			status: 'new',
 		})
 		expect(result.success).toBe(false)
+	})
+
+	it('rejects invalid type formats', () => {
+		expect(createObjectSchema.safeParse({ type: 'My Type', status: 'new' }).success).toBe(false)
+		expect(createObjectSchema.safeParse({ type: 'UPPER', status: 'new' }).success).toBe(false)
+		expect(createObjectSchema.safeParse({ type: 'has-dash', status: 'new' }).success).toBe(false)
 	})
 
 	it('accepts all object types', () => {

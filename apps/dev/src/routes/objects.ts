@@ -93,20 +93,30 @@ app.openapi(createObjectRoute, async (c) => {
 	// Validate object type against enabled extensions
 	const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
 	const validTypes = getValidObjectTypes(enabledModules)
-	if (validTypes.length > 0 && !validTypes.includes(body.type)) {
+	if (!validTypes.includes(body.type)) {
 		return c.json(
 			createApiError(
 				'BAD_REQUEST',
-				`Invalid object type '${body.type}'`,
+				validTypes.length === 0
+					? 'No object types available. Enable an extension in workspace settings.'
+					: `Invalid object type '${body.type}'`,
 				[
 					{
 						field: 'type',
-						message: `'${body.type}' is not a valid object type for this workspace`,
-						expected: validTypes.map((t) => `'${t}'`).join(' | '),
+						message:
+							validTypes.length === 0
+								? 'No extensions are enabled for this workspace'
+								: `'${body.type}' is not a valid object type for this workspace`,
+						expected:
+							validTypes.length > 0
+								? validTypes.map((t) => `'${t}'`).join(' | ')
+								: 'none (no extensions enabled)',
 						received: `'${body.type}'`,
 					},
 				],
-				`Valid types: ${validTypes.join(', ')}. Enable more extensions in workspace settings.`,
+				validTypes.length === 0
+					? 'Enable an extension in workspace settings to create objects.'
+					: `Valid types: ${validTypes.join(', ')}. Enable more extensions in workspace settings.`,
 			),
 			400,
 		)

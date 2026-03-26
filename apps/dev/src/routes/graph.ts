@@ -101,26 +101,34 @@ app.openapi(createGraphRoute, async (c) => {
 	const settings = workspace.settings as WorkspaceSettings
 	const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
 	const validTypes = getValidObjectTypes(enabledModules)
-	if (validTypes.length > 0) {
-		for (const node of body.nodes) {
-			if (!validTypes.includes(node.type)) {
-				return c.json(
-					createApiError(
-						'BAD_REQUEST',
-						`Invalid object type '${node.type}' on node '${node.$id}'`,
-						[
-							{
-								field: `nodes[${node.$id}].type`,
-								message: `'${node.type}' is not a valid object type`,
-								expected: validTypes.map((t) => `'${t}'`).join(' | '),
-								received: `'${node.type}'`,
-							},
-						],
-						`Valid types: ${validTypes.join(', ')}`,
-					),
-					400,
-				)
-			}
+	for (const node of body.nodes) {
+		if (!validTypes.includes(node.type)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					validTypes.length === 0
+						? 'No object types available. Enable an extension in workspace settings.'
+						: `Invalid object type '${node.type}' on node '${node.$id}'`,
+					[
+						{
+							field: `nodes[${node.$id}].type`,
+							message:
+								validTypes.length === 0
+									? 'No extensions are enabled for this workspace'
+									: `'${node.type}' is not a valid object type`,
+							expected:
+								validTypes.length > 0
+									? validTypes.map((t) => `'${t}'`).join(' | ')
+									: 'none (no extensions enabled)',
+							received: `'${node.type}'`,
+						},
+					],
+					validTypes.length === 0
+						? 'Enable an extension in workspace settings to create objects.'
+						: `Valid types: ${validTypes.join(', ')}`,
+				),
+				400,
+			)
 		}
 	}
 

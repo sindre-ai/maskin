@@ -13,7 +13,7 @@ import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
 import type { SafeJsonValue } from '@ai-native/shared'
 import { Check, X } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 // --- Types ---
 
@@ -53,18 +53,7 @@ export interface TriggerFormPayload {
 
 // --- Constants ---
 
-// Build internal events dynamically from registered extensions
 import { getAllWebModules } from '@ai-native/module-sdk'
-
-const INTERNAL_EVENTS: ProviderEventDefinition[] = getAllWebModules()
-	.flatMap((m) => m.objectTypeTabs)
-	.map((t) => ({
-		entityType: t.value,
-		actions: ['created', 'updated', 'status_changed'],
-		label: t.label,
-	}))
-
-const INTERNAL_ENTITY_TYPES = new Set(INTERNAL_EVENTS.map((e) => e.entityType))
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [
@@ -175,6 +164,23 @@ export function TriggerForm({
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: providers } = useProviders()
 
+	// Build internal events dynamically from registered extensions (must be in component, not module scope)
+	const internalEvents = useMemo<ProviderEventDefinition[]>(
+		() =>
+			getAllWebModules()
+				.flatMap((m) => m.objectTypeTabs)
+				.map((t) => ({
+					entityType: t.value,
+					actions: ['created', 'updated', 'status_changed'],
+					label: t.label,
+				})),
+		[],
+	)
+	const internalEntityTypes = useMemo(
+		() => new Set(internalEvents.map((e) => e.entityType)),
+		[internalEvents],
+	)
+
 	// Parse initial config
 	const initConfig = (initialValues?.config as Record<string, unknown>) ?? {}
 	const initCron =
@@ -270,11 +276,11 @@ export function TriggerForm({
 	)
 	const externalEvents =
 		(providers ?? []).filter((p) => connectedProviders.has(p.name)).flatMap((p) => p.events) ?? []
-	const allEvents = [...INTERNAL_EVENTS, ...externalEvents]
+	const allEvents = [...internalEvents, ...externalEvents]
 
 	const currentEventDef = allEvents.find((e) => e.entityType === entityType)
 	const availableActions = currentEventDef?.actions ?? []
-	const isInternal = INTERNAL_ENTITY_TYPES.has(entityType)
+	const isInternal = internalEntityTypes.has(entityType)
 
 	const isValid =
 		name.trim() && prompt.trim() && targetActorId && (type === 'reminder' ? scheduledDate : true)
