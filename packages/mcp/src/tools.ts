@@ -9,6 +9,15 @@ const optionalWorkspaceId = z
 	)
 
 export const tools = {
+	// ─── Welcome ─────────────────────────────────────────────
+	hello: {
+		description:
+			'👋 Welcome! Start here. Get a friendly overview of what Maskin is, what you can do, and how this workspace is set up — including object types, statuses, custom fields, team members, and available tools. Think of it as your agent landing page.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:

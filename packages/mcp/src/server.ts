@@ -1124,6 +1124,184 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Hello (Agent Welcome) ───────────────────────────────
+	registerAppTool(
+		server,
+		'hello',
+		{
+			description: tools.hello.description,
+			inputSchema: tools.hello.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			let workspaceSection = ''
+			let teamSection = ''
+
+			// All API calls are best-effort — the tool works even without auth or workspace
+			try {
+				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+					skipWorkspace: true,
+				})) as Array<{
+					id: string
+					name: string
+					settings: Record<string, unknown>
+				}>
+
+				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
+				const workspace =
+					(effectiveWsId
+						? workspaces.find((w) => w.id === effectiveWsId)
+						: workspaces[0]) ?? workspaces[0]
+
+				if (workspace) {
+					const settings = workspace.settings ?? {}
+					const statuses = (settings.statuses ?? {}) as Record<string, string[]>
+					const fieldDefinitions = (settings.field_definitions ?? {}) as Record<
+						string,
+						Array<{
+							name: string
+							type: string
+							required: boolean
+							values?: string[]
+						}>
+					>
+					const displayNames = (settings.display_names ?? {}) as Record<string, string>
+					const relationshipTypes = (settings.relationship_types ?? []) as string[]
+					const maxSessions = (settings.max_concurrent_sessions ?? 5) as number
+
+					// Build workspace config section
+					const typeLines: string[] = []
+					for (const t of ['insight', 'bet', 'task']) {
+						const name = displayNames[t] ?? t.charAt(0).toUpperCase() + t.slice(1)
+						const typeStatuses = statuses[t] ?? []
+						const fields = fieldDefinitions[t] ?? []
+						let line = `  • ${name} (type: "${t}")`
+						if (typeStatuses.length > 0) {
+							line += `\n    Statuses: ${typeStatuses.join(' → ')}`
+						}
+						if (fields.length > 0) {
+							const fieldDesc = fields
+								.map((f) => {
+									let s = `${f.name} (${f.type}${f.required ? ', required' : ''})`
+									if (f.values && f.values.length > 0) {
+										s += ` [${f.values.join(', ')}]`
+									}
+									return s
+								})
+								.join(', ')
+							line += `\n    Custom fields: ${fieldDesc}`
+						}
+						typeLines.push(line)
+					}
+
+					workspaceSection = `
+📋 Your Workspace: "${workspace.name}"
+   ID: ${workspace.id}
+
+   Object Types:
+${typeLines.join('\n')}
+
+   Relationship Types: ${relationshipTypes.length > 0 ? relationshipTypes.join(', ') : 'informs, breaks_into, blocks, relates_to, duplicates (defaults)'}
+   Max Concurrent Sessions: ${maxSessions}`
+
+					// Fetch team members
+					try {
+						const members = (await apiCall(
+							config,
+							'GET',
+							`/api/workspaces/${workspace.id}/members`,
+							undefined,
+							{ workspaceId: workspace.id },
+						)) as Array<{
+							actorId: string
+							name: string
+							type: string
+							role: string
+						}>
+
+						if (members.length > 0) {
+							const memberLines = members.map(
+								(m) => `  • ${m.name || 'Unnamed'} — ${m.type} (${m.role})`,
+							)
+							teamSection = `
+👥 Your Team (${members.length} member${members.length === 1 ? '' : 's'})
+${memberLines.join('\n')}`
+						}
+					} catch {
+						// Members fetch is best-effort
+					}
+				} else {
+					workspaceSection =
+						'\n📋 No workspace found. Create one with create_workspace to get started!'
+				}
+			} catch {
+				workspaceSection = `
+📋 Workspace
+   Not connected yet! To get your personalized workspace info:
+   1. Use create_actor to sign up and get an API key
+   2. Restart with API_KEY set, then call hello again
+   3. Or pass a workspace_id if you have one`
+			}
+
+			const text = `🚀 Welcome to Maskin!
+
+Hey there! Maskin is an AI-native product development platform where humans and agents collaborate side by side. Think of it as your mission control for turning insights into bets into shipped tasks — with full observability, real-time events, and automation built in.
+
+Everything here is an API, and you're talking to it right now through MCP. Let's get you oriented!
+${workspaceSection}
+${teamSection}
+
+🧰 What You Can Do
+
+   Objects (insights, bets, tasks):
+     create_objects, get_objects, list_objects, update_objects,
+     delete_object, search_objects
+
+   Relationships (connect objects):
+     create_relationship, list_relationships, delete_relationship
+
+   Workspace & Team:
+     list_workspaces, get_workspace_schema, create_workspace,
+     update_workspace, add_workspace_member
+
+   Actors (humans & agents):
+     create_actor, get_actor, list_actors, update_actor,
+     regenerate_api_key
+
+   Automation (triggers):
+     create_trigger, list_triggers, update_trigger, delete_trigger
+
+   Agent Sessions (run agents in containers):
+     create_session, get_session, list_sessions, run_agent,
+     stop_session, pause_session, resume_session
+
+   Events (real-time audit log):
+     get_events
+
+   Notifications:
+     create_notification, get_notification, list_notifications,
+     update_notification, delete_notification
+
+   Integrations:
+     list_integrations, list_integration_providers,
+     connect_integration, disconnect_integration
+
+⚡ Quick Start
+  1. Call get_workspace_schema to see the full config for your workspace
+  2. Use list_objects to see what's already in the workspace
+  3. Use create_objects to add new insights, bets, or tasks
+  4. Use search_objects to find things by keyword
+  5. Check get_events to see what's been happening lately
+
+Happy building! 🎉`
+
+			return {
+				_meta: { toolName: 'hello' },
+				content: [{ type: 'text' as const, text }],
+			}
+		},
+	)
+
 	return server
 }
 
