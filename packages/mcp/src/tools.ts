@@ -9,6 +9,15 @@ const optionalWorkspaceId = z
 	)
 
 export const tools = {
+	// ─── Welcome ─────────────────────────────────────────────
+	hello: {
+		description:
+			'👋 Welcome! Start here. Get a friendly overview of what Maskin is, what you can do, and how this workspace is set up — including object types, statuses, custom fields, team members, and available tools. Think of it as your agent landing page.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
@@ -520,6 +529,126 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
+		}),
+	},
+	// ─── Extensions ──────────────────────────────────────────
+	list_modules: {
+		description:
+			'List all available extension modules and their status in the workspace. Shows which modules are enabled, what object types they provide, and their default settings. Use this to discover what extensions are available before enabling or disabling them.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	enable_module: {
+		description:
+			"Enable an extension module in the workspace. This adds the module's object types, default statuses, field definitions, and display names to the workspace settings. Call list_modules first to see available modules.",
+		inputSchema: z.object({
+			workspace_id: z.string().uuid().describe('Workspace to enable the module in'),
+			module_id: z
+				.string()
+				.describe('Module ID to enable (e.g. "work"). Call list_modules to see available IDs.'),
+		}),
+	},
+	disable_module: {
+		description:
+			'Disable an extension module in the workspace. This removes the module from the enabled list but preserves existing objects of those types. The object types will no longer be valid for creating new objects.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid().describe('Workspace to disable the module in'),
+			module_id: z.string().describe('Module ID to disable'),
+		}),
+	},
+	create_object_type: {
+		description:
+			'Create a custom object type in the workspace. Defines the type name, display name, statuses, and optional custom fields. Once created, the type can be used with create_objects, list_objects, etc. No code or module registration needed — this works by adding the type definition to workspace settings.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid().describe('Workspace to add the type to'),
+			type: z
+				.string()
+				.regex(/^[a-z][a-z0-9_]*$/)
+				.describe(
+					'Type identifier (lowercase, underscores allowed, e.g. "lead", "meeting_note", "customer")',
+				),
+			display_name: z
+				.string()
+				.describe('Human-readable name (e.g. "Lead", "Meeting Note", "Customer")'),
+			statuses: z
+				.array(z.string())
+				.min(1)
+				.describe(
+					'Valid statuses for this type (e.g. ["new", "contacted", "qualified", "won", "lost"])',
+				),
+			fields: z
+				.array(
+					z.object({
+						name: z.string(),
+						type: z.enum(['text', 'number', 'date', 'enum', 'boolean']),
+						required: z.boolean().default(false),
+						values: z
+							.array(z.string())
+							.optional()
+							.describe('Allowed values (only for enum type)'),
+					}),
+				)
+				.default([])
+				.describe('Custom metadata fields for this type'),
+			relationship_types: z
+				.array(z.string())
+				.optional()
+				.describe('Additional relationship types to add to the workspace'),
+		}),
+	},
+	update_object_type: {
+		description:
+			'Update a custom object type in the workspace. Can modify the display name, statuses, or custom fields. Use this to add new statuses, rename the type display, or adjust field definitions.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid(),
+			type: z.string().describe('The type identifier to update'),
+			display_name: z.string().optional().describe('New display name'),
+			statuses: z
+				.array(z.string())
+				.min(1)
+				.optional()
+				.describe('New status list (replaces existing)'),
+			fields: z
+				.array(
+					z.object({
+						name: z.string(),
+						type: z.enum(['text', 'number', 'date', 'enum', 'boolean']),
+						required: z.boolean().default(false),
+						values: z.array(z.string()).optional(),
+					}),
+				)
+				.optional()
+				.describe('New field definitions (replaces existing)'),
+			relationship_types: z
+				.array(z.string())
+				.optional()
+				.describe('Additional relationship types to add to the workspace'),
+		}),
+	},
+	delete_object_type: {
+		description:
+			'Remove a custom object type from the workspace settings. Existing objects of this type are preserved but no new objects can be created with this type. Cannot delete types provided by enabled modules.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid(),
+			type: z.string().describe('The type identifier to remove'),
+		}),
+	},
+	list_templates: {
+		description:
+			'List available extension templates. Each template provides a pre-configured set of object types, statuses, and fields for a specific use case (e.g. CRM, Project Management, Content Pipeline).',
+		inputSchema: z.object({}),
+	},
+	install_template: {
+		description:
+			'Install a pre-built extension template that adds object types, statuses, fields, and relationship types to the workspace. Templates provide ready-made configurations for common use cases. Call list_templates to see available templates. Types that already exist in the workspace are skipped.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid().describe('Workspace to install the template into'),
+			template_id: z
+				.string()
+				.describe(
+					'Template ID to install (e.g. "crm", "project_management"). Call list_templates to see available templates.',
+				),
 		}),
 	},
 } as const

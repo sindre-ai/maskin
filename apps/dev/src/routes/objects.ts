@@ -1,6 +1,6 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
-import { getEnabledModuleIds, getValidObjectTypes } from '@ai-native/module-sdk'
+import { getAllValidTypes, getEnabledModuleIds } from '@ai-native/module-sdk'
 import {
 	createObjectSchema,
 	objectQuerySchema,
@@ -92,7 +92,7 @@ app.openapi(createObjectRoute, async (c) => {
 
 	// Validate object type against enabled extensions
 	const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
-	const validTypes = getValidObjectTypes(enabledModules)
+	const validTypes = getAllValidTypes(enabledModules, settings)
 	if (!validTypes.includes(body.type)) {
 		return c.json(createInvalidTypeError(body.type, 'type', validTypes), 400)
 	}

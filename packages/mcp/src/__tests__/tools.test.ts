@@ -6,6 +6,7 @@ const uuid = '550e8400-e29b-41d4-a716-446655440000'
 const uuid2 = '660e8400-e29b-41d4-a716-446655440000'
 
 const ALL_TOOL_NAMES = [
+	'hello',
 	'create_objects',
 	'get_objects',
 	'update_objects',
@@ -45,6 +46,14 @@ const ALL_TOOL_NAMES = [
 	'list_integration_providers',
 	'connect_integration',
 	'disconnect_integration',
+	'list_modules',
+	'enable_module',
+	'disable_module',
+	'create_object_type',
+	'update_object_type',
+	'delete_object_type',
+	'list_templates',
+	'install_template',
 ]
 
 describe('tool definitions', () => {
@@ -403,6 +412,107 @@ describe('add_workspace_member schema', () => {
 
 	it('rejects missing workspace_id', () => {
 		expect(() => schema.parse({ actor_id: uuid2 })).toThrow()
+	})
+})
+
+describe('create_object_type schema', () => {
+	const schema = tools.create_object_type.inputSchema
+
+	it('accepts valid custom type', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			type: 'lead',
+			display_name: 'Lead',
+			statuses: ['new', 'contacted', 'qualified'],
+		})
+		expect(result.type).toBe('lead')
+		expect(result.statuses).toHaveLength(3)
+		expect(result.fields).toEqual([])
+	})
+
+	it('accepts type with custom fields', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			type: 'customer',
+			display_name: 'Customer',
+			statuses: ['active', 'churned'],
+			fields: [
+				{ name: 'tier', type: 'enum', values: ['free', 'pro'] },
+				{ name: 'arr', type: 'number', required: true },
+			],
+		})
+		expect(result.fields).toHaveLength(2)
+	})
+
+	it('rejects invalid type identifier', () => {
+		expect(() =>
+			schema.parse({
+				workspace_id: uuid,
+				type: 'My Lead',
+				display_name: 'Lead',
+				statuses: ['new'],
+			}),
+		).toThrow()
+	})
+
+	it('rejects type starting with number', () => {
+		expect(() =>
+			schema.parse({
+				workspace_id: uuid,
+				type: '1lead',
+				display_name: 'Lead',
+				statuses: ['new'],
+			}),
+		).toThrow()
+	})
+
+	it('rejects empty statuses', () => {
+		expect(() =>
+			schema.parse({
+				workspace_id: uuid,
+				type: 'lead',
+				display_name: 'Lead',
+				statuses: [],
+			}),
+		).toThrow()
+	})
+})
+
+describe('update_object_type schema', () => {
+	const schema = tools.update_object_type.inputSchema
+
+	it('accepts partial update', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			type: 'lead',
+			display_name: 'Sales Lead',
+		})
+		expect(result.display_name).toBe('Sales Lead')
+		expect(result.statuses).toBeUndefined()
+	})
+})
+
+describe('install_template schema', () => {
+	const schema = tools.install_template.inputSchema
+
+	it('requires workspace_id and template_id', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			template_id: 'crm',
+		})
+		expect(result.template_id).toBe('crm')
+	})
+
+	it('rejects missing template_id', () => {
+		expect(() => schema.parse({ workspace_id: uuid })).toThrow()
+	})
+})
+
+describe('list_templates schema', () => {
+	const schema = tools.list_templates.inputSchema
+
+	it('accepts empty object', () => {
+		expect(schema.parse({})).toEqual({})
 	})
 })
 
