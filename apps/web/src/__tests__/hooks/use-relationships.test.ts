@@ -30,9 +30,7 @@ describe('useRelationships', () => {
 
 	describe('useRelationships', () => {
 		it('returns relationships for workspace', async () => {
-			const relationships = [
-				{ id: 'r1', sourceId: 'o1', targetId: 'o2', type: 'relates_to' },
-			]
+			const relationships = [{ id: 'r1', sourceId: 'o1', targetId: 'o2', type: 'relates_to' }]
 			vi.mocked(api.relationships.list).mockResolvedValue(relationships)
 
 			const { result } = renderHook(() => useRelationships('ws-1'), {

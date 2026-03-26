@@ -17,11 +17,7 @@ vi.mock('sonner', () => ({
 
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
-import {
-	useIntegrations,
-	useProviders,
-	useDisconnectIntegration,
-} from '@/hooks/use-integrations'
+import { useIntegrations, useProviders, useDisconnectIntegration } from '@/hooks/use-integrations'
 import { TestWrapper } from '../setup'
 
 describe('useIntegrations', () => {
@@ -101,9 +97,7 @@ describe('useIntegrations', () => {
 		})
 
 		it('handles disconnect error', async () => {
-			vi.mocked(api.integrations.disconnect).mockRejectedValue(
-				new Error('Disconnect failed'),
-			)
+			vi.mocked(api.integrations.disconnect).mockRejectedValue(new Error('Disconnect failed'))
 
 			const { result } = renderHook(() => useDisconnectIntegration('ws-1'), {
 				wrapper: TestWrapper,
