@@ -96,8 +96,8 @@ describe('workspaceSettingsSchema', () => {
 		})
 		const taskFields = result.field_definitions.task
 		expect(taskFields).toBeDefined()
-		expect(taskFields![0]!.name).toBe('priority')
-		expect(taskFields![0]!.required).toBe(false)
+		expect(taskFields?.[0]?.name).toBe('priority')
+		expect(taskFields?.[0]?.required).toBe(false)
 	})
 })
 

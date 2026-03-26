@@ -36,7 +36,7 @@ describe('actorToolsSchema', () => {
 		})
 		const server = result.mcpServers.myServer
 		expect(server).toBeDefined()
-		expect(server!.type).toBe('stdio')
+		expect(server?.type).toBe('stdio')
 	})
 })
 
