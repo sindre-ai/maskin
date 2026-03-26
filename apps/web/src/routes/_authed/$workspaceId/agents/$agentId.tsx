@@ -3,7 +3,7 @@ import { AgentDocument } from '@/components/agents/agent-document'
 import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { useActor, useAgent, useCreateActor } from '@/hooks/use-actors'
+import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
 import { api } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -21,6 +21,7 @@ function AgentDetailPage() {
 	// Use list-derived hook to check existence (returns undefined for new IDs, no 404)
 	const { data: agentListItem, isLoading } = useAgent(agentId, workspaceId)
 	const createActor = useCreateActor(workspaceId)
+	const updateActor = useUpdateActor(workspaceId)
 	const isCreatedRef = useRef(false)
 
 	// Once the agent exists in the list, mark as created
@@ -68,17 +69,21 @@ function AgentDetailPage() {
 		return <AgentDetailLoaded agentId={agentId} />
 	}
 
-	// Create mode — show minimal form
+	// Create mode — show form with all sections
+	const handleUpdate = (data: Record<string, unknown>) => {
+		updateActor.mutate({ id: agentId, data })
+	}
+
 	return (
 		<>
 			<PageHeader />
-			<div className="max-w-3xl mx-auto">
-				<AgentCreateForm
-					onAutoCreate={handleAutoCreate}
-					isPending={createActor.isPending}
-					error={createActor.error}
-				/>
-			</div>
+			<AgentCreateForm
+				onAutoCreate={handleAutoCreate}
+				onUpdate={handleUpdate}
+				agent={agentListItem}
+				isPending={createActor.isPending}
+				error={createActor.error}
+			/>
 		</>
 	)
 }
