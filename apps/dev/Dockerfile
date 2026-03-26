@@ -9,6 +9,8 @@ COPY packages/auth/package.json packages/auth/package.json
 COPY packages/realtime/package.json packages/realtime/package.json
 COPY packages/storage/package.json packages/storage/package.json
 COPY packages/mcp/package.json packages/mcp/package.json
+COPY packages/module-sdk/package.json packages/module-sdk/package.json
+COPY extensions/work/package.json extensions/work/package.json
 COPY apps/dev/package.json apps/dev/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/e2e/package.json apps/e2e/package.json
@@ -16,10 +18,14 @@ COPY apps/e2e/package.json apps/e2e/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY packages/ packages/
+COPY extensions/ extensions/
 COPY apps/dev/ apps/dev/
 COPY apps/web/ apps/web/
 
-RUN NODE_OPTIONS=--max-old-space-size=2048 pnpm build --concurrency=1
+# Build sequentially to stay within 8GB server memory
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter='./packages/*' build
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@ai-native/dev build
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@ai-native/web build
 
 COPY docker/agent-base/ docker/agent-base/
 
