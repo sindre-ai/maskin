@@ -1,5 +1,5 @@
-import { useEffect, useReducer } from 'react'
 import { formatDurationMs } from '@/lib/format-duration'
+import { useEffect, useReducer } from 'react'
 
 export function useDuration(startedAt: string | null | undefined): string | null {
 	const [, tick] = useReducer((n: number) => n + 1, 0)
