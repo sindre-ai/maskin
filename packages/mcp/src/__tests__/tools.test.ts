@@ -6,15 +6,45 @@ const uuid = '550e8400-e29b-41d4-a716-446655440000'
 const uuid2 = '660e8400-e29b-41d4-a716-446655440000'
 
 const ALL_TOOL_NAMES = [
-	'create_objects', 'get_objects', 'update_objects', 'delete_object', 'list_objects', 'search_objects',
-	'list_relationships', 'delete_relationship',
-	'create_actor', 'update_actor', 'regenerate_api_key', 'list_actors', 'get_actor',
-	'create_workspace', 'update_workspace', 'list_workspaces', 'get_workspace_schema', 'add_workspace_member',
+	'create_objects',
+	'get_objects',
+	'update_objects',
+	'delete_object',
+	'list_objects',
+	'search_objects',
+	'list_relationships',
+	'delete_relationship',
+	'create_actor',
+	'update_actor',
+	'regenerate_api_key',
+	'list_actors',
+	'get_actor',
+	'create_workspace',
+	'update_workspace',
+	'list_workspaces',
+	'get_workspace_schema',
+	'add_workspace_member',
 	'get_events',
-	'create_trigger', 'update_trigger', 'delete_trigger', 'list_triggers',
-	'create_session', 'list_sessions', 'get_session', 'stop_session', 'pause_session', 'resume_session', 'run_agent',
-	'create_notification', 'list_notifications', 'get_notification', 'update_notification', 'delete_notification',
-	'list_integrations', 'list_integration_providers', 'connect_integration', 'disconnect_integration',
+	'create_trigger',
+	'update_trigger',
+	'delete_trigger',
+	'list_triggers',
+	'create_session',
+	'list_sessions',
+	'get_session',
+	'stop_session',
+	'pause_session',
+	'resume_session',
+	'run_agent',
+	'create_notification',
+	'list_notifications',
+	'get_notification',
+	'update_notification',
+	'delete_notification',
+	'list_integrations',
+	'list_integration_providers',
+	'connect_integration',
+	'disconnect_integration',
 ]
 
 describe('tool definitions', () => {
@@ -58,15 +88,19 @@ describe('create_objects schema', () => {
 
 	it('rejects more than 50 nodes', () => {
 		const nodes = Array.from({ length: 51 }, (_, i) => ({
-			$id: `n-${i}`, type: 'task' as const, status: 'todo',
+			$id: `n-${i}`,
+			type: 'task' as const,
+			status: 'todo',
 		}))
 		expect(() => schema.parse({ nodes })).toThrow()
 	})
 
 	it('rejects invalid object type', () => {
-		expect(() => schema.parse({
-			nodes: [{ $id: 'x', type: 'story', status: 'new' }],
-		})).toThrow()
+		expect(() =>
+			schema.parse({
+				nodes: [{ $id: 'x', type: 'story', status: 'new' }],
+			}),
+		).toThrow()
 	})
 
 	it('defaults edges to empty array', () => {
@@ -159,7 +193,10 @@ describe('create_actor schema', () => {
 
 	it('accepts optional workspace_id and role', () => {
 		const result = schema.parse({
-			type: 'agent', name: 'Bot', workspace_id: uuid, role: 'owner',
+			type: 'agent',
+			name: 'Bot',
+			workspace_id: uuid,
+			role: 'owner',
 		})
 		expect(result.workspace_id).toBe(uuid)
 		expect(result.role).toBe('owner')
@@ -176,7 +213,9 @@ describe('update_actor schema', () => {
 
 	it('accepts optional fields', () => {
 		const result = schema.parse({
-			id: uuid, name: 'Updated', system_prompt: 'Be helpful',
+			id: uuid,
+			name: 'Updated',
+			system_prompt: 'Be helpful',
 		})
 		expect(result.name).toBe('Updated')
 	})
@@ -213,10 +252,13 @@ describe('create_session schema', () => {
 	})
 
 	it('rejects timeout below 30', () => {
-		expect(() => schema.parse({
-			actor_id: uuid, action_prompt: 'Test',
-			config: { timeout_seconds: 10 },
-		})).toThrow()
+		expect(() =>
+			schema.parse({
+				actor_id: uuid,
+				action_prompt: 'Test',
+				config: { timeout_seconds: 10 },
+			}),
+		).toThrow()
 	})
 })
 
@@ -249,9 +291,13 @@ describe('run_agent schema', () => {
 	})
 
 	it('rejects poll_interval below 2', () => {
-		expect(() => schema.parse({
-			actor_id: uuid, action_prompt: 'Do', poll_interval_seconds: 1,
-		})).toThrow()
+		expect(() =>
+			schema.parse({
+				actor_id: uuid,
+				action_prompt: 'Do',
+				poll_interval_seconds: 1,
+			}),
+		).toThrow()
 	})
 })
 
@@ -268,15 +314,23 @@ describe('create_notification schema', () => {
 	})
 
 	it('rejects invalid type', () => {
-		expect(() => schema.parse({
-			type: 'warning', title: 'X', source_actor_id: uuid,
-		})).toThrow()
+		expect(() =>
+			schema.parse({
+				type: 'warning',
+				title: 'X',
+				source_actor_id: uuid,
+			}),
+		).toThrow()
 	})
 
 	it('rejects empty title', () => {
-		expect(() => schema.parse({
-			type: 'alert', title: '', source_actor_id: uuid,
-		})).toThrow()
+		expect(() =>
+			schema.parse({
+				type: 'alert',
+				title: '',
+				source_actor_id: uuid,
+			}),
+		).toThrow()
 	})
 })
 
@@ -299,27 +353,36 @@ describe('create_trigger schema', () => {
 
 	it('accepts cron trigger', () => {
 		const result = schema.parse({
-			name: 'Daily', type: 'cron',
+			name: 'Daily',
+			type: 'cron',
 			config: { expression: '0 0 * * *' },
-			action_prompt: 'Check', target_actor_id: uuid,
+			action_prompt: 'Check',
+			target_actor_id: uuid,
 		})
 		expect(result.enabled).toBe(true)
 	})
 
 	it('accepts event trigger', () => {
 		const result = schema.parse({
-			name: 'On create', type: 'event',
+			name: 'On create',
+			type: 'event',
 			config: { entity_type: 'task', action: 'created' },
-			action_prompt: 'Process', target_actor_id: uuid,
+			action_prompt: 'Process',
+			target_actor_id: uuid,
 		})
 		expect(result.type).toBe('event')
 	})
 
 	it('rejects invalid trigger type', () => {
-		expect(() => schema.parse({
-			name: 'X', type: 'webhook',
-			config: {}, action_prompt: 'Y', target_actor_id: uuid,
-		})).toThrow()
+		expect(() =>
+			schema.parse({
+				name: 'X',
+				type: 'webhook',
+				config: {},
+				action_prompt: 'Y',
+				target_actor_id: uuid,
+			}),
+		).toThrow()
 	})
 })
 
@@ -359,10 +422,20 @@ describe('empty input schema tools', () => {
 
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
-		'create_objects', 'get_objects', 'update_objects', 'delete_object',
-		'list_objects', 'search_objects', 'list_relationships', 'delete_relationship',
-		'get_events', 'create_trigger', 'list_triggers',
-		'list_integrations', 'connect_integration', 'disconnect_integration',
+		'create_objects',
+		'get_objects',
+		'update_objects',
+		'delete_object',
+		'list_objects',
+		'search_objects',
+		'list_relationships',
+		'delete_relationship',
+		'get_events',
+		'create_trigger',
+		'list_triggers',
+		'list_integrations',
+		'connect_integration',
+		'disconnect_integration',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {

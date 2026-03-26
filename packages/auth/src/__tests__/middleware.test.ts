@@ -55,7 +55,7 @@ describe('authMiddleware', () => {
 	})
 
 	it('returns 401 when API key is invalid (no matching actor)', async () => {
-		const db = createMockDb([[]])  // validateApiKey returns empty
+		const db = createMockDb([[]]) // validateApiKey returns empty
 		const app = createTestApp(db)
 		const res = await app.request('/test', {
 			headers: { Authorization: 'Bearer ank_invalidkey' },
@@ -67,7 +67,7 @@ describe('authMiddleware', () => {
 
 	it('passes through with actorId/actorType when API key is valid (no workspace)', async () => {
 		const db = createMockDb([
-			[{ id: 'actor-1', type: 'human' }],  // validateApiKey finds actor
+			[{ id: 'actor-1', type: 'human' }], // validateApiKey finds actor
 		])
 		const app = createTestApp(db)
 		const res = await app.request('/test', {
@@ -81,8 +81,8 @@ describe('authMiddleware', () => {
 
 	it('passes through when valid key + workspace header + actor is member', async () => {
 		const db = createMockDb([
-			[{ id: 'actor-1', type: 'agent' }],     // validateApiKey finds actor
-			[{ actorId: 'actor-1' }],                 // workspace membership check passes
+			[{ id: 'actor-1', type: 'agent' }], // validateApiKey finds actor
+			[{ actorId: 'actor-1' }], // workspace membership check passes
 		])
 		const app = createTestApp(db)
 		const res = await app.request('/test', {
@@ -99,8 +99,8 @@ describe('authMiddleware', () => {
 
 	it('returns 404 when valid key + workspace header but actor is not member', async () => {
 		const db = createMockDb([
-			[{ id: 'actor-1', type: 'human' }],  // validateApiKey finds actor
-			[],                                    // workspace membership check fails
+			[{ id: 'actor-1', type: 'human' }], // validateApiKey finds actor
+			[], // workspace membership check fails
 		])
 		const app = createTestApp(db)
 		const res = await app.request('/test', {

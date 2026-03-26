@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
 import { queryKeys } from '@/lib/query-keys'
+import { describe, expect, it } from 'vitest'
 
 describe('queryKeys', () => {
 	describe('objects', () => {
@@ -58,7 +58,11 @@ describe('queryKeys', () => {
 		})
 
 		it('byObject includes objectId', () => {
-			expect(queryKeys.relationships.byObject('obj-1')).toEqual(['relationships', 'object', 'obj-1'])
+			expect(queryKeys.relationships.byObject('obj-1')).toEqual([
+				'relationships',
+				'object',
+				'obj-1',
+			])
 		})
 	})
 
@@ -77,13 +81,21 @@ describe('queryKeys', () => {
 
 		it('byActor includes workspaceId and actorId', () => {
 			expect(queryKeys.sessions.byActor('ws-1', 'a-1')).toEqual([
-				'sessions', 'ws-1', 'actor', 'a-1', 'running',
+				'sessions',
+				'ws-1',
+				'actor',
+				'a-1',
+				'running',
 			])
 		})
 
 		it('byActorAll includes workspaceId and actorId', () => {
 			expect(queryKeys.sessions.byActorAll('ws-1', 'a-1')).toEqual([
-				'sessions', 'ws-1', 'actor', 'a-1', 'all',
+				'sessions',
+				'ws-1',
+				'actor',
+				'a-1',
+				'all',
 			])
 		})
 	})
@@ -114,7 +126,11 @@ describe('queryKeys', () => {
 		})
 
 		it('detail includes actorId and skillName', () => {
-			expect(queryKeys.skills.detail('a-1', 'code-review')).toEqual(['skills', 'a-1', 'code-review'])
+			expect(queryKeys.skills.detail('a-1', 'code-review')).toEqual([
+				'skills',
+				'a-1',
+				'code-review',
+			])
 		})
 	})
 
@@ -125,7 +141,10 @@ describe('queryKeys', () => {
 
 		it('list includes workspaceId and filters', () => {
 			expect(queryKeys.notifications.list('ws-1', { status: 'pending' })).toEqual([
-				'notifications', 'ws-1', 'list', { status: 'pending' },
+				'notifications',
+				'ws-1',
+				'list',
+				{ status: 'pending' },
 			])
 		})
 

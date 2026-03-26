@@ -14,12 +14,22 @@ describe('workspaceSettingsSchema', () => {
 		expect(result.display_names).toEqual({ insight: 'Insight', bet: 'Bet', task: 'Task' })
 		expect(result.statuses.insight).toEqual(['new', 'processing', 'clustered', 'discarded'])
 		expect(result.statuses.bet).toEqual([
-			'signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused',
+			'signal',
+			'proposed',
+			'active',
+			'completed',
+			'succeeded',
+			'failed',
+			'paused',
 		])
 		expect(result.statuses.task).toEqual(['todo', 'in_progress', 'done', 'blocked'])
 		expect(result.field_definitions).toEqual({})
 		expect(result.relationship_types).toEqual([
-			'informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates',
+			'informs',
+			'breaks_into',
+			'blocks',
+			'relates_to',
+			'duplicates',
 		])
 		expect(result.max_concurrent_sessions).toBe(5)
 		expect(result.llm_keys).toEqual({})
@@ -86,8 +96,8 @@ describe('workspaceSettingsSchema', () => {
 		})
 		const taskFields = result.field_definitions.task
 		expect(taskFields).toBeDefined()
-		expect(taskFields![0]!.name).toBe('priority')
-		expect(taskFields![0]!.required).toBe(false)
+		expect(taskFields?.[0]?.name).toBe('priority')
+		expect(taskFields?.[0]?.required).toBe(false)
 	})
 })
 

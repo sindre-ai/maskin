@@ -1,4 +1,3 @@
-import { beforeEach, describe, expect, it } from 'vitest'
 import {
 	clearAuth,
 	getApiKey,
@@ -7,6 +6,7 @@ import {
 	setApiKey,
 	setStoredActor,
 } from '@/lib/auth'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 beforeEach(() => {
 	localStorage.clear()
@@ -51,7 +51,7 @@ describe('setStoredActor', () => {
 	it('stores serialized actor', () => {
 		const actor = { id: '1', name: 'Bob', type: 'agent', email: null }
 		setStoredActor(actor)
-		expect(JSON.parse(localStorage.getItem('ai-native-actor')!)).toEqual(actor)
+		expect(JSON.parse(localStorage.getItem('ai-native-actor') ?? '{}')).toEqual(actor)
 	})
 })
 

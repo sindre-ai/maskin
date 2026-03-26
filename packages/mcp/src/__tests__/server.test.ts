@@ -43,8 +43,12 @@ describe('createMcpServer', () => {
 		// Verify all expected URIs are present
 		const resourceUris = vi.mocked(registerAppResource).mock.calls.map((call) => call[2])
 		const expectedUris = [
-			'ui://ai-native/objects', 'ui://ai-native/actors', 'ui://ai-native/workspaces',
-			'ui://ai-native/events', 'ui://ai-native/triggers', 'ui://ai-native/relationships',
+			'ui://ai-native/objects',
+			'ui://ai-native/actors',
+			'ui://ai-native/workspaces',
+			'ui://ai-native/events',
+			'ui://ai-native/triggers',
+			'ui://ai-native/relationships',
 			'ui://ai-native/graph',
 		]
 		for (const uri of expectedUris) {
@@ -98,11 +102,9 @@ describe('tool handlers', () => {
 		vi.clearAllMocks()
 		handlers = new Map()
 
-		vi.mocked(registerAppTool).mockImplementation(
-			(_server, name, _def, handler) => {
-				handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
-			},
-		)
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+		})
 
 		createMcpServer(config)
 	})
@@ -111,6 +113,12 @@ describe('tool handlers', () => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
 	})
+
+	function getHandler(name: string) {
+		const handler = handlers.get(name)
+		if (!handler) throw new Error(`Handler ${name} not registered`)
+		return handler
+	}
 
 	function mockFetchSuccess(data: unknown) {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
@@ -132,11 +140,11 @@ describe('tool handlers', () => {
 			const mockResult = { nodes: [{ id: '1' }], edges: [] }
 			mockFetchSuccess(mockResult)
 
-			const handler = handlers.get('create_objects')!
-			const result = await handler({
+			const handler = getHandler('create_objects')
+			const result = (await handler({
 				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
 				edges: [],
-			}) as { content: Array<{ text: string }> }
+			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/graph',
@@ -156,7 +164,7 @@ describe('tool handlers', () => {
 		it('uses workspace_id from args over default', async () => {
 			mockFetchSuccess({})
 
-			const handler = handlers.get('create_objects')!
+			const handler = getHandler('create_objects')
 			await handler({
 				workspace_id: 'ws-custom',
 				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
@@ -178,8 +186,10 @@ describe('tool handlers', () => {
 		it('GETs /api/objects/:id/graph for each ID', async () => {
 			mockFetchSuccess({ id: '1', title: 'Test' })
 
-			const handler = handlers.get('get_objects')!
-			const result = await handler({ ids: ['id-1', 'id-2'] }) as { content: Array<{ text: string }> }
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
+				content: Array<{ text: string }>
+			}
 
 			expect(fetch).toHaveBeenCalledTimes(2)
 			expect(fetch).toHaveBeenCalledWith(
@@ -201,7 +211,7 @@ describe('tool handlers', () => {
 		it('GETs /api/objects with query params', async () => {
 			mockFetchSuccess([])
 
-			const handler = handlers.get('list_objects')!
+			const handler = getHandler('list_objects')
 			await handler({ type: 'task', limit: 10, offset: 5 })
 
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
@@ -216,7 +226,7 @@ describe('tool handlers', () => {
 		it('DELETEs /api/objects/:id', async () => {
 			mockFetchSuccess({})
 
-			const handler = handlers.get('delete_object')!
+			const handler = getHandler('delete_object')
 			await handler({ id: 'obj-123' })
 
 			expect(fetch).toHaveBeenCalledWith(
@@ -230,7 +240,7 @@ describe('tool handlers', () => {
 		it('POSTs to /api/actors with skipAuth', async () => {
 			mockFetchSuccess({ id: 'actor-new', name: 'Bot', type: 'agent' })
 
-			const handler = handlers.get('create_actor')!
+			const handler = getHandler('create_actor')
 			await handler({ type: 'agent', name: 'Bot' })
 
 			expect(fetch).toHaveBeenCalledWith(
@@ -250,10 +260,12 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({}),
 				} as Response)
 
-			const handler = handlers.get('create_actor')!
-			const result = await handler({
-				type: 'agent', name: 'Bot', workspace_id: 'ws-123',
-			}) as { content: Array<{ text: string }> }
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledTimes(2)
 			expect(fetch).toHaveBeenLastCalledWith(
@@ -280,8 +292,10 @@ describe('tool handlers', () => {
 					text: () => Promise.resolve('Not found'),
 				} as Response)
 
-			const handler = handlers.get('get_objects')!
-			const result = await handler({ ids: ['id-1', 'id-2'] }) as { content: Array<{ text: string }> }
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
+				content: Array<{ text: string }>
+			}
 
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toHaveLength(2)
@@ -296,7 +310,7 @@ describe('tool handlers', () => {
 		it('POSTs to /api/sessions', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
 
-			const handler = handlers.get('create_session')!
+			const handler = getHandler('create_session')
 			await handler({
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
@@ -313,7 +327,8 @@ describe('tool handlers', () => {
 	describe('run_agent handler', () => {
 		it('creates session, polls until completed, fetches logs', async () => {
 			vi.useFakeTimers()
-			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
 				// 1. POST /api/sessions — create session
 				.mockResolvedValueOnce({
 					ok: true,
@@ -335,7 +350,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([{ message: 'Done' }]),
 				} as Response)
 
-			const handler = handlers.get('run_agent')!
+			const handler = getHandler('run_agent')
 			const resultPromise = handler({
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
@@ -347,7 +362,7 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000) // first poll → running
 			await vi.advanceTimersByTimeAsync(5000) // second poll → completed
 
-			const result = await resultPromise as { content: Array<{ text: string }> }
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
 
 			expect(parsed.session.status).toBe('completed')
@@ -358,12 +373,15 @@ describe('tool handlers', () => {
 			expect(fetchSpy.mock.calls[0][0]).toBe('http://localhost:3000/api/sessions')
 			expect(fetchSpy.mock.calls[1][0]).toBe('http://localhost:3000/api/sessions/sess-1')
 			expect(fetchSpy.mock.calls[2][0]).toBe('http://localhost:3000/api/sessions/sess-1')
-			expect(fetchSpy.mock.calls[3][0]).toBe('http://localhost:3000/api/sessions/sess-1/logs?limit=500')
+			expect(fetchSpy.mock.calls[3][0]).toBe(
+				'http://localhost:3000/api/sessions/sess-1/logs?limit=500',
+			)
 		})
 
 		it('stops polling when deadline is reached', async () => {
 			vi.useFakeTimers()
-			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
 				// 1. POST /api/sessions — create session
 				.mockResolvedValueOnce({
 					ok: true,
@@ -375,7 +393,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id: 'sess-2', status: 'running' }),
 				} as Response)
 
-			const handler = handlers.get('run_agent')!
+			const handler = getHandler('run_agent')
 			// Very short timeout (10s) with 5s poll interval = at most 2 polls before deadline
 			const resultPromise = handler({
 				actor_id: 'actor-1',
@@ -385,11 +403,11 @@ describe('tool handlers', () => {
 			})
 
 			// Advance past deadline
-			await vi.advanceTimersByTimeAsync(5000)  // first poll
-			await vi.advanceTimersByTimeAsync(5000)  // second poll
-			await vi.advanceTimersByTimeAsync(5000)  // past deadline
+			await vi.advanceTimersByTimeAsync(5000) // first poll
+			await vi.advanceTimersByTimeAsync(5000) // second poll
+			await vi.advanceTimersByTimeAsync(5000) // past deadline
 
-			const result = await resultPromise as { content: Array<{ text: string }> }
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
 
 			// Session should still show 'running' since it never reached terminal
@@ -415,7 +433,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([]),
 				} as Response)
 
-			const handler = handlers.get('run_agent')!
+			const handler = getHandler('run_agent')
 			const resultPromise = handler({
 				actor_id: 'actor-1',
 				action_prompt: 'Quick task',
@@ -424,7 +442,7 @@ describe('tool handlers', () => {
 			// Default poll interval is 5s
 			await vi.advanceTimersByTimeAsync(5000)
 
-			const result = await resultPromise as { content: Array<{ text: string }> }
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.session.status).toBe('completed')
 		})
@@ -432,27 +450,36 @@ describe('tool handlers', () => {
 
 	describe('error handling', () => {
 		it('throws with API error message', async () => {
-			mockFetchError(400, JSON.stringify({
-				error: { message: 'Validation failed', details: [{ field: 'name', message: 'Required' }] },
-			}))
+			mockFetchError(
+				400,
+				JSON.stringify({
+					error: {
+						message: 'Validation failed',
+						details: [{ field: 'name', message: 'Required' }],
+					},
+				}),
+			)
 
-			const handler = handlers.get('list_objects')!
+			const handler = getHandler('list_objects')
 			await expect(handler({})).rejects.toThrow('API error 400')
 		})
 
 		it('throws with suggestion when available', async () => {
-			mockFetchError(401, JSON.stringify({
-				error: { message: 'Unauthorized', suggestion: 'Check your API key' },
-			}))
+			mockFetchError(
+				401,
+				JSON.stringify({
+					error: { message: 'Unauthorized', suggestion: 'Check your API key' },
+				}),
+			)
 
-			const handler = handlers.get('list_objects')!
+			const handler = getHandler('list_objects')
 			await expect(handler({})).rejects.toThrow('Hint: Check your API key')
 		})
 
 		it('throws with raw text for non-JSON error', async () => {
 			mockFetchError(500, 'Internal Server Error')
 
-			const handler = handlers.get('list_objects')!
+			const handler = getHandler('list_objects')
 			await expect(handler({})).rejects.toThrow('Internal Server Error')
 		})
 	})
@@ -460,14 +487,16 @@ describe('tool handlers', () => {
 	describe('auth validation', () => {
 		it('throws when no API key configured', async () => {
 			const noKeyHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
-			vi.mocked(registerAppTool).mockImplementation(
-				(_server, name, _def, handler) => {
-					noKeyHandlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
-				},
-			)
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				noKeyHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
 			createMcpServer({ ...config, apiKey: '' })
 
-			const handler = noKeyHandlers.get('list_objects')!
+			const handler = noKeyHandlers.get('list_objects')
+			if (!handler) throw new Error('Handler list_objects not registered')
 			await expect(handler({})).rejects.toThrow('Not authenticated')
 		})
 	})

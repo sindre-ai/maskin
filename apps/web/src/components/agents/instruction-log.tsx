@@ -52,8 +52,10 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 
 	// Auto-scroll on new messages or log updates
 	useEffect(() => {
-		scrollToBottom()
-	}, [messages, scrollToBottom])
+		if (messages.length > 0) {
+			scrollToBottom()
+		}
+	}, [messages.length, scrollToBottom])
 
 	// SSE streaming for session logs
 	useEffect(() => {

@@ -63,15 +63,11 @@ describe('createNotificationSchema', () => {
 	})
 
 	it('rejects missing type', () => {
-		expect(() =>
-			createNotificationSchema.parse({ title: 'Test', source_actor_id: uuid }),
-		).toThrow()
+		expect(() => createNotificationSchema.parse({ title: 'Test', source_actor_id: uuid })).toThrow()
 	})
 
 	it('rejects missing title', () => {
-		expect(() =>
-			createNotificationSchema.parse({ type: 'alert', source_actor_id: uuid }),
-		).toThrow()
+		expect(() => createNotificationSchema.parse({ type: 'alert', source_actor_id: uuid })).toThrow()
 	})
 
 	it('rejects empty title', () => {
@@ -81,9 +77,7 @@ describe('createNotificationSchema', () => {
 	})
 
 	it('rejects missing source_actor_id', () => {
-		expect(() =>
-			createNotificationSchema.parse({ type: 'alert', title: 'Test' }),
-		).toThrow()
+		expect(() => createNotificationSchema.parse({ type: 'alert', title: 'Test' })).toThrow()
 	})
 })
 

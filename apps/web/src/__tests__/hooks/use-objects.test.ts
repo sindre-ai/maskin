@@ -17,11 +17,35 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
+import {
+	useCreateObject,
+	useDeleteObject,
+	useObject,
+	useObjects,
+	useUpdateObject,
+} from '@/hooks/use-objects'
+import type { ObjectResponse } from '@/lib/api'
 import { api } from '@/lib/api'
-import { useCreateObject, useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
+
+function buildObject(overrides: Partial<ObjectResponse> & { id: string }): ObjectResponse {
+	return {
+		workspaceId: 'ws-1',
+		type: 'task',
+		title: null,
+		content: null,
+		status: 'todo',
+		metadata: null,
+		owner: null,
+		activeSessionId: null,
+		createdBy: 'actor-1',
+		createdAt: null,
+		updatedAt: null,
+		...overrides,
+	}
+}
 
 beforeEach(() => {
 	vi.clearAllMocks()
@@ -35,13 +59,13 @@ describe('useObjects', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error).toBeInstanceOf(Error)
-		expect(result.current.error!.message).toBe('Network error')
+		expect(result.current.error?.message).toBe('Network error')
 	})
 
 	it('fetches objects for workspace', async () => {
 		const mockObjects = [
-			{ id: 'obj-1', title: 'Task 1', type: 'task' },
-			{ id: 'obj-2', title: 'Bet 1', type: 'bet' },
+			buildObject({ id: 'obj-1', title: 'Task 1', type: 'task' }),
+			buildObject({ id: 'obj-2', title: 'Bet 1', type: 'bet' }),
 		]
 		vi.mocked(api.objects.list).mockResolvedValue(mockObjects)
 
@@ -66,8 +90,8 @@ describe('useObjects', () => {
 describe('useObject', () => {
 	it('returns matching object from list', async () => {
 		const mockObjects = [
-			{ id: 'obj-1', title: 'Task 1', type: 'task' },
-			{ id: 'obj-2', title: 'Bet 1', type: 'bet' },
+			buildObject({ id: 'obj-1', title: 'Task 1', type: 'task' }),
+			buildObject({ id: 'obj-2', title: 'Bet 1', type: 'bet' }),
 		]
 		vi.mocked(api.objects.list).mockResolvedValue(mockObjects)
 
@@ -80,7 +104,9 @@ describe('useObject', () => {
 	it('returns undefined when object not found', async () => {
 		vi.mocked(api.objects.list).mockResolvedValue([])
 
-		const { result } = renderHook(() => useObject('nonexistent', workspaceId), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useObject('nonexistent', workspaceId), {
+			wrapper: TestWrapper,
+		})
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toBeUndefined()
@@ -95,11 +121,11 @@ describe('useCreateObject', () => {
 
 		result.current.mutate({ type: 'task', title: 'Bad', status: 'todo' })
 		await waitFor(() => expect(result.current.isError).toBe(true))
-		expect(result.current.error!.message).toBe('Validation failed')
+		expect(result.current.error?.message).toBe('Validation failed')
 	})
 
 	it('calls api.objects.create with workspace and data', async () => {
-		const newObject = { id: 'obj-new', title: 'New', type: 'task', status: 'todo' }
+		const newObject = buildObject({ id: 'obj-new', title: 'New', type: 'task', status: 'todo' })
 		vi.mocked(api.objects.create).mockResolvedValue(newObject)
 
 		const { result } = renderHook(() => useCreateObject(workspaceId), { wrapper: TestWrapper })
@@ -122,11 +148,11 @@ describe('useUpdateObject', () => {
 
 		result.current.mutate({ id: 'obj-1', data: { title: 'Nope' } })
 		await waitFor(() => expect(result.current.isError).toBe(true))
-		expect(result.current.error!.message).toBe('Not found')
+		expect(result.current.error?.message).toBe('Not found')
 	})
 
 	it('calls api.objects.update with id and data', async () => {
-		vi.mocked(api.objects.update).mockResolvedValue({ id: 'obj-1', title: 'Updated' })
+		vi.mocked(api.objects.update).mockResolvedValue(buildObject({ id: 'obj-1', title: 'Updated' }))
 
 		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: TestWrapper })
 
@@ -144,11 +170,11 @@ describe('useDeleteObject', () => {
 
 		result.current.mutate('obj-1')
 		await waitFor(() => expect(result.current.isError).toBe(true))
-		expect(result.current.error!.message).toBe('Forbidden')
+		expect(result.current.error?.message).toBe('Forbidden')
 	})
 
 	it('calls api.objects.delete with id', async () => {
-		vi.mocked(api.objects.delete).mockResolvedValue(undefined)
+		vi.mocked(api.objects.delete).mockResolvedValue({ deleted: true })
 
 		const { result } = renderHook(() => useDeleteObject(workspaceId), { wrapper: TestWrapper })
 
