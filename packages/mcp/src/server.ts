@@ -106,6 +106,27 @@ async function apiCall(
 	return response.json()
 }
 
+async function getWorkspace(
+	config: McpConfig,
+	workspaceId: string,
+): Promise<{ id: string; name: string; settings: Record<string, unknown> }> {
+	const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+		skipWorkspace: true,
+	})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+	const workspace = workspaces.find((w) => w.id === workspaceId)
+	if (!workspace) throw new Error('Workspace not found')
+	return workspace
+}
+
+function extractSettings(settings: Record<string, unknown>) {
+	return {
+		statuses: { ...((settings.statuses ?? {}) as Record<string, string[]>) },
+		displayNames: { ...((settings.display_names ?? {}) as Record<string, string>) },
+		fieldDefs: { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) },
+		relTypes: [...((settings.relationship_types ?? []) as string[])],
+	}
+}
+
 function loadHtml(config: McpConfig, filename: string): string {
 	const basePath = config.htmlBasePath ?? resolve(__dirname, '../../../apps/web/dist-mcp')
 	const fullPath = resolve(basePath, filename)
@@ -1194,12 +1215,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
-			const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
-				skipWorkspace: true,
-			})) as Array<{ id: string; settings: Record<string, unknown> }>
-			const workspace = workspaces.find((w) => w.id === args.workspace_id)
-			if (!workspace) throw new Error('Workspace not found')
-
+			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
 			const enabledModules = Array.isArray(settings.enabled_modules)
 				? [...(settings.enabled_modules as string[])]
@@ -1283,12 +1299,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
-			const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
-				skipWorkspace: true,
-			})) as Array<{ id: string; settings: Record<string, unknown> }>
-			const workspace = workspaces.find((w) => w.id === args.workspace_id)
-			if (!workspace) throw new Error('Workspace not found')
-
+			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
 			const enabledModules = Array.isArray(settings.enabled_modules)
 				? (settings.enabled_modules as string[])
@@ -1334,19 +1345,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
-			const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
-				skipWorkspace: true,
-			})) as Array<{ id: string; settings: Record<string, unknown> }>
-			const workspace = workspaces.find((w) => w.id === args.workspace_id)
-			if (!workspace) throw new Error('Workspace not found')
-
+			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
-			const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
-			const fieldDefs = {
-				...((settings.field_definitions ?? {}) as Record<string, unknown[]>),
-			}
-			const relTypes = [...((settings.relationship_types ?? []) as string[])]
+			const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
 
 			if (args.type in statuses) {
 				throw new Error(
@@ -1398,19 +1399,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
-			const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
-				skipWorkspace: true,
-			})) as Array<{ id: string; settings: Record<string, unknown> }>
-			const workspace = workspaces.find((w) => w.id === args.workspace_id)
-			if (!workspace) throw new Error('Workspace not found')
-
+			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
-			const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
-			const fieldDefs = {
-				...((settings.field_definitions ?? {}) as Record<string, unknown[]>),
-			}
-			const relTypes = [...((settings.relationship_types ?? []) as string[])]
+			const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
 
 			if (!(args.type in statuses) && !(args.type in displayNames)) {
 				throw new Error(
@@ -1471,18 +1462,9 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
-			const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
-				skipWorkspace: true,
-			})) as Array<{ id: string; settings: Record<string, unknown> }>
-			const workspace = workspaces.find((w) => w.id === args.workspace_id)
-			if (!workspace) throw new Error('Workspace not found')
-
+			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
-			const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
-			const fieldDefs = {
-				...((settings.field_definitions ?? {}) as Record<string, unknown[]>),
-			}
+			const { statuses, displayNames, fieldDefs } = extractSettings(settings)
 
 			delete statuses[args.type]
 			delete displayNames[args.type]
@@ -1549,19 +1531,9 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
-			const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
-				skipWorkspace: true,
-			})) as Array<{ id: string; settings: Record<string, unknown> }>
-			const workspace = workspaces.find((w) => w.id === args.workspace_id)
-			if (!workspace) throw new Error('Workspace not found')
-
+			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
-			const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
-			const fieldDefs = {
-				...((settings.field_definitions ?? {}) as Record<string, unknown[]>),
-			}
-			const relTypes = [...((settings.relationship_types ?? []) as string[])]
+			const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
 
 			const skipped: string[] = []
 			const added: string[] = []
