@@ -23,7 +23,10 @@ export function ObjectActionBanner({ objectId, workspaceId }: ObjectActionBanner
 						className="border-l-4 border-amber-500 bg-amber-50 dark:bg-amber-950/30 rounded-r-md p-4"
 					>
 						<div className="flex items-start gap-2">
-							<AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+							<AlertTriangle
+								size={16}
+								className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0"
+							/>
 							<div className="flex-1 min-w-0">
 								<p className="text-sm font-medium text-amber-900 dark:text-amber-200">
 									{notification.title}
@@ -36,9 +39,7 @@ export function ObjectActionBanner({ objectId, workspaceId }: ObjectActionBanner
 								{metadata.input_type && (
 									<NotificationInput
 										metadata={metadata}
-										onSubmit={(response) =>
-											respond.mutate({ id: notification.id, response })
-										}
+										onSubmit={(response) => respond.mutate({ id: notification.id, response })}
 									/>
 								)}
 							</div>
