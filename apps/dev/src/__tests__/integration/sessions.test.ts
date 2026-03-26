@@ -488,8 +488,52 @@ describe('Sessions Integration', () => {
 		})
 	})
 
+	describe('Validation 400', () => {
+		it('returns 400 when action_prompt is missing', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					{ actor_id: agentActorId, auto_start: false },
+					headers,
+				),
+			)
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('VALIDATION_ERROR')
+		})
+
+		it('returns 400 when actor_id is not a valid UUID', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions',
+					{ actor_id: 'not-a-uuid', action_prompt: 'do something', auto_start: false },
+					headers,
+				),
+			)
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('VALIDATION_ERROR')
+		})
+
+		it('returns 400 when body is empty', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const res = await app.request(jsonRequest('POST', '/api/sessions', {}, headers))
+			expect(res.status).toBe(400)
+		})
+	})
+
 	describe('Workspace isolation', () => {
-		it('cannot see sessions from another workspace', async () => {
+		it('cannot see sessions from another workspace via GET', async () => {
 			const app = createSessionApp()
 
 			// Create session in first workspace
@@ -501,6 +545,40 @@ describe('Sessions Integration', () => {
 
 			// Try to get session from second workspace
 			const res = await app.request(jsonGet(`/api/sessions/${session.id}`, otherHeaders))
+			expect(res.status).toBe(404)
+		})
+
+		it('cannot list sessions from another workspace', async () => {
+			const app = createSessionApp()
+
+			// Create sessions in first workspace
+			await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			await insertSession(db, workspaceId, agentActorId, getTestActorId())
+
+			// Create a second workspace and list from it
+			const ws2 = await insertWorkspace(db, getTestActorId())
+			const otherHeaders = { 'x-workspace-id': ws2.id }
+
+			const res = await app.request(jsonGet('/api/sessions', otherHeaders))
+			expect(res.status).toBe(200)
+			const list = await res.json()
+			expect(list).toHaveLength(0)
+		})
+
+		it('cannot stop a session from another workspace', async () => {
+			const app = createSessionApp()
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+				status: 'running',
+				containerId: 'fake-container',
+			})
+
+			const ws2 = await insertWorkspace(db, getTestActorId())
+			const otherHeaders = { 'x-workspace-id': ws2.id }
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/stop`, undefined, otherHeaders),
+			)
 			expect(res.status).toBe(404)
 		})
 	})
