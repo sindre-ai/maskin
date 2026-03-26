@@ -1,5 +1,4 @@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { formatDurationBetween } from '@/lib/format-duration'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -17,9 +16,12 @@ import { useEvents } from '@/hooks/use-events'
 import {
 	useActiveSessionsForActor,
 	useActorSessions,
+	useCreateSession,
+	useSessionErrorLog,
 	useSessionLatestLog,
 } from '@/hooks/use-sessions'
 import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
 import {
 	Check,
@@ -195,7 +197,12 @@ export function AgentDocumentView({
 				<Section title="Sessions">
 					<div className="space-y-1">
 						{pastSessions.map((session) => (
-							<SessionRow key={session.id} session={session} />
+							<SessionRow
+								key={session.id}
+								session={session}
+								workspaceId={workspaceId}
+								agentId={agent.id}
+							/>
 						))}
 					</div>
 				</Section>
@@ -366,18 +373,79 @@ function SessionStatusIcon({ status }: { status: string }) {
 	}
 }
 
-function SessionRow({ session }: { session: SessionResponse }) {
+function SessionRow({
+	session,
+	workspaceId,
+	agentId,
+}: {
+	session: SessionResponse
+	workspaceId: string
+	agentId: string
+}) {
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
+	const isFailed = session.status === 'failed' || session.status === 'timeout'
+	const [showError, setShowError] = useState(false)
+	const createSession = useCreateSession(workspaceId)
+
+	const result = session.result as Record<string, unknown> | null
+	const errorMessage = result?.error as string | undefined
+	const exitCode = result?.exit_code as number | undefined
+	const hasResultError = !!errorMessage || (exitCode !== undefined && exitCode !== 0)
+
+	const { data: stderrLog } = useSessionErrorLog(
+		session.id,
+		workspaceId,
+		showError && !hasResultError,
+	)
+
+	const errorDetail =
+		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
+	const displayError = errorDetail ?? stderrLog
+
+	const handleRetry = useCallback(() => {
+		createSession.mutate({
+			actor_id: agentId,
+			action_prompt: session.actionPrompt,
+		})
+	}, [createSession, agentId, session.actionPrompt])
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md px-3 py-1.5">
-			<SessionStatusIcon status={session.status} />
-			<span className="text-sm truncate flex-1">{session.actionPrompt || 'Untitled session'}</span>
-			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
-			<RelativeTime
-				date={session.completedAt ?? session.createdAt}
-				className="text-xs text-muted-foreground shrink-0"
-			/>
+		<div>
+			<div className="flex items-center gap-2.5 rounded-md px-3 py-1.5">
+				<SessionStatusIcon status={session.status} />
+				<span className={`text-sm truncate flex-1 ${isFailed ? 'text-error' : ''}`}>
+					{session.actionPrompt || 'Untitled session'}
+				</span>
+				{isFailed && (
+					<>
+						<button
+							type="button"
+							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							onClick={() => setShowError((v) => !v)}
+						>
+							{showError ? 'Hide' : 'Error'}
+						</button>
+						<button
+							type="button"
+							className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer"
+							onClick={handleRetry}
+							disabled={createSession.isPending}
+						>
+							{createSession.isPending ? 'Retrying…' : 'Retry'}
+						</button>
+					</>
+				)}
+				{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+				<RelativeTime
+					date={session.completedAt ?? session.createdAt}
+					className="text-xs text-muted-foreground shrink-0"
+				/>
+			</div>
+			{showError && displayError && (
+				<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
+					{displayError}
+				</pre>
+			)}
 		</div>
 	)
 }
