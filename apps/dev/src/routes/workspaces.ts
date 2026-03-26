@@ -1,12 +1,15 @@
 import type { Database } from '@ai-native/db'
-import { actors, workspaceMembers, workspaces } from '@ai-native/db/schema'
+import { actors, objects, workspaceMembers, workspaces } from '@ai-native/db/schema'
 import {
 	createWorkspaceSchema,
+	getObjectTypes,
+	objectTypeDefinitionSchema,
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
+	workspaceTemplates,
 } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { eq } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -70,7 +73,16 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 
-	const settings = workspaceSettingsSchema.parse(body.settings ?? {})
+	let baseSettings = body.settings ?? {}
+	const template = body.template ? workspaceTemplates[body.template] : undefined
+	if (template) {
+		baseSettings = {
+			...baseSettings,
+			object_types: template.object_types,
+			relationship_types: template.relationship_types,
+		}
+	}
+	const settings = workspaceSettingsSchema.parse(baseSettings)
 
 	const [workspace] = await db
 		.insert(workspaces)
@@ -259,5 +271,144 @@ app.openapi(listMembersRoute, async (c) => {
 
 	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
 })
+
+// GET /api/workspaces/:id/types
+const listTypesRoute = createRoute({
+	method: 'get',
+	path: '/{id}/types',
+	tags: ['workspaces'],
+	summary: 'List object types for workspace',
+	request: { params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Object type definitions',
+			content: { 'application/json': { schema: z.array(objectTypeDefinitionSchema) } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(listTypesRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+
+	const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404) as never
+
+	return c.json(getObjectTypes(workspace.settings as Parameters<typeof getObjectTypes>[0]))
+}) as RouteHandler<typeof listTypesRoute, Env>)
+
+const typeSlugParamSchema = z.object({ id: z.string().uuid(), slug: z.string() })
+
+// PUT /api/workspaces/:id/types/:slug
+const upsertTypeRoute = createRoute({
+	method: 'put',
+	path: '/{id}/types/{slug}',
+	tags: ['workspaces'],
+	summary: 'Create or update an object type definition',
+	request: {
+		params: typeSlugParamSchema,
+		body: { content: { 'application/json': { schema: objectTypeDefinitionSchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Type upserted',
+			content: { 'application/json': { schema: objectTypeDefinitionSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(upsertTypeRoute, (async (c) => {
+	const db = c.get('db')
+	const { id, slug } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	const settings = workspace.settings as Parameters<typeof getObjectTypes>[0]
+	const existingTypes = getObjectTypes(settings)
+	const typeDef = { ...body, slug }
+	const updated = existingTypes.some((t) => t.slug === slug)
+		? existingTypes.map((t) => (t.slug === slug ? typeDef : t))
+		: [...existingTypes, typeDef]
+
+	const [updatedWorkspace] = await db
+		.update(workspaces)
+		.set({ settings: { ...(workspace.settings as object), object_types: updated }, updatedAt: new Date() })
+		.where(eq(workspaces.id, id))
+		.returning()
+
+	if (!updatedWorkspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	return c.json(typeDef as z.infer<typeof objectTypeDefinitionSchema>)
+}) as RouteHandler<typeof upsertTypeRoute, Env>)
+
+// DELETE /api/workspaces/:id/types/:slug
+const deleteTypeRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/types/{slug}',
+	tags: ['workspaces'],
+	summary: 'Remove an object type definition',
+	request: { params: typeSlugParamSchema },
+	responses: {
+		200: {
+			description: 'Type removed',
+			content: { 'application/json': { schema: z.object({ deleted: z.boolean(), objectCount: z.number() }) } },
+		},
+		400: {
+			description: 'Type has existing objects',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(deleteTypeRoute, (async (c) => {
+	const db = c.get('db')
+	const { id, slug } = c.req.valid('param')
+	const force = c.req.query('force') === 'true'
+
+	const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	// Count objects of this type
+	const [countResult] = await db
+		.select({ n: count() })
+		.from(objects)
+		.where(eq(objects.type, slug))
+
+	const objectCount = Number(countResult?.n ?? 0)
+	if (objectCount > 0 && !force) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Cannot delete type '${slug}': ${objectCount} object(s) exist. Use ?force=true to delete anyway.`,
+			),
+			400,
+		)
+	}
+
+	const settings = workspace.settings as Parameters<typeof getObjectTypes>[0]
+	const existingTypes = getObjectTypes(settings)
+	const updated = existingTypes.filter((t) => t.slug !== slug)
+
+	await db
+		.update(workspaces)
+		.set({ settings: { ...(workspace.settings as object), object_types: updated }, updatedAt: new Date() })
+		.where(eq(workspaces.id, id))
+
+	return c.json({ deleted: true, objectCount })
+}) as RouteHandler<typeof deleteTypeRoute, Env>)
 
 export default app

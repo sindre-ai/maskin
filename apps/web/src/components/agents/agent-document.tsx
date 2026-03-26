@@ -351,7 +351,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 
 	return (
 		<>
-			<PageHeader />
+			<PageHeader title={agent.name} />
 			<AgentDocumentView
 				agent={agent}
 				events={agentEvents}

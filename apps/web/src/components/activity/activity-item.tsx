@@ -2,8 +2,22 @@ import { useActor } from '@/hooks/use-actors'
 import type { ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
+import { Bot, FileText, Link2, User, Zap } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
+
+const entityIcons: Record<string, React.ElementType> = {
+	object: FileText,
+	relationship: Link2,
+	actor: User,
+	session: Bot,
+	trigger: Zap,
+}
+
+function EntityIcon({ entityType }: { entityType: string }) {
+	const Icon = entityIcons[entityType] ?? FileText
+	return <Icon className="h-3 w-3 shrink-0 text-muted-foreground/60 mt-0.5" />
+}
 
 function formatAction(event: EventResponse): string {
 	const action = event.action.replace(/_/g, ' ')
@@ -45,6 +59,7 @@ export function ActivityItemView({
 				isAgent && 'opacity-75',
 			)}
 		>
+			{!compact && <EntityIcon entityType={event.entityType} />}
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<div className="flex-1 min-w-0">
 				<div className="flex items-baseline gap-1.5 text-sm">

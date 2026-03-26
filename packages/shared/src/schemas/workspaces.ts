@@ -1,13 +1,60 @@
 import { z } from 'zod'
 
-const fieldDefinitionSchema = z.object({
+export const fieldDefinitionSchema = z.object({
 	name: z.string(),
 	type: z.enum(['text', 'number', 'date', 'enum', 'boolean']),
 	required: z.boolean().default(false),
 	values: z.array(z.string()).optional(),
 })
 
+export const objectTypeDefinitionSchema = z.object({
+	slug: z.string().min(1).regex(/^[a-z][a-z0-9_]*$/, 'Must be lowercase alphanumeric with underscores'),
+	display_name: z.string().min(1),
+	icon: z.string().optional(),
+	color: z.string().optional(),
+	statuses: z.array(z.string()).min(1),
+	default_status: z.string().optional(),
+	field_definitions: z.array(fieldDefinitionSchema).default([]),
+	source: z.enum(['core', 'custom', 'extension']).default('custom'),
+	extension_id: z.string().optional(),
+})
+
+export type ObjectTypeDefinition = z.infer<typeof objectTypeDefinitionSchema>
+
 export const workspaceSettingsSchema = z.object({
+	object_types: z.array(objectTypeDefinitionSchema).default([
+		{
+			slug: 'insight',
+			display_name: 'Insight',
+			icon: 'lightbulb',
+			color: 'amber',
+			statuses: ['new', 'processing', 'clustered', 'discarded'],
+			default_status: 'new',
+			field_definitions: [],
+			source: 'core',
+		},
+		{
+			slug: 'bet',
+			display_name: 'Bet',
+			icon: 'target',
+			color: 'indigo',
+			statuses: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+			default_status: 'signal',
+			field_definitions: [],
+			source: 'core',
+		},
+		{
+			slug: 'task',
+			display_name: 'Task',
+			icon: 'check-square',
+			color: 'emerald',
+			statuses: ['todo', 'in_progress', 'done', 'blocked'],
+			default_status: 'todo',
+			field_definitions: [],
+			source: 'core',
+		},
+	]),
+	// Kept for backwards compatibility — object_types is the source of truth
 	display_names: z.record(z.string()).default({
 		insight: 'Insight',
 		bet: 'Bet',
@@ -43,6 +90,7 @@ export const workspaceSettingsSchema = z.object({
 export const createWorkspaceSchema = z.object({
 	name: z.string().min(1),
 	settings: workspaceSettingsSchema.optional(),
+	template: z.enum(['product', 'crm', 'blank']).optional(),
 })
 
 export const updateWorkspaceSchema = z.object({

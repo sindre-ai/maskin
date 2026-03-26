@@ -1,6 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { ObjectForm } from '@/components/objects/object-form'
-import { ObjectList } from '@/components/objects/object-list'
+import { ObjectHierarchy } from '@/components/objects/object-hierarchy'
+import { ObjectRow } from '@/components/objects/object-row'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import {
@@ -11,7 +12,10 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useActors } from '@/hooks/use-actors'
+import { useObjectTypes } from '@/hooks/use-object-types'
 import { useObjects } from '@/hooks/use-objects'
+import { useRelationships } from '@/hooks/use-relationships'
+import { useSessions } from '@/hooks/use-sessions'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
@@ -25,15 +29,9 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	}),
 })
 
-const tabs = [
-	{ label: 'All', value: undefined },
-	{ label: 'Insights', value: 'insight' },
-	{ label: 'Bets', value: 'bet' },
-	{ label: 'Tasks', value: 'task' },
-] as const
-
 function ObjectsPage() {
-	const { workspaceId, workspace } = useWorkspace()
+	const { workspaceId } = useWorkspace()
+	const objectTypes = useObjectTypes()
 	const { create } = useSearch({ from: '/_authed/$workspaceId/objects/' })
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
@@ -54,14 +52,18 @@ function ObjectsPage() {
 
 	const { data: objects, isLoading } = useObjects(workspaceId, filters)
 
+	// Fetch relationships only when showing the All tab (for hierarchy)
+	const { data: relationships } = useRelationships(workspaceId)
+	const { data: sessions } = useSessions(workspaceId)
+	const sessionMap = useMemo(() => new Map((sessions ?? []).map((s) => [s.id, s])), [sessions])
+
 	// Derive available statuses for the current type filter
-	const settings = workspace.settings as Record<string, unknown>
 	const allStatuses = useMemo(() => {
-		const statusMap = settings?.statuses as Record<string, string[]> | undefined
-		if (!statusMap) return []
-		if (typeFilter) return statusMap[typeFilter] ?? []
-		return [...new Set(Object.values(statusMap).flat())]
-	}, [settings, typeFilter])
+		if (typeFilter) {
+			return objectTypes.find((t) => t.slug === typeFilter)?.statuses ?? []
+		}
+		return [...new Set(objectTypes.flatMap((t) => t.statuses))]
+	}, [objectTypes, typeFilter])
 
 	const filtered = search
 		? (objects ?? []).filter(
@@ -70,6 +72,18 @@ function ObjectsPage() {
 					o.content?.toLowerCase().includes(search.toLowerCase()),
 			)
 		: (objects ?? [])
+
+	// Group by status for type-specific tabs
+	const groupedByStatus = useMemo(() => {
+		if (!typeFilter) return null
+		const groups = new Map<string, typeof filtered>()
+		for (const o of filtered) {
+			const arr = groups.get(o.status ?? '') ?? []
+			arr.push(o)
+			groups.set(o.status ?? '', arr)
+		}
+		return groups
+	}, [filtered, typeFilter])
 
 	return (
 		<div>
@@ -83,23 +97,38 @@ function ObjectsPage() {
 
 			{/* Tabs + Filters */}
 			<div className="flex items-center gap-4 mb-4 flex-wrap">
-				<div className="flex gap-1">
-					{tabs.map((tab) => (
+				<div className="flex gap-1 flex-wrap">
+					<button
+						type="button"
+						className={cn(
+							'rounded px-3 py-1 text-sm',
+							typeFilter === undefined
+								? 'bg-muted text-foreground font-medium'
+								: 'text-muted-foreground hover:text-foreground',
+						)}
+						onClick={() => {
+							setTypeFilter(undefined)
+							setStatusFilter(undefined)
+						}}
+					>
+						All
+					</button>
+					{objectTypes.map((t) => (
 						<button
-							key={tab.label}
+							key={t.slug}
 							type="button"
 							className={cn(
 								'rounded px-3 py-1 text-sm',
-								typeFilter === tab.value
+								typeFilter === t.slug
 									? 'bg-muted text-foreground font-medium'
 									: 'text-muted-foreground hover:text-foreground',
 							)}
 							onClick={() => {
-								setTypeFilter(tab.value)
+								setTypeFilter(t.slug)
 								setStatusFilter(undefined)
 							}}
 						>
-							{tab.label}
+							{t.display_name}
 						</button>
 					))}
 				</div>
@@ -144,7 +173,50 @@ function ObjectsPage() {
 				/>
 			</div>
 
-			{isLoading ? <ListSkeleton /> : <ObjectList objects={filtered} workspaceId={workspaceId} />}
+			{isLoading ? (
+				<ListSkeleton />
+			) : typeFilter === undefined ? (
+				// All tab: hierarchical view
+				<ObjectHierarchy
+					objects={objects ?? []}
+					relationships={relationships ?? []}
+					workspaceId={workspaceId}
+					search={search}
+					sessionMap={sessionMap}
+				/>
+			) : groupedByStatus && groupedByStatus.size > 0 ? (
+				// Type-specific tabs: grouped by status
+				<div>
+					{[...groupedByStatus.entries()].map(([status, items]) => (
+						<div key={status} className="mb-4">
+							<div className="flex items-center gap-2 py-2 px-3">
+								<span className="text-xs font-semibold text-foreground capitalize">
+									{status.replace(/_/g, ' ') || 'No status'}
+								</span>
+								<span className="text-xs text-muted-foreground">{items.length}</span>
+								<div className="flex-1 h-px bg-border" />
+							</div>
+							<div className="divide-y divide-border">
+								{items.map((o) => (
+									<ObjectRow
+										key={o.id}
+										object={o}
+										workspaceId={workspaceId}
+										sessionMap={sessionMap}
+									/>
+								))}
+							</div>
+						</div>
+					))}
+				</div>
+			) : (
+				// Type tab but no results
+				<div className="divide-y divide-border">
+					{filtered.map((o) => (
+						<ObjectRow key={o.id} object={o} workspaceId={workspaceId} sessionMap={sessionMap} />
+					))}
+				</div>
+			)}
 		</div>
 	)
 }

@@ -10,6 +10,9 @@ import {
 	CardTitle,
 } from '@/components/ui/card'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { useWorkspace } from '@/lib/workspace-context'
+import { Link } from '@tanstack/react-router'
+import { ArrowRight } from 'lucide-react'
 import { NotificationInput } from './notification-input'
 
 const typeLabels: Record<string, string> = {
@@ -27,6 +30,7 @@ interface PulseCardProps {
 }
 
 export function PulseCard({ notification, actorsById, onRespond, onDismiss }: PulseCardProps) {
+	const { workspaceId } = useWorkspace()
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const tags = metadata.tags as string[] | undefined
@@ -119,6 +123,15 @@ export function PulseCard({ notification, actorsById, onRespond, onDismiss }: Pu
 						<span>&middot;</span>
 						<span>Session</span>
 					</>
+				)}
+				{notification.objectId && (
+					<Link
+						to="/$workspaceId/objects/$objectId"
+						params={{ workspaceId, objectId: notification.objectId }}
+						className="ml-auto flex items-center gap-1 text-primary hover:underline"
+					>
+						View <ArrowRight className="h-3 w-3" />
+					</Link>
 				)}
 			</CardFooter>
 		</Card>

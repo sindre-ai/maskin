@@ -222,6 +222,13 @@ export const api = {
 		},
 	},
 
+	sessions: {
+		list: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<SessionResponse[]>(`/sessions${qs}`, { workspaceId })
+		},
+	},
+
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
@@ -277,7 +284,7 @@ export interface ObjectResponse {
 }
 
 export interface CreateObjectInput {
-	type: 'insight' | 'bet' | 'task'
+	type: string
 	title?: string
 	content?: string
 	status: string
@@ -489,4 +496,23 @@ export interface EventResponse {
 	entityId: string
 	data: Record<string, unknown> | null
 	createdAt: string | null
+}
+
+export interface SessionResponse {
+	id: string
+	workspaceId: string
+	actorId: string
+	triggerId: string | null
+	status: string
+	containerId: string | null
+	actionPrompt: string
+	config: Record<string, unknown> | null
+	result: Record<string, unknown> | null
+	snapshotPath: string | null
+	startedAt: string | null
+	completedAt: string | null
+	timeoutAt: string | null
+	createdBy: string
+	createdAt: string | null
+	updatedAt: string | null
 }

@@ -3,6 +3,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useObjectTypes } from '@/hooks/use-object-types'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
@@ -26,13 +27,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/properties/
 function PropertiesPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
+	const dynamicTypes = useObjectTypes()
 
 	const settings = workspace.settings as Record<string, unknown>
 	const fieldDefs =
 		(settings?.field_definitions as Record<string, FieldDefinition[]> | undefined) ?? {}
 
-	const objectTypes = ['insight', 'bet', 'task']
-	const [activeType, setActiveType] = useState(objectTypes[0])
+	const [activeType, setActiveType] = useState(dynamicTypes[0]?.slug ?? 'insight')
 	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/properties/' })
 	const [showAdd, setShowAdd] = useState(false)
 	const [newName, setNewName] = useState('')
@@ -81,17 +82,16 @@ function PropertiesPage() {
 			<PageHeader title="Properties" />
 
 			{/* Object type tabs */}
-			<div className="flex gap-1 mb-4">
-				{objectTypes.map((type) => (
+			<div className="flex gap-1 mb-4 flex-wrap">
+				{dynamicTypes.map((t) => (
 					<Button
-						key={type}
+						key={t.slug}
 						type="button"
-						variant={activeType === type ? 'default' : 'secondary'}
+						variant={activeType === t.slug ? 'default' : 'secondary'}
 						size="sm"
-						className="capitalize"
-						onClick={() => setActiveType(type)}
+						onClick={() => setActiveType(t.slug)}
 					>
-						{type}
+						{t.display_name}
 					</Button>
 				))}
 			</div>
@@ -139,7 +139,7 @@ function PropertiesPage() {
 
 			{currentFields.length === 0 ? (
 				<EmptyState
-					title={`No properties for ${activeType}s`}
+					title={`No properties for ${activeType}`}
 					description="Create a property to add structured data to your objects"
 				/>
 			) : (

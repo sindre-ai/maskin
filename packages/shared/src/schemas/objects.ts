@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { safeMetadataSchema } from './primitives'
 
-export const objectTypeSchema = z.enum(['insight', 'bet', 'task'])
-export type ObjectType = z.infer<typeof objectTypeSchema>
+export const objectTypeSchema = z.string().min(1).regex(/^[a-z][a-z0-9_]*$/, 'Must be lowercase alphanumeric with underscores')
+export type ObjectType = string
 
 export const createObjectSchema = z.object({
 	type: objectTypeSchema,

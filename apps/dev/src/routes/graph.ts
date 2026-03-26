@@ -1,6 +1,6 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
-import { createGraphSchema } from '@ai-native/shared'
+import { createGraphSchema, getValidTypeSlugs } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
@@ -96,8 +96,32 @@ app.openapi(createGraphRoute, async (c) => {
 		)
 	}
 
-	// Validate statuses against workspace settings
+	// Validate types and statuses against workspace settings
 	const settings = workspace.settings as WorkspaceSettings
+	const validTypeSlugs = getValidTypeSlugs(settings)
+	if (validTypeSlugs.length > 0) {
+		for (const node of body.nodes) {
+			if (!validTypeSlugs.includes(node.type)) {
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						`Invalid type '${node.type}' on node '${node.$id}'`,
+						[
+							{
+								field: `nodes[${node.$id}].type`,
+								message: `'${node.type}' is not a valid object type for this workspace`,
+								expected: validTypeSlugs.map((s) => `'${s}'`).join(' | '),
+								received: `'${node.type}'`,
+							},
+						],
+						`Valid types: ${validTypeSlugs.join(', ')}`,
+					),
+					400,
+				)
+			}
+		}
+	}
+
 	const statuses = settings?.statuses
 	if (statuses) {
 		for (const node of body.nodes) {

@@ -2,6 +2,7 @@ import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
 import {
 	createObjectSchema,
+	getValidTypeSlugs,
 	objectQuerySchema,
 	searchObjectsSchema,
 	updateObjectSchema,
@@ -84,6 +85,26 @@ app.openapi(createObjectRoute, async (c) => {
 	}
 
 	const settings = workspace.settings as WorkspaceSettings
+	const validTypeSlugs = getValidTypeSlugs(settings)
+	if (validTypeSlugs.length > 0 && !validTypeSlugs.includes(body.type)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Invalid type '${body.type}'`,
+				[
+					{
+						field: 'type',
+						message: `'${body.type}' is not a valid object type for this workspace`,
+						expected: validTypeSlugs.map((s) => `'${s}'`).join(' | '),
+						received: `'${body.type}'`,
+					},
+				],
+				`Valid types: ${validTypeSlugs.join(', ')}`,
+			),
+			400,
+		)
+	}
+
 	const validStatuses = settings?.statuses?.[body.type]
 	if (validStatuses && !validStatuses.includes(body.status)) {
 		return c.json(

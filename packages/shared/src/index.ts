@@ -1,3 +1,5 @@
 export * from './schemas/index'
 export * from './constants/claude-oauth'
 export * from './errors'
+export * from './utils/workspace-types'
+export * from './templates/index'

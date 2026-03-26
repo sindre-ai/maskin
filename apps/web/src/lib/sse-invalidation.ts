@@ -2,6 +2,17 @@ import type { QueryClient } from '@tanstack/react-query'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
 
+// Non-object entity types that have dedicated query keys
+const NON_OBJECT_ENTITY_TYPES = new Set([
+	'relationship',
+	'trigger',
+	'notification',
+	'actor',
+	'workspace',
+	'session',
+	'integration',
+])
+
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
 	// Always invalidate events history
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.history(workspaceId) })
@@ -9,15 +20,6 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 
 	// Invalidate based on entity type
 	switch (event.entity_type) {
-		case 'insight':
-		case 'bet':
-		case 'task':
-			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
-			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
-			if (event.entity_type === 'bet') {
-				queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
-			}
-			break
 		case 'relationship':
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
 			break
@@ -32,6 +34,17 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'workspace':
 			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all() })
+			break
+		default:
+			// Any entity type not in the known non-object set is treated as an object type
+			if (!NON_OBJECT_ENTITY_TYPES.has(event.entity_type)) {
+				queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
+				// Also invalidate bets for backwards compat
+				if (event.entity_type === 'bet') {
+					queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+				}
+			}
 			break
 	}
 }

@@ -10,14 +10,16 @@ import {
 	SidebarRail,
 	SidebarTrigger,
 } from '@/components/ui/sidebar'
+import { useNotifications } from '@/hooks/use-notifications'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useMatchRoute } from '@tanstack/react-router'
 import { Activity, Bot, Layers, Zap } from 'lucide-react'
+import { useMemo } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
 
 const navItems = [
-	{ label: 'Pulse', to: '/$workspaceId' as const, exact: true, icon: Zap },
+	{ label: 'Pulse', to: '/$workspaceId' as const, exact: true, icon: Zap, badge: true },
 	{ label: 'Objects', to: '/$workspaceId/objects' as const, icon: Layers },
 	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
 	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
@@ -27,6 +29,13 @@ const navItems = [
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
+	const { data: notifications } = useNotifications(workspaceId)
+
+	const pendingCount = useMemo(
+		() =>
+			(notifications ?? []).filter((n) => n.status === 'pending' || n.status === 'seen').length,
+		[notifications],
+	)
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
@@ -47,13 +56,19 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 								params: { workspaceId },
 								fuzzy: !('exact' in item),
 							})
+							const count = item.badge ? pendingCount : 0
 
 							return (
 								<SidebarMenuItem key={item.to}>
 									<SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
 										<Link to={item.to} params={{ workspaceId }}>
 											<Icon />
-											<span>{item.label}</span>
+											<span className="flex-1">{item.label}</span>
+											{count > 0 && (
+												<span className="ml-auto text-[10px] font-semibold leading-none px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground group-data-[collapsible=icon]:hidden">
+													{count}
+												</span>
+											)}
 										</Link>
 									</SidebarMenuButton>
 								</SidebarMenuItem>

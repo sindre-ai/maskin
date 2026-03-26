@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAutoSave } from '@/hooks/use-auto-save'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
+import { getObjectTypes } from '@ai-native/shared'
 import type { SafeJsonValue } from '@ai-native/shared'
 import { Check, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -52,14 +53,6 @@ export interface TriggerFormPayload {
 }
 
 // --- Constants ---
-
-const INTERNAL_EVENTS: ProviderEventDefinition[] = [
-	{ entityType: 'insight', actions: ['created', 'updated', 'status_changed'], label: 'Insight' },
-	{ entityType: 'bet', actions: ['created', 'updated', 'status_changed'], label: 'Bet' },
-	{ entityType: 'task', actions: ['created', 'updated', 'status_changed'], label: 'Task' },
-]
-
-const INTERNAL_ENTITY_TYPES = new Set(['insight', 'bet', 'task'])
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [
@@ -254,10 +247,19 @@ export function TriggerForm({
 
 	// Workspace settings
 	const settings = workspace.settings as Record<string, unknown>
+	const workspaceObjectTypes = getObjectTypes(settings as Parameters<typeof getObjectTypes>[0])
+	const internalEvents: ProviderEventDefinition[] = workspaceObjectTypes.map((t) => ({
+		entityType: t.slug,
+		actions: ['created', 'updated', 'status_changed'],
+		label: t.display_name,
+	}))
+	const internalEntityTypes = new Set(workspaceObjectTypes.map((t) => t.slug))
+
 	const fieldDefs =
 		(settings?.field_definitions as Record<string, FieldDefinition[]> | undefined)?.[entityType] ??
 		[]
-	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[entityType] ?? []
+	const statuses = workspaceObjectTypes.find((t) => t.slug === entityType)?.statuses ??
+		(settings?.statuses as Record<string, string[]> | undefined)?.[entityType] ?? []
 
 	// Build available event definitions from internal + connected integrations
 	const connectedProviders = new Set(
@@ -265,11 +267,11 @@ export function TriggerForm({
 	)
 	const externalEvents =
 		(providers ?? []).filter((p) => connectedProviders.has(p.name)).flatMap((p) => p.events) ?? []
-	const allEvents = [...INTERNAL_EVENTS, ...externalEvents]
+	const allEvents = [...internalEvents, ...externalEvents]
 
 	const currentEventDef = allEvents.find((e) => e.entityType === entityType)
 	const availableActions = currentEventDef?.actions ?? []
-	const isInternal = INTERNAL_ENTITY_TYPES.has(entityType)
+	const isInternal = internalEntityTypes.has(entityType)
 
 	const isValid =
 		name.trim() && prompt.trim() && targetActorId && (type === 'reminder' ? scheduledDate : true)

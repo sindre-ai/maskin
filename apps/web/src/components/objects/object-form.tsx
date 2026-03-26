@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { useObjectTypes } from '@/hooks/use-object-types'
 import { useCreateObject } from '@/hooks/use-objects'
 import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -10,12 +11,6 @@ import type { createObjectSchema } from '@ai-native/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import type { z } from 'zod'
-
-const defaultStatuses: Record<string, string> = {
-	insight: 'new',
-	bet: 'signal',
-	task: 'todo',
-}
 
 export function ObjectFormView({
 	onSubmit,
@@ -28,7 +23,9 @@ export function ObjectFormView({
 	isPending?: boolean
 	error?: Error | null
 }) {
-	const [type, setType] = useState<'insight' | 'bet' | 'task'>('bet')
+	const objectTypes = useObjectTypes()
+	const firstType = objectTypes[0]?.slug ?? 'task'
+	const [type, setType] = useState(firstType)
 	const [title, setTitle] = useState('')
 	const [content, setContent] = useState('')
 
@@ -36,11 +33,12 @@ export function ObjectFormView({
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
+		const typeDef = objectTypes.find((t) => t.slug === type)
 		const data: z.input<typeof createObjectSchema> = {
 			type,
 			title,
 			content: content || undefined,
-			status: defaultStatuses[type],
+			status: typeDef?.default_status ?? typeDef?.statuses[0] ?? 'active',
 		}
 		await onSubmit(data)
 	}
@@ -49,16 +47,16 @@ export function ObjectFormView({
 		<form onSubmit={handleSubmit} className="space-y-4">
 			<div>
 				<Label className="mb-1 text-muted-foreground">Type</Label>
-				<div className="flex gap-2">
-					{(['insight', 'bet', 'task'] as const).map((t) => (
+				<div className="flex gap-2 flex-wrap">
+					{objectTypes.map((t) => (
 						<Button
-							key={t}
+							key={t.slug}
 							type="button"
-							variant={type === t ? 'default' : 'secondary'}
+							variant={type === t.slug ? 'default' : 'secondary'}
 							size="sm"
-							onClick={() => setType(t)}
+							onClick={() => setType(t.slug)}
 						>
-							{t}
+							{t.display_name}
 						</Button>
 					))}
 				</div>

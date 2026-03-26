@@ -14,7 +14,7 @@ import { useObjectRelationships } from '@/hooks/use-relationships'
 import type { ActorResponse, EventResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { Trash2 } from 'lucide-react'
+import { Check, Copy, MoreHorizontal, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
@@ -24,6 +24,12 @@ import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '../ui/dropdown-menu'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
 
@@ -78,8 +84,42 @@ export function ObjectDocumentView({
 		[onUpdateStatus],
 	)
 
+	// Bet metrics from metadata
+	const meta = object.metadata as Record<string, unknown> | null
+	const betMetrics =
+		object.type === 'bet' && meta
+			? {
+					investment: typeof meta.investment === 'number' ? meta.investment : null,
+					duration: typeof meta.duration === 'string' ? meta.duration : null,
+					target: typeof meta.target === 'number' ? meta.target : null,
+					progress: typeof meta.progress === 'number' ? meta.progress : null,
+					daysLeft: typeof meta.days_left === 'number' ? meta.days_left : null,
+				}
+			: null
+	const hasBetMetrics =
+		betMetrics &&
+		(betMetrics.investment !== null ||
+			betMetrics.duration !== null ||
+			betMetrics.progress !== null ||
+			betMetrics.daysLeft !== null)
+
 	return (
 		<div className="max-w-3xl mx-auto">
+			{/* Decision banner for proposed bets */}
+			{object.type === 'bet' && object.status === 'proposed' && (
+				<div className="flex items-center justify-between px-4 py-3 rounded-lg border border-warning/40 bg-warning/10 mb-6">
+					<span className="text-sm font-medium text-warning">This bet needs your decision</span>
+					<div className="flex gap-2">
+						<Button size="sm" onClick={() => onUpdateStatus('active')}>
+							Accept
+						</Button>
+						<Button size="sm" variant="outline" onClick={() => onUpdateStatus('failed')}>
+							Reject
+						</Button>
+					</div>
+				</div>
+			)}
+
 			{/* Title */}
 			<Input
 				type="text"
@@ -118,6 +158,59 @@ export function ObjectDocumentView({
 			<div className="mb-8">
 				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
 			</div>
+
+			{/* Bet metrics table */}
+			{hasBetMetrics && betMetrics && (
+				<div className="mb-8 rounded-lg border border-border overflow-hidden">
+					<table className="w-full text-sm">
+						<tbody>
+							{betMetrics.investment !== null && (
+								<tr className="border-b border-border">
+									<td className="px-4 py-2.5 text-muted-foreground w-36">Investment</td>
+									<td className="px-4 py-2.5 font-medium">
+										${betMetrics.investment.toLocaleString()}
+									</td>
+								</tr>
+							)}
+							{betMetrics.duration && (
+								<tr className="border-b border-border">
+									<td className="px-4 py-2.5 text-muted-foreground">Duration</td>
+									<td className="px-4 py-2.5 font-medium">{betMetrics.duration}</td>
+								</tr>
+							)}
+							{betMetrics.progress !== null && betMetrics.target !== null && (
+								<tr className="border-b border-border">
+									<td className="px-4 py-2.5 text-muted-foreground">Progress</td>
+									<td className="px-4 py-2.5">
+										<div className="flex items-center gap-3">
+											<span className="font-medium text-accent">
+												{betMetrics.progress}/{betMetrics.target}
+											</span>
+											<div className="w-20 h-1.5 bg-border rounded-full overflow-hidden">
+												<div
+													className="h-full bg-accent rounded-full"
+													style={{
+														width: `${Math.min(100, Math.round((betMetrics.progress / (betMetrics.target as number)) * 100))}%`,
+													}}
+												/>
+											</div>
+											<span className="text-xs text-muted-foreground">
+												{Math.round((betMetrics.progress / (betMetrics.target as number)) * 100)}%
+											</span>
+										</div>
+									</td>
+								</tr>
+							)}
+							{betMetrics.daysLeft !== null && (
+								<tr>
+									<td className="px-4 py-2.5 text-muted-foreground">Remaining</td>
+									<td className="px-4 py-2.5 font-medium">{betMetrics.daysLeft} days</td>
+								</tr>
+							)}
+						</tbody>
+					</table>
+				</div>
+			)}
 
 			{/* Linked objects */}
 			{relationships && (
@@ -190,6 +283,17 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	}, [object.id, deleteObject, navigate, workspaceId])
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [copied, setCopied] = useState<'link' | 'content' | null>(null)
+
+	const handleCopy = (type: 'link' | 'content') => {
+		const text =
+			type === 'link'
+				? window.location.href
+				: [object.title, object.content].filter(Boolean).join('\n\n')
+		navigator.clipboard.writeText(text)
+		setCopied(type)
+		setTimeout(() => setCopied(null), 1500)
+	}
 
 	const deleteActions = useMemo(
 		() =>
@@ -222,9 +326,38 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[confirmDelete, handleDelete, deleteObject.isPending, object.type],
 	)
 
+	const copyMenu = (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button variant="ghost" size="icon" className="text-muted-foreground">
+					<MoreHorizontal className="h-4 w-4" />
+					<span className="sr-only">More options</span>
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="end">
+				<DropdownMenuItem onClick={() => handleCopy('link')}>
+					{copied === 'link' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+					Copy link
+				</DropdownMenuItem>
+				<DropdownMenuItem onClick={() => handleCopy('content')}>
+					{copied === 'content' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+					Copy content
+				</DropdownMenuItem>
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+
 	return (
 		<>
-			<PageHeader actions={deleteActions} />
+			<PageHeader
+				title={object.title ?? undefined}
+				actions={
+					<div className="flex items-center gap-1">
+						{copyMenu}
+						{deleteActions}
+					</div>
+				}
+			/>
 			<ObjectDocumentView
 				object={object}
 				workspaceId={workspaceId}

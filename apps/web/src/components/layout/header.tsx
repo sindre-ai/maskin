@@ -103,7 +103,7 @@ const createItems: CreateItem[] = [
 
 export function Header() {
 	const matches = useMatches()
-	const { actions } = usePageHeader()
+	const { actions, title: contextTitle } = usePageHeader()
 	const router = useRouter()
 	const navigate = useNavigate()
 	const { workspaceId } = useWorkspace()
@@ -128,8 +128,8 @@ export function Header() {
 			crumbs.unshift({ label: parentConfig.label, path: parentPath })
 			parentId = parentConfig.parent
 		}
-		// Add current page
-		crumbs.push({ label: leafConfig.label, path: leafMatch.pathname })
+		// Add current page (use context title if available, e.g. object/agent name)
+		crumbs.push({ label: contextTitle ?? leafConfig.label, path: leafMatch.pathname })
 	}
 
 	return (

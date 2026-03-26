@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { getObjectTypes, type ObjectTypeDefinition } from '@ai-native/shared'
 import { tools } from './tools.js'
 
 interface McpConfig {
@@ -571,14 +572,11 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			const settings = workspace.settings ?? {}
-			const statuses = (settings.statuses ?? {}) as Record<string, string[]>
-			const fieldDefinitions = (settings.field_definitions ?? {}) as Record<
-				string,
-				Array<{ name: string; type: string; required: boolean; values?: string[] }>
-			>
-			const displayNames = (settings.display_names ?? {}) as Record<string, string>
 			const relationshipTypes = (settings.relationship_types ?? []) as string[]
 			const typeFilter = args.type
+
+			const allTypes = getObjectTypes(settings as Parameters<typeof getObjectTypes>[0])
+			const filteredTypes = typeFilter ? allTypes.filter((t) => t.slug === typeFilter) : allTypes
 
 			const schema: Record<string, unknown> = {
 				workspace_id: workspace.id,
@@ -586,14 +584,15 @@ export function createMcpServer(config: McpConfig) {
 				relationship_types: relationshipTypes,
 			}
 
-			const types = typeFilter ? [typeFilter] : ['insight', 'bet', 'task']
 			const typeSchemas: Record<string, unknown> = {}
-
-			for (const t of types) {
-				typeSchemas[t] = {
-					display_name: displayNames[t] ?? t,
-					statuses: statuses[t] ?? [],
-					fields: fieldDefinitions[t] ?? [],
+			for (const t of filteredTypes as ObjectTypeDefinition[]) {
+				typeSchemas[t.slug] = {
+					display_name: t.display_name,
+					icon: t.icon,
+					color: t.color,
+					statuses: t.statuses,
+					default_status: t.default_status ?? t.statuses[0],
+					fields: t.field_definitions ?? [],
 				}
 			}
 
@@ -602,6 +601,49 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: { toolName: 'get_workspace_schema' },
 				content: [{ type: 'text' as const, text: JSON.stringify(schema, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'manage_object_types',
+		{
+			description: tools.manage_object_types.description,
+			inputSchema: tools.manage_object_types.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+		},
+		async (args) => {
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (args.action === 'delete') {
+				const url = `/api/workspaces/${workspaceId}/types/${args.slug}${args.force ? '?force=true' : ''}`
+				const result = await apiCall(config, 'DELETE', url, undefined, { skipWorkspace: true })
+				return {
+					_meta: { toolName: 'manage_object_types' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
+			}
+			// upsert
+			const body = {
+				slug: args.slug,
+				display_name: args.display_name ?? args.slug,
+				icon: args.icon,
+				color: args.color,
+				statuses: args.statuses ?? [],
+				default_status: args.default_status,
+				field_definitions: args.field_definitions ?? [],
+				source: 'custom' as const,
+			}
+			const result = await apiCall(
+				config,
+				'PUT',
+				`/api/workspaces/${workspaceId}/types/${args.slug}`,
+				body,
+				{ skipWorkspace: true },
+			)
+			return {
+				_meta: { toolName: 'manage_object_types' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)

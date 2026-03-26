@@ -19,7 +19,7 @@ export const tools = {
 				.array(
 					z.object({
 						$id: z.string().describe('Client-side temporary ID for cross-referencing in edges'),
-						type: z.enum(['insight', 'bet', 'task']),
+						type: z.string().describe('Object type slug. Call get_workspace_schema to discover available types.'),
 						title: z.string().optional(),
 						content: z.string().optional(),
 						status: z.string(),
@@ -108,7 +108,7 @@ export const tools = {
 			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z.enum(['insight', 'bet', 'task']).optional(),
+			type: z.string().optional().describe('Object type slug to filter by. Call get_workspace_schema to discover available types.'),
 			status: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
@@ -123,7 +123,7 @@ export const tools = {
 				.string()
 				.min(1)
 				.describe('Search query — matches against title and content (case-insensitive)'),
-			type: z.enum(['insight', 'bet', 'task']).optional(),
+			type: z.string().optional().describe('Object type slug to filter by. Call get_workspace_schema to discover available types.'),
 			status: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(20),
 			offset: z.number().int().min(0).default(0),
@@ -202,9 +202,11 @@ export const tools = {
 		}),
 	},
 	create_workspace: {
-		description: 'Create a new workspace. The authenticated actor becomes the owner.',
+		description:
+			'Create a new workspace. The authenticated actor becomes the owner. Use template to start from a pre-configured setup: "product" (insight/bet/task), "crm" (person/company/deal), or "blank" (no types).',
 		inputSchema: z.object({
 			name: z.string().min(1),
+			template: z.enum(['product', 'crm', 'blank']).optional().describe('Starter template for object types'),
 			settings: z.record(z.unknown()).optional(),
 		}),
 	},
@@ -223,15 +225,41 @@ export const tools = {
 	},
 	get_workspace_schema: {
 		description:
-			'Get the workspace schema: available statuses per object type, custom metadata field definitions (name, type, required, enum values), display names, and relationship types. Call this before creating or updating objects to know which metadata fields exist, what types they expect, and which values are valid. Optionally filter by object type.',
+			'Get the workspace schema: available object types, statuses per type, custom metadata field definitions (name, type, required, enum values), display names, and relationship types. Call this before creating or updating objects to know which types exist, which metadata fields are available, and which values are valid. Optionally filter by object type slug.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
-				.enum(['insight', 'bet', 'task'])
+				.string()
 				.optional()
 				.describe(
-					'Filter schema to a specific object type. If omitted, returns schema for all types.',
+					'Filter schema to a specific object type slug. If omitted, returns schema for all types.',
 				),
+		}),
+	},
+	manage_object_types: {
+		description:
+			'Create, update, or delete object type definitions in the workspace. Use this to define custom types (e.g. person, company, deal) with their own statuses and metadata fields. After creating types, use create_objects with the new type slugs.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			action: z.enum(['upsert', 'delete']),
+			slug: z.string().min(1).describe('Type slug (lowercase, alphanumeric + underscores, e.g. "person")'),
+			display_name: z.string().optional().describe('Human-readable name (required for upsert)'),
+			icon: z.string().optional().describe('Lucide icon name (e.g. "user", "building")'),
+			color: z.string().optional().describe('Color name (e.g. "amber", "indigo", "emerald")'),
+			statuses: z.array(z.string()).optional().describe('Ordered list of status values (required for upsert)'),
+			default_status: z.string().optional(),
+			field_definitions: z
+				.array(
+					z.object({
+						name: z.string(),
+						type: z.enum(['text', 'number', 'date', 'enum', 'boolean']),
+						required: z.boolean().optional(),
+						values: z.array(z.string()).optional(),
+					}),
+				)
+				.optional()
+				.describe('Custom metadata fields for this type'),
+			force: z.boolean().optional().describe('For delete: remove even if objects of this type exist'),
 		}),
 	},
 	add_workspace_member: {

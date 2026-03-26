@@ -18,7 +18,7 @@ function EventsApp() {
 	const data = JSON.parse(text)
 	const events: EventResponse[] = data.data ?? data
 
-	return <ActivityFeedView events={events} />
+	return <ActivityFeedView events={events} actorTypeById={new Map()} />
 }
 
 renderMcpApp('Events', <EventsApp />)
