@@ -19,7 +19,14 @@ COPY packages/ packages/
 COPY apps/dev/ apps/dev/
 COPY apps/web/ apps/web/
 
-RUN NODE_OPTIONS=--max-old-space-size=2048 pnpm build --concurrency=1
+# Build packages first (small, fast)
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter='./packages/*' build
+
+# Build backend
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@ai-native/dev build
+
+# Build frontend (heaviest — tsc + vite + 7 MCP app builds)
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@ai-native/web build
 
 COPY docker/agent-base/ docker/agent-base/
 
