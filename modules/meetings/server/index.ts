@@ -1,6 +1,11 @@
 import type { ModuleDefinition } from '@ai-native/module-sdk'
 import { MEETINGS_OBJECT_TYPES } from '../shared/index.js'
+import { RecallBotProvider } from './bot-providers/recall.js'
+import { registerBotProvider } from './bot-providers/registry.js'
 import { meetingRoutes } from './routes.js'
+
+// Register bot providers
+registerBotProvider(new RecallBotProvider())
 
 const meetingsModule: ModuleDefinition = {
 	id: 'meetings',
