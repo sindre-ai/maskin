@@ -128,6 +128,10 @@ describe('queryKeys', () => {
 				'notifications', 'ws-1', 'list', { status: 'pending' },
 			])
 		})
+
+		it('detail includes id', () => {
+			expect(queryKeys.notifications.detail('n-1')).toEqual(['notifications', 'detail', 'n-1'])
+		})
 	})
 
 	describe('events', () => {
