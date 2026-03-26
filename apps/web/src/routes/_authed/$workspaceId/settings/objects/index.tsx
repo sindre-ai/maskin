@@ -3,6 +3,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -31,7 +32,7 @@ function ObjectsPage() {
 	const fieldDefs =
 		(settings?.field_definitions as Record<string, FieldDefinition[]> | undefined) ?? {}
 
-	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const enabledModules = useEnabledModules()
 	const objectTypes = getEnabledObjectTypeTabs(enabledModules).map((t) => t.value)
 	const [activeType, setActiveType] = useState(objectTypes[0])
 	const [showAdd, setShowAdd] = useState(false)

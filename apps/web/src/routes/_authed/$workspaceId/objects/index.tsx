@@ -10,6 +10,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useActors } from '@/hooks/use-actors'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -29,9 +30,8 @@ function ObjectsPage() {
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
 	const [search, setSearch] = useState('')
 	const { data: actors } = useActors(workspaceId)
-
+	const enabledModules = useEnabledModules()
 	const settings = workspace.settings as Record<string, unknown>
-	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
 
 	const tabs = useMemo(() => {
 		const moduleTabs = getEnabledObjectTypeTabs(enabledModules)

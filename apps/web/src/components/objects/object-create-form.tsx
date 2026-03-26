@@ -1,7 +1,8 @@
+import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { Input } from '@/components/ui/input'
-import { useWorkspace } from '@/lib/workspace-context'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
@@ -25,15 +26,24 @@ export function ObjectCreateForm({
 	isPending = false,
 	error,
 }: ObjectCreateFormProps) {
-	const { workspace } = useWorkspace()
-	const settings = workspace.settings as Record<string, unknown>
-	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const enabledModules = useEnabledModules()
 
 	const availableTypes = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
 
-	const [type, setType] = useState(availableTypes[0]?.value ?? 'bet')
+	const [type, setType] = useState(availableTypes[0]?.value ?? '')
 	const [title, setTitle] = useState('')
 	const hasAutoCreatedRef = useRef(false)
+
+	if (availableTypes.length === 0) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<EmptyState
+					title="No object types available"
+					description="Enable an extension in workspace settings to create objects."
+				/>
+			</div>
+		)
+	}
 
 	const isValid = title.trim().length > 0
 

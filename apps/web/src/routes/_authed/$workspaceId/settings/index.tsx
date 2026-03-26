@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
@@ -63,7 +64,7 @@ function ExtensionsSection() {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
-	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const enabledModules = useEnabledModules()
 	const allModules = getAllWebModules()
 
 	const handleToggle = (moduleId: string, enabled: boolean) => {

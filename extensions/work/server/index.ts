@@ -1,8 +1,9 @@
 import type { ModuleDefinition } from '@ai-native/module-sdk'
+import { MODULE_ID, MODULE_NAME } from '../shared.js'
 
 const workExtension: ModuleDefinition = {
-	id: 'work',
-	name: 'Work',
+	id: MODULE_ID,
+	name: MODULE_NAME,
 	version: '0.1.0',
 	objectTypes: [
 		{

@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getDefaultStatusForType } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
@@ -21,7 +22,8 @@ function ObjectDetailPage() {
 	// Derive default statuses from workspace settings (first status per type)
 	const settings = workspace.settings as Record<string, unknown>
 	const statusMap = (settings?.statuses ?? {}) as Record<string, string[]>
-	const getDefaultStatus = (type: string) => statusMap[type]?.[0] ?? 'new'
+	const getDefaultStatus = (type: string) =>
+		statusMap[type]?.[0] ?? getDefaultStatusForType(type) ?? 'new'
 	const { data: object, isLoading } = useObject(objectId, workspaceId)
 	const createObject = useCreateObject(workspaceId)
 	const updateObject = useUpdateObject(workspaceId)

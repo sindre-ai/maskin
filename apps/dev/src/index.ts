@@ -159,7 +159,7 @@ app.route('/api/notifications', notificationsRoutes)
 app.route('/api/graph', graphRoutes)
 app.route('/api/claude-oauth', claudeOauthRoutes)
 
-// Mount extension routes at /api/m/{extensionId}
+// Mount extension routes at /api/m/{extensionId} — auth middleware on /api/* covers these
 const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
 for (const ext of getAllModules()) {
 	if (ext.routes) {

@@ -15,6 +15,10 @@
 		"./web": {
 			"types": "./web/index.ts",
 			"default": "./web/index.ts"
+		},
+		"./shared": {
+			"types": "./shared.ts",
+			"default": "./shared.ts"
 		}
 	},
 	"dependencies": {

@@ -11,6 +11,7 @@ import {
 	SidebarTrigger,
 	useSidebar,
 } from '@/components/ui/sidebar'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
@@ -27,12 +28,10 @@ const coreNavItems = [
 ]
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
-	const { workspaceId, workspace } = useWorkspace()
+	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const { setOpenMobile } = useSidebar()
-
-	const settings = workspace.settings as Record<string, unknown>
-	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const enabledModules = useEnabledModules()
 
 	const navItems = useMemo(() => {
 		const hasObjectTypes = getEnabledObjectTypeTabs(enabledModules).length > 0

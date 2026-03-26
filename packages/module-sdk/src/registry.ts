@@ -9,11 +9,8 @@ import type {
 export class ModuleRegistry {
 	private modules = new Map<string, ModuleDefinition>()
 
-	/** Register a module. Throws if a module with the same ID is already registered. */
+	/** Register a module. Silently replaces if a module with the same ID is already registered (supports HMR). */
 	register(mod: ModuleDefinition): void {
-		if (this.modules.has(mod.id)) {
-			throw new Error(`Module "${mod.id}" is already registered`)
-		}
 		this.modules.set(mod.id, mod)
 	}
 
@@ -56,6 +53,15 @@ export class ModuleRegistry {
 		return this.modules.get(moduleId)?.defaultSettings
 	}
 
+	/** Get the default status for an object type from the module that provides it */
+	getDefaultStatusForType(type: string): string | undefined {
+		for (const mod of this.modules.values()) {
+			const objType = mod.objectTypes.find((t) => t.type === type)
+			if (objType) return objType.defaultStatuses[0]
+		}
+		return undefined
+	}
+
 	/** Clear all registered modules */
 	clear(): void {
 		this.modules.clear()
@@ -95,6 +101,17 @@ export function getModuleDefaultSettings(moduleId: string) {
 	return defaultRegistry.getModuleDefaultSettings(moduleId)
 }
 
+export function getDefaultStatusForType(type: string): string | undefined {
+	return defaultRegistry.getDefaultStatusForType(type)
+}
+
+/** Extract enabled module IDs from workspace settings, defaulting to ['work'] */
+export function getEnabledModuleIds(
+	settings: Record<string, unknown> | null | undefined,
+): string[] {
+	return (settings?.enabled_modules as string[]) ?? ['work']
+}
+
 export function clearModules(): void {
 	defaultRegistry.clear()
 }
@@ -103,11 +120,8 @@ export function clearModules(): void {
 
 const webModules = new Map<string, ModuleWebDefinition>()
 
-/** Register a frontend module definition */
+/** Register a frontend module definition. Silently replaces if already registered (supports HMR). */
 export function registerWebModule(mod: ModuleWebDefinition): void {
-	if (webModules.has(mod.id)) {
-		throw new Error(`Web module "${mod.id}" is already registered`)
-	}
 	webModules.set(mod.id, mod)
 }
 
