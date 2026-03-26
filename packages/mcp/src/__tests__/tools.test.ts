@@ -95,12 +95,11 @@ describe('create_objects schema', () => {
 		expect(() => schema.parse({ nodes })).toThrow()
 	})
 
-	it('rejects invalid object type', () => {
-		expect(() =>
-			schema.parse({
-				nodes: [{ $id: 'x', type: 'story', status: 'new' }],
-			}),
-		).toThrow()
+	it('accepts any string as object type', () => {
+		const result = schema.parse({
+			nodes: [{ $id: 'x', type: 'story', status: 'new' }],
+		})
+		expect(result.nodes[0].type).toBe('story')
 	})
 
 	it('defaults edges to empty array', () => {
@@ -125,8 +124,9 @@ describe('list_objects schema', () => {
 		expect(result.type).toBe('bet')
 	})
 
-	it('rejects invalid type', () => {
-		expect(() => schema.parse({ type: 'story' })).toThrow()
+	it('accepts any string as type filter', () => {
+		const result = schema.parse({ type: 'story' })
+		expect(result.type).toBe('story')
 	})
 
 	it('rejects limit above 100', () => {
