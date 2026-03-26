@@ -26,6 +26,7 @@ import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
+import { ObjectActionBanner } from './object-action-banner'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -83,6 +84,9 @@ export function ObjectDocumentView({
 
 	return (
 		<div className="max-w-3xl mx-auto">
+			{/* Action banner for pending decisions */}
+			<ObjectActionBanner objectId={object.id} workspaceId={workspaceId} />
+
 			{/* Title */}
 			<div className="flex items-center gap-2">
 				<Input

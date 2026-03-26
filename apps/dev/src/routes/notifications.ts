@@ -123,11 +123,12 @@ const listNotificationsRoute = createRoute({
 app.openapi(listNotificationsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { status, type, limit, offset } = c.req.valid('query')
+	const { status, type, object_id, limit, offset } = c.req.valid('query')
 
 	const conditions = [eq(notifications.workspaceId, workspaceId)]
 	if (status) conditions.push(eq(notifications.status, status))
 	if (type) conditions.push(eq(notifications.type, type))
+	if (object_id) conditions.push(eq(notifications.objectId, object_id))
 
 	const results = await db
 		.select()
