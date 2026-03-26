@@ -330,6 +330,88 @@ describe('Sessions Integration', () => {
 		})
 	})
 
+	describe('Pause 400', () => {
+		it('returns 400 when pausing a completed session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+				status: 'completed',
+			})
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/pause`, undefined, headers),
+			)
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when pausing an already paused session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+				status: 'paused',
+				snapshotPath: 'snapshots/existing.tar.gz',
+			})
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/pause`, undefined, headers),
+			)
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 when pausing a non-existent session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${randomUUID()}/pause`, undefined, headers),
+			)
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('Resume 400', () => {
+		it('returns 400 when resuming a running session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+				status: 'running',
+				containerId: 'fake-container',
+			})
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/resume`, undefined, headers),
+			)
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when resuming a completed session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+				status: 'completed',
+			})
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/resume`, undefined, headers),
+			)
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 when resuming a non-existent session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${randomUUID()}/resume`, undefined, headers),
+			)
+			expect(res.status).toBe(404)
+		})
+	})
+
 	describe('Stop 400', () => {
 		it('returns 400 when stopping a completed session', async () => {
 			const app = createSessionApp()
