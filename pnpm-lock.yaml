@@ -310,6 +310,18 @@ importers:
 
   packages/module-sdk:
     dependencies:
+      '@ai-native/db':
+        specifier: workspace:*
+        version: link:../db
+      '@ai-native/realtime':
+        specifier: workspace:*
+        version: link:../realtime
+      '@hono/zod-openapi':
+        specifier: ^0.18.0
+        version: 0.18.4(hono@4.12.8)(zod@3.25.76)
+      hono:
+        specifier: ^4.7.0
+        version: 4.12.8
       zod:
         specifier: ^3.24.0
         version: 3.25.76

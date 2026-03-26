@@ -1,7 +1,14 @@
 import { z } from 'zod'
 import { safeMetadataSchema } from './primitives'
 
-export const objectTypeSchema = z.string().min(1).max(50)
+export const objectTypeSchema = z
+	.string()
+	.min(1)
+	.max(50)
+	.regex(/^[a-z][a-z0-9_]*$/, {
+		message:
+			'Object type must be lowercase alphanumeric with underscores (e.g. "meeting", "pull_request")',
+	})
 export type ObjectType = z.infer<typeof objectTypeSchema>
 
 export const createObjectSchema = z.object({

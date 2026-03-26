@@ -1,3 +1,6 @@
+import type { Database } from '@ai-native/db'
+import type { PgNotifyBridge } from '@ai-native/realtime'
+import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { z } from 'zod'
 
 /** Field definition for custom metadata fields on objects */
@@ -24,6 +27,14 @@ export interface ObjectTypeDefinition {
 	defaultRelationshipTypes?: string[]
 }
 
+/** Function for making API calls from MCP tool handlers */
+export type McpApiCall = (
+	method: string,
+	path: string,
+	body?: unknown,
+	options?: { workspaceId?: string },
+) => Promise<unknown>
+
 /** MCP tool definition provided by a module */
 export interface McpToolDefinition {
 	/** Tool name (will be prefixed with moduleId_) */
@@ -32,8 +43,8 @@ export interface McpToolDefinition {
 	description: string
 	/** Zod input schema */
 	inputSchema: z.ZodType<unknown>
-	/** Handler function — receives parsed args, returns MCP tool result */
-	handler: (args: unknown) => Promise<McpToolResult>
+	/** Handler function — receives parsed args and an apiCall helper for making API requests */
+	handler: (args: unknown, apiCall: McpApiCall) => Promise<McpToolResult>
 }
 
 export interface McpToolResult {
@@ -50,8 +61,8 @@ export interface ModuleDefinition {
 	version: string
 	/** Object types this module provides */
 	objectTypes: ObjectTypeDefinition[]
-	/** Optional extra backend routes — will be mounted at /api/m/{moduleId}. Returns a Hono app. */
-	routes?: (env: ModuleEnv) => unknown
+	/** Optional extra backend routes — will be mounted at /api/m/{moduleId}. Returns an OpenAPIHono app. */
+	routes?: (env: ModuleEnv) => OpenAPIHono
 	/** Optional extra MCP tools (namespaced with moduleId prefix) */
 	mcpTools?: McpToolDefinition[]
 	/** Default workspace settings this module contributes when first enabled */
@@ -68,8 +79,12 @@ export interface ModuleDefaultSettings {
 
 /** Environment passed to module route factories */
 export interface ModuleEnv {
-	db: unknown
-	notifyBridge: unknown
+	/** Drizzle database instance */
+	db: Database
+	/** PG NOTIFY → SSE bridge for real-time events */
+	notifyBridge: PgNotifyBridge
+	/** Session manager for container-based agent execution */
 	sessionManager: unknown
+	/** Agent storage manager for file operations */
 	agentStorage: unknown
 }

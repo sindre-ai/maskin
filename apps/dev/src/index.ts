@@ -168,7 +168,7 @@ for (const mod of getAllModules()) {
 			sessionManager,
 			agentStorage,
 		})
-		app.route(`/api/m/${mod.id}`, moduleRoutes as OpenAPIHono)
+		app.route(`/api/m/${mod.id}`, moduleRoutes)
 	}
 }
 

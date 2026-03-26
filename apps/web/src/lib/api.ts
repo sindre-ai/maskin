@@ -277,7 +277,7 @@ export interface ObjectResponse {
 }
 
 export interface CreateObjectInput {
-	type: 'insight' | 'bet' | 'task'
+	type: string
 	title?: string
 	content?: string
 	status: string

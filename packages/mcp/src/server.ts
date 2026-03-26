@@ -1130,8 +1130,18 @@ export function createMcpServer(config: McpConfig) {
 		for (const tool of mod.mcpTools ?? []) {
 			const toolName = `${mod.id}_${tool.name}`
 			const schema = tool.inputSchema as import('zod').ZodObject<import('zod').ZodRawShape>
+			// Create an apiCall wrapper bound to this module's route prefix
+			const moduleApiCall = (
+				method: string,
+				path: string,
+				body?: unknown,
+				options?: { workspaceId?: string },
+			) =>
+				apiCall(config, method, `/api/m/${mod.id}${path}`, body, {
+					workspaceId: options?.workspaceId,
+				})
 			server.tool(toolName, `[${mod.name}] ${tool.description}`, schema.shape, async (args) => {
-				const result = await tool.handler(args)
+				const result = await tool.handler(args, moduleApiCall)
 				return { ...result }
 			})
 		}
