@@ -1,12 +1,14 @@
-import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { Link, createFileRoute } from '@tanstack/react-router'
+import { Plus } from 'lucide-react'
+import { useState } from 'react'
 
 interface FieldDefinition {
 	name: string
@@ -15,15 +17,12 @@ interface FieldDefinition {
 	values?: string[]
 }
 
-export const Route = createFileRoute('/_authed/$workspaceId/settings/properties/')({
-	component: PropertiesPage,
+export const Route = createFileRoute('/_authed/$workspaceId/settings/objects/')({
+	component: ObjectsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
-	validateSearch: (search: Record<string, unknown>) => ({
-		create: search.create === 'true' || search.create === true,
-	}),
 })
 
-function PropertiesPage() {
+function ObjectsPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 
@@ -33,13 +32,8 @@ function PropertiesPage() {
 
 	const objectTypes = ['insight', 'bet', 'task']
 	const [activeType, setActiveType] = useState(objectTypes[0])
-	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/properties/' })
 	const [showAdd, setShowAdd] = useState(false)
 	const [newName, setNewName] = useState('')
-
-	useEffect(() => {
-		if (create) setShowAdd(true)
-	}, [create])
 	const [newType, setNewType] = useState<FieldDefinition['type']>('text')
 	const [newEnumValues, setNewEnumValues] = useState('')
 
@@ -78,22 +72,33 @@ function PropertiesPage() {
 
 	return (
 		<div>
-			<PageHeader title="Properties" />
+			{/* Properties section */}
+			<h2 className="text-sm font-medium text-foreground mb-4">Properties</h2>
 
-			{/* Object type tabs */}
-			<div className="flex gap-1 mb-4">
-				{objectTypes.map((type) => (
-					<Button
-						key={type}
-						type="button"
-						variant={activeType === type ? 'default' : 'secondary'}
-						size="sm"
-						className="capitalize"
-						onClick={() => setActiveType(type)}
-					>
-						{type}
+			<div className="flex items-center justify-between mb-4">
+				<div className="inline-flex rounded-md border border-border">
+					{objectTypes.map((type) => (
+						<button
+							key={type}
+							type="button"
+							className={cn(
+								'px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-md last:rounded-r-md',
+								activeType === type
+									? 'bg-primary text-primary-foreground'
+									: 'bg-background text-muted-foreground hover:bg-muted',
+							)}
+							onClick={() => setActiveType(type)}
+						>
+							{type}
+						</button>
+					))}
+				</div>
+				{!showAdd && (
+					<Button variant="outline" size="sm" onClick={() => setShowAdd(true)}>
+						<Plus size={14} className="mr-1" />
+						Add property
 					</Button>
-				))}
+				)}
 			</div>
 
 			{showAdd && (
@@ -147,7 +152,7 @@ function PropertiesPage() {
 					{currentFields.map((field) => (
 						<Link
 							key={field.name}
-							to="/$workspaceId/settings/properties/$propertyName"
+							to="/$workspaceId/settings/objects/$propertyName"
 							params={{ workspaceId, propertyName: field.name }}
 							search={{ type: activeType }}
 							className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
@@ -163,6 +168,89 @@ function PropertiesPage() {
 					))}
 				</div>
 			)}
+
+			{/* Relationship types section */}
+			<div className="border-t border-border pt-6 mt-6">
+				<RelationshipTypesEditor workspace={workspace} workspaceId={workspaceId} />
+			</div>
+		</div>
+	)
+}
+
+function RelationshipTypesEditor({
+	workspace,
+	workspaceId,
+}: {
+	workspace: import('@/lib/api').WorkspaceWithRole
+	workspaceId: string
+}) {
+	const updateWorkspace = useUpdateWorkspace(workspaceId)
+	const [newType, setNewType] = useState('')
+
+	const settings = workspace.settings as Record<string, unknown>
+	const relationshipTypes = (settings?.relationship_types as string[] | undefined) ?? [
+		'informs',
+		'breaks_into',
+		'blocks',
+		'relates_to',
+		'duplicates',
+	]
+
+	const handleAdd = () => {
+		const trimmed = newType.trim().toLowerCase().replace(/\s+/g, '_')
+		if (!trimmed || relationshipTypes.includes(trimmed)) return
+		const updated = [...relationshipTypes, trimmed]
+		updateWorkspace.mutate({
+			settings: { ...settings, relationship_types: updated },
+		})
+		setNewType('')
+	}
+
+	const handleRemove = (type: string) => {
+		const updated = relationshipTypes.filter((t) => t !== type)
+		updateWorkspace.mutate({
+			settings: { ...settings, relationship_types: updated },
+		})
+	}
+
+	return (
+		<div>
+			<Label className="mb-2 text-muted-foreground">Relationship types</Label>
+			<div className="flex flex-wrap gap-1.5 mb-2">
+				{relationshipTypes.map((type) => (
+					<span
+						key={type}
+						className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
+					>
+						{type.replace(/_/g, ' ')}
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-error ml-0.5"
+							onClick={() => handleRemove(type)}
+							title={`Remove ${type}`}
+						>
+							×
+						</button>
+					</span>
+				))}
+			</div>
+			<div className="flex gap-2">
+				<Input
+					type="text"
+					value={newType}
+					onChange={(e) => setNewType(e.target.value)}
+					onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+					placeholder="New relationship type"
+					className="flex-1"
+				/>
+				<Button
+					variant="secondary"
+					onClick={handleAdd}
+					disabled={!newType.trim() || updateWorkspace.isPending}
+				>
+					Add
+				</Button>
+			</div>
 		</div>
 	)
 }

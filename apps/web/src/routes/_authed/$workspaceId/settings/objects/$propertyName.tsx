@@ -14,7 +14,7 @@ interface FieldDefinition {
 	values?: string[]
 }
 
-export const Route = createFileRoute('/_authed/$workspaceId/settings/properties/$propertyName')({
+export const Route = createFileRoute('/_authed/$workspaceId/settings/objects/$propertyName')({
 	component: PropertyDetailPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 	validateSearch: (search: Record<string, unknown>) => ({
@@ -86,7 +86,7 @@ function PropertyDetailPage() {
 					// If name changed, navigate to new URL
 					if (trimmedName !== field.name) {
 						navigate({
-							to: '/$workspaceId/settings/properties/$propertyName',
+							to: '/$workspaceId/settings/objects/$propertyName',
 							params: { workspaceId, propertyName: trimmedName },
 							search: { type: objectType },
 							replace: true,
@@ -106,7 +106,7 @@ function PropertyDetailPage() {
 			{
 				onSuccess: () => {
 					navigate({
-						to: '/$workspaceId/settings/properties',
+						to: '/$workspaceId/settings/objects',
 						params: { workspaceId },
 						search: { create: false },
 					})

@@ -1,4 +1,3 @@
-import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -32,8 +31,6 @@ function IntegrationsPage() {
 
 	return (
 		<div>
-			<PageHeader title="Integrations" />
-
 			{isLoading ? (
 				<ListSkeleton />
 			) : !providers?.length ? (
