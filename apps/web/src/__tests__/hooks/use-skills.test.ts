@@ -13,12 +13,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import { api } from '@/lib/api'
-import {
-	useSkills,
-	useSkill,
-	useSaveSkill,
-	useDeleteSkill,
-} from '@/hooks/use-skills'
+import { useSkills, useSkill, useSaveSkill, useDeleteSkill } from '@/hooks/use-skills'
 import { TestWrapper } from '../setup'
 
 describe('useSkills', () => {
