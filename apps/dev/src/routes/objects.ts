@@ -90,10 +90,9 @@ app.openapi(createObjectRoute, async (c) => {
 
 	const settings = workspace.settings as WorkspaceSettings
 	// Validate object type against enabled modules
-	const enabledModules = (settings as WorkspaceSettings & { enabled_modules?: string[] })
-		.enabled_modules ?? ['work']
+	const enabledModules = settings.enabled_modules ?? ['work']
 	const validTypes = getValidObjectTypes(enabledModules)
-	if (validTypes.length > 0 && !validTypes.includes(body.type)) {
+	if (!validTypes.includes(body.type)) {
 		return c.json(
 			createApiError(
 				'VALIDATION_ERROR',

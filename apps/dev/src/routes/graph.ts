@@ -98,29 +98,27 @@ app.openapi(createGraphRoute, async (c) => {
 	}
 
 	// Validate object types against enabled modules
-	const settings = workspace.settings as WorkspaceSettings & { enabled_modules?: string[] }
+	const settings = workspace.settings as WorkspaceSettings
 	const enabledModules = settings.enabled_modules ?? ['work']
 	const validTypes = getValidObjectTypes(enabledModules)
-	if (validTypes.length > 0) {
-		for (const node of body.nodes) {
-			if (!validTypes.includes(node.type)) {
-				return c.json(
-					createApiError(
-						'VALIDATION_ERROR',
-						`Object type '${node.type}' is not enabled in this workspace`,
-						[
-							{
-								field: `nodes[${node.$id}].type`,
-								message: `'${node.type}' is not an enabled object type`,
-								expected: validTypes.map((t) => `'${t}'`).join(' | '),
-								received: `'${node.type}'`,
-							},
-						],
-						`Enabled types: ${validTypes.join(', ')}`,
-					),
-					400,
-				)
-			}
+	for (const node of body.nodes) {
+		if (!validTypes.includes(node.type)) {
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					`Object type '${node.type}' is not enabled in this workspace`,
+					[
+						{
+							field: `nodes[${node.$id}].type`,
+							message: `'${node.type}' is not an enabled object type`,
+							expected: validTypes.map((t) => `'${t}'`).join(' | '),
+							received: `'${node.type}'`,
+						},
+					],
+					`Enabled types: ${validTypes.join(', ')}`,
+				),
+				400,
+			)
 		}
 	}
 

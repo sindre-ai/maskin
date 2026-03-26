@@ -1,3 +1,4 @@
+import { clearModules, registerModule } from '@ai-native/module-sdk'
 import {
 	buildCreateObjectBody,
 	buildObject,
@@ -13,6 +14,23 @@ import { createTestApp } from '../setup'
 const { default: objectsRoutes } = await import('../../routes/objects')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
+
+beforeEach(() => {
+	registerModule({
+		id: 'work',
+		name: 'Work',
+		version: '0.0.1',
+		objectTypes: [
+			{ type: 'insight', label: 'Insight', icon: 'lightbulb', defaultStatuses: ['new'] },
+			{ type: 'bet', label: 'Bet', icon: 'target', defaultStatuses: ['active'] },
+			{ type: 'task', label: 'Task', icon: 'check-square', defaultStatuses: ['todo'] },
+		],
+	})
+})
+
+afterEach(() => {
+	clearModules()
+})
 
 describe('Objects Routes', () => {
 	describe('POST /api/objects', () => {
