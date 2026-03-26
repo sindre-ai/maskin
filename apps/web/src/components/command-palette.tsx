@@ -26,7 +26,7 @@ export function CommandPalette() {
 			}
 			if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
-				navigateTo(`/${workspaceId}/objects?create=true`)
+				navigateTo(`/${workspaceId}/objects/${crypto.randomUUID()}`)
 			}
 			if (e.key === 'Escape') {
 				setOpen(false)

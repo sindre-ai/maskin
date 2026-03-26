@@ -48,6 +48,10 @@ const createActorRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor with this ID already exists',
+		},
 		500: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Internal server error',
@@ -88,6 +92,7 @@ app.openapi(createActorRoute, async (c) => {
 	const [actor] = await db
 		.insert(actors)
 		.values({
+			...(body.id && { id: body.id }),
 			type: body.type,
 			name: body.name,
 			email: body.email,
@@ -98,9 +103,13 @@ app.openapi(createActorRoute, async (c) => {
 			llmProvider: body.llm_provider,
 			llmConfig: body.llm_config,
 		})
+		.onConflictDoNothing({ target: actors.id })
 		.returning()
 
 	if (!actor) {
+		if (body.id) {
+			return c.json(createApiError('BAD_REQUEST', 'An actor with this ID already exists'), 409)
+		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
 

@@ -72,13 +72,19 @@ const createItems: CreateItem[] = [
 		label: 'Object',
 		icon: Layers,
 		navigate: (nav, workspaceId) =>
-			nav({ to: '/$workspaceId/objects', params: { workspaceId }, search: { create: true } }),
+			nav({
+				to: '/$workspaceId/objects/$objectId',
+				params: { workspaceId, objectId: crypto.randomUUID() },
+			}),
 	},
 	{
 		label: 'Agent',
 		icon: Bot,
 		navigate: (nav, workspaceId) =>
-			nav({ to: '/$workspaceId/agents', params: { workspaceId }, search: { create: true } }),
+			nav({
+				to: '/$workspaceId/agents/$agentId',
+				params: { workspaceId, agentId: crypto.randomUUID() },
+			}),
 	},
 	{
 		label: 'Trigger',

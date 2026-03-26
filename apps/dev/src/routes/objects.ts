@@ -59,6 +59,10 @@ const createObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace not found',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object with this ID already exists',
+		},
 		500: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Internal server error',
@@ -107,6 +111,7 @@ app.openapi(createObjectRoute, async (c) => {
 	const [created] = await db
 		.insert(objects)
 		.values({
+			...(body.id && { id: body.id }),
 			workspaceId,
 			type: body.type,
 			title: body.title,
@@ -116,9 +121,13 @@ app.openapi(createObjectRoute, async (c) => {
 			owner: body.owner,
 			createdBy: actorId,
 		})
+		.onConflictDoNothing({ target: objects.id })
 		.returning()
 
 	if (!created) {
+		if (body.id) {
+			return c.json(createApiError('BAD_REQUEST', 'An object with this ID already exists'), 409)
+		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create object'), 500)
 	}
 

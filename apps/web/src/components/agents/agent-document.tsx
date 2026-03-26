@@ -1,4 +1,3 @@
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -10,13 +9,13 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useRegenerateApiKey, useUpdateActor } from '@/hooks/use-actors'
+import { useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import { useActiveSessionsForActor, useSessionLatestLog } from '@/hooks/use-sessions'
 import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Copy, KeyRound } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
@@ -36,9 +35,7 @@ interface AgentDocumentViewProps {
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
 	onUpdateTools: (tools: Record<string, unknown>) => void
 	onUpdateMemory: (memory: Record<string, unknown>) => void
-	onRegenerateApiKey: () => void
-	regeneratedApiKey?: string | null
-	isRegenerating?: boolean
+	showSaved?: boolean
 }
 
 export function AgentDocumentView({
@@ -52,9 +49,7 @@ export function AgentDocumentView({
 	onUpdateLlmConfig,
 	onUpdateTools,
 	onUpdateMemory,
-	onRegenerateApiKey,
-	regeneratedApiKey,
-	isRegenerating = false,
+	showSaved = false,
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
 	const [systemPromptDraft, setSystemPromptDraft] = useState(agent.systemPrompt ?? '')
@@ -67,8 +62,6 @@ export function AgentDocumentView({
 	)
 	const [memoryDirty, setMemoryDirty] = useState(false)
 	const [memoryError, setMemoryError] = useState<string | null>(null)
-	const [copied, setCopied] = useState(false)
-	const [confirmRegenerate, setConfirmRegenerate] = useState(false)
 
 	const isActive = (activeSessions?.length ?? 0) > 0
 
@@ -103,26 +96,25 @@ export function AgentDocumentView({
 		}
 	}, [memoryDraft, onUpdateMemory])
 
-	const handleCopyApiKey = useCallback(async () => {
-		if (regeneratedApiKey) {
-			await navigator.clipboard.writeText(regeneratedApiKey)
-			setCopied(true)
-			setTimeout(() => setCopied(false), 2000)
-		}
-	}, [regeneratedApiKey])
-
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Name */}
-			<Input
-				type="text"
-				value={nameDraft}
-				onChange={(e) => setNameDraft(e.target.value)}
-				onBlur={handleNameBlur}
-				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-				placeholder="Agent name"
-				className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
-			/>
+			<div className="flex items-center gap-2">
+				<Input
+					type="text"
+					value={nameDraft}
+					onChange={(e) => setNameDraft(e.target.value)}
+					onBlur={handleNameBlur}
+					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					placeholder="Agent name"
+					className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+				/>
+				{showSaved && (
+					<span className="flex items-center gap-1 text-xs text-muted-foreground">
+						<Check size={14} /> Saved
+					</span>
+				)}
+			</div>
 
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
@@ -216,54 +208,14 @@ export function AgentDocumentView({
 				{memoryError && <p className="text-xs text-error mt-1">{memoryError}</p>}
 				{memoryDirty && (
 					<div className="flex justify-end mt-2">
-						<Button size="sm" onClick={handleMemorySave}>
-							Save Memory
-						</Button>
-					</div>
-				)}
-			</Section>
-
-			{/* API Key */}
-			<Section title="API Key">
-				{regeneratedApiKey ? (
-					<div className="space-y-2">
-						<p className="text-xs text-muted-foreground">
-							Save this key now — it cannot be retrieved later.
-						</p>
-						<div className="flex items-center gap-2">
-							<code className="flex-1 rounded border border-border bg-background px-3 py-2 text-xs font-mono text-foreground break-all">
-								{regeneratedApiKey}
-							</code>
-							<Button size="sm" variant="outline" onClick={handleCopyApiKey}>
-								{copied ? 'Copied!' : <Copy className="h-4 w-4" />}
-							</Button>
-						</div>
-					</div>
-				) : confirmRegenerate ? (
-					<div className="flex items-center gap-2">
-						<span className="text-xs text-error">
-							This will invalidate the current key. Continue?
-						</span>
-						<Button
-							size="sm"
-							variant="destructive"
-							onClick={() => {
-								onRegenerateApiKey()
-								setConfirmRegenerate(false)
-							}}
-							disabled={isRegenerating}
+						<button
+							type="button"
+							className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground hover:bg-accent-hover"
+							onClick={handleMemorySave}
 						>
-							{isRegenerating ? 'Regenerating...' : 'Confirm'}
-						</Button>
-						<Button size="sm" variant="ghost" onClick={() => setConfirmRegenerate(false)}>
-							Cancel
-						</Button>
+							Save Memory
+						</button>
 					</div>
-				) : (
-					<Button size="sm" variant="outline" onClick={() => setConfirmRegenerate(true)}>
-						<KeyRound className="h-4 w-4 mr-1.5" />
-						Regenerate API Key
-					</Button>
 				)}
 			</Section>
 
@@ -328,11 +280,8 @@ function ActiveSessionCard({
 export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
-	const regenerateApiKey = useRegenerateApiKey()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
-	const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null)
-
 	// Filter events by this agent's actorId
 	const agentEvents = useMemo(
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),
@@ -381,14 +330,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[agent.id, updateActor],
 	)
 
-	const handleRegenerateApiKey = useCallback(() => {
-		regenerateApiKey.mutate(agent.id, {
-			onSuccess: (result) => {
-				setRegeneratedKey(result.api_key)
-			},
-		})
-	}, [agent.id, regenerateApiKey])
-
 	return (
 		<>
 			<PageHeader />
@@ -403,9 +344,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onUpdateLlmConfig={handleUpdateLlmConfig}
 				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
-				onRegenerateApiKey={handleRegenerateApiKey}
-				regeneratedApiKey={regeneratedKey}
-				isRegenerating={regenerateApiKey.isPending}
 			/>
 		</>
 	)
