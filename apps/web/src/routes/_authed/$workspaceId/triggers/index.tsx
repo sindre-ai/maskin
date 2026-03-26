@@ -58,7 +58,7 @@ function TriggerRow({
 		<Link
 			to="/$workspaceId/triggers/$triggerId"
 			params={{ workspaceId, triggerId: trigger.id }}
-			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-muted/50 transition-colors"
+			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
 		>
 			<span
 				className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}

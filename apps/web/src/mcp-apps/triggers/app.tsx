@@ -37,7 +37,7 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 			{triggers.map((trigger) => (
 				<div
 					key={trigger.id}
-					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors"
+					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
 				>
 					<span
 						className={`w-2 h-2 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-text-muted'}`}

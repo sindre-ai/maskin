@@ -150,7 +150,7 @@ function PropertiesPage() {
 							to="/$workspaceId/settings/properties/$propertyName"
 							params={{ workspaceId, propertyName: field.name }}
 							search={{ type: activeType }}
-							className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-muted/50 transition-colors"
+							className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
 						>
 							<div className="flex-1">
 								<p className="text-sm font-medium text-foreground">{field.name}</p>

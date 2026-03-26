@@ -44,7 +44,7 @@ function WorkspaceListView({ workspaces }: { workspaces: WorkspaceResponse[] }) 
 			{workspaces.map((ws) => (
 				<div
 					key={ws.id}
-					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors"
+					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
 				>
 					<span className="text-sm text-foreground flex-1">{ws.name}</span>
 					{ws.createdAt && (
@@ -85,7 +85,7 @@ function MemberListView({ members }: { members: MemberResponse[] }) {
 			{members.map((member) => (
 				<div
 					key={member.actorId}
-					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors"
+					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
 				>
 					<ActorAvatar name={member.name} type={member.type} size="sm" />
 					<span className="text-sm text-foreground flex-1">{member.name}</span>

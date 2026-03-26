@@ -198,7 +198,7 @@ function PropertyRow({
 	const type = fieldDef?.type ?? inferType(value)
 
 	return (
-		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-muted/50 group">
+		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-accent/50 hover:text-accent-foreground group">
 			<span className="w-28 shrink-0 text-xs text-muted-foreground truncate" title={name}>
 				{name}
 			</span>
