@@ -2,7 +2,7 @@ import { AgentCard } from '@/components/agents/agent-card'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { ActorResponse, ActorWithKey, SessionResponse } from '../shared/types'
@@ -35,6 +35,8 @@ function ActorsApp() {
 
 function ActorListView({ actors }: { actors: ActorResponse[] }) {
 	const callTool = useCallTool()
+	const callToolRef = useRef(callTool)
+	callToolRef.current = callTool
 	const [sessions, setSessions] = useState<SessionResponse[]>([])
 
 	const agents = actors.filter((a) => a.type === 'agent')
@@ -42,13 +44,13 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 
 	useEffect(() => {
 		if (!agents.length) return
-		callTool('list_sessions', { limit: 100 }).then((result) => {
+		callToolRef.current('list_sessions', { limit: 100 }).then((result) => {
 			const text = result.content?.find(
 				(c: { type: string; text?: string }) => c.type === 'text',
 			)?.text
 			if (text) setSessions(JSON.parse(text))
 		})
-	}, [agents.length, callTool])
+	}, [agents.length])
 
 	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions), [sessions])
 
