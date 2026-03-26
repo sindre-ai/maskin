@@ -17,6 +17,15 @@ export function useActor(id: string) {
 	})
 }
 
+/** Derives agent from the workspace actors list — returns undefined for non-existent IDs (create mode). */
+export function useAgent(id: string, workspaceId: string) {
+	const { data: actors, ...rest } = useActors(workspaceId)
+	return {
+		...rest,
+		data: actors?.find((a) => a.id === id),
+	}
+}
+
 export function useCreateActor(workspaceId?: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -36,11 +45,5 @@ export function useUpdateActor(workspaceId?: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 		},
-	})
-}
-
-export function useRegenerateApiKey() {
-	return useMutation({
-		mutationFn: (id: string) => api.actors.regenerateApiKey(id),
 	})
 }

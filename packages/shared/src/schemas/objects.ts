@@ -5,6 +5,7 @@ export const objectTypeSchema = z.enum(['insight', 'bet', 'task'])
 export type ObjectType = z.infer<typeof objectTypeSchema>
 
 export const createObjectSchema = z.object({
+	id: z.string().uuid().optional(),
 	type: objectTypeSchema,
 	title: z.string().optional(),
 	content: z.string().optional(),

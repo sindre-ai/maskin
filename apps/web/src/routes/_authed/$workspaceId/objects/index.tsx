@@ -1,5 +1,4 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { ObjectForm } from '@/components/objects/object-form'
 import { ObjectList } from '@/components/objects/object-list'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -14,15 +13,12 @@ import { useActors } from '@/hooks/use-actors'
 import { useObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useSearch } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { createFileRoute } from '@tanstack/react-router'
+import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
-	validateSearch: (search: Record<string, unknown>) => ({
-		create: search.create === 'true' || search.create === true,
-	}),
 })
 
 const tabs = [
@@ -34,18 +30,11 @@ const tabs = [
 
 function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
-	const { create } = useSearch({ from: '/_authed/$workspaceId/objects/' })
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
 	const [search, setSearch] = useState('')
-	const [showCreate, setShowCreate] = useState(false)
 	const { data: actors } = useActors(workspaceId)
-
-	// Open create form via Cmd+N keyboard shortcut
-	useEffect(() => {
-		if (create) setShowCreate(true)
-	}, [create])
 
 	const filters: Record<string, string> = {}
 	if (typeFilter) filters.type = typeFilter
@@ -74,12 +63,6 @@ function ObjectsPage() {
 	return (
 		<div>
 			<PageHeader title="Objects" />
-
-			{showCreate && (
-				<div className="mb-6 rounded-lg border border-border bg-card p-4">
-					<ObjectForm onClose={() => setShowCreate(false)} />
-				</div>
-			)}
 
 			{/* Tabs + Filters */}
 			<div className="flex items-center gap-4 mb-4 flex-wrap">

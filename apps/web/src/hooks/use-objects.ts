@@ -16,54 +16,18 @@ export function useObjects(workspaceId: string, filters?: Record<string, string>
 	})
 }
 
-export function useObject(id: string) {
-	return useQuery({
-		queryKey: queryKeys.objects.detail(id),
-		queryFn: () => api.objects.get(id),
-		enabled: !!id,
-	})
+export function useObject(id: string, workspaceId: string) {
+	const { data: objects, ...rest } = useObjects(workspaceId)
+	return {
+		...rest,
+		data: objects?.find((o) => o.id === id),
+	}
 }
 
 export function useCreateObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateObjectInput) => api.objects.create(workspaceId, data),
-		onMutate: async (data) => {
-			await queryClient.cancelQueries({ queryKey: queryKeys.objects.all(workspaceId) })
-
-			const optimistic: ObjectResponse = {
-				id: `optimistic-${crypto.randomUUID()}`,
-				workspaceId,
-				type: data.type,
-				title: data.title ?? null,
-				content: data.content ?? null,
-				status: data.status,
-				metadata: data.metadata ?? null,
-				owner: data.owner ?? null,
-				activeSessionId: null,
-				createdBy: '',
-				createdAt: new Date().toISOString(),
-				updatedAt: new Date().toISOString(),
-			}
-
-			const previousQueries: [readonly unknown[], ObjectResponse[] | undefined][] = []
-			const queries = queryClient.getQueriesData<ObjectResponse[]>({
-				queryKey: queryKeys.objects.all(workspaceId),
-			})
-			for (const [key, data] of queries) {
-				if (data) {
-					previousQueries.push([key, data])
-					queryClient.setQueryData(key, [optimistic, ...data])
-				}
-			}
-
-			return { previousQueries }
-		},
-		onError: (_err, _data, context) => {
-			for (const [key, data] of context?.previousQueries ?? []) {
-				queryClient.setQueryData(key, data)
-			}
-		},
 		onSettled: (_data, _err, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			if (variables.type === 'bet') {
@@ -78,19 +42,6 @@ export function useUpdateObject(workspaceId: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateObjectInput }) =>
 			api.objects.update(id, data),
-		onMutate: async ({ id, data }) => {
-			await queryClient.cancelQueries({ queryKey: queryKeys.objects.detail(id) })
-			const previous = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(id))
-			if (previous) {
-				queryClient.setQueryData(queryKeys.objects.detail(id), { ...previous, ...data })
-			}
-			return { previous }
-		},
-		onError: (_err, { id }, context) => {
-			if (context?.previous) {
-				queryClient.setQueryData(queryKeys.objects.detail(id), context.previous)
-			}
-		},
 		onSettled: (_data, _err, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
@@ -103,30 +54,6 @@ export function useDeleteObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (id: string) => api.objects.delete(id),
-		onMutate: async (id) => {
-			await queryClient.cancelQueries({ queryKey: queryKeys.objects.all(workspaceId) })
-
-			const previousQueries: [readonly unknown[], ObjectResponse[] | undefined][] = []
-			const queries = queryClient.getQueriesData<ObjectResponse[]>({
-				queryKey: queryKeys.objects.all(workspaceId),
-			})
-			for (const [key, data] of queries) {
-				if (data) {
-					previousQueries.push([key, data])
-					queryClient.setQueryData(
-						key,
-						data.filter((obj) => obj.id !== id),
-					)
-				}
-			}
-
-			return { previousQueries }
-		},
-		onError: (_err, _id, context) => {
-			for (const [key, data] of context?.previousQueries ?? []) {
-				queryClient.setQueryData(key, data)
-			}
-		},
 		onSuccess: () => {
 			toast.success('Object deleted')
 		},
