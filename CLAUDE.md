@@ -5,6 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Sub-project CLAUDE.md
 - `apps/web/CLAUDE.md` — detailed frontend guidance: product philosophy, design system, component conventions, routing, state management, SSE patterns, and styling rules
 
+## Project Rules
+- `.claude/rules/testing.md` — testing conventions for all test types (unit, integration, E2E, frontend)
+- `.claude/rules/pre-commit.md` — pre-commit checklist (lint, type-check, tests)
+
 ## Architecture
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
 - Backend (`apps/dev`): Hono.js + OpenAPIHono + Drizzle ORM + PostgreSQL, runs on port 3000
@@ -139,10 +143,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `POST /mcp` — Streamable HTTP transport for MCP Apps
 
 ## Testing
-- Backend tests use Vitest with mock DB context (`apps/dev/src/__tests__/setup.ts`)
-- `createTestContext()` provides a Proxy-based mock DB, `withTestEnv()` injects it into Hono context
-- Tests run without a real database — DB calls are mocked via chained proxy
-- E2E tests (`apps/e2e`): Playwright-based browser tests for auth flows, CRUD, and navigation
+- **Full conventions**: see `.claude/rules/testing.md` for patterns, file locations, and examples
+- **Pre-commit**: see `.claude/rules/pre-commit.md` — always run lint, type-check, and tests before committing
+- Backend unit tests: Vitest with mock DB context (`apps/dev/src/__tests__/setup.ts`)
+- Backend integration tests: Vitest with real PostgreSQL (`apps/dev/src/__tests__/integration/`)
+- Frontend tests: Vitest + React Testing Library + jsdom (`apps/web/src/__tests__/`)
+- E2E tests: Playwright (`apps/e2e/src/tests/`)
+- Test pyramid for frontend: lib utilities → hooks → components
+- `pnpm test -- --run` — run all unit tests
+- `pnpm test:integration -- --run` — run integration tests (requires DATABASE_URL)
 - `pnpm test:e2e` — run E2E tests (requires running dev server)
 
 ## Environment Variables
