@@ -104,7 +104,7 @@ describe('create_objects schema', () => {
 		expect(() => schema.parse({ nodes })).toThrow()
 	})
 
-	it('accepts any string as object type (validation is server-side)', () => {
+	it('accepts any string as object type', () => {
 		const result = schema.parse({
 			nodes: [{ $id: 'x', type: 'story', status: 'new' }],
 		})
@@ -133,7 +133,7 @@ describe('list_objects schema', () => {
 		expect(result.type).toBe('bet')
 	})
 
-	it('accepts any string as type filter (validation is server-side)', () => {
+	it('accepts any string as type filter', () => {
 		const result = schema.parse({ type: 'story' })
 		expect(result.type).toBe('story')
 	})
