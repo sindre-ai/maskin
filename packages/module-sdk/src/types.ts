@@ -41,8 +41,8 @@ export interface McpToolDefinition {
 	name: string
 	/** Tool description for MCP */
 	description: string
-	/** Zod input schema */
-	inputSchema: z.ZodType<unknown>
+	/** Zod input schema — must be a ZodObject so .shape is accessible for MCP registration */
+	inputSchema: z.ZodObject<z.ZodRawShape>
 	/** Handler function — receives parsed args and an apiCall helper for making API requests */
 	handler: (args: unknown, apiCall: McpApiCall) => Promise<McpToolResult>
 }

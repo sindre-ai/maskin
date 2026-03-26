@@ -60,6 +60,9 @@ export class ModuleRegistry {
 // ─── Default global instance + convenience functions ─────────────────────────
 // These delegate to a shared default registry for simple single-server usage.
 // For tests or multi-instance scenarios, create your own ModuleRegistry instead.
+//
+// ⚠️ Tests that call registerModule() MUST call clearModules() in afterEach
+// to avoid leaking module state between test files.
 
 const defaultRegistry = new ModuleRegistry()
 
