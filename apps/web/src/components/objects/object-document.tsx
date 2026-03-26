@@ -8,13 +8,14 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
+import { useAutoSave } from '@/hooks/use-auto-save'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
 import { useObjectRelationships } from '@/hooks/use-relationships'
 import type { ActorResponse, EventResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, useNavigate } from '@tanstack/react-router'
-import { Trash2 } from 'lucide-react'
+import { useNavigate } from '@tanstack/react-router'
+import { Check, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
@@ -42,6 +43,7 @@ interface ObjectDocumentViewProps {
 	onUpdateStatus: (status: string) => void
 	onDelete: () => void
 	isDeleting?: boolean
+	showSaved?: boolean
 }
 
 export function ObjectDocumentView({
@@ -55,6 +57,7 @@ export function ObjectDocumentView({
 	onUpdateStatus,
 	onDelete,
 	isDeleting = false,
+	showSaved = false,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 
@@ -81,15 +84,22 @@ export function ObjectDocumentView({
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Title */}
-			<Input
-				type="text"
-				value={titleDraft}
-				onChange={(e) => setTitleDraft(e.target.value)}
-				onBlur={handleTitleBlur}
-				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-				placeholder="Untitled"
-				className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
-			/>
+			<div className="flex items-center gap-2">
+				<Input
+					type="text"
+					value={titleDraft}
+					onChange={(e) => setTitleDraft(e.target.value)}
+					onBlur={handleTitleBlur}
+					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					placeholder="Untitled"
+					className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+				/>
+				{showSaved && (
+					<span className="flex items-center gap-1 text-xs text-muted-foreground">
+						<Check size={14} /> Saved
+					</span>
+				)}
+			</div>
 
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
@@ -184,7 +194,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const handleDelete = useCallback(() => {
 		deleteObject.mutate(object.id, {
 			onSuccess: () => {
-				navigate({ to: '/$workspaceId', params: { workspaceId } })
+				navigate({ to: '/$workspaceId/objects', params: { workspaceId } })
 			},
 		})
 	}, [object.id, deleteObject, navigate, workspaceId])
@@ -212,11 +222,10 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				<Button
 					variant="ghost"
 					size="icon"
-					className="text-muted-foreground hover:text-error"
+					className="h-7 w-7 text-muted-foreground hover:text-error"
 					onClick={() => setConfirmDelete(true)}
 				>
-					<Trash2 className="h-4 w-4" />
-					<span className="sr-only">Delete</span>
+					<Trash2 size={15} />
 				</Button>
 			),
 		[confirmDelete, handleDelete, deleteObject.isPending, object.type],

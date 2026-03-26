@@ -13,6 +13,7 @@ export const llmConfigSchema = z.object({
 })
 
 export const createActorSchema = z.object({
+	id: z.string().uuid().optional(),
 	type: actorTypeSchema,
 	name: z.string().min(1),
 	email: z.string().email().optional(),

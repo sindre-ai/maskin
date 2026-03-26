@@ -1,19 +1,39 @@
+import { PageHeader } from '@/components/layout/page-header'
+import { ObjectCreateForm } from '@/components/objects/object-create-form'
 import { ObjectDocument } from '@/components/objects/object-document'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { useObject } from '@/hooks/use-objects'
+import { useCreateObject, useObject } from '@/hooks/use-objects'
+import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+import { useEffect, useRef } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')({
 	component: ObjectDetailPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
+const defaultStatuses: Record<string, string> = {
+	insight: 'new',
+	bet: 'signal',
+	task: 'todo',
+}
+
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
-	const { data: object, isLoading, error } = useObject(objectId)
+	const { workspaceId } = useWorkspace()
+	const { data: object, isLoading } = useObject(objectId, workspaceId)
+	const createObject = useCreateObject(workspaceId)
+	const isCreatedRef = useRef(false)
 
-	if (isLoading) {
+	// Once the object exists in cache, mark as created
+	useEffect(() => {
+		if (object) isCreatedRef.current = true
+	}, [object])
+	const isCreated = isCreatedRef.current || !!object
+
+	if (isLoading && !isCreated) {
 		return (
 			<div className="max-w-3xl mx-auto space-y-4">
 				<Skeleton className="h-8 w-64" />
@@ -23,13 +43,41 @@ function ObjectDetailPage() {
 		)
 	}
 
-	if (error || !object) {
-		return (
-			<div className="flex items-center justify-center py-16">
-				<p className="text-sm text-muted-foreground">{error?.message || 'Object not found'}</p>
-			</div>
-		)
+	const handleAutoCreate = async (data: {
+		type: 'insight' | 'bet' | 'task'
+		title: string
+	}) => {
+		if (isCreatedRef.current) return
+		isCreatedRef.current = true
+		try {
+			await createObject.mutateAsync({
+				id: objectId,
+				type: data.type,
+				title: data.title,
+				status: defaultStatuses[data.type],
+			})
+			toast.success('Object created')
+		} catch {
+			isCreatedRef.current = false
+		}
 	}
 
-	return <ObjectDocument object={object} />
+	// Once created, render the full document editor
+	if (isCreated && object) {
+		return <ObjectDocument object={object} />
+	}
+
+	// Create mode — show minimal form
+	return (
+		<>
+			<PageHeader />
+			<div className="max-w-3xl mx-auto">
+				<ObjectCreateForm
+					onAutoCreate={handleAutoCreate}
+					isPending={createObject.isPending}
+					error={createObject.error}
+				/>
+			</div>
+		</>
+	)
 }

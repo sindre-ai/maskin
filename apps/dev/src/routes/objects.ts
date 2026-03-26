@@ -107,6 +107,7 @@ app.openapi(createObjectRoute, async (c) => {
 	const [created] = await db
 		.insert(objects)
 		.values({
+			...(body.id && { id: body.id }),
 			workspaceId,
 			type: body.type,
 			title: body.title,

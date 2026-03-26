@@ -277,6 +277,7 @@ export interface ObjectResponse {
 }
 
 export interface CreateObjectInput {
+	id?: string
 	type: 'insight' | 'bet' | 'task'
 	title?: string
 	content?: string
@@ -320,6 +321,7 @@ export interface LoginInput {
 }
 
 export interface CreateActorInput {
+	id?: string
 	type: 'human' | 'agent'
 	name: string
 	email?: string

@@ -88,6 +88,7 @@ app.openapi(createActorRoute, async (c) => {
 	const [actor] = await db
 		.insert(actors)
 		.values({
+			...(body.id && { id: body.id }),
 			type: body.type,
 			name: body.name,
 			email: body.email,
