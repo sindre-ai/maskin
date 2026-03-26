@@ -25,7 +25,9 @@ export function ObjectFormView({
 }) {
 	const { workspace } = useWorkspace()
 	const wsSettings = workspace.settings as Record<string, unknown>
-	const enabledModules = (wsSettings?.enabled_modules as string[]) ?? ['work']
+	const enabledModulesRaw = (wsSettings?.enabled_modules as string[]) ?? ['work']
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stabilize array reference from JSONB
+	const enabledModules = useMemo(() => enabledModulesRaw, [JSON.stringify(enabledModulesRaw)])
 	const typeTabs = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
 	const statusMap = (wsSettings?.statuses as Record<string, string[]>) ?? {}
 

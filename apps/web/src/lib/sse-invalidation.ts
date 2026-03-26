@@ -24,6 +24,10 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 	if (objectTypes.has(event.entity_type)) {
 		queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 		queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
+		// Legacy: bets query key is still used in use-objects.ts and use-bets.ts
+		if (event.entity_type === 'bet') {
+			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+		}
 		return
 	}
 

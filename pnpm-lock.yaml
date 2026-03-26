@@ -117,6 +117,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@ai-native/mod-work':
+        specifier: workspace:*
+        version: link:../../modules/work
       '@ai-native/module-sdk':
         specifier: workspace:*
         version: link:../../packages/module-sdk

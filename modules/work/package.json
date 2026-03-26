@@ -11,6 +11,10 @@
 		"./server": {
 			"types": "./server/index.ts",
 			"default": "./server/index.ts"
+		},
+		"./shared": {
+			"types": "./shared/index.ts",
+			"default": "./shared/index.ts"
 		}
 	},
 	"dependencies": {

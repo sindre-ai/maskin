@@ -30,12 +30,17 @@ function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
 	const { create } = useSearch({ from: '/_authed/$workspaceId/objects/' })
 	const settings = workspace.settings as Record<string, unknown>
-	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
-	const moduleTabs = getEnabledObjectTypeTabs(enabledModules)
-	const tabs = [
-		{ label: 'All', value: undefined as string | undefined },
-		...moduleTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),
-	]
+	const enabledModulesRaw = (settings?.enabled_modules as string[]) ?? ['work']
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stabilize array reference from JSONB
+	const enabledModules = useMemo(() => enabledModulesRaw, [JSON.stringify(enabledModulesRaw)])
+	const moduleTabs = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
+	const tabs = useMemo(
+		() => [
+			{ label: 'All', value: undefined as string | undefined },
+			...moduleTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),
+		],
+		[moduleTabs],
+	)
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)

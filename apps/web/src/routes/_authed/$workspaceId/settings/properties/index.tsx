@@ -32,7 +32,9 @@ function PropertiesPage() {
 	const fieldDefs =
 		(settings?.field_definitions as Record<string, FieldDefinition[]> | undefined) ?? {}
 
-	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const enabledModulesRaw = (settings?.enabled_modules as string[]) ?? ['work']
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stabilize array reference from JSONB
+	const enabledModules = useMemo(() => enabledModulesRaw, [JSON.stringify(enabledModulesRaw)])
 	const objectTypes = useMemo(
 		() => getEnabledObjectTypeTabs(enabledModules).map((t) => t.value),
 		[enabledModules],

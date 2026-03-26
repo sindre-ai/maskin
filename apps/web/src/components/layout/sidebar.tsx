@@ -43,7 +43,9 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const matchRoute = useMatchRoute()
 
 	const settings = workspace.settings as Record<string, unknown>
-	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const enabledModulesRaw = (settings?.enabled_modules as string[]) ?? ['work']
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stabilize array reference from JSONB
+	const enabledModules = useMemo(() => enabledModulesRaw, [JSON.stringify(enabledModulesRaw)])
 
 	// Get module nav items and convert to sidebar format
 	const moduleNavItems = useMemo(() => {
