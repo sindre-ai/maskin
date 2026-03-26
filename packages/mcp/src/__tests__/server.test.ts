@@ -17,6 +17,7 @@ vi.mock('node:fs', () => ({
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { createMcpServer } from '../server'
+import { tools } from '../tools'
 
 const config = {
 	apiBaseUrl: 'http://localhost:3000',
@@ -29,14 +30,27 @@ describe('createMcpServer', () => {
 		vi.clearAllMocks()
 	})
 
-	it('registers all 39 tools', () => {
+	it('registers a tool for every tool definition', () => {
 		createMcpServer(config)
-		expect(registerAppTool).toHaveBeenCalledTimes(39)
+		expect(registerAppTool).toHaveBeenCalledTimes(Object.keys(tools).length)
 	})
 
-	it('registers all 7 UI resources', () => {
+	it('registers a UI resource for every defined resource', () => {
 		createMcpServer(config)
-		expect(registerAppResource).toHaveBeenCalledTimes(7)
+		// UI_RESOURCES has 7 entries: objects, relationships, actors, workspaces, events, triggers, graph
+		const resourceCount = vi.mocked(registerAppResource).mock.calls.length
+		expect(resourceCount).toBeGreaterThan(0)
+		// Verify all expected URIs are present
+		const resourceUris = vi.mocked(registerAppResource).mock.calls.map((call) => call[2])
+		const expectedUris = [
+			'ui://ai-native/objects', 'ui://ai-native/actors', 'ui://ai-native/workspaces',
+			'ui://ai-native/events', 'ui://ai-native/triggers', 'ui://ai-native/relationships',
+			'ui://ai-native/graph',
+		]
+		for (const uri of expectedUris) {
+			expect(resourceUris).toContain(uri)
+		}
+		expect(resourceCount).toBe(expectedUris.length)
 	})
 
 	it('registers tools with correct names', () => {
@@ -68,16 +82,12 @@ describe('createMcpServer', () => {
 		}
 	})
 
-	it('registers UI resources with correct URIs', () => {
+	it('registers every tool name from tools definitions', () => {
 		createMcpServer(config)
-		const resourceUris = vi.mocked(registerAppResource).mock.calls.map((call) => call[2])
-		expect(resourceUris).toContain('ui://ai-native/objects')
-		expect(resourceUris).toContain('ui://ai-native/actors')
-		expect(resourceUris).toContain('ui://ai-native/workspaces')
-		expect(resourceUris).toContain('ui://ai-native/events')
-		expect(resourceUris).toContain('ui://ai-native/triggers')
-		expect(resourceUris).toContain('ui://ai-native/relationships')
-		expect(resourceUris).toContain('ui://ai-native/graph')
+		const registeredNames = vi.mocked(registerAppTool).mock.calls.map((call) => call[1])
+		for (const name of Object.keys(tools)) {
+			expect(registeredNames).toContain(name)
+		}
 	})
 })
 
@@ -256,6 +266,31 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_objects handler (partial failure)', () => {
+		it('returns success false for failed IDs without rejecting', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'id-1', title: 'OK' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 404,
+					text: () => Promise.resolve('Not found'),
+				} as Response)
+
+			const handler = handlers.get('get_objects')!
+			const result = await handler({ ids: ['id-1', 'id-2'] }) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toHaveLength(2)
+			expect(parsed[0].success).toBe(true)
+			expect(parsed[0].result).toEqual({ id: 'id-1', title: 'OK' })
+			expect(parsed[1].success).toBe(false)
+			expect(parsed[1].error).toContain('API error 404')
+		})
+	})
+
 	describe('create_session handler', () => {
 		it('POSTs to /api/sessions', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
@@ -271,6 +306,132 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/sessions',
 				expect.objectContaining({ method: 'POST' }),
 			)
+		})
+	})
+
+	describe('run_agent handler', () => {
+		it('creates session, polls until completed, fetches logs', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+				// 1. POST /api/sessions — create session
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-1', status: 'pending' }),
+				} as Response)
+				// 2. GET /api/sessions/sess-1 — first poll (running)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-1', status: 'running' }),
+				} as Response)
+				// 3. GET /api/sessions/sess-1 — second poll (completed)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-1', status: 'completed' }),
+				} as Response)
+				// 4. GET /api/sessions/sess-1/logs — fetch logs
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([{ message: 'Done' }]),
+				} as Response)
+
+			const handler = handlers.get('run_agent')!
+			const resultPromise = handler({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				poll_interval_seconds: 5,
+				timeout_seconds: 60,
+			})
+
+			// Advance through the two polling intervals
+			await vi.advanceTimersByTimeAsync(5000) // first poll → running
+			await vi.advanceTimersByTimeAsync(5000) // second poll → completed
+
+			const result = await resultPromise as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+
+			expect(parsed.session.status).toBe('completed')
+			expect(parsed.logs).toEqual([{ message: 'Done' }])
+
+			// Verify call sequence: create → poll → poll → logs
+			expect(fetchSpy).toHaveBeenCalledTimes(4)
+			expect(fetchSpy.mock.calls[0][0]).toBe('http://localhost:3000/api/sessions')
+			expect(fetchSpy.mock.calls[1][0]).toBe('http://localhost:3000/api/sessions/sess-1')
+			expect(fetchSpy.mock.calls[2][0]).toBe('http://localhost:3000/api/sessions/sess-1')
+			expect(fetchSpy.mock.calls[3][0]).toBe('http://localhost:3000/api/sessions/sess-1/logs?limit=500')
+
+			vi.useRealTimers()
+		})
+
+		it('stops polling when deadline is reached', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+				// 1. POST /api/sessions — create session
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-2', status: 'pending' }),
+				} as Response)
+				// All subsequent polls return 'running' (never terminal)
+				.mockResolvedValue({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-2', status: 'running' }),
+				} as Response)
+
+			const handler = handlers.get('run_agent')!
+			// Very short timeout (10s) with 5s poll interval = at most 2 polls before deadline
+			const resultPromise = handler({
+				actor_id: 'actor-1',
+				action_prompt: 'Long task',
+				poll_interval_seconds: 5,
+				timeout_seconds: 10,
+			})
+
+			// Advance past deadline
+			await vi.advanceTimersByTimeAsync(5000)  // first poll
+			await vi.advanceTimersByTimeAsync(5000)  // second poll
+			await vi.advanceTimersByTimeAsync(5000)  // past deadline
+
+			const result = await resultPromise as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+
+			// Session should still show 'running' since it never reached terminal
+			expect(parsed.session.status).toBe('running')
+			// Should have fetched logs even though it timed out
+			expect(parsed.logs).toBeDefined()
+
+			vi.useRealTimers()
+		})
+
+		it('uses default poll_interval and timeout when not specified', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-3', status: 'pending' }),
+				} as Response)
+				// Immediate completion on first poll
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-3', status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([]),
+				} as Response)
+
+			const handler = handlers.get('run_agent')!
+			const resultPromise = handler({
+				actor_id: 'actor-1',
+				action_prompt: 'Quick task',
+			})
+
+			// Default poll interval is 5s
+			await vi.advanceTimersByTimeAsync(5000)
+
+			const result = await resultPromise as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.session.status).toBe('completed')
+
+			vi.useRealTimers()
 		})
 	})
 

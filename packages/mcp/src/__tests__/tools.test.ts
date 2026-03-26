@@ -18,8 +18,8 @@ const ALL_TOOL_NAMES = [
 ]
 
 describe('tool definitions', () => {
-	it('exports all 39 tools', () => {
-		expect(Object.keys(tools)).toHaveLength(39)
+	it('exports all expected tools', () => {
+		expect(Object.keys(tools)).toHaveLength(ALL_TOOL_NAMES.length)
 	})
 
 	for (const name of ALL_TOOL_NAMES) {
