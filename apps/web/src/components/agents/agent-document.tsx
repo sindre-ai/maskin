@@ -21,6 +21,7 @@ import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
+import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
 import { Skills } from './skills'
 
@@ -130,6 +131,9 @@ export function AgentDocumentView({
 				)}
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
+
+			{/* Instruction Log */}
+			<InstructionLog agent={agent} workspaceId={workspaceId} />
 
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (
