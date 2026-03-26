@@ -52,6 +52,16 @@ describe('queryKeys', () => {
 		})
 	})
 
+	describe('relationships', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.relationships.all('ws-1')).toEqual(['relationships', 'ws-1'])
+		})
+
+		it('byObject includes objectId', () => {
+			expect(queryKeys.relationships.byObject('obj-1')).toEqual(['relationships', 'object', 'obj-1'])
+		})
+	})
+
 	describe('sessions', () => {
 		it('all includes workspaceId', () => {
 			expect(queryKeys.sessions.all('ws-1')).toEqual(['sessions', 'ws-1'])
@@ -70,11 +80,41 @@ describe('queryKeys', () => {
 				'sessions', 'ws-1', 'actor', 'a-1', 'running',
 			])
 		})
+
+		it('byActorAll includes workspaceId and actorId', () => {
+			expect(queryKeys.sessions.byActorAll('ws-1', 'a-1')).toEqual([
+				'sessions', 'ws-1', 'actor', 'a-1', 'all',
+			])
+		})
 	})
 
 	describe('triggers', () => {
 		it('all includes workspaceId', () => {
 			expect(queryKeys.triggers.all('ws-1')).toEqual(['triggers', 'ws-1'])
+		})
+
+		it('detail includes id', () => {
+			expect(queryKeys.triggers.detail('t-1')).toEqual(['triggers', 'detail', 't-1'])
+		})
+	})
+
+	describe('integrations', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.integrations.all('ws-1')).toEqual(['integrations', 'ws-1'])
+		})
+
+		it('providers returns static key', () => {
+			expect(queryKeys.integrations.providers()).toEqual(['integrations', 'providers'])
+		})
+	})
+
+	describe('skills', () => {
+		it('all includes actorId', () => {
+			expect(queryKeys.skills.all('a-1')).toEqual(['skills', 'a-1'])
+		})
+
+		it('detail includes actorId and skillName', () => {
+			expect(queryKeys.skills.detail('a-1', 'code-review')).toEqual(['skills', 'a-1', 'code-review'])
 		})
 	})
 

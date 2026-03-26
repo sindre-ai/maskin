@@ -17,6 +17,12 @@ export function createTestQueryClient() {
 	})
 }
 
+export function createTestWrapper() {
+	const queryClient = createTestQueryClient()
+	return ({ children }: { children: ReactNode }) =>
+		React.createElement(QueryClientProvider, { client: queryClient }, children)
+}
+
 export function TestWrapper({ children }: { children: ReactNode }) {
 	const queryClient = createTestQueryClient()
 	return React.createElement(QueryClientProvider, { client: queryClient }, children)
