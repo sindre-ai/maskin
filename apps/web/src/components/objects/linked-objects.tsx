@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -14,17 +15,17 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 
-interface LinkedSection {
-	title: string
-	relationships: RelationshipResponse[]
-	direction: 'source' | 'target'
-	/** Relationship type to use when adding a new link in this section */
-	addRelType?: string
-	/** When adding, is the current object the source or target? */
-	addDirection?: 'source' | 'target'
+interface ResolvedRelationship {
+	rel: RelationshipResponse
+	object: ObjectResponse
+}
+
+function resolveLinkedObjectId(rel: RelationshipResponse, currentId: string): string {
+	return rel.sourceId === currentId ? rel.targetId : rel.sourceId
 }
 
 export function LinkedObjectsView({
@@ -50,60 +51,155 @@ export function LinkedObjectsView({
 	onDeleteRelationship: (id: string) => void
 	onNavigate?: (workspaceId: string, objectId: string) => void
 }) {
+	const [activeFilter, setActiveFilter] = useState<string>('all')
+	const [showAddLink, setShowAddLink] = useState(false)
+
 	const objectMap = useMemo(() => new Map(allObjects.map((o) => [o.id, o])), [allObjects])
 
-	const sections: LinkedSection[] = [
-		{
-			title: 'Linked Insights',
-			relationships: asTarget.filter((r) => r.type === 'informs'),
-			direction: 'source',
-			addRelType: 'informs',
-			addDirection: 'target',
-		},
-		{
-			title: 'Tasks',
-			relationships: asSource.filter((r) => r.type === 'breaks_into'),
-			direction: 'target',
-			addRelType: 'breaks_into',
-			addDirection: 'source',
-		},
-		{
-			title: 'Related',
-			relationships: [
-				...asSource.filter((r) => !['breaks_into'].includes(r.type)),
-				...asTarget.filter((r) => !['informs'].includes(r.type)),
-			],
-			direction: 'target',
-		},
-	]
+	// Merge all relationships into a flat list with resolved objects
+	const allRelationships = useMemo(() => {
+		const allRels = [...asSource, ...asTarget]
+		const seen = new Set<string>()
+		const resolved: ResolvedRelationship[] = []
+
+		for (const rel of allRels) {
+			if (seen.has(rel.id)) continue
+			seen.add(rel.id)
+
+			const linkedId = resolveLinkedObjectId(rel, objectId)
+			const obj = objectMap.get(linkedId)
+			if (obj) {
+				resolved.push({ rel, object: obj })
+			}
+		}
+
+		return resolved
+	}, [asSource, asTarget, objectId, objectMap])
+
+	// Compute type counts for filter buttons
+	const typeCounts = useMemo(() => {
+		const counts: Record<string, number> = {}
+		for (const { object } of allRelationships) {
+			counts[object.type] = (counts[object.type] ?? 0) + 1
+		}
+		return counts
+	}, [allRelationships])
+
+	const uniqueTypes = Object.keys(typeCounts)
+
+	// Fall back to 'all' when the selected type no longer has any relationships
+	const effectiveFilter =
+		activeFilter !== 'all' && !typeCounts[activeFilter] ? 'all' : activeFilter
+
+	// Filter by active type
+	const filteredRelationships =
+		effectiveFilter === 'all'
+			? allRelationships
+			: allRelationships.filter((r) => r.object.type === effectiveFilter)
+
+	const totalCount = allRelationships.length
+	const existingRelationships = [...asSource, ...asTarget]
 
 	return (
-		<div className="space-y-4">
-			{sections.map((section) => (
-				<LinkedSectionView
-					key={section.title}
-					section={section}
-					objectMap={objectMap}
+		<div>
+			{/* Header */}
+			<div className="flex items-center gap-2 mb-2">
+				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					Related ({totalCount})
+				</h3>
+				<div className="flex-1" />
+				<Button variant="ghost" size="sm" onClick={() => setShowAddLink(!showAddLink)}>
+					+ link
+				</Button>
+			</div>
+
+			{/* Filter buttons — only when 2+ types */}
+			{uniqueTypes.length >= 2 && (
+				<div className="flex items-center gap-1 mb-3">
+					<Button
+						variant={effectiveFilter === 'all' ? 'secondary' : 'ghost'}
+						size="sm"
+						onClick={() => setActiveFilter('all')}
+					>
+						All {totalCount}
+					</Button>
+					{uniqueTypes.map((type) => (
+						<Button
+							key={type}
+							variant={effectiveFilter === type ? 'secondary' : 'ghost'}
+							size="sm"
+							onClick={() => setActiveFilter(type)}
+						>
+							{type}s {typeCounts[type]}
+						</Button>
+					))}
+				</div>
+			)}
+
+			{/* Add link form */}
+			{showAddLink && (
+				<AddLinkForm
 					objectId={objectId}
 					objectType={objectType}
-					workspaceId={workspaceId}
 					allObjects={allObjects}
 					relationshipTypes={relationshipTypes}
+					existingRelationships={existingRelationships}
 					onCreateRelationship={onCreateRelationship}
-					onDeleteRelationship={onDeleteRelationship}
-					onNavigate={onNavigate}
+					onClose={() => setShowAddLink(false)}
 				/>
-			))}
+			)}
 
-			{/* Generic "Add link" for arbitrary relationship types */}
-			<AddLinkForm
-				objectId={objectId}
-				objectType={objectType}
-				allObjects={allObjects}
-				relationshipTypes={relationshipTypes}
-				existingRelationships={[...asSource, ...asTarget]}
-				onCreateRelationship={onCreateRelationship}
-			/>
+			{/* Related rows */}
+			{filteredRelationships.length > 0 && (
+				<div className="space-y-1">
+					{filteredRelationships.map(({ rel, object: obj }) => (
+						<div key={rel.id} className="flex items-center gap-2 group">
+							{onNavigate ? (
+								<button
+									type="button"
+									onClick={() => onNavigate(workspaceId, obj.id)}
+									className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 text-left"
+								>
+									<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
+									<Badge variant="outline" className="text-[10px] font-normal">
+										{rel.type.replace(/_/g, ' ')}
+									</Badge>
+									<StatusBadge status={obj.status} />
+									<TypeBadge type={obj.type} />
+								</button>
+							) : (
+								<Link
+									to="/$workspaceId/objects/$objectId"
+									params={{ workspaceId, objectId: obj.id }}
+									className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50"
+								>
+									<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
+									<Badge variant="outline" className="text-[10px] font-normal">
+										{rel.type.replace(/_/g, ' ')}
+									</Badge>
+									<StatusBadge status={obj.status} />
+									<TypeBadge type={obj.type} />
+								</Link>
+							)}
+							{obj.activeSessionId && (
+								<AgentWorkingBadge
+									sessionId={obj.activeSessionId}
+									workspaceId={workspaceId}
+								/>
+							)}
+							<Button
+								variant="ghost"
+								size="icon"
+								className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
+								onClick={() => onDeleteRelationship(rel.id)}
+								title="Remove link"
+							>
+								<X className="h-3 w-3" />
+							</Button>
+						</div>
+					))}
+				</div>
+			)}
 		</div>
 	)
 }
@@ -148,133 +244,6 @@ export function LinkedObjects({
 	)
 }
 
-function LinkedSectionView({
-	section,
-	objectMap,
-	objectId,
-	objectType,
-	workspaceId,
-	allObjects,
-	relationshipTypes,
-	onCreateRelationship,
-	onDeleteRelationship,
-	onNavigate,
-}: {
-	section: LinkedSection
-	objectMap: Map<string, ObjectResponse>
-	objectId: string
-	objectType: string
-	workspaceId: string
-	allObjects: ObjectResponse[]
-	relationshipTypes: string[]
-	onCreateRelationship: (data: CreateRelationshipInput) => void
-	onDeleteRelationship: (id: string) => void
-	onNavigate?: (workspaceId: string, objectId: string) => void
-}) {
-	const [collapsed, setCollapsed] = useState(false)
-	const [showAdd, setShowAdd] = useState(false)
-
-	const handleAdd = (targetObjectId: string) => {
-		if (!section.addRelType || !section.addDirection) return
-		const isSource = section.addDirection === 'source'
-		const targetObj = objectMap.get(targetObjectId)
-		onCreateRelationship({
-			source_type: isSource ? objectType : (targetObj?.type ?? objectType),
-			source_id: isSource ? objectId : targetObjectId,
-			target_type: isSource ? (targetObj?.type ?? objectType) : objectType,
-			target_id: isSource ? targetObjectId : objectId,
-			type: section.addRelType,
-		})
-		setShowAdd(false)
-	}
-
-	// Objects already linked in this section
-	const linkedIds = new Set(
-		section.relationships.map((r) => {
-			const id = section.direction === 'source' ? r.sourceId : r.targetId
-			return id === objectId ? (section.direction === 'source' ? r.targetId : r.sourceId) : id
-		}),
-	)
-
-	return (
-		<div>
-			<div className="flex items-center gap-2 mb-2">
-				<button
-					type="button"
-					className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-muted-foreground"
-					onClick={() => setCollapsed(!collapsed)}
-				>
-					<span>{collapsed ? '▸' : '▾'}</span>
-					{section.title}
-					<span className="text-muted-foreground">({section.relationships.length})</span>
-				</button>
-				{section.addRelType && (
-					<Button variant="ghost" size="sm" onClick={() => setShowAdd(!showAdd)}>
-						+ link
-					</Button>
-				)}
-			</div>
-
-			{showAdd && (
-				<ObjectPicker
-					allObjects={allObjects}
-					excludeIds={new Set([objectId, ...linkedIds])}
-					onSelect={handleAdd}
-					onCancel={() => setShowAdd(false)}
-				/>
-			)}
-
-			{!collapsed && section.relationships.length > 0 && (
-				<div className="space-y-1 pl-4">
-					{section.relationships.map((rel) => {
-						const linkedId = section.direction === 'source' ? rel.sourceId : rel.targetId
-						const resolvedId =
-							linkedId === objectId
-								? section.direction === 'source'
-									? rel.targetId
-									: rel.sourceId
-								: linkedId
-						const obj = objectMap.get(resolvedId)
-						if (!obj) return null
-						return (
-							<div key={rel.id} className="flex items-center gap-2 group">
-								{onNavigate ? (
-									<button
-										type="button"
-										onClick={() => onNavigate(workspaceId, resolvedId)}
-										className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 text-left"
-									>
-										<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
-										<StatusBadge status={obj.status} />
-									</button>
-								) : (
-									<Link
-										to="/$workspaceId/objects/$objectId"
-										params={{ workspaceId, objectId: resolvedId }}
-										className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50"
-									>
-										<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
-										<StatusBadge status={obj.status} />
-									</Link>
-								)}
-								<Button
-									variant="ghost"
-									size="icon"
-									className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
-									onClick={() => onDeleteRelationship(rel.id)}
-									title="Remove link"
-								>
-									<X className="h-3 w-3" />
-								</Button>
-							</div>
-						)
-					})}
-				</div>
-			)}
-		</div>
-	)
-}
-
 function ObjectPicker({
 	allObjects,
 	excludeIds,
@@ -299,7 +268,7 @@ function ObjectPicker({
 		.slice(0, 10)
 
 	return (
-		<div className="mb-2 pl-4 rounded border border-border bg-card p-2">
+		<div className="mb-2 rounded border border-border bg-card p-2">
 			<input
 				type="text"
 				value={search}
@@ -337,6 +306,7 @@ function AddLinkForm({
 	relationshipTypes,
 	existingRelationships,
 	onCreateRelationship,
+	onClose,
 }: {
 	objectId: string
 	objectType: string
@@ -344,8 +314,8 @@ function AddLinkForm({
 	relationshipTypes: string[]
 	existingRelationships: RelationshipResponse[]
 	onCreateRelationship: (data: CreateRelationshipInput) => void
+	onClose: () => void
 }) {
-	const [open, setOpen] = useState(false)
 	const [relType, setRelType] = useState(relationshipTypes[0] ?? 'relates_to')
 	const [search, setSearch] = useState('')
 
@@ -370,20 +340,12 @@ function AddLinkForm({
 			target_id: targetId,
 			type: relType,
 		})
-		setOpen(false)
+		onClose()
 		setSearch('')
 	}
 
-	if (!open) {
-		return (
-			<Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
-				+ Add link
-			</Button>
-		)
-	}
-
 	return (
-		<div className="rounded border border-border bg-card p-3 space-y-2">
+		<div className="rounded border border-border bg-card p-3 space-y-2 mb-3">
 			<div className="flex items-center gap-2">
 				<Label htmlFor="rel-type-select">Type:</Label>
 				<Select value={relType} onValueChange={setRelType}>
@@ -423,7 +385,7 @@ function AddLinkForm({
 					<p className="text-xs text-muted-foreground py-1 px-2">No objects found</p>
 				)}
 			</div>
-			<Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+			<Button variant="ghost" size="sm" onClick={onClose}>
 				Cancel
 			</Button>
 		</div>
