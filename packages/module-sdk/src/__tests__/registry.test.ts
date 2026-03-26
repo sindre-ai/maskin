@@ -4,6 +4,7 @@ import {
 	clearModules,
 	clearWebModules,
 	getAllModules,
+	getAllValidTypes,
 	getAllWebModules,
 	getDefaultStatusForType,
 	getEnabledModuleIds,
@@ -122,6 +123,46 @@ describe('ModuleRegistry class', () => {
 		expect(registry.getValidObjectTypes(['nonexistent'])).toEqual([])
 	})
 
+	it('getAllValidTypes merges module types with settings-defined types', () => {
+		const registry = new ModuleRegistry()
+		registry.register(mockModule)
+		const result = registry.getAllValidTypes(['work'], {
+			statuses: { lead: ['new', 'contacted'], deal: ['open', 'closed'] },
+		})
+		expect(result).toContain('insight')
+		expect(result).toContain('bet')
+		expect(result).toContain('task')
+		expect(result).toContain('lead')
+		expect(result).toContain('deal')
+		expect(result).toHaveLength(5)
+	})
+
+	it('getAllValidTypes deduplicates types from modules and settings', () => {
+		const registry = new ModuleRegistry()
+		registry.register(mockModule)
+		const result = registry.getAllValidTypes(['work'], {
+			statuses: { insight: ['custom_status'], lead: ['new'] },
+		})
+		expect(result.filter((t) => t === 'insight')).toHaveLength(1)
+		expect(result).toHaveLength(4) // insight, bet, task, lead
+	})
+
+	it('getAllValidTypes works with undefined settings', () => {
+		const registry = new ModuleRegistry()
+		registry.register(mockModule)
+		const result = registry.getAllValidTypes(['work'])
+		expect(result).toEqual(['insight', 'bet', 'task'])
+	})
+
+	it('getAllValidTypes returns only settings types when no modules enabled', () => {
+		const registry = new ModuleRegistry()
+		registry.register(mockModule)
+		const result = registry.getAllValidTypes([], {
+			statuses: { lead: ['new'] },
+		})
+		expect(result).toEqual(['lead'])
+	})
+
 	it('returns default status for known type', () => {
 		const registry = new ModuleRegistry()
 		registry.register(mockModule)
@@ -171,6 +212,13 @@ describe('global convenience functions', () => {
 		registerModule(mockModule)
 		registerModule(mockModule2)
 		expect(getValidObjectTypes(['work'])).toEqual(['insight', 'bet', 'task'])
+	})
+
+	it('getAllValidTypes merges module and settings types', () => {
+		registerModule(mockModule)
+		const result = getAllValidTypes(['work'], { statuses: { lead: ['new'] } })
+		expect(result).toContain('insight')
+		expect(result).toContain('lead')
 	})
 
 	it('getDefaultStatusForType delegates to registry', () => {

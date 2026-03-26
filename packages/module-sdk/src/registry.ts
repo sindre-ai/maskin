@@ -48,6 +48,16 @@ export class ModuleRegistry {
 			.flatMap((m) => m.objectTypes.map((t) => t.type))
 	}
 
+	/** Get all valid object types: module-provided types + custom types defined in workspace settings */
+	getAllValidTypes(
+		enabledModuleIds: string[],
+		settings?: { statuses?: Record<string, string[]> },
+	): string[] {
+		const moduleTypes = this.getValidObjectTypes(enabledModuleIds)
+		const settingsTypes = settings?.statuses ? Object.keys(settings.statuses) : []
+		return [...new Set([...moduleTypes, ...settingsTypes])]
+	}
+
 	/** Get default settings to merge when enabling a module */
 	getModuleDefaultSettings(moduleId: string): ModuleDefinition['defaultSettings'] {
 		return this.modules.get(moduleId)?.defaultSettings
@@ -95,6 +105,13 @@ export function getAllObjectTypes() {
 
 export function getValidObjectTypes(enabledModuleIds: string[]): string[] {
 	return defaultRegistry.getValidObjectTypes(enabledModuleIds)
+}
+
+export function getAllValidTypes(
+	enabledModuleIds: string[],
+	settings?: { statuses?: Record<string, string[]> },
+): string[] {
+	return defaultRegistry.getAllValidTypes(enabledModuleIds, settings)
 }
 
 export function getModuleDefaultSettings(moduleId: string) {
