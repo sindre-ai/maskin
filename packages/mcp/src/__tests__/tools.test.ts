@@ -326,13 +326,10 @@ describe('create_trigger schema', () => {
 describe('add_workspace_member schema', () => {
 	const schema = tools.add_workspace_member.inputSchema
 
-	it('requires workspace_id and actor_id', () => {
+	it('requires workspace_id and actor_id, defaults role to member', () => {
 		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2 })
-		expect(result.role).toBe('member')
-	})
-
-	it('defaults role to member', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2 })
+		expect(result.workspace_id).toBe(uuid)
+		expect(result.actor_id).toBe(uuid2)
 		expect(result.role).toBe('member')
 	})
 

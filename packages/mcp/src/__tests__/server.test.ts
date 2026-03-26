@@ -108,6 +108,7 @@ describe('tool handlers', () => {
 	})
 
 	afterEach(() => {
+		vi.useRealTimers()
 		vi.restoreAllMocks()
 	})
 
@@ -358,8 +359,6 @@ describe('tool handlers', () => {
 			expect(fetchSpy.mock.calls[1][0]).toBe('http://localhost:3000/api/sessions/sess-1')
 			expect(fetchSpy.mock.calls[2][0]).toBe('http://localhost:3000/api/sessions/sess-1')
 			expect(fetchSpy.mock.calls[3][0]).toBe('http://localhost:3000/api/sessions/sess-1/logs?limit=500')
-
-			vi.useRealTimers()
 		})
 
 		it('stops polling when deadline is reached', async () => {
@@ -397,8 +396,6 @@ describe('tool handlers', () => {
 			expect(parsed.session.status).toBe('running')
 			// Should have fetched logs even though it timed out
 			expect(parsed.logs).toBeDefined()
-
-			vi.useRealTimers()
 		})
 
 		it('uses default poll_interval and timeout when not specified', async () => {
@@ -430,8 +427,6 @@ describe('tool handlers', () => {
 			const result = await resultPromise as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.session.status).toBe('completed')
-
-			vi.useRealTimers()
 		})
 	})
 
