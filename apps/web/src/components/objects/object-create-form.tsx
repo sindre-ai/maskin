@@ -81,28 +81,31 @@ export function ObjectCreateForm({
 				</ButtonGroup>
 			</div>
 
-			{/* Properties — available once object exists */}
-			{object && (
-				<div className="mb-6">
+			{/* Properties */}
+			<div className="mb-6 w-fit">
+				{object ? (
 					<MetadataProperties object={object} />
-				</div>
-			)}
+				) : (
+					<Button variant="ghost" size="sm" disabled>
+						+ Add property
+					</Button>
+				)}
+			</div>
 
 			{/* Content editor */}
 			<div className="mb-8">
-				<MarkdownContent
-					content={object?.content ?? ''}
-					onChange={handleContentChange}
-					editable={!!object}
-				/>
+				<MarkdownContent content={object?.content ?? ''} onChange={handleContentChange} editable />
 			</div>
 
-			{/* Linked objects — available once object exists */}
-			{object && (
-				<div className="border-t border-border pt-6 mb-8">
-					<LinkedObjects objectId={objectId} objectType={object.type} asSource={[]} asTarget={[]} />
-				</div>
-			)}
+			{/* Linked objects */}
+			<div className="border-t border-border pt-6 mb-8">
+				<LinkedObjects
+					objectId={objectId}
+					objectType={object?.type ?? type}
+					asSource={[]}
+					asTarget={[]}
+				/>
+			</div>
 
 			{isPending && <p className="text-xs text-muted-foreground">Creating...</p>}
 

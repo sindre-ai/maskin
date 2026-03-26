@@ -233,6 +233,8 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
 		},
+		create: (workspaceId: string, data: CreateCommentInput) =>
+			request<EventResponse>('/events', { method: 'POST', body: data, workspaceId }),
 	},
 
 	claudeOauth: {
@@ -531,4 +533,11 @@ export interface EventResponse {
 	entityId: string
 	data: Record<string, unknown> | null
 	createdAt: string | null
+}
+
+export interface CreateCommentInput {
+	entity_id: string
+	content: string
+	mentions?: string[]
+	parent_event_id?: number
 }
