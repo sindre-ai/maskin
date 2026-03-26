@@ -99,10 +99,7 @@ describe('useSession', () => {
 
 describe('useSessionLatestLog', () => {
 	it('returns the last log entry', async () => {
-		const logs = [
-			buildLog({ id: 1, content: 'first' }),
-			buildLog({ id: 2, content: 'latest' }),
-		]
+		const logs = [buildLog({ id: 1, content: 'first' }), buildLog({ id: 2, content: 'latest' })]
 		vi.mocked(api.sessions.logs).mockResolvedValue(logs)
 
 		const { result } = renderHook(() => useSessionLatestLog('session-1', workspaceId), {
@@ -199,10 +196,9 @@ describe('useActiveSessionsForActor', () => {
 		const mockSessions = [buildSession({ id: 'session-1', status: 'running' })]
 		vi.mocked(api.sessions.list).mockResolvedValue(mockSessions)
 
-		const { result } = renderHook(
-			() => useActiveSessionsForActor('actor-1', workspaceId),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useActiveSessionsForActor('actor-1', workspaceId), {
+			wrapper: TestWrapper,
+		})
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(mockSessions)
@@ -213,10 +209,9 @@ describe('useActiveSessionsForActor', () => {
 	})
 
 	it('is not enabled when actorId is empty', async () => {
-		const { result } = renderHook(
-			() => useActiveSessionsForActor('', workspaceId),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useActiveSessionsForActor('', workspaceId), {
+			wrapper: TestWrapper,
+		})
 
 		expect(result.current.isFetching).toBe(false)
 		expect(api.sessions.list).not.toHaveBeenCalled()
@@ -225,10 +220,9 @@ describe('useActiveSessionsForActor', () => {
 	it('exposes error when API rejects', async () => {
 		vi.mocked(api.sessions.list).mockRejectedValue(new Error('Network error'))
 
-		const { result } = renderHook(
-			() => useActiveSessionsForActor('actor-1', workspaceId),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useActiveSessionsForActor('actor-1', workspaceId), {
+			wrapper: TestWrapper,
+		})
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Network error')
@@ -243,10 +237,9 @@ describe('useSessionErrorLog', () => {
 		]
 		vi.mocked(api.sessions.logs).mockResolvedValue(logs)
 
-		const { result } = renderHook(
-			() => useSessionErrorLog('session-1', workspaceId, true),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useSessionErrorLog('session-1', workspaceId, true), {
+			wrapper: TestWrapper,
+		})
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toBe('Error line 1\nError line 2')
@@ -259,30 +252,27 @@ describe('useSessionErrorLog', () => {
 	it('returns null when no stderr logs', async () => {
 		vi.mocked(api.sessions.logs).mockResolvedValue([])
 
-		const { result } = renderHook(
-			() => useSessionErrorLog('session-1', workspaceId, true),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useSessionErrorLog('session-1', workspaceId, true), {
+			wrapper: TestWrapper,
+		})
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toBeNull()
 	})
 
 	it('is not enabled when sessionId is null', async () => {
-		const { result } = renderHook(
-			() => useSessionErrorLog(null, workspaceId, true),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useSessionErrorLog(null, workspaceId, true), {
+			wrapper: TestWrapper,
+		})
 
 		expect(result.current.isFetching).toBe(false)
 		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})
 
 	it('is not enabled when enabled flag is false', async () => {
-		const { result } = renderHook(
-			() => useSessionErrorLog('session-1', workspaceId, false),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useSessionErrorLog('session-1', workspaceId, false), {
+			wrapper: TestWrapper,
+		})
 
 		expect(result.current.isFetching).toBe(false)
 		expect(api.sessions.logs).not.toHaveBeenCalled()
