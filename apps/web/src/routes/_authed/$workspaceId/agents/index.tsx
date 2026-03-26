@@ -1,33 +1,23 @@
 import { AgentCard } from '@/components/agents/agent-card'
-import { CreateAgentDialog } from '@/components/agents/create-agent-dialog'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useEvents } from '@/hooks/use-events'
+import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useSearch } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 	component: AgentsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
-	validateSearch: (search: Record<string, unknown>) => ({
-		create: search.create === 'true' || search.create === true,
-	}),
 })
 
 function AgentsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: events } = useEvents(workspaceId, { limit: '100' })
-	const { create } = useSearch({ from: '/_authed/$workspaceId/agents/' })
-	const [showCreate, setShowCreate] = useState(false)
-
-	useEffect(() => {
-		if (create) setShowCreate(true)
-	}, [create])
 
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
 
@@ -67,17 +57,12 @@ function AgentsPage() {
 					{agents.map((agent) => (
 						<AgentCard
 							key={agent.id}
-							agent={agent as import('@/lib/api').ActorResponse}
+							agent={agent as ActorResponse}
 							lastEvent={lastEventByActor.get(agent.id)}
 						/>
 					))}
 				</div>
 			)}
-			<CreateAgentDialog
-				open={showCreate}
-				onClose={() => setShowCreate(false)}
-				workspaceId={workspaceId}
-			/>
 		</div>
 	)
 }

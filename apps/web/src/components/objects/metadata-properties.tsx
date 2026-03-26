@@ -13,6 +13,7 @@ import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SafeJsonValue, SafeMetadata } from '@ai-native/shared'
+import { X } from 'lucide-react'
 import { useState } from 'react'
 
 interface FieldDefinition {
@@ -98,18 +99,14 @@ export function MetadataPropertiesView({
 
 	if (metaEntries.length === 0 && unsetFields.length === 0 && !showAddMenu) {
 		return (
-			<button
-				type="button"
-				className="text-[11px] text-muted-foreground hover:text-muted-foreground"
-				onClick={() => setShowAddMenu(true)}
-			>
+			<Button variant="ghost" size="sm" onClick={() => setShowAddMenu(true)}>
 				+ Add property
-			</button>
+			</Button>
 		)
 	}
 
 	return (
-		<div className="space-y-1">
+		<div className="space-y-1 w-fit">
 			{metaEntries.map(([key, value]) => {
 				const fieldDef = fieldDefs.find((f) => f.name === key)
 				return (
@@ -123,19 +120,6 @@ export function MetadataPropertiesView({
 					/>
 				)
 			})}
-
-			{/* Unset defined fields shown as empty */}
-			{unsetFields.map((field) => (
-				<button
-					type="button"
-					key={field.name}
-					className="flex items-center gap-2 py-1 px-2 rounded hover:bg-muted/50 cursor-pointer group w-full text-left"
-					onClick={() => handleAddField(field)}
-				>
-					<span className="w-28 shrink-0 text-xs text-muted-foreground truncate">{field.name}</span>
-					<span className="text-xs text-muted-foreground italic">Empty</span>
-				</button>
-			))}
 
 			{/* Add property button / menu */}
 			{showAddMenu ? (
@@ -154,13 +138,9 @@ export function MetadataPropertiesView({
 					onSaveField={onCreateField ? handleSaveField : undefined}
 				/>
 			) : (
-				<button
-					type="button"
-					className="text-[11px] text-muted-foreground hover:text-muted-foreground mt-1"
-					onClick={() => setShowAddMenu(true)}
-				>
+				<Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowAddMenu(true)}>
 					+ Add property
-				</button>
+				</Button>
 			)}
 		</div>
 	)
@@ -244,14 +224,15 @@ function PropertyRow({
 					</button>
 				)}
 			</div>
-			<button
-				type="button"
-				className="text-[11px] text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+			<Button
+				variant="ghost"
+				size="icon"
+				className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
 				onClick={onRemove}
 				title="Remove property"
 			>
-				×
-			</button>
+				<X className="h-3 w-3" />
+			</Button>
 		</div>
 	)
 }
@@ -420,41 +401,33 @@ function AddPropertyMenu({
 	}
 
 	return (
-		<div className="rounded border border-border bg-card p-2 text-xs space-y-1">
+		<div className="rounded border border-border bg-card p-2 text-xs space-y-1 w-fit">
 			{unsetFields.length > 0 && (
 				<>
 					<p className="text-muted-foreground px-1 text-[10px] uppercase tracking-wider">
 						Defined fields
 					</p>
 					{unsetFields.map((field) => (
-						<button
+						<Button
 							key={field.name}
-							type="button"
-							className="flex items-center gap-2 w-full text-left rounded px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+							variant="ghost"
+							className="justify-start"
 							onClick={() => onSelectField(field)}
 						>
 							<FieldTypeIcon type={field.type} />
 							<span>{field.name}</span>
 							<span className="text-muted-foreground text-[10px]">({field.type})</span>
-						</button>
+						</Button>
 					))}
 					<Separator className="my-1" />
 				</>
 			)}
-			<button
-				type="button"
-				className="flex items-center gap-2 w-full text-left rounded px-2 py-1 text-primary hover:bg-muted"
-				onClick={onCreateNew}
-			>
+			<Button variant="ghost" className="justify-start text-primary" onClick={onCreateNew}>
 				+ Create new property
-			</button>
-			<button
-				type="button"
-				className="text-muted-foreground hover:text-muted-foreground px-2 py-0.5"
-				onClick={onClose}
-			>
+			</Button>
+			<Button variant="ghost" size="sm" onClick={onClose}>
 				Cancel
-			</button>
+			</Button>
 		</div>
 	)
 }
@@ -525,10 +498,8 @@ function CreateFieldForm({
 				{(['text', 'number', 'date', 'boolean', 'enum'] as const).map((t) => (
 					<Button
 						key={t}
-						type="button"
 						variant={type === t ? 'default' : 'secondary'}
 						size="sm"
-						className="h-6 text-[11px] px-2"
 						onClick={() => setType(t)}
 					>
 						{t}
@@ -545,22 +516,10 @@ function CreateFieldForm({
 				/>
 			)}
 			<div className="flex justify-end gap-2">
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					className="h-6 text-[11px]"
-					onClick={onCancel}
-				>
+				<Button variant="ghost" size="sm" onClick={onCancel}>
 					Cancel
 				</Button>
-				<Button
-					type="button"
-					size="sm"
-					className="h-6 text-[11px]"
-					disabled={!name.trim() || isPending}
-					onClick={handleCreate}
-				>
+				<Button size="sm" disabled={!name.trim() || isPending} onClick={handleCreate}>
 					{isPending ? 'Creating...' : 'Create'}
 				</Button>
 			</div>

@@ -1,5 +1,5 @@
 import type { Database } from '@ai-native/db'
-import { events, relationships } from '@ai-native/db/schema'
+import { events, objects, relationships } from '@ai-native/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
@@ -11,6 +11,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -156,6 +157,16 @@ app.openapi(deleteRelationshipRoute, (async (c) => {
 	const [existing] = await db.select().from(relationships).where(eq(relationships.id, id)).limit(1)
 
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Relationship not found'), 404)
+
+	// Verify actor is a member of the workspace that owns the source object
+	const [sourceObject] = await db
+		.select({ workspaceId: objects.workspaceId })
+		.from(objects)
+		.where(eq(objects.id, existing.sourceId))
+		.limit(1)
+	if (!sourceObject || !(await isWorkspaceMember(db, actorId, sourceObject.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Relationship not found'), 404)
+	}
 
 	await db.delete(relationships).where(eq(relationships.id, id))
 

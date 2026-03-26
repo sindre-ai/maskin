@@ -5,6 +5,7 @@ import { createGraphSchema } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	objectResponseSchema,
@@ -266,8 +267,8 @@ app.openapi(createGraphRoute, async (c) => {
 			return { nodes: createdNodes, edges: createdEdges }
 		})
 	} catch (err) {
-		const message = err instanceof Error ? err.message : 'Transaction failed'
-		return c.json(createApiError('INTERNAL_ERROR', message), 500)
+		logger.error('Graph transaction failed', { error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create graph'), 500)
 	}
 
 	const response = {

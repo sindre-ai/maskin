@@ -190,9 +190,14 @@ app.post('/mcp', async (c) => {
 	const nodeRes = (c.env as Record<string, unknown>).outgoing as import('node:http').ServerResponse
 	const nodeReq = (c.env as Record<string, unknown>).incoming as import('node:http').IncomingMessage
 
-	const body = await c.req.json()
+	let body: unknown
+	try {
+		body = await c.req.json()
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
+	}
 	const method =
-		body?.method ??
+		(body as Record<string, unknown>)?.method ??
 		(Array.isArray(body) ? body.map((b: { method?: string }) => b.method) : 'unknown')
 	console.log(`[MCP] POST /mcp — method: ${JSON.stringify(method)}`)
 	await mcpServer.connect(transport)
@@ -203,6 +208,15 @@ app.post('/mcp', async (c) => {
 	return new Response(null, {
 		headers: { 'x-hono-already-sent': '1' },
 	})
+})
+
+// Reject GET/DELETE on /mcp — server doesn't support server-initiated SSE streams
+app.get('/mcp', (c) => {
+	return c.text('Method Not Allowed', 405)
+})
+
+app.delete('/mcp', (c) => {
+	return c.text('Method Not Allowed', 405)
 })
 
 // Auto-generated OpenAPI spec from route definitions
@@ -240,8 +254,12 @@ if (fs.existsSync(staticDir)) {
 	)
 	// SPA fallback: serve index.html for non-API, non-file routes
 	app.get('*', (c) => {
-		const html = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8')
-		return c.html(html)
+		try {
+			const html = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf-8')
+			return c.html(html)
+		} catch {
+			return c.json(createApiError('NOT_FOUND', 'Page not found'), 404)
+		}
 	})
 }
 

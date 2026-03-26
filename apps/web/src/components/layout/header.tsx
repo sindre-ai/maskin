@@ -72,13 +72,19 @@ const createItems: CreateItem[] = [
 		label: 'Object',
 		icon: Layers,
 		navigate: (nav, workspaceId) =>
-			nav({ to: '/$workspaceId/objects', params: { workspaceId }, search: { create: true } }),
+			nav({
+				to: '/$workspaceId/objects/$objectId',
+				params: { workspaceId, objectId: crypto.randomUUID() },
+			}),
 	},
 	{
 		label: 'Agent',
 		icon: Bot,
 		navigate: (nav, workspaceId) =>
-			nav({ to: '/$workspaceId/agents', params: { workspaceId }, search: { create: true } }),
+			nav({
+				to: '/$workspaceId/agents/$agentId',
+				params: { workspaceId, agentId: crypto.randomUUID() },
+			}),
 	},
 	{
 		label: 'Trigger',
@@ -140,7 +146,7 @@ export function Header() {
 						<Button
 							variant="ghost"
 							size="icon"
-							className="-ml-1 h-7 w-7"
+							className="-ml-1"
 							onClick={() => router.history.back()}
 						>
 							<ArrowLeft />
@@ -177,7 +183,7 @@ export function Header() {
 					{actions}
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
-							<Button variant="ghost" size="icon" className="h-7 w-7">
+							<Button variant="ghost" size="icon">
 								<Plus className="h-4 w-4" />
 								<span className="sr-only">Create new</span>
 							</Button>

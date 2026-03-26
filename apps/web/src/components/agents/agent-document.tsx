@@ -1,4 +1,3 @@
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -8,13 +7,16 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useRegenerateApiKey, useUpdateActor } from '@/hooks/use-actors'
+import { useUpdateActor } from '@/hooks/use-actors'
+import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
-import type { ActorResponse, EventResponse } from '@/lib/api'
+import { useActiveSessionsForActor, useSessionLatestLog } from '@/hooks/use-sessions'
+import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Copy, KeyRound } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Check } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
@@ -24,38 +26,32 @@ import { Skills } from './skills'
 
 interface AgentDocumentViewProps {
 	agent: ActorResponse
+	workspaceId: string
 	events?: EventResponse[]
+	activeSessions?: SessionResponse[]
 	onUpdateName: (name: string) => void
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
 	onUpdateTools: (tools: Record<string, unknown>) => void
 	onUpdateMemory: (memory: Record<string, unknown>) => void
-	onRegenerateApiKey: () => void
-	regeneratedApiKey?: string | null
-	isRegenerating?: boolean
+	showSaved?: boolean
 }
 
 export function AgentDocumentView({
 	agent,
+	workspaceId,
 	events,
+	activeSessions,
 	onUpdateName,
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
 	onUpdateLlmConfig,
 	onUpdateTools,
 	onUpdateMemory,
-	onRegenerateApiKey,
-	regeneratedApiKey,
-	isRegenerating = false,
+	showSaved = false,
 }: AgentDocumentViewProps) {
-	const nameInputRef = useRef<HTMLInputElement>(null)
-	const [editingName, setEditingName] = useState(false)
 	const [nameDraft, setNameDraft] = useState(agent.name)
-
-	useEffect(() => {
-		if (editingName) nameInputRef.current?.focus()
-	}, [editingName])
 	const [systemPromptDraft, setSystemPromptDraft] = useState(agent.systemPrompt ?? '')
 	const [systemPromptDirty, setSystemPromptDirty] = useState(false)
 	const [modelDraft, setModelDraft] = useState(
@@ -66,16 +62,10 @@ export function AgentDocumentView({
 	)
 	const [memoryDirty, setMemoryDirty] = useState(false)
 	const [memoryError, setMemoryError] = useState<string | null>(null)
-	const [copied, setCopied] = useState(false)
-	const [confirmRegenerate, setConfirmRegenerate] = useState(false)
 
-	const isRecentlyActive =
-		events?.length && events[0].createdAt
-			? Date.now() - new Date(events[0].createdAt).getTime() < 5 * 60 * 1000
-			: false
+	const isActive = (activeSessions?.length ?? 0) > 0
 
 	const handleNameBlur = useCallback(() => {
-		setEditingName(false)
 		if (nameDraft.trim() && nameDraft !== agent.name) {
 			onUpdateName(nameDraft.trim())
 		}
@@ -106,54 +96,51 @@ export function AgentDocumentView({
 		}
 	}, [memoryDraft, onUpdateMemory])
 
-	const handleCopyApiKey = useCallback(async () => {
-		if (regeneratedApiKey) {
-			await navigator.clipboard.writeText(regeneratedApiKey)
-			setCopied(true)
-			setTimeout(() => setCopied(false), 2000)
-		}
-	}, [regeneratedApiKey])
-
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Name */}
-			{editingName ? (
-				<input
-					ref={nameInputRef}
+			<div className="flex items-center gap-2">
+				<Input
 					type="text"
 					value={nameDraft}
 					onChange={(e) => setNameDraft(e.target.value)}
 					onBlur={handleNameBlur}
-					onKeyDown={(e) => e.key === 'Enter' && handleNameBlur()}
-					className="w-full text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					placeholder="Agent name"
+					className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 				/>
-			) : (
-				<button
-					type="button"
-					className="w-full text-left text-2xl font-semibold tracking-tight text-foreground mb-2 cursor-text bg-transparent border-none outline-none p-0"
-					onClick={() => {
-						setNameDraft(agent.name)
-						setEditingName(true)
-					}}
-				>
-					{agent.name}
-				</button>
-			)}
+				{showSaved && (
+					<span className="flex items-center gap-1 text-xs text-muted-foreground">
+						<Check size={14} /> Saved
+					</span>
+				)}
+			</div>
 
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type="agent" />
 				<span className="flex items-center gap-1.5 text-xs">
 					<span
-						className={`h-1.5 w-1.5 rounded-full ${isRecentlyActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
+						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
 					/>
-					<span className="text-muted-foreground">{isRecentlyActive ? 'active' : 'idle'}</span>
+					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
 				</span>
 				{agent.llmProvider && (
 					<span className="text-[11px] text-muted-foreground">{agent.llmProvider}</span>
 				)}
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
+
+			{/* Currently Working On */}
+			{activeSessions && activeSessions.length > 0 && (
+				<Section title="Currently Working On">
+					<div className="space-y-2">
+						{activeSessions.map((session) => (
+							<ActiveSessionCard key={session.id} session={session} workspaceId={workspaceId} />
+						))}
+					</div>
+				</Section>
+			)}
 
 			{/* System Prompt */}
 			<Section title="System Prompt">
@@ -173,7 +160,7 @@ export function AgentDocumentView({
 			<Section title="LLM Configuration">
 				<div className="flex gap-3">
 					<div className="flex-1">
-						<Label className="mb-1 text-muted-foreground text-xs">Provider</Label>
+						<Label>Provider</Label>
 						<Select value={agent.llmProvider ?? 'anthropic'} onValueChange={onUpdateLlmProvider}>
 							<SelectTrigger>
 								<SelectValue />
@@ -185,7 +172,7 @@ export function AgentDocumentView({
 						</Select>
 					</div>
 					<div className="flex-1">
-						<Label className="mb-1 text-muted-foreground text-xs">Model</Label>
+						<Label>Model</Label>
 						<Input
 							type="text"
 							value={modelDraft}
@@ -221,54 +208,14 @@ export function AgentDocumentView({
 				{memoryError && <p className="text-xs text-error mt-1">{memoryError}</p>}
 				{memoryDirty && (
 					<div className="flex justify-end mt-2">
-						<Button size="sm" onClick={handleMemorySave}>
-							Save Memory
-						</Button>
-					</div>
-				)}
-			</Section>
-
-			{/* API Key */}
-			<Section title="API Key">
-				{regeneratedApiKey ? (
-					<div className="space-y-2">
-						<p className="text-xs text-muted-foreground">
-							Save this key now — it cannot be retrieved later.
-						</p>
-						<div className="flex items-center gap-2">
-							<code className="flex-1 rounded border border-border bg-background px-3 py-2 text-xs font-mono text-foreground break-all">
-								{regeneratedApiKey}
-							</code>
-							<Button size="sm" variant="outline" onClick={handleCopyApiKey}>
-								{copied ? 'Copied!' : <Copy className="h-4 w-4" />}
-							</Button>
-						</div>
-					</div>
-				) : confirmRegenerate ? (
-					<div className="flex items-center gap-2">
-						<span className="text-xs text-error">
-							This will invalidate the current key. Continue?
-						</span>
-						<Button
-							size="sm"
-							variant="destructive"
-							onClick={() => {
-								onRegenerateApiKey()
-								setConfirmRegenerate(false)
-							}}
-							disabled={isRegenerating}
+						<button
+							type="button"
+							className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground hover:bg-accent-hover"
+							onClick={handleMemorySave}
 						>
-							{isRegenerating ? 'Regenerating...' : 'Confirm'}
-						</Button>
-						<Button size="sm" variant="ghost" onClick={() => setConfirmRegenerate(false)}>
-							Cancel
-						</Button>
+							Save Memory
+						</button>
 					</div>
-				) : (
-					<Button size="sm" variant="outline" onClick={() => setConfirmRegenerate(true)}>
-						<KeyRound className="h-4 w-4 mr-1.5" />
-						Regenerate API Key
-					</Button>
 				)}
 			</Section>
 
@@ -306,13 +253,35 @@ function Section({
 	)
 }
 
+function ActiveSessionCard({
+	session,
+	workspaceId,
+}: {
+	session: SessionResponse
+	workspaceId: string
+}) {
+	const { data: latestLog } = useSessionLatestLog(session.id, workspaceId)
+	const duration = useDuration(session.startedAt)
+
+	return (
+		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2">
+			<Spinner />
+			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
+			{latestLog && (
+				<span className="text-xs text-muted-foreground truncate max-w-[200px]">
+					{latestLog.content}
+				</span>
+			)}
+			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+		</div>
+	)
+}
+
 export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
-	const regenerateApiKey = useRegenerateApiKey()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
-	const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null)
-
+	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
 	// Filter events by this agent's actorId
 	const agentEvents = useMemo(
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),
@@ -361,29 +330,20 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[agent.id, updateActor],
 	)
 
-	const handleRegenerateApiKey = useCallback(() => {
-		regenerateApiKey.mutate(agent.id, {
-			onSuccess: (result) => {
-				setRegeneratedKey(result.api_key)
-			},
-		})
-	}, [agent.id, regenerateApiKey])
-
 	return (
 		<>
 			<PageHeader />
 			<AgentDocumentView
 				agent={agent}
+				workspaceId={workspaceId}
 				events={agentEvents}
+				activeSessions={activeSessions}
 				onUpdateName={handleUpdateName}
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
 				onUpdateLlmConfig={handleUpdateLlmConfig}
 				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
-				onRegenerateApiKey={handleRegenerateApiKey}
-				regeneratedApiKey={regeneratedKey}
-				isRegenerating={regenerateApiKey.isPending}
 			/>
 		</>
 	)

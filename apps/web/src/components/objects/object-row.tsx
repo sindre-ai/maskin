@@ -18,7 +18,9 @@ export function ObjectRow({
 			className="flex items-center gap-3 rounded px-3 py-2 hover:bg-muted/50 transition-colors"
 		>
 			<span className="flex-1 text-sm text-foreground truncate">{object.title || 'Untitled'}</span>
-			{object.activeSessionId && <AgentWorkingBadge />}
+			{object.activeSessionId && (
+				<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
+			)}
 			<StatusBadge status={object.status} />
 			<TypeBadge type={object.type} />
 		</Link>

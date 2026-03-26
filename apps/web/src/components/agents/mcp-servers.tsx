@@ -257,18 +257,13 @@ function ServerCard({
 				</div>
 			) : (
 				<div className="flex items-center gap-1">
-					<Button
-						size="icon"
-						variant="ghost"
-						className="h-7 w-7 text-muted-foreground"
-						onClick={onEdit}
-					>
+					<Button size="icon" variant="ghost" className="text-muted-foreground" onClick={onEdit}>
 						<Pencil className="h-3.5 w-3.5" />
 					</Button>
 					<Button
 						size="icon"
 						variant="ghost"
-						className="h-7 w-7 text-muted-foreground hover:text-error"
+						className="text-muted-foreground hover:text-error"
 						onClick={() => setConfirmDelete(true)}
 					>
 						<Trash2 className="h-3.5 w-3.5" />
@@ -344,7 +339,7 @@ function ServerForm({
 		<div className="rounded-md border border-border bg-bg-surface p-3 space-y-2">
 			<div className="flex gap-2">
 				<div className="flex-1">
-					<Label className="text-xs text-muted-foreground">Name</Label>
+					<Label>Name</Label>
 					<Input
 						value={name}
 						onChange={(e) => setName(e.target.value)}
@@ -353,7 +348,7 @@ function ServerForm({
 					/>
 				</div>
 				<div className="w-28">
-					<Label className="text-xs text-muted-foreground">Transport</Label>
+					<Label>Transport</Label>
 					<Select value={transport} onValueChange={(v) => setTransport(v as 'stdio' | 'http')}>
 						<SelectTrigger>
 							<SelectValue />
@@ -370,7 +365,7 @@ function ServerForm({
 				<>
 					<div className="flex gap-2">
 						<div className="flex-1">
-							<Label className="text-xs text-muted-foreground">Command</Label>
+							<Label>Command</Label>
 							<Input
 								value={command}
 								onChange={(e) => setCommand(e.target.value)}
@@ -380,7 +375,7 @@ function ServerForm({
 						</div>
 					</div>
 					<div>
-						<Label className="text-xs text-muted-foreground">Args (comma-separated)</Label>
+						<Label>Args (comma-separated)</Label>
 						<Input
 							value={args}
 							onChange={(e) => setArgs(e.target.value)}
@@ -401,7 +396,7 @@ function ServerForm({
 			) : (
 				<>
 					<div>
-						<Label className="text-xs text-muted-foreground">URL</Label>
+						<Label>URL</Label>
 						<Input
 							value={url}
 							onChange={(e) => setUrl(e.target.value)}
@@ -453,11 +448,10 @@ function KeyValueEditor({
 	return (
 		<div>
 			<div className="flex items-center justify-between mb-1">
-				<Label className="text-xs text-muted-foreground">{label}</Label>
+				<Label>{label}</Label>
 				<Button
 					size="sm"
 					variant="ghost"
-					className="h-6 text-xs"
 					onClick={() => {
 						onChange([...pairs, { id: nextId, key: '', value: '' }])
 						onNextId(nextId + 1)
@@ -488,7 +482,7 @@ function KeyValueEditor({
 					<Button
 						size="icon"
 						variant="ghost"
-						className="h-7 w-7 text-muted-foreground hover:text-error shrink-0"
+						className="text-muted-foreground hover:text-error shrink-0"
 						onClick={() => onChange(pairs.filter((p) => p.id !== pair.id))}
 					>
 						<Trash2 className="h-3 w-3" />

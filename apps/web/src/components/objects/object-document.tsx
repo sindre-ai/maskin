@@ -13,8 +13,8 @@ import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
 import { useObjectRelationships } from '@/hooks/use-relationships'
 import type { ActorResponse, EventResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, useNavigate } from '@tanstack/react-router'
-import { Trash2 } from 'lucide-react'
+import { useNavigate } from '@tanstack/react-router'
+import { Check, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
@@ -42,10 +42,12 @@ interface ObjectDocumentViewProps {
 	onUpdateStatus: (status: string) => void
 	onDelete: () => void
 	isDeleting?: boolean
+	showSaved?: boolean
 }
 
 export function ObjectDocumentView({
 	object,
+	workspaceId,
 	statuses,
 	creator,
 	relationships,
@@ -55,12 +57,11 @@ export function ObjectDocumentView({
 	onUpdateStatus,
 	onDelete,
 	isDeleting = false,
+	showSaved = false,
 }: ObjectDocumentViewProps) {
-	const [editingTitle, setEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 
 	const handleTitleBlur = useCallback(() => {
-		setEditingTitle(false)
 		if (titleDraft !== object.title) {
 			onUpdateTitle(titleDraft)
 		}
@@ -83,28 +84,30 @@ export function ObjectDocumentView({
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Title */}
-			{editingTitle ? (
-				<input
+			<div className="flex items-center gap-2">
+				<Input
 					type="text"
 					value={titleDraft}
 					onChange={(e) => setTitleDraft(e.target.value)}
 					onBlur={handleTitleBlur}
-					onKeyDown={(e) => e.key === 'Enter' && handleTitleBlur()}
-					className="w-full text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
-					// biome-ignore lint/a11y/noAutofocus: intentional focus on edit mode activation
-					autoFocus
+					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					placeholder="Untitled"
+					className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 				/>
-			) : (
-				<button
-					type="button"
-					className="w-full text-left text-2xl font-semibold tracking-tight text-foreground mb-2 cursor-text bg-transparent border-none outline-none p-0"
-					onClick={() => {
-						setTitleDraft(object.title ?? '')
-						setEditingTitle(true)
-					}}
-				>
-					{object.title || 'Untitled'}
-				</button>
+				{showSaved && (
+					<span className="flex items-center gap-1 text-xs text-muted-foreground">
+						<Check size={14} /> Saved
+					</span>
+				)}
+			</div>
+
+			{/* Agent working banner */}
+			{object.activeSessionId && (
+				<AgentWorkingBadge
+					sessionId={object.activeSessionId}
+					workspaceId={workspaceId}
+					variant="banner"
+				/>
 			)}
 
 			{/* Metadata badges row */}
@@ -115,7 +118,6 @@ export function ObjectDocumentView({
 				) : (
 					<StatusBadge status={object.status} />
 				)}
-				{object.activeSessionId && <AgentWorkingBadge />}
 				{creator && (
 					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
 						<ActorAvatar name={creator.name} type={creator.type} size="sm" />
@@ -126,7 +128,7 @@ export function ObjectDocumentView({
 			</div>
 
 			{/* Properties */}
-			<div className="mb-6">
+			<div className="mb-6 w-fit">
 				<MetadataProperties object={object} />
 			</div>
 
@@ -200,7 +202,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const handleDelete = useCallback(() => {
 		deleteObject.mutate(object.id, {
 			onSuccess: () => {
-				navigate({ to: '/$workspaceId', params: { workspaceId } })
+				navigate({ to: '/$workspaceId/objects', params: { workspaceId } })
 			},
 		})
 	}, [object.id, deleteObject, navigate, workspaceId])
@@ -231,8 +233,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					className="h-7 w-7 text-muted-foreground hover:text-error"
 					onClick={() => setConfirmDelete(true)}
 				>
-					<Trash2 className="h-4 w-4" />
-					<span className="sr-only">Delete</span>
+					<Trash2 size={15} />
 				</Button>
 			),
 		[confirmDelete, handleDelete, deleteObject.isPending, object.type],

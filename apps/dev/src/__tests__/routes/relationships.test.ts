@@ -1,4 +1,9 @@
-import { buildCreateRelationshipBody, buildRelationship } from '../factories'
+import {
+	buildCreateRelationshipBody,
+	buildObject,
+	buildRelationship,
+	buildWorkspaceMember,
+} from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -43,9 +48,11 @@ describe('Relationships Routes', () => {
 
 	describe('DELETE /api/relationships/:id', () => {
 		it('returns 200 when deleted', async () => {
-			const rel = buildRelationship()
+			const sourceObj = buildObject()
+			const rel = buildRelationship({ sourceId: sourceObj.id })
 			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
-			mockResults.selectQueue = [[rel]]
+			// First select: relationship, second: source object lookup, third: membership check
+			mockResults.selectQueue = [[rel], [sourceObj], [buildWorkspaceMember()]]
 			mockResults.insert = [{}] // event
 
 			const res = await app.request(

@@ -1,8 +1,9 @@
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getApiKey } from '@/lib/auth'
-import { cn } from '@/lib/cn'
 import { Check, Copy } from 'lucide-react'
+
 import { useCallback, useMemo, useState } from 'react'
 
 type Tab = 'claude-ai' | 'claude-code' | 'claude-desktop' | 'custom'
@@ -125,37 +126,26 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<div>
-			<Label className="mb-1 text-muted-foreground">MCP Connection</Label>
+			<Label>MCP Connection</Label>
 			<p className="text-xs text-muted-foreground mb-3">
 				Connect Claude.ai, Claude Code, Claude Desktop, or any MCP-compatible client to this
 				workspace.
 			</p>
 
-			<div className="flex gap-1 rounded-lg border border-border bg-background p-1 mb-3">
-				{tabs.map((tab) => {
-					const isActive = activeTab === tab.value
-					return (
-						<button
-							key={tab.value}
-							type="button"
-							onClick={() => setActiveTab(tab.value)}
-							className={cn(
-								'flex flex-1 items-center justify-center rounded-md px-3 py-1.5 text-xs transition-colors',
-								isActive
-									? 'bg-muted text-foreground font-medium shadow-sm'
-									: 'text-muted-foreground hover:text-foreground',
-							)}
-						>
+			<Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)} className="mb-3">
+				<TabsList className="w-full">
+					{tabs.map((tab) => (
+						<TabsTrigger key={tab.value} value={tab.value} className="flex-1 text-xs">
 							{tab.label}
-						</button>
-					)
-				})}
-			</div>
+						</TabsTrigger>
+					))}
+				</TabsList>
+			</Tabs>
 
 			{activeTab === 'claude-ai' ? (
 				<div className="space-y-3">
 					<div>
-						<Label className="mb-1 text-xs text-muted-foreground">Custom connector URL</Label>
+						<Label>Custom connector URL</Label>
 						<p className="text-xs text-muted-foreground mb-2">
 							Go to Profile → Settings → Connectors → Add custom connector, then paste this URL.
 						</p>
@@ -170,7 +160,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 			) : activeTab === 'custom' ? (
 				<div className="space-y-3">
 					<div>
-						<Label className="mb-1 text-xs text-muted-foreground">Endpoint URL</Label>
+						<Label>Endpoint URL</Label>
 						<div className="flex gap-2">
 							<div className="flex-1 rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs select-all">
 								{mcpUrl}
@@ -179,7 +169,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 						</div>
 					</div>
 					<div>
-						<Label className="mb-1 text-xs text-muted-foreground">Required Headers</Label>
+						<Label>Required Headers</Label>
 						<div className="rounded-md border border-border bg-muted p-3 font-mono text-xs space-y-1">
 							<div>
 								<span className="text-muted-foreground">Authorization:</span> Bearer {apiKey}
@@ -195,9 +185,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 				<div className="space-y-3">
 					{activeTab === 'claude-code' && (
 						<div>
-							<Label className="mb-1 text-xs text-muted-foreground">
-								Quick setup (run in terminal)
-							</Label>
+							<Label>Quick setup (run in terminal)</Label>
 							<div className="relative">
 								<pre className="rounded-md border border-border bg-muted p-3 pr-12 font-mono text-xs overflow-x-auto whitespace-pre">
 									{cliCommand}
@@ -207,7 +195,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 						</div>
 					)}
 					<div>
-						<Label className="mb-1 text-xs text-muted-foreground">
+						<Label>
 							{activeTab === 'claude-code'
 								? 'Or add to .mcp.json / ~/.claude.json'
 								: 'Add to claude_desktop_config.json'}
