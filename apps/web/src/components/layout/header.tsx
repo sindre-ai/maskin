@@ -147,7 +147,7 @@ export function Header() {
 					<Button
 						variant="ghost"
 						size="icon"
-						className="-ml-1"
+						className="md:hidden -ml-1"
 						onClick={() => router.history.back()}
 					>
 						<ArrowLeft />
@@ -155,6 +155,17 @@ export function Header() {
 					</Button>
 				)}
 				<div className="hidden md:flex items-center gap-1 opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-2">
+					{crumbs.length > 1 && (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="-ml-1"
+							onClick={() => router.history.back()}
+						>
+							<ArrowLeft />
+							<span className="sr-only">Go back</span>
+						</Button>
+					)}
 					{crumbs.length > 0 && (
 						<Breadcrumb>
 							<BreadcrumbList>
