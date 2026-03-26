@@ -53,3 +53,11 @@ export function useActiveSessionsForActor(actorId: string, workspaceId: string) 
 		enabled: !!actorId && !!workspaceId,
 	})
 }
+
+export function useActorSessions(actorId: string, workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),
+		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '20' }),
+		enabled: !!actorId && !!workspaceId,
+	})
+}

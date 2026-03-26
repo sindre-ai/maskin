@@ -45,6 +45,8 @@ export const queryKeys = {
 		logs: (sessionId: string) => ['sessions', sessionId, 'logs'] as const,
 		byActor: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
+		byActorAll: (workspaceId: string, actorId: string) =>
+			['sessions', workspaceId, 'actor', actorId, 'all'] as const,
 	},
 	events: {
 		history: (workspaceId: string, filters?: Record<string, unknown>) =>

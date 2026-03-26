@@ -1,3 +1,4 @@
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -12,10 +13,22 @@ import { Textarea } from '@/components/ui/textarea'
 import { useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
-import { useActiveSessionsForActor, useSessionLatestLog } from '@/hooks/use-sessions'
+import {
+	useActiveSessionsForActor,
+	useActorSessions,
+	useSessionLatestLog,
+} from '@/hooks/use-sessions'
 import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Check } from 'lucide-react'
+import {
+	Check,
+	CheckCircle2,
+	ChevronDown,
+	ChevronRight,
+	CircleX,
+	Clock,
+	XCircle,
+} from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
@@ -30,6 +43,7 @@ interface AgentDocumentViewProps {
 	workspaceId: string
 	events?: EventResponse[]
 	activeSessions?: SessionResponse[]
+	recentSessions?: SessionResponse[]
 	onUpdateName: (name: string) => void
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
@@ -39,11 +53,29 @@ interface AgentDocumentViewProps {
 	showSaved?: boolean
 }
 
+function useConfigExpanded() {
+	const [expanded, setExpanded] = useState(() => {
+		try {
+			return localStorage.getItem('agent-config-expanded') === 'true'
+		} catch {
+			return false
+		}
+	})
+	const toggle = useCallback((open: boolean) => {
+		setExpanded(open)
+		try {
+			localStorage.setItem('agent-config-expanded', String(open))
+		} catch {}
+	}, [])
+	return [expanded, toggle] as const
+}
+
 export function AgentDocumentView({
 	agent,
 	workspaceId,
 	events,
 	activeSessions,
+	recentSessions,
 	onUpdateName,
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
@@ -63,6 +95,7 @@ export function AgentDocumentView({
 	)
 	const [memoryDirty, setMemoryDirty] = useState(false)
 	const [memoryError, setMemoryError] = useState<string | null>(null)
+	const [configExpanded, setConfigExpanded] = useConfigExpanded()
 
 	const isActive = (activeSessions?.length ?? 0) > 0
 
@@ -96,6 +129,16 @@ export function AgentDocumentView({
 			setMemoryError('Invalid JSON')
 		}
 	}, [memoryDraft, onUpdateMemory])
+
+	// Filter out active sessions from recent sessions to avoid duplicates
+	const activeIds = useMemo(
+		() => new Set((activeSessions ?? []).map((s) => s.id)),
+		[activeSessions],
+	)
+	const pastSessions = useMemo(
+		() => (recentSessions ?? []).filter((s) => !activeIds.has(s.id)),
+		[recentSessions, activeIds],
+	)
 
 	return (
 		<div className="max-w-3xl mx-auto">
@@ -146,82 +189,105 @@ export function AgentDocumentView({
 				</Section>
 			)}
 
-			{/* System Prompt */}
-			<Section title="System Prompt">
-				<Textarea
-					value={systemPromptDraft}
-					onChange={(e) => {
-						setSystemPromptDraft(e.target.value)
-						setSystemPromptDirty(true)
-					}}
-					onBlur={handleSystemPromptBlur}
-					placeholder="Instructions for the agent..."
-					className="min-h-[120px] font-mono text-sm"
-				/>
-			</Section>
-
-			{/* LLM Configuration */}
-			<Section title="LLM Configuration">
-				<div className="flex gap-3">
-					<div className="flex-1">
-						<Label>Provider</Label>
-						<Select value={agent.llmProvider ?? 'anthropic'} onValueChange={onUpdateLlmProvider}>
-							<SelectTrigger>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="anthropic">Anthropic</SelectItem>
-								<SelectItem value="openai">OpenAI</SelectItem>
-							</SelectContent>
-						</Select>
+			{/* Recent Sessions */}
+			{pastSessions.length > 0 && (
+				<Section title="Sessions">
+					<div className="space-y-1">
+						{pastSessions.map((session) => (
+							<SessionRow key={session.id} session={session} />
+						))}
 					</div>
-					<div className="flex-1">
-						<Label>Model</Label>
-						<Input
-							type="text"
-							value={modelDraft}
-							onChange={(e) => setModelDraft(e.target.value)}
-							onBlur={handleModelBlur}
-							placeholder="e.g. claude-sonnet-4-5-20250514"
+				</Section>
+			)}
+
+			{/* Configuration (collapsible) */}
+			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
+				<CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4 hover:text-foreground transition-colors cursor-pointer">
+					{configExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+					Configuration
+				</CollapsibleTrigger>
+				<CollapsibleContent>
+					{/* System Prompt */}
+					<Section title="System Prompt">
+						<Textarea
+							value={systemPromptDraft}
+							onChange={(e) => {
+								setSystemPromptDraft(e.target.value)
+								setSystemPromptDirty(true)
+							}}
+							onBlur={handleSystemPromptBlur}
+							placeholder="Instructions for the agent..."
+							className="min-h-[120px] font-mono text-sm"
 						/>
-					</div>
-				</div>
-			</Section>
+					</Section>
 
-			{/* MCP Servers */}
-			<Section title="MCP Servers">
-				<McpServers tools={agent.tools} onUpdate={onUpdateTools} />
-			</Section>
+					{/* LLM Configuration */}
+					<Section title="LLM Configuration">
+						<div className="flex gap-3">
+							<div className="flex-1">
+								<Label>Provider</Label>
+								<Select
+									value={agent.llmProvider ?? 'anthropic'}
+									onValueChange={onUpdateLlmProvider}
+								>
+									<SelectTrigger>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="anthropic">Anthropic</SelectItem>
+										<SelectItem value="openai">OpenAI</SelectItem>
+									</SelectContent>
+								</Select>
+							</div>
+							<div className="flex-1">
+								<Label>Model</Label>
+								<Input
+									type="text"
+									value={modelDraft}
+									onChange={(e) => setModelDraft(e.target.value)}
+									onBlur={handleModelBlur}
+									placeholder="e.g. claude-sonnet-4-5-20250514"
+								/>
+							</div>
+						</div>
+					</Section>
 
-			{/* Skills */}
-			<Section title="Skills">
-				<Skills actorId={agent.id} />
-			</Section>
+					{/* MCP Servers */}
+					<Section title="MCP Servers">
+						<McpServers tools={agent.tools} onUpdate={onUpdateTools} />
+					</Section>
 
-			{/* Memory */}
-			<Section title="Memory">
-				<Textarea
-					value={memoryDraft}
-					onChange={(e) => {
-						setMemoryDraft(e.target.value)
-						setMemoryDirty(true)
-					}}
-					placeholder="{}"
-					className="min-h-[100px] font-mono text-sm"
-				/>
-				{memoryError && <p className="text-xs text-error mt-1">{memoryError}</p>}
-				{memoryDirty && (
-					<div className="flex justify-end mt-2">
-						<button
-							type="button"
-							className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground hover:bg-accent-hover"
-							onClick={handleMemorySave}
-						>
-							Save Memory
-						</button>
-					</div>
-				)}
-			</Section>
+					{/* Skills */}
+					<Section title="Skills">
+						<Skills actorId={agent.id} />
+					</Section>
+
+					{/* Memory */}
+					<Section title="Memory">
+						<Textarea
+							value={memoryDraft}
+							onChange={(e) => {
+								setMemoryDraft(e.target.value)
+								setMemoryDirty(true)
+							}}
+							placeholder="{}"
+							className="min-h-[100px] font-mono text-sm"
+						/>
+						{memoryError && <p className="text-xs text-error mt-1">{memoryError}</p>}
+						{memoryDirty && (
+							<div className="flex justify-end mt-2">
+								<button
+									type="button"
+									className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground hover:bg-accent-hover"
+									onClick={handleMemorySave}
+								>
+									Save Memory
+								</button>
+							</div>
+						)}
+					</Section>
+				</CollapsibleContent>
+			</Collapsible>
 
 			{/* Activity trail */}
 			{events && events.length > 0 && (
@@ -281,11 +347,60 @@ function ActiveSessionCard({
 	)
 }
 
+function SessionStatusIcon({ status }: { status: string }) {
+	switch (status) {
+		case 'completed':
+			return <CheckCircle2 size={14} className="text-success shrink-0" />
+		case 'failed':
+		case 'timeout':
+			return <XCircle size={14} className="text-error shrink-0" />
+		case 'running':
+		case 'starting':
+			return <Spinner className="shrink-0" />
+		case 'paused':
+		case 'snapshotting':
+			return <Clock size={14} className="text-warning shrink-0" />
+		default:
+			return <CircleX size={14} className="text-muted-foreground shrink-0" />
+	}
+}
+
+function formatDuration(startedAt: string | null, completedAt: string | null): string | null {
+	if (!startedAt) return null
+	const start = new Date(startedAt).getTime()
+	const end = completedAt ? new Date(completedAt).getTime() : Date.now()
+	const seconds = Math.floor((end - start) / 1000)
+	if (seconds < 60) return `${seconds}s`
+	const minutes = Math.floor(seconds / 60)
+	const remainingSeconds = seconds % 60
+	if (minutes < 60) return `${minutes}m ${remainingSeconds}s`
+	const hours = Math.floor(minutes / 60)
+	const remainingMinutes = minutes % 60
+	return `${hours}h ${remainingMinutes}m`
+}
+
+function SessionRow({ session }: { session: SessionResponse }) {
+	const duration = formatDuration(session.startedAt, session.completedAt)
+
+	return (
+		<div className="flex items-center gap-2.5 rounded-md px-3 py-1.5 hover:bg-bg-hover transition-colors">
+			<SessionStatusIcon status={session.status} />
+			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
+			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+			<RelativeTime
+				date={session.completedAt ?? session.createdAt}
+				className="text-xs text-muted-foreground shrink-0"
+			/>
+		</div>
+	)
+}
+
 export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
+	const { data: recentSessions } = useActorSessions(agent.id, workspaceId)
 	// Filter events by this agent's actorId
 	const agentEvents = useMemo(
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),
@@ -342,6 +457,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				workspaceId={workspaceId}
 				events={agentEvents}
 				activeSessions={activeSessions}
+				recentSessions={recentSessions}
 				onUpdateName={handleUpdateName}
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
