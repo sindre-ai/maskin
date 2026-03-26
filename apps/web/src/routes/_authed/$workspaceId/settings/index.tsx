@@ -8,7 +8,7 @@ import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getAllWebModules } from '@ai-native/module-sdk'
+import { getAllWebModules, getWebModule } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { useState } from 'react'
@@ -71,9 +71,31 @@ function ExtensionsSection() {
 		const next = enabled
 			? [...enabledModules, moduleId]
 			: enabledModules.filter((m) => m !== moduleId)
-		updateWorkspace.mutate({
-			settings: { ...settings, enabled_modules: next },
-		})
+
+		let mergedSettings: Record<string, unknown> = { ...settings, enabled_modules: next }
+
+		// When enabling, merge the module's default settings (only add missing keys)
+		if (enabled) {
+			const mod = getWebModule(moduleId)
+			const defaults = mod?.defaultSettings
+			if (defaults) {
+				const currentDisplayNames = (settings?.display_names as Record<string, string>) ?? {}
+				const currentStatuses = (settings?.statuses as Record<string, string[]>) ?? {}
+				mergedSettings = {
+					...mergedSettings,
+					display_names: {
+						...defaults.display_names,
+						...currentDisplayNames,
+					},
+					statuses: {
+						...defaults.statuses,
+						...currentStatuses,
+					},
+				}
+			}
+		}
+
+		updateWorkspace.mutate({ settings: mergedSettings })
 	}
 
 	return (

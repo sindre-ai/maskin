@@ -202,6 +202,12 @@ describe('getEnabledModuleIds', () => {
 	it('defaults to ["work"] for undefined settings', () => {
 		expect(getEnabledModuleIds(undefined)).toEqual(['work'])
 	})
+
+	it('defaults to ["work"] when enabled_modules is not an array', () => {
+		expect(getEnabledModuleIds({ enabled_modules: 'work' })).toEqual(['work'])
+		expect(getEnabledModuleIds({ enabled_modules: 42 })).toEqual(['work'])
+		expect(getEnabledModuleIds({ enabled_modules: true })).toEqual(['work'])
+	})
 })
 
 describe('web module registry', () => {

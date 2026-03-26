@@ -109,7 +109,8 @@ export function getDefaultStatusForType(type: string): string | undefined {
 export function getEnabledModuleIds(
 	settings: Record<string, unknown> | null | undefined,
 ): string[] {
-	return (settings?.enabled_modules as string[]) ?? ['work']
+	const raw = settings?.enabled_modules
+	return Array.isArray(raw) ? raw : ['work']
 }
 
 export function clearModules(): void {

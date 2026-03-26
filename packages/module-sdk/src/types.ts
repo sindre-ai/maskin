@@ -162,4 +162,6 @@ export interface ModuleWebDefinition {
 	navItems: NavItemDefinition[]
 	/** Object type tabs this module adds to the objects list */
 	objectTypeTabs: ObjectTypeTab[]
+	/** Default workspace settings to merge when enabling this module */
+	defaultSettings?: ModuleDefaultSettings
 }

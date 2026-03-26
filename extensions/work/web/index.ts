@@ -10,6 +10,18 @@ const workWebExtension: ModuleWebDefinition = {
 		{ label: 'Bets', value: 'bet' },
 		{ label: 'Tasks', value: 'task' },
 	],
+	defaultSettings: {
+		display_names: {
+			insight: 'Insight',
+			bet: 'Bet',
+			task: 'Task',
+		},
+		statuses: {
+			insight: ['new', 'processing', 'clustered', 'discarded'],
+			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+			task: ['todo', 'in_progress', 'done', 'blocked'],
+		},
+	},
 }
 
 export default workWebExtension

@@ -4,7 +4,7 @@ import { getEnabledModuleIds, getValidObjectTypes } from '@ai-native/module-sdk'
 import { createGraphSchema } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -103,32 +103,7 @@ app.openapi(createGraphRoute, async (c) => {
 	const validTypes = getValidObjectTypes(enabledModules)
 	for (const node of body.nodes) {
 		if (!validTypes.includes(node.type)) {
-			return c.json(
-				createApiError(
-					'BAD_REQUEST',
-					validTypes.length === 0
-						? 'No object types available. Enable an extension in workspace settings.'
-						: `Invalid object type '${node.type}' on node '${node.$id}'`,
-					[
-						{
-							field: `nodes[${node.$id}].type`,
-							message:
-								validTypes.length === 0
-									? 'No extensions are enabled for this workspace'
-									: `'${node.type}' is not a valid object type`,
-							expected:
-								validTypes.length > 0
-									? validTypes.map((t) => `'${t}'`).join(' | ')
-									: 'none (no extensions enabled)',
-							received: `'${node.type}'`,
-						},
-					],
-					validTypes.length === 0
-						? 'Enable an extension in workspace settings to create objects.'
-						: `Valid types: ${validTypes.join(', ')}`,
-				),
-				400,
-			)
+			return c.json(createInvalidTypeError(node.type, `nodes[${node.$id}].type`, validTypes), 400)
 		}
 	}
 
