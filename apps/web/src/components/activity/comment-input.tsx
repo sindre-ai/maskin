@@ -96,11 +96,17 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 		const trimmed = content.trim()
 		if (!trimmed) return
 
+		// Reconcile mentions: only include actors whose @Name is still in the text
+		const activeMentions = mentions.filter((id) => {
+			const actor = actors?.find((a) => a.id === id)
+			return actor && trimmed.includes(`@${actor.name}`)
+		})
+
 		createComment.mutate(
 			{
 				entity_id: objectId,
 				content: trimmed,
-				mentions: mentions.length > 0 ? mentions : undefined,
+				mentions: activeMentions.length > 0 ? activeMentions : undefined,
 				parent_event_id: parentEventId,
 			},
 			{
@@ -110,7 +116,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 				},
 			},
 		)
-	}, [content, mentions, objectId, parentEventId, createComment])
+	}, [content, mentions, actors, objectId, parentEventId, createComment])
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
