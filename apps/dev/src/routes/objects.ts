@@ -1,5 +1,6 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
+import { getEnabledModuleIds, getValidObjectTypes } from '@ai-native/module-sdk'
 import {
 	createObjectSchema,
 	objectQuerySchema,
@@ -8,7 +9,7 @@ import {
 } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { and, eq, ilike, inArray, or } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, createInvalidTypeError } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -88,6 +89,14 @@ app.openapi(createObjectRoute, async (c) => {
 	}
 
 	const settings = workspace.settings as WorkspaceSettings
+
+	// Validate object type against enabled extensions
+	const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
+	const validTypes = getValidObjectTypes(enabledModules)
+	if (!validTypes.includes(body.type)) {
+		return c.json(createInvalidTypeError(body.type, 'type', validTypes), 400)
+	}
+
 	const validStatuses = settings?.statuses?.[body.type]
 	if (validStatuses && !validStatuses.includes(body.status)) {
 		return c.json(

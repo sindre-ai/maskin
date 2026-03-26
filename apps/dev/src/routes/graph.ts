@@ -1,9 +1,10 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
+import { getEnabledModuleIds, getValidObjectTypes } from '@ai-native/module-sdk'
 import { createGraphSchema } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -96,8 +97,17 @@ app.openapi(createGraphRoute, async (c) => {
 		)
 	}
 
-	// Validate statuses against workspace settings
+	// Validate object types against enabled extensions
 	const settings = workspace.settings as WorkspaceSettings
+	const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
+	const validTypes = getValidObjectTypes(enabledModules)
+	for (const node of body.nodes) {
+		if (!validTypes.includes(node.type)) {
+			return c.json(createInvalidTypeError(node.type, `nodes[${node.$id}].type`, validTypes), 400)
+		}
+	}
+
+	// Validate statuses against workspace settings
 	const statuses = settings?.statuses
 	if (statuses) {
 		for (const node of body.nodes) {

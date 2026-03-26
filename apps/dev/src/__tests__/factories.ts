@@ -43,6 +43,7 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 		id: randomUUID(),
 		name: `Workspace ${n}`,
 		settings: {
+			enabled_modules: ['work'],
 			display_names: { insight: 'Insight', bet: 'Bet', task: 'Task' },
 			statuses: {
 				insight: ['new', 'processing', 'clustered', 'discarded'],

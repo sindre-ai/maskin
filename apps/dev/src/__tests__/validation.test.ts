@@ -22,12 +22,26 @@ describe('Object validation', () => {
 		expect(result.success).toBe(true)
 	})
 
-	it('rejects invalid type', () => {
+	it('accepts valid lowercase slug types (runtime validation checks against enabled extensions)', () => {
 		const result = createObjectSchema.safeParse({
-			type: 'invalid',
+			type: 'meeting',
+			status: 'scheduled',
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects empty type', () => {
+		const result = createObjectSchema.safeParse({
+			type: '',
 			status: 'new',
 		})
 		expect(result.success).toBe(false)
+	})
+
+	it('rejects invalid type formats', () => {
+		expect(createObjectSchema.safeParse({ type: 'My Type', status: 'new' }).success).toBe(false)
+		expect(createObjectSchema.safeParse({ type: 'UPPER', status: 'new' }).success).toBe(false)
+		expect(createObjectSchema.safeParse({ type: 'has-dash', status: 'new' }).success).toBe(false)
 	})
 
 	it('accepts all object types', () => {

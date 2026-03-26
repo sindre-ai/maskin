@@ -2,14 +2,17 @@ import { z } from '@hono/zod-openapi'
 import type { ZodError, ZodIssue } from 'zod'
 
 // Re-export shared error types and helpers
-export { ApiErrorCode, createApiError, mapStatusToCode } from '@ai-native/shared'
+export { ApiErrorCode, mapStatusToCode } from '@ai-native/shared'
 export type {
 	ApiErrorCode as ApiErrorCodeType,
 	ApiErrorDetail,
 	ApiErrorResponse,
 } from '@ai-native/shared'
 
+import { createApiError } from '@ai-native/shared'
 import type { ApiErrorDetail } from '@ai-native/shared'
+
+export { createApiError }
 
 function formatZodIssue(issue: ZodIssue): ApiErrorDetail {
 	const field = issue.path.length > 0 ? issue.path.join('.') : '_root'
@@ -46,6 +49,33 @@ function formatZodIssue(issue: ZodIssue): ApiErrorDetail {
 
 export function formatZodError(error: ZodError): ApiErrorDetail[] {
 	return error.issues.map(formatZodIssue)
+}
+
+/** Build a structured error response for an invalid object type */
+export function createInvalidTypeError(type: string, field: string, validTypes: string[]) {
+	return createApiError(
+		'BAD_REQUEST',
+		validTypes.length === 0
+			? 'No object types available. Enable an extension in workspace settings.'
+			: `Invalid object type '${type}'`,
+		[
+			{
+				field,
+				message:
+					validTypes.length === 0
+						? 'No extensions are enabled for this workspace'
+						: `'${type}' is not a valid object type`,
+				expected:
+					validTypes.length > 0
+						? validTypes.map((t) => `'${t}'`).join(' | ')
+						: 'none (no extensions enabled)',
+				received: `'${type}'`,
+			},
+		],
+		validTypes.length === 0
+			? 'Enable an extension in workspace settings to create objects.'
+			: `Valid types: ${validTypes.join(', ')}`,
+	)
 }
 
 /** Zod schema for OpenAPI documentation of structured error responses */

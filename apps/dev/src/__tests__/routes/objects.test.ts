@@ -68,6 +68,22 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('Invalid status')
 		})
+
+		it('returns 400 for invalid object type', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody({ type: 'nonexistent' }), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('Invalid object type')
+		})
 	})
 
 	describe('GET /api/objects', () => {

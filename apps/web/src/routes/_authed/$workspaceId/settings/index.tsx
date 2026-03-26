@@ -2,13 +2,17 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getAllWebModules, getWebModule } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
 	component: GeneralPage,
@@ -47,7 +51,86 @@ function GeneralPage() {
 			</div>
 
 			<div className="border-t border-border pt-6">
+				<ExtensionsSection />
+			</div>
+
+			<div className="border-t border-border pt-6">
 				<ThemePicker />
+			</div>
+		</div>
+	)
+}
+
+function ExtensionsSection() {
+	const { workspace, workspaceId } = useWorkspace()
+	const updateWorkspace = useUpdateWorkspace(workspaceId)
+	const settings = workspace.settings as Record<string, unknown>
+	const enabledModules = useEnabledModules()
+	const allModules = getAllWebModules()
+
+	const handleToggle = (moduleId: string, enabled: boolean) => {
+		const next = enabled
+			? [...enabledModules, moduleId]
+			: enabledModules.filter((m) => m !== moduleId)
+
+		let mergedSettings: Record<string, unknown> = { ...settings, enabled_modules: next }
+
+		// When enabling, merge the module's default settings (only add missing keys)
+		if (enabled) {
+			const mod = getWebModule(moduleId)
+			const defaults = mod?.defaultSettings
+			if (defaults) {
+				const currentDisplayNames = (settings?.display_names as Record<string, string>) ?? {}
+				const currentStatuses = (settings?.statuses as Record<string, string[]>) ?? {}
+				mergedSettings = {
+					...mergedSettings,
+					display_names: {
+						...defaults.display_names,
+						...currentDisplayNames,
+					},
+					statuses: {
+						...defaults.statuses,
+						...currentStatuses,
+					},
+				}
+			}
+		}
+
+		updateWorkspace.mutate(
+			{ settings: mergedSettings },
+			{ onError: () => toast.error('Failed to update extensions') },
+		)
+	}
+
+	return (
+		<div>
+			<Label className="mb-1 text-muted-foreground">Extensions</Label>
+			<p className="text-sm text-muted-foreground mb-3">
+				Enable or disable extensions for this workspace.
+			</p>
+			<div className="space-y-3">
+				{allModules.map((mod) => {
+					const isEnabled = enabledModules.includes(mod.id)
+					return (
+						<div
+							key={mod.id}
+							className="flex items-center justify-between rounded-lg border border-border p-3"
+						>
+							<div>
+								<span className="text-sm font-medium">{mod.name}</span>
+								{mod.objectTypeTabs.length > 0 && (
+									<span className="text-sm text-muted-foreground ml-2">
+										{mod.objectTypeTabs.map((t) => t.label).join(', ')}
+									</span>
+								)}
+							</div>
+							<Switch
+								checked={isEnabled}
+								onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
+							/>
+						</div>
+					)
+				})}
 			</div>
 		</div>
 	)

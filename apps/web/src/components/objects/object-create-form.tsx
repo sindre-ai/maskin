@@ -1,7 +1,10 @@
+import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { Input } from '@/components/ui/input'
-import { useEffect, useRef, useState } from 'react'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
@@ -9,7 +12,7 @@ import { MetadataProperties } from './metadata-properties'
 interface ObjectCreateFormProps {
 	objectId: string
 	object?: import('@/lib/api').ObjectResponse
-	onAutoCreate: (data: { type: 'insight' | 'bet' | 'task'; title: string }) => void
+	onAutoCreate: (data: { type: string; title: string }) => void
 	onUpdate?: (data: { title?: string; content?: string; status?: string }) => void
 	isPending?: boolean
 	error?: Error | null
@@ -23,18 +26,33 @@ export function ObjectCreateForm({
 	isPending = false,
 	error,
 }: ObjectCreateFormProps) {
-	const [type, setType] = useState<'insight' | 'bet' | 'task'>('bet')
+	const enabledModules = useEnabledModules()
+
+	const availableTypes = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
+
+	const [type, setType] = useState(availableTypes[0]?.value ?? '')
 	const [title, setTitle] = useState('')
 	const hasAutoCreatedRef = useRef(false)
-
 	const isValid = title.trim().length > 0
 
 	// Auto-create when form first becomes valid
 	useEffect(() => {
+		if (availableTypes.length === 0) return
 		if (!isValid || hasAutoCreatedRef.current) return
 		hasAutoCreatedRef.current = true
 		onAutoCreate({ type, title: title.trim() })
-	}, [isValid, type, title, onAutoCreate])
+	}, [isValid, type, title, onAutoCreate, availableTypes.length])
+
+	if (availableTypes.length === 0) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<EmptyState
+					title="No object types available"
+					description="Enable an extension in workspace settings to create objects."
+				/>
+			</div>
+		)
+	}
 
 	// Once created, sync title updates on blur
 	const handleTitleBlur = () => {
@@ -66,16 +84,16 @@ export function ObjectCreateForm({
 			{/* Type selector */}
 			<div className="mb-6">
 				<ButtonGroup>
-					{(['insight', 'bet', 'task'] as const).map((t) => (
+					{availableTypes.map((t) => (
 						<Button
-							key={t}
+							key={t.value}
 							type="button"
-							variant={type === t ? 'secondary' : 'ghost'}
+							variant={type === t.value ? 'secondary' : 'ghost'}
 							size="sm"
-							onClick={() => setType(t)}
+							onClick={() => setType(t.value)}
 							disabled={hasAutoCreatedRef.current}
 						>
-							{t}
+							{t.label}
 						</Button>
 					))}
 				</ButtonGroup>
