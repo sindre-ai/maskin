@@ -10,9 +10,11 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useActors } from '@/hooks/use-actors'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
@@ -21,13 +23,6 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const tabs = [
-	{ label: 'All', value: undefined },
-	{ label: 'Insights', value: 'insight' },
-	{ label: 'Bets', value: 'bet' },
-	{ label: 'Tasks', value: 'task' },
-] as const
-
 function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
@@ -35,6 +30,16 @@ function ObjectsPage() {
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
 	const [search, setSearch] = useState('')
 	const { data: actors } = useActors(workspaceId)
+	const enabledModules = useEnabledModules()
+	const settings = workspace.settings as Record<string, unknown>
+
+	const tabs = useMemo(() => {
+		const moduleTabs = getEnabledObjectTypeTabs(enabledModules)
+		return [
+			{ label: 'All', value: undefined as string | undefined },
+			...moduleTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),
+		]
+	}, [enabledModules])
 
 	const filters: Record<string, string> = {}
 	if (typeFilter) filters.type = typeFilter
@@ -44,7 +49,6 @@ function ObjectsPage() {
 	const { data: objects, isLoading } = useObjects(workspaceId, filters)
 
 	// Derive available statuses for the current type filter
-	const settings = workspace.settings as Record<string, unknown>
 	const allStatuses = useMemo(() => {
 		const statusMap = settings?.statuses as Record<string, string[]> | undefined
 		if (!statusMap) return []

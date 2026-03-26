@@ -11,14 +11,26 @@ import {
 const uuid = '550e8400-e29b-41d4-a716-446655440000'
 
 describe('objectTypeSchema', () => {
-	it('accepts insight, bet, task', () => {
+	it('accepts valid lowercase slug types', () => {
 		expect(objectTypeSchema.parse('insight')).toBe('insight')
 		expect(objectTypeSchema.parse('bet')).toBe('bet')
 		expect(objectTypeSchema.parse('task')).toBe('task')
+		expect(objectTypeSchema.parse('meeting')).toBe('meeting')
+		expect(objectTypeSchema.parse('contact')).toBe('contact')
+		expect(objectTypeSchema.parse('my_custom_type')).toBe('my_custom_type')
 	})
 
-	it('rejects unknown types', () => {
-		expect(() => objectTypeSchema.parse('story')).toThrow()
+	it('rejects empty string', () => {
+		expect(() => objectTypeSchema.parse('')).toThrow()
+	})
+
+	it('rejects invalid type formats', () => {
+		expect(() => objectTypeSchema.parse('My Type')).toThrow()
+		expect(() => objectTypeSchema.parse('UPPER')).toThrow()
+		expect(() => objectTypeSchema.parse('has space')).toThrow()
+		expect(() => objectTypeSchema.parse('has-dash')).toThrow()
+		expect(() => objectTypeSchema.parse('123start')).toThrow()
+		expect(() => objectTypeSchema.parse('_leading')).toThrow()
 	})
 })
 

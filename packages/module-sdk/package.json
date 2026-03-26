@@ -1,5 +1,5 @@
 {
-	"name": "@ai-native/mcp",
+	"name": "@ai-native/module-sdk",
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
@@ -15,9 +15,11 @@
 		"test": "vitest"
 	},
 	"dependencies": {
-		"@ai-native/module-sdk": "workspace:*",
-		"@modelcontextprotocol/ext-apps": "^1.2.2",
-		"@modelcontextprotocol/sdk": "^1.27.1",
+		"@ai-native/db": "workspace:*",
+		"@ai-native/realtime": "workspace:*",
+		"@ai-native/storage": "workspace:*",
+		"@hono/zod-openapi": "^0.18.0",
+		"hono": "^4.7.0",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {

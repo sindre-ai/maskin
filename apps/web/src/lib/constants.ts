@@ -28,4 +28,16 @@ export const typeColors: Record<string, { bg: string; text: string }> = {
 	task: { bg: 'bg-type-task-bg', text: 'text-type-task-text' },
 }
 
+/** Fallback for extension-defined types not in the hardcoded maps */
+export const defaultTypeColor = { bg: 'bg-muted', text: 'text-muted-foreground' }
+export const defaultStatusColor = { bg: 'bg-muted', text: 'text-muted-foreground' }
+
+export function getTypeColor(type: string) {
+	return typeColors[type] ?? defaultTypeColor
+}
+
+export function getStatusColor(status: string) {
+	return statusColors[status] ?? defaultStatusColor
+}
+
 export const API_BASE = '/api'

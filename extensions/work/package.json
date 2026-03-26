@@ -1,0 +1,30 @@
+{
+	"name": "@ai-native/ext-work",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./server/index.ts",
+			"default": "./server/index.ts"
+		},
+		"./server": {
+			"types": "./server/index.ts",
+			"default": "./server/index.ts"
+		},
+		"./web": {
+			"types": "./web/index.ts",
+			"default": "./web/index.ts"
+		},
+		"./shared": {
+			"types": "./shared.ts",
+			"default": "./shared.ts"
+		}
+	},
+	"dependencies": {
+		"@ai-native/module-sdk": "workspace:*"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.0"
+	}
+}

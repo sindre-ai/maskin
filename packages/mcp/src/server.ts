@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { getAllModules } from '@ai-native/module-sdk'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -586,7 +587,9 @@ export function createMcpServer(config: McpConfig) {
 				relationship_types: relationshipTypes,
 			}
 
-			const types = typeFilter ? [typeFilter] : ['insight', 'bet', 'task']
+			// Dynamic types: use all types defined in workspace statuses (from enabled extensions)
+			const allTypes = Object.keys(statuses)
+			const types = typeFilter ? [typeFilter] : allTypes
 			const typeSchemas: Record<string, unknown> = {}
 
 			for (const t of types) {
@@ -1123,6 +1126,34 @@ export function createMcpServer(config: McpConfig) {
 			}
 		},
 	)
+
+	// Register extension MCP tools (namespaced with extensionId prefix)
+	for (const ext of getAllModules()) {
+		for (const tool of ext.mcpTools ?? []) {
+			try {
+				registerAppTool(
+					server,
+					`${ext.id}_${tool.name}`,
+					{
+						description: `[${ext.name}] ${tool.description}`,
+						inputSchema: tool.inputSchema.shape,
+						_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
+					},
+					async (args) => {
+						const result = await tool.handler(args, (method, path, body, options) =>
+							apiCall(config, method, `/api/m/${ext.id}${path}`, body, options),
+						)
+						return {
+							_meta: { toolName: `${ext.id}_${tool.name}` },
+							content: result.content,
+						}
+					},
+				)
+			} catch (err) {
+				console.error(`Failed to register MCP tool '${ext.id}_${tool.name}':`, err)
+			}
+		}
+	}
 
 	return server
 }

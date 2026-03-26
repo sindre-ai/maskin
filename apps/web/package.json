@@ -13,6 +13,8 @@
 		"test": "vitest"
 	},
 	"dependencies": {
+		"@ai-native/ext-work": "workspace:*",
+		"@ai-native/module-sdk": "workspace:*",
 		"@ai-native/shared": "workspace:*",
 		"@microsoft/fetch-event-source": "^2.0.1",
 		"@modelcontextprotocol/ext-apps": "^1.2.2",

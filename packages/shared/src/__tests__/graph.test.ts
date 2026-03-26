@@ -40,8 +40,18 @@ describe('graphNodeSchema', () => {
 		expect(() => graphNodeSchema.parse({ $id: 'x', type: 'bet' })).toThrow()
 	})
 
-	it('rejects invalid type', () => {
-		expect(() => graphNodeSchema.parse({ $id: 'x', type: 'story', status: 'a' })).toThrow()
+	it('accepts valid lowercase slug types', () => {
+		const result = graphNodeSchema.parse({ $id: 'x', type: 'meeting', status: 'scheduled' })
+		expect(result.type).toBe('meeting')
+	})
+
+	it('rejects empty type', () => {
+		expect(() => graphNodeSchema.parse({ $id: 'x', type: '', status: 'a' })).toThrow()
+	})
+
+	it('rejects invalid type formats', () => {
+		expect(() => graphNodeSchema.parse({ $id: 'x', type: 'My Type', status: 'a' })).toThrow()
+		expect(() => graphNodeSchema.parse({ $id: 'x', type: 'UPPER', status: 'a' })).toThrow()
 	})
 })
 

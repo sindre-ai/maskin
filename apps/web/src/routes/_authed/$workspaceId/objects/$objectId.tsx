@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getDefaultStatusForType } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
@@ -14,15 +15,15 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')(
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const defaultStatuses: Record<string, string> = {
-	insight: 'new',
-	bet: 'signal',
-	task: 'todo',
-}
-
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
-	const { workspaceId } = useWorkspace()
+	const { workspaceId, workspace } = useWorkspace()
+
+	// Derive default statuses from workspace settings (first status per type)
+	const settings = workspace.settings as Record<string, unknown>
+	const statusMap = (settings?.statuses ?? {}) as Record<string, string[]>
+	const getDefaultStatus = (type: string) =>
+		statusMap[type]?.[0] ?? getDefaultStatusForType(type) ?? 'new'
 	const { data: object, isLoading } = useObject(objectId, workspaceId)
 	const createObject = useCreateObject(workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
@@ -35,7 +36,7 @@ function ObjectDetailPage() {
 	const isCreated = isCreatedRef.current || !!object
 
 	const handleAutoCreate = async (data: {
-		type: 'insight' | 'bet' | 'task'
+		type: string
 		title: string
 	}) => {
 		if (isCreatedRef.current) return
@@ -45,11 +46,12 @@ function ObjectDetailPage() {
 				id: objectId,
 				type: data.type,
 				title: data.title,
-				status: defaultStatuses[data.type],
+				status: getDefaultStatus(data.type),
 			})
 			toast.success('Object created')
-		} catch {
+		} catch (err) {
 			isCreatedRef.current = false
+			toast.error(err instanceof Error ? err.message : 'Failed to create object')
 		}
 	}
 

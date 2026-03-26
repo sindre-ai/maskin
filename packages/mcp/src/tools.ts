@@ -19,7 +19,7 @@ export const tools = {
 				.array(
 					z.object({
 						$id: z.string().describe('Client-side temporary ID for cross-referencing in edges'),
-						type: z.enum(['insight', 'bet', 'task']),
+						type: z.string().describe('Object type (e.g. insight, bet, task, meeting)'),
 						title: z.string().optional(),
 						content: z.string().optional(),
 						status: z.string(),
@@ -108,7 +108,7 @@ export const tools = {
 			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z.enum(['insight', 'bet', 'task']).optional(),
+			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
@@ -123,7 +123,7 @@ export const tools = {
 				.string()
 				.min(1)
 				.describe('Search query — matches against title and content (case-insensitive)'),
-			type: z.enum(['insight', 'bet', 'task']).optional(),
+			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(20),
 			offset: z.number().int().min(0).default(0),
@@ -227,10 +227,10 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
-				.enum(['insight', 'bet', 'task'])
+				.string()
 				.optional()
 				.describe(
-					'Filter schema to a specific object type. If omitted, returns schema for all types.',
+					'Filter schema to a specific object type (e.g. insight, bet, task, meeting). If omitted, returns schema for all types.',
 				),
 		}),
 	},
