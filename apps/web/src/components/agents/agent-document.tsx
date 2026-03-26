@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useRegenerateApiKey, useUpdateActor } from '@/hooks/use-actors'
+import { useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import { useActiveSessionsForActor, useSessionLatestLog } from '@/hooks/use-sessions'
@@ -282,8 +282,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const updateActor = useUpdateActor(workspaceId)
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
-	const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null)
-
 	// Filter events by this agent's actorId
 	const agentEvents = useMemo(
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),

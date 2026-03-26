@@ -8,7 +8,6 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
-import { useAutoSave } from '@/hooks/use-auto-save'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
 import { useObjectRelationships } from '@/hooks/use-relationships'

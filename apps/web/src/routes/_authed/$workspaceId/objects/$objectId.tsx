@@ -3,10 +3,10 @@ import { ObjectCreateForm } from '@/components/objects/object-create-form'
 import { ObjectDocument } from '@/components/objects/object-document'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { useCreateObject, useObject } from '@/hooks/use-objects'
+import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')({
@@ -25,6 +25,7 @@ function ObjectDetailPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: object, isLoading } = useObject(objectId, workspaceId)
 	const createObject = useCreateObject(workspaceId)
+	const updateObject = useUpdateObject(workspaceId)
 	const isCreatedRef = useRef(false)
 
 	// Once the object exists in cache, mark as created
@@ -62,22 +63,30 @@ function ObjectDetailPage() {
 		}
 	}
 
-	// Once created, render the full document editor
+	const handleUpdate = useCallback(
+		(data: { title?: string; content?: string; status?: string }) => {
+			updateObject.mutate({ id: objectId, data })
+		},
+		[objectId, updateObject],
+	)
+
+	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
 		return <ObjectDocument object={object} />
 	}
 
-	// Create mode — show minimal form
+	// Create mode — show form with document-like sections
 	return (
 		<>
 			<PageHeader />
-			<div className="max-w-3xl mx-auto">
-				<ObjectCreateForm
-					onAutoCreate={handleAutoCreate}
-					isPending={createObject.isPending}
-					error={createObject.error}
-				/>
-			</div>
+			<ObjectCreateForm
+				objectId={objectId}
+				object={object}
+				onAutoCreate={handleAutoCreate}
+				onUpdate={handleUpdate}
+				isPending={createObject.isPending}
+				error={createObject.error}
+			/>
 		</>
 	)
 }
