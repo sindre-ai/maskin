@@ -70,6 +70,10 @@ function AgentsPage() {
 			list.push(session)
 			map.set(session.actorId, list)
 		}
+		// Sort each agent's sessions by createdAt descending
+		for (const list of map.values()) {
+			list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+		}
 		return map
 	}, [sessions])
 
