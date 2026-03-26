@@ -388,8 +388,8 @@ function SessionRow({
 	const createSession = useCreateSession(workspaceId)
 
 	const result = session.result as Record<string, unknown> | null
-	const errorMessage = result?.error as string | undefined
-	const exitCode = result?.exit_code as number | undefined
+	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
+	const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
 	const hasResultError = !!errorMessage || (exitCode !== undefined && exitCode !== 0)
 
 	const { data: stderrLog } = useSessionErrorLog(
