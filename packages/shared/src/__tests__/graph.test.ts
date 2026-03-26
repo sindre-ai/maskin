@@ -40,8 +40,13 @@ describe('graphNodeSchema', () => {
 		expect(() => graphNodeSchema.parse({ $id: 'x', type: 'bet' })).toThrow()
 	})
 
-	it('rejects invalid type', () => {
-		expect(() => graphNodeSchema.parse({ $id: 'x', type: 'story', status: 'a' })).toThrow()
+	it('accepts any non-empty string type', () => {
+		const result = graphNodeSchema.parse({ $id: 'x', type: 'meeting', status: 'scheduled' })
+		expect(result.type).toBe('meeting')
+	})
+
+	it('rejects empty type', () => {
+		expect(() => graphNodeSchema.parse({ $id: 'x', type: '', status: 'a' })).toThrow()
 	})
 })
 

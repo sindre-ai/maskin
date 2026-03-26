@@ -17,7 +17,9 @@
 	"dependencies": {
 		"@ai-native/auth": "workspace:*",
 		"@ai-native/db": "workspace:*",
+		"@ai-native/ext-work": "workspace:*",
 		"@ai-native/mcp": "workspace:*",
+		"@ai-native/module-sdk": "workspace:*",
 		"@ai-native/realtime": "workspace:*",
 		"@ai-native/shared": "workspace:*",
 		"@ai-native/storage": "workspace:*",

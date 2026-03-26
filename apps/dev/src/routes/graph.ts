@@ -1,5 +1,6 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
+import { getValidObjectTypes } from '@ai-native/module-sdk'
 import { createGraphSchema } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
@@ -96,8 +97,34 @@ app.openapi(createGraphRoute, async (c) => {
 		)
 	}
 
-	// Validate statuses against workspace settings
+	// Validate object types against enabled extensions
 	const settings = workspace.settings as WorkspaceSettings
+	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const validTypes = getValidObjectTypes(enabledModules)
+	if (validTypes.length > 0) {
+		for (const node of body.nodes) {
+			if (!validTypes.includes(node.type)) {
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						`Invalid object type '${node.type}' on node '${node.$id}'`,
+						[
+							{
+								field: `nodes[${node.$id}].type`,
+								message: `'${node.type}' is not a valid object type`,
+								expected: validTypes.map((t) => `'${t}'`).join(' | '),
+								received: `'${node.type}'`,
+							},
+						],
+						`Valid types: ${validTypes.join(', ')}`,
+					),
+					400,
+				)
+			}
+		}
+	}
+
+	// Validate statuses against workspace settings
 	const statuses = settings?.statuses
 	if (statuses) {
 		for (const node of body.nodes) {

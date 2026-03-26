@@ -1,7 +1,9 @@
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { Input } from '@/components/ui/input'
-import { useEffect, useRef, useState } from 'react'
+import { useWorkspace } from '@/lib/workspace-context'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
@@ -9,7 +11,7 @@ import { MetadataProperties } from './metadata-properties'
 interface ObjectCreateFormProps {
 	objectId: string
 	object?: import('@/lib/api').ObjectResponse
-	onAutoCreate: (data: { type: 'insight' | 'bet' | 'task'; title: string }) => void
+	onAutoCreate: (data: { type: string; title: string }) => void
 	onUpdate?: (data: { title?: string; content?: string; status?: string }) => void
 	isPending?: boolean
 	error?: Error | null
@@ -23,7 +25,13 @@ export function ObjectCreateForm({
 	isPending = false,
 	error,
 }: ObjectCreateFormProps) {
-	const [type, setType] = useState<'insight' | 'bet' | 'task'>('bet')
+	const { workspace } = useWorkspace()
+	const settings = workspace.settings as Record<string, unknown>
+	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+
+	const availableTypes = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
+
+	const [type, setType] = useState(availableTypes[0]?.value ?? 'bet')
 	const [title, setTitle] = useState('')
 	const hasAutoCreatedRef = useRef(false)
 
@@ -66,16 +74,16 @@ export function ObjectCreateForm({
 			{/* Type selector */}
 			<div className="mb-6">
 				<ButtonGroup>
-					{(['insight', 'bet', 'task'] as const).map((t) => (
+					{availableTypes.map((t) => (
 						<Button
-							key={t}
+							key={t.value}
 							type="button"
-							variant={type === t ? 'secondary' : 'ghost'}
+							variant={type === t.value ? 'secondary' : 'ghost'}
 							size="sm"
-							onClick={() => setType(t)}
+							onClick={() => setType(t.value)}
 							disabled={hasAutoCreatedRef.current}
 						>
-							{t}
+							{t.label}
 						</Button>
 					))}
 				</ButtonGroup>

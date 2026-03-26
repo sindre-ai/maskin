@@ -1,9 +1,11 @@
+import './extensions'
 import fs from 'node:fs'
 import path from 'node:path'
 import { authMiddleware } from '@ai-native/auth'
 import { createDb } from '@ai-native/db'
 import type { Database } from '@ai-native/db'
 import { createMcpServer } from '@ai-native/mcp'
+import { getAllModules } from '@ai-native/module-sdk'
 import { PgNotifyBridge } from '@ai-native/realtime'
 import { S3StorageProvider } from '@ai-native/storage'
 import { serve } from '@hono/node-server'
@@ -156,6 +158,14 @@ app.route('/api/sessions', sessionsRoutes)
 app.route('/api/notifications', notificationsRoutes)
 app.route('/api/graph', graphRoutes)
 app.route('/api/claude-oauth', claudeOauthRoutes)
+
+// Mount extension routes at /api/m/{extensionId}
+const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
+for (const ext of getAllModules()) {
+	if (ext.routes) {
+		app.route(`/api/m/${ext.id}`, ext.routes(moduleEnv))
+	}
+}
 
 // MCP HTTP transport for MCP Apps (interactive UIs in chat clients)
 app.post('/mcp', async (c) => {

@@ -77,9 +77,7 @@ describe('createCommentSchema', () => {
 
 	it('rejects mentions exceeding 50', () => {
 		const mentions = Array.from({ length: 51 }, () => uuid)
-		expect(() =>
-			createCommentSchema.parse({ entity_id: uuid, content: 'hey', mentions }),
-		).toThrow()
+		expect(() => createCommentSchema.parse({ entity_id: uuid, content: 'hey', mentions })).toThrow()
 	})
 
 	it('accepts optional parent_event_id as positive integer', () => {

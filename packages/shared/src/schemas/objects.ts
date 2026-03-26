@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { safeMetadataSchema } from './primitives'
 
-export const objectTypeSchema = z.enum(['insight', 'bet', 'task'])
+export const objectTypeSchema = z.string().min(1)
 export type ObjectType = z.infer<typeof objectTypeSchema>
 
 export const createObjectSchema = z.object({

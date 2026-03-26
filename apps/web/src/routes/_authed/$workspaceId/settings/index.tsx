@@ -2,10 +2,12 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getAllWebModules } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { useState } from 'react'
@@ -47,7 +49,61 @@ function GeneralPage() {
 			</div>
 
 			<div className="border-t border-border pt-6">
+				<ExtensionsSection />
+			</div>
+
+			<div className="border-t border-border pt-6">
 				<ThemePicker />
+			</div>
+		</div>
+	)
+}
+
+function ExtensionsSection() {
+	const { workspace, workspaceId } = useWorkspace()
+	const updateWorkspace = useUpdateWorkspace(workspaceId)
+	const settings = workspace.settings as Record<string, unknown>
+	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const allModules = getAllWebModules()
+
+	const handleToggle = (moduleId: string, enabled: boolean) => {
+		const next = enabled
+			? [...enabledModules, moduleId]
+			: enabledModules.filter((m) => m !== moduleId)
+		updateWorkspace.mutate({
+			settings: { ...settings, enabled_modules: next },
+		})
+	}
+
+	return (
+		<div>
+			<Label className="mb-1 text-muted-foreground">Extensions</Label>
+			<p className="text-sm text-muted-foreground mb-3">
+				Enable or disable extensions for this workspace.
+			</p>
+			<div className="space-y-3">
+				{allModules.map((mod) => {
+					const isEnabled = enabledModules.includes(mod.id)
+					return (
+						<div
+							key={mod.id}
+							className="flex items-center justify-between rounded-lg border border-border p-3"
+						>
+							<div>
+								<span className="text-sm font-medium">{mod.name}</span>
+								{mod.objectTypeTabs.length > 0 && (
+									<span className="text-sm text-muted-foreground ml-2">
+										{mod.objectTypeTabs.map((t) => t.label).join(', ')}
+									</span>
+								)}
+							</div>
+							<Switch
+								checked={isEnabled}
+								onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
+							/>
+						</div>
+					)
+				})}
 			</div>
 		</div>
 	)

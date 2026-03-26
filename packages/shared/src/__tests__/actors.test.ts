@@ -93,7 +93,9 @@ describe('createActorSchema', () => {
 	})
 
 	it('rejects invalid email format', () => {
-		expect(() => createActorSchema.parse({ type: 'human', name: 'A', email: 'not-email' })).toThrow()
+		expect(() =>
+			createActorSchema.parse({ type: 'human', name: 'A', email: 'not-email' }),
+		).toThrow()
 	})
 
 	it('rejects password shorter than 8 chars', () => {
@@ -101,7 +103,11 @@ describe('createActorSchema', () => {
 	})
 
 	it('accepts auto_create_workspace boolean', () => {
-		const result = createActorSchema.parse({ type: 'human', name: 'A', auto_create_workspace: true })
+		const result = createActorSchema.parse({
+			type: 'human',
+			name: 'A',
+			auto_create_workspace: true,
+		})
 		expect(result.auto_create_workspace).toBe(true)
 	})
 })

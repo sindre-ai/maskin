@@ -14,15 +14,14 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')(
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const defaultStatuses: Record<string, string> = {
-	insight: 'new',
-	bet: 'signal',
-	task: 'todo',
-}
-
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
-	const { workspaceId } = useWorkspace()
+	const { workspaceId, workspace } = useWorkspace()
+
+	// Derive default statuses from workspace settings (first status per type)
+	const settings = workspace.settings as Record<string, unknown>
+	const statusMap = (settings?.statuses ?? {}) as Record<string, string[]>
+	const getDefaultStatus = (type: string) => statusMap[type]?.[0] ?? 'new'
 	const { data: object, isLoading } = useObject(objectId, workspaceId)
 	const createObject = useCreateObject(workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
@@ -35,7 +34,7 @@ function ObjectDetailPage() {
 	const isCreated = isCreatedRef.current || !!object
 
 	const handleAutoCreate = async (data: {
-		type: 'insight' | 'bet' | 'task'
+		type: string
 		title: string
 	}) => {
 		if (isCreatedRef.current) return
@@ -45,7 +44,7 @@ function ObjectDetailPage() {
 				id: objectId,
 				type: data.type,
 				title: data.title,
-				status: defaultStatuses[data.type],
+				status: getDefaultStatus(data.type),
 			})
 			toast.success('Object created')
 		} catch {

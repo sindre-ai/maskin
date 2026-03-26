@@ -1,5 +1,6 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
+import { getValidObjectTypes } from '@ai-native/module-sdk'
 import {
 	createObjectSchema,
 	objectQuerySchema,
@@ -88,6 +89,29 @@ app.openapi(createObjectRoute, async (c) => {
 	}
 
 	const settings = workspace.settings as WorkspaceSettings
+
+	// Validate object type against enabled extensions
+	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const validTypes = getValidObjectTypes(enabledModules)
+	if (validTypes.length > 0 && !validTypes.includes(body.type)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Invalid object type '${body.type}'`,
+				[
+					{
+						field: 'type',
+						message: `'${body.type}' is not a valid object type for this workspace`,
+						expected: validTypes.map((t) => `'${t}'`).join(' | '),
+						received: `'${body.type}'`,
+					},
+				],
+				`Valid types: ${validTypes.join(', ')}. Enable more extensions in workspace settings.`,
+			),
+			400,
+		)
+	}
+
 	const validStatuses = settings?.statuses?.[body.type]
 	if (validStatuses && !validStatuses.includes(body.status)) {
 		return c.json(

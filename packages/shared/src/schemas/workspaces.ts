@@ -22,6 +22,7 @@ export const workspaceSettingsSchema = z.object({
 	relationship_types: z
 		.array(z.string())
 		.default(['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']),
+	enabled_modules: z.array(z.string()).default(['work']),
 	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(5),
 	llm_keys: z
 		.object({

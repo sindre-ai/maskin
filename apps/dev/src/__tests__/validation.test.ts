@@ -22,9 +22,17 @@ describe('Object validation', () => {
 		expect(result.success).toBe(true)
 	})
 
-	it('rejects invalid type', () => {
+	it('accepts any non-empty string type (validation happens at runtime against enabled extensions)', () => {
 		const result = createObjectSchema.safeParse({
-			type: 'invalid',
+			type: 'meeting',
+			status: 'scheduled',
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects empty type', () => {
+		const result = createObjectSchema.safeParse({
+			type: '',
 			status: 'new',
 		})
 		expect(result.success).toBe(false)

@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
@@ -30,7 +31,8 @@ function ObjectsPage() {
 	const fieldDefs =
 		(settings?.field_definitions as Record<string, FieldDefinition[]> | undefined) ?? {}
 
-	const objectTypes = ['insight', 'bet', 'task']
+	const enabledModules = (settings?.enabled_modules as string[]) ?? ['work']
+	const objectTypes = getEnabledObjectTypeTabs(enabledModules).map((t) => t.value)
 	const [activeType, setActiveType] = useState(objectTypes[0])
 	const [showAdd, setShowAdd] = useState(false)
 	const [newName, setNewName] = useState('')

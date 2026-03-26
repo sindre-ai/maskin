@@ -53,13 +53,18 @@ export interface TriggerFormPayload {
 
 // --- Constants ---
 
-const INTERNAL_EVENTS: ProviderEventDefinition[] = [
-	{ entityType: 'insight', actions: ['created', 'updated', 'status_changed'], label: 'Insight' },
-	{ entityType: 'bet', actions: ['created', 'updated', 'status_changed'], label: 'Bet' },
-	{ entityType: 'task', actions: ['created', 'updated', 'status_changed'], label: 'Task' },
-]
+// Build internal events dynamically from registered extensions
+import { getAllWebModules } from '@ai-native/module-sdk'
 
-const INTERNAL_ENTITY_TYPES = new Set(['insight', 'bet', 'task'])
+const INTERNAL_EVENTS: ProviderEventDefinition[] = getAllWebModules()
+	.flatMap((m) => m.objectTypeTabs)
+	.map((t) => ({
+		entityType: t.value,
+		actions: ['created', 'updated', 'status_changed'],
+		label: t.label,
+	}))
+
+const INTERNAL_ENTITY_TYPES = new Set(INTERNAL_EVENTS.map((e) => e.entityType))
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [

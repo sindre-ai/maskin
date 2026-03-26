@@ -32,9 +32,15 @@ importers:
       '@ai-native/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@ai-native/ext-work':
+        specifier: workspace:*
+        version: link:../../extensions/work
       '@ai-native/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@ai-native/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
       '@ai-native/realtime':
         specifier: workspace:*
         version: link:../../packages/realtime
@@ -111,6 +117,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@ai-native/ext-work':
+        specifier: workspace:*
+        version: link:../../extensions/work
+      '@ai-native/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
       '@ai-native/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -239,6 +251,16 @@ importers:
         specifier: ^2.3.2
         version: 2.3.2(rollup@4.59.0)(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2))
 
+  extensions/work:
+    dependencies:
+      '@ai-native/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/auth:
     dependencies:
       '@ai-native/db':
@@ -288,12 +310,40 @@ importers:
 
   packages/mcp:
     dependencies:
+      '@ai-native/module-sdk':
+        specifier: workspace:*
+        version: link:../module-sdk
       '@modelcontextprotocol/ext-apps':
         specifier: ^1.2.2
         version: 1.2.2(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@3.25.76)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@3.25.76)
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/module-sdk:
+    dependencies:
+      '@ai-native/db':
+        specifier: workspace:*
+        version: link:../db
+      '@ai-native/realtime':
+        specifier: workspace:*
+        version: link:../realtime
+      '@ai-native/storage':
+        specifier: workspace:*
+        version: link:../storage
+      '@hono/zod-openapi':
+        specifier: ^0.18.0
+        version: 0.18.4(hono@4.12.8)(zod@3.25.76)
+      hono:
+        specifier: ^4.7.0
+        version: 4.12.8
       zod:
         specifier: ^3.24.0
         version: 3.25.76

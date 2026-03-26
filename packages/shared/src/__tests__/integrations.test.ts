@@ -20,15 +20,11 @@ describe('eventDefinitionSchema', () => {
 	})
 
 	it('rejects missing entityType', () => {
-		expect(() =>
-			eventDefinitionSchema.parse({ actions: ['opened'], label: 'test' }),
-		).toThrow()
+		expect(() => eventDefinitionSchema.parse({ actions: ['opened'], label: 'test' })).toThrow()
 	})
 
 	it('rejects missing actions', () => {
-		expect(() =>
-			eventDefinitionSchema.parse({ entityType: 'issue', label: 'test' }),
-		).toThrow()
+		expect(() => eventDefinitionSchema.parse({ entityType: 'issue', label: 'test' })).toThrow()
 	})
 
 	it('rejects missing label', () => {
@@ -50,9 +46,7 @@ describe('providerInfoSchema', () => {
 	})
 
 	it('rejects missing name', () => {
-		expect(() =>
-			providerInfoSchema.parse({ displayName: 'X', events: [] }),
-		).toThrow()
+		expect(() => providerInfoSchema.parse({ displayName: 'X', events: [] })).toThrow()
 	})
 })
 
