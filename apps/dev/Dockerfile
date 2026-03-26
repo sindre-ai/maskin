@@ -19,7 +19,7 @@ COPY packages/ packages/
 COPY apps/dev/ apps/dev/
 COPY apps/web/ apps/web/
 
-RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm build
+RUN NODE_OPTIONS=--max-old-space-size=2048 pnpm build --concurrency=1
 
 COPY docker/agent-base/ docker/agent-base/
 
