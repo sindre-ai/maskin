@@ -402,13 +402,6 @@ function SessionRow({
 		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
 	const displayError = errorDetail ?? stderrLog
 
-	const handleRetry = useCallback(() => {
-		createSession.mutate({
-			actor_id: agentId,
-			action_prompt: session.actionPrompt,
-		})
-	}, [createSession, agentId, session.actionPrompt])
-
 	return (
 		<div>
 			<div className="flex items-center gap-2.5 rounded-md px-3 py-1.5">
@@ -428,7 +421,12 @@ function SessionRow({
 						<button
 							type="button"
 							className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer"
-							onClick={handleRetry}
+							onClick={() =>
+								createSession.mutate({
+									actor_id: agentId,
+									action_prompt: session.actionPrompt,
+								})
+							}
 							disabled={createSession.isPending}
 						>
 							{createSession.isPending ? 'Retrying…' : 'Retry'}
