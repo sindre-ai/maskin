@@ -77,7 +77,7 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 					{humans.map((actor) => (
 						<div
 							key={actor.id}
-							className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors"
+							className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
 						>
 							<ActorAvatar name={actor.name} type={actor.type} size="sm" />
 							<div className="flex-1 min-w-0">

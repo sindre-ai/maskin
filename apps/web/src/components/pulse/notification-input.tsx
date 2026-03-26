@@ -56,7 +56,7 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 							{options.map((opt) => (
 								<div
 									key={opt.value}
-									className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-accent"
+									className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-accent hover:text-accent-foreground"
 									onClick={() => setSingleValue(opt.value)}
 									onKeyDown={(e) => e.key === 'Enter' && setSingleValue(opt.value)}
 								>
@@ -83,7 +83,7 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 							{options.map((opt) => (
 								<div
 									key={opt.value}
-									className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-accent"
+									className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-accent hover:text-accent-foreground"
 									onClick={() => toggleMulti(opt.value)}
 									onKeyDown={(e) => e.key === 'Enter' && toggleMulti(opt.value)}
 								>

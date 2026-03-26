@@ -18,7 +18,7 @@ export function BetCard({
 		<Link
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId: bet.id }}
-			className="block rounded-lg border border-border bg-card p-4 shadow-md hover:border-border hover:bg-muted/30 hover:shadow-lg transition-all"
+			className="block rounded-lg border border-border bg-card p-4 shadow-md hover:border-border hover:bg-accent/30 hover:shadow-lg transition-all"
 		>
 			<div className="flex items-start justify-between gap-2">
 				<h3 className="text-sm font-medium text-foreground leading-tight">

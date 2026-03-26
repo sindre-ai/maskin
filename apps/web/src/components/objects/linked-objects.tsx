@@ -157,7 +157,7 @@ export function LinkedObjectsView({
 								<button
 									type="button"
 									onClick={() => onNavigate(workspaceId, obj.id)}
-									className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 text-left"
+									className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-accent-foreground hover:bg-accent/50 text-left"
 								>
 									<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
 									<Badge variant="outline" className="text-[10px] font-normal">
@@ -170,7 +170,7 @@ export function LinkedObjectsView({
 								<Link
 									to="/$workspaceId/objects/$objectId"
 									params={{ workspaceId, objectId: obj.id }}
-									className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50"
+									className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-accent-foreground hover:bg-accent/50"
 								>
 									<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
 									<Badge variant="outline" className="text-[10px] font-normal">

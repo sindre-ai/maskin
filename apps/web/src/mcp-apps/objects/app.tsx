@@ -115,7 +115,7 @@ function ObjectListView({ objects }: { objects: ObjectResponse[] }) {
 			{objects.map((obj) => (
 				<div
 					key={obj.id}
-					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors"
+					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
 				>
 					<TypeBadge type={obj.type} />
 					<span className="flex-1 text-sm text-foreground truncate">{obj.title || 'Untitled'}</span>
