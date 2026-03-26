@@ -53,11 +53,15 @@ describe('createObjectSchema', () => {
 	})
 
 	it('rejects invalid uuid for id', () => {
-		expect(() => createObjectSchema.parse({ type: 'task', status: 'todo', id: 'not-uuid' })).toThrow()
+		expect(() =>
+			createObjectSchema.parse({ type: 'task', status: 'todo', id: 'not-uuid' }),
+		).toThrow()
 	})
 
 	it('rejects invalid uuid for owner', () => {
-		expect(() => createObjectSchema.parse({ type: 'task', status: 'todo', owner: 'not-uuid' })).toThrow()
+		expect(() =>
+			createObjectSchema.parse({ type: 'task', status: 'todo', owner: 'not-uuid' }),
+		).toThrow()
 	})
 })
 

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
 import { formatDurationBetween, formatDurationMs } from '@/lib/format-duration'
+import { describe, expect, it, vi } from 'vitest'
 
 describe('formatDurationMs', () => {
 	it('formats seconds', () => {

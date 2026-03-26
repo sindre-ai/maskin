@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
+import { describe, expect, it } from 'vitest'
 
 interface TestSession {
 	actorId: string
@@ -34,7 +34,7 @@ describe('groupSessionsByAgent', () => {
 			session({ actorId: 'a1', createdAt: '2025-01-02T00:00:00Z' }),
 		]
 		const grouped = groupSessionsByAgent(sessions)
-		const sorted = grouped.get('a1')!
+		const sorted = grouped.get('a1') ?? []
 		expect(sorted[0].createdAt).toBe('2025-01-03T00:00:00Z')
 		expect(sorted[1].createdAt).toBe('2025-01-02T00:00:00Z')
 		expect(sorted[2].createdAt).toBe('2025-01-01T00:00:00Z')
@@ -102,7 +102,11 @@ describe('getLatestSession', () => {
 
 	it('returns most recent session when none active', () => {
 		const first = session({ actorId: 'a1', status: 'completed', createdAt: '2025-01-01T00:00:00Z' })
-		const second = session({ actorId: 'a1', status: 'completed', createdAt: '2025-01-02T00:00:00Z' })
+		const second = session({
+			actorId: 'a1',
+			status: 'completed',
+			createdAt: '2025-01-02T00:00:00Z',
+		})
 		// groupSessionsByAgent sorts descending, so second would be first in array
 		const map = new Map([['a1', [second, first]]])
 		expect(getLatestSession('a1', map)).toBe(second)

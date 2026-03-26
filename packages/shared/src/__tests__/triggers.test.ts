@@ -74,8 +74,16 @@ describe('reminderConfigSchema', () => {
 
 describe('conditionOperatorSchema', () => {
 	const operators = [
-		'equals', 'not_equals', 'greater_than', 'less_than',
-		'before', 'after', 'within_days', 'is_set', 'is_not_set', 'contains',
+		'equals',
+		'not_equals',
+		'greater_than',
+		'less_than',
+		'before',
+		'after',
+		'within_days',
+		'is_set',
+		'is_not_set',
+		'contains',
 	]
 
 	for (const op of operators) {

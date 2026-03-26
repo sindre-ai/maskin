@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
-import { invalidateFromSSE } from '@/lib/sse-invalidation'
 import { queryKeys } from '@/lib/query-keys'
+import { invalidateFromSSE } from '@/lib/sse-invalidation'
+import { describe, expect, it, vi } from 'vitest'
 
 function createMockQueryClient() {
 	return {
