@@ -46,6 +46,7 @@ interface ObjectDocumentViewProps {
 
 export function ObjectDocumentView({
 	object,
+	workspaceId,
 	statuses,
 	creator,
 	relationships,
@@ -91,6 +92,15 @@ export function ObjectDocumentView({
 				className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 			/>
 
+			{/* Agent working banner */}
+			{object.activeSessionId && (
+				<AgentWorkingBadge
+					sessionId={object.activeSessionId}
+					workspaceId={workspaceId}
+					variant="banner"
+				/>
+			)}
+
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
@@ -99,7 +109,6 @@ export function ObjectDocumentView({
 				) : (
 					<StatusBadge status={object.status} />
 				)}
-				{object.activeSessionId && <AgentWorkingBadge />}
 				{creator && (
 					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
 						<ActorAvatar name={creator.name} type={creator.type} size="sm" />

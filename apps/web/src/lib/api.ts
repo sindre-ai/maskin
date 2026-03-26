@@ -215,6 +215,19 @@ export const api = {
 			}),
 	},
 
+	sessions: {
+		get: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}`, { workspaceId }),
+		list: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<SessionResponse[]>(`/sessions${qs}`, { workspaceId })
+		},
+		logs: (id: string, workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<SessionLogResponse[]>(`/sessions/${id}/logs${qs}`, { workspaceId })
+		},
+	},
+
 	events: {
 		history: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
@@ -478,6 +491,33 @@ export interface SaveSkillInput {
 	description: string
 	content: string
 	frontmatter?: Record<string, unknown>
+}
+
+export interface SessionResponse {
+	id: string
+	workspaceId: string
+	actorId: string
+	triggerId: string | null
+	status: string
+	containerId: string | null
+	actionPrompt: string
+	config: Record<string, unknown> | null
+	result: Record<string, unknown> | null
+	snapshotPath: string | null
+	startedAt: string | null
+	completedAt: string | null
+	timeoutAt: string | null
+	createdBy: string
+	createdAt: string | null
+	updatedAt: string | null
+}
+
+export interface SessionLogResponse {
+	id: number
+	sessionId: string
+	stream: string
+	content: string
+	createdAt: string | null
 }
 
 export interface EventResponse {
