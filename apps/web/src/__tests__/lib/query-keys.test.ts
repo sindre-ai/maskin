@@ -1,0 +1,108 @@
+import { describe, expect, it } from 'vitest'
+import { queryKeys } from '@/lib/query-keys'
+
+describe('queryKeys', () => {
+	describe('objects', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.objects.all('ws-1')).toEqual(['objects', 'ws-1'])
+		})
+
+		it('list includes workspaceId and filters', () => {
+			const filters = { type: 'task' }
+			expect(queryKeys.objects.list('ws-1', filters)).toEqual(['objects', 'ws-1', 'list', filters])
+		})
+
+		it('list without filters includes undefined', () => {
+			expect(queryKeys.objects.list('ws-1')).toEqual(['objects', 'ws-1', 'list', undefined])
+		})
+
+		it('detail includes id', () => {
+			expect(queryKeys.objects.detail('obj-1')).toEqual(['objects', 'detail', 'obj-1'])
+		})
+	})
+
+	describe('bets', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.bets.all('ws-1')).toEqual(['bets', 'ws-1'])
+		})
+	})
+
+	describe('actors', () => {
+		it('all includes optional workspaceId', () => {
+			expect(queryKeys.actors.all('ws-1')).toEqual(['actors', 'ws-1'])
+			expect(queryKeys.actors.all()).toEqual(['actors', undefined])
+		})
+
+		it('detail includes id', () => {
+			expect(queryKeys.actors.detail('a-1')).toEqual(['actors', 'detail', 'a-1'])
+		})
+	})
+
+	describe('workspaces', () => {
+		it('all returns static key', () => {
+			expect(queryKeys.workspaces.all()).toEqual(['workspaces'])
+		})
+
+		it('detail includes id', () => {
+			expect(queryKeys.workspaces.detail('ws-1')).toEqual(['workspaces', 'detail', 'ws-1'])
+		})
+
+		it('members includes workspaceId', () => {
+			expect(queryKeys.workspaces.members('ws-1')).toEqual(['workspaces', 'ws-1', 'members'])
+		})
+	})
+
+	describe('sessions', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.sessions.all('ws-1')).toEqual(['sessions', 'ws-1'])
+		})
+
+		it('detail includes id', () => {
+			expect(queryKeys.sessions.detail('s-1')).toEqual(['sessions', 'detail', 's-1'])
+		})
+
+		it('logs includes sessionId', () => {
+			expect(queryKeys.sessions.logs('s-1')).toEqual(['sessions', 's-1', 'logs'])
+		})
+
+		it('byActor includes workspaceId and actorId', () => {
+			expect(queryKeys.sessions.byActor('ws-1', 'a-1')).toEqual([
+				'sessions', 'ws-1', 'actor', 'a-1', 'running',
+			])
+		})
+	})
+
+	describe('triggers', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.triggers.all('ws-1')).toEqual(['triggers', 'ws-1'])
+		})
+	})
+
+	describe('notifications', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.notifications.all('ws-1')).toEqual(['notifications', 'ws-1'])
+		})
+
+		it('list includes workspaceId and filters', () => {
+			expect(queryKeys.notifications.list('ws-1', { status: 'pending' })).toEqual([
+				'notifications', 'ws-1', 'list', { status: 'pending' },
+			])
+		})
+	})
+
+	describe('events', () => {
+		it('history includes workspaceId', () => {
+			expect(queryKeys.events.history('ws-1')).toEqual(['events', 'ws-1', 'history', undefined])
+		})
+
+		it('byEntity includes entityId', () => {
+			expect(queryKeys.events.byEntity('e-1')).toEqual(['events', 'entity', 'e-1'])
+		})
+	})
+
+	describe('claudeOauth', () => {
+		it('status includes workspaceId', () => {
+			expect(queryKeys.claudeOauth.status('ws-1')).toEqual(['claude-oauth', 'ws-1', 'status'])
+		})
+	})
+})
