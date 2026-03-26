@@ -1,9 +1,9 @@
 import type { Database } from '@ai-native/db'
-import { events } from '@ai-native/db/schema'
+import { events, actors, notifications, objects } from '@ai-native/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
-import { eventQuerySchema } from '@ai-native/shared'
+import { createCommentSchema, eventQuerySchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { and, asc, desc, eq, gt } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -121,5 +121,119 @@ app.openapi(eventHistoryRoute, (async (c) => {
 
 	return c.json(serializeArray(results) as z.infer<typeof eventResponseSchema>[])
 }) as RouteHandler<typeof eventHistoryRoute, Env>)
+
+// POST /api/events - Create a comment event
+const createCommentRoute = createRoute({
+	method: 'post',
+	path: '/',
+	tags: ['events'],
+	summary: 'Create a comment on an object',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: createCommentSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		201: {
+			description: 'Comment event created',
+			content: { 'application/json': { schema: eventResponseSchema } },
+		},
+		400: {
+			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(createCommentRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	// Validate the target object exists and belongs to this workspace
+	const [object] = await db
+		.select({ workspaceId: objects.workspaceId })
+		.from(objects)
+		.where(eq(objects.id, body.entity_id))
+		.limit(1)
+
+	if (!object || object.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404 as never)
+	}
+
+	const created = await db.transaction(async (tx) => {
+		const results = await tx
+			.insert(events)
+			.values({
+				workspaceId,
+				actorId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: body.entity_id,
+				data: {
+					content: body.content,
+					mentions: body.mentions,
+					parentEventId: body.parent_event_id,
+				},
+			})
+			.returning()
+
+		const comment = results[0]
+		if (!comment) {
+			throw new Error('Failed to create comment')
+		}
+
+		// Create notifications for @mentioned agents (batched)
+		if (body.mentions?.length) {
+			const mentionedActors = await tx
+				.select({ id: actors.id, type: actors.type, name: actors.name })
+				.from(actors)
+				.where(inArray(actors.id, body.mentions))
+
+			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
+
+			if (agentActors.length > 0) {
+				const createdNotifications = await tx
+					.insert(notifications)
+					.values(
+						agentActors.map((agent) => ({
+							workspaceId,
+							type: 'needs_input' as const,
+							title: '@mentioned by comment',
+							content: body.content,
+							sourceActorId: actorId,
+							targetActorId: agent.id,
+							objectId: body.entity_id,
+							status: 'pending' as const,
+						})),
+					)
+					.returning()
+
+				if (createdNotifications.length > 0) {
+					await tx.insert(events).values(
+						createdNotifications.map((notification) => ({
+							workspaceId,
+							actorId,
+							action: 'created',
+							entityType: 'notification',
+							entityId: notification.id,
+							data: notification,
+						})),
+					)
+				}
+			}
+		}
+
+		return comment
+	})
+
+	return c.json(serializeArray([created])[0] as z.infer<typeof eventResponseSchema>, 201)
+}) as RouteHandler<typeof createCommentRoute, Env>)
 
 export default app
