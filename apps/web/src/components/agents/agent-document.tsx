@@ -1,5 +1,5 @@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { formatDurationMs } from '@/lib/format-duration'
+import { formatDurationBetween } from '@/lib/format-duration'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -26,8 +26,8 @@ import {
 	CheckCircle2,
 	ChevronDown,
 	ChevronRight,
-	CircleX,
 	Clock,
+	MinusCircle,
 	XCircle,
 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
@@ -362,24 +362,17 @@ function SessionStatusIcon({ status }: { status: string }) {
 		case 'snapshotting':
 			return <Clock size={14} className="text-warning shrink-0" />
 		default:
-			return <CircleX size={14} className="text-muted-foreground shrink-0" />
+			return <MinusCircle size={14} className="text-muted-foreground shrink-0" />
 	}
 }
 
-function formatDuration(startedAt: string | null, completedAt: string | null): string | null {
-	if (!startedAt) return null
-	const start = new Date(startedAt).getTime()
-	const end = completedAt ? new Date(completedAt).getTime() : Date.now()
-	return formatDurationMs(end - start)
-}
-
 function SessionRow({ session }: { session: SessionResponse }) {
-	const duration = formatDuration(session.startedAt, session.completedAt)
+	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md px-3 py-1.5 hover:bg-bg-hover transition-colors">
+		<div className="flex items-center gap-2.5 rounded-md px-3 py-1.5">
 			<SessionStatusIcon status={session.status} />
-			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
+			<span className="text-sm truncate flex-1">{session.actionPrompt || 'Untitled session'}</span>
 			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
 			<RelativeTime
 				date={session.completedAt ?? session.createdAt}
