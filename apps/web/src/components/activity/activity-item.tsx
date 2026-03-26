@@ -4,16 +4,12 @@ import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
-
-function formatAction(event: EventResponse): string {
-	const action = event.action.replace(/_/g, ' ')
-	return `${action} ${event.entityType}`
-}
+import { Badge } from '../ui/badge'
+import { formatEventDescription, isErrorEvent } from './format-event'
 
 function getEntityTitle(event: EventResponse): string | null {
 	const data = event.data
 	if (!data) return null
-	// Try common shapes from the backend event data
 	if (typeof data.title === 'string') return data.title
 	if (typeof data.updated === 'object' && data.updated && 'title' in data.updated) {
 		return (data.updated as Record<string, unknown>).title as string
@@ -36,6 +32,8 @@ export function ActivityItemView({
 }: ActivityItemViewProps) {
 	const isAgent = actor?.type === 'agent'
 	const title = getEntityTitle(event)
+	const description = formatEventDescription(event)
+	const hasError = isErrorEvent(event)
 
 	return (
 		<div
@@ -51,25 +49,28 @@ export function ActivityItemView({
 					<span className={cn('font-medium', isAgent ? 'text-primary' : 'text-foreground')}>
 						{actor?.name ?? 'Unknown'}
 					</span>
-					<span className="text-muted-foreground">{formatAction(event)}</span>
-					<RelativeTime
-						date={event.createdAt}
-						className="text-muted-foreground ml-auto text-xs shrink-0"
-					/>
+					<span className="text-muted-foreground">{description}</span>
+					{title &&
+						(onNavigate ? (
+							<button
+								type="button"
+								onClick={() => onNavigate(event.workspaceId, event.entityId)}
+								className="text-primary hover:underline cursor-pointer truncate text-sm"
+							>
+								{title}
+							</button>
+						) : (
+							<span className="text-muted-foreground truncate text-sm">{title}</span>
+						))}
+					<span className="flex items-center gap-1.5 ml-auto shrink-0">
+						{hasError && (
+							<Badge variant="destructive" className="text-[10px] px-1 py-0">
+								error
+							</Badge>
+						)}
+						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+					</span>
 				</div>
-				{title &&
-					!compact &&
-					(onNavigate ? (
-						<button
-							type="button"
-							onClick={() => onNavigate(event.workspaceId, event.entityId)}
-							className="text-xs text-muted-foreground hover:text-primary truncate block text-left"
-						>
-							"{title}"
-						</button>
-					) : (
-						<span className="text-xs text-muted-foreground truncate block">"{title}"</span>
-					))}
 			</div>
 		</div>
 	)
