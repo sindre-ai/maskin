@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "tsc -b && vite build && node scripts/build-mcp.mjs",
+		"build": "tsc -b tsconfig.build.json && vite build && node scripts/build-mcp.mjs",
 		"build:mcp": "node scripts/build-mcp.mjs",
 		"preview": "vite preview",
 		"lint": "biome check .",

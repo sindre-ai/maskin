@@ -19,6 +19,7 @@
 	},
 	"scripts": {
 		"build": "tsc",
+		"test": "vitest run",
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
@@ -26,6 +27,7 @@
 		"hono": "^4.7.0"
 	},
 	"devDependencies": {
-		"typescript": "^5.7.0"
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
 	}
 }
