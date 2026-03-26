@@ -88,8 +88,7 @@ export function LinkedObjectsView({
 	const uniqueTypes = Object.keys(typeCounts)
 
 	// Fall back to 'all' when the selected type no longer has any relationships
-	const effectiveFilter =
-		activeFilter !== 'all' && !typeCounts[activeFilter] ? 'all' : activeFilter
+	const effectiveFilter = activeFilter !== 'all' && !typeCounts[activeFilter] ? 'all' : activeFilter
 
 	// Filter by active type
 	const filteredRelationships =
@@ -182,10 +181,7 @@ export function LinkedObjectsView({
 								</Link>
 							)}
 							{obj.activeSessionId && (
-								<AgentWorkingBadge
-									sessionId={obj.activeSessionId}
-									workspaceId={workspaceId}
-								/>
+								<AgentWorkingBadge sessionId={obj.activeSessionId} workspaceId={workspaceId} />
 							)}
 							<Button
 								variant="ghost"

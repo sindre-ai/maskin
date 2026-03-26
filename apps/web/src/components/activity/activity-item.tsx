@@ -2,8 +2,23 @@ import { useActor } from '@/hooks/use-actors'
 import type { ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
+import { Activity, CircleDot, Link2, Pencil, Play, RefreshCw, Trash2, Unlink } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
+
+function getEventIcon(event: EventResponse) {
+	const action = event.action
+	const entityType = event.entityType
+
+	if (action === 'created' && entityType === 'relationship') return Link2
+	if (action === 'deleted' && entityType === 'relationship') return Unlink
+	if (action === 'created') return CircleDot
+	if (action === 'updated') return Pencil
+	if (action === 'status_changed') return RefreshCw
+	if (action === 'deleted') return Trash2
+	if (action === 'session_created') return Play
+	return Activity
+}
 
 function formatAction(event: EventResponse): string {
 	const action = event.action.replace(/_/g, ' ')
@@ -37,6 +52,8 @@ export function ActivityItemView({
 	const isAgent = actor?.type === 'agent'
 	const title = getEntityTitle(event)
 
+	const Icon = getEventIcon(event)
+
 	return (
 		<div
 			className={cn(
@@ -48,6 +65,7 @@ export function ActivityItemView({
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<div className="flex-1 min-w-0">
 				<div className="flex items-baseline gap-1.5 text-sm">
+					<Icon size={14} className="text-muted-foreground shrink-0 relative top-[2px]" />
 					<span className={cn('font-medium', isAgent ? 'text-primary' : 'text-foreground')}>
 						{actor?.name ?? 'Unknown'}
 					</span>
