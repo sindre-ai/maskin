@@ -1708,7 +1708,12 @@ export function createMcpServer(config: McpConfig) {
 ${typeLines.join('\n')}
 
    Relationship Types: ${relationshipTypes.length > 0 ? relationshipTypes.join(', ') : 'informs, breaks_into, blocks, relates_to, duplicates (defaults)'}
-   Max Concurrent Sessions: ${maxSessions}`
+   Max Concurrent Sessions: ${maxSessions}
+${(() => {
+	const enabledModules = (settings.enabled_modules ?? []) as string[]
+	if (enabledModules.length === 0) return '   Extensions: none enabled (use enable_module or install_template to get started)'
+	return `   Extensions: ${enabledModules.join(', ')}`
+})()}`
 
 					// Fetch team members
 					try {
@@ -1762,6 +1767,12 @@ ${Object.keys(tools)
 	.filter((t) => t !== 'hello')
 	.map((t) => `   • ${t}`)
 	.join('\n')}
+${(() => {
+	const extTools = getAllModules().flatMap((ext) =>
+		(ext.mcpTools ?? []).map((t) => `   • ${ext.id}_${t.name} — [${ext.name}] ${t.description}`),
+	)
+	return extTools.length > 0 ? `\n🧩 Extension Tools\n${extTools.join('\n')}` : ''
+})()}
 
 ⚡ Quick Start
   1. Call get_workspace_schema to see the full config for your workspace
