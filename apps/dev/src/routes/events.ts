@@ -1,5 +1,5 @@
 import type { Database } from '@ai-native/db'
-import { events, actors, notifications } from '@ai-native/db/schema'
+import { events, actors, notifications, objects } from '@ai-native/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
 import { createCommentSchema, eventQuerySchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
@@ -156,6 +156,17 @@ app.openapi(createCommentRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
+	// Validate the target object exists and belongs to this workspace
+	const [object] = await db
+		.select({ workspaceId: objects.workspaceId })
+		.from(objects)
+		.where(eq(objects.id, body.entity_id))
+		.limit(1)
+
+	if (!object || object.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404 as never)
+	}
+
 	const results = await db
 		.insert(events)
 		.values({
@@ -177,39 +188,43 @@ app.openapi(createCommentRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create comment'), 500 as never)
 	}
 
-	// Create notifications for @mentioned agents
+	// Create notifications for @mentioned agents (batched)
 	if (body.mentions?.length) {
 		const mentionedActors = await db
 			.select({ id: actors.id, type: actors.type, name: actors.name })
 			.from(actors)
 			.where(inArray(actors.id, body.mentions))
 
-		for (const actor of mentionedActors) {
-			if (actor.type === 'agent') {
-				const [notification] = await db
-					.insert(notifications)
-					.values({
+		const agentActors = mentionedActors.filter((a) => a.type === 'agent')
+
+		if (agentActors.length > 0) {
+			const createdNotifications = await db
+				.insert(notifications)
+				.values(
+					agentActors.map((agent) => ({
 						workspaceId,
-						type: 'needs_input',
+						type: 'needs_input' as const,
 						title: '@mentioned by comment',
 						content: body.content,
 						sourceActorId: actorId,
-						targetActorId: actor.id,
+						targetActorId: agent.id,
 						objectId: body.entity_id,
-						status: 'pending',
-					})
-					.returning()
+						status: 'pending' as const,
+					})),
+				)
+				.returning()
 
-				if (notification) {
-					await db.insert(events).values({
+			if (createdNotifications.length > 0) {
+				await db.insert(events).values(
+					createdNotifications.map((notification) => ({
 						workspaceId,
 						actorId,
 						action: 'created',
 						entityType: 'notification',
 						entityId: notification.id,
 						data: notification,
-					})
-				}
+					})),
+				)
 			}
 		}
 	}

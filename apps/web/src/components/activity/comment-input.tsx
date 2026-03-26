@@ -92,6 +92,26 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 		setMentionFilter('')
 	}, [])
 
+	const handleSubmit = useCallback(() => {
+		const trimmed = content.trim()
+		if (!trimmed) return
+
+		createComment.mutate(
+			{
+				entity_id: objectId,
+				content: trimmed,
+				mentions: mentions.length > 0 ? mentions : undefined,
+				parent_event_id: parentEventId,
+			},
+			{
+				onSuccess: () => {
+					setContent('')
+					setMentions([])
+				},
+			},
+		)
+	}, [content, mentions, objectId, parentEventId, createComment])
+
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 			if (showMentions && filteredActors.length > 0) {
@@ -123,28 +143,8 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 				handleSubmit()
 			}
 		},
-		[showMentions, filteredActors, selectedIndex, insertMention],
+		[showMentions, filteredActors, selectedIndex, insertMention, handleSubmit],
 	)
-
-	const handleSubmit = useCallback(() => {
-		const trimmed = content.trim()
-		if (!trimmed) return
-
-		createComment.mutate(
-			{
-				entity_id: objectId,
-				content: trimmed,
-				mentions: mentions.length > 0 ? mentions : undefined,
-				parent_event_id: parentEventId,
-			},
-			{
-				onSuccess: () => {
-					setContent('')
-					setMentions([])
-				},
-			},
-		)
-	}, [content, mentions, objectId, parentEventId, createComment])
 
 	if (!actor) return null
 
