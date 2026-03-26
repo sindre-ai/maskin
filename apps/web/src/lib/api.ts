@@ -216,6 +216,8 @@ export const api = {
 	},
 
 	sessions: {
+		create: (workspaceId: string, data: CreateSessionInput) =>
+			request<SessionResponse>('/sessions', { method: 'POST', body: data, workspaceId }),
 		get: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}`, { workspaceId }),
 		list: (workspaceId: string, params?: Record<string, string>) => {
@@ -493,6 +495,12 @@ export interface SaveSkillInput {
 	description: string
 	content: string
 	frontmatter?: Record<string, unknown>
+}
+
+export interface CreateSessionInput {
+	actor_id: string
+	action_prompt: string
+	auto_start?: boolean
 }
 
 export interface SessionResponse {
