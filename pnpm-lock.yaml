@@ -259,12 +259,18 @@ importers:
 
   modules/meetings:
     dependencies:
+      '@ai-native/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@ai-native/module-sdk':
         specifier: workspace:*
         version: link:../../packages/module-sdk
       '@hono/zod-openapi':
         specifier: ^0.18.0
         version: 0.18.4(hono@4.12.8)(zod@3.25.76)
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/react@19.2.14)(kysely@0.28.14)(postgres@3.4.8)(react@19.2.4)
       hono:
         specifier: ^4.7.0
         version: 4.12.8
@@ -360,6 +366,9 @@ importers:
       '@ai-native/realtime':
         specifier: workspace:*
         version: link:../realtime
+      '@ai-native/storage':
+        specifier: workspace:*
+        version: link:../storage
       '@hono/zod-openapi':
         specifier: ^0.18.0
         version: 0.18.4(hono@4.12.8)(zod@3.25.76)

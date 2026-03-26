@@ -167,6 +167,7 @@ for (const mod of getAllModules()) {
 			notifyBridge,
 			sessionManager,
 			agentStorage,
+			storageProvider,
 		})
 		app.route(`/api/m/${mod.id}`, moduleRoutes)
 	}

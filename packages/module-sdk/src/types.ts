@@ -1,5 +1,6 @@
 import type { Database } from '@ai-native/db'
 import type { PgNotifyBridge } from '@ai-native/realtime'
+import type { StorageProvider } from '@ai-native/storage'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { z } from 'zod'
 
@@ -125,6 +126,8 @@ export interface ModuleEnv {
 	sessionManager: ISessionManager
 	/** Agent storage manager for file operations */
 	agentStorage: IAgentStorage
+	/** S3-compatible storage provider for files (recordings, transcripts, etc.) */
+	storageProvider: StorageProvider
 }
 
 // ── Frontend module definition ─────────────────────────────────────

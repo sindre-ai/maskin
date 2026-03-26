@@ -16,6 +16,7 @@
 	"dependencies": {
 		"@ai-native/db": "workspace:*",
 		"@ai-native/realtime": "workspace:*",
+		"@ai-native/storage": "workspace:*",
 		"@hono/zod-openapi": "^0.18.0",
 		"hono": "^4.7.0",
 		"zod": "^3.24.0"
