@@ -12,6 +12,6 @@ export const eventQuerySchema = z.object({
 export const createCommentSchema = z.object({
 	entity_id: z.string().uuid(),
 	content: z.string().min(1).max(10000),
-	mentions: z.array(z.string().uuid()).optional(),
-	parent_event_id: z.coerce.number().optional(),
+	mentions: z.array(z.string().uuid()).max(50).optional(),
+	parent_event_id: z.number().int().positive().optional(),
 })
