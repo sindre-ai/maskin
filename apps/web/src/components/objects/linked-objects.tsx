@@ -87,11 +87,15 @@ export function LinkedObjectsView({
 
 	const uniqueTypes = Object.keys(typeCounts)
 
+	// Fall back to 'all' when the selected type no longer has any relationships
+	const effectiveFilter =
+		activeFilter !== 'all' && !typeCounts[activeFilter] ? 'all' : activeFilter
+
 	// Filter by active type
 	const filteredRelationships =
-		activeFilter === 'all'
+		effectiveFilter === 'all'
 			? allRelationships
-			: allRelationships.filter((r) => r.object.type === activeFilter)
+			: allRelationships.filter((r) => r.object.type === effectiveFilter)
 
 	const totalCount = allRelationships.length
 	const existingRelationships = [...asSource, ...asTarget]
@@ -113,7 +117,7 @@ export function LinkedObjectsView({
 			{uniqueTypes.length >= 2 && (
 				<div className="flex items-center gap-1 mb-3">
 					<Button
-						variant={activeFilter === 'all' ? 'secondary' : 'ghost'}
+						variant={effectiveFilter === 'all' ? 'secondary' : 'ghost'}
 						size="sm"
 						onClick={() => setActiveFilter('all')}
 					>
@@ -122,7 +126,7 @@ export function LinkedObjectsView({
 					{uniqueTypes.map((type) => (
 						<Button
 							key={type}
-							variant={activeFilter === type ? 'secondary' : 'ghost'}
+							variant={effectiveFilter === type ? 'secondary' : 'ghost'}
 							size="sm"
 							onClick={() => setActiveFilter(type)}
 						>
