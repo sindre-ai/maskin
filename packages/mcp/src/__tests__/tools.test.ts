@@ -6,6 +6,7 @@ const uuid = '550e8400-e29b-41d4-a716-446655440000'
 const uuid2 = '660e8400-e29b-41d4-a716-446655440000'
 
 const ALL_TOOL_NAMES = [
+	'hello',
 	'create_objects',
 	'get_objects',
 	'update_objects',

@@ -1172,9 +1172,17 @@ export function createMcpServer(config: McpConfig) {
 					const relationshipTypes = (settings.relationship_types ?? []) as string[]
 					const maxSessions = (settings.max_concurrent_sessions ?? 5) as number
 
-					// Build workspace config section
+					// Build workspace config section — derive types from settings keys
+					const configuredTypes = new Set([
+						...Object.keys(statuses),
+						...Object.keys(fieldDefinitions),
+						...Object.keys(displayNames),
+					])
+					const objectTypes =
+						configuredTypes.size > 0 ? [...configuredTypes] : ['insight', 'bet', 'task']
+
 					const typeLines: string[] = []
-					for (const t of ['insight', 'bet', 'task']) {
+					for (const t of objectTypes) {
 						const name = displayNames[t] ?? t.charAt(0).toUpperCase() + t.slice(1)
 						const typeStatuses = statuses[t] ?? []
 						const fields = fieldDefinitions[t] ?? []
@@ -1254,40 +1262,11 @@ Everything here is an API, and you're talking to it right now through MCP. Let's
 ${workspaceSection}
 ${teamSection}
 
-🧰 What You Can Do
-
-   Objects (insights, bets, tasks):
-     create_objects, get_objects, list_objects, update_objects,
-     delete_object, search_objects
-
-   Relationships (connect objects):
-     create_relationship, list_relationships, delete_relationship
-
-   Workspace & Team:
-     list_workspaces, get_workspace_schema, create_workspace,
-     update_workspace, add_workspace_member
-
-   Actors (humans & agents):
-     create_actor, get_actor, list_actors, update_actor,
-     regenerate_api_key
-
-   Automation (triggers):
-     create_trigger, list_triggers, update_trigger, delete_trigger
-
-   Agent Sessions (run agents in containers):
-     create_session, get_session, list_sessions, run_agent,
-     stop_session, pause_session, resume_session
-
-   Events (real-time audit log):
-     get_events
-
-   Notifications:
-     create_notification, get_notification, list_notifications,
-     update_notification, delete_notification
-
-   Integrations:
-     list_integrations, list_integration_providers,
-     connect_integration, disconnect_integration
+🧰 Available Tools
+${Object.keys(tools)
+	.filter((t) => t !== 'hello')
+	.map((t) => `   • ${t}`)
+	.join('\n')}
 
 ⚡ Quick Start
   1. Call get_workspace_schema to see the full config for your workspace

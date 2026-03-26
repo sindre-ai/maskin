@@ -448,6 +448,137 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('hello handler', () => {
+		it('returns welcome with workspace and members', async () => {
+			const workspace = {
+				id: 'ws-1',
+				name: 'My Workspace',
+				settings: {
+					statuses: { insight: ['new', 'processing'], bet: ['active'] },
+					field_definitions: {},
+					display_names: {},
+					relationship_types: ['informs', 'blocks'],
+					max_concurrent_sessions: 3,
+				},
+			}
+			const members = [
+				{ actorId: 'a-1', name: 'Alice', type: 'human', role: 'owner' },
+				{ actorId: 'a-2', name: 'Bot', type: 'agent', role: 'member' },
+			]
+
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([workspace]),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve(members),
+				} as Response)
+
+			const handler = getHandler('hello')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+
+			expect(text).toContain('Welcome to Maskin')
+			expect(text).toContain('My Workspace')
+			expect(text).toContain('ws-1')
+			expect(text).toContain('Alice')
+			expect(text).toContain('Bot')
+			expect(text).toContain('informs, blocks')
+		})
+
+		it('shows fallback when no workspaces exist', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('hello')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+
+			expect(text).toContain('No workspace found')
+			expect(text).toContain('create_workspace')
+		})
+
+		it('degrades gracefully when API call fails', async () => {
+			vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'))
+
+			const handler = getHandler('hello')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+
+			expect(text).toContain('Welcome to Maskin')
+			expect(text).toContain('Not connected yet')
+			expect(text).toContain('create_actor')
+		})
+
+		it('selects workspace matching workspace_id arg', async () => {
+			const ws1 = { id: 'ws-1', name: 'First', settings: {} }
+			const ws2 = { id: 'ws-2', name: 'Second', settings: {} }
+
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([ws1, ws2]),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([]),
+				} as Response)
+
+			const handler = getHandler('hello')
+			const result = (await handler({ workspace_id: 'ws-2' })) as {
+				content: Array<{ text: string }>
+			}
+			const text = result.content[0].text
+
+			expect(text).toContain('Second')
+			expect(text).toContain('ws-2')
+		})
+
+		it('includes all tool names dynamically', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('hello')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+
+			for (const toolName of Object.keys(tools)) {
+				if (toolName === 'hello') continue
+				expect(text).toContain(toolName)
+			}
+		})
+
+		it('shows custom object types from workspace settings', async () => {
+			const workspace = {
+				id: 'ws-1',
+				name: 'Custom',
+				settings: {
+					statuses: { meeting: ['scheduled', 'done'], insight: ['new'] },
+					field_definitions: {},
+					display_names: { meeting: 'Meeting' },
+				},
+			}
+
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([workspace]),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([]),
+				} as Response)
+
+			const handler = getHandler('hello')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+
+			expect(text).toContain('Meeting')
+			expect(text).toContain('meeting')
+			expect(text).toContain('scheduled')
+		})
+	})
+
 	describe('error handling', () => {
 		it('throws with API error message', async () => {
 			mockFetchError(
