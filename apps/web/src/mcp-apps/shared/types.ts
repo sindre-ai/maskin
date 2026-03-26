@@ -10,4 +10,5 @@ export type {
 	RelationshipResponse,
 	TriggerResponse,
 	EventResponse,
+	SessionResponse,
 } from '@/lib/api'
