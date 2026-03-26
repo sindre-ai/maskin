@@ -96,7 +96,7 @@ export function ObjectDocumentView({
 					onBlur={handleTitleBlur}
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Untitled"
-					className="w-fit text-2xl font-semibold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+					className="w-fit text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 				/>
 				{showSaved && (
 					<span className="flex items-center gap-1 text-xs text-muted-foreground">
