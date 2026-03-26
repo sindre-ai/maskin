@@ -126,3 +126,37 @@ export interface ModuleEnv {
 	/** Agent storage manager for file operations */
 	agentStorage: IAgentStorage
 }
+
+// ── Frontend module definition ─────────────────────────────────────
+
+/** Navigation item for the sidebar */
+export interface NavItemDefinition {
+	/** Display label */
+	label: string
+	/** Route path relative to workspace, e.g. 'objects' becomes /$workspaceId/objects */
+	path: string
+	/** Lucide icon name */
+	icon: string
+	/** If true, only match this route exactly (not fuzzy) */
+	exact?: boolean
+}
+
+/** Object type tab for the objects list page */
+export interface ObjectTypeTab {
+	/** Display label, e.g. 'Insights' */
+	label: string
+	/** Object type value used as filter, e.g. 'insight' */
+	value: string
+}
+
+/** Frontend module definition — registered in the web app */
+export interface ModuleWebDefinition {
+	/** Must match the server module's id */
+	id: string
+	/** Human-readable name */
+	name: string
+	/** Sidebar navigation items this module adds */
+	navItems: NavItemDefinition[]
+	/** Object type tabs this module adds to the objects list */
+	objectTypeTabs: ObjectTypeTab[]
+}

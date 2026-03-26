@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAutoSave } from '@/hooks/use-auto-save'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
+import { getAllWebModules } from '@ai-native/module-sdk'
 import type { SafeJsonValue } from '@ai-native/shared'
 import { Check, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -53,13 +54,17 @@ export interface TriggerFormPayload {
 
 // --- Constants ---
 
-const INTERNAL_EVENTS: ProviderEventDefinition[] = [
-	{ entityType: 'insight', actions: ['created', 'updated', 'status_changed'], label: 'Insight' },
-	{ entityType: 'bet', actions: ['created', 'updated', 'status_changed'], label: 'Bet' },
-	{ entityType: 'task', actions: ['created', 'updated', 'status_changed'], label: 'Task' },
-]
+const INTERNAL_EVENTS: ProviderEventDefinition[] = getAllWebModules().flatMap((mod) =>
+	mod.objectTypeTabs.map((t) => ({
+		entityType: t.value,
+		actions: ['created', 'updated', 'status_changed'],
+		label: t.label,
+	})),
+)
 
-const INTERNAL_ENTITY_TYPES = new Set(['insight', 'bet', 'task'])
+const INTERNAL_ENTITY_TYPES = new Set(
+	getAllWebModules().flatMap((mod) => mod.objectTypeTabs.map((t) => t.value)),
+)
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [

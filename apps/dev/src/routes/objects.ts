@@ -1,6 +1,5 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
-import { getValidObjectTypes } from '@ai-native/module-sdk'
 import {
 	createObjectSchema,
 	objectQuerySchema,
@@ -19,6 +18,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
+import { validateObjectType } from '../lib/validate-object-type'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
@@ -90,25 +90,9 @@ app.openapi(createObjectRoute, async (c) => {
 
 	const settings = workspace.settings as WorkspaceSettings
 	// Validate object type against enabled modules
-	const enabledModules = settings.enabled_modules ?? ['work']
-	const validTypes = getValidObjectTypes(enabledModules)
-	if (!validTypes.includes(body.type)) {
-		return c.json(
-			createApiError(
-				'VALIDATION_ERROR',
-				`Object type '${body.type}' is not enabled in this workspace`,
-				[
-					{
-						field: 'type',
-						message: `'${body.type}' is not an enabled object type`,
-						expected: validTypes.map((t) => `'${t}'`).join(' | '),
-						received: `'${body.type}'`,
-					},
-				],
-				`Enabled types: ${validTypes.join(', ')}`,
-			),
-			400,
-		)
+	const typeError = validateObjectType(settings, body.type)
+	if (typeError) {
+		return c.json(typeError.error, typeError.status)
 	}
 	const validStatuses = settings?.statuses?.[body.type]
 	if (validStatuses && !validStatuses.includes(body.status)) {

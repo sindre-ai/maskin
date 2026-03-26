@@ -5,8 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 interface FieldDefinition {
 	name: string
@@ -31,7 +32,13 @@ function PropertiesPage() {
 	const fieldDefs =
 		(settings?.field_definitions as Record<string, FieldDefinition[]> | undefined) ?? {}
 
-	const objectTypes = ['insight', 'bet', 'task']
+	const enabledModulesRaw = (settings?.enabled_modules as string[]) ?? ['work']
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stabilize array reference from JSONB
+	const enabledModules = useMemo(() => enabledModulesRaw, [JSON.stringify(enabledModulesRaw)])
+	const objectTypes = useMemo(
+		() => getEnabledObjectTypeTabs(enabledModules).map((t) => t.value),
+		[enabledModules],
+	)
 	const [activeType, setActiveType] = useState(objectTypes[0])
 	const { create } = useSearch({ from: '/_authed/$workspaceId/settings/properties/' })
 	const [showAdd, setShowAdd] = useState(false)

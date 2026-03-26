@@ -13,23 +13,30 @@ import { useActors } from '@/hooks/use-actors'
 import { useObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
+import { createFileRoute, useSearch } from '@tanstack/react-router'
+import { useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const tabs = [
-	{ label: 'All', value: undefined },
-	{ label: 'Insights', value: 'insight' },
-	{ label: 'Bets', value: 'bet' },
-	{ label: 'Tasks', value: 'task' },
-] as const
-
 function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
+	const { create } = useSearch({ from: '/_authed/$workspaceId/objects/' })
+	const settings = workspace.settings as Record<string, unknown>
+	const enabledModulesRaw = (settings?.enabled_modules as string[]) ?? ['work']
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stabilize array reference from JSONB
+	const enabledModules = useMemo(() => enabledModulesRaw, [JSON.stringify(enabledModulesRaw)])
+	const moduleTabs = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
+	const tabs = useMemo(
+		() => [
+			{ label: 'All', value: undefined as string | undefined },
+			...moduleTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),
+		],
+		[moduleTabs],
+	)
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
@@ -44,7 +51,6 @@ function ObjectsPage() {
 	const { data: objects, isLoading } = useObjects(workspaceId, filters)
 
 	// Derive available statuses for the current type filter
-	const settings = workspace.settings as Record<string, unknown>
 	const allStatuses = useMemo(() => {
 		const statusMap = settings?.statuses as Record<string, string[]> | undefined
 		if (!statusMap) return []

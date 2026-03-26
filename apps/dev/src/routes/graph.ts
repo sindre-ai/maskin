@@ -1,6 +1,5 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
-import { getValidObjectTypes } from '@ai-native/module-sdk'
 import { createGraphSchema } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
@@ -14,6 +13,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
+import { validateObjectType } from '../lib/validate-object-type'
 
 type Env = {
 	Variables: {
@@ -99,26 +99,10 @@ app.openapi(createGraphRoute, async (c) => {
 
 	// Validate object types against enabled modules
 	const settings = workspace.settings as WorkspaceSettings
-	const enabledModules = settings.enabled_modules ?? ['work']
-	const validTypes = getValidObjectTypes(enabledModules)
 	for (const node of body.nodes) {
-		if (!validTypes.includes(node.type)) {
-			return c.json(
-				createApiError(
-					'VALIDATION_ERROR',
-					`Object type '${node.type}' is not enabled in this workspace`,
-					[
-						{
-							field: `nodes[${node.$id}].type`,
-							message: `'${node.type}' is not an enabled object type`,
-							expected: validTypes.map((t) => `'${t}'`).join(' | '),
-							received: `'${node.type}'`,
-						},
-					],
-					`Enabled types: ${validTypes.join(', ')}`,
-				),
-				400,
-			)
+		const typeError = validateObjectType(settings, node.type, `nodes[${node.$id}]`)
+		if (typeError) {
+			return c.json(typeError.error, typeError.status)
 		}
 	}
 

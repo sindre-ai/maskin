@@ -1,4 +1,9 @@
-import type { ModuleDefinition } from './types.js'
+import type {
+	ModuleDefinition,
+	ModuleWebDefinition,
+	NavItemDefinition,
+	ObjectTypeTab,
+} from './types.js'
 
 /** Isolated module registry — each instance has its own set of modules. */
 export class ModuleRegistry {
@@ -92,4 +97,45 @@ export function getModuleDefaultSettings(moduleId: string) {
 
 export function clearModules(): void {
 	defaultRegistry.clear()
+}
+
+// ── Frontend module registry ───────────────────────────────────────
+
+const webModules = new Map<string, ModuleWebDefinition>()
+
+/** Register a frontend module definition */
+export function registerWebModule(mod: ModuleWebDefinition): void {
+	if (webModules.has(mod.id)) {
+		throw new Error(`Web module "${mod.id}" is already registered`)
+	}
+	webModules.set(mod.id, mod)
+}
+
+/** Get all registered frontend modules */
+export function getAllWebModules(): ModuleWebDefinition[] {
+	return Array.from(webModules.values())
+}
+
+/** Get a frontend module by ID */
+export function getWebModule(id: string): ModuleWebDefinition | undefined {
+	return webModules.get(id)
+}
+
+/** Get nav items from all enabled modules */
+export function getEnabledNavItems(enabledModuleIds: string[]): NavItemDefinition[] {
+	return getAllWebModules()
+		.filter((m) => enabledModuleIds.includes(m.id))
+		.flatMap((m) => m.navItems)
+}
+
+/** Get object type tabs from all enabled modules */
+export function getEnabledObjectTypeTabs(enabledModuleIds: string[]): ObjectTypeTab[] {
+	return getAllWebModules()
+		.filter((m) => enabledModuleIds.includes(m.id))
+		.flatMap((m) => m.objectTypeTabs)
+}
+
+/** Clear all frontend modules (for testing) */
+export function clearWebModules(): void {
+	webModules.clear()
 }
