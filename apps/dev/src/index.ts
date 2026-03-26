@@ -163,7 +163,11 @@ app.route('/api/claude-oauth', claudeOauthRoutes)
 const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
 for (const ext of getAllModules()) {
 	if (ext.routes) {
-		app.route(`/api/m/${ext.id}`, ext.routes(moduleEnv))
+		try {
+			app.route(`/api/m/${ext.id}`, ext.routes(moduleEnv))
+		} catch (err) {
+			console.error(`Failed to mount routes for extension '${ext.id}':`, err)
+		}
 	}
 }
 

@@ -33,6 +33,15 @@ export function ObjectCreateForm({
 	const [type, setType] = useState(availableTypes[0]?.value ?? '')
 	const [title, setTitle] = useState('')
 	const hasAutoCreatedRef = useRef(false)
+	const isValid = title.trim().length > 0
+
+	// Auto-create when form first becomes valid
+	useEffect(() => {
+		if (availableTypes.length === 0) return
+		if (!isValid || hasAutoCreatedRef.current) return
+		hasAutoCreatedRef.current = true
+		onAutoCreate({ type, title: title.trim() })
+	}, [isValid, type, title, onAutoCreate, availableTypes.length])
 
 	if (availableTypes.length === 0) {
 		return (
@@ -44,15 +53,6 @@ export function ObjectCreateForm({
 			</div>
 		)
 	}
-
-	const isValid = title.trim().length > 0
-
-	// Auto-create when form first becomes valid
-	useEffect(() => {
-		if (!isValid || hasAutoCreatedRef.current) return
-		hasAutoCreatedRef.current = true
-		onAutoCreate({ type, title: title.trim() })
-	}, [isValid, type, title, onAutoCreate])
 
 	// Once created, sync title updates on blur
 	const handleTitleBlur = () => {

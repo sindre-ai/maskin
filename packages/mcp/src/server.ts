@@ -1130,24 +1130,28 @@ export function createMcpServer(config: McpConfig) {
 	// Register extension MCP tools (namespaced with extensionId prefix)
 	for (const ext of getAllModules()) {
 		for (const tool of ext.mcpTools ?? []) {
-			registerAppTool(
-				server,
-				`${ext.id}_${tool.name}`,
-				{
-					description: `[${ext.name}] ${tool.description}`,
-					inputSchema: tool.inputSchema.shape,
-					_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
-				},
-				async (args) => {
-					const result = await tool.handler(args, (method, path, body, options) =>
-						apiCall(config, method, `/api/m/${ext.id}${path}`, body, options),
-					)
-					return {
-						_meta: { toolName: `${ext.id}_${tool.name}` },
-						content: result.content,
-					}
-				},
-			)
+			try {
+				registerAppTool(
+					server,
+					`${ext.id}_${tool.name}`,
+					{
+						description: `[${ext.name}] ${tool.description}`,
+						inputSchema: tool.inputSchema.shape,
+						_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
+					},
+					async (args) => {
+						const result = await tool.handler(args, (method, path, body, options) =>
+							apiCall(config, method, `/api/m/${ext.id}${path}`, body, options),
+						)
+						return {
+							_meta: { toolName: `${ext.id}_${tool.name}` },
+							content: result.content,
+						}
+					},
+				)
+			} catch (err) {
+				console.error(`Failed to register MCP tool '${ext.id}_${tool.name}':`, err)
+			}
 		}
 	}
 

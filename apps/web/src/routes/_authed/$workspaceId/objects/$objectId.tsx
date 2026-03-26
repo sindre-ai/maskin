@@ -49,8 +49,9 @@ function ObjectDetailPage() {
 				status: getDefaultStatus(data.type),
 			})
 			toast.success('Object created')
-		} catch {
+		} catch (err) {
 			isCreatedRef.current = false
+			toast.error(err instanceof Error ? err.message : 'Failed to create object')
 		}
 	}
 

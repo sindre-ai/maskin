@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useAutoSave } from '@/hooks/use-auto-save'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
 import type { SafeJsonValue } from '@ai-native/shared'
@@ -53,7 +54,7 @@ export interface TriggerFormPayload {
 
 // --- Constants ---
 
-import { getAllWebModules } from '@ai-native/module-sdk'
+import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [
@@ -163,18 +164,17 @@ export function TriggerForm({
 }) {
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: providers } = useProviders()
+	const enabledModules = useEnabledModules()
 
-	// Build internal events dynamically from registered extensions (must be in component, not module scope)
+	// Build internal events dynamically from enabled extensions for this workspace
 	const internalEvents = useMemo<ProviderEventDefinition[]>(
 		() =>
-			getAllWebModules()
-				.flatMap((m) => m.objectTypeTabs)
-				.map((t) => ({
-					entityType: t.value,
-					actions: ['created', 'updated', 'status_changed'],
-					label: t.label,
-				})),
-		[],
+			getEnabledObjectTypeTabs(enabledModules).map((t) => ({
+				entityType: t.value,
+				actions: ['created', 'updated', 'status_changed'],
+				label: t.label,
+			})),
+		[enabledModules],
 	)
 	const internalEntityTypes = useMemo(
 		() => new Set(internalEvents.map((e) => e.entityType)),

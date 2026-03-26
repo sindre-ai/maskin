@@ -5,7 +5,9 @@ import { useRef } from 'react'
 export function useEnabledModules(): string[] {
 	const { workspace } = useWorkspace()
 	const settings = workspace.settings as Record<string, unknown>
-	const raw = (settings?.enabled_modules as string[]) ?? ['work']
+	const raw = Array.isArray(settings?.enabled_modules)
+		? (settings.enabled_modules as string[])
+		: ['work']
 	const ref = useRef(raw)
 
 	// Only update the ref if the actual values changed

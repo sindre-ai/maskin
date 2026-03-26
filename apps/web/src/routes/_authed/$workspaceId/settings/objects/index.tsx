@@ -10,7 +10,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 interface FieldDefinition {
 	name: string
@@ -35,6 +35,13 @@ function ObjectsPage() {
 	const enabledModules = useEnabledModules()
 	const objectTypes = getEnabledObjectTypeTabs(enabledModules).map((t) => t.value)
 	const [activeType, setActiveType] = useState(objectTypes[0])
+
+	useEffect(() => {
+		if (objectTypes.length > 0 && !objectTypes.includes(activeType)) {
+			setActiveType(objectTypes[0])
+		}
+	}, [objectTypes, activeType])
+
 	const [showAdd, setShowAdd] = useState(false)
 	const [newName, setNewName] = useState('')
 	const [newType, setNewType] = useState<FieldDefinition['type']>('text')

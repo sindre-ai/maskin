@@ -12,6 +12,7 @@ import { getAllWebModules, getWebModule } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
 	component: GeneralPage,
@@ -95,7 +96,10 @@ function ExtensionsSection() {
 			}
 		}
 
-		updateWorkspace.mutate({ settings: mergedSettings })
+		updateWorkspace.mutate(
+			{ settings: mergedSettings },
+			{ onError: () => toast.error('Failed to update extensions') },
+		)
 	}
 
 	return (
