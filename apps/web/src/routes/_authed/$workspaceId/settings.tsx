@@ -8,10 +8,10 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings')({
 
 const settingsNav = [
 	{ label: 'General', to: '/$workspaceId/settings' as const, exact: true },
-	{ label: 'Keys', to: '/$workspaceId/settings/keys' as const },
+	{ label: 'Objects', to: '/$workspaceId/settings/objects' as const },
 	{ label: 'Members', to: '/$workspaceId/settings/members' as const },
-	{ label: 'Properties', to: '/$workspaceId/settings/properties' as const },
 	{ label: 'Integrations', to: '/$workspaceId/settings/integrations' as const },
+	{ label: 'LLM', to: '/$workspaceId/settings/keys' as const },
 	{ label: 'MCP', to: '/$workspaceId/settings/mcp' as const },
 ]
 

@@ -133,13 +133,19 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 			</p>
 
 			<Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)} className="mb-3">
-				<TabsList className="w-full">
-					{tabs.map((tab) => (
-						<TabsTrigger key={tab.value} value={tab.value} className="flex-1 text-xs">
-							{tab.label}
-						</TabsTrigger>
-					))}
-				</TabsList>
+				<div className="overflow-x-auto">
+					<TabsList className="inline-flex w-auto min-w-full">
+						{tabs.map((tab) => (
+							<TabsTrigger
+								key={tab.value}
+								value={tab.value}
+								className="flex-1 text-xs whitespace-nowrap"
+							>
+								{tab.label}
+							</TabsTrigger>
+						))}
+					</TabsList>
+				</div>
 			</Tabs>
 
 			{activeTab === 'claude-ai' ? (

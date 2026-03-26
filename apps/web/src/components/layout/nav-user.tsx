@@ -25,7 +25,7 @@ export function NavUser() {
 	const { workspace, workspaceId } = useWorkspace()
 	const { data: workspaces } = useWorkspaces()
 	const navigate = useNavigate()
-	const { isMobile } = useSidebar()
+	const { isMobile, setOpenMobile } = useSidebar()
 	const actor = getStoredActor()
 
 	const displayName = actor?.name ?? 'User'
@@ -69,12 +69,13 @@ export function NavUser() {
 						</DropdownMenuLabel>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
-							onClick={() =>
+							onClick={() => {
+								setOpenMobile(false)
 								navigate({
 									to: '/$workspaceId/settings',
 									params: { workspaceId },
 								})
-							}
+							}}
 						>
 							<Settings className="mr-2 size-4" />
 							Settings

@@ -17,7 +17,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Tags, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Layers, Plus, Zap } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
@@ -36,7 +36,7 @@ const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/agents': { label: 'Agents' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
-		label: 'Keys',
+		label: 'LLM',
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/members': {
@@ -51,13 +51,13 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'MCP',
 		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/properties/': {
-		label: 'Properties',
+	'/_authed/$workspaceId/settings/objects/': {
+		label: 'Objects',
 		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/properties/$propertyName': {
+	'/_authed/$workspaceId/settings/objects/$propertyName': {
 		label: 'Property Details',
-		parent: '/_authed/$workspaceId/settings/properties/',
+		parent: '/_authed/$workspaceId/settings/objects/',
 	},
 	'/_authed/$workspaceId/triggers/': {
 		label: 'Triggers',
@@ -102,16 +102,6 @@ const createItems: CreateItem[] = [
 			nav({
 				to: '/$workspaceId/triggers/$triggerId',
 				params: { workspaceId, triggerId: crypto.randomUUID() },
-			}),
-	},
-	{
-		label: 'Property',
-		icon: Tags,
-		navigate: (nav, workspaceId) =>
-			nav({
-				to: '/$workspaceId/settings/properties',
-				params: { workspaceId },
-				search: { create: true },
 			}),
 	},
 ]
