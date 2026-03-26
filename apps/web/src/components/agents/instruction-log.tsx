@@ -35,7 +35,14 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 	const [input, setInput] = useState('')
 	const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null)
 	const messagesEndRef = useRef<HTMLDivElement>(null)
+	const mountedRef = useRef(true)
 	const createSession = useCreateSession(workspaceId)
+
+	useEffect(() => {
+		return () => {
+			mountedRef.current = false
+		}
+	}, [])
 
 	const isStreaming = streamingSessionId !== null
 
@@ -117,7 +124,7 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 					return updated
 				})
 				setStreamingSessionId(null)
-				throw new Error('SSE connection failed')
+				controller.abort()
 			},
 			openWhenHidden: true,
 		})
@@ -145,6 +152,8 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 				action_prompt: prompt,
 			})
 
+			if (!mountedRef.current) return
+
 			// Add agent message with streaming status
 			setMessages((prev) => [
 				...prev,
@@ -159,6 +168,8 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 			])
 			setStreamingSessionId(session.id)
 		} catch {
+			if (!mountedRef.current) return
+
 			// Add failed agent message
 			setMessages((prev) => [
 				...prev,
