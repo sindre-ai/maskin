@@ -1,6 +1,7 @@
 import { api } from '@/lib/api'
+import type { CreateSessionInput } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 export function useSession(id: string | null, workspaceId: string) {
 	return useQuery({
@@ -29,6 +30,19 @@ export function useWorkspaceSessions(workspaceId: string) {
 		queryKey: queryKeys.sessions.all(workspaceId),
 		queryFn: () => api.sessions.list(workspaceId, { limit: '100' }),
 		enabled: !!workspaceId,
+	})
+}
+
+export function useCreateSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: CreateSessionInput) => api.sessions.create(workspaceId, data),
+		onSuccess: (_result, data) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.byActor(workspaceId, data.actor_id),
+			})
+		},
 	})
 }
 
