@@ -9,6 +9,7 @@ import {
 	SidebarMenuItem,
 	SidebarRail,
 	SidebarTrigger,
+	useSidebar,
 } from '@/components/ui/sidebar'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useMatchRoute } from '@tanstack/react-router'
@@ -27,6 +28,7 @@ const navItems = [
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
+	const { setOpenMobile } = useSidebar()
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
@@ -51,7 +53,11 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 							return (
 								<SidebarMenuItem key={item.to}>
 									<SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-										<Link to={item.to} params={{ workspaceId }}>
+										<Link
+											to={item.to}
+											params={{ workspaceId }}
+											onClick={() => setOpenMobile(false)}
+										>
 											<Icon />
 											<span>{item.label}</span>
 										</Link>
