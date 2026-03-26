@@ -35,12 +35,20 @@ const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/activity': { label: 'Activity' },
 	'/_authed/$workspaceId/agents': { label: 'Agents' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
+	'/_authed/$workspaceId/settings/keys': {
+		label: 'Keys',
+		parent: '/_authed/$workspaceId/settings/',
+	},
 	'/_authed/$workspaceId/settings/members': {
 		label: 'Members',
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/integrations': {
 		label: 'Integrations',
+		parent: '/_authed/$workspaceId/settings/',
+	},
+	'/_authed/$workspaceId/settings/mcp': {
+		label: 'MCP',
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/properties/': {

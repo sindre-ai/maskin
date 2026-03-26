@@ -1,4 +1,3 @@
-import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -78,8 +77,6 @@ function PropertiesPage() {
 
 	return (
 		<div>
-			<PageHeader title="Properties" />
-
 			{/* Object type tabs */}
 			<div className="flex gap-1 mb-4">
 				{objectTypes.map((type) => (

@@ -1,4 +1,3 @@
-import { PageHeader } from '@/components/layout/page-header'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -48,8 +47,6 @@ function MembersPage() {
 
 	return (
 		<div>
-			<PageHeader title="Members" />
-
 			{showAdd && (
 				<form
 					onSubmit={handleAdd}
