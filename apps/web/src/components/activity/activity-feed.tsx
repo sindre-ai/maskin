@@ -30,7 +30,7 @@ export function ActivityFeedView({ events, isLoading = false }: ActivityFeedView
 		)
 
 	return (
-		<div ref={parentRef} className="h-[calc(100vh-10rem)] overflow-auto">
+		<div ref={parentRef} className="h-full overflow-auto">
 			<div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
 				{virtualizer.getVirtualItems().map((virtualItem) => {
 					const event = events[virtualItem.index]
