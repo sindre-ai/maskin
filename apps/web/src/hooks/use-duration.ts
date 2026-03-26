@@ -1,16 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useReducer } from 'react'
 
 export function useDuration(startedAt: string | null | undefined): string | null {
-	const [now, setNow] = useState(Date.now())
+	const [, tick] = useReducer((n: number) => n + 1, 0)
 
 	useEffect(() => {
 		if (!startedAt) return
-		const interval = setInterval(() => setNow(Date.now()), 30000)
+		const interval = setInterval(tick, 30000)
 		return () => clearInterval(interval)
 	}, [startedAt])
 
 	if (!startedAt) return null
-	const ms = now - new Date(startedAt).getTime()
+	const ms = Date.now() - new Date(startedAt).getTime()
 	if (ms < 60000) return '<1m'
 	const minutes = Math.floor(ms / 60000)
 	if (minutes < 60) return `${minutes}m`

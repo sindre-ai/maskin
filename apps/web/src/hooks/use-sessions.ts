@@ -21,13 +21,12 @@ export function useSessionLatestLog(sessionId: string | null, workspaceId: strin
 			return logs.length > 0 ? logs[logs.length - 1] : null
 		},
 		enabled: !!sessionId,
-		refetchInterval: 8000,
 	})
 }
 
 export function useActiveSessionsForActor(actorId: string, workspaceId: string) {
 	return useQuery({
-		queryKey: [...queryKeys.sessions.all(workspaceId), 'actor', actorId, 'running'],
+		queryKey: queryKeys.sessions.byActor(workspaceId, actorId),
 		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, status: 'running' }),
 		enabled: !!actorId && !!workspaceId,
 	})
