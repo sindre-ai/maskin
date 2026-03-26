@@ -44,7 +44,7 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 			{agents.length > 0 && (
 				<div className="space-y-2">
 					{agents.map((agent) => (
-						<AgentCard key={agent.id} agent={agent} />
+						<AgentCard key={agent.id} agent={agent} status="idle" />
 					))}
 				</div>
 			)}
