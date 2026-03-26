@@ -1,7 +1,7 @@
 import { AgentCard } from '@/components/agents/agent-card'
-import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
+import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'

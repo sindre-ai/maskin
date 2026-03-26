@@ -5,8 +5,8 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
-import type { ActorResponse } from '@/lib/api'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
+import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -25,15 +25,9 @@ function AgentsPage() {
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
-	const agents = useMemo(
-		() => (actors ?? []).filter((a) => a.type === 'agent'),
-		[actors],
-	)
+	const agents = useMemo(() => (actors ?? []).filter((a) => a.type === 'agent'), [actors])
 
-	const sessionsByAgent = useMemo(
-		() => groupSessionsByAgent(sessions ?? []),
-		[sessions],
-	)
+	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions ?? []), [sessions])
 
 	// Compute status for each agent
 	const agentStatuses = useMemo(() => {
