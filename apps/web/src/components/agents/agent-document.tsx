@@ -7,11 +7,13 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useUpdateActor } from '@/hooks/use-actors'
-import { useAutoSave } from '@/hooks/use-auto-save'
+import { useRegenerateApiKey, useUpdateActor } from '@/hooks/use-actors'
+import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
-import type { ActorResponse, EventResponse } from '@/lib/api'
+import { useActiveSessionsForActor, useSessionLatestLog } from '@/hooks/use-sessions'
+import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Check } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
@@ -24,7 +26,9 @@ import { Skills } from './skills'
 
 interface AgentDocumentViewProps {
 	agent: ActorResponse
+	workspaceId: string
 	events?: EventResponse[]
+	activeSessions?: SessionResponse[]
 	onUpdateName: (name: string) => void
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
@@ -36,7 +40,9 @@ interface AgentDocumentViewProps {
 
 export function AgentDocumentView({
 	agent,
+	workspaceId,
 	events,
+	activeSessions,
 	onUpdateName,
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
@@ -57,10 +63,7 @@ export function AgentDocumentView({
 	const [memoryDirty, setMemoryDirty] = useState(false)
 	const [memoryError, setMemoryError] = useState<string | null>(null)
 
-	const isRecentlyActive =
-		events?.length && events[0].createdAt
-			? Date.now() - new Date(events[0].createdAt).getTime() < 5 * 60 * 1000
-			: false
+	const isActive = (activeSessions?.length ?? 0) > 0
 
 	const handleNameBlur = useCallback(() => {
 		if (nameDraft.trim() && nameDraft !== agent.name) {
@@ -118,15 +121,26 @@ export function AgentDocumentView({
 				<TypeBadge type="agent" />
 				<span className="flex items-center gap-1.5 text-xs">
 					<span
-						className={`h-1.5 w-1.5 rounded-full ${isRecentlyActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
+						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
 					/>
-					<span className="text-muted-foreground">{isRecentlyActive ? 'active' : 'idle'}</span>
+					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
 				</span>
 				{agent.llmProvider && (
 					<span className="text-[11px] text-muted-foreground">{agent.llmProvider}</span>
 				)}
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
+
+			{/* Currently Working On */}
+			{activeSessions && activeSessions.length > 0 && (
+				<Section title="Currently Working On">
+					<div className="space-y-2">
+						{activeSessions.map((session) => (
+							<ActiveSessionCard key={session.id} session={session} workspaceId={workspaceId} />
+						))}
+					</div>
+				</Section>
+			)}
 
 			{/* System Prompt */}
 			<Section title="System Prompt">
@@ -239,10 +253,36 @@ function Section({
 	)
 }
 
+function ActiveSessionCard({
+	session,
+	workspaceId,
+}: {
+	session: SessionResponse
+	workspaceId: string
+}) {
+	const { data: latestLog } = useSessionLatestLog(session.id, workspaceId)
+	const duration = useDuration(session.startedAt)
+
+	return (
+		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2">
+			<Spinner />
+			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
+			{latestLog && (
+				<span className="text-xs text-muted-foreground truncate max-w-[200px]">
+					{latestLog.content}
+				</span>
+			)}
+			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+		</div>
+	)
+}
+
 export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
+	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
+	const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null)
 
 	// Filter events by this agent's actorId
 	const agentEvents = useMemo(
@@ -297,7 +337,9 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 			<PageHeader />
 			<AgentDocumentView
 				agent={agent}
+				workspaceId={workspaceId}
 				events={agentEvents}
+				activeSessions={activeSessions}
 				onUpdateName={handleUpdateName}
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}

@@ -24,6 +24,10 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'trigger':
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
 			break
+		case 'session':
+			// Broad prefix invalidation covers all session queries including byActor
+			queryClient.invalidateQueries({ queryKey: ['sessions'] })
+			break
 		case 'notification':
 			queryClient.invalidateQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
 			break
