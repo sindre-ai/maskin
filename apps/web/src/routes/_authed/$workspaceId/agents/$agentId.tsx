@@ -64,16 +64,16 @@ function AgentDetailPage() {
 		}
 	}
 
+	const handleUpdate = (data: Record<string, unknown>) => {
+		updateActor.mutate({ id: agentId, data })
+	}
+
 	// Once created, render the full document editor (fetches full detail)
 	if (isCreated) {
 		return <AgentDetailLoaded agentId={agentId} />
 	}
 
 	// Create mode — show form with all sections
-	const handleUpdate = (data: Record<string, unknown>) => {
-		updateActor.mutate({ id: agentId, data })
-	}
-
 	return (
 		<>
 			<PageHeader />

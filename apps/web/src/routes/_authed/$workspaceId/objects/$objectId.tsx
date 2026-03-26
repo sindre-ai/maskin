@@ -34,16 +34,6 @@ function ObjectDetailPage() {
 	}, [object])
 	const isCreated = isCreatedRef.current || !!object
 
-	if (isLoading && !isCreated) {
-		return (
-			<div className="max-w-3xl mx-auto space-y-4">
-				<Skeleton className="h-8 w-64" />
-				<Skeleton className="h-4 w-96" />
-				<Skeleton className="h-32 w-full" />
-			</div>
-		)
-	}
-
 	const handleAutoCreate = async (data: {
 		type: 'insight' | 'bet' | 'task'
 		title: string
@@ -69,6 +59,16 @@ function ObjectDetailPage() {
 		},
 		[objectId, updateObject],
 	)
+
+	if (isLoading && !isCreated) {
+		return (
+			<div className="max-w-3xl mx-auto space-y-4">
+				<Skeleton className="h-8 w-64" />
+				<Skeleton className="h-4 w-96" />
+				<Skeleton className="h-32 w-full" />
+			</div>
+		)
+	}
 
 	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
