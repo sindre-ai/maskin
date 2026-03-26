@@ -167,67 +167,71 @@ app.openapi(createCommentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404 as never)
 	}
 
-	const results = await db
-		.insert(events)
-		.values({
-			workspaceId,
-			actorId,
-			action: 'commented',
-			entityType: 'object',
-			entityId: body.entity_id,
-			data: {
-				content: body.content,
-				mentions: body.mentions,
-				parentEventId: body.parent_event_id,
-			},
-		})
-		.returning()
+	const created = await db.transaction(async (tx) => {
+		const results = await tx
+			.insert(events)
+			.values({
+				workspaceId,
+				actorId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: body.entity_id,
+				data: {
+					content: body.content,
+					mentions: body.mentions,
+					parentEventId: body.parent_event_id,
+				},
+			})
+			.returning()
 
-	const created = results[0]
-	if (!created) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create comment'), 500 as never)
-	}
+		const comment = results[0]
+		if (!comment) {
+			throw new Error('Failed to create comment')
+		}
 
-	// Create notifications for @mentioned agents (batched)
-	if (body.mentions?.length) {
-		const mentionedActors = await db
-			.select({ id: actors.id, type: actors.type, name: actors.name })
-			.from(actors)
-			.where(inArray(actors.id, body.mentions))
+		// Create notifications for @mentioned agents (batched)
+		if (body.mentions?.length) {
+			const mentionedActors = await tx
+				.select({ id: actors.id, type: actors.type, name: actors.name })
+				.from(actors)
+				.where(inArray(actors.id, body.mentions))
 
-		const agentActors = mentionedActors.filter((a) => a.type === 'agent')
+			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
 
-		if (agentActors.length > 0) {
-			const createdNotifications = await db
-				.insert(notifications)
-				.values(
-					agentActors.map((agent) => ({
-						workspaceId,
-						type: 'needs_input' as const,
-						title: '@mentioned by comment',
-						content: body.content,
-						sourceActorId: actorId,
-						targetActorId: agent.id,
-						objectId: body.entity_id,
-						status: 'pending' as const,
-					})),
-				)
-				.returning()
+			if (agentActors.length > 0) {
+				const createdNotifications = await tx
+					.insert(notifications)
+					.values(
+						agentActors.map((agent) => ({
+							workspaceId,
+							type: 'needs_input' as const,
+							title: '@mentioned by comment',
+							content: body.content,
+							sourceActorId: actorId,
+							targetActorId: agent.id,
+							objectId: body.entity_id,
+							status: 'pending' as const,
+						})),
+					)
+					.returning()
 
-			if (createdNotifications.length > 0) {
-				await db.insert(events).values(
-					createdNotifications.map((notification) => ({
-						workspaceId,
-						actorId,
-						action: 'created',
-						entityType: 'notification',
-						entityId: notification.id,
-						data: notification,
-					})),
-				)
+				if (createdNotifications.length > 0) {
+					await tx.insert(events).values(
+						createdNotifications.map((notification) => ({
+							workspaceId,
+							actorId,
+							action: 'created',
+							entityType: 'notification',
+							entityId: notification.id,
+							data: notification,
+						})),
+					)
+				}
 			}
 		}
-	}
+
+		return comment
+	})
 
 	return c.json(serializeArray([created])[0] as z.infer<typeof eventResponseSchema>, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)

@@ -18,11 +18,11 @@ interface ActivityCommentProps {
 function renderCommentContent(content: string) {
 	// Match @Name patterns (word characters and spaces after @)
 	const parts = content.split(/(@\w[\w\s]*?\b)/g)
-	return parts.map((part) => {
+	return parts.map((part, index) => {
 		if (part.startsWith('@')) {
 			return (
 				<span
-					key={part}
+					key={index}
 					className="inline-flex items-center rounded px-1 py-0.5 text-xs font-medium bg-primary/10 text-primary"
 				>
 					{part}
