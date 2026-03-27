@@ -25,6 +25,11 @@ services:
     volumes:
       - seaweed_data:/data
 
+  agent-base:
+    build:
+      context: ./docker/agent-base
+    image: agent-base:latest
+
   app:
     build:
       context: .
@@ -60,6 +65,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      agent-base:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

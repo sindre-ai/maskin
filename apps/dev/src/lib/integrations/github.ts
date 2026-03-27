@@ -1,4 +1,4 @@
-import { createHmac, createSign, timingSafeEqual } from 'node:crypto'
+import { createHmac, createPrivateKey, createSign, timingSafeEqual } from 'node:crypto'
 import type {
 	EventDefinition,
 	IntegrationCredentials,
@@ -43,7 +43,7 @@ function getEnvOrThrow(name: string): string {
 	return value
 }
 
-function createJwt(appId: string, privateKey: string): string {
+function createJwt(appId: string, privateKeyPem: string): string {
 	const now = Math.floor(Date.now() / 1000)
 	const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')
 	const payload = Buffer.from(
@@ -54,9 +54,9 @@ function createJwt(appId: string, privateKey: string): string {
 		}),
 	).toString('base64url')
 
-	const signature = createSign('RSA-SHA256')
-		.update(`${header}.${payload}`)
-		.sign(privateKey, 'base64url')
+	// Use createPrivateKey to normalize any PEM format (PKCS#1 or PKCS#8) for OpenSSL 3
+	const key = createPrivateKey(privateKeyPem)
+	const signature = createSign('RSA-SHA256').update(`${header}.${payload}`).sign(key, 'base64url')
 
 	return `${header}.${payload}.${signature}`
 }
@@ -173,8 +173,9 @@ export class GitHubProvider implements IntegrationProvider {
 	async getAccessToken(credentials: IntegrationCredentials): Promise<string> {
 		const appId = getEnvOrThrow('GITHUB_APP_ID')
 		const privateKeyRaw = getEnvOrThrow('GITHUB_APP_PRIVATE_KEY')
+		// Support PEM with literal \n sequences (common in env vars) or base64-encoded PEM
 		const privateKey = privateKeyRaw.includes('-----BEGIN')
-			? privateKeyRaw.replace(/\\n/g, '\n')
+			? privateKeyRaw.replace(/\\n/g, '\n').replace(/\\r/g, '')
 			: Buffer.from(privateKeyRaw, 'base64').toString('utf8')
 
 		const jwt = createJwt(appId, privateKey)
