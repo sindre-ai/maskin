@@ -387,13 +387,23 @@ export function TriggerForm({
 				</div>
 			)}
 
-			<Input
-				type="text"
+			<textarea
 				value={name}
-				onChange={(e) => setName(e.target.value)}
+				onChange={(e) => {
+					setName(e.target.value)
+					e.target.style.height = 'auto'
+					e.target.style.height = `${e.target.scrollHeight}px`
+				}}
 				placeholder="Trigger name"
 				autoFocus={!initialValues}
-				className="w-full text-4xl md:text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+				rows={1}
+				className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 resize-none overflow-hidden p-0 focus:outline-none"
+				ref={(el) => {
+					if (el) {
+						el.style.height = 'auto'
+						el.style.height = `${el.scrollHeight}px`
+					}
+				}}
 			/>
 
 			<div className="flex gap-2">
