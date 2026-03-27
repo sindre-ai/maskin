@@ -1,5 +1,5 @@
 import { renderHook, waitFor } from '@testing-library/react'
-import { vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
 	api: {
@@ -16,9 +16,26 @@ vi.mock('sonner', () => ({
 }))
 
 import { useDisconnectIntegration, useIntegrations, useProviders } from '@/hooks/use-integrations'
+import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
+
+function buildIntegration(
+	overrides: Partial<IntegrationResponse> & { id: string },
+): IntegrationResponse {
+	return {
+		workspaceId: 'ws-1',
+		provider: 'github',
+		status: 'connected',
+		externalId: null,
+		config: {},
+		createdBy: 'actor-1',
+		createdAt: null,
+		updatedAt: null,
+		...overrides,
+	}
+}
 
 describe('useIntegrations', () => {
 	beforeEach(() => vi.clearAllMocks())
@@ -26,8 +43,8 @@ describe('useIntegrations', () => {
 	describe('useIntegrations', () => {
 		it('returns integrations for workspace', async () => {
 			const integrations = [
-				{ id: 'int-1', provider: 'github', status: 'connected' },
-				{ id: 'int-2', provider: 'slack', status: 'connected' },
+				buildIntegration({ id: 'int-1', provider: 'github' }),
+				buildIntegration({ id: 'int-2', provider: 'slack' }),
 			]
 			vi.mocked(api.integrations.list).mockResolvedValue(integrations)
 
@@ -54,9 +71,9 @@ describe('useIntegrations', () => {
 
 	describe('useProviders', () => {
 		it('returns available providers', async () => {
-			const providers = [
-				{ id: 'github', name: 'GitHub' },
-				{ id: 'slack', name: 'Slack' },
+			const providers: ProviderInfo[] = [
+				{ name: 'github', displayName: 'GitHub', events: [] },
+				{ name: 'slack', displayName: 'Slack', events: [] },
 			]
 			vi.mocked(api.integrations.providers).mockResolvedValue(providers)
 
@@ -83,7 +100,7 @@ describe('useIntegrations', () => {
 
 	describe('useDisconnectIntegration', () => {
 		it('disconnects an integration and shows toast', async () => {
-			vi.mocked(api.integrations.disconnect).mockResolvedValue(undefined)
+			vi.mocked(api.integrations.disconnect).mockResolvedValue({ deleted: true })
 
 			const { result } = renderHook(() => useDisconnectIntegration('ws-1'), {
 				wrapper: TestWrapper,
