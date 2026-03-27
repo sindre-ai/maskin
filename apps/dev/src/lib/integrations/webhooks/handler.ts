@@ -33,6 +33,10 @@ export class WebhookHandler {
 				return verifyHmacSha256(body, signature, secret, config.signaturePrefix)
 			case 'hmac-sha1':
 				return verifyHmacSha1(body, signature, secret, config.signaturePrefix)
+			default: {
+				const _exhaustive: never = config.signatureScheme
+				throw new Error(`Unsupported signature scheme: ${_exhaustive}`)
+			}
 		}
 	}
 }

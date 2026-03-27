@@ -139,4 +139,6 @@ export interface ResolvedProvider {
 	customNormalizer?: CustomEventNormalizer
 	/** Override token response parsing for providers with non-standard format */
 	parseTokenResponse?: (raw: unknown) => Partial<StoredCredentials>
+	/** Custom webhook signature verification. Required when webhook type is 'custom'. */
+	customWebhookVerifier?: (body: string, headers: Record<string, string>) => boolean
 }

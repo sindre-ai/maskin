@@ -156,7 +156,8 @@ export class OAuth2Handler {
 
 		// Calculate expiry
 		if (typeof raw.expires_at === 'number') {
-			creds.expiresAt = raw.expires_at * 1000 // convert seconds to ms
+			// If > 1e12, value is already in milliseconds; otherwise convert from seconds
+			creds.expiresAt = raw.expires_at > 1e12 ? raw.expires_at : raw.expires_at * 1000
 		} else if (typeof raw.expires_in === 'number') {
 			creds.expiresAt = Date.now() + raw.expires_in * 1000
 		}

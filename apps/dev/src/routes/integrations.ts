@@ -469,8 +469,14 @@ webhookApp.post('/:provider', async (c) => {
 	}
 
 	if ('type' in webhookConfig) {
-		// Custom webhook verification — provider must handle this in its normalizer
-		// (fall through to normalization)
+		if (!resolved.customWebhookVerifier) {
+			logger.error(`Provider ${providerName} uses custom webhook but has no customWebhookVerifier`)
+			return c.json(createApiError('INTERNAL_ERROR', 'Webhook verification not configured'), 500)
+		}
+		if (!resolved.customWebhookVerifier(body, headers)) {
+			logger.warn(`Custom webhook verification failed for ${providerName}`)
+			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+		}
 	} else {
 		if (!webhookHandler.verify(webhookConfig, body, headers)) {
 			logger.warn(`Webhook signature verification failed for ${providerName}`)
@@ -537,12 +543,19 @@ webhookApp.post('/:provider', async (c) => {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Build the OAuth redirect URI, respecting reverse proxy headers */
+/** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 function buildRedirectUri(
 	requestUrl: string,
 	providerName: string,
 	headers: Record<string, string | undefined>,
 ): string {
+	// In production, use the configured origin to prevent X-Forwarded-Host injection
+	const corsOrigin = process.env.CORS_ORIGIN
+	if (corsOrigin) {
+		return `${corsOrigin.replace(/\/$/, '')}/api/integrations/${providerName}/callback`
+	}
+
+	// Fallback for local development
 	const forwardedHost = headers['x-forwarded-host']
 	const forwardedProto = headers['x-forwarded-proto']
 
