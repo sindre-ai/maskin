@@ -75,10 +75,10 @@ app.onError((err, c) => {
 app.use('*', cors())
 app.use('*', honoLogger())
 
-// Database connection
-const databaseUrl = process.env.DATABASE_URL
+// Database connection — POSTGRES_URL takes priority over DATABASE_URL
+const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
-	throw new Error('DATABASE_URL environment variable is required')
+	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
 
