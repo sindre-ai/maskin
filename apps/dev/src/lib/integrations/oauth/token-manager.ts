@@ -72,13 +72,8 @@ export class TokenManager {
 		}
 
 		const oauth2Config = provider.config.auth.config
-		const handler = new OAuth2Handler(oauth2Config)
-		let refreshed = await handler.refreshToken(credentials.refreshToken)
-
-		// Apply custom token parser if provider has one
-		if (provider.parseTokenResponse) {
-			refreshed = { ...refreshed, ...provider.parseTokenResponse(refreshed) }
-		}
+		const handler = new OAuth2Handler(oauth2Config, provider.parseTokenResponse)
+		const refreshed = await handler.refreshToken(credentials.refreshToken)
 
 		// Merge: keep existing fields (like provider-specific data), override with refreshed tokens
 		const updated: StoredCredentials = {

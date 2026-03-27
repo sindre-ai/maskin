@@ -303,15 +303,8 @@ app.openapi(callbackRoute, (async (c) => {
 			return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
 		}
 		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
-		const handler = new OAuth2Handler(resolved.config.auth.config)
-		let exchanged = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
-
-		// Apply custom token parser if provider has one
-		if (resolved.parseTokenResponse) {
-			exchanged = { ...exchanged, ...resolved.parseTokenResponse(exchanged) }
-		}
-
-		credentials = exchanged
+		const handler = new OAuth2Handler(resolved.config.auth.config, resolved.parseTokenResponse)
+		credentials = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
 	} else {
 		return c.json(createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'), 400)
 	}

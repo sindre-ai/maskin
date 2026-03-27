@@ -3,7 +3,14 @@ import type { OAuth2Config, StoredCredentials } from '../types'
 import { createS256CodeChallenge } from './pkce'
 
 export class OAuth2Handler {
-	constructor(private config: OAuth2Config) {}
+	private customParser?: (raw: unknown) => Partial<StoredCredentials>
+
+	constructor(
+		private config: OAuth2Config,
+		customParser?: (raw: unknown) => Partial<StoredCredentials>,
+	) {
+		this.customParser = customParser
+	}
 
 	/**
 	 * Build the authorization URL the user should be redirected to.
@@ -107,7 +114,14 @@ export class OAuth2Handler {
 		}
 
 		const raw = await response.json()
-		return this.parseTokenResponse(raw as Record<string, unknown>)
+		const parsed = this.parseTokenResponse(raw as Record<string, unknown>)
+
+		// Apply custom parser to the raw response and merge with standard parsing
+		if (this.customParser) {
+			return { ...parsed, ...this.customParser(raw) }
+		}
+
+		return parsed
 	}
 
 	private buildAuthHeaders(): Headers {
