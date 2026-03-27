@@ -127,6 +127,62 @@ function extractSettings(settings: Record<string, unknown>) {
 	}
 }
 
+/** Enable a module and merge its default settings into the workspace. Returns the updated settings object. */
+function buildEnableModuleSettings(
+	moduleId: string,
+	settings: Record<string, unknown>,
+): Record<string, unknown> {
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? [...(settings.enabled_modules as string[])]
+		: ['work']
+
+	enabledModules.push(moduleId)
+
+	const defaults = getModuleDefaultSettings(moduleId)
+	const updatedSettings: Record<string, unknown> = {
+		enabled_modules: enabledModules,
+	}
+
+	if (defaults) {
+		const existingStatuses = (settings.statuses ?? {}) as Record<string, string[]>
+		const existingDisplayNames = (settings.display_names ?? {}) as Record<string, string>
+		const existingFieldDefs = (settings.field_definitions ?? {}) as Record<string, unknown[]>
+		const existingRelTypes = (settings.relationship_types ?? []) as string[]
+
+		if (defaults.statuses) {
+			updatedSettings.statuses = { ...existingStatuses }
+			for (const [type, sts] of Object.entries(defaults.statuses)) {
+				if (!(type in existingStatuses)) {
+					;(updatedSettings.statuses as Record<string, string[]>)[type] = sts
+				}
+			}
+		}
+		if (defaults.display_names) {
+			updatedSettings.display_names = { ...existingDisplayNames }
+			for (const [type, name] of Object.entries(defaults.display_names)) {
+				if (!(type in existingDisplayNames)) {
+					;(updatedSettings.display_names as Record<string, string>)[type] = name
+				}
+			}
+		}
+		if (defaults.field_definitions) {
+			updatedSettings.field_definitions = { ...existingFieldDefs }
+			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
+				if (!(type in existingFieldDefs)) {
+					;(updatedSettings.field_definitions as Record<string, unknown[]>)[type] = fields
+				}
+			}
+		}
+		if (defaults.relationship_types) {
+			updatedSettings.relationship_types = [
+				...new Set([...existingRelTypes, ...defaults.relationship_types]),
+			]
+		}
+	}
+
+	return updatedSettings
+}
+
 function loadHtml(config: McpConfig, filename: string): string {
 	const basePath = config.htmlBasePath ?? resolve(__dirname, '../../../apps/web/dist-mcp')
 	const fullPath = resolve(basePath, filename)
@@ -1276,11 +1332,11 @@ export function createMcpServer(config: McpConfig) {
 			const template = templates[args.id]
 
 			if (mod) {
-				// Enable module — same as old enable_module logic
+				// Enable module
 				const workspace = await getWorkspace(config, args.workspace_id)
 				const settings = (workspace.settings ?? {}) as Record<string, unknown>
 				const enabledModules = Array.isArray(settings.enabled_modules)
-					? [...(settings.enabled_modules as string[])]
+					? (settings.enabled_modules as string[])
 					: ['work']
 
 				if (enabledModules.includes(args.id)) {
@@ -1295,49 +1351,7 @@ export function createMcpServer(config: McpConfig) {
 					}
 				}
 
-				enabledModules.push(args.id)
-
-				const defaults = getModuleDefaultSettings(args.id)
-				const updatedSettings: Record<string, unknown> = {
-					enabled_modules: enabledModules,
-				}
-
-				if (defaults) {
-					const existingStatuses = (settings.statuses ?? {}) as Record<string, string[]>
-					const existingDisplayNames = (settings.display_names ?? {}) as Record<string, string>
-					const existingFieldDefs = (settings.field_definitions ?? {}) as Record<string, unknown[]>
-					const existingRelTypes = (settings.relationship_types ?? []) as string[]
-
-					if (defaults.statuses) {
-						updatedSettings.statuses = { ...existingStatuses }
-						for (const [type, sts] of Object.entries(defaults.statuses)) {
-							if (!(type in existingStatuses)) {
-								;(updatedSettings.statuses as Record<string, string[]>)[type] = sts
-							}
-						}
-					}
-					if (defaults.display_names) {
-						updatedSettings.display_names = { ...existingDisplayNames }
-						for (const [type, name] of Object.entries(defaults.display_names)) {
-							if (!(type in existingDisplayNames)) {
-								;(updatedSettings.display_names as Record<string, string>)[type] = name
-							}
-						}
-					}
-					if (defaults.field_definitions) {
-						updatedSettings.field_definitions = { ...existingFieldDefs }
-						for (const [type, fields] of Object.entries(defaults.field_definitions)) {
-							if (!(type in existingFieldDefs)) {
-								;(updatedSettings.field_definitions as Record<string, unknown[]>)[type] = fields
-							}
-						}
-					}
-					if (defaults.relationship_types) {
-						updatedSettings.relationship_types = [
-							...new Set([...existingRelTypes, ...defaults.relationship_types]),
-						]
-					}
-				}
+				const updatedSettings = buildEnableModuleSettings(args.id, settings)
 
 				const result = await apiCall(
 					config,
@@ -1505,52 +1519,8 @@ export function createMcpServer(config: McpConfig) {
 								],
 							}
 						}
-						enabledModules.push(args.id)
 
-						const defaults = getModuleDefaultSettings(args.id)
-						const updatedSettings: Record<string, unknown> = {
-							enabled_modules: enabledModules,
-						}
-
-						if (defaults) {
-							const existingStatuses = (settings.statuses ?? {}) as Record<string, string[]>
-							const existingDisplayNames = (settings.display_names ?? {}) as Record<string, string>
-							const existingFieldDefs = (settings.field_definitions ?? {}) as Record<
-								string,
-								unknown[]
-							>
-							const existingRelTypes = (settings.relationship_types ?? []) as string[]
-
-							if (defaults.statuses) {
-								updatedSettings.statuses = { ...existingStatuses }
-								for (const [type, sts] of Object.entries(defaults.statuses)) {
-									if (!(type in existingStatuses)) {
-										;(updatedSettings.statuses as Record<string, string[]>)[type] = sts
-									}
-								}
-							}
-							if (defaults.display_names) {
-								updatedSettings.display_names = { ...existingDisplayNames }
-								for (const [type, name] of Object.entries(defaults.display_names)) {
-									if (!(type in existingDisplayNames)) {
-										;(updatedSettings.display_names as Record<string, string>)[type] = name
-									}
-								}
-							}
-							if (defaults.field_definitions) {
-								updatedSettings.field_definitions = { ...existingFieldDefs }
-								for (const [type, fields] of Object.entries(defaults.field_definitions)) {
-									if (!(type in existingFieldDefs)) {
-										;(updatedSettings.field_definitions as Record<string, unknown[]>)[type] = fields
-									}
-								}
-							}
-							if (defaults.relationship_types) {
-								updatedSettings.relationship_types = [
-									...new Set([...existingRelTypes, ...defaults.relationship_types]),
-								]
-							}
-						}
+						const updatedSettings = buildEnableModuleSettings(args.id, settings)
 
 						const result = await apiCall(
 							config,
