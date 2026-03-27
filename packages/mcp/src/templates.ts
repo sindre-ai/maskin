@@ -134,7 +134,14 @@ export const templates: Record<string, ExtensionTemplate> = {
 			statuses: {
 				ticket: ['open', 'in_progress', 'waiting', 'resolved', 'closed'],
 				feedback: ['new', 'reviewed', 'actionable', 'archived'],
-				feature_request: ['submitted', 'under_review', 'planned', 'building', 'shipped', 'declined'],
+				feature_request: [
+					'submitted',
+					'under_review',
+					'planned',
+					'building',
+					'shipped',
+					'declined',
+				],
 			},
 			field_definitions: {
 				ticket: [
