@@ -173,10 +173,27 @@ export class GitHubProvider implements IntegrationProvider {
 	async getAccessToken(credentials: IntegrationCredentials): Promise<string> {
 		const appId = getEnvOrThrow('GITHUB_APP_ID')
 		const privateKeyRaw = getEnvOrThrow('GITHUB_APP_PRIVATE_KEY')
-		// Support PEM with literal \n sequences (common in env vars) or base64-encoded PEM
-		const privateKey = privateKeyRaw.includes('-----BEGIN')
-			? privateKeyRaw.replace(/\\n/g, '\n').replace(/\\r/g, '')
-			: Buffer.from(privateKeyRaw, 'base64').toString('utf8')
+		// Support PEM in multiple formats:
+		// 1. Literal \n sequences (common in .env files)
+		// 2. Spaces instead of newlines (Coolify and other platforms collapse newlines to spaces)
+		// 3. Base64-encoded PEM
+		let privateKey: string
+		if (privateKeyRaw.includes('-----BEGIN')) {
+			const normalized = privateKeyRaw.replace(/\\n/g, '\n').replace(/\\r/g, '')
+			// Extract header, body, and footer then reconstruct with proper newlines
+			const match = normalized.match(
+				/(-----BEGIN [\w ]+-----)\s+([\s\S]+?)\s+(-----END [\w ]+-----)/,
+			)
+			if (match) {
+				const [, header, body = '', footer] = match
+				const bodyLines = body.split(/\s+/).join('\n')
+				privateKey = `${header}\n${bodyLines}\n${footer}\n`
+			} else {
+				privateKey = normalized
+			}
+		} else {
+			privateKey = Buffer.from(privateKeyRaw, 'base64').toString('utf8')
+		}
 
 		const jwt = createJwt(appId, privateKey)
 
