@@ -1,5 +1,5 @@
 import { renderHook, waitFor } from '@testing-library/react'
-import { vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
 	api: {
@@ -25,12 +25,26 @@ import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
+function buildRelationship(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 'r1',
+		sourceType: 'bet',
+		sourceId: 'o1',
+		targetType: 'task',
+		targetId: 'o2',
+		type: 'relates_to',
+		createdBy: 'actor-1',
+		createdAt: null,
+		...overrides,
+	}
+}
+
 describe('useRelationships', () => {
 	beforeEach(() => vi.clearAllMocks())
 
 	describe('useRelationships', () => {
 		it('returns relationships for workspace', async () => {
-			const relationships = [{ id: 'r1', sourceId: 'o1', targetId: 'o2', type: 'relates_to' }]
+			const relationships = [buildRelationship()]
 			vi.mocked(api.relationships.list).mockResolvedValue(relationships)
 
 			const { result } = renderHook(() => useRelationships('ws-1'), {
@@ -68,8 +82,10 @@ describe('useRelationships', () => {
 
 	describe('useObjectRelationships', () => {
 		it('returns relationships as source and target', async () => {
-			const asSource = [{ id: 'r1', sourceId: 'o1', targetId: 'o2', type: 'relates_to' }]
-			const asTarget = [{ id: 'r2', sourceId: 'o3', targetId: 'o1', type: 'blocks' }]
+			const asSource = [buildRelationship({ id: 'r1', sourceId: 'o1', targetId: 'o2' })]
+			const asTarget = [
+				buildRelationship({ id: 'r2', sourceId: 'o3', targetId: 'o1', type: 'blocks' }),
+			]
 			vi.mocked(api.relationships.list)
 				.mockResolvedValueOnce(asSource)
 				.mockResolvedValueOnce(asTarget)
@@ -107,19 +123,27 @@ describe('useRelationships', () => {
 
 	describe('useCreateRelationship', () => {
 		it('creates a relationship', async () => {
-			const created = { id: 'r1', sourceId: 'o1', targetId: 'o2', type: 'relates_to' }
+			const created = buildRelationship()
 			vi.mocked(api.relationships.create).mockResolvedValue(created)
 
 			const { result } = renderHook(() => useCreateRelationship('ws-1', 'o1'), {
 				wrapper: TestWrapper,
 			})
 
-			result.current.mutate({ sourceId: 'o1', targetId: 'o2', type: 'relates_to' })
+			result.current.mutate({
+				source_type: 'bet',
+				source_id: 'o1',
+				target_type: 'task',
+				target_id: 'o2',
+				type: 'relates_to',
+			})
 
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.relationships.create).toHaveBeenCalledWith('ws-1', {
-				sourceId: 'o1',
-				targetId: 'o2',
+				source_type: 'bet',
+				source_id: 'o1',
+				target_type: 'task',
+				target_id: 'o2',
 				type: 'relates_to',
 			})
 		})
@@ -131,7 +155,13 @@ describe('useRelationships', () => {
 				wrapper: TestWrapper,
 			})
 
-			result.current.mutate({ sourceId: 'o1', targetId: 'o2', type: 'relates_to' })
+			result.current.mutate({
+				source_type: 'bet',
+				source_id: 'o1',
+				target_type: 'task',
+				target_id: 'o2',
+				type: 'relates_to',
+			})
 
 			await waitFor(() => expect(result.current.isError).toBe(true))
 			expect(result.current.error?.message).toBe('Create failed')
@@ -140,7 +170,7 @@ describe('useRelationships', () => {
 
 	describe('useDeleteRelationship', () => {
 		it('deletes a relationship and shows toast', async () => {
-			vi.mocked(api.relationships.delete).mockResolvedValue(undefined)
+			vi.mocked(api.relationships.delete).mockResolvedValue({ deleted: true })
 
 			const { result } = renderHook(() => useDeleteRelationship('ws-1', 'o1'), {
 				wrapper: TestWrapper,

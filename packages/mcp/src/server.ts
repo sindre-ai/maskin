@@ -1638,7 +1638,8 @@ export function createMcpServer(config: McpConfig) {
 
 			// Check if it's a tracked custom extension
 			if (args.id in customExtensions) {
-				const ext = customExtensions[args.id]!
+				const ext = customExtensions[args.id]
+				if (!ext) throw new Error(`Extension ${args.id} not found`)
 				const removed: string[] = []
 				for (const type of ext.types) {
 					// Don't remove types that are also provided by a module

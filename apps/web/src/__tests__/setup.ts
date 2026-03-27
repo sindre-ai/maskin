@@ -1,3 +1,4 @@
+/// <reference types="vitest/globals" />
 import '@testing-library/jest-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
