@@ -45,6 +45,8 @@ services:
     command: ["sh", "-c", "node packages/db/dist/migrate.js && node apps/dev/dist/index.js"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_native_oss}
+      POSTGRES_URL: ${POSTGRES_URL:-}
+      DATABASE_URL_DIRECT: ${DATABASE_URL_DIRECT:-}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       PORT: "3000"
