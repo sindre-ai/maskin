@@ -124,6 +124,12 @@ function extractSettings(settings: Record<string, unknown>) {
 		displayNames: { ...((settings.display_names ?? {}) as Record<string, string>) },
 		fieldDefs: { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) },
 		relTypes: [...((settings.relationship_types ?? []) as string[])],
+		customExtensions: {
+			...((settings.custom_extensions ?? {}) as Record<
+				string,
+				{ name: string; types: string[]; relationship_types?: string[] }
+			>),
+		},
 	}
 }
 
@@ -181,6 +187,51 @@ function buildEnableModuleSettings(
 	}
 
 	return updatedSettings
+}
+
+/** Compute the set of relationship types still referenced by remaining extensions. */
+function collectActiveRelTypes(
+	settings: Record<string, unknown>,
+	modules: Array<{ objectTypes: Array<{ defaultRelationshipTypes?: string[] }> }>,
+): string[] {
+	const active = new Set<string>()
+
+	// Module relationship types
+	for (const mod of modules) {
+		for (const ot of mod.objectTypes) {
+			if (ot.defaultRelationshipTypes) {
+				for (const rt of ot.defaultRelationshipTypes) active.add(rt)
+			}
+		}
+	}
+
+	// Template relationship types (for installed templates)
+	const statuses = (settings.statuses ?? {}) as Record<string, string[]>
+	for (const t of Object.values(templates)) {
+		const typeKeys = Object.keys(t.settings.statuses)
+		const installed = typeKeys.some((tk) => tk in statuses)
+		if (installed && t.settings.relationship_types) {
+			for (const rt of t.settings.relationship_types) active.add(rt)
+		}
+	}
+
+	// Custom extension relationship types
+	const customExts = (settings.custom_extensions ?? {}) as Record<
+		string,
+		{ relationship_types?: string[] }
+	>
+	for (const ext of Object.values(customExts)) {
+		if (ext.relationship_types) {
+			for (const rt of ext.relationship_types) active.add(rt)
+		}
+	}
+
+	// Always keep the built-in defaults
+	for (const rt of ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']) {
+		active.add(rt)
+	}
+
+	return [...active]
 }
 
 function loadHtml(config: McpConfig, filename: string): string {
@@ -1236,12 +1287,15 @@ export function createMcpServer(config: McpConfig) {
 				// Best-effort workspace lookup
 			}
 
-			const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(workspaceSettings)
+			const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+				extractSettings(workspaceSettings)
 
 			// Collect all type keys owned by modules
 			const moduleTypeKeys = new Set<string>()
 			// Collect all type keys owned by templates
 			const templateTypeKeys = new Set<string>()
+			// Collect all type keys owned by tracked custom extensions
+			const customExtTypeKeys = new Set<string>()
 
 			// 1. Registered modules as extensions
 			const moduleExtensions = modules.map((mod) => {
@@ -1284,18 +1338,38 @@ export function createMcpServer(config: McpConfig) {
 				}
 			})
 
-			// 3. Custom types (not owned by any module or template)
-			const customTypes = Object.keys(statuses).filter(
-				(t) => !moduleTypeKeys.has(t) && !templateTypeKeys.has(t),
+			// 3. Tracked custom extensions
+			const trackedCustomExtensions = Object.entries(customExtensions).map(([extId, ext]) => {
+				for (const t of ext.types) customExtTypeKeys.add(t)
+				return {
+					id: extId,
+					name: ext.name,
+					enabled: true,
+					object_types: ext.types
+						.filter((t) => t in statuses)
+						.map((t) => ({
+							type: t,
+							display_name: displayNames[t] ?? t,
+							statuses: statuses[t],
+							fields: fieldDefs[t] ?? [],
+							relationship_types: ext.relationship_types ?? [],
+						})),
+				}
+			})
+
+			// 4. Untracked custom types (not owned by any module, template, or tracked extension)
+			const untrackedTypes = Object.keys(statuses).filter(
+				(t) =>
+					!moduleTypeKeys.has(t) && !templateTypeKeys.has(t) && !customExtTypeKeys.has(t),
 			)
-			const customExtensions =
-				customTypes.length > 0
+			const untrackedExtensions =
+				untrackedTypes.length > 0
 					? [
 							{
 								id: 'custom',
 								name: 'Custom Types',
 								enabled: true,
-								object_types: customTypes.map((t) => ({
+								object_types: untrackedTypes.map((t) => ({
 									type: t,
 									display_name: displayNames[t] ?? t,
 									statuses: statuses[t],
@@ -1306,7 +1380,12 @@ export function createMcpServer(config: McpConfig) {
 						]
 					: []
 
-			const result = [...moduleExtensions, ...templateExtensions, ...customExtensions]
+			const result = [
+				...moduleExtensions,
+				...templateExtensions,
+				...trackedCustomExtensions,
+				...untrackedExtensions,
+			]
 
 			return {
 				_meta: { toolName: 'list_extensions' },
@@ -1443,8 +1522,16 @@ export function createMcpServer(config: McpConfig) {
 
 			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
+			const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+				extractSettings(settings)
 
+			if (args.id in customExtensions) {
+				throw new Error(
+					`Custom extension "${args.id}" already exists. Use update_extension to modify it.`,
+				)
+			}
+
+			const extRelTypes: string[] = []
 			for (const ot of args.object_types) {
 				if (ot.type in statuses) {
 					throw new Error(
@@ -1459,8 +1546,16 @@ export function createMcpServer(config: McpConfig) {
 				if (ot.relationship_types) {
 					for (const rt of ot.relationship_types) {
 						if (!relTypes.includes(rt)) relTypes.push(rt)
+						if (!extRelTypes.includes(rt)) extRelTypes.push(rt)
 					}
 				}
+			}
+
+			// Track the custom extension metadata
+			customExtensions[args.id] = {
+				name: args.name ?? args.id,
+				types: args.object_types.map((ot) => ot.type),
+				...(extRelTypes.length > 0 ? { relationship_types: extRelTypes } : {}),
 			}
 
 			const updatedSettings: Record<string, unknown> = {
@@ -1468,6 +1563,7 @@ export function createMcpServer(config: McpConfig) {
 				display_names: displayNames,
 				field_definitions: fieldDefs,
 				relationship_types: relTypes,
+				custom_extensions: customExtensions,
 			}
 
 			const result = await apiCall(
@@ -1645,7 +1741,7 @@ export function createMcpServer(config: McpConfig) {
 			const template = templates[args.id]
 			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const { statuses, displayNames, fieldDefs } = extractSettings(settings)
+			const { statuses, displayNames, fieldDefs, customExtensions } = extractSettings(settings)
 
 			if (template) {
 				// Remove all types from this template
@@ -1661,17 +1757,21 @@ export function createMcpServer(config: McpConfig) {
 					}
 				}
 
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+					relationship_types: collectActiveRelTypes(
+						{ ...settings, statuses, custom_extensions: customExtensions },
+						allModules,
+					),
+				}
+
 				const result = await apiCall(
 					config,
 					'PATCH',
 					`/api/workspaces/${args.workspace_id}`,
-					{
-						settings: {
-							statuses,
-							display_names: displayNames,
-							field_definitions: fieldDefs,
-						},
-					},
+					{ settings: updatedSettings },
 					{ workspaceId: args.workspace_id },
 				)
 
@@ -1686,8 +1786,53 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
-			// Custom extension — try to find types matching the ID prefix or the ID itself as a type
-			// First check if the id matches any type directly
+			// Check if it's a tracked custom extension
+			if (args.id in customExtensions) {
+				const ext = customExtensions[args.id]!
+				const removed: string[] = []
+				for (const type of ext.types) {
+					// Don't remove types that are also provided by a module
+					const isModuleType = allModules.some((m) => m.objectTypes.some((t) => t.type === type))
+					if (!isModuleType && type in statuses) {
+						delete statuses[type]
+						delete displayNames[type]
+						delete fieldDefs[type]
+						removed.push(type)
+					}
+				}
+				delete customExtensions[args.id]
+
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+					custom_extensions: customExtensions,
+					relationship_types: collectActiveRelTypes(
+						{ ...settings, statuses, custom_extensions: customExtensions },
+						allModules,
+					),
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'delete_extension' },
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ removed, workspace: result }, null, 2),
+						},
+					],
+				}
+			}
+
+			// Fallback: check if the id matches a single type directly
 			if (args.id in statuses) {
 				// Check it's not a module type
 				for (const m of allModules) {
@@ -1703,17 +1848,21 @@ export function createMcpServer(config: McpConfig) {
 				delete displayNames[args.id]
 				delete fieldDefs[args.id]
 
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+					relationship_types: collectActiveRelTypes(
+						{ ...settings, statuses, custom_extensions: customExtensions },
+						allModules,
+					),
+				}
+
 				const result = await apiCall(
 					config,
 					'PATCH',
 					`/api/workspaces/${args.workspace_id}`,
-					{
-						settings: {
-							statuses,
-							display_names: displayNames,
-							field_definitions: fieldDefs,
-						},
-					},
+					{ settings: updatedSettings },
 					{ workspaceId: args.workspace_id },
 				)
 
