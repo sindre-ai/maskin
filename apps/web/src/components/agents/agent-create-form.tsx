@@ -83,7 +83,7 @@ export function AgentCreateForm({
 				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Agent name"
 				autoFocus
-				className="w-full text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+				className="w-full text-4xl md:text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 			/>
 
 			{/* Metadata badges row */}

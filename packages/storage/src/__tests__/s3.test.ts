@@ -68,9 +68,7 @@ describe('S3StorageProvider', () => {
 				secretAccessKey: 'secret',
 			})
 
-			expect(S3Client).toHaveBeenCalledWith(
-				expect.objectContaining({ region: 'us-east-1' }),
-			)
+			expect(S3Client).toHaveBeenCalledWith(expect.objectContaining({ region: 'us-east-1' }))
 		})
 	})
 
@@ -166,9 +164,7 @@ describe('S3StorageProvider', () => {
 				},
 			})
 
-			await expect(provider.get('bad-key')).rejects.toThrow(
-				'Empty response for key: bad-key',
-			)
+			await expect(provider.get('bad-key')).rejects.toThrow('Empty response for key: bad-key')
 		})
 	})
 
