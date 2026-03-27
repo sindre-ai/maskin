@@ -184,7 +184,7 @@ app.openapi(connectRoute, (async (c) => {
 	if (resolved.customAuth) {
 		installUrl = resolved.customAuth.getInstallUrl(state)
 	} else if (resolved.config.auth.type === 'oauth2') {
-		const redirectUri = buildRedirectUri(c.req.url, providerName)
+		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 		const handler = new OAuth2Handler(resolved.config.auth.config)
 		installUrl = handler.createAuthorizationUrl(
 			state,
@@ -302,7 +302,7 @@ app.openapi(callbackRoute, (async (c) => {
 		if (!code) {
 			return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
 		}
-		const redirectUri = buildRedirectUri(c.req.url, providerName)
+		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 		const handler = new OAuth2Handler(resolved.config.auth.config)
 		let exchanged = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
 
@@ -544,8 +544,23 @@ webhookApp.post('/:provider', async (c) => {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Build the OAuth redirect URI from the current request URL */
-function buildRedirectUri(requestUrl: string, providerName: string): string {
-	const url = new URL(requestUrl)
-	return `${url.origin}/api/integrations/${providerName}/callback`
+/** Build the OAuth redirect URI, respecting reverse proxy headers */
+function buildRedirectUri(
+	requestUrl: string,
+	providerName: string,
+	headers: Record<string, string | undefined>,
+): string {
+	const forwardedHost = headers['x-forwarded-host']
+	const forwardedProto = headers['x-forwarded-proto']
+
+	let origin: string
+	if (forwardedHost) {
+		const proto = forwardedProto ?? 'https'
+		origin = `${proto}://${forwardedHost}`
+	} else {
+		const url = new URL(requestUrl)
+		origin = url.origin
+	}
+
+	return `${origin}/api/integrations/${providerName}/callback`
 }

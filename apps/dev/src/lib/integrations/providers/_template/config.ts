@@ -36,13 +36,24 @@ export const config: ProviderConfig = {
 		},
 	},
 
-	// Uncomment if the provider sends webhooks:
+	// Uncomment if the provider sends webhooks (HMAC-based):
 	// webhook: {
 	//   signatureHeader: 'x-provider-signature',
 	//   signatureScheme: 'hmac-sha256',
 	//   signaturePrefix: 'sha256=',
 	//   secretEnv: 'PROVIDER_WEBHOOK_SECRET',
 	//   eventTypeHeader: 'x-provider-event',
+	// },
+
+	// Alternative: timestamp-based signature (e.g. Slack-style):
+	// webhook: {
+	//   signatureHeader: 'x-provider-signature',    // not used for timestamp scheme, but required by type
+	//   signatureScheme: 'timestamp',
+	//   secretEnv: 'PROVIDER_SIGNING_SECRET',
+	//   timestampHeader: 'x-provider-request-timestamp',
+	//   timestampSignatureHeader: 'x-provider-signature',
+	//   timestampBodyTemplate: 'v0:{timestamp}:{body}',
+	//   timestampSignaturePrefix: 'v0=',
 	// },
 
 	// Uncomment if defining events:

@@ -1,8 +1,8 @@
 import type { ResolvedProvider } from './types'
 
+import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
-import { githubAuth } from './providers/github/auth'
 import { githubEventNormalizer } from './providers/github/webhooks'
 
 const providers = new Map<string, ResolvedProvider>()

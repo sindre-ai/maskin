@@ -1,11 +1,6 @@
+import { getEnvOrThrow } from '../env'
 import type { OAuth2Config, StoredCredentials } from '../types'
 import { createS256CodeChallenge } from './pkce'
-
-function getEnvOrThrow(name: string): string {
-	const value = process.env[name]
-	if (!value) throw new Error(`${name} environment variable is required`)
-	return value
-}
 
 export class OAuth2Handler {
 	constructor(private config: OAuth2Config) {}
@@ -14,11 +9,7 @@ export class OAuth2Handler {
 	 * Build the authorization URL the user should be redirected to.
 	 * If PKCE is enabled, pass a code verifier to include a code challenge.
 	 */
-	createAuthorizationUrl(
-		state: string,
-		redirectUri: string,
-		codeVerifier?: string,
-	): string {
+	createAuthorizationUrl(state: string, redirectUri: string, codeVerifier?: string): string {
 		const url = new URL(this.config.authorizationUrl)
 		url.searchParams.set('response_type', 'code')
 		url.searchParams.set('client_id', getEnvOrThrow(this.config.clientIdEnv))

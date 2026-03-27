@@ -94,6 +94,12 @@ export class TokenManager {
 			updated.refreshToken = refreshed.refreshToken
 		}
 
+		if (!updated.accessToken) {
+			throw new Error(
+				`Integration ${integrationId} token refresh did not return an access token. User must reconnect.`,
+			)
+		}
+
 		// Store updated credentials
 		await db
 			.update(integrations)
@@ -103,6 +109,6 @@ export class TokenManager {
 			})
 			.where(eq(integrations.id, integrationId))
 
-		return updated.accessToken!
+		return updated.accessToken
 	}
 }

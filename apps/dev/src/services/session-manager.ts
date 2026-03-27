@@ -480,11 +480,7 @@ export class SessionManager extends EventEmitter {
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
-				const accessToken = await tokenManager.getValidToken(
-					this.db,
-					integration.id,
-					resolved,
-				)
+				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
 				envVars[`${integration.provider.toUpperCase()}_TOKEN`] = accessToken
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {

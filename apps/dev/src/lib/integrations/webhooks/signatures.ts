@@ -28,26 +28,42 @@ export function verifyHmacSha1(
 	return timingSafeEqual(expected, actual)
 }
 
+export interface TimestampSignatureConfig {
+	/** Header containing the request timestamp */
+	timestampHeader: string
+	/** Header containing the signature */
+	signatureHeader: string
+	/** Template for the signing base string. Use `{timestamp}` and `{body}` placeholders. */
+	bodyTemplate: string
+	/** Prefix prepended to the computed HMAC hex digest (e.g. 'v0=') */
+	signaturePrefix?: string
+	/** Max age in seconds before rejecting (default: 300) */
+	maxAgeSeconds?: number
+}
+
 /**
- * Verify Slack-style timestamp-based signature.
- * Slack signs `v0:${timestamp}:${body}` with HMAC-SHA256
- * and sends signature in `x-slack-signature` header.
+ * Verify a timestamp-based HMAC-SHA256 signature.
+ * The signing base string is built from the configured template,
+ * and the computed digest is compared with timing-safe equality.
  */
 export function verifyTimestampSignature(
 	body: string,
 	headers: Record<string, string>,
 	secret: string,
+	config: TimestampSignatureConfig,
 ): boolean {
-	const timestamp = headers['x-slack-request-timestamp']
-	const signature = headers['x-slack-signature']
+	const timestamp = headers[config.timestampHeader]
+	const signature = headers[config.signatureHeader]
 	if (!timestamp || !signature) return false
 
-	// Reject requests older than 5 minutes to prevent replay attacks
+	// Reject requests older than maxAgeSeconds to prevent replay attacks
+	const maxAge = config.maxAgeSeconds ?? 300
 	const age = Math.abs(Date.now() / 1000 - Number(timestamp))
-	if (age > 300) return false
+	if (age > maxAge) return false
 
-	const baseString = `v0:${timestamp}:${body}`
-	const computed = `v0=${createHmac('sha256', secret).update(baseString).digest('hex')}`
+	const baseString = config.bodyTemplate.replace('{timestamp}', timestamp).replace('{body}', body)
+	const digest = createHmac('sha256', secret).update(baseString).digest('hex')
+	const computed = config.signaturePrefix ? `${config.signaturePrefix}${digest}` : digest
 
 	const expected = Buffer.from(computed)
 	const actual = Buffer.from(signature)

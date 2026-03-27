@@ -37,13 +37,27 @@ export type AuthConfig =
 export interface WebhookConfig {
 	/** Header containing the signature (e.g. 'x-hub-signature-256') */
 	signatureHeader: string
-	signatureScheme: 'hmac-sha256' | 'hmac-sha1' | 'timestamp' | 'custom'
+	signatureScheme: 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
 	/** Prefix before the hex digest (e.g. 'sha256=' for GitHub) */
 	signaturePrefix?: string
 	/** Env var name for the webhook signing secret */
 	secretEnv: string
 	/** Header containing the event type (e.g. 'x-github-event') */
 	eventTypeHeader?: string
+	/** Header containing the timestamp (required for 'timestamp' scheme, e.g. 'x-slack-request-timestamp') */
+	timestampHeader?: string
+	/** Header containing the timestamp-based signature (required for 'timestamp' scheme, e.g. 'x-slack-signature') */
+	timestampSignatureHeader?: string
+	/**
+	 * Template for the signing base string. Use `{timestamp}` and `{body}` placeholders.
+	 * Required for 'timestamp' scheme. Example: 'v0:{timestamp}:{body}'
+	 */
+	timestampBodyTemplate?: string
+	/**
+	 * Prefix prepended to the computed HMAC hex digest for comparison.
+	 * Used with 'timestamp' scheme. Example: 'v0='
+	 */
+	timestampSignaturePrefix?: string
 }
 
 // ── MCP config ─────────────────────────────────────────────────────────────

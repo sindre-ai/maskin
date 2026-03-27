@@ -1,11 +1,6 @@
 import { createPrivateKey, createSign } from 'node:crypto'
+import { getEnvOrThrow } from '../../env'
 import type { CustomAuthHandler, StoredCredentials } from '../../types'
-
-function getEnvOrThrow(name: string): string {
-	const value = process.env[name]
-	if (!value) throw new Error(`${name} environment variable is required`)
-	return value
-}
 
 function createJwt(appId: string, privateKeyPem: string): string {
 	const now = Math.floor(Date.now() / 1000)
@@ -34,9 +29,7 @@ function createJwt(appId: string, privateKeyPem: string): string {
 function parsePrivateKey(raw: string): string {
 	if (raw.includes('-----BEGIN')) {
 		const normalized = raw.replace(/\\n/g, '\n').replace(/\\r/g, '')
-		const match = normalized.match(
-			/(-----BEGIN [\w ]+-----)\s+([\s\S]+?)\s+(-----END [\w ]+-----)/,
-		)
+		const match = normalized.match(/(-----BEGIN [\w ]+-----)\s+([\s\S]+?)\s+(-----END [\w ]+-----)/)
 		if (match) {
 			const [, header, body = '', footer] = match
 			const bodyLines = body.split(/\s+/).join('\n')

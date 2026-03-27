@@ -20,6 +20,8 @@ export function normalizeEvent(
 	const mapping = provider.config.events?.mapping
 	if (!mapping) return null
 
+	if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return null
+
 	const webhookConfig = provider.config.webhook
 	if (!webhookConfig || 'type' in webhookConfig) return null
 
