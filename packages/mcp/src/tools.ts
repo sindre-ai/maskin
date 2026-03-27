@@ -534,21 +534,21 @@ export const tools = {
 	// ─── Extensions ──────────────────────────────────────────
 	list_extensions: {
 		description:
-			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work"), pre-built extensions (e.g. "crm", "project_management"), and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or install.',
+			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 		}),
 	},
 	create_extension: {
 		description:
-			'Add an extension to the workspace. Two modes: (1) Install a known extension by ID — pass just the id (e.g. "crm", "work", "project_management"). The extension\'s object types, statuses, fields, and relationship types are merged into the workspace. Types that already exist are skipped. (2) Create a custom extension — pass id, name, and object_types to define new types from scratch. Call list_extensions first to see available extensions.',
+			'Add an extension to the workspace. Two modes: (1) Enable a registered extension by ID (e.g. "work"). (2) Create a custom extension — pass id, name, and object_types to define new types from scratch. Call list_extensions first to see available extensions.',
 		inputSchema: z.object({
 			workspace_id: z.string().uuid().describe('Workspace to add the extension to'),
 			id: z
 				.string()
 				.regex(/^[a-z][a-z0-9_]*$/)
 				.describe(
-					'Extension ID. For known extensions: "work", "crm", "project_management", "content_pipeline", "customer_success". For custom: any lowercase identifier.',
+					'Extension ID. For registered extensions: "work". For custom: any lowercase identifier.',
 				),
 			name: z
 				.string()

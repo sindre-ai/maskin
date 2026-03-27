@@ -9,7 +9,6 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { templates } from './templates.js'
 import { tools } from './tools.js'
 
 interface McpConfig {
@@ -202,16 +201,6 @@ function collectActiveRelTypes(
 			if (ot.defaultRelationshipTypes) {
 				for (const rt of ot.defaultRelationshipTypes) active.add(rt)
 			}
-		}
-	}
-
-	// Template relationship types (for installed templates)
-	const statuses = (settings.statuses ?? {}) as Record<string, string[]>
-	for (const t of Object.values(templates)) {
-		const typeKeys = Object.keys(t.settings.statuses)
-		const installed = typeKeys.some((tk) => tk in statuses)
-		if (installed && t.settings.relationship_types) {
-			for (const rt of t.settings.relationship_types) active.add(rt)
 		}
 	}
 
@@ -1292,8 +1281,6 @@ export function createMcpServer(config: McpConfig) {
 
 			// Collect all type keys owned by modules
 			const moduleTypeKeys = new Set<string>()
-			// Collect all type keys owned by templates
-			const templateTypeKeys = new Set<string>()
 			// Collect all type keys owned by tracked custom extensions
 			const customExtTypeKeys = new Set<string>()
 
@@ -1315,30 +1302,7 @@ export function createMcpServer(config: McpConfig) {
 				}
 			})
 
-			// 2. Templates as extensions
-			const templateExtensions = Object.values(templates).map((t) => {
-				const typeKeys = Object.keys(t.settings.statuses)
-				for (const tk of typeKeys) templateTypeKeys.add(tk)
-				const installed = typeKeys.some((tk) => tk in statuses)
-				return {
-					id: t.id,
-					name: t.name,
-					description: t.description,
-					enabled: installed,
-					object_types: typeKeys.map((tk) => ({
-						type: tk,
-						display_name: t.settings.display_names[tk],
-						statuses: statuses[tk] ?? t.settings.statuses[tk],
-						fields:
-							(fieldDefs[tk] as Array<{ name: string; type: string }>) ??
-							t.settings.field_definitions[tk] ??
-							[],
-						relationship_types: t.settings.relationship_types,
-					})),
-				}
-			})
-
-			// 3. Tracked custom extensions
+			// 2. Tracked custom extensions
 			const trackedCustomExtensions = Object.entries(customExtensions).map(([extId, ext]) => {
 				for (const t of ext.types) customExtTypeKeys.add(t)
 				return {
@@ -1357,10 +1321,9 @@ export function createMcpServer(config: McpConfig) {
 				}
 			})
 
-			// 4. Untracked custom types (not owned by any module, template, or tracked extension)
+			// 3. Untracked custom types (not owned by any module or tracked extension)
 			const untrackedTypes = Object.keys(statuses).filter(
-				(t) =>
-					!moduleTypeKeys.has(t) && !templateTypeKeys.has(t) && !customExtTypeKeys.has(t),
+				(t) => !moduleTypeKeys.has(t) && !customExtTypeKeys.has(t),
 			)
 			const untrackedExtensions =
 				untrackedTypes.length > 0
@@ -1380,12 +1343,7 @@ export function createMcpServer(config: McpConfig) {
 						]
 					: []
 
-			const result = [
-				...moduleExtensions,
-				...templateExtensions,
-				...trackedCustomExtensions,
-				...untrackedExtensions,
-			]
+			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
 
 			return {
 				_meta: { toolName: 'list_extensions' },
@@ -1406,9 +1364,6 @@ export function createMcpServer(config: McpConfig) {
 			// Check if this is a known module
 			const allModules = getAllModules()
 			const mod = allModules.find((m) => m.id === args.id)
-
-			// Check if this is a known template
-			const template = templates[args.id]
 
 			if (mod) {
 				// Enable module
@@ -1446,75 +1401,9 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
-			if (template) {
-				// Install template — same as old install_template logic
-				const workspace = await getWorkspace(config, args.workspace_id)
-				const settings = (workspace.settings ?? {}) as Record<string, unknown>
-				const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
-
-				const skipped: string[] = []
-				const added: string[] = []
-
-				for (const [type, typeStatuses] of Object.entries(template.settings.statuses)) {
-					if (type in statuses) {
-						skipped.push(type)
-						continue
-					}
-					statuses[type] = typeStatuses
-					added.push(type)
-				}
-
-				for (const [type, name] of Object.entries(template.settings.display_names)) {
-					if (!(type in displayNames)) {
-						displayNames[type] = name
-					}
-				}
-
-				for (const [type, fields] of Object.entries(template.settings.field_definitions)) {
-					if (!(type in fieldDefs)) {
-						fieldDefs[type] = fields
-					}
-				}
-
-				if (template.settings.relationship_types) {
-					for (const rt of template.settings.relationship_types) {
-						if (!relTypes.includes(rt)) relTypes.push(rt)
-					}
-				}
-
-				const result = await apiCall(
-					config,
-					'PATCH',
-					`/api/workspaces/${args.workspace_id}`,
-					{
-						settings: {
-							statuses,
-							display_names: displayNames,
-							field_definitions: fieldDefs,
-							relationship_types: relTypes,
-						},
-					},
-					{ workspaceId: args.workspace_id },
-				)
-
-				return {
-					_meta: { toolName: 'create_extension' },
-					content: [
-						{
-							type: 'text' as const,
-							text: JSON.stringify(
-								{ extension: template.name, added, skipped, workspace: result },
-								null,
-								2,
-							),
-						},
-					],
-				}
-			}
-
 			// Custom extension — create object types
 			if (!args.object_types || args.object_types.length === 0) {
-				const available = [...allModules.map((m) => m.id), ...Object.keys(templates)].join(', ')
+				const available = allModules.map((m) => m.id).join(', ')
 				throw new Error(
 					`Extension "${args.id}" is not a known extension. Available: ${available}. To create a custom extension, provide object_types.`,
 				)
@@ -1737,54 +1626,9 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
-			// Check if it's a template — find which types belong to it
-			const template = templates[args.id]
 			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
 			const { statuses, displayNames, fieldDefs, customExtensions } = extractSettings(settings)
-
-			if (template) {
-				// Remove all types from this template
-				const removed: string[] = []
-				for (const type of Object.keys(template.settings.statuses)) {
-					// Don't remove types that are also provided by a module
-					const isModuleType = allModules.some((m) => m.objectTypes.some((t) => t.type === type))
-					if (!isModuleType && type in statuses) {
-						delete statuses[type]
-						delete displayNames[type]
-						delete fieldDefs[type]
-						removed.push(type)
-					}
-				}
-
-				const updatedSettings: Record<string, unknown> = {
-					statuses,
-					display_names: displayNames,
-					field_definitions: fieldDefs,
-					relationship_types: collectActiveRelTypes(
-						{ ...settings, statuses, custom_extensions: customExtensions },
-						allModules,
-					),
-				}
-
-				const result = await apiCall(
-					config,
-					'PATCH',
-					`/api/workspaces/${args.workspace_id}`,
-					{ settings: updatedSettings },
-					{ workspaceId: args.workspace_id },
-				)
-
-				return {
-					_meta: { toolName: 'delete_extension' },
-					content: [
-						{
-							type: 'text' as const,
-							text: JSON.stringify({ removed, workspace: result }, null, 2),
-						},
-					],
-				}
-			}
 
 			// Check if it's a tracked custom extension
 			if (args.id in customExtensions) {
