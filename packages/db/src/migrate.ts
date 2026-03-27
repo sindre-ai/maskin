@@ -6,8 +6,9 @@ import postgres from 'postgres'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationsDir = join(__dirname, '..', 'drizzle')
 
+// Migrations need a direct connection — poolers in transaction mode can break DDL
 // biome-ignore lint/style/noNonNullAssertion: required env var for CLI
-const sql = postgres(process.env.DATABASE_URL!)
+const sql = postgres(process.env.DATABASE_URL_DIRECT || process.env.POSTGRES_URL || process.env.DATABASE_URL!)
 
 // Create migrations tracking table if it doesn't exist
 await sql`
