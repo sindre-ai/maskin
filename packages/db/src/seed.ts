@@ -10,7 +10,7 @@ import {
 } from './schema'
 
 // biome-ignore lint/style/noNonNullAssertion: required env var for CLI
-const db = createDb(process.env.DATABASE_URL!)
+const db = createDb(process.env.POSTGRES_URL || process.env.DATABASE_URL!)
 
 function unwrap<T>(value: T | undefined, label: string): T {
 	if (!value) throw new Error(`Seed failed: ${label} returned no rows`)
