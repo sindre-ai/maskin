@@ -29,6 +29,8 @@ services:
     build:
       context: ./docker/agent-base
     image: agent-base:latest
+    entrypoint: ["echo", "agent-base image built"]
+    restart: "no"
 
   app:
     build:
