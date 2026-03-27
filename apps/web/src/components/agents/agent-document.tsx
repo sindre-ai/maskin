@@ -154,7 +154,7 @@ export function AgentDocumentView({
 					onBlur={handleNameBlur}
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Agent name"
-					className="w-full text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+					className="w-full text-4xl md:text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 				/>
 				{showSaved && (
 					<span className="flex items-center gap-1 text-xs text-muted-foreground">
