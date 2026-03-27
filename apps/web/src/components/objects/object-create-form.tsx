@@ -78,7 +78,7 @@ export function ObjectCreateForm({
 				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Untitled"
 				autoFocus
-				className="w-full text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+				className="w-full text-4xl md:text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 			/>
 
 			{/* Type selector */}
