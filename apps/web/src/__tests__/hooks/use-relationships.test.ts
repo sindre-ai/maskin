@@ -26,9 +26,7 @@ import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
-function buildRelationship(
-	overrides: Partial<RelationshipResponse> = {},
-): RelationshipResponse {
+function buildRelationship(overrides: Partial<RelationshipResponse> = {}): RelationshipResponse {
 	return {
 		id: 'r1',
 		sourceType: 'bet',
