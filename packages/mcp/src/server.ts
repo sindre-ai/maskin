@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getAllModules, getModuleDefaultSettings } from '@ai-native/module-sdk'
+import type { CustomExtensionEntry } from '@ai-native/shared/schemas'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -124,10 +125,7 @@ function extractSettings(settings: Record<string, unknown>) {
 		fieldDefs: { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) },
 		relTypes: [...((settings.relationship_types ?? []) as string[])],
 		customExtensions: {
-			...((settings.custom_extensions ?? {}) as Record<
-				string,
-				{ name: string; types: string[]; relationship_types?: string[] }
-			>),
+			...((settings.custom_extensions ?? {}) as Record<string, CustomExtensionEntry>),
 		},
 	}
 }
@@ -205,10 +203,7 @@ function collectActiveRelTypes(
 	}
 
 	// Custom extension relationship types
-	const customExts = (settings.custom_extensions ?? {}) as Record<
-		string,
-		{ relationship_types?: string[] }
-	>
+	const customExts = (settings.custom_extensions ?? {}) as Record<string, CustomExtensionEntry>
 	for (const ext of Object.values(customExts)) {
 		if (ext.relationship_types) {
 			for (const rt of ext.relationship_types) active.add(rt)
@@ -1525,36 +1520,47 @@ export function createMcpServer(config: McpConfig) {
 							],
 						}
 					}
-				} else {
-					// Disable
-					if (!enabledModules.includes(args.id)) {
-						return {
-							_meta: { toolName: 'update_extension' },
-							content: [
-								{
-									type: 'text' as const,
-									text: `Extension "${args.id}" is not currently enabled.`,
-								},
-							],
-						}
-					}
 
-					const result = await apiCall(
-						config,
-						'PATCH',
-						`/api/workspaces/${args.workspace_id}`,
-						{
-							settings: {
-								enabled_modules: enabledModules.filter((id) => id !== args.id),
-							},
-						},
-						{ workspaceId: args.workspace_id },
-					)
-
+					// Custom extensions are always enabled — enabled: true is a no-op
 					return {
 						_meta: { toolName: 'update_extension' },
-						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+						content: [
+							{
+								type: 'text' as const,
+								text: 'Custom extensions are always enabled. Use object_types to update type definitions, or delete_extension to remove it.',
+							},
+						],
 					}
+				}
+
+				// Disable
+				if (!enabledModules.includes(args.id)) {
+					return {
+						_meta: { toolName: 'update_extension' },
+						content: [
+							{
+								type: 'text' as const,
+								text: `Extension "${args.id}" is not currently enabled.`,
+							},
+						],
+					}
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{
+						settings: {
+							enabled_modules: enabledModules.filter((id) => id !== args.id),
+						},
+					},
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'update_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
 
@@ -1692,10 +1698,19 @@ export function createMcpServer(config: McpConfig) {
 				delete displayNames[args.id]
 				delete fieldDefs[args.id]
 
+				// Clean up any custom extension that tracked this type
+				for (const [extId, ext] of Object.entries(customExtensions)) {
+					ext.types = ext.types.filter((t) => t !== args.id)
+					if (ext.types.length === 0) {
+						delete customExtensions[extId]
+					}
+				}
+
 				const updatedSettings: Record<string, unknown> = {
 					statuses,
 					display_names: displayNames,
 					field_definitions: fieldDefs,
+					custom_extensions: customExtensions,
 					relationship_types: collectActiveRelTypes(
 						{ ...settings, statuses, custom_extensions: customExtensions },
 						allModules,
