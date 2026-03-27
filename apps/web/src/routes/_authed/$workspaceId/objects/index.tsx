@@ -10,6 +10,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useActors } from '@/hooks/use-actors'
+import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
@@ -31,15 +32,18 @@ function ObjectsPage() {
 	const [search, setSearch] = useState('')
 	const { data: actors } = useActors(workspaceId)
 	const enabledModules = useEnabledModules()
+	const customExtensions = useCustomExtensions()
 	const settings = workspace.settings as Record<string, unknown>
 
 	const tabs = useMemo(() => {
 		const moduleTabs = getEnabledObjectTypeTabs(enabledModules)
+		const customTabs = customExtensions.flatMap((ext) => ext.tabs)
 		return [
 			{ label: 'All', value: undefined as string | undefined },
 			...moduleTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),
+			...customTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),
 		]
-	}, [enabledModules])
+	}, [enabledModules, customExtensions])
 
 	const filters: Record<string, string> = {}
 	if (typeFilter) filters.type = typeFilter
