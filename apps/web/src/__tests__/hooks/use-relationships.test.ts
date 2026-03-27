@@ -21,11 +21,14 @@ import {
 	useObjectRelationships,
 	useRelationships,
 } from '@/hooks/use-relationships'
+import type { RelationshipResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
-function buildRelationship(overrides: Record<string, unknown> = {}) {
+function buildRelationship(
+	overrides: Partial<RelationshipResponse> = {},
+): RelationshipResponse {
 	return {
 		id: 'r1',
 		sourceType: 'bet',

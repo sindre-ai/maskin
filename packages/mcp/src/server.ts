@@ -1361,6 +1361,12 @@ export function createMcpServer(config: McpConfig) {
 			const mod = allModules.find((m) => m.id === args.id)
 
 			if (mod) {
+				if (args.object_types && args.object_types.length > 0) {
+					throw new Error(
+						`"${args.id}" is a registered extension and cannot have custom object_types. Call create_extension with just the id to enable it, or choose a different id for your custom extension.`,
+					)
+				}
+
 				// Enable module
 				const workspace = await getWorkspace(config, args.workspace_id)
 				const settings = (workspace.settings ?? {}) as Record<string, unknown>
@@ -1519,6 +1525,14 @@ export function createMcpServer(config: McpConfig) {
 								},
 							],
 						}
+					}
+
+					// Not a registered module — check if it's a known custom extension
+					const { customExtensions } = extractSettings(settings)
+					if (!(args.id in customExtensions)) {
+						throw new Error(
+							`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+						)
 					}
 
 					// Custom extensions are always enabled — enabled: true is a no-op
