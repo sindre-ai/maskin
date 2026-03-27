@@ -114,7 +114,7 @@ describe('useCreateTrigger', () => {
 		result.current.mutate({
 			name: 'New Trigger',
 			type: 'cron',
-			config: { schedule: '0 * * * *' },
+			config: { expression: '0 * * * *' },
 			action_prompt: 'Run it',
 			target_actor_id: 'actor-1',
 		})
@@ -122,7 +122,7 @@ describe('useCreateTrigger', () => {
 		expect(api.triggers.create).toHaveBeenCalledWith(workspaceId, {
 			name: 'New Trigger',
 			type: 'cron',
-			config: { schedule: '0 * * * *' },
+			config: { expression: '0 * * * *' },
 			action_prompt: 'Run it',
 			target_actor_id: 'actor-1',
 		})
@@ -136,7 +136,7 @@ describe('useCreateTrigger', () => {
 		result.current.mutate({
 			name: 'Bad',
 			type: 'cron',
-			config: {},
+			config: { expression: '' },
 			action_prompt: 'Nope',
 			target_actor_id: 'actor-1',
 		})

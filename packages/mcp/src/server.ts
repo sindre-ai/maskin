@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getAllModules, getModuleDefaultSettings } from '@ai-native/module-sdk'
+import type { CustomExtensionEntry } from '@ai-native/shared/schemas'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -9,7 +10,6 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { templates } from './templates.js'
 import { tools } from './tools.js'
 
 interface McpConfig {
@@ -124,7 +124,98 @@ function extractSettings(settings: Record<string, unknown>) {
 		displayNames: { ...((settings.display_names ?? {}) as Record<string, string>) },
 		fieldDefs: { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) },
 		relTypes: [...((settings.relationship_types ?? []) as string[])],
+		customExtensions: {
+			...((settings.custom_extensions ?? {}) as Record<string, CustomExtensionEntry>),
+		},
 	}
+}
+
+/** Enable a module and merge its default settings into the workspace. Returns the updated settings object. */
+function buildEnableModuleSettings(
+	moduleId: string,
+	settings: Record<string, unknown>,
+): Record<string, unknown> {
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? [...(settings.enabled_modules as string[])]
+		: ['work']
+
+	enabledModules.push(moduleId)
+
+	const defaults = getModuleDefaultSettings(moduleId)
+	const updatedSettings: Record<string, unknown> = {
+		enabled_modules: enabledModules,
+	}
+
+	if (defaults) {
+		const existingStatuses = (settings.statuses ?? {}) as Record<string, string[]>
+		const existingDisplayNames = (settings.display_names ?? {}) as Record<string, string>
+		const existingFieldDefs = (settings.field_definitions ?? {}) as Record<string, unknown[]>
+		const existingRelTypes = (settings.relationship_types ?? []) as string[]
+
+		if (defaults.statuses) {
+			updatedSettings.statuses = { ...existingStatuses }
+			for (const [type, sts] of Object.entries(defaults.statuses)) {
+				if (!(type in existingStatuses)) {
+					;(updatedSettings.statuses as Record<string, string[]>)[type] = sts
+				}
+			}
+		}
+		if (defaults.display_names) {
+			updatedSettings.display_names = { ...existingDisplayNames }
+			for (const [type, name] of Object.entries(defaults.display_names)) {
+				if (!(type in existingDisplayNames)) {
+					;(updatedSettings.display_names as Record<string, string>)[type] = name
+				}
+			}
+		}
+		if (defaults.field_definitions) {
+			updatedSettings.field_definitions = { ...existingFieldDefs }
+			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
+				if (!(type in existingFieldDefs)) {
+					;(updatedSettings.field_definitions as Record<string, unknown[]>)[type] = fields
+				}
+			}
+		}
+		if (defaults.relationship_types) {
+			updatedSettings.relationship_types = [
+				...new Set([...existingRelTypes, ...defaults.relationship_types]),
+			]
+		}
+	}
+
+	return updatedSettings
+}
+
+/** Compute the set of relationship types still referenced by remaining extensions. */
+function collectActiveRelTypes(
+	settings: Record<string, unknown>,
+	modules: Array<{ objectTypes: Array<{ defaultRelationshipTypes?: string[] }> }>,
+): string[] {
+	const active = new Set<string>()
+
+	// Module relationship types
+	for (const mod of modules) {
+		for (const ot of mod.objectTypes) {
+			if (ot.defaultRelationshipTypes) {
+				for (const rt of ot.defaultRelationshipTypes) active.add(rt)
+			}
+		}
+	}
+
+	// Custom extension relationship types
+	const customExts = (settings.custom_extensions ?? {}) as Record<string, CustomExtensionEntry>
+	for (const ext of Object.values(customExts)) {
+		if (ext.relationship_types) {
+			for (const rt of ext.relationship_types) active.add(rt)
+		}
+	}
+
+	// Always keep the built-in defaults
+	for (const rt of ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']) {
+		active.add(rt)
+	}
+
+	return [...active]
 }
 
 function loadHtml(config: McpConfig, filename: string): string {
@@ -1152,15 +1243,16 @@ export function createMcpServer(config: McpConfig) {
 	// ─── Extensions ──────────────────────────────────────────
 	registerAppTool(
 		server,
-		'list_modules',
+		'list_extensions',
 		{
-			description: tools.list_modules.description,
-			inputSchema: tools.list_modules.inputSchema.shape,
+			description: tools.list_extensions.description,
+			inputSchema: tools.list_extensions.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
 			const modules = getAllModules()
 			let enabledModuleIds: string[] = ['work']
+			let workspaceSettings: Record<string, unknown> = {}
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 					skipWorkspace: true,
@@ -1169,166 +1261,87 @@ export function createMcpServer(config: McpConfig) {
 				const workspace = effectiveWsId
 					? workspaces.find((w) => w.id === effectiveWsId)
 					: workspaces[0]
-				if (workspace?.settings?.enabled_modules) {
-					enabledModuleIds = workspace.settings.enabled_modules as string[]
+				if (workspace?.settings) {
+					workspaceSettings = workspace.settings
+					if (workspace.settings.enabled_modules) {
+						enabledModuleIds = workspace.settings.enabled_modules as string[]
+					}
 				}
 			} catch {
 				// Best-effort workspace lookup
 			}
 
-			const result = modules.map((mod) => ({
-				id: mod.id,
-				name: mod.name,
-				version: mod.version,
-				enabled: enabledModuleIds.includes(mod.id),
-				objectTypes: mod.objectTypes.map((t) => ({
-					type: t.type,
-					label: t.label,
-					icon: t.icon,
-					defaultStatuses: t.defaultStatuses,
-					defaultFields: t.defaultFields ?? [],
-				})),
-			}))
+			const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+				extractSettings(workspaceSettings)
 
-			return {
-				_meta: { toolName: 'list_modules' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
+			// Collect all type keys owned by modules
+			const moduleTypeKeys = new Set<string>()
+			// Collect all type keys owned by tracked custom extensions
+			const customExtTypeKeys = new Set<string>()
 
-	registerAppTool(
-		server,
-		'enable_module',
-		{
-			description: tools.enable_module.description,
-			inputSchema: tools.enable_module.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
-		},
-		async (args) => {
-			const allModules = getAllModules()
-			const mod = allModules.find((m) => m.id === args.module_id)
-			if (!mod) {
-				const available = allModules.map((m) => m.id).join(', ')
-				throw new Error(`Module "${args.module_id}" not found. Available modules: ${available}`)
-			}
-
-			const workspace = await getWorkspace(config, args.workspace_id)
-			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const enabledModules = Array.isArray(settings.enabled_modules)
-				? [...(settings.enabled_modules as string[])]
-				: ['work']
-
-			if (enabledModules.includes(args.module_id)) {
+			// 1. Registered modules as extensions
+			const moduleExtensions = modules.map((mod) => {
+				for (const t of mod.objectTypes) moduleTypeKeys.add(t.type)
 				return {
-					_meta: { toolName: 'enable_module' },
-					content: [
-						{
-							type: 'text' as const,
-							text: `Module "${args.module_id}" is already enabled.`,
-						},
-					],
+					id: mod.id,
+					name: mod.name,
+					enabled: enabledModuleIds.includes(mod.id),
+					object_types: mod.objectTypes.map((t) => ({
+						type: t.type,
+						display_name: displayNames[t.type] ?? t.label,
+						statuses: statuses[t.type] ?? t.defaultStatuses,
+						fields:
+							(fieldDefs[t.type] as Array<{ name: string; type: string }>) ?? t.defaultFields ?? [],
+						relationship_types: t.defaultRelationshipTypes,
+					})),
 				}
-			}
+			})
 
-			enabledModules.push(args.module_id)
-
-			const defaults = getModuleDefaultSettings(args.module_id)
-			const updatedSettings: Record<string, unknown> = { enabled_modules: enabledModules }
-
-			if (defaults) {
-				const existingStatuses = (settings.statuses ?? {}) as Record<string, string[]>
-				const existingDisplayNames = (settings.display_names ?? {}) as Record<string, string>
-				const existingFieldDefs = (settings.field_definitions ?? {}) as Record<string, unknown[]>
-				const existingRelTypes = (settings.relationship_types ?? []) as string[]
-
-				if (defaults.statuses) {
-					updatedSettings.statuses = { ...existingStatuses }
-					for (const [type, statuses] of Object.entries(defaults.statuses)) {
-						if (!(type in existingStatuses)) {
-							;(updatedSettings.statuses as Record<string, string[]>)[type] = statuses
-						}
-					}
-				}
-				if (defaults.display_names) {
-					updatedSettings.display_names = { ...existingDisplayNames }
-					for (const [type, name] of Object.entries(defaults.display_names)) {
-						if (!(type in existingDisplayNames)) {
-							;(updatedSettings.display_names as Record<string, string>)[type] = name
-						}
-					}
-				}
-				if (defaults.field_definitions) {
-					updatedSettings.field_definitions = { ...existingFieldDefs }
-					for (const [type, fields] of Object.entries(defaults.field_definitions)) {
-						if (!(type in existingFieldDefs)) {
-							;(updatedSettings.field_definitions as Record<string, unknown[]>)[type] = fields
-						}
-					}
-				}
-				if (defaults.relationship_types) {
-					updatedSettings.relationship_types = [
-						...new Set([...existingRelTypes, ...defaults.relationship_types]),
-					]
-				}
-			}
-
-			const result = await apiCall(
-				config,
-				'PATCH',
-				`/api/workspaces/${args.workspace_id}`,
-				{ settings: updatedSettings },
-				{ workspaceId: args.workspace_id },
-			)
-
-			return {
-				_meta: { toolName: 'enable_module' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'disable_module',
-		{
-			description: tools.disable_module.description,
-			inputSchema: tools.disable_module.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
-		},
-		async (args) => {
-			const workspace = await getWorkspace(config, args.workspace_id)
-			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const enabledModules = Array.isArray(settings.enabled_modules)
-				? (settings.enabled_modules as string[])
-				: ['work']
-
-			if (!enabledModules.includes(args.module_id)) {
+			// 2. Tracked custom extensions
+			const trackedCustomExtensions = Object.entries(customExtensions).map(([extId, ext]) => {
+				for (const t of ext.types) customExtTypeKeys.add(t)
 				return {
-					_meta: { toolName: 'disable_module' },
-					content: [
-						{
-							type: 'text' as const,
-							text: `Module "${args.module_id}" is not currently enabled.`,
-						},
-					],
+					id: extId,
+					name: ext.name,
+					enabled: true,
+					object_types: ext.types
+						.filter((t) => t in statuses)
+						.map((t) => ({
+							type: t,
+							display_name: displayNames[t] ?? t,
+							statuses: statuses[t],
+							fields: fieldDefs[t] ?? [],
+							relationship_types: ext.relationship_types ?? [],
+						})),
 				}
-			}
+			})
 
-			const result = await apiCall(
-				config,
-				'PATCH',
-				`/api/workspaces/${args.workspace_id}`,
-				{
-					settings: {
-						enabled_modules: enabledModules.filter((id) => id !== args.module_id),
-					},
-				},
-				{ workspaceId: args.workspace_id },
+			// 3. Untracked custom types (not owned by any module or tracked extension)
+			const untrackedTypes = Object.keys(statuses).filter(
+				(t) => !moduleTypeKeys.has(t) && !customExtTypeKeys.has(t),
 			)
+			const untrackedExtensions =
+				untrackedTypes.length > 0
+					? [
+							{
+								id: 'custom',
+								name: 'Custom Types',
+								enabled: true,
+								object_types: untrackedTypes.map((t) => ({
+									type: t,
+									display_name: displayNames[t] ?? t,
+									statuses: statuses[t],
+									fields: fieldDefs[t] ?? [],
+									relationship_types: relTypes,
+								})),
+							},
+						]
+					: []
+
+			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
 
 			return {
-				_meta: { toolName: 'disable_module' },
+				_meta: { toolName: 'list_extensions' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1336,259 +1349,438 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
-		'create_object_type',
+		'create_extension',
 		{
-			description: tools.create_object_type.description,
-			inputSchema: tools.create_object_type.inputSchema.shape,
+			description: tools.create_extension.description,
+			inputSchema: tools.create_extension.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
-			const workspace = await getWorkspace(config, args.workspace_id)
-			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
-
-			if (args.type in statuses) {
-				throw new Error(
-					`Object type "${args.type}" already exists. Use update_object_type to modify it.`,
-				)
-			}
-
-			statuses[args.type] = args.statuses
-			displayNames[args.type] = args.display_name
-			if (args.fields && args.fields.length > 0) {
-				fieldDefs[args.type] = args.fields
-			}
-			if (args.relationship_types) {
-				for (const rt of args.relationship_types) {
-					if (!relTypes.includes(rt)) relTypes.push(rt)
-				}
-			}
-
-			const updatedSettings: Record<string, unknown> = {
-				statuses,
-				display_names: displayNames,
-				field_definitions: fieldDefs,
-			}
-			if (args.relationship_types) {
-				updatedSettings.relationship_types = relTypes
-			}
-
-			const result = await apiCall(
-				config,
-				'PATCH',
-				`/api/workspaces/${args.workspace_id}`,
-				{ settings: updatedSettings },
-				{ workspaceId: args.workspace_id },
-			)
-
-			return {
-				_meta: { toolName: 'create_object_type' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'update_object_type',
-		{
-			description: tools.update_object_type.description,
-			inputSchema: tools.update_object_type.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
-		},
-		async (args) => {
-			const workspace = await getWorkspace(config, args.workspace_id)
-			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
-
-			if (!(args.type in statuses) && !(args.type in displayNames)) {
-				throw new Error(
-					`Object type "${args.type}" not found. Use create_object_type to create it first.`,
-				)
-			}
-
-			if (args.statuses) statuses[args.type] = args.statuses
-			if (args.display_name) displayNames[args.type] = args.display_name
-			if (args.fields) fieldDefs[args.type] = args.fields
-			if (args.relationship_types) {
-				for (const rt of args.relationship_types) {
-					if (!relTypes.includes(rt)) relTypes.push(rt)
-				}
-			}
-
-			const updatedSettings: Record<string, unknown> = {
-				statuses,
-				display_names: displayNames,
-				field_definitions: fieldDefs,
-			}
-			if (args.relationship_types) {
-				updatedSettings.relationship_types = relTypes
-			}
-
-			const result = await apiCall(
-				config,
-				'PATCH',
-				`/api/workspaces/${args.workspace_id}`,
-				{ settings: updatedSettings },
-				{ workspaceId: args.workspace_id },
-			)
-
-			return {
-				_meta: { toolName: 'update_object_type' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'delete_object_type',
-		{
-			description: tools.delete_object_type.description,
-			inputSchema: tools.delete_object_type.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
-		},
-		async (args) => {
-			// Check if the type is provided by a registered module
+			// Check if this is a known module
 			const allModules = getAllModules()
-			for (const mod of allModules) {
-				const provided = mod.objectTypes.find((t) => t.type === args.type)
-				if (provided) {
+			const mod = allModules.find((m) => m.id === args.id)
+
+			if (mod) {
+				if (args.object_types && args.object_types.length > 0) {
 					throw new Error(
-						`Cannot delete type "${args.type}" — it is provided by the "${mod.name}" module. Disable the module instead with disable_module.`,
+						`"${args.id}" is a registered extension and cannot have custom object_types. Call create_extension with just the id to enable it, or choose a different id for your custom extension.`,
 					)
 				}
+
+				// Enable module
+				const workspace = await getWorkspace(config, args.workspace_id)
+				const settings = (workspace.settings ?? {}) as Record<string, unknown>
+				const enabledModules = Array.isArray(settings.enabled_modules)
+					? (settings.enabled_modules as string[])
+					: ['work']
+
+				if (enabledModules.includes(args.id)) {
+					return {
+						_meta: { toolName: 'create_extension' },
+						content: [
+							{
+								type: 'text' as const,
+								text: `Extension "${args.id}" is already enabled.`,
+							},
+						],
+					}
+				}
+
+				const updatedSettings = buildEnableModuleSettings(args.id, settings)
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'create_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
 			}
 
-			const workspace = await getWorkspace(config, args.workspace_id)
-			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const { statuses, displayNames, fieldDefs } = extractSettings(settings)
-
-			delete statuses[args.type]
-			delete displayNames[args.type]
-			delete fieldDefs[args.type]
-
-			const result = await apiCall(
-				config,
-				'PATCH',
-				`/api/workspaces/${args.workspace_id}`,
-				{
-					settings: {
-						statuses,
-						display_names: displayNames,
-						field_definitions: fieldDefs,
-					},
-				},
-				{ workspaceId: args.workspace_id },
-			)
-
-			return {
-				_meta: { toolName: 'delete_object_type' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'list_templates',
-		{
-			description: tools.list_templates.description,
-			inputSchema: tools.list_templates.inputSchema.shape,
-			_meta: {},
-		},
-		async () => {
-			const result = Object.values(templates).map((t) => ({
-				id: t.id,
-				name: t.name,
-				description: t.description,
-				objectTypes: Object.keys(t.settings.statuses),
-			}))
-
-			return {
-				_meta: { toolName: 'list_templates' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'install_template',
-		{
-			description: tools.install_template.description,
-			inputSchema: tools.install_template.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
-		},
-		async (args) => {
-			const template = templates[args.template_id]
-			if (!template) {
-				const available = Object.keys(templates).join(', ')
+			// Custom extension — create object types
+			if (!args.object_types || args.object_types.length === 0) {
+				const available = allModules.map((m) => m.id).join(', ')
 				throw new Error(
-					`Template "${args.template_id}" not found. Available templates: ${available}`,
+					`Extension "${args.id}" is not a known extension. Available: ${available}. To create a custom extension, provide object_types.`,
 				)
 			}
 
 			const workspace = await getWorkspace(config, args.workspace_id)
 			const settings = (workspace.settings ?? {}) as Record<string, unknown>
-			const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
+			const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+				extractSettings(settings)
 
-			const skipped: string[] = []
-			const added: string[] = []
-
-			for (const [type, typeStatuses] of Object.entries(template.settings.statuses)) {
-				if (type in statuses) {
-					skipped.push(type)
-					continue
-				}
-				statuses[type] = typeStatuses
-				added.push(type)
+			if (args.id in customExtensions) {
+				throw new Error(
+					`Custom extension "${args.id}" already exists. Use update_extension to modify it.`,
+				)
 			}
 
-			for (const [type, name] of Object.entries(template.settings.display_names)) {
-				if (!(type in displayNames)) {
-					displayNames[type] = name
+			const extRelTypes: string[] = []
+			for (const ot of args.object_types) {
+				if (ot.type in statuses) {
+					throw new Error(
+						`Object type "${ot.type}" already exists. Use update_extension to modify it.`,
+					)
+				}
+				statuses[ot.type] = ot.statuses
+				displayNames[ot.type] = ot.display_name
+				if (ot.fields && ot.fields.length > 0) {
+					fieldDefs[ot.type] = ot.fields
+				}
+				if (ot.relationship_types) {
+					for (const rt of ot.relationship_types) {
+						if (!relTypes.includes(rt)) relTypes.push(rt)
+						if (!extRelTypes.includes(rt)) extRelTypes.push(rt)
+					}
 				}
 			}
 
-			for (const [type, fields] of Object.entries(template.settings.field_definitions)) {
-				if (!(type in fieldDefs)) {
-					fieldDefs[type] = fields
-				}
+			// Track the custom extension metadata
+			customExtensions[args.id] = {
+				name: args.name ?? args.id,
+				types: args.object_types.map((ot) => ot.type),
+				...(extRelTypes.length > 0 ? { relationship_types: extRelTypes } : {}),
 			}
 
-			if (template.settings.relationship_types) {
-				for (const rt of template.settings.relationship_types) {
-					if (!relTypes.includes(rt)) relTypes.push(rt)
-				}
+			const updatedSettings: Record<string, unknown> = {
+				statuses,
+				display_names: displayNames,
+				field_definitions: fieldDefs,
+				relationship_types: relTypes,
+				custom_extensions: customExtensions,
 			}
 
 			const result = await apiCall(
 				config,
 				'PATCH',
 				`/api/workspaces/${args.workspace_id}`,
-				{
-					settings: {
-						statuses,
-						display_names: displayNames,
-						field_definitions: fieldDefs,
-						relationship_types: relTypes,
-					},
-				},
+				{ settings: updatedSettings },
 				{ workspaceId: args.workspace_id },
 			)
 
-			const summary = {
-				template: template.name,
-				added,
-				skipped,
-				workspace: result,
+			return {
+				_meta: { toolName: 'create_extension' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_extension',
+		{
+			description: tools.update_extension.description,
+			inputSchema: tools.update_extension.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+		},
+		async (args) => {
+			const workspace = await getWorkspace(config, args.workspace_id)
+			const settings = (workspace.settings ?? {}) as Record<string, unknown>
+
+			// Handle enable/disable
+			if (args.enabled !== undefined) {
+				const enabledModules = Array.isArray(settings.enabled_modules)
+					? [...(settings.enabled_modules as string[])]
+					: ['work']
+
+				if (args.enabled) {
+					// Enable — check if it's a registered module
+					const allModules = getAllModules()
+					const mod = allModules.find((m) => m.id === args.id)
+					if (mod) {
+						if (enabledModules.includes(args.id)) {
+							return {
+								_meta: { toolName: 'update_extension' },
+								content: [
+									{
+										type: 'text' as const,
+										text: `Extension "${args.id}" is already enabled.`,
+									},
+								],
+							}
+						}
+
+						const updatedSettings = buildEnableModuleSettings(args.id, settings)
+
+						const result = await apiCall(
+							config,
+							'PATCH',
+							`/api/workspaces/${args.workspace_id}`,
+							{ settings: updatedSettings },
+							{ workspaceId: args.workspace_id },
+						)
+
+						return {
+							_meta: { toolName: 'update_extension' },
+							content: [
+								{
+									type: 'text' as const,
+									text: JSON.stringify(result, null, 2),
+								},
+							],
+						}
+					}
+
+					// Not a registered module — check if it's a known custom extension
+					const { customExtensions } = extractSettings(settings)
+					if (!(args.id in customExtensions)) {
+						throw new Error(
+							`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+						)
+					}
+
+					// Custom extensions are always enabled — enabled: true is a no-op
+					return {
+						_meta: { toolName: 'update_extension' },
+						content: [
+							{
+								type: 'text' as const,
+								text: 'Custom extensions are always enabled. Use object_types to update type definitions, or delete_extension to remove it.',
+							},
+						],
+					}
+				}
+
+				// Disable
+				if (!enabledModules.includes(args.id)) {
+					return {
+						_meta: { toolName: 'update_extension' },
+						content: [
+							{
+								type: 'text' as const,
+								text: `Extension "${args.id}" is not currently enabled.`,
+							},
+						],
+					}
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{
+						settings: {
+							enabled_modules: enabledModules.filter((id) => id !== args.id),
+						},
+					},
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'update_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
 			}
 
-			return {
-				_meta: { toolName: 'install_template' },
-				content: [{ type: 'text' as const, text: JSON.stringify(summary, null, 2) }],
+			// Handle object type updates
+			if (args.object_types && args.object_types.length > 0) {
+				const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+					extractSettings(settings)
+
+				// Determine which types this extension owns
+				const allModules = getAllModules()
+				const mod = allModules.find((m) => m.id === args.id)
+				const customExt = customExtensions[args.id]
+				const ownedTypes = new Set<string>()
+
+				if (mod) {
+					for (const t of mod.objectTypes) ownedTypes.add(t.type)
+				} else if (customExt) {
+					for (const t of customExt.types) ownedTypes.add(t)
+				} else {
+					throw new Error(
+						`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+					)
+				}
+
+				const extRelTypes: string[] = customExt?.relationship_types
+					? [...customExt.relationship_types]
+					: []
+
+				for (const ot of args.object_types) {
+					if (!ownedTypes.has(ot.type)) {
+						throw new Error(
+							`Object type "${ot.type}" is not owned by extension "${args.id}". ` +
+								`Types owned by this extension: ${[...ownedTypes].join(', ') || 'none'}.`,
+						)
+					}
+
+					if (ot.statuses) statuses[ot.type] = ot.statuses
+					if (ot.display_name) displayNames[ot.type] = ot.display_name
+					if (ot.fields) fieldDefs[ot.type] = ot.fields
+					if (ot.relationship_types) {
+						for (const rt of ot.relationship_types) {
+							if (!relTypes.includes(rt)) relTypes.push(rt)
+							if (!extRelTypes.includes(rt)) extRelTypes.push(rt)
+						}
+					}
+				}
+
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+				}
+				if (args.object_types.some((ot) => ot.relationship_types)) {
+					updatedSettings.relationship_types = relTypes
+				}
+
+				// Update custom_extensions tracking metadata if this is a custom extension
+				if (customExt) {
+					customExtensions[args.id] = {
+						...customExt,
+						...(extRelTypes.length > 0 ? { relationship_types: extRelTypes } : {}),
+					}
+					updatedSettings.custom_extensions = customExtensions
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'update_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
 			}
+
+			throw new Error(
+				'No changes specified. Provide enabled (true/false) to enable/disable, or object_types to update type definitions.',
+			)
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_extension',
+		{
+			description: tools.delete_extension.description,
+			inputSchema: tools.delete_extension.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+		},
+		async (args) => {
+			// Check if the extension is a registered module
+			const allModules = getAllModules()
+			const mod = allModules.find((m) => m.id === args.id)
+			if (mod) {
+				throw new Error(
+					`Cannot delete "${args.id}" — it is a registered extension. Use update_extension with enabled: false to disable it instead.`,
+				)
+			}
+
+			const workspace = await getWorkspace(config, args.workspace_id)
+			const settings = (workspace.settings ?? {}) as Record<string, unknown>
+			const { statuses, displayNames, fieldDefs, customExtensions } = extractSettings(settings)
+
+			// Check if it's a tracked custom extension
+			if (args.id in customExtensions) {
+				const ext = customExtensions[args.id]
+				if (!ext) throw new Error(`Extension ${args.id} not found`)
+				const removed: string[] = []
+				for (const type of ext.types) {
+					// Don't remove types that are also provided by a module
+					const isModuleType = allModules.some((m) => m.objectTypes.some((t) => t.type === type))
+					if (!isModuleType && type in statuses) {
+						delete statuses[type]
+						delete displayNames[type]
+						delete fieldDefs[type]
+						removed.push(type)
+					}
+				}
+				delete customExtensions[args.id]
+
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+					custom_extensions: customExtensions,
+					relationship_types: collectActiveRelTypes(
+						{ ...settings, statuses, custom_extensions: customExtensions },
+						allModules,
+					),
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'delete_extension' },
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ removed, workspace: result }, null, 2),
+						},
+					],
+				}
+			}
+
+			// Fallback: check if the id matches a single type directly
+			if (args.id in statuses) {
+				// Check it's not a module type
+				for (const m of allModules) {
+					const provided = m.objectTypes.find((t) => t.type === args.id)
+					if (provided) {
+						throw new Error(
+							`Cannot delete type "${args.id}" — it is provided by the "${m.name}" extension. Use update_extension with enabled: false to disable it instead.`,
+						)
+					}
+				}
+
+				delete statuses[args.id]
+				delete displayNames[args.id]
+				delete fieldDefs[args.id]
+
+				// Clean up any custom extension that tracked this type
+				for (const [extId, ext] of Object.entries(customExtensions)) {
+					ext.types = ext.types.filter((t) => t !== args.id)
+					if (ext.types.length === 0) {
+						delete customExtensions[extId]
+					}
+				}
+
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+					custom_extensions: customExtensions,
+					relationship_types: collectActiveRelTypes(
+						{ ...settings, statuses, custom_extensions: customExtensions },
+						allModules,
+					),
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'delete_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
+			}
+
+			throw new Error(
+				`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+			)
 		},
 	)
 
@@ -1681,7 +1873,7 @@ ${typeLines.join('\n')}
 ${(() => {
 	const enabledModules = (settings.enabled_modules ?? []) as string[]
 	if (enabledModules.length === 0)
-		return '   Extensions: none enabled (use enable_module or install_template to get started)'
+		return '   Extensions: none enabled (use create_extension to get started)'
 	return `   Extensions: ${enabledModules.join(', ')}`
 })()}`
 
