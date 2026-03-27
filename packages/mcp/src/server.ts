@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { getAllModules, getModuleDefaultSettings } from '@ai-native/module-sdk'
+import type { CustomExtensionEntry } from '@ai-native/shared'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -102,6 +104,118 @@ async function apiCall(
 	}
 
 	return response.json()
+}
+
+async function getWorkspace(
+	config: McpConfig,
+	workspaceId: string,
+): Promise<{ id: string; name: string; settings: Record<string, unknown> }> {
+	const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+		skipWorkspace: true,
+	})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+	const workspace = workspaces.find((w) => w.id === workspaceId)
+	if (!workspace) throw new Error('Workspace not found')
+	return workspace
+}
+
+function extractSettings(settings: Record<string, unknown>) {
+	return {
+		statuses: { ...((settings.statuses ?? {}) as Record<string, string[]>) },
+		displayNames: { ...((settings.display_names ?? {}) as Record<string, string>) },
+		fieldDefs: { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) },
+		relTypes: [...((settings.relationship_types ?? []) as string[])],
+		customExtensions: {
+			...((settings.custom_extensions ?? {}) as Record<string, CustomExtensionEntry>),
+		},
+	}
+}
+
+/** Enable a module and merge its default settings into the workspace. Returns the updated settings object. */
+function buildEnableModuleSettings(
+	moduleId: string,
+	settings: Record<string, unknown>,
+): Record<string, unknown> {
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? [...(settings.enabled_modules as string[])]
+		: ['work']
+
+	enabledModules.push(moduleId)
+
+	const defaults = getModuleDefaultSettings(moduleId)
+	const updatedSettings: Record<string, unknown> = {
+		enabled_modules: enabledModules,
+	}
+
+	if (defaults) {
+		const existingStatuses = (settings.statuses ?? {}) as Record<string, string[]>
+		const existingDisplayNames = (settings.display_names ?? {}) as Record<string, string>
+		const existingFieldDefs = (settings.field_definitions ?? {}) as Record<string, unknown[]>
+		const existingRelTypes = (settings.relationship_types ?? []) as string[]
+
+		if (defaults.statuses) {
+			updatedSettings.statuses = { ...existingStatuses }
+			for (const [type, sts] of Object.entries(defaults.statuses)) {
+				if (!(type in existingStatuses)) {
+					;(updatedSettings.statuses as Record<string, string[]>)[type] = sts
+				}
+			}
+		}
+		if (defaults.display_names) {
+			updatedSettings.display_names = { ...existingDisplayNames }
+			for (const [type, name] of Object.entries(defaults.display_names)) {
+				if (!(type in existingDisplayNames)) {
+					;(updatedSettings.display_names as Record<string, string>)[type] = name
+				}
+			}
+		}
+		if (defaults.field_definitions) {
+			updatedSettings.field_definitions = { ...existingFieldDefs }
+			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
+				if (!(type in existingFieldDefs)) {
+					;(updatedSettings.field_definitions as Record<string, unknown[]>)[type] = fields
+				}
+			}
+		}
+		if (defaults.relationship_types) {
+			updatedSettings.relationship_types = [
+				...new Set([...existingRelTypes, ...defaults.relationship_types]),
+			]
+		}
+	}
+
+	return updatedSettings
+}
+
+/** Compute the set of relationship types still referenced by remaining extensions. */
+function collectActiveRelTypes(
+	settings: Record<string, unknown>,
+	modules: Array<{ objectTypes: Array<{ defaultRelationshipTypes?: string[] }> }>,
+): string[] {
+	const active = new Set<string>()
+
+	// Module relationship types
+	for (const mod of modules) {
+		for (const ot of mod.objectTypes) {
+			if (ot.defaultRelationshipTypes) {
+				for (const rt of ot.defaultRelationshipTypes) active.add(rt)
+			}
+		}
+	}
+
+	// Custom extension relationship types
+	const customExts = (settings.custom_extensions ?? {}) as Record<string, CustomExtensionEntry>
+	for (const ext of Object.values(customExts)) {
+		if (ext.relationship_types) {
+			for (const rt of ext.relationship_types) active.add(rt)
+		}
+	}
+
+	// Always keep the built-in defaults
+	for (const rt of ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']) {
+		active.add(rt)
+	}
+
+	return [...active]
 }
 
 function loadHtml(config: McpConfig, filename: string): string {
@@ -586,7 +700,9 @@ export function createMcpServer(config: McpConfig) {
 				relationship_types: relationshipTypes,
 			}
 
-			const types = typeFilter ? [typeFilter] : ['insight', 'bet', 'task']
+			// Dynamic types: use all types defined in workspace statuses (from enabled extensions)
+			const allTypes = Object.keys(statuses)
+			const types = typeFilter ? [typeFilter] : allTypes
 			const typeSchemas: Record<string, unknown> = {}
 
 			for (const t of types) {
@@ -1123,6 +1239,746 @@ export function createMcpServer(config: McpConfig) {
 			}
 		},
 	)
+
+	// ─── Extensions ──────────────────────────────────────────
+	registerAppTool(
+		server,
+		'list_extensions',
+		{
+			description: tools.list_extensions.description,
+			inputSchema: tools.list_extensions.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+		},
+		async (args) => {
+			const modules = getAllModules()
+			let enabledModuleIds: string[] = ['work']
+			let workspaceSettings: Record<string, unknown> = {}
+			try {
+				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+					skipWorkspace: true,
+				})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
+				const workspace = effectiveWsId
+					? workspaces.find((w) => w.id === effectiveWsId)
+					: workspaces[0]
+				if (workspace?.settings) {
+					workspaceSettings = workspace.settings
+					if (workspace.settings.enabled_modules) {
+						enabledModuleIds = workspace.settings.enabled_modules as string[]
+					}
+				}
+			} catch {
+				// Best-effort workspace lookup
+			}
+
+			const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+				extractSettings(workspaceSettings)
+
+			// Collect all type keys owned by modules
+			const moduleTypeKeys = new Set<string>()
+			// Collect all type keys owned by tracked custom extensions
+			const customExtTypeKeys = new Set<string>()
+
+			// 1. Registered modules as extensions
+			const moduleExtensions = modules.map((mod) => {
+				for (const t of mod.objectTypes) moduleTypeKeys.add(t.type)
+				return {
+					id: mod.id,
+					name: mod.name,
+					enabled: enabledModuleIds.includes(mod.id),
+					object_types: mod.objectTypes.map((t) => ({
+						type: t.type,
+						display_name: displayNames[t.type] ?? t.label,
+						statuses: statuses[t.type] ?? t.defaultStatuses,
+						fields:
+							(fieldDefs[t.type] as Array<{ name: string; type: string }>) ?? t.defaultFields ?? [],
+						relationship_types: t.defaultRelationshipTypes,
+					})),
+				}
+			})
+
+			// 2. Tracked custom extensions
+			const trackedCustomExtensions = Object.entries(customExtensions).map(([extId, ext]) => {
+				for (const t of ext.types) customExtTypeKeys.add(t)
+				return {
+					id: extId,
+					name: ext.name,
+					enabled: true,
+					object_types: ext.types
+						.filter((t) => t in statuses)
+						.map((t) => ({
+							type: t,
+							display_name: displayNames[t] ?? t,
+							statuses: statuses[t],
+							fields: fieldDefs[t] ?? [],
+							relationship_types: ext.relationship_types ?? [],
+						})),
+				}
+			})
+
+			// 3. Untracked custom types (not owned by any module or tracked extension)
+			const untrackedTypes = Object.keys(statuses).filter(
+				(t) => !moduleTypeKeys.has(t) && !customExtTypeKeys.has(t),
+			)
+			const untrackedExtensions =
+				untrackedTypes.length > 0
+					? [
+							{
+								id: 'custom',
+								name: 'Custom Types',
+								enabled: true,
+								object_types: untrackedTypes.map((t) => ({
+									type: t,
+									display_name: displayNames[t] ?? t,
+									statuses: statuses[t],
+									fields: fieldDefs[t] ?? [],
+									relationship_types: relTypes,
+								})),
+							},
+						]
+					: []
+
+			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
+
+			return {
+				_meta: { toolName: 'list_extensions' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_extension',
+		{
+			description: tools.create_extension.description,
+			inputSchema: tools.create_extension.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+		},
+		async (args) => {
+			// Check if this is a known module
+			const allModules = getAllModules()
+			const mod = allModules.find((m) => m.id === args.id)
+
+			if (mod) {
+				if (args.object_types && args.object_types.length > 0) {
+					throw new Error(
+						`"${args.id}" is a registered extension and cannot have custom object_types. Call create_extension with just the id to enable it, or choose a different id for your custom extension.`,
+					)
+				}
+
+				// Enable module
+				const workspace = await getWorkspace(config, args.workspace_id)
+				const settings = (workspace.settings ?? {}) as Record<string, unknown>
+				const enabledModules = Array.isArray(settings.enabled_modules)
+					? (settings.enabled_modules as string[])
+					: ['work']
+
+				if (enabledModules.includes(args.id)) {
+					return {
+						_meta: { toolName: 'create_extension' },
+						content: [
+							{
+								type: 'text' as const,
+								text: `Extension "${args.id}" is already enabled.`,
+							},
+						],
+					}
+				}
+
+				const updatedSettings = buildEnableModuleSettings(args.id, settings)
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'create_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
+			}
+
+			// Custom extension — create object types
+			if (!args.object_types || args.object_types.length === 0) {
+				const available = allModules.map((m) => m.id).join(', ')
+				throw new Error(
+					`Extension "${args.id}" is not a known extension. Available: ${available}. To create a custom extension, provide object_types.`,
+				)
+			}
+
+			const workspace = await getWorkspace(config, args.workspace_id)
+			const settings = (workspace.settings ?? {}) as Record<string, unknown>
+			const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+				extractSettings(settings)
+
+			if (args.id in customExtensions) {
+				throw new Error(
+					`Custom extension "${args.id}" already exists. Use update_extension to modify it.`,
+				)
+			}
+
+			const extRelTypes: string[] = []
+			for (const ot of args.object_types) {
+				if (ot.type in statuses) {
+					throw new Error(
+						`Object type "${ot.type}" already exists. Use update_extension to modify it.`,
+					)
+				}
+				statuses[ot.type] = ot.statuses
+				displayNames[ot.type] = ot.display_name
+				if (ot.fields && ot.fields.length > 0) {
+					fieldDefs[ot.type] = ot.fields
+				}
+				if (ot.relationship_types) {
+					for (const rt of ot.relationship_types) {
+						if (!relTypes.includes(rt)) relTypes.push(rt)
+						if (!extRelTypes.includes(rt)) extRelTypes.push(rt)
+					}
+				}
+			}
+
+			// Track the custom extension metadata
+			customExtensions[args.id] = {
+				name: args.name ?? args.id,
+				types: args.object_types.map((ot) => ot.type),
+				...(extRelTypes.length > 0 ? { relationship_types: extRelTypes } : {}),
+			}
+
+			const updatedSettings: Record<string, unknown> = {
+				statuses,
+				display_names: displayNames,
+				field_definitions: fieldDefs,
+				relationship_types: relTypes,
+				custom_extensions: customExtensions,
+			}
+
+			const result = await apiCall(
+				config,
+				'PATCH',
+				`/api/workspaces/${args.workspace_id}`,
+				{ settings: updatedSettings },
+				{ workspaceId: args.workspace_id },
+			)
+
+			return {
+				_meta: { toolName: 'create_extension' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_extension',
+		{
+			description: tools.update_extension.description,
+			inputSchema: tools.update_extension.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+		},
+		async (args) => {
+			const workspace = await getWorkspace(config, args.workspace_id)
+			const settings = (workspace.settings ?? {}) as Record<string, unknown>
+
+			// Handle enable/disable
+			if (args.enabled !== undefined) {
+				const enabledModules = Array.isArray(settings.enabled_modules)
+					? [...(settings.enabled_modules as string[])]
+					: ['work']
+
+				if (args.enabled) {
+					// Enable — check if it's a registered module
+					const allModules = getAllModules()
+					const mod = allModules.find((m) => m.id === args.id)
+					if (mod) {
+						if (enabledModules.includes(args.id)) {
+							return {
+								_meta: { toolName: 'update_extension' },
+								content: [
+									{
+										type: 'text' as const,
+										text: `Extension "${args.id}" is already enabled.`,
+									},
+								],
+							}
+						}
+
+						const updatedSettings = buildEnableModuleSettings(args.id, settings)
+
+						const result = await apiCall(
+							config,
+							'PATCH',
+							`/api/workspaces/${args.workspace_id}`,
+							{ settings: updatedSettings },
+							{ workspaceId: args.workspace_id },
+						)
+
+						return {
+							_meta: { toolName: 'update_extension' },
+							content: [
+								{
+									type: 'text' as const,
+									text: JSON.stringify(result, null, 2),
+								},
+							],
+						}
+					}
+
+					// Not a registered module — check if it's a known custom extension
+					const { customExtensions } = extractSettings(settings)
+					if (!(args.id in customExtensions)) {
+						throw new Error(
+							`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+						)
+					}
+
+					// Custom extensions are always enabled — enabled: true is a no-op
+					return {
+						_meta: { toolName: 'update_extension' },
+						content: [
+							{
+								type: 'text' as const,
+								text: 'Custom extensions are always enabled. Use object_types to update type definitions, or delete_extension to remove it.',
+							},
+						],
+					}
+				}
+
+				// Disable
+				if (!enabledModules.includes(args.id)) {
+					return {
+						_meta: { toolName: 'update_extension' },
+						content: [
+							{
+								type: 'text' as const,
+								text: `Extension "${args.id}" is not currently enabled.`,
+							},
+						],
+					}
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{
+						settings: {
+							enabled_modules: enabledModules.filter((id) => id !== args.id),
+						},
+					},
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'update_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
+			}
+
+			// Handle object type updates
+			if (args.object_types && args.object_types.length > 0) {
+				const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+					extractSettings(settings)
+
+				// Determine which types this extension owns
+				const allModules = getAllModules()
+				const mod = allModules.find((m) => m.id === args.id)
+				const customExt = customExtensions[args.id]
+				const ownedTypes = new Set<string>()
+
+				if (mod) {
+					for (const t of mod.objectTypes) ownedTypes.add(t.type)
+				} else if (customExt) {
+					for (const t of customExt.types) ownedTypes.add(t)
+				} else {
+					throw new Error(
+						`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+					)
+				}
+
+				const extRelTypes: string[] = customExt?.relationship_types
+					? [...customExt.relationship_types]
+					: []
+
+				for (const ot of args.object_types) {
+					if (!ownedTypes.has(ot.type)) {
+						throw new Error(
+							`Object type "${ot.type}" is not owned by extension "${args.id}". ` +
+								`Types owned by this extension: ${[...ownedTypes].join(', ') || 'none'}.`,
+						)
+					}
+
+					if (ot.statuses) statuses[ot.type] = ot.statuses
+					if (ot.display_name) displayNames[ot.type] = ot.display_name
+					if (ot.fields) fieldDefs[ot.type] = ot.fields
+					if (ot.relationship_types) {
+						for (const rt of ot.relationship_types) {
+							if (!relTypes.includes(rt)) relTypes.push(rt)
+							if (!extRelTypes.includes(rt)) extRelTypes.push(rt)
+						}
+					}
+				}
+
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+				}
+				if (args.object_types.some((ot) => ot.relationship_types)) {
+					updatedSettings.relationship_types = relTypes
+				}
+
+				// Update custom_extensions tracking metadata if this is a custom extension
+				if (customExt) {
+					customExtensions[args.id] = {
+						...customExt,
+						...(extRelTypes.length > 0 ? { relationship_types: extRelTypes } : {}),
+					}
+					updatedSettings.custom_extensions = customExtensions
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'update_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
+			}
+
+			throw new Error(
+				'No changes specified. Provide enabled (true/false) to enable/disable, or object_types to update type definitions.',
+			)
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_extension',
+		{
+			description: tools.delete_extension.description,
+			inputSchema: tools.delete_extension.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+		},
+		async (args) => {
+			// Check if the extension is a registered module
+			const allModules = getAllModules()
+			const mod = allModules.find((m) => m.id === args.id)
+			if (mod) {
+				throw new Error(
+					`Cannot delete "${args.id}" — it is a registered extension. Use update_extension with enabled: false to disable it instead.`,
+				)
+			}
+
+			const workspace = await getWorkspace(config, args.workspace_id)
+			const settings = (workspace.settings ?? {}) as Record<string, unknown>
+			const { statuses, displayNames, fieldDefs, customExtensions } = extractSettings(settings)
+
+			// Check if it's a tracked custom extension
+			if (args.id in customExtensions) {
+				const ext = customExtensions[args.id]
+				if (!ext) throw new Error(`Extension ${args.id} not found`)
+				const removed: string[] = []
+				for (const type of ext.types) {
+					// Don't remove types that are also provided by a module
+					const isModuleType = allModules.some((m) => m.objectTypes.some((t) => t.type === type))
+					if (!isModuleType && type in statuses) {
+						delete statuses[type]
+						delete displayNames[type]
+						delete fieldDefs[type]
+						removed.push(type)
+					}
+				}
+				delete customExtensions[args.id]
+
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+					custom_extensions: customExtensions,
+					relationship_types: collectActiveRelTypes(
+						{ ...settings, statuses, custom_extensions: customExtensions },
+						allModules,
+					),
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'delete_extension' },
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ removed, workspace: result }, null, 2),
+						},
+					],
+				}
+			}
+
+			// Fallback: check if the id matches a single type directly
+			if (args.id in statuses) {
+				// Check it's not a module type
+				for (const m of allModules) {
+					const provided = m.objectTypes.find((t) => t.type === args.id)
+					if (provided) {
+						throw new Error(
+							`Cannot delete type "${args.id}" — it is provided by the "${m.name}" extension. Use update_extension with enabled: false to disable it instead.`,
+						)
+					}
+				}
+
+				delete statuses[args.id]
+				delete displayNames[args.id]
+				delete fieldDefs[args.id]
+
+				// Clean up any custom extension that tracked this type
+				for (const [extId, ext] of Object.entries(customExtensions)) {
+					ext.types = ext.types.filter((t) => t !== args.id)
+					if (ext.types.length === 0) {
+						delete customExtensions[extId]
+					}
+				}
+
+				const updatedSettings: Record<string, unknown> = {
+					statuses,
+					display_names: displayNames,
+					field_definitions: fieldDefs,
+					custom_extensions: customExtensions,
+					relationship_types: collectActiveRelTypes(
+						{ ...settings, statuses, custom_extensions: customExtensions },
+						allModules,
+					),
+				}
+
+				const result = await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${args.workspace_id}`,
+					{ settings: updatedSettings },
+					{ workspaceId: args.workspace_id },
+				)
+
+				return {
+					_meta: { toolName: 'delete_extension' },
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				}
+			}
+
+			throw new Error(
+				`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+			)
+		},
+	)
+
+	// ─── Hello (Agent Welcome) ───────────────────────────────
+	registerAppTool(
+		server,
+		'hello',
+		{
+			description: tools.hello.description,
+			inputSchema: tools.hello.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			let workspaceSection = ''
+			let teamSection = ''
+
+			// All API calls are best-effort — the tool works even without auth or workspace
+			try {
+				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+					skipWorkspace: true,
+				})) as Array<{
+					id: string
+					name: string
+					settings: Record<string, unknown>
+				}>
+
+				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
+				const workspace =
+					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
+					workspaces[0]
+
+				if (workspace) {
+					const settings = workspace.settings ?? {}
+					const statuses = (settings.statuses ?? {}) as Record<string, string[]>
+					const fieldDefinitions = (settings.field_definitions ?? {}) as Record<
+						string,
+						Array<{
+							name: string
+							type: string
+							required: boolean
+							values?: string[]
+						}>
+					>
+					const displayNames = (settings.display_names ?? {}) as Record<string, string>
+					const relationshipTypes = (settings.relationship_types ?? []) as string[]
+					const maxSessions = (settings.max_concurrent_sessions ?? 5) as number
+
+					// Build workspace config section — derive types from settings keys
+					const configuredTypes = new Set([
+						...Object.keys(statuses),
+						...Object.keys(fieldDefinitions),
+						...Object.keys(displayNames),
+					])
+					const objectTypes =
+						configuredTypes.size > 0 ? [...configuredTypes] : ['insight', 'bet', 'task']
+
+					const typeLines: string[] = []
+					for (const t of objectTypes) {
+						const name = displayNames[t] ?? t.charAt(0).toUpperCase() + t.slice(1)
+						const typeStatuses = statuses[t] ?? []
+						const fields = fieldDefinitions[t] ?? []
+						let line = `  • ${name} (type: "${t}")`
+						if (typeStatuses.length > 0) {
+							line += `\n    Statuses: ${typeStatuses.join(' → ')}`
+						}
+						if (fields.length > 0) {
+							const fieldDesc = fields
+								.map((f) => {
+									let s = `${f.name} (${f.type}${f.required ? ', required' : ''})`
+									if (f.values && f.values.length > 0) {
+										s += ` [${f.values.join(', ')}]`
+									}
+									return s
+								})
+								.join(', ')
+							line += `\n    Custom fields: ${fieldDesc}`
+						}
+						typeLines.push(line)
+					}
+
+					workspaceSection = `
+📋 Your Workspace: "${workspace.name}"
+   ID: ${workspace.id}
+
+   Object Types:
+${typeLines.join('\n')}
+
+   Relationship Types: ${relationshipTypes.length > 0 ? relationshipTypes.join(', ') : 'informs, breaks_into, blocks, relates_to, duplicates (defaults)'}
+   Max Concurrent Sessions: ${maxSessions}
+${(() => {
+	const enabledModules = (settings.enabled_modules ?? []) as string[]
+	if (enabledModules.length === 0)
+		return '   Extensions: none enabled (use create_extension to get started)'
+	return `   Extensions: ${enabledModules.join(', ')}`
+})()}`
+
+					// Fetch team members
+					try {
+						const members = (await apiCall(
+							config,
+							'GET',
+							`/api/workspaces/${workspace.id}/members`,
+							undefined,
+							{ workspaceId: workspace.id },
+						)) as Array<{
+							actorId: string
+							name: string
+							type: string
+							role: string
+						}>
+
+						if (members.length > 0) {
+							const memberLines = members.map(
+								(m) => `  • ${m.name || 'Unnamed'} — ${m.type} (${m.role})`,
+							)
+							teamSection = `
+👥 Your Team (${members.length} member${members.length === 1 ? '' : 's'})
+${memberLines.join('\n')}`
+						}
+					} catch {
+						// Members fetch is best-effort
+					}
+				} else {
+					workspaceSection =
+						'\n📋 No workspace found. Create one with create_workspace to get started!'
+				}
+			} catch {
+				workspaceSection = `
+📋 Workspace
+   Not connected yet! To get your personalized workspace info:
+   1. Use create_actor to sign up and get an API key
+   2. Restart with API_KEY set, then call hello again
+   3. Or pass a workspace_id if you have one`
+			}
+
+			const text = `🚀 Welcome to Maskin!
+
+Hey there! Maskin is an AI-native product development platform where humans and agents collaborate side by side. Think of it as your mission control for turning insights into bets into shipped tasks — with full observability, real-time events, and automation built in.
+
+Everything here is an API, and you're talking to it right now through MCP. Let's get you oriented!
+${workspaceSection}
+${teamSection}
+
+🧰 Available Tools
+${Object.keys(tools)
+	.filter((t) => t !== 'hello')
+	.map((t) => `   • ${t}`)
+	.join('\n')}
+${(() => {
+	const extTools = getAllModules().flatMap((ext) =>
+		(ext.mcpTools ?? []).map((t) => `   • ${ext.id}_${t.name} — [${ext.name}] ${t.description}`),
+	)
+	return extTools.length > 0 ? `\n🧩 Extension Tools\n${extTools.join('\n')}` : ''
+})()}
+
+⚡ Quick Start
+  1. Call get_workspace_schema to see the full config for your workspace
+  2. Use list_objects to see what's already in the workspace
+  3. Use create_objects to add new insights, bets, or tasks
+  4. Use search_objects to find things by keyword
+  5. Check get_events to see what's been happening lately
+
+Happy building! 🎉`
+
+			return {
+				_meta: { toolName: 'hello' },
+				content: [{ type: 'text' as const, text }],
+			}
+		},
+	)
+
+	// Register extension MCP tools (namespaced with extensionId prefix)
+	for (const ext of getAllModules()) {
+		for (const tool of ext.mcpTools ?? []) {
+			try {
+				registerAppTool(
+					server,
+					`${ext.id}_${tool.name}`,
+					{
+						description: `[${ext.name}] ${tool.description}`,
+						inputSchema: tool.inputSchema.shape,
+						_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
+					},
+					async (args) => {
+						const result = await tool.handler(args, (method, path, body, options) =>
+							apiCall(config, method, `/api/m/${ext.id}${path}`, body, options),
+						)
+						return {
+							_meta: { toolName: `${ext.id}_${tool.name}` },
+							content: result.content,
+						}
+					},
+				)
+			} catch (err) {
+				console.error(`Failed to register MCP tool '${ext.id}_${tool.name}':`, err)
+			}
+		}
+	}
 
 	return server
 }

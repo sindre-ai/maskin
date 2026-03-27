@@ -1,9 +1,11 @@
+import { useActors } from '@/hooks/use-actors'
 import { useEvents } from '@/hooks/use-events'
 import type { EventResponse } from '@/lib/api'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import { EmptyState } from '../shared/empty-state'
 import { ListSkeleton } from '../shared/loading-skeleton'
+import { type CategoryFilter, matchesFilter } from './activity-filters'
 import { ActivityItem } from './activity-item'
 
 interface ActivityFeedViewProps {
@@ -28,7 +30,7 @@ export function ActivityFeedView({ events, isLoading = false }: ActivityFeedView
 		)
 
 	return (
-		<div ref={parentRef} className="h-[calc(100vh-10rem)] overflow-auto">
+		<div ref={parentRef} className="h-full overflow-auto">
 			<div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
 				{virtualizer.getVirtualItems().map((virtualItem) => {
 					const event = events[virtualItem.index]
@@ -52,8 +54,29 @@ export function ActivityFeedView({ events, isLoading = false }: ActivityFeedView
 	)
 }
 
-export function ActivityFeed({ workspaceId }: { workspaceId: string }) {
+export function ActivityFeed({
+	workspaceId,
+	filter,
+}: {
+	workspaceId: string
+	filter?: CategoryFilter
+}) {
 	const { data: events, isLoading } = useEvents(workspaceId)
+	const { data: actors } = useActors(workspaceId)
 
-	return <ActivityFeedView events={events ?? []} isLoading={isLoading} />
+	const actorTypeMap = useMemo(() => {
+		const map = new Map<string, string>()
+		for (const actor of actors ?? []) {
+			map.set(actor.id, actor.type)
+		}
+		return map
+	}, [actors])
+
+	const filteredEvents = useMemo(() => {
+		const all = events ?? []
+		if (!filter) return all
+		return all.filter((event) => matchesFilter(event, filter, actorTypeMap))
+	}, [events, filter, actorTypeMap])
+
+	return <ActivityFeedView events={filteredEvents} isLoading={isLoading} />
 }

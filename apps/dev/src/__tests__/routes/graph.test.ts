@@ -119,6 +119,28 @@ describe('Graph Routes', () => {
 			expect(body.error.code).toBe('INTERNAL_ERROR')
 		})
 
+		it('returns 400 for invalid object type', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(graphRoutes, '/api/graph')
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/graph',
+					{
+						nodes: [{ $id: 'bad-1', type: 'nonexistent', title: 'A', status: 'new' }],
+						edges: [],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('Invalid object type')
+		})
+
 		it('returns 400 for invalid status against workspace settings', async () => {
 			const ws = buildWorkspace({ id: wsId })
 			const { app, mockResults } = createTestApp(graphRoutes, '/api/graph')

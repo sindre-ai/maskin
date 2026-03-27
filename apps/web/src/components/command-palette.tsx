@@ -26,7 +26,7 @@ export function CommandPalette() {
 			}
 			if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
-				navigateTo(`/${workspaceId}/objects?create=true`)
+				navigateTo(`/${workspaceId}/objects/${crypto.randomUUID()}`)
 			}
 			if (e.key === 'Escape') {
 				setOpen(false)
@@ -63,25 +63,25 @@ export function CommandPalette() {
 
 						<Command.Group heading="Navigation" className="text-xs text-muted-foreground px-2 py-1">
 							<Command.Item
-								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-muted data-[selected]:text-foreground"
+								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
 								onSelect={() => navigateTo(`/${workspaceId}`)}
 							>
 								Bets Dashboard
 							</Command.Item>
 							<Command.Item
-								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-muted data-[selected]:text-foreground"
+								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
 								onSelect={() => navigateTo(`/${workspaceId}/objects`)}
 							>
 								All Objects
 							</Command.Item>
 							<Command.Item
-								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-muted data-[selected]:text-foreground"
+								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
 								onSelect={() => navigateTo(`/${workspaceId}/activity`)}
 							>
 								Activity Feed
 							</Command.Item>
 							<Command.Item
-								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-muted data-[selected]:text-foreground"
+								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
 								onSelect={() => navigateTo(`/${workspaceId}/agents`)}
 							>
 								Agents
@@ -97,7 +97,7 @@ export function CommandPalette() {
 									<Command.Item
 										key={obj.id}
 										value={`${obj.title} ${obj.type} ${obj.status}`}
-										className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-muted data-[selected]:text-foreground"
+										className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
 										onSelect={() => navigateTo(`/${workspaceId}/objects/${obj.id}`)}
 									>
 										<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>

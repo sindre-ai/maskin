@@ -13,10 +13,11 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { SidebarTrigger } from '@/components/ui/sidebar'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Tags, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Layers, Plus, Zap } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
@@ -34,6 +35,10 @@ const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/activity': { label: 'Activity' },
 	'/_authed/$workspaceId/agents': { label: 'Agents' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
+	'/_authed/$workspaceId/settings/keys': {
+		label: 'LLM',
+		parent: '/_authed/$workspaceId/settings/',
+	},
 	'/_authed/$workspaceId/settings/members': {
 		label: 'Members',
 		parent: '/_authed/$workspaceId/settings/',
@@ -42,13 +47,17 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Integrations',
 		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/properties/': {
-		label: 'Properties',
+	'/_authed/$workspaceId/settings/mcp': {
+		label: 'MCP',
 		parent: '/_authed/$workspaceId/settings/',
 	},
-	'/_authed/$workspaceId/settings/properties/$propertyName': {
+	'/_authed/$workspaceId/settings/objects/': {
+		label: 'Objects',
+		parent: '/_authed/$workspaceId/settings/',
+	},
+	'/_authed/$workspaceId/settings/objects/$propertyName': {
 		label: 'Property Details',
-		parent: '/_authed/$workspaceId/settings/properties/',
+		parent: '/_authed/$workspaceId/settings/objects/',
 	},
 	'/_authed/$workspaceId/triggers/': {
 		label: 'Triggers',
@@ -72,13 +81,19 @@ const createItems: CreateItem[] = [
 		label: 'Object',
 		icon: Layers,
 		navigate: (nav, workspaceId) =>
-			nav({ to: '/$workspaceId/objects', params: { workspaceId }, search: { create: true } }),
+			nav({
+				to: '/$workspaceId/objects/$objectId',
+				params: { workspaceId, objectId: crypto.randomUUID() },
+			}),
 	},
 	{
 		label: 'Agent',
 		icon: Bot,
 		navigate: (nav, workspaceId) =>
-			nav({ to: '/$workspaceId/agents', params: { workspaceId }, search: { create: true } }),
+			nav({
+				to: '/$workspaceId/agents/$agentId',
+				params: { workspaceId, agentId: crypto.randomUUID() },
+			}),
 	},
 	{
 		label: 'Trigger',
@@ -87,16 +102,6 @@ const createItems: CreateItem[] = [
 			nav({
 				to: '/$workspaceId/triggers/$triggerId',
 				params: { workspaceId, triggerId: crypto.randomUUID() },
-			}),
-	},
-	{
-		label: 'Property',
-		icon: Tags,
-		navigate: (nav, workspaceId) =>
-			nav({
-				to: '/$workspaceId/settings/properties',
-				params: { workspaceId },
-				search: { create: true },
 			}),
 	},
 ]
@@ -135,8 +140,20 @@ export function Header() {
 	return (
 		<header className="flex h-16 shrink-0 items-center gap-2">
 			<div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
-				<div className="flex items-center gap-1 opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-2">
-					{crumbs.length > 1 ? (
+				<SidebarTrigger className="md:hidden -ml-1" />
+				{crumbs.length > 1 && (
+					<Button
+						variant="ghost"
+						size="icon"
+						className="md:hidden -ml-1"
+						onClick={() => router.history.back()}
+					>
+						<ArrowLeft />
+						<span className="sr-only">Go back</span>
+					</Button>
+				)}
+				<div className="hidden md:flex items-center gap-1 opacity-0 hover:opacity-100 transition-opacity duration-150 lg:gap-2">
+					{crumbs.length > 1 && (
 						<Button
 							variant="ghost"
 							size="icon"
@@ -146,8 +163,6 @@ export function Header() {
 							<ArrowLeft />
 							<span className="sr-only">Go back</span>
 						</Button>
-					) : (
-						<div className="-ml-1 h-7 w-7" />
 					)}
 					{crumbs.length > 0 && (
 						<Breadcrumb>

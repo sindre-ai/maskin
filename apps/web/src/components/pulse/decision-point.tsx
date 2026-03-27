@@ -30,7 +30,7 @@ export function DecisionPoint({ question, options, onConfirm }: DecisionPointPro
 					{options.map((opt) => (
 						<div
 							key={opt.value}
-							className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-accent"
+							className="flex items-start gap-3 rounded-md border p-3 cursor-pointer hover:bg-accent hover:text-accent-foreground"
 							onClick={() => setSelected(opt.value)}
 							onKeyDown={(e) => e.key === 'Enter' && setSelected(opt.value)}
 						>

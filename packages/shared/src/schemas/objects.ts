@@ -1,10 +1,15 @@
 import { z } from 'zod'
 import { safeMetadataSchema } from './primitives'
 
-export const objectTypeSchema = z.enum(['insight', 'bet', 'task'])
+export const objectTypeSchema = z
+	.string()
+	.min(1)
+	.max(50)
+	.regex(/^[a-z][a-z0-9_]*$/)
 export type ObjectType = z.infer<typeof objectTypeSchema>
 
 export const createObjectSchema = z.object({
+	id: z.string().uuid().optional(),
 	type: objectTypeSchema,
 	title: z.string().optional(),
 	content: z.string().optional(),

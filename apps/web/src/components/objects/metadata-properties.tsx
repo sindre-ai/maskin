@@ -106,7 +106,7 @@ export function MetadataPropertiesView({
 	}
 
 	return (
-		<div className="space-y-1">
+		<div className="space-y-1 w-fit">
 			{metaEntries.map(([key, value]) => {
 				const fieldDef = fieldDefs.find((f) => f.name === key)
 				return (
@@ -120,19 +120,6 @@ export function MetadataPropertiesView({
 					/>
 				)
 			})}
-
-			{/* Unset defined fields shown as empty */}
-			{unsetFields.map((field) => (
-				<Button
-					key={field.name}
-					variant="ghost"
-					className="w-full justify-start gap-2"
-					onClick={() => handleAddField(field)}
-				>
-					<span className="w-28 shrink-0 text-xs text-muted-foreground truncate">{field.name}</span>
-					<span className="text-xs text-muted-foreground italic">Empty</span>
-				</Button>
-			))}
 
 			{/* Add property button / menu */}
 			{showAddMenu ? (
@@ -211,7 +198,7 @@ function PropertyRow({
 	const type = fieldDef?.type ?? inferType(value)
 
 	return (
-		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-muted/50 group">
+		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-accent/50 hover:text-accent-foreground group">
 			<span className="w-28 shrink-0 text-xs text-muted-foreground truncate" title={name}>
 				{name}
 			</span>
@@ -414,7 +401,7 @@ function AddPropertyMenu({
 	}
 
 	return (
-		<div className="rounded border border-border bg-card p-2 text-xs space-y-1">
+		<div className="rounded border border-border bg-card p-2 text-xs space-y-1 w-fit">
 			{unsetFields.length > 0 && (
 				<>
 					<p className="text-muted-foreground px-1 text-[10px] uppercase tracking-wider">
@@ -424,7 +411,7 @@ function AddPropertyMenu({
 						<Button
 							key={field.name}
 							variant="ghost"
-							className="w-full justify-start"
+							className="justify-start"
 							onClick={() => onSelectField(field)}
 						>
 							<FieldTypeIcon type={field.type} />
@@ -435,7 +422,7 @@ function AddPropertyMenu({
 					<Separator className="my-1" />
 				</>
 			)}
-			<Button variant="ghost" className="w-full justify-start text-primary" onClick={onCreateNew}>
+			<Button variant="ghost" className="justify-start text-primary" onClick={onCreateNew}>
 				+ Create new property
 			</Button>
 			<Button variant="ghost" size="sm" onClick={onClose}>

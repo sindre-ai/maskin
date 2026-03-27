@@ -1,9 +1,11 @@
 import { AgentCard } from '@/components/agents/agent-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
-import { useToolResult } from '../shared/mcp-app-provider'
+import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
-import type { ActorResponse, ActorWithKey } from '../shared/types'
+import type { ActorResponse, ActorWithKey, SessionResponse } from '../shared/types'
 
 function ActorsApp() {
 	const toolResult = useToolResult()
@@ -32,19 +34,41 @@ function ActorsApp() {
 }
 
 function ActorListView({ actors }: { actors: ActorResponse[] }) {
-	if (!actors.length) {
-		return <EmptyState title="No actors" description="No actors found in this workspace" />
-	}
+	const callTool = useCallTool()
+	const callToolRef = useRef(callTool)
+	callToolRef.current = callTool
+	const [sessions, setSessions] = useState<SessionResponse[]>([])
 
 	const agents = actors.filter((a) => a.type === 'agent')
 	const humans = actors.filter((a) => a.type !== 'agent')
+
+	useEffect(() => {
+		if (!agents.length) return
+		callToolRef.current('list_sessions', { limit: 100 }).then((result) => {
+			const text = result.content?.find(
+				(c: { type: string; text?: string }) => c.type === 'text',
+			)?.text
+			if (text) setSessions(JSON.parse(text))
+		})
+	}, [agents.length])
+
+	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions), [sessions])
+
+	if (!actors.length) {
+		return <EmptyState title="No actors" description="No actors found in this workspace" />
+	}
 
 	return (
 		<div className="p-4 space-y-4">
 			{agents.length > 0 && (
 				<div className="space-y-2">
 					{agents.map((agent) => (
-						<AgentCard key={agent.id} agent={agent} />
+						<AgentCard
+							key={agent.id}
+							agent={agent}
+							status={deriveAgentStatus(agent.id, sessionsByAgent)}
+							latestSession={getLatestSession(agent.id, sessionsByAgent)}
+						/>
 					))}
 				</div>
 			)}
@@ -53,7 +77,7 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 					{humans.map((actor) => (
 						<div
 							key={actor.id}
-							className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors"
+							className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
 						>
 							<ActorAvatar name={actor.name} type={actor.type} size="sm" />
 							<div className="flex-1 min-w-0">

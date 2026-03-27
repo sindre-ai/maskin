@@ -5,6 +5,8 @@ import {
 	notifications,
 	objects,
 	relationships,
+	sessionLogs,
+	sessions,
 	triggers,
 	workspaceMembers,
 	workspaces,
@@ -43,6 +45,7 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 		id: randomUUID(),
 		name: `Workspace ${n}`,
 		settings: {
+			enabled_modules: ['work'],
 			display_names: { insight: 'Insight', bet: 'Bet', task: 'Task' },
 			statuses: {
 				insight: ['new', 'processing', 'clustered', 'discarded'],
@@ -379,6 +382,28 @@ export async function insertNotification(
 		...overrides,
 	})
 	const rows = await db.insert(notifications).values(data).returning()
+	return rows[0]
+}
+
+export async function insertSession(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+	createdBy: string,
+	overrides?: Record<string, unknown>,
+) {
+	const data = buildSession({ workspaceId, actorId, createdBy, ...overrides })
+	const rows = await db.insert(sessions).values(data).returning()
+	return rows[0]
+}
+
+export async function insertSessionLog(
+	db: Database,
+	sessionId: string,
+	overrides?: Record<string, unknown>,
+) {
+	const { id: _id, ...data } = buildSessionLog({ sessionId, ...overrides })
+	const rows = await db.insert(sessionLogs).values(data).returning()
 	return rows[0]
 }
 

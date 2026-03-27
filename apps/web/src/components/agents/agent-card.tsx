@@ -1,55 +1,128 @@
-import type { ActorResponse } from '@/lib/api'
+import { useDuration } from '@/hooks/use-duration'
+import type { ActorResponse, SessionResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
+import { Spinner } from '../ui/spinner'
+
+export type AgentStatus = 'working' | 'idle' | 'failed'
 
 export function AgentCard({
 	agent,
-	lastEvent,
+	status,
+	latestSession,
 }: {
 	agent: ActorResponse
-	lastEvent?: { action: string; entityType: string; createdAt: string | null }
+	status: AgentStatus
+	latestSession?: SessionResponse
 }) {
 	const { workspaceId } = useWorkspace()
-	const memorySize = agent.memory
-		? `${(JSON.stringify(agent.memory).length / 1024).toFixed(1)}kb`
-		: '0kb'
 
-	const isRecentlyActive = lastEvent?.createdAt
-		? Date.now() - new Date(lastEvent.createdAt).getTime() < 5 * 60 * 1000
-		: false
+	const roleDescription = agent.systemPrompt?.split('\n')[0]?.trim()
 
 	return (
 		<Link
 			to="/$workspaceId/agents/$agentId"
 			params={{ workspaceId, agentId: agent.id }}
-			className="block rounded-lg border border-border bg-card p-4 shadow-md transition-colors hover:border-border-hover"
+			className={cn(
+				'block rounded-lg border bg-card p-4 shadow-md transition-colors hover:border-border-hover',
+				status === 'working' && 'border-accent bg-accent/5',
+				status === 'failed' && 'border-error',
+				status === 'idle' && 'border-border',
+			)}
 		>
-			<div className="flex items-center justify-between mb-3">
+			<div className="flex items-center justify-between mb-1">
 				<div className="flex items-center gap-2">
 					<ActorAvatar name={agent.name} type="agent" size="md" />
 					<span className="text-sm font-medium text-foreground">{agent.name}</span>
+					<StatusIndicator status={status} />
 				</div>
-				<span className="flex items-center gap-1.5 text-xs">
-					<span
-						className={`h-1.5 w-1.5 rounded-full ${isRecentlyActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
-					/>
-					<span className="text-muted-foreground">{isRecentlyActive ? 'active' : 'idle'}</span>
-				</span>
+				<StatusLabel status={status} />
 			</div>
-			{lastEvent && (
-				<p className="text-xs text-muted-foreground mb-2">
-					Last action: {lastEvent.action.replace(/_/g, ' ')} {lastEvent.entityType}
-					{lastEvent.createdAt && (
-						<>
-							{' '}
-							<RelativeTime date={lastEvent.createdAt} className="text-muted-foreground" />
-						</>
-					)}
-				</p>
+
+			{roleDescription && (
+				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{roleDescription}</p>
 			)}
-			<p className="text-xs text-muted-foreground">Memory: {memorySize}</p>
+
+			<div className="ml-9">
+				<ActivityLine status={status} session={latestSession} />
+			</div>
 		</Link>
+	)
+}
+
+function StatusIndicator({ status }: { status: AgentStatus }) {
+	if (status === 'working') {
+		return <Spinner className="size-3 text-accent" />
+	}
+	return (
+		<span
+			className={cn('h-1.5 w-1.5 rounded-full', status === 'failed' ? 'bg-error' : 'bg-text-muted')}
+		/>
+	)
+}
+
+function StatusLabel({ status }: { status: AgentStatus }) {
+	return (
+		<span
+			className={cn(
+				'text-xs font-medium',
+				status === 'working' && 'text-accent',
+				status === 'failed' && 'text-error',
+				status === 'idle' && 'text-muted-foreground',
+			)}
+		>
+			{status}
+		</span>
+	)
+}
+
+function ActivityLine({ status, session }: { status: AgentStatus; session?: SessionResponse }) {
+	if (!session) {
+		return <p className="text-xs text-muted-foreground">No activity yet</p>
+	}
+
+	if (status === 'working') {
+		return <WorkingActivity session={session} />
+	}
+
+	if (status === 'failed') {
+		return (
+			<p className="text-xs text-error truncate">
+				✕ {session.actionPrompt}
+				{session.completedAt && (
+					<>
+						{' · '}
+						<RelativeTime date={session.completedAt} className="text-error" />
+					</>
+				)}
+			</p>
+		)
+	}
+
+	// idle — show last completed session
+	return (
+		<p className="text-xs text-muted-foreground truncate">
+			{session.actionPrompt}
+			{session.completedAt && (
+				<>
+					{' · '}
+					<RelativeTime date={session.completedAt} className="text-muted-foreground" />
+				</>
+			)}
+		</p>
+	)
+}
+
+function WorkingActivity({ session }: { session: SessionResponse }) {
+	const duration = useDuration(session.startedAt)
+
+	return (
+		<p className="text-xs text-accent truncate">
+			{session.actionPrompt}
+			{duration && ` · ${duration}`}
+		</p>
 	)
 }

@@ -1,5 +1,6 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
+import { getAllValidTypes, getEnabledModuleIds } from '@ai-native/module-sdk'
 import {
 	createObjectSchema,
 	objectQuerySchema,
@@ -8,7 +9,7 @@ import {
 } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { and, eq, ilike, inArray, or } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, createInvalidTypeError } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -59,6 +60,10 @@ const createObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace not found',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object with this ID already exists',
+		},
 		500: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Internal server error',
@@ -84,6 +89,14 @@ app.openapi(createObjectRoute, async (c) => {
 	}
 
 	const settings = workspace.settings as WorkspaceSettings
+
+	// Validate object type against enabled extensions
+	const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
+	const validTypes = getAllValidTypes(enabledModules, settings)
+	if (!validTypes.includes(body.type)) {
+		return c.json(createInvalidTypeError(body.type, 'type', validTypes), 400)
+	}
+
 	const validStatuses = settings?.statuses?.[body.type]
 	if (validStatuses && !validStatuses.includes(body.status)) {
 		return c.json(
@@ -107,6 +120,7 @@ app.openapi(createObjectRoute, async (c) => {
 	const [created] = await db
 		.insert(objects)
 		.values({
+			...(body.id && { id: body.id }),
 			workspaceId,
 			type: body.type,
 			title: body.title,
@@ -116,9 +130,13 @@ app.openapi(createObjectRoute, async (c) => {
 			owner: body.owner,
 			createdBy: actorId,
 		})
+		.onConflictDoNothing({ target: objects.id })
 		.returning()
 
 	if (!created) {
+		if (body.id) {
+			return c.json(createApiError('BAD_REQUEST', 'An object with this ID already exists'), 409)
+		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create object'), 500)
 	}
 

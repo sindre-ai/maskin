@@ -1,9 +1,11 @@
+import './extensions'
 import fs from 'node:fs'
 import path from 'node:path'
 import { authMiddleware } from '@ai-native/auth'
 import { createDb } from '@ai-native/db'
 import type { Database } from '@ai-native/db'
 import { createMcpServer } from '@ai-native/mcp'
+import { getAllModules } from '@ai-native/module-sdk'
 import { PgNotifyBridge } from '@ai-native/realtime'
 import { S3StorageProvider } from '@ai-native/storage'
 import { serve } from '@hono/node-server'
@@ -69,19 +71,26 @@ app.onError((err, c) => {
 	return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 })
 
-// Global middleware
-app.use('*', cors())
+// CORS — restrict API to configured origins, keep MCP open for chat client webviews
+const allowedOrigins = process.env.CORS_ORIGIN
+	? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+	: ['http://localhost:5173']
+
+app.use('/mcp', cors())
+app.use('*', cors({ origin: allowedOrigins, credentials: true }))
 app.use('*', honoLogger())
 
-// Database connection
-const databaseUrl = process.env.DATABASE_URL
+// Database connection — POSTGRES_URL takes priority over DATABASE_URL
+const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
-	throw new Error('DATABASE_URL environment variable is required')
+	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
 
 // Real-time: PG NOTIFY → SSE bridge
-const notifyBridge = new PgNotifyBridge(databaseUrl)
+// LISTEN/NOTIFY requires a direct (session-mode) connection when using a connection
+// pooler in transaction mode. Set DATABASE_URL_DIRECT to a non-pooled connection string.
+const notifyBridge = new PgNotifyBridge(process.env.DATABASE_URL_DIRECT || databaseUrl)
 notifyBridge.start().then(() => {
 	logger.info('PG NOTIFY bridge started')
 })
@@ -156,6 +165,18 @@ app.route('/api/sessions', sessionsRoutes)
 app.route('/api/notifications', notificationsRoutes)
 app.route('/api/graph', graphRoutes)
 app.route('/api/claude-oauth', claudeOauthRoutes)
+
+// Mount extension routes at /api/m/{extensionId} — auth middleware on /api/* covers these
+const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
+for (const ext of getAllModules()) {
+	if (ext.routes) {
+		try {
+			app.route(`/api/m/${ext.id}`, ext.routes(moduleEnv))
+		} catch (err) {
+			console.error(`Failed to mount routes for extension '${ext.id}':`, err)
+		}
+	}
+}
 
 // MCP HTTP transport for MCP Apps (interactive UIs in chat clients)
 app.post('/mcp', async (c) => {

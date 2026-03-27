@@ -25,6 +25,13 @@ services:
     volumes:
       - seaweed_data:/data
 
+  agent-base:
+    build:
+      context: ./docker/agent-base
+    image: agent-base:latest
+    entrypoint: ["echo", "agent-base image built"]
+    restart: "no"
+
   app:
     build:
       context: .
@@ -38,12 +45,14 @@ services:
     command: ["sh", "-c", "node packages/db/dist/migrate.js && node apps/dev/dist/index.js"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_native_oss}
+      POSTGRES_URL: ${POSTGRES_URL:-}
+      DATABASE_URL_DIRECT: ${DATABASE_URL_DIRECT:-}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       PORT: "3000"
       NODE_ENV: production
       STATIC_DIR: /app/apps/web/dist
-      S3_ENDPOINT: http://seaweedfs:8333
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
       S3_BUCKET: ${S3_BUCKET:-agent-files}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-admin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-admin}
@@ -60,6 +69,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      agent-base:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

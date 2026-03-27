@@ -215,11 +215,28 @@ export const api = {
 			}),
 	},
 
+	sessions: {
+		create: (workspaceId: string, data: CreateSessionInput) =>
+			request<SessionResponse>('/sessions', { method: 'POST', body: data, workspaceId }),
+		get: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}`, { workspaceId }),
+		list: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<SessionResponse[]>(`/sessions${qs}`, { workspaceId })
+		},
+		logs: (id: string, workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<SessionLogResponse[]>(`/sessions/${id}/logs${qs}`, { workspaceId })
+		},
+	},
+
 	events: {
 		history: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
 		},
+		create: (workspaceId: string, data: CreateCommentInput) =>
+			request<EventResponse>('/events', { method: 'POST', body: data, workspaceId }),
 	},
 
 	claudeOauth: {
@@ -277,7 +294,8 @@ export interface ObjectResponse {
 }
 
 export interface CreateObjectInput {
-	type: 'insight' | 'bet' | 'task'
+	id?: string
+	type: string
 	title?: string
 	content?: string
 	status: string
@@ -320,6 +338,7 @@ export interface LoginInput {
 }
 
 export interface CreateActorInput {
+	id?: string
 	type: 'human' | 'agent'
 	name: string
 	email?: string
@@ -480,6 +499,39 @@ export interface SaveSkillInput {
 	frontmatter?: Record<string, unknown>
 }
 
+export interface CreateSessionInput {
+	actor_id: string
+	action_prompt: string
+	auto_start?: boolean
+}
+
+export interface SessionResponse {
+	id: string
+	workspaceId: string
+	actorId: string
+	triggerId: string | null
+	status: string
+	containerId: string | null
+	actionPrompt: string
+	config: Record<string, unknown> | null
+	result: Record<string, unknown> | null
+	snapshotPath: string | null
+	startedAt: string | null
+	completedAt: string | null
+	timeoutAt: string | null
+	createdBy: string
+	createdAt: string | null
+	updatedAt: string | null
+}
+
+export interface SessionLogResponse {
+	id: number
+	sessionId: string
+	stream: string
+	content: string
+	createdAt: string | null
+}
+
 export interface EventResponse {
 	id: number
 	workspaceId: string
@@ -489,4 +541,11 @@ export interface EventResponse {
 	entityId: string
 	data: Record<string, unknown> | null
 	createdAt: string | null
+}
+
+export interface CreateCommentInput {
+	entity_id: string
+	content: string
+	mentions?: string[]
+	parent_event_id?: number
 }

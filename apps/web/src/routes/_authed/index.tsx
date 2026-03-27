@@ -33,7 +33,7 @@ function WorkspacePicker() {
 						<a
 							key={ws.id}
 							href={`/${ws.id}`}
-							className="block rounded-lg border border-border bg-card p-4 hover:border-border hover:bg-muted/30 transition-all"
+							className="block rounded-lg border border-border bg-card p-4 hover:border-border hover:bg-accent/30 transition-all"
 						>
 							<p className="text-sm font-medium text-foreground">{ws.name}</p>
 							<p className="text-xs text-muted-foreground mt-1">Role: {ws.role}</p>

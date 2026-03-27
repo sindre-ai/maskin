@@ -5,13 +5,16 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "tsc -b && vite build && node scripts/build-mcp.mjs",
+		"build": "tsc -b tsconfig.build.json && vite build && node scripts/build-mcp.mjs",
 		"build:mcp": "node scripts/build-mcp.mjs",
 		"preview": "vite preview",
 		"lint": "biome check .",
-		"type-check": "tsc --noEmit"
+		"type-check": "tsc --noEmit",
+		"test": "vitest"
 	},
 	"dependencies": {
+		"@ai-native/ext-work": "workspace:*",
+		"@ai-native/module-sdk": "workspace:*",
 		"@ai-native/shared": "workspace:*",
 		"@microsoft/fetch-event-source": "^2.0.1",
 		"@modelcontextprotocol/ext-apps": "^1.2.2",
@@ -38,7 +41,6 @@
 		"date-fns": "^4.1.0",
 		"lucide-react": "^0.468.0",
 		"react": "^19.0.0",
-		"react-day-picker": "^9.14.0",
 		"react-dom": "^19.0.0",
 		"react-markdown": "^9.0.1",
 		"remark-breaks": "^4.0.0",
@@ -50,12 +52,17 @@
 	"devDependencies": {
 		"@tailwindcss/vite": "^4.0.0",
 		"@tanstack/router-plugin": "^1.93.0",
+		"@testing-library/jest-dom": "^6.6.0",
+		"@testing-library/react": "^16.1.0",
+		"@testing-library/user-event": "^14.6.1",
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
 		"@vitejs/plugin-react": "^4.7.0",
+		"jsdom": "^25.0.0",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.0",
 		"vite": "^6.0.0",
-		"vite-plugin-singlefile": "^2.3.2"
+		"vite-plugin-singlefile": "^2.3.2",
+		"vitest": "^3.0.0"
 	}
 }

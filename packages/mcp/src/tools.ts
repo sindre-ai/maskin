@@ -9,6 +9,15 @@ const optionalWorkspaceId = z
 	)
 
 export const tools = {
+	// ─── Welcome ─────────────────────────────────────────────
+	hello: {
+		description:
+			'👋 Welcome! Start here. Get a friendly overview of what Maskin is, what you can do, and how this workspace is set up — including object types, statuses, custom fields, team members, and available tools. Think of it as your agent landing page.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
@@ -19,7 +28,7 @@ export const tools = {
 				.array(
 					z.object({
 						$id: z.string().describe('Client-side temporary ID for cross-referencing in edges'),
-						type: z.enum(['insight', 'bet', 'task']),
+						type: z.string().describe('Object type (e.g. insight, bet, task, meeting)'),
 						title: z.string().optional(),
 						content: z.string().optional(),
 						status: z.string(),
@@ -108,7 +117,7 @@ export const tools = {
 			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z.enum(['insight', 'bet', 'task']).optional(),
+			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
@@ -123,7 +132,7 @@ export const tools = {
 				.string()
 				.min(1)
 				.describe('Search query — matches against title and content (case-insensitive)'),
-			type: z.enum(['insight', 'bet', 'task']).optional(),
+			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(20),
 			offset: z.number().int().min(0).default(0),
@@ -227,10 +236,10 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
-				.enum(['insight', 'bet', 'task'])
+				.string()
 				.optional()
 				.describe(
-					'Filter schema to a specific object type. If omitted, returns schema for all types.',
+					'Filter schema to a specific object type (e.g. insight, bet, task, meeting). If omitted, returns schema for all types.',
 				),
 		}),
 	},
@@ -520,6 +529,119 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
+		}),
+	},
+	// ─── Extensions ──────────────────────────────────────────
+	list_extensions: {
+		description:
+			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	create_extension: {
+		description:
+			'Add an extension to the workspace. Two modes: (1) Enable a registered extension by ID (e.g. "work"). (2) Create a custom extension — pass id, name, and object_types to define new types from scratch. Call list_extensions first to see available extensions.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid().describe('Workspace to add the extension to'),
+			id: z
+				.string()
+				.regex(/^[a-z][a-z0-9_]*$/)
+				.describe(
+					'Extension ID. For registered extensions: "work". For custom: any lowercase identifier.',
+				),
+			name: z
+				.string()
+				.optional()
+				.describe(
+					'Human-readable name for a custom extension (e.g. "My CRM"). Not needed when installing a known extension.',
+				),
+			object_types: z
+				.array(
+					z.object({
+						type: z
+							.string()
+							.regex(/^[a-z][a-z0-9_]*$/)
+							.describe('Type identifier (e.g. "lead", "meeting_note")'),
+						display_name: z.string().describe('Human-readable name (e.g. "Lead")'),
+						statuses: z.array(z.string()).min(1).describe('Valid statuses for this type'),
+						fields: z
+							.array(
+								z.object({
+									name: z.string(),
+									type: z.enum(['text', 'number', 'date', 'enum', 'boolean']),
+									required: z.boolean().default(false),
+									values: z
+										.array(z.string())
+										.optional()
+										.describe('Allowed values (only for enum type)'),
+								}),
+							)
+							.default([])
+							.describe('Custom metadata fields for this type'),
+						relationship_types: z
+							.array(z.string())
+							.optional()
+							.describe('Relationship types to add for this type'),
+					}),
+				)
+				.optional()
+				.describe(
+					'Object type definitions for a custom extension. Not needed when installing a known extension by ID.',
+				),
+		}),
+	},
+	update_extension: {
+		description:
+			'Update an extension in the workspace. Use this to enable/disable an extension (set enabled: true/false) or to update the object type definitions of a custom extension (modify statuses, fields, display names).',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid(),
+			id: z.string().describe('Extension ID to update'),
+			enabled: z
+				.boolean()
+				.optional()
+				.describe('Set to false to disable the extension, true to re-enable it'),
+			object_types: z
+				.array(
+					z.object({
+						type: z.string().describe('The type identifier to update'),
+						display_name: z.string().optional().describe('New display name'),
+						statuses: z
+							.array(z.string())
+							.min(1)
+							.optional()
+							.describe('New status list (replaces existing)'),
+						fields: z
+							.array(
+								z.object({
+									name: z.string(),
+									type: z.enum(['text', 'number', 'date', 'enum', 'boolean']),
+									required: z.boolean().default(false),
+									values: z.array(z.string()).optional(),
+								}),
+							)
+							.optional()
+							.describe('New field definitions (replaces existing)'),
+						relationship_types: z
+							.array(z.string())
+							.optional()
+							.describe('Additional relationship types to add'),
+					}),
+				)
+				.optional()
+				.describe(
+					'Updated object type definitions (PATCH semantics — only provided fields are changed)',
+				),
+		}),
+	},
+	delete_extension: {
+		description:
+			'Remove an extension from the workspace. Deletes its object type definitions from workspace settings. Existing objects of those types are preserved but no new objects can be created with those types. Cannot delete types provided by registered extensions like "work" — disable them instead with update_extension.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid(),
+			id: z
+				.string()
+				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
 		}),
 	},
 } as const

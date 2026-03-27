@@ -39,7 +39,7 @@ function RelationshipListView({ relationships }: { relationships: RelationshipRe
 			{relationships.map((rel) => (
 				<div
 					key={rel.id}
-					className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
+					className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors text-sm"
 				>
 					<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
 						{rel.sourceId.slice(0, 8)}

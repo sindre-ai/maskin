@@ -15,10 +15,12 @@ export function ObjectRow({
 		<Link
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId: object.id }}
-			className="flex items-center gap-3 rounded px-3 py-2 hover:bg-muted/50 transition-colors"
+			className="flex items-center gap-3 rounded px-3 py-2 hover:bg-accent/50 hover:text-accent-foreground transition-colors"
 		>
 			<span className="flex-1 text-sm text-foreground truncate">{object.title || 'Untitled'}</span>
-			{object.activeSessionId && <AgentWorkingBadge />}
+			{object.activeSessionId && (
+				<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
+			)}
 			<StatusBadge status={object.status} />
 			<TypeBadge type={object.type} />
 		</Link>
