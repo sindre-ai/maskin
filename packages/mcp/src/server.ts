@@ -1580,12 +1580,34 @@ export function createMcpServer(config: McpConfig) {
 
 			// Handle object type updates
 			if (args.object_types && args.object_types.length > 0) {
-				const { statuses, displayNames, fieldDefs, relTypes } = extractSettings(settings)
+				const { statuses, displayNames, fieldDefs, relTypes, customExtensions } =
+					extractSettings(settings)
+
+				// Determine which types this extension owns
+				const allModules = getAllModules()
+				const mod = allModules.find((m) => m.id === args.id)
+				const customExt = customExtensions[args.id]
+				const ownedTypes = new Set<string>()
+
+				if (mod) {
+					for (const t of mod.objectTypes) ownedTypes.add(t.type)
+				} else if (customExt) {
+					for (const t of customExt.types) ownedTypes.add(t)
+				} else {
+					throw new Error(
+						`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+					)
+				}
+
+				const extRelTypes: string[] = customExt?.relationship_types
+					? [...customExt.relationship_types]
+					: []
 
 				for (const ot of args.object_types) {
-					if (!(ot.type in statuses) && !(ot.type in displayNames)) {
+					if (!ownedTypes.has(ot.type)) {
 						throw new Error(
-							`Object type "${ot.type}" not found. Use create_extension to create it first.`,
+							`Object type "${ot.type}" is not owned by extension "${args.id}". ` +
+								`Types owned by this extension: ${[...ownedTypes].join(', ') || 'none'}.`,
 						)
 					}
 
@@ -1595,6 +1617,7 @@ export function createMcpServer(config: McpConfig) {
 					if (ot.relationship_types) {
 						for (const rt of ot.relationship_types) {
 							if (!relTypes.includes(rt)) relTypes.push(rt)
+							if (!extRelTypes.includes(rt)) extRelTypes.push(rt)
 						}
 					}
 				}
@@ -1606,6 +1629,15 @@ export function createMcpServer(config: McpConfig) {
 				}
 				if (args.object_types.some((ot) => ot.relationship_types)) {
 					updatedSettings.relationship_types = relTypes
+				}
+
+				// Update custom_extensions tracking metadata if this is a custom extension
+				if (customExt) {
+					customExtensions[args.id] = {
+						...customExt,
+						...(extRelTypes.length > 0 ? { relationship_types: extRelTypes } : {}),
+					}
+					updatedSettings.custom_extensions = customExtensions
 				}
 
 				const result = await apiCall(
