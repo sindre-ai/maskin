@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { OAuth2Config } from '../../../lib/integrations/types'
 import { OAuth2Handler } from '../../../lib/integrations/oauth/handler'
+import type { OAuth2Config } from '../../../lib/integrations/types'
 
 // Mock getEnvOrThrow
 vi.mock('../../../lib/integrations/env', () => ({
@@ -34,9 +34,7 @@ describe('OAuth2Handler', () => {
 	describe('createAuthorizationUrl', () => {
 		it('builds URL with required params', () => {
 			const handler = new OAuth2Handler(baseConfig)
-			const url = new URL(
-				handler.createAuthorizationUrl('state-123', 'https://app.com/callback'),
-			)
+			const url = new URL(handler.createAuthorizationUrl('state-123', 'https://app.com/callback'))
 
 			expect(url.origin + url.pathname).toBe('https://provider.com/authorize')
 			expect(url.searchParams.get('response_type')).toBe('code')
@@ -48,9 +46,7 @@ describe('OAuth2Handler', () => {
 
 		it('omits scope when scopes array is empty', () => {
 			const handler = new OAuth2Handler({ ...baseConfig, scopes: [] })
-			const url = new URL(
-				handler.createAuthorizationUrl('state', 'https://app.com/callback'),
-			)
+			const url = new URL(handler.createAuthorizationUrl('state', 'https://app.com/callback'))
 
 			expect(url.searchParams.has('scope')).toBe(false)
 		})
@@ -79,9 +75,7 @@ describe('OAuth2Handler', () => {
 				...baseConfig,
 				extraAuthParams: { access_type: 'offline', prompt: 'consent' },
 			})
-			const url = new URL(
-				handler.createAuthorizationUrl('state', 'https://app.com/callback'),
-			)
+			const url = new URL(handler.createAuthorizationUrl('state', 'https://app.com/callback'))
 
 			expect(url.searchParams.get('access_type')).toBe('offline')
 			expect(url.searchParams.get('prompt')).toBe('consent')

@@ -1,9 +1,9 @@
-import { describe, expect, it, afterEach } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { getEnvOrThrow } from '../../../lib/integrations/env'
 
 describe('getEnvOrThrow', () => {
 	afterEach(() => {
-		delete process.env.TEST_ENV_VAR
+		Reflect.deleteProperty(process.env, 'TEST_ENV_VAR')
 	})
 
 	it('returns value when env var is set', () => {

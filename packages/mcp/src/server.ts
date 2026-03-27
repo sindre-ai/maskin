@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getAllModules, getModuleDefaultSettings } from '@ai-native/module-sdk'
-import type { CustomExtensionEntry } from '@ai-native/shared/schemas'
+import type { CustomExtensionEntry } from '@ai-native/shared'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
