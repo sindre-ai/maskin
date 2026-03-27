@@ -295,18 +295,32 @@ app.openapi(callbackRoute, (async (c) => {
 
 	// Handle provider-specific callback
 	let credentials: StoredCredentials
-	if (resolved.customAuth) {
-		credentials = await resolved.customAuth.handleCallback(query)
-	} else if (resolved.config.auth.type === 'oauth2') {
-		const code = query.code
-		if (!code) {
-			return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
+	try {
+		if (resolved.customAuth) {
+			credentials = await resolved.customAuth.handleCallback(query)
+		} else if (resolved.config.auth.type === 'oauth2') {
+			const code = query.code
+			if (!code) {
+				return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
+			}
+			const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
+			const handler = new OAuth2Handler(resolved.config.auth.config, resolved.parseTokenResponse)
+			credentials = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
+		} else {
+			return c.json(
+				createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'),
+				400,
+			)
 		}
-		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
-		const handler = new OAuth2Handler(resolved.config.auth.config, resolved.parseTokenResponse)
-		credentials = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
-	} else {
-		return c.json(createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'), 400)
+	} catch (err) {
+		logger.error(`OAuth callback token exchange failed for provider ${providerName}`, {
+			workspaceId: stateData.workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+		return c.redirect(
+			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=token_exchange_failed`,
+		)
 	}
 
 	// Create or find system actor for this provider in the workspace
@@ -362,7 +376,16 @@ app.openapi(callbackRoute, (async (c) => {
 		externalId = String(credentials.installation_id)
 	} else if (resolved.resolveExternalId) {
 		// Standard OAuth2 providers resolve their identity via an API call (e.g. Slack auth.test → team_id)
-		externalId = await resolved.resolveExternalId(credentials)
+		try {
+			externalId = await resolved.resolveExternalId(credentials)
+		} catch (err) {
+			logger.error(`Failed to resolve external ID for provider ${providerName}`, {
+				workspaceId: stateData.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			// Fall back to nonce-based ID so the integration still activates
+			externalId = `oauth-${stateData.nonce.slice(0, 8)}`
+		}
 	} else {
 		// No webhook matching needed — use nonce-based fallback
 		externalId = `oauth-${stateData.nonce.slice(0, 8)}`

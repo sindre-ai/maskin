@@ -71,7 +71,7 @@ export class OAuth2Handler {
 			refresh_token: refreshToken,
 		})
 
-		return this.sendTokenRequest(body)
+		return this.sendTokenRequest(body, this.config.refreshUrl)
 	}
 
 	/** Revoke a token if the provider supports it. */
@@ -82,14 +82,22 @@ export class OAuth2Handler {
 		const headers = this.buildAuthHeaders()
 		headers.set('Content-Type', 'application/x-www-form-urlencoded')
 
-		await fetch(this.config.revokeUrl, {
+		const response = await fetch(this.config.revokeUrl, {
 			method: 'POST',
 			headers,
 			body: body.toString(),
 		})
+
+		if (!response.ok) {
+			const text = await response.text()
+			throw new Error(`Token revocation failed: ${response.status} ${text}`)
+		}
 	}
 
-	private async sendTokenRequest(body: URLSearchParams): Promise<StoredCredentials> {
+	private async sendTokenRequest(
+		body: URLSearchParams,
+		urlOverride?: string,
+	): Promise<StoredCredentials> {
 		const headers = this.buildAuthHeaders()
 		headers.set('Content-Type', 'application/x-www-form-urlencoded')
 		headers.set('Accept', 'application/json')
@@ -101,7 +109,7 @@ export class OAuth2Handler {
 			body.set('client_secret', getEnvOrThrow(this.config.clientSecretEnv))
 		}
 
-		const tokenUrl = this.config.tokenUrl
+		const tokenUrl = urlOverride ?? this.config.tokenUrl
 		const response = await fetch(tokenUrl, {
 			method: 'POST',
 			headers,
