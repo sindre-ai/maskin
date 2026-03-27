@@ -393,6 +393,7 @@ export function TriggerForm({
 				onChange={(e) => setName(e.target.value)}
 				placeholder="Trigger name"
 				autoFocus={!initialValues}
+				className="w-full text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
 			/>
 
 			<div className="flex gap-2">
