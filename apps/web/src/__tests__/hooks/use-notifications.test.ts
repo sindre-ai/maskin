@@ -12,13 +12,13 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-import { api } from '@/lib/api'
 import {
-	useNotifications,
-	useUpdateNotification,
-	useRespondNotification,
 	useDeleteNotification,
+	useNotifications,
+	useRespondNotification,
+	useUpdateNotification,
 } from '@/hooks/use-notifications'
+import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
 
 describe('useNotifications', () => {
