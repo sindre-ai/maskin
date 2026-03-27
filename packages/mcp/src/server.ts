@@ -1210,9 +1210,7 @@ export function createMcpServer(config: McpConfig) {
 			const mod = allModules.find((m) => m.id === args.module_id)
 			if (!mod) {
 				const available = allModules.map((m) => m.id).join(', ')
-				throw new Error(
-					`Module "${args.module_id}" not found. Available modules: ${available}`,
-				)
+				throw new Error(`Module "${args.module_id}" not found. Available modules: ${available}`)
 			}
 
 			const workspace = await getWorkspace(config, args.workspace_id)
@@ -1619,9 +1617,8 @@ export function createMcpServer(config: McpConfig) {
 
 				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
 				const workspace =
-					(effectiveWsId
-						? workspaces.find((w) => w.id === effectiveWsId)
-						: workspaces[0]) ?? workspaces[0]
+					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
+					workspaces[0]
 
 				if (workspace) {
 					const settings = workspace.settings ?? {}
@@ -1683,7 +1680,8 @@ ${typeLines.join('\n')}
    Max Concurrent Sessions: ${maxSessions}
 ${(() => {
 	const enabledModules = (settings.enabled_modules ?? []) as string[]
-	if (enabledModules.length === 0) return '   Extensions: none enabled (use enable_module or install_template to get started)'
+	if (enabledModules.length === 0)
+		return '   Extensions: none enabled (use enable_module or install_template to get started)'
 	return `   Extensions: ${enabledModules.join(', ')}`
 })()}`
 

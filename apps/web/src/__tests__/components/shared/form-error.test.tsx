@@ -1,6 +1,6 @@
+import { FormError } from '@/components/shared/form-error'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { FormError } from '@/components/shared/form-error'
 
 describe('FormError', () => {
 	it('returns null when no error', () => {

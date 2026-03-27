@@ -395,6 +395,7 @@ export function TriggerForm({
 					e.target.style.height = `${e.target.scrollHeight}px`
 				}}
 				placeholder="Trigger name"
+				// biome-ignore lint/a11y/noAutofocus: focus title on create
 				autoFocus={!initialValues}
 				rows={1}
 				className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 resize-none overflow-hidden p-0 focus:outline-none"

@@ -1,6 +1,6 @@
+import { EmptyState } from '@/components/shared/empty-state'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { EmptyState } from '@/components/shared/empty-state'
 
 describe('EmptyState', () => {
 	it('renders title', () => {
@@ -19,7 +19,7 @@ describe('EmptyState', () => {
 	})
 
 	it('renders action node when provided', () => {
-		render(<EmptyState title="No items" action={<button>Create</button>} />)
+		render(<EmptyState title="No items" action={<button type="button">Create</button>} />)
 		expect(screen.getByRole('button', { name: 'Create' })).toBeInTheDocument()
 	})
 })

@@ -12,8 +12,8 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
+import { useDeleteSkill, useSaveSkill, useSkill, useSkills } from '@/hooks/use-skills'
 import { api } from '@/lib/api'
-import { useSkills, useSkill, useSaveSkill, useDeleteSkill } from '@/hooks/use-skills'
 import { TestWrapper } from '../setup'
 
 describe('useSkills', () => {

@@ -1,6 +1,6 @@
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { ActorAvatar } from '@/components/shared/actor-avatar'
 
 describe('ActorAvatar', () => {
 	it('renders first character of name for human type', () => {
