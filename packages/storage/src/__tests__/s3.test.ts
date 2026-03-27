@@ -1,14 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
-	S3Client,
-	HeadBucketCommand,
 	CreateBucketCommand,
-	PutObjectCommand,
-	GetObjectCommand,
-	ListObjectsV2Command,
 	DeleteObjectCommand,
+	GetObjectCommand,
+	HeadBucketCommand,
 	HeadObjectCommand,
+	ListObjectsV2Command,
+	PutObjectCommand,
+	S3Client,
 } from '@aws-sdk/client-s3'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { S3StorageProvider } from '../s3'
 
 vi.mock('@aws-sdk/client-s3', async () => {
@@ -28,8 +28,10 @@ function getProvider() {
 		accessKeyId: 'test-key',
 		secretAccessKey: 'test-secret',
 	})
+	// biome-ignore lint/suspicious/noExplicitAny: accessing private client for test mocking
 	const client = (provider as any).client as { send: ReturnType<typeof vi.fn> }
 	const send = client.send
+	// biome-ignore lint/style/noNonNullAssertion: test helper with known call indices
 	const getCommand = (callIndex: number) => send.mock.calls[callIndex]![0]!
 	return { provider, send, getCommand }
 }

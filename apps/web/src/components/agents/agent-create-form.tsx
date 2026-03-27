@@ -75,15 +75,26 @@ export function AgentCreateForm({
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Name */}
-			<Input
-				type="text"
+			<textarea
 				value={name}
-				onChange={(e) => setName(e.target.value)}
+				onChange={(e) => {
+					setName(e.target.value)
+					e.target.style.height = 'auto'
+					e.target.style.height = `${e.target.scrollHeight}px`
+				}}
 				onBlur={handleNameBlur}
 				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Agent name"
+				// biome-ignore lint/a11y/noAutofocus: focus title on create
 				autoFocus
-				className="w-full text-4xl md:text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+				rows={1}
+				className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 resize-none overflow-hidden p-0 focus:outline-none"
+				ref={(el) => {
+					if (el) {
+						el.style.height = 'auto'
+						el.style.height = `${el.scrollHeight}px`
+					}
+				}}
 			/>
 
 			{/* Metadata badges row */}

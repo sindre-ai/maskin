@@ -15,9 +15,9 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
+import { useDisconnectIntegration, useIntegrations, useProviders } from '@/hooks/use-integrations'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
-import { useIntegrations, useProviders, useDisconnectIntegration } from '@/hooks/use-integrations'
 import { TestWrapper } from '../setup'
 
 describe('useIntegrations', () => {

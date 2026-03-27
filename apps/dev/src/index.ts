@@ -75,15 +75,17 @@ app.onError((err, c) => {
 app.use('*', cors())
 app.use('*', honoLogger())
 
-// Database connection
-const databaseUrl = process.env.DATABASE_URL
+// Database connection — POSTGRES_URL takes priority over DATABASE_URL
+const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
-	throw new Error('DATABASE_URL environment variable is required')
+	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
 const db = createDb(databaseUrl)
 
 // Real-time: PG NOTIFY → SSE bridge
-const notifyBridge = new PgNotifyBridge(databaseUrl)
+// LISTEN/NOTIFY requires a direct (session-mode) connection when using a connection
+// pooler in transaction mode. Set DATABASE_URL_DIRECT to a non-pooled connection string.
+const notifyBridge = new PgNotifyBridge(process.env.DATABASE_URL_DIRECT || databaseUrl)
 notifyBridge.start().then(() => {
 	logger.info('PG NOTIFY bridge started')
 })
