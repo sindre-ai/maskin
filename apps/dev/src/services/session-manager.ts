@@ -19,7 +19,7 @@ import {
 import type { StorageProvider } from '@ai-native/storage'
 import { and, count as countFn, desc, eq, lt } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
-import { decrypt } from '../lib/crypto'
+import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
@@ -476,11 +476,11 @@ export class SessionManager extends EventEmitter {
 				and(eq(integrations.workspaceId, session.workspaceId), eq(integrations.status, 'active')),
 			)
 
+		const tokenManager = new TokenManager()
 		for (const integration of activeIntegrations) {
 			try {
-				const provider = getProvider(integration.provider)
-				const creds = JSON.parse(decrypt(integration.credentials))
-				const accessToken = await provider.getAccessToken(creds)
+				const resolved = getProvider(integration.provider)
+				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
 				envVars[`${integration.provider.toUpperCase()}_TOKEN`] = accessToken
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {

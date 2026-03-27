@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import type { LLMTool } from '../llm/adapter'
-import { logger } from '../logger'
+import type { LLMTool } from '../../llm/adapter'
+import { logger } from '../../logger'
 
 export interface McpBridgeSession {
 	tools: LLMTool[]
