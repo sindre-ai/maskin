@@ -146,18 +146,28 @@ export function AgentDocumentView({
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Name */}
-			<div className="flex items-center gap-2">
-				<Input
-					type="text"
+			<div className="flex items-start gap-2 mb-2">
+				<textarea
 					value={nameDraft}
-					onChange={(e) => setNameDraft(e.target.value)}
+					onChange={(e) => {
+						setNameDraft(e.target.value)
+						e.target.style.height = 'auto'
+						e.target.style.height = `${e.target.scrollHeight}px`
+					}}
 					onBlur={handleNameBlur}
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Agent name"
-					className="w-full text-4xl md:text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+					rows={1}
+					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+					ref={(el) => {
+						if (el) {
+							el.style.height = 'auto'
+							el.style.height = `${el.scrollHeight}px`
+						}
+					}}
 				/>
 				{showSaved && (
-					<span className="flex items-center gap-1 text-xs text-muted-foreground">
+					<span className="flex items-center gap-1 text-xs text-muted-foreground mt-1.5">
 						<Check size={14} /> Saved
 					</span>
 				)}

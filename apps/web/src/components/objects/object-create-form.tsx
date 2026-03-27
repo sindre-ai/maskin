@@ -1,7 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
-import { Input } from '@/components/ui/input'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -70,15 +69,25 @@ export function ObjectCreateForm({
 	return (
 		<div className="max-w-3xl mx-auto">
 			{/* Title */}
-			<Input
-				type="text"
+			<textarea
 				value={title}
-				onChange={(e) => setTitle(e.target.value)}
+				onChange={(e) => {
+					setTitle(e.target.value)
+					e.target.style.height = 'auto'
+					e.target.style.height = `${e.target.scrollHeight}px`
+				}}
 				onBlur={handleTitleBlur}
 				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Untitled"
 				autoFocus
-				className="w-full text-4xl md:text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+				rows={1}
+				className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 resize-none overflow-hidden p-0 focus:outline-none"
+				ref={(el) => {
+					if (el) {
+						el.style.height = 'auto'
+						el.style.height = `${el.scrollHeight}px`
+					}
+				}}
 			/>
 
 			{/* Type selector */}

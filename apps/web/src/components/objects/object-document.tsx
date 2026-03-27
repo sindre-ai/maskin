@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
 	Select,
 	SelectContent,
@@ -88,18 +87,28 @@ export function ObjectDocumentView({
 			<ObjectActionBanner objectId={object.id} workspaceId={workspaceId} />
 
 			{/* Title */}
-			<div className="flex items-center gap-2">
-				<Input
-					type="text"
+			<div className="flex items-start gap-2 mb-2">
+				<textarea
 					value={titleDraft}
-					onChange={(e) => setTitleDraft(e.target.value)}
+					onChange={(e) => {
+						setTitleDraft(e.target.value)
+						e.target.style.height = 'auto'
+						e.target.style.height = `${e.target.scrollHeight}px`
+					}}
 					onBlur={handleTitleBlur}
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Untitled"
-					className="w-full text-4xl md:text-4xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 h-auto p-0 focus:outline-none"
+					rows={1}
+					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+					ref={(el) => {
+						if (el) {
+							el.style.height = 'auto'
+							el.style.height = `${el.scrollHeight}px`
+						}
+					}}
 				/>
 				{showSaved && (
-					<span className="flex items-center gap-1 text-xs text-muted-foreground">
+					<span className="flex items-center gap-1 text-xs text-muted-foreground mt-1.5">
 						<Check size={14} /> Saved
 					</span>
 				)}
