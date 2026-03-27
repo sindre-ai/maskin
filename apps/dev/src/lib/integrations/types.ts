@@ -141,4 +141,10 @@ export interface ResolvedProvider {
 	parseTokenResponse?: (raw: unknown) => Partial<StoredCredentials>
 	/** Custom webhook signature verification. Required when webhook type is 'custom'. */
 	customWebhookVerifier?: (body: string, headers: Record<string, string>) => boolean
+	/**
+	 * Resolve a stable external ID after OAuth2 token exchange.
+	 * Must return the same ID that extractInstallationId() will find in webhook payloads.
+	 * Only needed for providers that receive webhooks via standard OAuth2 (not oauth2_custom).
+	 */
+	resolveExternalId?: (credentials: StoredCredentials) => Promise<string>
 }

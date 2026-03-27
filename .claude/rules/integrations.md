@@ -67,6 +67,7 @@ Handle provider-specific behavior through these escape hatches:
 2. **Non-standard token response**: Export `parseTokenResponse` function from config
 3. **Custom webhook verification**: Set `webhook: { type: 'custom' }` and handle in normalizer
 4. **Fully custom auth**: Use `auth: { type: 'oauth2_custom' }` and implement `CustomAuthHandler`
+5. **Webhook matching**: If the provider sends webhooks via standard OAuth2, export `resolveExternalId` — called once during callback to get a stable ID (e.g., `team_id`) that matches what `extractInstallationId()` finds in webhook payloads
 
 ## File Locations
 

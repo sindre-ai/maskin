@@ -355,10 +355,18 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
-	// Derive externalId — use installation_id for GitHub, or a provider-specific ID
-	const externalId =
-		(credentials.installation_id as string) ??
-		(credentials.accessToken ? `oauth-${stateData.nonce.slice(0, 8)}` : stateData.nonce)
+	// Derive externalId — must match what extractInstallationId() finds in webhook payloads
+	let externalId: string
+	if (credentials.installation_id) {
+		// Custom auth providers (e.g. GitHub) embed the ID directly in credentials
+		externalId = String(credentials.installation_id)
+	} else if (resolved.resolveExternalId) {
+		// Standard OAuth2 providers resolve their identity via an API call (e.g. Slack auth.test → team_id)
+		externalId = await resolved.resolveExternalId(credentials)
+	} else {
+		// No webhook matching needed — use nonce-based fallback
+		externalId = `oauth-${stateData.nonce.slice(0, 8)}`
+	}
 
 	// Activate the pending integration (consumes the nonce)
 	const encryptedCredentials = encrypt(JSON.stringify(credentials))

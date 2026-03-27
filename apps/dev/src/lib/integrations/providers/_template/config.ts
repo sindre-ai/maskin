@@ -80,6 +80,20 @@ export const config: ProviderConfig = {
 	// },
 }
 
+// Optional: resolve a stable external ID for webhook matching.
+// Required if the provider sends webhooks via standard OAuth2.
+// The returned ID must match what extractInstallationId() finds in webhook payloads.
+//
+// import type { StoredCredentials } from '../../types'
+// export const resolveExternalId = async (credentials: StoredCredentials): Promise<string> => {
+//   // Example for Slack: call auth.test to get the team_id
+//   const res = await fetch('https://slack.com/api/auth.test', {
+//     headers: { Authorization: `Bearer ${credentials.accessToken}` },
+//   })
+//   const data = await res.json() as { team_id: string }
+//   return data.team_id
+// }
+
 // Optional: override token response parsing for non-standard providers.
 // For example, if the provider nests the access token differently:
 //
