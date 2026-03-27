@@ -307,10 +307,7 @@ app.openapi(callbackRoute, (async (c) => {
 			const handler = new OAuth2Handler(resolved.config.auth.config, resolved.parseTokenResponse)
 			credentials = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
 		} else {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'),
-				400,
-			)
+			return c.json(createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'), 400)
 		}
 	} catch (err) {
 		logger.error(`OAuth callback token exchange failed for provider ${providerName}`, {
@@ -583,7 +580,7 @@ function buildRedirectUri(
 	// In production, use the configured origin to prevent X-Forwarded-Host injection
 	const corsOrigin = process.env.CORS_ORIGIN
 	if (corsOrigin) {
-		const origin = corsOrigin.split(',')[0].trim().replace(/\/$/, '')
+		const origin = (corsOrigin.split(',')[0] ?? corsOrigin).trim().replace(/\/$/, '')
 		return `${origin}/api/integrations/${providerName}/callback`
 	}
 

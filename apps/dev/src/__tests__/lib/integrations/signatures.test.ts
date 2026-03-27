@@ -85,12 +85,17 @@ describe('verifyTimestampSignature', () => {
 		const signature = makeTimestampSignature(timestamp, body, secret, template, 'v0=')
 
 		expect(
-			verifyTimestampSignature(body, { 'x-timestamp': timestamp, 'x-signature': signature }, secret, {
-				timestampHeader: 'x-timestamp',
-				signatureHeader: 'x-signature',
-				bodyTemplate: template,
-				signaturePrefix: 'v0=',
-			}),
+			verifyTimestampSignature(
+				body,
+				{ 'x-timestamp': timestamp, 'x-signature': signature },
+				secret,
+				{
+					timestampHeader: 'x-timestamp',
+					signatureHeader: 'x-signature',
+					bodyTemplate: template,
+					signaturePrefix: 'v0=',
+				},
+			),
 		).toBe(true)
 	})
 

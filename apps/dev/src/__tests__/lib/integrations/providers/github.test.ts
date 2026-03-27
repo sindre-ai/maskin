@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { config } from '../../../../lib/integrations/providers/github/config'
 import { githubAuth } from '../../../../lib/integrations/providers/github/auth'
+import { config } from '../../../../lib/integrations/providers/github/config'
 import { githubEventNormalizer } from '../../../../lib/integrations/providers/github/webhooks'
 
 describe('GitHub provider config', () => {
@@ -17,7 +17,7 @@ describe('GitHub provider config', () => {
 		const wh = config.webhook
 		expect(wh).toBeDefined()
 		expect(wh).not.toHaveProperty('type')
-		if ('signatureScheme' in wh!) {
+		if (wh && 'signatureScheme' in wh) {
 			expect(wh.signatureScheme).toBe('hmac-sha256')
 			expect(wh.signatureHeader).toBe('x-hub-signature-256')
 			expect(wh.signaturePrefix).toBe('sha256=')
@@ -28,7 +28,7 @@ describe('GitHub provider config', () => {
 
 	it('defines event types', () => {
 		expect(config.events?.definitions).toBeDefined()
-		const types = config.events!.definitions.map((d) => d.entityType)
+		const types = config.events?.definitions.map((d) => d.entityType)
 		expect(types).toContain('github.pull_request')
 		expect(types).toContain('github.issue')
 		expect(types).toContain('github.push')
@@ -37,8 +37,8 @@ describe('GitHub provider config', () => {
 
 	it('has MCP config', () => {
 		expect(config.mcp).toBeDefined()
-		expect(config.mcp!.command).toBe('npx')
-		expect(config.mcp!.envKey).toBe('GITHUB_PERSONAL_ACCESS_TOKEN')
+		expect(config.mcp?.command).toBe('npx')
+		expect(config.mcp?.envKey).toBe('GITHUB_PERSONAL_ACCESS_TOKEN')
 	})
 })
 
@@ -99,13 +99,13 @@ describe('githubEventNormalizer', () => {
 		const result = githubEventNormalizer(payload, headers)
 
 		expect(result).not.toBeNull()
-		expect(result!.entityType).toBe('github.pull_request')
-		expect(result!.action).toBe('opened')
-		expect(result!.installationId).toBe('12345')
-		expect(result!.data.pr_number).toBe(42)
-		expect(result!.data.pr_title).toBe('Add feature')
-		expect(result!.data.pr_head_sha).toBe('abc123')
-		expect(result!.data.pr_base_branch).toBe('main')
+		expect(result?.entityType).toBe('github.pull_request')
+		expect(result?.action).toBe('opened')
+		expect(result?.installationId).toBe('12345')
+		expect(result?.data.pr_number).toBe(42)
+		expect(result?.data.pr_title).toBe('Add feature')
+		expect(result?.data.pr_head_sha).toBe('abc123')
+		expect(result?.data.pr_base_branch).toBe('main')
 	})
 
 	it('maps closed+merged pull_request to merged action', () => {
@@ -116,7 +116,7 @@ describe('githubEventNormalizer', () => {
 		const headers = { 'x-github-event': 'pull_request' }
 
 		const result = githubEventNormalizer(payload, headers)
-		expect(result!.action).toBe('merged')
+		expect(result?.action).toBe('merged')
 	})
 
 	it('maps closed (not merged) pull_request to closed action', () => {
@@ -127,7 +127,7 @@ describe('githubEventNormalizer', () => {
 		const headers = { 'x-github-event': 'pull_request' }
 
 		const result = githubEventNormalizer(payload, headers)
-		expect(result!.action).toBe('closed')
+		expect(result?.action).toBe('closed')
 	})
 
 	it('normalizes push event', () => {
@@ -140,11 +140,11 @@ describe('githubEventNormalizer', () => {
 
 		const result = githubEventNormalizer(payload, headers)
 
-		expect(result!.entityType).toBe('github.push')
-		expect(result!.action).toBe('pushed')
-		expect(result!.data.ref).toBe('refs/heads/main')
-		expect(result!.data.commits_count).toBe(2)
-		expect(result!.data.head_commit).toBe('Fix bug')
+		expect(result?.entityType).toBe('github.push')
+		expect(result?.action).toBe('pushed')
+		expect(result?.data.ref).toBe('refs/heads/main')
+		expect(result?.data.commits_count).toBe(2)
+		expect(result?.data.head_commit).toBe('Fix bug')
 	})
 
 	it('normalizes issues event', () => {
@@ -160,10 +160,10 @@ describe('githubEventNormalizer', () => {
 
 		const result = githubEventNormalizer(payload, headers)
 
-		expect(result!.entityType).toBe('github.issue')
-		expect(result!.action).toBe('opened')
-		expect(result!.data.issue_number).toBe(10)
-		expect(result!.data.issue_title).toBe('Bug report')
+		expect(result?.entityType).toBe('github.issue')
+		expect(result?.action).toBe('opened')
+		expect(result?.data.issue_number).toBe(10)
+		expect(result?.data.issue_title).toBe('Bug report')
 	})
 
 	it('normalizes pull_request_review event', () => {
@@ -176,10 +176,10 @@ describe('githubEventNormalizer', () => {
 
 		const result = githubEventNormalizer(payload, headers)
 
-		expect(result!.entityType).toBe('github.review')
-		expect(result!.action).toBe('submitted')
-		expect(result!.data.review_state).toBe('approved')
-		expect(result!.data.review_body).toBe('LGTM')
+		expect(result?.entityType).toBe('github.review')
+		expect(result?.action).toBe('submitted')
+		expect(result?.data.review_state).toBe('approved')
+		expect(result?.data.review_body).toBe('LGTM')
 	})
 
 	it('returns null for unknown event type', () => {
@@ -203,10 +203,10 @@ describe('githubEventNormalizer', () => {
 
 	it('uses action from body or falls back to unknown', () => {
 		const payload = makePayload()
-		delete (payload as Record<string, unknown>).action
+		;(payload as Record<string, unknown>).action = undefined
 		const headers = { 'x-github-event': 'issues' }
 
 		const result = githubEventNormalizer(payload, headers)
-		expect(result!.action).toBe('unknown')
+		expect(result?.action).toBe('unknown')
 	})
 })
