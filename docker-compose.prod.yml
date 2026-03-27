@@ -25,6 +25,20 @@ services:
     volumes:
       - seaweed_data:/data
 
+  whisper-server:
+    build:
+      context: ./docker/whisper-server
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL:-small}
+    ports:
+      - "8178:8178"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8178/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
   agent-base:
     build:
       context: ./docker/agent-base
@@ -64,6 +78,7 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      WHISPER_SERVER_URL: http://whisper-server:8178
     depends_on:
       postgres:
         condition: service_healthy

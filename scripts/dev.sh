@@ -8,8 +8,13 @@ if [ -f .env ]; then
   set +a
 fi
 
-echo "Starting Docker services (postgres, seaweedfs)..."
-docker-compose up -d postgres seaweedfs
+DOCKER_SERVICES="postgres seaweedfs"
+if [ "${WHISPER_ENABLED:-}" = "true" ]; then
+  DOCKER_SERVICES="${DOCKER_SERVICES} whisper-server"
+fi
+
+echo "Starting Docker services (${DOCKER_SERVICES})..."
+docker-compose up -d ${DOCKER_SERVICES}
 
 echo "Waiting for PostgreSQL to be ready..."
 until docker-compose exec -T postgres pg_isready -U postgres > /dev/null 2>&1; do
