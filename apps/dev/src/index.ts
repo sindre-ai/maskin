@@ -83,7 +83,9 @@ if (!databaseUrl) {
 const db = createDb(databaseUrl)
 
 // Real-time: PG NOTIFY → SSE bridge
-const notifyBridge = new PgNotifyBridge(databaseUrl)
+// LISTEN/NOTIFY requires a direct (session-mode) connection when using a connection
+// pooler in transaction mode. Set DATABASE_URL_DIRECT to a non-pooled connection string.
+const notifyBridge = new PgNotifyBridge(process.env.DATABASE_URL_DIRECT ?? databaseUrl)
 notifyBridge.start().then(() => {
 	logger.info('PG NOTIFY bridge started')
 })
