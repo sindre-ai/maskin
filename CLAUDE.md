@@ -162,6 +162,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `S3_BUCKET` — storage bucket name (default: `agent-files`)
 - `S3_ACCESS_KEY`, `S3_SECRET_KEY` — S3 credentials (default: `admin`/`admin` for dev)
 - `S3_REGION` — S3 region (default: `us-east-1`)
+- `CORS_ORIGIN` — comma-separated allowed origins for CORS (default: `http://localhost:5173`)
 
 ## Principles
 1. Simple & intuitive
