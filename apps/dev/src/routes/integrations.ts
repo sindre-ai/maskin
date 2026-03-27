@@ -6,7 +6,12 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
+import { normalizeEvent } from '../lib/integrations/events/normalizer'
+import { OAuth2Handler } from '../lib/integrations/oauth/handler'
+import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { getProvider, listProviders } from '../lib/integrations/registry'
+import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
+import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -82,9 +87,9 @@ const listProvidersRoute = createRoute({
 
 app.openapi(listProvidersRoute, (async (c) => {
 	const providers = listProviders().map((p) => ({
-		name: p.name,
-		displayName: p.displayName,
-		events: p.getAvailableEvents(),
+		name: p.config.name,
+		displayName: p.config.displayName,
+		events: p.config.events?.definitions ?? [],
 	}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
@@ -121,9 +126,9 @@ app.openapi(connectRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const actorId = c.get('actorId')
 
-	let provider: ReturnType<typeof getProvider>
+	let resolved: ResolvedProvider
 	try {
-		provider = getProvider(providerName)
+		resolved = getProvider(providerName)
 	} catch {
 		return c.json(
 			createApiError(
@@ -131,7 +136,7 @@ app.openapi(connectRoute, (async (c) => {
 				`Unknown provider: ${providerName}`,
 				undefined,
 				`Available providers: ${listProviders()
-					.map((p) => p.name)
+					.map((p) => p.config.name)
 					.join(', ')}`,
 			),
 			400,
@@ -140,13 +145,19 @@ app.openapi(connectRoute, (async (c) => {
 
 	// Create signed state containing workspace + actor info + one-time nonce
 	const nonce = randomBytes(16).toString('hex')
-	const statePayload = JSON.stringify({
+	const statePayload: Record<string, unknown> = {
 		workspaceId,
 		actorId,
 		ts: Date.now(),
 		nonce,
-	})
-	const state = encrypt(statePayload)
+	}
+
+	// If provider uses PKCE, generate and include code verifier in state
+	if (resolved.config.auth.type === 'oauth2' && resolved.config.auth.config.pkce) {
+		statePayload.codeVerifier = generateCodeVerifier()
+	}
+
+	const state = encrypt(JSON.stringify(statePayload))
 
 	// Store nonce in DB to prevent replay attacks
 	await db
@@ -168,7 +179,25 @@ app.openapi(connectRoute, (async (c) => {
 			},
 		})
 
-	const installUrl = provider.getInstallUrl(state)
+	// Build install URL based on auth type
+	let installUrl: string
+	if (resolved.customAuth) {
+		installUrl = resolved.customAuth.getInstallUrl(state)
+	} else if (resolved.config.auth.type === 'oauth2') {
+		const redirectUri = buildRedirectUri(c.req.url, providerName)
+		const handler = new OAuth2Handler(resolved.config.auth.config)
+		installUrl = handler.createAuthorizationUrl(
+			state,
+			redirectUri,
+			statePayload.codeVerifier as string | undefined,
+		)
+	} else {
+		return c.json(
+			createApiError('BAD_REQUEST', `Provider ${providerName} does not support OAuth connect`),
+			400,
+		)
+	}
+
 	return c.json({ install_url: installUrl })
 }) as RouteHandler<typeof connectRoute, Env>)
 
@@ -196,9 +225,9 @@ app.openapi(callbackRoute, (async (c) => {
 	const { provider: providerName } = c.req.valid('param')
 	const query = c.req.query()
 
-	let provider: ReturnType<typeof getProvider>
+	let resolved: ResolvedProvider
 	try {
-		provider = getProvider(providerName)
+		resolved = getProvider(providerName)
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', `Unknown provider: ${providerName}`), 400)
 	}
@@ -209,7 +238,13 @@ app.openapi(callbackRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Missing state parameter'), 400)
 	}
 
-	let stateData: { workspaceId: string; actorId: string; ts: number; nonce: string }
+	let stateData: {
+		workspaceId: string
+		actorId: string
+		ts: number
+		nonce: string
+		codeVerifier?: string
+	}
 	try {
 		stateData = JSON.parse(decrypt(stateParam))
 	} catch {
@@ -259,10 +294,30 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 
 	// Handle provider-specific callback
-	const credentials = await provider.handleCallback(query)
+	let credentials: StoredCredentials
+	if (resolved.customAuth) {
+		credentials = await resolved.customAuth.handleCallback(query)
+	} else if (resolved.config.auth.type === 'oauth2') {
+		const code = query.code
+		if (!code) {
+			return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
+		}
+		const redirectUri = buildRedirectUri(c.req.url, providerName)
+		const handler = new OAuth2Handler(resolved.config.auth.config)
+		let exchanged = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
+
+		// Apply custom token parser if provider has one
+		if (resolved.parseTokenResponse) {
+			exchanged = { ...exchanged, ...resolved.parseTokenResponse(exchanged) }
+		}
+
+		credentials = exchanged
+	} else {
+		return c.json(createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'), 400)
+	}
 
 	// Create or find system actor for this provider in the workspace
-	const systemActorName = provider.displayName
+	const systemActorName = resolved.config.displayName
 	let [systemActor] = await db
 		.select()
 		.from(actors)
@@ -307,6 +362,11 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
+	// Derive externalId — use installation_id for GitHub, or a provider-specific ID
+	const externalId =
+		(credentials.installation_id as string) ??
+		(credentials.accessToken ? `oauth-${stateData.nonce.slice(0, 8)}` : stateData.nonce)
+
 	// Activate the pending integration (consumes the nonce)
 	const encryptedCredentials = encrypt(JSON.stringify(credentials))
 	const integrationId = pendingIntegration.id
@@ -315,7 +375,7 @@ app.openapi(callbackRoute, (async (c) => {
 		.update(integrations)
 		.set({
 			status: 'active',
-			externalId: credentials.installation_id,
+			externalId,
 			credentials: encryptedCredentials,
 			config: { system_actor_id: systemActor.id },
 			updatedAt: new Date(),
@@ -329,7 +389,7 @@ app.openapi(callbackRoute, (async (c) => {
 		action: 'created',
 		entityType: 'integration',
 		entityId: integrationId,
-		data: { provider: providerName, installation_id: credentials.installation_id },
+		data: { provider: providerName, external_id: externalId },
 	})
 
 	// Redirect to frontend settings/integrations page
@@ -385,26 +445,44 @@ export default app
 
 // ── Webhook handler (mounted separately at /api/webhooks) ──────────────────
 
+const webhookHandler = new WebhookHandler()
+
 export const webhookApp = new OpenAPIHono<Env>()
 
 webhookApp.post('/:provider', async (c) => {
 	const db = c.get('db')
 	const providerName = c.req.param('provider')
 
-	let provider: ReturnType<typeof getProvider>
+	let resolved: ResolvedProvider
 	try {
-		provider = getProvider(providerName)
+		resolved = getProvider(providerName)
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', 'Unknown provider'), 400)
 	}
 
 	// Read raw body for signature verification
 	const body = await c.req.text()
-	const signature = c.req.header('x-hub-signature-256') || ''
 
-	if (!provider.verifyWebhook(body, signature)) {
-		logger.warn(`Webhook signature verification failed for ${providerName}`)
-		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	// Build lowercase headers map
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	// Verify webhook signature using provider's config
+	const webhookConfig = resolved.config.webhook
+	if (!webhookConfig) {
+		return c.json(createApiError('BAD_REQUEST', 'Provider does not support webhooks'), 400)
+	}
+
+	if ('type' in webhookConfig) {
+		// Custom webhook verification — provider must handle this in its normalizer
+		// (fall through to normalization)
+	} else {
+		if (!webhookHandler.verify(webhookConfig, body, headers)) {
+			logger.warn(`Webhook signature verification failed for ${providerName}`)
+			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+		}
 	}
 
 	// Parse and normalize
@@ -414,12 +492,8 @@ webhookApp.post('/:provider', async (c) => {
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON payload'), 400)
 	}
-	const headers: Record<string, string> = {}
-	for (const [key, value] of Object.entries(c.req.header())) {
-		if (typeof value === 'string') headers[key.toLowerCase()] = value
-	}
 
-	const normalized = provider.normalizeEvent(payload, headers)
+	const normalized = normalizeEvent(resolved, payload, headers)
 	if (!normalized) {
 		// Event type we don't handle — acknowledge it
 		return c.json({ ok: true, skipped: true })
@@ -467,3 +541,11 @@ webhookApp.post('/:provider', async (c) => {
 
 	return c.json({ ok: true })
 })
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Build the OAuth redirect URI from the current request URL */
+function buildRedirectUri(requestUrl: string, providerName: string): string {
+	const url = new URL(requestUrl)
+	return `${url.origin}/api/integrations/${providerName}/callback`
+}

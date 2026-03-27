@@ -1,6 +1,66 @@
-export interface IntegrationCredentials {
-	installation_id: string
-	[key: string]: unknown
+// ── Auth configs ────────────────────────────────────────────────────────────
+
+export interface OAuth2Config {
+	authorizationUrl: string
+	tokenUrl: string
+	/** Defaults to tokenUrl if not set */
+	refreshUrl?: string
+	revokeUrl?: string
+	scopes: string[]
+	/** Enable PKCE (S256 code challenge). Default: false */
+	pkce?: boolean
+	/** How to send client credentials on token exchange. Default: 'client_secret_post' */
+	tokenAuthMethod?: 'client_secret_post' | 'client_secret_basic'
+	/** Extra params appended to the authorization URL (e.g. Reddit: { duration: 'permanent' }) */
+	extraAuthParams?: Record<string, string>
+	/** Extra params added to token exchange request body */
+	extraTokenParams?: Record<string, string>
+	/** Env var name for OAuth client ID */
+	clientIdEnv: string
+	/** Env var name for OAuth client secret */
+	clientSecretEnv: string
+}
+
+export interface ApiKeyConfig {
+	headerName: string
+	headerPrefix?: string
+	envKeyName: string
+}
+
+export type AuthConfig =
+	| { type: 'oauth2'; config: OAuth2Config }
+	| { type: 'oauth2_custom' }
+	| { type: 'api_key'; config: ApiKeyConfig }
+
+// ── Webhook config ─────────────────────────────────────────────────────────
+
+export interface WebhookConfig {
+	/** Header containing the signature (e.g. 'x-hub-signature-256') */
+	signatureHeader: string
+	signatureScheme: 'hmac-sha256' | 'hmac-sha1' | 'timestamp' | 'custom'
+	/** Prefix before the hex digest (e.g. 'sha256=' for GitHub) */
+	signaturePrefix?: string
+	/** Env var name for the webhook signing secret */
+	secretEnv: string
+	/** Header containing the event type (e.g. 'x-github-event') */
+	eventTypeHeader?: string
+}
+
+// ── MCP config ─────────────────────────────────────────────────────────────
+
+export interface McpConfig {
+	command: string
+	args: string[]
+	/** Env var the MCP server reads for its auth token */
+	envKey: string
+}
+
+// ── Events ─────────────────────────────────────────────────────────────────
+
+export interface EventDefinition {
+	entityType: string
+	actions: string[]
+	label: string
 }
 
 export interface NormalizedEvent {
@@ -10,28 +70,59 @@ export interface NormalizedEvent {
 	data: Record<string, unknown>
 }
 
-export interface EventDefinition {
-	entityType: string
-	actions: string[]
-	label: string
+/** Declarative event mapping: provider event key → normalized event */
+export interface EventMapping {
+	[providerEventKey: string]: {
+		entityType: string
+		action: string
+	}
 }
 
-export interface IntegrationProvider {
+// ── Provider config ────────────────────────────────────────────────────────
+
+export interface ProviderConfig {
 	name: string
 	displayName: string
+	description?: string
+	logoUrl?: string
+	auth: AuthConfig
+	webhook?: WebhookConfig | { type: 'custom' }
+	events?: {
+		definitions: EventDefinition[]
+		mapping?: EventMapping
+	}
+	mcp?: McpConfig
+}
 
-	// Installation flow
+// ── Custom handler interfaces ──────────────────────────────────────────────
+
+export interface StoredCredentials {
+	accessToken?: string
+	refreshToken?: string
+	/** Unix timestamp in milliseconds */
+	expiresAt?: number
+	scope?: string
+	tokenType?: string
+	[key: string]: unknown
+}
+
+export interface CustomAuthHandler {
 	getInstallUrl(state: string): string
-	handleCallback(params: Record<string, string>): Promise<IntegrationCredentials>
+	handleCallback(params: Record<string, string>): Promise<StoredCredentials>
+	getAccessToken(credentials: StoredCredentials): Promise<string>
+}
 
-	// Webhooks
-	verifyWebhook(body: string, signature: string): boolean
-	normalizeEvent(payload: unknown, headers: Record<string, string>): NormalizedEvent | null
-	getAvailableEvents(): EventDefinition[]
+export type CustomEventNormalizer = (
+	payload: unknown,
+	headers: Record<string, string>,
+) => NormalizedEvent | null
 
-	// Agent tools — generate a short-lived access token for MCP server
-	getAccessToken(credentials: IntegrationCredentials): Promise<string>
+// ── Resolved provider (returned by registry) ──────────────────────────────
 
-	// MCP server command to spawn for this provider
-	getMcpCommand(): { command: string; args: string[]; envKey: string }
+export interface ResolvedProvider {
+	config: ProviderConfig
+	customAuth?: CustomAuthHandler
+	customNormalizer?: CustomEventNormalizer
+	/** Override token response parsing for providers with non-standard format */
+	parseTokenResponse?: (raw: unknown) => Partial<StoredCredentials>
 }

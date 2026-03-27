@@ -1,12 +1,23 @@
-import { GitHubProvider } from './github'
-import type { IntegrationProvider } from './types'
+import type { ResolvedProvider } from './types'
 
-const providers = new Map<string, IntegrationProvider>()
+// Import provider configs
+import { config as githubConfig } from './providers/github/config'
+import { githubAuth } from './providers/github/auth'
+import { githubEventNormalizer } from './providers/github/webhooks'
 
-// Register built-in providers
-providers.set('github', new GitHubProvider())
+const providers = new Map<string, ResolvedProvider>()
 
-export function getProvider(name: string): IntegrationProvider {
+// ── Register providers ─────────────────────────────────────────────────────
+
+providers.set('github', {
+	config: githubConfig,
+	customAuth: githubAuth,
+	customNormalizer: githubEventNormalizer,
+})
+
+// ── Public API ─────────────────────────────────────────────────────────────
+
+export function getProvider(name: string): ResolvedProvider {
 	const provider = providers.get(name)
 	if (!provider) {
 		throw new Error(`Unknown integration provider: ${name}`)
@@ -14,6 +25,6 @@ export function getProvider(name: string): IntegrationProvider {
 	return provider
 }
 
-export function listProviders(): IntegrationProvider[] {
+export function listProviders(): ResolvedProvider[] {
 	return Array.from(providers.values())
 }
