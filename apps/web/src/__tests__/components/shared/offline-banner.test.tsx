@@ -5,8 +5,8 @@ vi.mock('@/hooks/use-online-status', () => ({
 	useOnlineStatus: vi.fn(),
 }))
 
-import { useOnlineStatus } from '@/hooks/use-online-status'
 import { OfflineBanner } from '@/components/shared/offline-banner'
+import { useOnlineStatus } from '@/hooks/use-online-status'
 
 describe('OfflineBanner', () => {
 	it('returns null when online', () => {

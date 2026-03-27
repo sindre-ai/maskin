@@ -15,14 +15,14 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
-import { api } from '@/lib/api'
-import { toast } from 'sonner'
 import {
-	useRelationships,
-	useObjectRelationships,
 	useCreateRelationship,
 	useDeleteRelationship,
+	useObjectRelationships,
+	useRelationships,
 } from '@/hooks/use-relationships'
+import { api } from '@/lib/api'
+import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
 describe('useRelationships', () => {

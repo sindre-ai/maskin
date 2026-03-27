@@ -583,10 +583,7 @@ export const tools = {
 						name: z.string(),
 						type: z.enum(['text', 'number', 'date', 'enum', 'boolean']),
 						required: z.boolean().default(false),
-						values: z
-							.array(z.string())
-							.optional()
-							.describe('Allowed values (only for enum type)'),
+						values: z.array(z.string()).optional().describe('Allowed values (only for enum type)'),
 					}),
 				)
 				.default([])
