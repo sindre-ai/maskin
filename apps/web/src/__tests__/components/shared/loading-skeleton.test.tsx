@@ -1,6 +1,6 @@
+import { CardSkeleton, ListSkeleton, Skeleton } from '@/components/shared/loading-skeleton'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { CardSkeleton, ListSkeleton, Skeleton } from '@/components/shared/loading-skeleton'
 
 describe('Skeleton', () => {
 	it('renders with animate-pulse class', () => {
