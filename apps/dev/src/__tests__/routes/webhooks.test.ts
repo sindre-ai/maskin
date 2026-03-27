@@ -10,6 +10,20 @@ vi.mock('../../lib/integrations/registry', () => ({
 	listProviders: (...args: unknown[]) => mockListProviders(...args),
 }))
 
+// Mock the webhook handler
+const mockVerify = vi.fn()
+vi.mock('../../lib/integrations/webhooks/handler', () => ({
+	WebhookHandler: vi.fn().mockImplementation(() => ({
+		verify: (...args: unknown[]) => mockVerify(...args),
+	})),
+}))
+
+// Mock the event normalizer
+const mockNormalizeEvent = vi.fn()
+vi.mock('../../lib/integrations/events/normalizer', () => ({
+	normalizeEvent: (...args: unknown[]) => mockNormalizeEvent(...args),
+}))
+
 const { webhookApp } = await import('../../routes/integrations')
 
 function createWebhookTestApp() {
@@ -20,6 +34,8 @@ describe('Webhook Routes', () => {
 	beforeEach(() => {
 		mockGetProvider.mockReset()
 		mockListProviders.mockReset()
+		mockVerify.mockReset()
+		mockNormalizeEvent.mockReset()
 	})
 
 	describe('POST /api/webhooks/:provider', () => {
@@ -41,8 +57,17 @@ describe('Webhook Routes', () => {
 
 		it('returns 401 for invalid webhook signature', async () => {
 			mockGetProvider.mockReturnValue({
-				verifyWebhook: () => false,
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
 			})
+			mockVerify.mockReturnValue(false)
 			const { app } = createWebhookTestApp()
 
 			const res = await app.request(jsonRequest('POST', '/api/webhooks/github', { event: 'test' }))
@@ -55,9 +80,18 @@ describe('Webhook Routes', () => {
 
 		it('returns 200 with skipped for unhandled event type', async () => {
 			mockGetProvider.mockReturnValue({
-				verifyWebhook: () => true,
-				normalizeEvent: () => null,
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
 			})
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue(null)
 			const { app } = createWebhookTestApp()
 
 			const res = await app.request(
@@ -72,13 +106,22 @@ describe('Webhook Routes', () => {
 
 		it('returns 200 with skipped when no matching integration found', async () => {
 			mockGetProvider.mockReturnValue({
-				verifyWebhook: () => true,
-				normalizeEvent: () => ({
-					action: 'push',
-					entityType: 'repository',
-					installationId: 'inst-123',
-					data: {},
-				}),
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
+			})
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue({
+				action: 'push',
+				entityType: 'repository',
+				installationId: 'inst-123',
+				data: {},
 			})
 			const { app } = createWebhookTestApp()
 
@@ -93,13 +136,22 @@ describe('Webhook Routes', () => {
 		it('returns 200 with skipped when integration has no system_actor_id', async () => {
 			const integration = buildIntegration({ config: {} })
 			mockGetProvider.mockReturnValue({
-				verifyWebhook: () => true,
-				normalizeEvent: () => ({
-					action: 'push',
-					entityType: 'repository',
-					installationId: integration.externalId,
-					data: {},
-				}),
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
+			})
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue({
+				action: 'push',
+				entityType: 'repository',
+				installationId: integration.externalId,
+				data: {},
 			})
 			const { app, mockResults } = createWebhookTestApp()
 			mockResults.select = [integration]
@@ -117,13 +169,22 @@ describe('Webhook Routes', () => {
 				config: { system_actor_id: 'actor-123' },
 			})
 			mockGetProvider.mockReturnValue({
-				verifyWebhook: () => true,
-				normalizeEvent: () => ({
-					action: 'push',
-					entityType: 'repository',
-					installationId: integration.externalId,
-					data: { ref: 'refs/heads/main' },
-				}),
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
+			})
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue({
+				action: 'push',
+				entityType: 'repository',
+				installationId: integration.externalId,
+				data: { ref: 'refs/heads/main' },
 			})
 			const { app, mockResults } = createWebhookTestApp()
 			mockResults.select = [integration]
