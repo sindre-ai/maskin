@@ -11,3 +11,4 @@ dist-mcp/
 coverage/
 .mcp.json
 .claude/settings.local.json
+vendor/

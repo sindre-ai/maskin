@@ -23,7 +23,11 @@ function run(cmd) {
 }
 
 // Start docker services
-run('docker-compose up -d postgres seaweedfs')
+const dockerServices = ['postgres', 'seaweedfs']
+if (process.env.WHISPER_ENABLED === 'true') {
+	dockerServices.push('whisper-server')
+}
+run(`docker-compose up -d ${dockerServices.join(' ')}`)
 
 // Wait for postgres
 console.log('Waiting for PostgreSQL to be ready...')
