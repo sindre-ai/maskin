@@ -9,15 +9,46 @@ import {
 	useRespondNotification,
 	useUpdateNotification,
 } from '@/hooks/use-notifications'
-import type { ActorListItem } from '@/lib/api'
+import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: PulseDashboard,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function resolveNavigationPath(
+	workspaceId: string,
+	nav: { to: string; id?: string },
+	notification: NotificationResponse,
+): string | null {
+	const id = nav.id && UUID_RE.test(nav.id) ? nav.id : undefined
+	switch (nav.to) {
+		case 'object': {
+			const fallbackId =
+				notification.objectId && UUID_RE.test(notification.objectId)
+					? notification.objectId
+					: undefined
+			const objectId = id ?? fallbackId
+			return objectId ? `/${workspaceId}/objects/${objectId}` : `/${workspaceId}/objects`
+		}
+		case 'objects':
+			return `/${workspaceId}/objects`
+		case 'activity':
+			return `/${workspaceId}/activity`
+		case 'agent':
+			return id ? `/${workspaceId}/agents/${id}` : null
+		case 'trigger':
+			return id ? `/${workspaceId}/triggers/${id}` : null
+		default:
+			return null
+	}
+}
 
 function PulseDashboard() {
 	const { workspaceId } = useWorkspace()
@@ -25,6 +56,7 @@ function PulseDashboard() {
 	const { data: actors } = useActors(workspaceId)
 	const updateNotification = useUpdateNotification(workspaceId)
 	const respondNotification = useRespondNotification(workspaceId)
+	const navigate = useNavigate()
 	const [activeFilter, setActiveFilter] = useState('all')
 
 	const actorsById = useMemo(() => {
@@ -54,12 +86,37 @@ function PulseDashboard() {
 		return c
 	}, [activeNotifications])
 
-	const handleRespond = (id: string, response: unknown) => {
-		respondNotification.mutate({ id, response })
+	const handleAction = (
+		notification: NotificationResponse,
+		response: unknown,
+		nav?: { to: string; id?: string },
+	) => {
+		respondNotification.mutate(
+			{ id: notification.id, response },
+			{
+				onSuccess: () => {
+					if (nav) {
+						const path = resolveNavigationPath(workspaceId, nav, notification)
+						if (path) navigate({ to: path })
+						else toast.warning('Could not navigate to the requested page.')
+					}
+				},
+				onError: () => {
+					toast.error('Failed to respond. Please try again.')
+				},
+			},
+		)
 	}
 
 	const handleDismiss = (id: string) => {
-		updateNotification.mutate({ id, data: { status: 'dismissed' } })
+		updateNotification.mutate(
+			{ id, data: { status: 'dismissed' } },
+			{
+				onError: () => {
+					toast.error('Failed to dismiss. Please try again.')
+				},
+			},
+		)
 	}
 
 	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length
@@ -92,7 +149,7 @@ function PulseDashboard() {
 								key={notification.id}
 								notification={notification}
 								actorsById={actorsById}
-								onRespond={handleRespond}
+								onAction={handleAction}
 								onDismiss={handleDismiss}
 							/>
 						))}
