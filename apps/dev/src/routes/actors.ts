@@ -205,7 +205,7 @@ app.openapi(listActorsRoute, async (c) => {
 	}
 
 	const members = await db
-		.select({
+		.selectDistinct({
 			id: actors.id,
 			type: actors.type,
 			name: actors.name,
@@ -215,15 +215,7 @@ app.openapi(listActorsRoute, async (c) => {
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
 
-	// Deduplicate actors who appear in multiple workspaces
-	const seen = new Set<string>()
-	const unique = members.filter((m) => {
-		if (seen.has(m.id)) return false
-		seen.add(m.id)
-		return true
-	})
-
-	return c.json(serializeArray(unique) as z.infer<typeof actorListItemSchema>[])
+	return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
 })
 
 // GET /:id - Get actor by ID
