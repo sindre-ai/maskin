@@ -33,26 +33,18 @@ import {
 	setApiKey,
 	setStoredActor,
 } from '@/lib/auth'
+import { buildActorWithKey } from '../factories'
 import { TestWrapper } from '../setup'
 
 beforeEach(() => {
 	vi.clearAllMocks()
 })
 
-const mockActorResult = {
+const mockActorResult = buildActorWithKey({
 	id: 'actor-1',
 	name: 'Test User',
-	type: 'human' as const,
 	email: 'test@example.com',
-	api_key: 'ank_test123',
-	systemPrompt: null,
-	tools: null,
-	memory: null,
-	llmProvider: null,
-	llmConfig: null,
-	createdAt: null,
-	updatedAt: null,
-}
+})
 
 describe('useAuth', () => {
 	describe('login', () => {

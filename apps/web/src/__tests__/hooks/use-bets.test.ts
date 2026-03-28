@@ -10,28 +10,11 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import { useBets } from '@/hooks/use-bets'
-import type { ObjectResponse } from '@/lib/api'
 import { api } from '@/lib/api'
+import { buildObjectResponse } from '../factories'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
-
-function buildBet(overrides: Partial<ObjectResponse> & { id: string }): ObjectResponse {
-	return {
-		workspaceId: 'ws-1',
-		type: 'bet',
-		title: 'Test Bet',
-		content: null,
-		status: 'active',
-		metadata: null,
-		owner: null,
-		activeSessionId: null,
-		createdBy: 'actor-1',
-		createdAt: null,
-		updatedAt: null,
-		...overrides,
-	}
-}
 
 beforeEach(() => {
 	vi.clearAllMocks()
@@ -40,8 +23,8 @@ beforeEach(() => {
 describe('useBets', () => {
 	it('fetches bets for workspace', async () => {
 		const mockBets = [
-			buildBet({ id: 'bet-1', title: 'Bet A' }),
-			buildBet({ id: 'bet-2', title: 'Bet B' }),
+			buildObjectResponse({ id: 'bet-1', type: 'bet', title: 'Bet A' }),
+			buildObjectResponse({ id: 'bet-2', type: 'bet', title: 'Bet B' }),
 		]
 		vi.mocked(api.objects.list).mockResolvedValue(mockBets)
 

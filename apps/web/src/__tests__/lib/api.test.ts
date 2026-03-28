@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/auth', () => ({
 	getApiKey: vi.fn(),
@@ -7,9 +7,16 @@ vi.mock('@/lib/auth', () => ({
 import { ApiError, api } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 
+let fetchSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
 	vi.clearAllMocks()
 	vi.mocked(getApiKey).mockReturnValue(null)
+	fetchSpy = vi.spyOn(globalThis, 'fetch')
+})
+
+afterEach(() => {
+	fetchSpy.mockRestore()
 })
 
 describe('ApiError', () => {
@@ -40,13 +47,11 @@ describe('ApiError', () => {
 describe('request', () => {
 	it('sends Authorization header when API key exists', async () => {
 		vi.mocked(getApiKey).mockReturnValue('ank_test123')
-		const mockFetch = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }))
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }))
 
 		await api.objects.list('ws-1')
 
-		expect(mockFetch).toHaveBeenCalledWith(
+		expect(fetchSpy).toHaveBeenCalledWith(
 			'/api/objects',
 			expect.objectContaining({
 				headers: expect.objectContaining({
@@ -55,30 +60,24 @@ describe('request', () => {
 				}),
 			}),
 		)
-		mockFetch.mockRestore()
 	})
 
 	it('does not send Authorization header when no API key', async () => {
 		vi.mocked(getApiKey).mockReturnValue(null)
-		const mockFetch = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }))
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }))
 
 		await api.objects.list('ws-1')
 
-		const headers = mockFetch.mock.calls[0][1]?.headers as Record<string, string>
+		const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>
 		expect(headers.Authorization).toBeUndefined()
-		mockFetch.mockRestore()
 	})
 
 	it('sends X-Workspace-Id header when workspaceId provided', async () => {
-		const mockFetch = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }))
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }))
 
 		await api.objects.list('ws-42')
 
-		expect(mockFetch).toHaveBeenCalledWith(
+		expect(fetchSpy).toHaveBeenCalledWith(
 			'/api/objects',
 			expect.objectContaining({
 				headers: expect.objectContaining({
@@ -86,14 +85,11 @@ describe('request', () => {
 				}),
 			}),
 		)
-		mockFetch.mockRestore()
 	})
 
 	it('sends Content-Type and body for POST requests', async () => {
 		vi.mocked(getApiKey).mockReturnValue('ank_key')
-		const mockFetch = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response(JSON.stringify({ id: '1' }), { status: 200 }))
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify({ id: '1' }), { status: 200 }))
 
 		await api.objects.create('ws-1', {
 			type: 'bet',
@@ -101,7 +97,7 @@ describe('request', () => {
 			status: 'active',
 		})
 
-		expect(mockFetch).toHaveBeenCalledWith(
+		expect(fetchSpy).toHaveBeenCalledWith(
 			'/api/objects',
 			expect.objectContaining({
 				method: 'POST',
@@ -111,7 +107,6 @@ describe('request', () => {
 				body: JSON.stringify({ type: 'bet', title: 'New bet', status: 'active' }),
 			}),
 		)
-		mockFetch.mockRestore()
 	})
 
 	it('throws ApiError with structured error format', async () => {
@@ -125,9 +120,7 @@ describe('request', () => {
 				],
 			},
 		}
-		const mockFetch = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 400 }))
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 400 }))
 
 		try {
 			await api.objects.list('ws-1')
@@ -142,14 +135,11 @@ describe('request', () => {
 				status: ['Invalid status'],
 			})
 		}
-		mockFetch.mockRestore()
 	})
 
 	it('throws ApiError with legacy string error format', async () => {
 		const errorBody = { error: 'Not found' }
-		const mockFetch = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 404 }))
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 404 }))
 
 		try {
 			await api.objects.list('ws-1')
@@ -158,15 +148,12 @@ describe('request', () => {
 			expect(apiErr.status).toBe(404)
 			expect(apiErr.message).toBe('Not found')
 		}
-		mockFetch.mockRestore()
 	})
 
 	it('throws ApiError with statusText fallback on JSON parse failure', async () => {
-		const mockFetch = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(
-				new Response('not json', { status: 500, statusText: 'Internal Server Error' }),
-			)
+		fetchSpy.mockResolvedValue(
+			new Response('not json', { status: 500, statusText: 'Internal Server Error' }),
+		)
 
 		try {
 			await api.objects.list('ws-1')
@@ -175,6 +162,5 @@ describe('request', () => {
 			expect(apiErr.status).toBe(500)
 			expect(apiErr.message).toBe('Internal Server Error')
 		}
-		mockFetch.mockRestore()
 	})
 })
