@@ -353,8 +353,6 @@ pnpm db:seed
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | -- | PostgreSQL connection string |
-| `BETTER_AUTH_SECRET` | Yes | -- | Secret for auth token signing |
-| `BETTER_AUTH_URL` | No | `http://localhost:3000` | Base URL for auth callbacks |
 | `PORT` | No | `3000` | Server port |
 | `S3_ENDPOINT` | No | `http://localhost:8333` | S3-compatible storage endpoint (SeaweedFS for dev) |
 | `S3_BUCKET` | No | `agent-files` | Storage bucket name |
