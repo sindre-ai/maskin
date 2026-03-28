@@ -9,7 +9,9 @@ import {
 	CardHeader,
 	CardTitle,
 } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { useState } from 'react'
 import { NotificationInput } from './notification-input'
 
 const typeLabels: Record<string, string> = {
@@ -19,14 +21,57 @@ const typeLabels: Record<string, string> = {
 	alert: 'Alert',
 }
 
+export interface NotificationAction {
+	label: string
+	response: unknown
+	variant?: 'default' | 'outline' | 'ghost'
+	navigate?: { to: string; id?: string }
+}
+
+function resolveActions(
+	notification: NotificationResponse,
+	metadata: Record<string, unknown>,
+): NotificationAction[] {
+	const defined = metadata.actions as NotificationAction[] | undefined
+	if (defined && Array.isArray(defined) && defined.length > 0) return defined
+
+	if (metadata.input_type) return []
+
+	const hasObject = !!notification.objectId
+	switch (notification.type) {
+		case 'recommendation':
+			return [
+				{
+					label: hasObject ? 'View object' : 'View objects',
+					response: 'view_object',
+					navigate: { to: hasObject ? 'object' : 'objects' },
+				},
+			]
+		case 'alert':
+			return [
+				{
+					label: hasObject ? 'Review' : 'Review tasks',
+					response: 'acknowledged',
+					navigate: { to: hasObject ? 'object' : 'objects' },
+				},
+			]
+		case 'good_news':
+			return hasObject
+				? [{ label: 'View', response: 'acknowledged', navigate: { to: 'object' } }]
+				: []
+		default:
+			return []
+	}
+}
+
 interface PulseCardProps {
 	notification: NotificationResponse
 	actorsById: Map<string, ActorListItem>
-	onRespond: (id: string, response: unknown) => void
+	onAction: (id: string, response: unknown, navigate?: { to: string; id?: string }) => void
 	onDismiss: (id: string) => void
 }
 
-export function PulseCard({ notification, actorsById, onRespond, onDismiss }: PulseCardProps) {
+export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const tags = metadata.tags as string[] | undefined
@@ -34,6 +79,12 @@ export function PulseCard({ notification, actorsById, onRespond, onDismiss }: Pu
 	const urgencyLabel = metadata.urgency_label as string | undefined
 	const inputType = metadata.input_type as string | undefined
 	const sourceActor = actorsById.get(notification.sourceActorId)
+
+	const actions = resolveActions(notification, metadata)
+	const showReplyInput = !!notification.sessionId && !inputType
+
+	const [replyOpen, setReplyOpen] = useState(false)
+	const [replyText, setReplyText] = useState('')
 
 	return (
 		<Card>
@@ -68,7 +119,7 @@ export function PulseCard({ notification, actorsById, onRespond, onDismiss }: Pu
 				{inputType && (
 					<NotificationInput
 						metadata={metadata}
-						onSubmit={(response) => onRespond(notification.id, response)}
+						onSubmit={(response) => onAction(notification.id, response)}
 					/>
 				)}
 
@@ -79,29 +130,62 @@ export function PulseCard({ notification, actorsById, onRespond, onDismiss }: Pu
 
 				{/* Action buttons */}
 				<div className="flex gap-2">
-					{notification.type === 'recommendation' && !inputType && (
-						<>
-							<Button size="sm" onClick={() => onRespond(notification.id, 'create_bet')}>
-								Create bet
-							</Button>
-							<Button
-								size="sm"
-								variant="outline"
-								onClick={() => onRespond(notification.id, 'show_data')}
-							>
-								Show data
-							</Button>
-						</>
-					)}
-					{notification.type === 'alert' && !inputType && (
-						<Button size="sm" onClick={() => onRespond(notification.id, 'acknowledged')}>
-							Review tasks
+					{actions.map((action, i) => (
+						<Button
+							key={action.label}
+							size="sm"
+							variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
+							onClick={() => onAction(notification.id, action.response, action.navigate)}
+						>
+							{action.label}
 						</Button>
-					)}
+					))}
 					<Button size="sm" variant="ghost" onClick={() => onDismiss(notification.id)}>
 						Dismiss
 					</Button>
 				</div>
+
+				{/* Collapsible text reply for session-linked notifications */}
+				{showReplyInput && (
+					<div>
+						{!replyOpen ? (
+							<button
+								type="button"
+								className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+								onClick={() => setReplyOpen(true)}
+							>
+								Reply to agent...
+							</button>
+						) : (
+							<div className="flex gap-2">
+								<Input
+									value={replyText}
+									onChange={(e) => setReplyText(e.target.value)}
+									placeholder="Type a reply..."
+									className="h-8 text-sm"
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && replyText.trim()) {
+											onAction(notification.id, { type: 'text_reply', message: replyText })
+											setReplyText('')
+											setReplyOpen(false)
+										}
+									}}
+								/>
+								<Button
+									size="sm"
+									disabled={!replyText.trim()}
+									onClick={() => {
+										onAction(notification.id, { type: 'text_reply', message: replyText })
+										setReplyText('')
+										setReplyOpen(false)
+									}}
+								>
+									Send
+								</Button>
+							</div>
+						)}
+					</div>
+				)}
 			</CardContent>
 			<CardFooter className="text-xs text-muted-foreground border-t pt-3 gap-1.5">
 				{sourceActor && (

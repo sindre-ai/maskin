@@ -9,9 +9,9 @@ import {
 	useRespondNotification,
 	useUpdateNotification,
 } from '@/hooks/use-notifications'
-import type { ActorListItem } from '@/lib/api'
+import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
@@ -19,12 +19,37 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
+function resolveNavigationPath(
+	workspaceId: string,
+	nav: { to: string; id?: string },
+	notification: NotificationResponse,
+): string | null {
+	const id = nav.id
+	switch (nav.to) {
+		case 'object': {
+			const objectId = id ?? notification.objectId
+			return objectId ? `/${workspaceId}/objects/${objectId}` : `/${workspaceId}/objects`
+		}
+		case 'objects':
+			return `/${workspaceId}/objects`
+		case 'activity':
+			return `/${workspaceId}/activity`
+		case 'agent':
+			return id ? `/${workspaceId}/agents/${id}` : null
+		case 'trigger':
+			return id ? `/${workspaceId}/triggers/${id}` : null
+		default:
+			return null
+	}
+}
+
 function PulseDashboard() {
 	const { workspaceId } = useWorkspace()
 	const { data: notifications, isLoading } = useNotifications(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const updateNotification = useUpdateNotification(workspaceId)
 	const respondNotification = useRespondNotification(workspaceId)
+	const navigate = useNavigate()
 	const [activeFilter, setActiveFilter] = useState('all')
 
 	const actorsById = useMemo(() => {
@@ -54,8 +79,15 @@ function PulseDashboard() {
 		return c
 	}, [activeNotifications])
 
-	const handleRespond = (id: string, response: unknown) => {
+	const handleAction = (id: string, response: unknown, nav?: { to: string; id?: string }) => {
 		respondNotification.mutate({ id, response })
+		if (nav) {
+			const notification = filtered.find((n) => n.id === id)
+			if (notification) {
+				const path = resolveNavigationPath(workspaceId, nav, notification)
+				if (path) navigate({ to: path })
+			}
+		}
 	}
 
 	const handleDismiss = (id: string) => {
@@ -92,7 +124,7 @@ function PulseDashboard() {
 								key={notification.id}
 								notification={notification}
 								actorsById={actorsById}
-								onRespond={handleRespond}
+								onAction={handleAction}
 								onDismiss={handleDismiss}
 							/>
 						))}
