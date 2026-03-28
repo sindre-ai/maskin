@@ -40,7 +40,7 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
 				>
 					<span
-						className={`w-2 h-2 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-text-muted'}`}
+						className={`w-2 h-2 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 					/>
 					<span className="text-sm text-foreground flex-1">{trigger.name}</span>
 					<span className="text-xs text-muted-foreground capitalize">{trigger.type}</span>
@@ -55,7 +55,7 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 		<div className="p-4 max-w-2xl">
 			<div className="flex items-center gap-2 mb-2">
 				<span
-					className={`w-2 h-2 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-text-muted'}`}
+					className={`w-2 h-2 rounded-full ${trigger.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 				/>
 				<h1 className="text-lg font-semibold text-foreground">{trigger.name}</h1>
 			</div>
@@ -77,9 +77,22 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
 						Config
 					</h3>
-					<pre className="text-xs text-muted-foreground bg-card rounded p-3 overflow-auto">
-						{JSON.stringify(trigger.config, null, 2)}
-					</pre>
+					<div className="space-y-1.5">
+						{Object.entries(trigger.config).map(([key, value]) => (
+							<div key={key} className="flex gap-2 text-xs">
+								<span className="text-muted-foreground font-medium min-w-[100px]">
+									{key.replace(/_/g, ' ')}
+								</span>
+								<span className="text-foreground">
+									{typeof value === 'object' && value !== null
+										? Array.isArray(value)
+											? value.join(', ')
+											: JSON.stringify(value)
+										: String(value)}
+								</span>
+							</div>
+						))}
+					</div>
 				</div>
 			)}
 		</div>
