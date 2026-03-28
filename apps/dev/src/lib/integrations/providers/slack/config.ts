@@ -71,15 +71,15 @@ export const parseTokenResponse = (raw: unknown): Partial<StoredCredentials> => 
 	if (typeof data.access_token !== 'string') {
 		throw new Error('Slack token response missing access_token')
 	}
-	const team = data.team as { id: string; name: string } | undefined
+	const team = data.team as Record<string, unknown> | undefined
 	return {
-		accessToken: data.access_token as string,
-		tokenType: data.token_type as string,
-		scope: data.scope as string,
-		teamId: team?.id,
-		teamName: team?.name,
-		botUserId: data.bot_user_id as string,
-		appId: data.app_id as string,
+		accessToken: data.access_token,
+		tokenType: typeof data.token_type === 'string' ? data.token_type : undefined,
+		scope: typeof data.scope === 'string' ? data.scope : undefined,
+		teamId: typeof team?.id === 'string' ? team.id : undefined,
+		teamName: typeof team?.name === 'string' ? team.name : undefined,
+		botUserId: typeof data.bot_user_id === 'string' ? data.bot_user_id : undefined,
+		appId: typeof data.app_id === 'string' ? data.app_id : undefined,
 	}
 }
 
