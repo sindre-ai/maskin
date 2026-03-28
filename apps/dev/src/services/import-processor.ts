@@ -372,23 +372,29 @@ export async function executeImport(
 		const batch = rows.slice(i, i + BATCH_SIZE)
 		const batchErrors: ImportError[] = []
 
-		try {
-			await db.transaction(async (tx) => {
-				for (let j = 0; j < batch.length; j++) {
-					const rowIndex = i + j + 1 // 1-based
-					const row = batch[j]
-					if (!row) continue
-					try {
-						const mapped = mapRow(row, mapping, settings)
+		// Phase 1: Validate and map rows before the transaction
+		const validRows: { rowIndex: number; mapped: MappedRow }[] = []
+		for (let j = 0; j < batch.length; j++) {
+			const rowIndex = i + j + 1 // 1-based
+			const row = batch[j]
+			if (!row) continue
 
-						if (!mapped.title && !mapped.content) {
-							batchErrors.push({
-								row: rowIndex,
-								message: 'Row has no title or content',
-							})
-							continue
-						}
+			const mapped = mapRow(row, mapping, settings)
+			if (!mapped.title && !mapped.content) {
+				batchErrors.push({
+					row: rowIndex,
+					message: 'Row has no title or content',
+				})
+				continue
+			}
+			validRows.push({ rowIndex, mapped })
+		}
 
+		// Phase 2: Insert all valid rows in a single transaction
+		if (validRows.length > 0) {
+			try {
+				await db.transaction(async (tx) => {
+					for (const { mapped } of validRows) {
 						const [created] = await tx
 							.insert(objects)
 							.values({
@@ -410,25 +416,20 @@ export async function executeImport(
 								action: 'created',
 								entityType: mapped.type,
 								entityId: created.id,
-								data: created,
+								data: { id: created.id, type: mapped.type, title: mapped.title },
 							})
-							successCount++
 						}
-					} catch (err) {
-						batchErrors.push({
-							row: rowIndex,
-							message: err instanceof Error ? err.message : String(err),
-						})
 					}
-				}
-			})
-		} catch (err) {
-			// Entire batch transaction failed — count all rows as errors
-			for (let j = 0; j < batch.length; j++) {
-				batchErrors.push({
-					row: i + j + 1,
-					message: `Batch failed: ${err instanceof Error ? err.message : String(err)}`,
 				})
+				successCount += validRows.length
+			} catch (err) {
+				// Entire batch transaction failed — all valid rows in this batch are errors
+				for (const { rowIndex } of validRows) {
+					batchErrors.push({
+						row: rowIndex,
+						message: `Batch failed: ${err instanceof Error ? err.message : String(err)}`,
+					})
+				}
 			}
 		}
 

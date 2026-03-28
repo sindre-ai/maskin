@@ -28,6 +28,20 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+// All import routes require workspace membership
+app.use('*', async (c, next) => {
+	const workspaceId = c.req.header('x-workspace-id')
+	if (workspaceId) {
+		const db = c.get('db')
+		const actorId = c.get('actorId')
+		const isMember = await isWorkspaceMember(db, actorId, workspaceId)
+		if (!isMember) {
+			return c.json(createApiError('FORBIDDEN', 'Not a workspace member'), 403)
+		}
+	}
+	return next()
+})
+
 function findImport(db: Database, id: string, workspaceId: string) {
 	return db
 		.select()
@@ -81,12 +95,6 @@ app.openapi(createImportRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-
-	// Validate workspace membership
-	const isMember = await isWorkspaceMember(db, actorId, workspaceId)
-	if (!isMember) {
-		return c.json(createApiError('FORBIDDEN', 'Not a workspace member'), 403)
-	}
 
 	// Fetch workspace for settings
 	const [workspace] = await db
