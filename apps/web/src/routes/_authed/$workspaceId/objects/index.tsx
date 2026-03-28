@@ -40,7 +40,7 @@ function ObjectsPage() {
 
 	const tabs = useMemo(() => {
 		const moduleTabs = getEnabledObjectTypeTabs(enabledModules)
-		const customTabs = customExtensions.flatMap((ext) => ext.tabs)
+		const customTabs = customExtensions.filter((ext) => ext.enabled).flatMap((ext) => ext.tabs)
 		return [
 			{ label: 'All', value: undefined as string | undefined },
 			...moduleTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),

@@ -52,15 +52,23 @@ export function createTestContext() {
 
 	const db = new Proxy({} as Database, {
 		get: (_target, prop) => {
-			if (prop === 'select' || prop === 'insert' || prop === 'update' || prop === 'delete') {
+			if (
+				prop === 'select' ||
+				prop === 'selectDistinct' ||
+				prop === 'insert' ||
+				prop === 'update' ||
+				prop === 'delete'
+			) {
+				// Map selectDistinct to the same bucket as select
+				const key = prop === 'selectDistinct' ? 'select' : (prop as string)
 				return () => {
 					// Use queue if available, fall back to static mockResults
-					const queueKey = `${String(prop)}Queue`
+					const queueKey = `${key}Queue`
 					const queue = queues[queueKey]
 					if (queue && queue.length > 0) {
 						return createChain(queue.shift())
 					}
-					return createChain(mockResults[prop as string])
+					return createChain(mockResults[key])
 				}
 			}
 			if (prop === 'transaction') {

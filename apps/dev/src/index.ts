@@ -238,7 +238,7 @@ app.doc31('/api/openapi.json', {
 		version: '0.1.0',
 		description: 'Unified API for insights, bets, tasks, actors, and automation',
 	},
-	servers: [{ url: process.env.BETTER_AUTH_URL || 'http://localhost:3000' }],
+	servers: [{ url: `http://localhost:${Number(process.env.PORT) || 3000}` }],
 })
 
 // Start session manager (container-based agent execution)
