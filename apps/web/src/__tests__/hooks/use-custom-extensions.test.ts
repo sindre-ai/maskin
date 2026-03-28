@@ -67,6 +67,7 @@ describe('useCustomExtensions', () => {
 					{ label: 'Leads', value: 'lead' },
 					{ label: 'Deals', value: 'deal' },
 				],
+				enabled: true,
 			},
 		])
 	})
@@ -86,6 +87,48 @@ describe('useCustomExtensions', () => {
 		})
 
 		expect(result.current[0].tabs).toEqual([{ label: 'todo_item', value: 'todo_item' }])
+	})
+
+	it('defaults enabled to true when field is missing', () => {
+		const settings = {
+			custom_extensions: {
+				'ext-a': { name: 'A', types: ['type_a'] },
+			},
+		}
+
+		const { result } = renderHook(() => useCustomExtensions(), {
+			wrapper: createWrapper(settings),
+		})
+
+		expect(result.current[0].enabled).toBe(true)
+	})
+
+	it('returns enabled as false when explicitly set', () => {
+		const settings = {
+			custom_extensions: {
+				'ext-a': { name: 'A', types: ['type_a'], enabled: false },
+			},
+		}
+
+		const { result } = renderHook(() => useCustomExtensions(), {
+			wrapper: createWrapper(settings),
+		})
+
+		expect(result.current[0].enabled).toBe(false)
+	})
+
+	it('returns enabled as true when explicitly set', () => {
+		const settings = {
+			custom_extensions: {
+				'ext-a': { name: 'A', types: ['type_a'], enabled: true },
+			},
+		}
+
+		const { result } = renderHook(() => useCustomExtensions(), {
+			wrapper: createWrapper(settings),
+		})
+
+		expect(result.current[0].enabled).toBe(true)
 	})
 
 	it('returns multiple extensions', () => {
