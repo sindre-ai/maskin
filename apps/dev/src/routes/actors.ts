@@ -3,7 +3,7 @@ import type { Database } from '@ai-native/db'
 import { actors, workspaceMembers, workspaces } from '@ai-native/db/schema'
 import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -191,17 +191,31 @@ app.openapi(listActorsRoute, async (c) => {
 		return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
 	}
 
-	// List all actors (admin)
-	const allActors = await db
-		.select({
+	// List actors across all workspaces the authenticated actor belongs to
+	const actorId = c.get('actorId')
+
+	const myWorkspaces = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(eq(workspaceMembers.actorId, actorId))
+
+	const workspaceIds = myWorkspaces.map((w) => w.workspaceId)
+	if (workspaceIds.length === 0) {
+		return c.json([] as z.infer<typeof actorListItemSchema>[])
+	}
+
+	const members = await db
+		.selectDistinct({
 			id: actors.id,
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
 		})
-		.from(actors)
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
 
-	return c.json(serializeArray(allActors) as z.infer<typeof actorListItemSchema>[])
+	return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
 })
 
 // GET /:id - Get actor by ID
