@@ -7,7 +7,8 @@ vi.mock('@/lib/auth', () => ({
 import { ApiError, api } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 
-let fetchSpy: ReturnType<typeof vi.spyOn>
+// biome-ignore lint/suspicious/noExplicitAny: test spy type
+let fetchSpy: any
 
 beforeEach(() => {
 	vi.clearAllMocks()
