@@ -4,6 +4,7 @@ import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
+import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { config as recallConfig, verifyRecallWebhook } from './providers/recall/config'
 import { recallEventNormalizer } from './providers/recall/webhooks'
 
@@ -21,6 +22,10 @@ providers.set('recall', {
 	config: recallConfig,
 	customWebhookVerifier: verifyRecallWebhook,
 	customNormalizer: recallEventNormalizer,
+})
+
+providers.set('google-calendar', {
+	config: googleCalendarConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────
