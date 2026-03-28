@@ -1,8 +1,9 @@
-import { describe, expect, it, afterEach } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { getEnvOrThrow } from '../../../lib/integrations/env'
 
 describe('getEnvOrThrow', () => {
 	afterEach(() => {
+		// biome-ignore lint/performance/noDelete: process.env coerces undefined to string
 		delete process.env.TEST_ENV_VAR
 	})
 

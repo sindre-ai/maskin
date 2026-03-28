@@ -1,9 +1,9 @@
-import { renderHook } from '@testing-library/react'
-import React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CustomExtensionInfo } from '@/hooks/use-custom-extensions'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { WorkspaceContext, type WorkspaceContextValue } from '@/lib/workspace-context'
+import { renderHook } from '@testing-library/react'
+import React from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 function createWrapper(settings: Record<string, unknown>) {
 	const ctx: WorkspaceContextValue = {
