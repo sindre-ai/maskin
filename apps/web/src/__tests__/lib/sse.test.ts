@@ -164,7 +164,7 @@ describe('connectSSE', () => {
 			expect(onEvent).not.toHaveBeenCalled()
 		})
 
-		it('silently ignores JSON parse errors', () => {
+		it('ignores JSON parse errors without calling onEvent', () => {
 			const onEvent = vi.fn()
 			connectSSE(workspaceId, { onEvent })
 
@@ -172,6 +172,21 @@ describe('connectSSE', () => {
 			onmessage({ data: 'not-json', id: 'evt-1' })
 
 			expect(onEvent).not.toHaveBeenCalled()
+		})
+
+		it('does not catch errors thrown by onEvent', () => {
+			const onEvent = vi.fn(() => {
+				throw new Error('handler bug')
+			})
+			connectSSE(workspaceId, { onEvent })
+
+			const onmessage = getOnmessage()
+			expect(() => {
+				onmessage({
+					data: JSON.stringify({ entity_type: 'object' }),
+					id: 'evt-1',
+				})
+			}).toThrow('handler bug')
 		})
 	})
 

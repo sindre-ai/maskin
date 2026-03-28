@@ -68,6 +68,13 @@ describe('useEnabledModules', () => {
 		expect(result.current).toEqual(['work'])
 	})
 
+	it('returns empty array when enabled_modules is an empty array', () => {
+		const { result } = renderHook(() => useEnabledModules(), {
+			wrapper: createWorkspaceWrapper({ enabled_modules: [] }),
+		})
+		expect(result.current).toEqual([])
+	})
+
 	it('returns stable reference when values have not changed', () => {
 		currentSettings = { enabled_modules: ['work', 'pulse'] }
 		const { result, rerender } = renderHook(() => useEnabledModules(), {
@@ -79,5 +86,18 @@ describe('useEnabledModules', () => {
 		currentSettings = { enabled_modules: ['work', 'pulse'] }
 		rerender()
 		expect(result.current).toBe(first)
+	})
+
+	it('returns new reference when values change', () => {
+		currentSettings = { enabled_modules: ['work'] }
+		const { result, rerender } = renderHook(() => useEnabledModules(), {
+			wrapper: MutableSettingsWrapper,
+		})
+
+		const first = result.current
+		currentSettings = { enabled_modules: ['work', 'pulse'] }
+		rerender()
+		expect(result.current).not.toBe(first)
+		expect(result.current).toEqual(['work', 'pulse'])
 	})
 })

@@ -2,11 +2,11 @@ import { renderHook } from '@testing-library/react'
 import { act } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockAbort = vi.fn()
-const mockConnectSSE = vi.fn((_workspaceId: string, _callbacks: unknown) => ({
-	abort: mockAbort,
-	signal: {},
-}))
+let mockController: AbortController
+const mockConnectSSE = vi.fn((_workspaceId: string, _callbacks: unknown) => {
+	mockController = new AbortController()
+	return mockController
+})
 
 vi.mock('@/lib/sse', () => ({
 	connectSSE: (workspaceId: string, callbacks: unknown) => mockConnectSSE(workspaceId, callbacks),
@@ -61,23 +61,33 @@ describe('useSSE', () => {
 	it('aborts controller on unmount', () => {
 		const { unmount } = renderHook(() => useSSE('ws-1'), { wrapper: TestWrapper })
 		unmount()
-		expect(mockAbort).toHaveBeenCalled()
+		expect(mockController.signal.aborted).toBe(true)
 	})
 
 	it('reconnects when workspaceId changes', () => {
-		const { rerender } = renderHook(({ wsId }) => useSSE(wsId), {
+		const { result, rerender } = renderHook(({ wsId }) => useSSE(wsId), {
 			wrapper: TestWrapper,
 			initialProps: { wsId: 'ws-1' },
 		})
 
 		expect(mockConnectSSE).toHaveBeenCalledTimes(1)
 
+		// Simulate connected status on first connection
+		const callbacks = mockConnectSSE.mock.calls[0][1] as {
+			onStatusChange: (status: string) => void
+		}
+		act(() => callbacks.onStatusChange('connected'))
+		expect(result.current).toBe('connected')
+
+		const firstController = mockController
 		rerender({ wsId: 'ws-2' })
 
 		// Should have aborted the first connection and created a new one
-		expect(mockAbort).toHaveBeenCalled()
+		expect(firstController.signal.aborted).toBe(true)
 		expect(mockConnectSSE).toHaveBeenCalledTimes(2)
 		expect(mockConnectSSE).toHaveBeenLastCalledWith('ws-2', expect.any(Object))
+		// Status should reset to connecting
+		expect(result.current).toBe('connecting')
 	})
 
 	it('calls invalidateFromSSE when an event is received', () => {

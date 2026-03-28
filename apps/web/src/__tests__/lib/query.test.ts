@@ -69,6 +69,14 @@ describe('queryClient', () => {
 			;(queryClient.getMutationCache() as any).config.onError(error)
 		}
 
+		it('has accessible onError handler on mutation cache config', () => {
+			// Guard: this test accesses TanStack Query internals — if it fails after a library
+			// upgrade, the triggerMutationError helper needs updating
+			// biome-ignore lint/suspicious/noExplicitAny: accessing internal config property
+			const config = (queryClient.getMutationCache() as any).config
+			expect(config?.onError).toBeTypeOf('function')
+		})
+
 		it('shows toast for generic errors', () => {
 			triggerMutationError(new Error('Something unexpected'))
 			expect(toast.error).toHaveBeenCalledWith('Something went wrong')
