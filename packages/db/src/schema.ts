@@ -246,6 +246,37 @@ export const agentFiles = pgTable(
 	],
 )
 
+// ── Imports ───────────────────────────────────────────────────────────
+
+export const imports = pgTable(
+	'imports',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		status: text('status').notNull(),
+		fileName: text('file_name').notNull(),
+		fileType: text('file_type').notNull(),
+		fileStorageKey: text('file_storage_key').notNull(),
+		totalRows: integer('total_rows'),
+		processedRows: integer('processed_rows').notNull().default(0),
+		successCount: integer('success_count').notNull().default(0),
+		errorCount: integer('error_count').notNull().default(0),
+		mapping: jsonb('mapping'),
+		preview: jsonb('preview'),
+		errors: jsonb('errors'),
+		source: text('source').notNull().default('file'),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+		completedAt: timestamp('completed_at', { withTimezone: true }),
+	},
+	(t) => [index('imports_ws_status_idx').on(t.workspaceId, t.status)],
+)
+
 // ── Notifications ─────────────────────────────────────────────────────────
 
 export const notifications = pgTable(

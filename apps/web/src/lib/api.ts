@@ -239,6 +239,43 @@ export const api = {
 			request<EventResponse>('/events', { method: 'POST', body: data, workspaceId }),
 	},
 
+	imports: {
+		create: async (workspaceId: string, file: File): Promise<ImportResponse> => {
+			const apiKey = getApiKey()
+			const formData = new FormData()
+			formData.append('file', file)
+			const res = await fetch(`${API_BASE}/imports`, {
+				method: 'POST',
+				headers: {
+					...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+					'X-Workspace-Id': workspaceId,
+				},
+				body: formData,
+			})
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: res.statusText }))
+				const message =
+					typeof data.error === 'object' ? data.error.message : data.error || res.statusText
+				throw new ApiError(res.status, message)
+			}
+			return res.json()
+		},
+		get: (id: string, workspaceId: string) =>
+			request<ImportResponse>(`/imports/${id}`, { workspaceId }),
+		list: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<ImportListItem[]>(`/imports${qs}`, { workspaceId })
+		},
+		updateMapping: (id: string, mapping: ImportMappingInput, workspaceId: string) =>
+			request<ImportResponse>(`/imports/${id}/mapping`, {
+				method: 'PATCH',
+				body: { mapping },
+				workspaceId,
+			}),
+		confirm: (id: string, workspaceId: string) =>
+			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
+	},
+
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
@@ -548,4 +585,68 @@ export interface CreateCommentInput {
 	content: string
 	mentions?: string[]
 	parent_event_id?: number
+}
+
+// Imports
+export interface ImportResponse {
+	id: string
+	workspaceId: string
+	status: string
+	fileName: string
+	fileType: string
+	totalRows: number | null
+	processedRows: number
+	successCount: number
+	errorCount: number
+	mapping: ImportMappingInput | null
+	preview: ImportPreview | null
+	errors: ImportError[] | null
+	source: string
+	createdBy: string
+	createdAt: string | null
+	updatedAt: string | null
+	completedAt: string | null
+}
+
+export interface ImportListItem {
+	id: string
+	workspaceId: string
+	status: string
+	fileName: string
+	fileType: string
+	totalRows: number | null
+	processedRows: number
+	successCount: number
+	errorCount: number
+	source: string
+	createdBy: string
+	createdAt: string | null
+	updatedAt: string | null
+	completedAt: string | null
+}
+
+export interface ImportPreview {
+	columns: string[]
+	sampleRows: Record<string, string>[]
+	totalRows: number
+}
+
+export interface ImportError {
+	row: number
+	column?: string
+	message: string
+	value?: string
+}
+
+export interface ColumnMappingInput {
+	sourceColumn: string
+	targetField: string
+	transform: 'none' | 'date' | 'number' | 'boolean'
+	skip: boolean
+}
+
+export interface ImportMappingInput {
+	objectType: string | { column: string; typeMap: Record<string, string> }
+	columns: ColumnMappingInput[]
+	defaultStatus?: string
 }
