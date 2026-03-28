@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { type CreateActorInput, type UpdateActorInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -44,6 +45,20 @@ export function useUpdateActor(workspaceId?: string) {
 		onSuccess: (_result, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+		},
+	})
+}
+
+export function useDeleteActor(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.actors.delete(id, workspaceId),
+		onSuccess: () => {
+			toast.success('Agent deleted')
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+		},
+		onError: () => {
+			toast.error('Failed to delete agent')
 		},
 	})
 }
