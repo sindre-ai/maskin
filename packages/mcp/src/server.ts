@@ -1494,7 +1494,10 @@ export function createMcpServer(config: McpConfig) {
 				const { customExtensions } = extractSettings(settings)
 				if (args.id in customExtensions) {
 					const updatedCustomExts = { ...customExtensions }
-					updatedCustomExts[args.id] = { ...updatedCustomExts[args.id]!, enabled: args.enabled }
+					const existing = updatedCustomExts[args.id]
+					if (existing) {
+						updatedCustomExts[args.id] = { ...existing, enabled: args.enabled }
+					}
 
 					const result = await apiCall(
 						config,
