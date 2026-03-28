@@ -12,7 +12,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
@@ -25,7 +25,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
@@ -38,7 +38,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
@@ -53,7 +53,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
@@ -68,7 +68,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
@@ -84,7 +84,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
@@ -97,7 +97,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
@@ -112,7 +112,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={onDismiss}
 			/>,
 		)
@@ -121,18 +121,17 @@ describe('PulseCard', () => {
 		expect(onDismiss).toHaveBeenCalledWith('n-1')
 	})
 
-	it('shows Create bet and Show data for recommendation type', () => {
+	it('shows View objects for recommendation type', () => {
 		const notification = buildNotificationResponse({ type: 'recommendation' })
 		render(
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
-		expect(screen.getByRole('button', { name: 'Create bet' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Show data' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'View objects' })).toBeInTheDocument()
 	})
 
 	it('shows Review tasks for alert type', () => {
@@ -141,7 +140,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)
@@ -154,7 +153,7 @@ describe('PulseCard', () => {
 			<PulseCard
 				notification={notification}
 				actorsById={actorsById}
-				onRespond={vi.fn()}
+				onAction={vi.fn()}
 				onDismiss={vi.fn()}
 			/>,
 		)

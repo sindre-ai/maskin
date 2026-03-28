@@ -6,9 +6,10 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-vi.mock('@tanstack/react-router', () => ({
-	Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
-}))
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
 
 vi.mock('@/hooks/use-duration', () => ({
 	useDuration: () => '5m 30s',

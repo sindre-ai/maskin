@@ -44,9 +44,10 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: vi.fn() }),
 }))
 
-vi.mock('@tanstack/react-router', () => ({
-	Link: ({ children }: { children: React.ReactNode }) => <a href="/mock">{children}</a>,
-}))
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
 
 describe('ObjectCreateForm', () => {
 	it('shows empty state when no available types', () => {

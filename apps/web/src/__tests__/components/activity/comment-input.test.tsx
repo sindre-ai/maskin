@@ -4,13 +4,14 @@ import userEvent from '@testing-library/user-event'
 
 const mockMutate = vi.fn()
 const mockGetStoredActor = vi.fn()
+let mockIsPending = false
 
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => mockGetStoredActor(),
 }))
 
 vi.mock('@/hooks/use-events', () => ({
-	useCreateComment: () => ({ mutate: mockMutate, isPending: false }),
+	useCreateComment: () => ({ mutate: mockMutate, isPending: mockIsPending }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -20,6 +21,7 @@ vi.mock('@/hooks/use-actors', () => ({
 describe('CommentInput', () => {
 	beforeEach(() => {
 		mockMutate.mockClear()
+		mockIsPending = false
 		mockGetStoredActor.mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human' })
 	})
 
@@ -46,6 +48,15 @@ describe('CommentInput', () => {
 
 		await user.type(screen.getByPlaceholderText('Comment or instruct an agent...'), 'Hello')
 		expect(screen.getByRole('button')).not.toBeDisabled()
+	})
+
+	it('disables send when isPending', async () => {
+		const user = userEvent.setup()
+		mockIsPending = true
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.type(screen.getByPlaceholderText('Comment or instruct an agent...'), 'Hello')
+		expect(screen.getByRole('button')).toBeDisabled()
 	})
 
 	it('submits on Enter key', async () => {

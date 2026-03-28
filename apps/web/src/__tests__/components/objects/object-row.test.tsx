@@ -2,16 +2,10 @@ import { ObjectRow } from '@/components/objects/object-row'
 import { render, screen } from '@testing-library/react'
 import { buildObjectResponse } from '../../factories'
 
-vi.mock('@tanstack/react-router', () => ({
-	Link: ({
-		children,
-		...rest
-	}: { children: React.ReactNode; to: string; params: Record<string, string> }) => (
-		<a href={rest.to} {...rest}>
-			{children}
-		</a>
-	),
-}))
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
 
 vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => <span>working</span>,

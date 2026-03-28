@@ -15,10 +15,10 @@ vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'actor-1', name: 'Me', type: 'human' }),
 }))
 
-vi.mock('@tanstack/react-router', () => ({
-	Link: ({ children }: { children: React.ReactNode }) => <a href="/mock">{children}</a>,
-	useNavigate: () => vi.fn(),
-}))
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
 
 describe('ObjectActivity', () => {
 	it('shows "No activity yet" when events is empty', () => {
