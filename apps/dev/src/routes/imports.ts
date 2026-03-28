@@ -98,6 +98,12 @@ app.openapi(createImportRoute, async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'No file provided'), 400)
 	}
 
+	// File size limit (10MB)
+	const MAX_FILE_SIZE = 10 * 1024 * 1024
+	if (file.size > MAX_FILE_SIZE) {
+		return c.json(createApiError('BAD_REQUEST', 'File too large. Maximum size is 10MB.'), 400)
+	}
+
 	// Determine file type
 	const fileName = file.name
 	const ext = fileName.split('.').pop()?.toLowerCase()
@@ -259,6 +265,88 @@ app.openapi(updateMappingRoute, async (c) => {
 	return c.json(serialize(updated) as z.infer<typeof importResponseSchema>, 200)
 })
 
+// ── Background import execution ─────────────────────────────────────────
+
+function runImportInBackground(
+	importId: string,
+	fileStorageKey: string,
+	fileType: string,
+	mapping: z.infer<typeof importMappingSchema>,
+	workspaceId: string,
+	actorId: string,
+	db: Database,
+	storage: StorageProvider,
+) {
+	const run = async () => {
+		const fileBuffer = await storage.get(fileStorageKey)
+		const parsed = parseFile(fileBuffer, fileType)
+
+		const [workspace] = await db
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+
+		const settings = (workspace?.settings ?? {}) as WorkspaceSettings
+		const result = await executeImport(
+			importId,
+			parsed.rows,
+			mapping,
+			workspaceId,
+			actorId,
+			settings,
+			db,
+		)
+
+		const finalStatus = result.successCount > 0 ? 'completed' : 'failed'
+		await db
+			.update(imports)
+			.set({
+				status: finalStatus,
+				successCount: result.successCount,
+				errorCount: result.errorCount,
+				errors: result.errors.length > 0 ? result.errors : null,
+				processedRows: parsed.rows.length,
+				completedAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.where(eq(imports.id, importId))
+
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: finalStatus === 'completed' ? 'import_completed' : 'import_failed',
+			entityType: 'import',
+			entityId: importId,
+			data: { successCount: result.successCount, errorCount: result.errorCount },
+		})
+
+		logger.info('Import finished', {
+			importId,
+			status: finalStatus,
+			successCount: result.successCount,
+			errorCount: result.errorCount,
+		})
+	}
+
+	run().catch(async (err) => {
+		logger.error('Import background execution failed', { importId, error: err })
+		await db
+			.update(imports)
+			.set({
+				status: 'failed',
+				errors: [
+					{ row: 0, message: `Import failed: ${err instanceof Error ? err.message : String(err)}` },
+				],
+				updatedAt: new Date(),
+			})
+			.where(eq(imports.id, importId))
+			.catch((updateErr) =>
+				logger.error('Failed to update import status after error', { importId, error: updateErr }),
+			)
+	})
+}
+
 // ── POST /:id/confirm — Execute the import ─────────────────────────────
 
 const confirmImportRoute = createRoute({
@@ -271,9 +359,9 @@ const confirmImportRoute = createRoute({
 		params: z.object({ id: z.string().uuid() }),
 	},
 	responses: {
-		200: {
+		202: {
 			content: { 'application/json': { schema: importResponseSchema } },
-			description: 'Import completed',
+			description: 'Import accepted and started in background',
 		},
 		400: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -297,7 +385,7 @@ app.openapi(confirmImportRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id } = c.req.valid('param')
 
-	// Fetch import record
+	// Fetch import record (needed for 404 and mapping check)
 	const [importRecord] = await db
 		.select()
 		.from(imports)
@@ -308,22 +396,23 @@ app.openapi(confirmImportRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Import not found'), 404)
 	}
 
-	if (importRecord.status !== 'mapping') {
+	if (!importRecord.mapping) {
+		return c.json(createApiError('BAD_REQUEST', 'No mapping configured'), 400)
+	}
+
+	// Atomically claim the import — only succeeds if status is still 'mapping'
+	const [updated] = await db
+		.update(imports)
+		.set({ status: 'importing', updatedAt: new Date() })
+		.where(and(eq(imports.id, id), eq(imports.status, 'mapping')))
+		.returning()
+
+	if (!updated) {
 		return c.json(
 			createApiError('CONFLICT', `Import is in '${importRecord.status}' state, not 'mapping'`),
 			409,
 		)
 	}
-
-	if (!importRecord.mapping) {
-		return c.json(createApiError('BAD_REQUEST', 'No mapping configured'), 400)
-	}
-
-	// Atomically set status to importing
-	await db
-		.update(imports)
-		.set({ status: 'importing', updatedAt: new Date() })
-		.where(eq(imports.id, id))
 
 	// Log event
 	await db.insert(events).values({
@@ -335,61 +424,19 @@ app.openapi(confirmImportRoute, async (c) => {
 		data: { totalRows: importRecord.totalRows },
 	})
 
-	// Re-parse file from S3
-	const fileBuffer = await storage.get(importRecord.fileStorageKey)
-	const parsed = parseFile(fileBuffer, importRecord.fileType)
-
-	// Fetch workspace settings for validation
-	const [workspace] = await db
-		.select()
-		.from(workspaces)
-		.where(eq(workspaces.id, workspaceId))
-		.limit(1)
-
-	const settings = (workspace?.settings ?? {}) as WorkspaceSettings
-	const mapping = importRecord.mapping as z.infer<typeof importMappingSchema>
-
-	// Execute the import
-	const result = await executeImport(id, parsed.rows, mapping, workspaceId, actorId, settings, db)
-
-	// Final status update
-	const finalStatus = result.successCount > 0 ? 'completed' : 'failed'
-	const [finalRecord] = await db
-		.update(imports)
-		.set({
-			status: finalStatus,
-			successCount: result.successCount,
-			errorCount: result.errorCount,
-			errors: result.errors.length > 0 ? result.errors : undefined,
-			processedRows: parsed.rows.length,
-			completedAt: new Date(),
-			updatedAt: new Date(),
-		})
-		.where(eq(imports.id, id))
-		.returning()
-
-	// Log completion event
-	await db.insert(events).values({
+	// Run execution in background — don't block the response
+	runImportInBackground(
+		id,
+		importRecord.fileStorageKey,
+		importRecord.fileType,
+		importRecord.mapping as z.infer<typeof importMappingSchema>,
 		workspaceId,
 		actorId,
-		action: finalStatus === 'completed' ? 'import_completed' : 'import_failed',
-		entityType: 'import',
-		entityId: id,
-		data: { successCount: result.successCount, errorCount: result.errorCount },
-	})
+		db,
+		storage,
+	)
 
-	logger.info('Import finished', {
-		importId: id,
-		status: finalStatus,
-		successCount: result.successCount,
-		errorCount: result.errorCount,
-	})
-
-	if (!finalRecord) {
-		return c.json(createApiError('NOT_FOUND', 'Import not found'), 404)
-	}
-
-	return c.json(serialize(finalRecord) as z.infer<typeof importResponseSchema>, 200)
+	return c.json(serialize(updated) as z.infer<typeof importResponseSchema>, 202)
 })
 
 // ── GET /:id — Get import by ID ────────────────────────────────────────
