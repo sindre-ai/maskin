@@ -45,17 +45,33 @@ describe('Actors Routes', () => {
 	})
 
 	describe('GET /api/actors', () => {
-		it('returns 200 with list of actors', async () => {
+		it('returns 200 with list of actors scoped to shared workspaces', async () => {
 			const a1 = { id: buildActor().id, type: 'human', name: 'Alice', email: 'a@test.com' }
 			const a2 = { id: buildActor().id, type: 'agent', name: 'Bot', email: null }
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.select = [a1, a2]
+			// First select: get workspaces the actor belongs to
+			// Second select: get actors in those workspaces
+			mockResults.selectQueue = [
+				[{ workspaceId: '00000000-0000-0000-0000-000000000001' }],
+				[a1, a2],
+			]
 
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+		})
+
+		it('returns empty list when actor has no workspaces', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = []
+
+			const res = await app.request(jsonGet('/api/actors'))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(0)
 		})
 	})
 
