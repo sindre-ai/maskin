@@ -7,7 +7,8 @@ vi.mock('@/lib/auth', () => ({
 import { ApiError, api } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 
-let fetchSpy: ReturnType<typeof vi.spyOn>
+// biome-ignore lint/suspicious/noExplicitAny: test spy type
+let fetchSpy: any
 
 beforeEach(() => {
 	vi.clearAllMocks()
@@ -68,7 +69,7 @@ describe('request', () => {
 
 		await api.objects.list('ws-1')
 
-		const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>
+		const headers = (fetchSpy.mock.calls[0][1] as RequestInit)?.headers as Record<string, string>
 		expect(headers.Authorization).toBeUndefined()
 	})
 

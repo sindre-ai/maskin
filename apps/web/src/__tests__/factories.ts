@@ -5,9 +5,7 @@ function nextId(prefix: string) {
 	return `${prefix}-${++counter}`
 }
 
-export function buildObjectResponse(
-	overrides: Partial<ObjectResponse> = {},
-): ObjectResponse {
+export function buildObjectResponse(overrides: Partial<ObjectResponse> = {}): ObjectResponse {
 	const id = overrides.id ?? nextId('obj')
 	return {
 		id,
@@ -26,9 +24,7 @@ export function buildObjectResponse(
 	}
 }
 
-export function buildActorWithKey(
-	overrides: Partial<ActorWithKey> = {},
-): ActorWithKey {
+export function buildActorWithKey(overrides: Partial<ActorWithKey> = {}): ActorWithKey {
 	const id = overrides.id ?? nextId('actor')
 	return {
 		id,
