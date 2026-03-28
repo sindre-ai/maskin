@@ -68,6 +68,9 @@ export const parseTokenResponse = (raw: unknown): Partial<StoredCredentials> => 
 	if (data.ok === false) {
 		throw new Error(`Slack token exchange failed: ${(data.error as string) ?? 'unknown error'}`)
 	}
+	if (typeof data.access_token !== 'string') {
+		throw new Error('Slack token response missing access_token')
+	}
 	const team = data.team as { id: string; name: string } | undefined
 	return {
 		accessToken: data.access_token as string,
