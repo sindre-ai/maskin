@@ -24,15 +24,18 @@ export function useCustomExtensions(): CustomExtensionInfo[] {
 	>
 	const displayNames = (settings?.display_names ?? {}) as Record<string, string>
 
-	const result = Object.entries(customExtensions).map(([id, ext]) => ({
-		id,
-		name: ext.name,
-		types: ext.types,
-		tabs: ext.types.map((type) => ({
-			label: displayNames[type] ?? type,
-			value: type,
-		})),
-	}))
+	const result = Object.entries(customExtensions).map(([id, ext]) => {
+		const types = Array.isArray(ext.types) ? ext.types : []
+		return {
+			id,
+			name: ext.name,
+			types,
+			tabs: types.map((type) => ({
+				label: displayNames[type] ?? type,
+				value: type,
+			})),
+		}
+	})
 
 	const ref = useRef(result)
 	const serialized = JSON.stringify(result)
