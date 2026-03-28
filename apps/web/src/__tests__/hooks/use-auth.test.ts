@@ -67,6 +67,20 @@ describe('useAuth', () => {
 			})
 			expect(mockNavigate).toHaveBeenCalledWith({ to: '/' })
 		})
+
+		it('does not store credentials or navigate on API failure', async () => {
+			vi.mocked(api.auth.login).mockRejectedValue(new Error('Invalid credentials'))
+
+			const { result } = renderHook(() => useAuth(), { wrapper: TestWrapper })
+
+			await expect(
+				act(() => result.current.login({ email: 'test@example.com', password: 'wrong' })),
+			).rejects.toThrow('Invalid credentials')
+
+			expect(setApiKey).not.toHaveBeenCalled()
+			expect(setStoredActor).not.toHaveBeenCalled()
+			expect(mockNavigate).not.toHaveBeenCalled()
+		})
 	})
 
 	describe('signup', () => {
@@ -88,6 +102,20 @@ describe('useAuth', () => {
 				email: 'test@example.com',
 			})
 			expect(mockNavigate).toHaveBeenCalledWith({ to: '/' })
+		})
+
+		it('does not store credentials or navigate on API failure', async () => {
+			vi.mocked(api.actors.create).mockRejectedValue(new Error('Signup failed'))
+
+			const { result } = renderHook(() => useAuth(), { wrapper: TestWrapper })
+
+			await expect(
+				act(() => result.current.signup({ type: 'human', name: 'Test User' })),
+			).rejects.toThrow('Signup failed')
+
+			expect(setApiKey).not.toHaveBeenCalled()
+			expect(setStoredActor).not.toHaveBeenCalled()
+			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 	})
 

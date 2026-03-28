@@ -5,10 +5,6 @@ function nextId(prefix: string) {
 	return `${prefix}-${++counter}`
 }
 
-export function resetFactoryCounter() {
-	counter = 0
-}
-
 export function buildObjectResponse(
 	overrides: Partial<ObjectResponse> = {},
 ): ObjectResponse {
