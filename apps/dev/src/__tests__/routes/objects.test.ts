@@ -168,6 +168,39 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('Invalid status')
 		})
+
+		it('merges metadata instead of replacing it', async () => {
+			const existing = buildObject({
+				metadata: { linkedin_url: 'https://linkedin.com/in/test', company: 'Acme' },
+			})
+			const merged = {
+				...existing,
+				metadata: {
+					linkedin_url: 'https://linkedin.com/in/test',
+					company: 'Acme',
+					priority: 'hot',
+				},
+			}
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			mockResults.update = [merged]
+			mockResults.insert = [{}] // event insert
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					metadata: { priority: 'hot' },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			// Verify the update was called with merged metadata (existing + new)
+			const body = await res.json()
+			expect(body.metadata).toEqual({
+				linkedin_url: 'https://linkedin.com/in/test',
+				company: 'Acme',
+				priority: 'hot',
+			})
+		})
 	})
 
 	describe('GET /api/objects/search', () => {

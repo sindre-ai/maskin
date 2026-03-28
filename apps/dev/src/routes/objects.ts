@@ -419,14 +419,20 @@ app.openapi(updateObjectRoute, async (c) => {
 		}
 	}
 
-	const [updated] = await db
-		.update(objects)
-		.set({
-			...body,
-			updatedAt: new Date(),
-		})
-		.where(eq(objects.id, id))
-		.returning()
+	const updateData = {
+		...body,
+		updatedAt: new Date(),
+	}
+
+	// Shallow-merge metadata: new fields are added/overwritten, existing fields are preserved
+	if (body.metadata && existing.metadata) {
+		updateData.metadata = {
+			...(existing.metadata as typeof body.metadata),
+			...body.metadata,
+		}
+	}
+
+	const [updated] = await db.update(objects).set(updateData).where(eq(objects.id, id)).returning()
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
