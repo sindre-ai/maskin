@@ -1,5 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { useToolResult } from '../shared/mcp-app-provider'
+import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { TriggerResponse } from '../shared/types'
 
@@ -15,22 +16,30 @@ function TriggersApp() {
 	)?.text
 	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 
-	let data: unknown
-	try {
-		data = JSON.parse(text)
-	} catch {
-		return <div className="p-4 text-sm text-foreground">{text}</div>
-	}
+	const data = safeParseJson(text)
+	if (!data) return <div className="p-4 text-sm text-foreground">{text}</div>
 
-	const unwrapped = (data as { data?: unknown }).data ?? data
+	const unwrapped = unwrapEnvelope(data)
 
 	switch (toolResult.toolName) {
 		case 'list_triggers':
-			return <TriggerListView triggers={unwrapped as TriggerResponse[]} />
+			return isArray(unwrapped) ? (
+				<TriggerListView triggers={unwrapped as TriggerResponse[]} />
+			) : (
+				<div className="p-4 text-sm text-foreground">{text}</div>
+			)
 		case 'create_trigger':
-			return <TriggerDetailView trigger={data as TriggerResponse} />
+			return isObject<TriggerResponse>(data, 'id', 'name') ? (
+				<TriggerDetailView trigger={data} />
+			) : (
+				<div className="p-4 text-sm text-foreground">{text}</div>
+			)
 		default:
-			return <TriggerDetailView trigger={data as TriggerResponse} />
+			return isObject<TriggerResponse>(data, 'id', 'name') ? (
+				<TriggerDetailView trigger={data} />
+			) : (
+				<div className="p-4 text-sm text-foreground">{text}</div>
+			)
 	}
 }
 
