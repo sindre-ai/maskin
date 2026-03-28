@@ -1303,7 +1303,7 @@ export function createMcpServer(config: McpConfig) {
 				return {
 					id: extId,
 					name: ext.name,
-					enabled: true,
+					enabled: ext.enabled !== false,
 					object_types: ext.types
 						.filter((t) => t in statuses)
 						.map((t) => ({
@@ -1445,6 +1445,7 @@ export function createMcpServer(config: McpConfig) {
 			customExtensions[args.id] = {
 				name: args.name ?? args.id,
 				types: args.object_types.map((ot) => ot.type),
+				enabled: true,
 				...(extRelTypes.length > 0 ? { relationship_types: extRelTypes } : {}),
 			}
 
@@ -1489,6 +1490,33 @@ export function createMcpServer(config: McpConfig) {
 					? [...(settings.enabled_modules as string[])]
 					: ['work']
 
+				// Check if it's a custom extension — handle enable/disable in one place
+				const { customExtensions } = extractSettings(settings)
+				if (args.id in customExtensions) {
+					const updatedCustomExts = { ...customExtensions }
+					const existing = updatedCustomExts[args.id]
+					if (existing) {
+						updatedCustomExts[args.id] = { ...existing, enabled: args.enabled }
+					}
+
+					const result = await apiCall(
+						config,
+						'PATCH',
+						`/api/workspaces/${args.workspace_id}`,
+						{
+							settings: {
+								custom_extensions: updatedCustomExts,
+							},
+						},
+						{ workspaceId: args.workspace_id },
+					)
+
+					return {
+						_meta: { toolName: 'update_extension' },
+						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+					}
+				}
+
 				if (args.enabled) {
 					// Enable — check if it's a registered module
 					const allModules = getAllModules()
@@ -1527,27 +1555,12 @@ export function createMcpServer(config: McpConfig) {
 						}
 					}
 
-					// Not a registered module — check if it's a known custom extension
-					const { customExtensions } = extractSettings(settings)
-					if (!(args.id in customExtensions)) {
-						throw new Error(
-							`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
-						)
-					}
-
-					// Custom extensions are always enabled — enabled: true is a no-op
-					return {
-						_meta: { toolName: 'update_extension' },
-						content: [
-							{
-								type: 'text' as const,
-								text: 'Custom extensions are always enabled. Use object_types to update type definitions, or delete_extension to remove it.',
-							},
-						],
-					}
+					// Not a registered module or custom extension
+					throw new Error(
+						`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
+					)
 				}
 
-				// Disable
 				if (!enabledModules.includes(args.id)) {
 					return {
 						_meta: { toolName: 'update_extension' },

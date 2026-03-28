@@ -5,6 +5,7 @@ interface CustomExtensionEntry {
 	name: string
 	types: string[]
 	relationship_types?: string[]
+	enabled?: boolean
 }
 
 export interface CustomExtensionInfo {
@@ -12,6 +13,7 @@ export interface CustomExtensionInfo {
 	name: string
 	types: string[]
 	tabs: { label: string; value: string }[]
+	enabled: boolean
 }
 
 export function useCustomExtensions(): CustomExtensionInfo[] {
@@ -34,14 +36,17 @@ export function useCustomExtensions(): CustomExtensionInfo[] {
 				label: displayNames[type] ?? type,
 				value: type,
 			})),
+			enabled: ext.enabled !== false,
 		}
 	})
 
 	const ref = useRef(result)
+	const prevSerialized = useRef('')
 	const serialized = JSON.stringify(result)
 
-	if (serialized !== JSON.stringify(ref.current)) {
+	if (serialized !== prevSerialized.current) {
 		ref.current = result
+		prevSerialized.current = serialized
 	}
 
 	return ref.current
