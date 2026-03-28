@@ -392,11 +392,12 @@ app.get('/:id/logs/stream', async (c) => {
 		}
 
 		// Replay missed logs if Last-Event-ID is provided
-		if (lastLogId) {
+		const parsedLogId = Number(lastLogId)
+		if (lastLogId && !Number.isNaN(parsedLogId)) {
 			const missed = await db
 				.select()
 				.from(sessionLogs)
-				.where(and(eq(sessionLogs.sessionId, sessionId), gt(sessionLogs.id, Number(lastLogId))))
+				.where(and(eq(sessionLogs.sessionId, sessionId), gt(sessionLogs.id, parsedLogId)))
 				.orderBy(asc(sessionLogs.id))
 				.limit(500)
 
