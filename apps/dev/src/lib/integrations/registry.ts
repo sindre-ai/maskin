@@ -5,6 +5,7 @@ import { githubAuth } from './providers/github/auth'
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
 import { config as recallConfig, verifyRecallWebhook } from './providers/recall/config'
+import { recallEventNormalizer } from './providers/recall/webhooks'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -19,6 +20,7 @@ providers.set('github', {
 providers.set('recall', {
 	config: recallConfig,
 	customWebhookVerifier: verifyRecallWebhook,
+	customNormalizer: recallEventNormalizer,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────
