@@ -19,12 +19,14 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export function resolveNavigationPath(
 	workspaceId: string,
 	nav: { to: string; id?: string },
 	notification: NotificationResponse,
 ): string | null {
-	const id = nav.id
+	const id = nav.id && UUID_RE.test(nav.id) ? nav.id : undefined
 	switch (nav.to) {
 		case 'object': {
 			const objectId = id ?? notification.objectId
@@ -80,16 +82,14 @@ function PulseDashboard() {
 	}, [activeNotifications])
 
 	const handleAction = (id: string, response: unknown, nav?: { to: string; id?: string }) => {
+		const notification = (notifications ?? []).find((n) => n.id === id)
 		respondNotification.mutate(
 			{ id, response },
 			{
 				onSuccess: () => {
-					if (nav) {
-						const notification = filtered.find((n) => n.id === id)
-						if (notification) {
-							const path = resolveNavigationPath(workspaceId, nav, notification)
-							if (path) navigate({ to: path })
-						}
+					if (nav && notification) {
+						const path = resolveNavigationPath(workspaceId, nav, notification)
+						if (path) navigate({ to: path })
 					}
 				},
 			},

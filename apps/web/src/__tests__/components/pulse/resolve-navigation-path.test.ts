@@ -2,6 +2,9 @@ import type { NotificationResponse } from '@/lib/api'
 import { resolveNavigationPath } from '@/routes/_authed/$workspaceId/index'
 import { describe, expect, it } from 'vitest'
 
+const VALID_UUID = '00000000-0000-0000-0000-000000000001'
+const VALID_UUID_2 = '00000000-0000-0000-0000-000000000002'
+
 function buildNotification(overrides: Partial<NotificationResponse> = {}): NotificationResponse {
 	return {
 		id: 'n-1',
@@ -29,19 +32,19 @@ describe('resolveNavigationPath', () => {
 		it('uses nav.id when provided', () => {
 			const result = resolveNavigationPath(
 				workspaceId,
-				{ to: 'object', id: 'obj-explicit' },
+				{ to: 'object', id: VALID_UUID },
 				buildNotification(),
 			)
-			expect(result).toBe('/ws-1/objects/obj-explicit')
+			expect(result).toBe(`/ws-1/objects/${VALID_UUID}`)
 		})
 
 		it('falls back to notification.objectId', () => {
 			const result = resolveNavigationPath(
 				workspaceId,
 				{ to: 'object' },
-				buildNotification({ objectId: 'obj-fallback' }),
+				buildNotification({ objectId: VALID_UUID_2 }),
 			)
-			expect(result).toBe('/ws-1/objects/obj-fallback')
+			expect(result).toBe(`/ws-1/objects/${VALID_UUID_2}`)
 		})
 
 		it('falls back to objects list when no id available', () => {
@@ -64,10 +67,10 @@ describe('resolveNavigationPath', () => {
 		it('returns agent path with id', () => {
 			const result = resolveNavigationPath(
 				workspaceId,
-				{ to: 'agent', id: 'agent-1' },
+				{ to: 'agent', id: VALID_UUID },
 				buildNotification(),
 			)
-			expect(result).toBe('/ws-1/agents/agent-1')
+			expect(result).toBe(`/ws-1/agents/${VALID_UUID}`)
 		})
 
 		it('returns null without id', () => {
@@ -80,10 +83,10 @@ describe('resolveNavigationPath', () => {
 		it('returns trigger path with id', () => {
 			const result = resolveNavigationPath(
 				workspaceId,
-				{ to: 'trigger', id: 'trigger-1' },
+				{ to: 'trigger', id: VALID_UUID },
 				buildNotification(),
 			)
-			expect(result).toBe('/ws-1/triggers/trigger-1')
+			expect(result).toBe(`/ws-1/triggers/${VALID_UUID}`)
 		})
 
 		it('returns null without id', () => {
@@ -95,5 +98,25 @@ describe('resolveNavigationPath', () => {
 	it('returns null for unknown navigation targets', () => {
 		const result = resolveNavigationPath(workspaceId, { to: 'unknown' }, buildNotification())
 		expect(result).toBeNull()
+	})
+
+	describe('UUID validation', () => {
+		it('ignores nav.id with path traversal', () => {
+			const result = resolveNavigationPath(
+				workspaceId,
+				{ to: 'agent', id: '../../admin' },
+				buildNotification(),
+			)
+			expect(result).toBeNull()
+		})
+
+		it('ignores nav.id that is not a valid UUID', () => {
+			const result = resolveNavigationPath(
+				workspaceId,
+				{ to: 'object', id: 'not-a-uuid' },
+				buildNotification(),
+			)
+			expect(result).toBe('/ws-1/objects')
+		})
 	})
 })
