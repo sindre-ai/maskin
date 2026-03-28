@@ -1490,6 +1490,30 @@ export function createMcpServer(config: McpConfig) {
 					? [...(settings.enabled_modules as string[])]
 					: ['work']
 
+				// Check if it's a custom extension — handle enable/disable in one place
+				const { customExtensions } = extractSettings(settings)
+				if (args.id in customExtensions) {
+					const updatedCustomExts = { ...customExtensions }
+					updatedCustomExts[args.id] = { ...updatedCustomExts[args.id]!, enabled: args.enabled }
+
+					const result = await apiCall(
+						config,
+						'PATCH',
+						`/api/workspaces/${args.workspace_id}`,
+						{
+							settings: {
+								custom_extensions: updatedCustomExts,
+							},
+						},
+						{ workspaceId: args.workspace_id },
+					)
+
+					return {
+						_meta: { toolName: 'update_extension' },
+						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+					}
+				}
+
 				if (args.enabled) {
 					// Enable — check if it's a registered module
 					const allModules = getAllModules()
@@ -1528,63 +1552,10 @@ export function createMcpServer(config: McpConfig) {
 						}
 					}
 
-					// Not a registered module — check if it's a known custom extension
-					const { customExtensions } = extractSettings(settings)
-					if (!(args.id in customExtensions)) {
-						throw new Error(
-							`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
-						)
-					}
-
-					// Toggle custom extension enabled state
-					const updatedCustomExts = { ...customExtensions }
-					const extEntry = updatedCustomExts[args.id]!
-					extEntry.enabled = args.enabled
-					updatedCustomExts[args.id] = extEntry
-
-					const result = await apiCall(
-						config,
-						'PATCH',
-						`/api/workspaces/${args.workspace_id}`,
-						{
-							settings: {
-								custom_extensions: updatedCustomExts,
-							},
-						},
-						{ workspaceId: args.workspace_id },
+					// Not a registered module or custom extension
+					throw new Error(
+						`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
 					)
-
-					return {
-						_meta: { toolName: 'update_extension' },
-						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-					}
-				}
-
-				// Disable
-				// Check if it's a custom extension first
-				const { customExtensions: customExtsForDisable } = extractSettings(settings)
-				if (args.id in customExtsForDisable) {
-					const updatedCustomExts = { ...customExtsForDisable }
-					const extEntry = updatedCustomExts[args.id]!
-					extEntry.enabled = false
-					updatedCustomExts[args.id] = extEntry
-
-					const result = await apiCall(
-						config,
-						'PATCH',
-						`/api/workspaces/${args.workspace_id}`,
-						{
-							settings: {
-								custom_extensions: updatedCustomExts,
-							},
-						},
-						{ workspaceId: args.workspace_id },
-					)
-
-					return {
-						_meta: { toolName: 'update_extension' },
-						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-					}
 				}
 
 				if (!enabledModules.includes(args.id)) {
