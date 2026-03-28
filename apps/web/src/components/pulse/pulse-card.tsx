@@ -67,7 +67,11 @@ export function resolveActions(
 interface PulseCardProps {
 	notification: NotificationResponse
 	actorsById: Map<string, ActorListItem>
-	onAction: (id: string, response: unknown, navigate?: { to: string; id?: string }) => void
+	onAction: (
+		notification: NotificationResponse,
+		response: unknown,
+		navigate?: { to: string; id?: string },
+	) => void
 	onDismiss: (id: string) => void
 }
 
@@ -88,9 +92,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 
 	const handleReplySubmit = () => {
 		if (!replyText.trim()) return
-		onAction(notification.id, { type: 'text_reply', message: replyText })
-		setReplyText('')
-		setReplyOpen(false)
+		onAction(notification, { type: 'text_reply', message: replyText })
 	}
 
 	return (
@@ -126,7 +128,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{inputType && (
 					<NotificationInput
 						metadata={metadata}
-						onSubmit={(response) => onAction(notification.id, response)}
+						onSubmit={(response) => onAction(notification, response)}
 					/>
 				)}
 
@@ -142,7 +144,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 							key={action.label}
 							size="sm"
 							variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
-							onClick={() => onAction(notification.id, action.response, action.navigate)}
+							onClick={() => onAction(notification, action.response, action.navigate)}
 						>
 							{action.label}
 						</Button>
@@ -156,13 +158,14 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{showReplyInput && (
 					<div>
 						{!replyOpen ? (
-							<button
-								type="button"
-								className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+							<Button
+								variant="link"
+								size="sm"
+								className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
 								onClick={() => setReplyOpen(true)}
 							>
 								Reply to agent...
-							</button>
+							</Button>
 						) : (
 							<div className="flex gap-2">
 								<Input

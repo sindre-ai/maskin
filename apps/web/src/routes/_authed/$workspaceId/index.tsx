@@ -13,6 +13,7 @@ import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: PulseDashboard,
@@ -29,7 +30,11 @@ export function resolveNavigationPath(
 	const id = nav.id && UUID_RE.test(nav.id) ? nav.id : undefined
 	switch (nav.to) {
 		case 'object': {
-			const objectId = id ?? notification.objectId
+			const fallbackId =
+				notification.objectId && UUID_RE.test(notification.objectId)
+					? notification.objectId
+					: undefined
+			const objectId = id ?? fallbackId
 			return objectId ? `/${workspaceId}/objects/${objectId}` : `/${workspaceId}/objects`
 		}
 		case 'objects':
@@ -81,23 +86,36 @@ function PulseDashboard() {
 		return c
 	}, [activeNotifications])
 
-	const handleAction = (id: string, response: unknown, nav?: { to: string; id?: string }) => {
-		const notification = (notifications ?? []).find((n) => n.id === id)
+	const handleAction = (
+		notification: NotificationResponse,
+		response: unknown,
+		nav?: { to: string; id?: string },
+	) => {
 		respondNotification.mutate(
-			{ id, response },
+			{ id: notification.id, response },
 			{
 				onSuccess: () => {
-					if (nav && notification) {
+					if (nav) {
 						const path = resolveNavigationPath(workspaceId, nav, notification)
 						if (path) navigate({ to: path })
 					}
+				},
+				onError: () => {
+					toast.error('Failed to respond. Please try again.')
 				},
 			},
 		)
 	}
 
 	const handleDismiss = (id: string) => {
-		updateNotification.mutate({ id, data: { status: 'dismissed' } })
+		updateNotification.mutate(
+			{ id, data: { status: 'dismissed' } },
+			{
+				onError: () => {
+					toast.error('Failed to dismiss. Please try again.')
+				},
+			},
+		)
 	}
 
 	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length

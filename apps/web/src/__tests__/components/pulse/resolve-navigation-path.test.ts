@@ -118,5 +118,14 @@ describe('resolveNavigationPath', () => {
 			)
 			expect(result).toBe('/ws-1/objects')
 		})
+
+		it('ignores notification.objectId that is not a valid UUID', () => {
+			const result = resolveNavigationPath(
+				workspaceId,
+				{ to: 'object' },
+				buildNotification({ objectId: 'not-a-uuid' }),
+			)
+			expect(result).toBe('/ws-1/objects')
+		})
 	})
 })
