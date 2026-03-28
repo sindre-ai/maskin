@@ -33,7 +33,12 @@ export function resolveActions(
 	metadata: Record<string, unknown>,
 ): NotificationAction[] {
 	const defined = metadata.actions as NotificationAction[] | undefined
-	if (defined && Array.isArray(defined) && defined.length > 0) return defined
+	if (defined && Array.isArray(defined) && defined.length > 0) {
+		const valid = defined.filter(
+			(a) => a && typeof a === 'object' && typeof a.label === 'string' && 'response' in a,
+		)
+		if (valid.length > 0) return valid
+	}
 
 	if (metadata.input_type) return []
 
@@ -93,6 +98,8 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const handleReplySubmit = () => {
 		if (!replyText.trim()) return
 		onAction(notification, { type: 'text_reply', message: replyText })
+		setReplyText('')
+		setReplyOpen(false)
 	}
 
 	return (

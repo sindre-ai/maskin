@@ -98,6 +98,7 @@ function PulseDashboard() {
 					if (nav) {
 						const path = resolveNavigationPath(workspaceId, nav, notification)
 						if (path) navigate({ to: path })
+						else toast.warning('Could not navigate to the requested page.')
 					}
 				},
 				onError: () => {
