@@ -37,11 +37,12 @@ app.get('/', async (c) => {
 
 	return streamSSE(c, async (stream) => {
 		// Replay missed events if Last-Event-ID is provided
-		if (lastEventId) {
+		const parsedId = Number(lastEventId)
+		if (lastEventId && !Number.isNaN(parsedId)) {
 			const missed = await db
 				.select()
 				.from(events)
-				.where(and(eq(events.workspaceId, workspaceId), gt(events.id, Number(lastEventId))))
+				.where(and(eq(events.workspaceId, workspaceId), gt(events.id, parsedId)))
 				.orderBy(asc(events.id))
 				.limit(100)
 
