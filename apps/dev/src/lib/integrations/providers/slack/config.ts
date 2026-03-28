@@ -54,6 +54,12 @@ export const config: ProviderConfig = {
 			{ entityType: 'slack.member', actions: ['joined'], label: 'Member' },
 		],
 	},
+
+	mcp: {
+		command: 'npx',
+		args: ['-y', '@modelcontextprotocol/server-slack'],
+		envKey: 'SLACK_BOT_TOKEN',
+	},
 }
 
 /**
