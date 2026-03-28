@@ -1,4 +1,3 @@
-import type { Database } from '@ai-native/db'
 import { events, objects, relationships } from '@ai-native/db/schema'
 import type { ModuleEnv } from '@ai-native/module-sdk'
 import { OpenAPIHono } from '@hono/zod-openapi'
@@ -7,7 +6,6 @@ import { transcribe } from '../services/transcription.js'
 
 type HonoEnv = {
 	Variables: {
-		db: Database
 		actorId: string
 		actorType: string
 	}
@@ -18,14 +16,6 @@ const MAX_FILE_SIZE = 500 * 1024 * 1024 // 500 MB
 
 function getExtension(filename: string): string {
 	return filename.split('.').pop()?.toLowerCase() ?? ''
-}
-
-function serializeObject(obj: Record<string, unknown>) {
-	const result: Record<string, unknown> = {}
-	for (const [key, value] of Object.entries(obj)) {
-		result[key] = value instanceof Date ? value.toISOString() : value
-	}
-	return result
 }
 
 export function createUploadRoutes(env: ModuleEnv) {
@@ -40,7 +30,6 @@ export function createUploadRoutes(env: ModuleEnv) {
 			return c.json({ error: 'Missing X-Workspace-Id header' }, 400)
 		}
 
-		// Parse multipart form data
 		const formData = await c.req.formData()
 		const file = formData.get('file')
 		const title = formData.get('title') as string | null
@@ -51,7 +40,6 @@ export function createUploadRoutes(env: ModuleEnv) {
 			return c.json({ error: 'Missing required field: file' }, 400)
 		}
 
-		// Validate format
 		const ext = getExtension(file.name)
 		if (!ACCEPTED_FORMATS.includes(ext)) {
 			return c.json(
@@ -62,7 +50,6 @@ export function createUploadRoutes(env: ModuleEnv) {
 			)
 		}
 
-		// Validate size
 		if (file.size > MAX_FILE_SIZE) {
 			return c.json(
 				{ error: `File too large. Maximum size: ${MAX_FILE_SIZE / 1024 / 1024}MB` },
@@ -70,7 +57,6 @@ export function createUploadRoutes(env: ModuleEnv) {
 			)
 		}
 
-		// Create meeting object with initial status
 		const [meeting] = await db
 			.insert(objects)
 			.values({
@@ -91,15 +77,15 @@ export function createUploadRoutes(env: ModuleEnv) {
 		}
 
 		try {
-			// Store audio in S3
 			const audioBuffer = Buffer.from(await file.arrayBuffer())
 			const s3Key = `notetaker/${workspaceId}/${meeting.id}/${file.name}`
-			await env.storageProvider.put(s3Key, audioBuffer)
 
-			// Transcribe
-			const result = await transcribe(audioBuffer, file.name, language ? { language } : undefined)
+			// S3 upload and transcription are independent — run in parallel
+			const [, result] = await Promise.all([
+				env.storageProvider.put(s3Key, audioBuffer),
+				transcribe(audioBuffer, file.name, language ? { language } : undefined),
+			])
 
-			// Update meeting object with transcription
 			const [updated] = await db
 				.update(objects)
 				.set({
@@ -117,7 +103,6 @@ export function createUploadRoutes(env: ModuleEnv) {
 				.where(eq(objects.id, meeting.id))
 				.returning()
 
-			// Log event
 			await db.insert(events).values({
 				workspaceId,
 				actorId,
@@ -127,36 +112,48 @@ export function createUploadRoutes(env: ModuleEnv) {
 				data: updated,
 			})
 
-			// Create relationship if linkedObjectId provided
 			if (linkedObjectId) {
-				await db
-					.insert(relationships)
-					.values({
-						sourceType: 'meeting',
-						sourceId: meeting.id,
-						targetType: 'unknown',
-						targetId: linkedObjectId,
-						type: 'relates_to',
-						createdBy: actorId,
-					})
-					.onConflictDoNothing()
+				const [linkedObj] = await db
+					.select({ type: objects.type })
+					.from(objects)
+					.where(eq(objects.id, linkedObjectId))
+
+				if (linkedObj) {
+					await db
+						.insert(relationships)
+						.values({
+							sourceType: 'meeting',
+							sourceId: meeting.id,
+							targetType: linkedObj.type,
+							targetId: linkedObjectId,
+							type: 'relates_to',
+							createdBy: actorId,
+						})
+						.onConflictDoNothing()
+				}
 			}
 
-			return c.json(serializeObject(updated as Record<string, unknown>), 201)
+			return c.json(updated, 201)
 		} catch (err) {
-			// Mark as failed on error
-			await db
-				.update(objects)
-				.set({
-					status: 'failed',
-					metadata: {
-						source: 'upload',
-						original_filename: file.name,
-						error: err instanceof Error ? err.message : 'Unknown error',
-					},
-					updatedAt: new Date(),
+			try {
+				await db
+					.update(objects)
+					.set({
+						status: 'failed',
+						metadata: {
+							source: 'upload',
+							original_filename: file.name,
+							error: err instanceof Error ? err.message : 'Unknown error',
+						},
+						updatedAt: new Date(),
+					})
+					.where(eq(objects.id, meeting.id))
+			} catch (updateErr) {
+				console.error('Failed to mark meeting as failed', {
+					meetingId: meeting.id,
+					updateErr,
 				})
-				.where(eq(objects.id, meeting.id))
+			}
 
 			return c.json(
 				{ error: `Transcription failed: ${err instanceof Error ? err.message : 'Unknown error'}` },
