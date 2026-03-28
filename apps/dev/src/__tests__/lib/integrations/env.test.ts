@@ -3,8 +3,7 @@ import { getEnvOrThrow } from '../../../lib/integrations/env'
 
 describe('getEnvOrThrow', () => {
 	afterEach(() => {
-		// biome-ignore lint/performance/noDelete: process.env coerces undefined to string
-		delete process.env.TEST_ENV_VAR
+		Reflect.deleteProperty(process.env, 'TEST_ENV_VAR')
 	})
 
 	it('returns value when env var is set', () => {

@@ -580,7 +580,7 @@ function buildRedirectUri(
 	// In production, use the configured origin to prevent X-Forwarded-Host injection
 	const corsOrigin = process.env.CORS_ORIGIN
 	if (corsOrigin) {
-		const origin = corsOrigin.split(',')[0]?.trim().replace(/\/$/, '')
+		const origin = (corsOrigin.split(',')[0] ?? corsOrigin).trim().replace(/\/$/, '')
 		return `${origin}/api/integrations/${providerName}/callback`
 	}
 
