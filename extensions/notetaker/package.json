@@ -3,6 +3,10 @@
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
+	"scripts": {
+		"test": "vitest",
+		"type-check": "tsc --noEmit"
+	},
 	"exports": {
 		".": {
 			"types": "./server/index.ts",
@@ -28,6 +32,7 @@
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {
-		"typescript": "^5.7.0"
+		"typescript": "^5.7.0",
+		"vitest": "^3.1.0"
 	}
 }
