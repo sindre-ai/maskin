@@ -151,5 +151,8 @@ export interface ResolvedProvider {
 	 * Pre-handler for webhook payloads. Runs after signature verification but before normalization.
 	 * Return a Response to short-circuit normal processing (e.g. Slack url_verification challenge).
 	 */
-	webhookPreHandler?: (payload: unknown, headers: Record<string, string>) => Response | null
+	webhookPreHandler?: (
+		payload: unknown,
+		headers: Record<string, string>,
+	) => { body: unknown; status?: number } | null
 }

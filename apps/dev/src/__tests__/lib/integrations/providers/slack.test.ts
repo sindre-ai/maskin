@@ -82,9 +82,18 @@ describe('parseTokenResponse', () => {
 		expect(result.teamId).toBeUndefined()
 		expect(result.teamName).toBeUndefined()
 	})
+
+	it('throws on error response', () => {
+		const raw = { ok: false, error: 'invalid_code' }
+		expect(() => parseTokenResponse(raw)).toThrow('Slack token exchange failed: invalid_code')
+	})
 })
 
 describe('resolveExternalId', () => {
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
 	it('returns teamId from credentials when available', async () => {
 		const credentials = { accessToken: 'xoxb-test', teamId: 'T123' }
 		const id = await resolveExternalId(credentials)
@@ -92,20 +101,28 @@ describe('resolveExternalId', () => {
 	})
 
 	it('calls auth.test API when teamId is missing', async () => {
-		const mockFetch = vi.fn().mockResolvedValue({
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
 			json: () => Promise.resolve({ ok: true, team_id: 'T456' }),
-		})
-		vi.stubGlobal('fetch', mockFetch)
+		} as Response)
 
 		const credentials = { accessToken: 'xoxb-test' }
 		const id = await resolveExternalId(credentials)
 
 		expect(id).toBe('T456')
-		expect(mockFetch).toHaveBeenCalledWith('https://slack.com/api/auth.test', {
+		expect(globalThis.fetch).toHaveBeenCalledWith('https://slack.com/api/auth.test', {
 			headers: { Authorization: 'Bearer xoxb-test' },
 		})
+	})
 
-		vi.unstubAllGlobals()
+	it('throws when auth.test API returns error', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			json: () => Promise.resolve({ ok: false, error: 'invalid_auth' }),
+		} as Response)
+
+		const credentials = { accessToken: 'xoxb-bad-token' }
+		await expect(resolveExternalId(credentials)).rejects.toThrow(
+			'Failed to resolve Slack team ID: invalid_auth',
+		)
 	})
 })
 
@@ -114,16 +131,15 @@ describe('slackWebhookPreHandler', () => {
 		const payload = { type: 'url_verification', challenge: 'abc123xyz' }
 		const response = slackWebhookPreHandler(payload, {})
 
-		expect(response).toBeInstanceOf(Response)
 		expect(response).not.toBeNull()
+		expect(response?.body).toEqual({ challenge: 'abc123xyz' })
 	})
 
-	it('includes correct challenge in response body', async () => {
+	it('includes correct challenge in response body', () => {
 		const payload = { type: 'url_verification', challenge: 'test-challenge-string' }
 		const response = slackWebhookPreHandler(payload, {})
 
-		const body = await response?.json()
-		expect(body).toEqual({ challenge: 'test-challenge-string' })
+		expect(response).toEqual({ body: { challenge: 'test-challenge-string' } })
 	})
 
 	it('returns null for event_callback', () => {

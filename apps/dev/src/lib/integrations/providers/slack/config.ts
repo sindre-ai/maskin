@@ -65,6 +65,9 @@ export const config: ProviderConfig = {
  */
 export const parseTokenResponse = (raw: unknown): Partial<StoredCredentials> => {
 	const data = raw as Record<string, unknown>
+	if (data.ok === false) {
+		throw new Error(`Slack token exchange failed: ${(data.error as string) ?? 'unknown error'}`)
+	}
 	const team = data.team as { id: string; name: string } | undefined
 	return {
 		accessToken: data.access_token as string,
@@ -87,7 +90,10 @@ export const resolveExternalId = async (credentials: StoredCredentials): Promise
 	const res = await fetch('https://slack.com/api/auth.test', {
 		headers: { Authorization: `Bearer ${credentials.accessToken}` },
 	})
-	const data = (await res.json()) as { team_id: string }
+	const data = (await res.json()) as { ok: boolean; team_id?: string; error?: string }
+	if (!data.ok || !data.team_id) {
+		throw new Error(`Failed to resolve Slack team ID: ${data.error ?? 'unknown error'}`)
+	}
 	return data.team_id
 }
 
@@ -99,12 +105,10 @@ export const resolveExternalId = async (credentials: StoredCredentials): Promise
 export const slackWebhookPreHandler = (
 	payload: unknown,
 	_headers: Record<string, string>,
-): Response | null => {
+): { body: unknown; status?: number } | null => {
 	const data = payload as Record<string, unknown>
 	if (data.type === 'url_verification' && typeof data.challenge === 'string') {
-		return new Response(JSON.stringify({ challenge: data.challenge }), {
-			headers: { 'Content-Type': 'application/json' },
-		})
+		return { body: { challenge: data.challenge } }
 	}
 	return null
 }

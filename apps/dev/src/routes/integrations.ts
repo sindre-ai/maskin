@@ -523,7 +523,7 @@ webhookApp.post('/:provider', async (c) => {
 	// Allow provider to short-circuit (e.g. Slack url_verification challenge)
 	if (resolved.webhookPreHandler) {
 		const preResponse = resolved.webhookPreHandler(payload, headers)
-		if (preResponse) return preResponse
+		if (preResponse) return c.json(preResponse.body, (preResponse.status ?? 200) as 200)
 	}
 
 	const normalized = normalizeEvent(resolved, payload, headers)
