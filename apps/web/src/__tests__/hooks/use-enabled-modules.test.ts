@@ -44,6 +44,7 @@ function MutableSettingsWrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	currentSettings = {}
 })
 
 describe('useEnabledModules', () => {

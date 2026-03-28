@@ -8,6 +8,10 @@ vi.mock('@/lib/auth', () => ({
 	getApiKey: vi.fn(() => 'test-api-key'),
 }))
 
+vi.mock('@/lib/constants', () => ({
+	API_BASE: '/api',
+}))
+
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { connectSSE } from '@/lib/sse'
 
