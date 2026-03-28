@@ -19,7 +19,6 @@ CREATE TABLE "imports" (
 	"completed_at" timestamp with time zone
 );
 --> statement-breakpoint
-ALTER TABLE "actors" ADD COLUMN "password_hash" text;--> statement-breakpoint
 ALTER TABLE "imports" ADD CONSTRAINT "imports_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "imports" ADD CONSTRAINT "imports_created_by_actors_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."actors"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "imports_ws_status_idx" ON "imports" USING btree ("workspace_id","status");

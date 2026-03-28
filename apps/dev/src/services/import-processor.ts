@@ -403,8 +403,7 @@ export async function executeImport(
 								title: mapped.title,
 								content: mapped.content,
 								status: mapped.status,
-								metadata:
-									Object.keys(mapped.metadata).length > 0 ? mapped.metadata : undefined,
+								metadata: Object.keys(mapped.metadata).length > 0 ? mapped.metadata : undefined,
 								owner: mapped.owner,
 								createdBy: actorId,
 							})),

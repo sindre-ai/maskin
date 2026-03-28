@@ -39,12 +39,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "password_hash": {
-          "name": "password_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "system_prompt": {
           "name": "system_prompt",
           "type": "text",

@@ -31,13 +31,14 @@ const app = new OpenAPIHono<Env>()
 // All import routes require workspace membership
 app.use('*', async (c, next) => {
 	const workspaceId = c.req.header('x-workspace-id')
-	if (workspaceId) {
-		const db = c.get('db')
-		const actorId = c.get('actorId')
-		const isMember = await isWorkspaceMember(db, actorId, workspaceId)
-		if (!isMember) {
-			return c.json(createApiError('FORBIDDEN', 'Not a workspace member'), 403)
-		}
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const isMember = await isWorkspaceMember(db, actorId, workspaceId)
+	if (!isMember) {
+		return c.json(createApiError('FORBIDDEN', 'Not a workspace member'), 403)
 	}
 	return next()
 })
@@ -173,7 +174,14 @@ app.openapi(createImportRoute, async (c) => {
 		totalRows: parsed.rows.length,
 	}
 
-	// Insert import record
+	// Insert import record — clean up S3 if this fails
+	const cleanupS3 = () =>
+		storage
+			.delete(storageKey)
+			.catch((delErr) =>
+				logger.error('Failed to clean up S3 file after DB error', { storageKey, error: delErr }),
+			)
+
 	const [importRecord] = await db
 		.insert(imports)
 		.values({
@@ -190,8 +198,13 @@ app.openapi(createImportRoute, async (c) => {
 			createdBy: actorId,
 		})
 		.returning()
+		.catch(async (err) => {
+			await cleanupS3()
+			throw err
+		})
 
 	if (!importRecord) {
+		await cleanupS3()
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create import'), 400)
 	}
 
