@@ -56,53 +56,36 @@ function WorkspacesApp() {
 	)?.text
 	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 
+	const result = tryParseJson(text)
+	if (!result.parsed) return <MessageView message={text} />
+	const data = result.data as Record<string, unknown>
+
 	switch (toolResult.toolName) {
-		case 'list_workspaces': {
-			const data = JSON.parse(text)
-			return <WorkspaceListView workspaces={data.data ?? data} />
-		}
-		case 'list_workspace_members': {
-			const data = JSON.parse(text)
-			return <MemberListView members={data.data ?? data} />
-		}
-		case 'add_workspace_member': {
-			const data = JSON.parse(text)
-			return <MemberAddedView member={data} />
-		}
-		case 'get_workspace_schema': {
-			const data = JSON.parse(text) as WorkspaceSchema
-			return <WorkspaceSchemaView schema={data} />
-		}
-		case 'list_extensions': {
-			const data = JSON.parse(text) as Extension[]
-			return <ExtensionListView extensions={data} />
-		}
+		case 'list_workspaces':
+			return <WorkspaceListView workspaces={(data.data ?? data) as WorkspaceResponse[]} />
+		case 'list_workspace_members':
+			return <MemberListView members={(data.data ?? data) as MemberResponse[]} />
+		case 'add_workspace_member':
+			return <MemberAddedView member={data as unknown as MemberResponse} />
+		case 'get_workspace_schema':
+			return <WorkspaceSchemaView schema={data as unknown as WorkspaceSchema} />
+		case 'list_extensions':
+			return <ExtensionListView extensions={result.data as Extension[]} />
 		case 'create_extension':
-		case 'update_extension': {
-			const result = tryParseJson(text)
-			if (!result.parsed) return <MessageView message={text} />
+		case 'update_extension':
 			return (
 				<ExtensionConfirmView
-					data={result.data as WorkspaceResponse}
+					data={data as unknown as WorkspaceResponse}
 					action={toolResult.toolName === 'create_extension' ? 'created' : 'updated'}
 				/>
 			)
-		}
-		case 'delete_extension': {
-			const result = tryParseJson(text)
-			if (!result.parsed) return <MessageView message={text} />
+		case 'delete_extension':
 			return <MessageView message="Extension deleted successfully." />
-		}
 		case 'create_workspace':
-		case 'update_workspace': {
-			const data = JSON.parse(text)
-			return <WorkspaceDetailView workspace={data} />
-		}
-		default: {
-			const result = tryParseJson(text)
-			if (!result.parsed) return <MessageView message={text} />
-			return <WorkspaceDetailView workspace={result.data as WorkspaceResponse} />
-		}
+		case 'update_workspace':
+			return <WorkspaceDetailView workspace={data as unknown as WorkspaceResponse} />
+		default:
+			return <WorkspaceDetailView workspace={data as unknown as WorkspaceResponse} />
 	}
 }
 
