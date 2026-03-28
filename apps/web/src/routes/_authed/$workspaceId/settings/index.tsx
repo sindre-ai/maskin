@@ -11,7 +11,7 @@ import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getAllWebModules, getWebModule } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
-import { Monitor, Moon, Sun, Trash2 } from 'lucide-react'
+import { Monitor, Moon, Sun, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -69,6 +69,7 @@ function ExtensionsSection() {
 	const enabledModules = useEnabledModules()
 	const allModules = getAllWebModules()
 	const customExtensions = useCustomExtensions()
+	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
 	const handleToggle = (moduleId: string, enabled: boolean) => {
 		const next = enabled
@@ -177,13 +178,32 @@ function ExtensionsSection() {
 								</span>
 							)}
 						</div>
-						<button
-							type="button"
-							onClick={() => handleDeleteCustomExtension(ext.id, ext.types)}
-							className="text-muted-foreground hover:text-destructive transition-colors"
-						>
-							<Trash2 size={15} />
-						</button>
+						{confirmDeleteId === ext.id ? (
+							<div className="flex items-center gap-1">
+								<Button
+									size="sm"
+									variant="destructive"
+									onClick={() => {
+										handleDeleteCustomExtension(ext.id, ext.types)
+										setConfirmDeleteId(null)
+									}}
+								>
+									Delete
+								</Button>
+								<Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+									Cancel
+								</Button>
+							</div>
+						) : (
+							<button
+								type="button"
+								aria-label={`Delete ${ext.name}`}
+								onClick={() => setConfirmDeleteId(ext.id)}
+								className="text-muted-foreground hover:text-destructive transition-colors"
+							>
+								<Trash2 size={15} />
+							</button>
+						)}
 					</div>
 				))}
 			</div>

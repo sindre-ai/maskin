@@ -1,5 +1,5 @@
 import { useWorkspace } from '@/lib/workspace-context'
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 
 interface CustomExtensionEntry {
 	name: string
@@ -18,19 +18,14 @@ export function useCustomExtensions(): CustomExtensionInfo[] {
 	const { workspace } = useWorkspace()
 	const settings = workspace.settings as Record<string, unknown>
 
-	const customExtensions = (settings?.custom_extensions ?? {}) as Record<
-		string,
-		CustomExtensionEntry
-	>
-	const displayNames = (settings?.display_names ?? {}) as Record<string, string>
-
-	const prev = useRef<CustomExtensionInfo[]>([])
-
 	return useMemo(() => {
-		const entries = Object.entries(customExtensions)
-		if (entries.length === 0) return prev.current.length === 0 ? prev.current : []
+		const customExtensions = (settings?.custom_extensions ?? {}) as Record<
+			string,
+			CustomExtensionEntry
+		>
+		const displayNames = (settings?.display_names ?? {}) as Record<string, string>
 
-		const result = entries.map(([id, ext]) => ({
+		return Object.entries(customExtensions).map(([id, ext]) => ({
 			id,
 			name: ext.name,
 			types: ext.types,
@@ -39,8 +34,5 @@ export function useCustomExtensions(): CustomExtensionInfo[] {
 				value: type,
 			})),
 		}))
-
-		prev.current = result
-		return result
-	}, [customExtensions, displayNames])
+	}, [settings])
 }
