@@ -390,35 +390,38 @@ export async function executeImport(
 			validRows.push({ rowIndex, mapped })
 		}
 
-		// Phase 2: Insert all valid rows in a single transaction
+		// Phase 2: Bulk insert all valid rows in a single transaction
 		if (validRows.length > 0) {
 			try {
 				await db.transaction(async (tx) => {
-					for (const { mapped } of validRows) {
-						const [created] = await tx
-							.insert(objects)
-							.values({
+					const createdObjects = await tx
+						.insert(objects)
+						.values(
+							validRows.map(({ mapped }) => ({
 								workspaceId,
 								type: mapped.type,
 								title: mapped.title,
 								content: mapped.content,
 								status: mapped.status,
-								metadata: Object.keys(mapped.metadata).length > 0 ? mapped.metadata : undefined,
+								metadata:
+									Object.keys(mapped.metadata).length > 0 ? mapped.metadata : undefined,
 								owner: mapped.owner,
 								createdBy: actorId,
-							})
-							.returning()
+							})),
+						)
+						.returning()
 
-						if (created) {
-							await tx.insert(events).values({
+					if (createdObjects.length > 0) {
+						await tx.insert(events).values(
+							createdObjects.map((obj) => ({
 								workspaceId,
 								actorId,
-								action: 'created',
-								entityType: mapped.type,
-								entityId: created.id,
-								data: { id: created.id, type: mapped.type, title: mapped.title },
-							})
-						}
+								action: 'created' as const,
+								entityType: obj.type,
+								entityId: obj.id,
+								data: { id: obj.id, type: obj.type, title: obj.title },
+							})),
+						)
 					}
 				})
 				successCount += validRows.length
