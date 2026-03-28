@@ -5,6 +5,7 @@ interface CustomExtensionEntry {
 	name: string
 	types: string[]
 	relationship_types?: string[]
+	enabled?: boolean
 }
 
 export interface CustomExtensionInfo {
@@ -12,6 +13,7 @@ export interface CustomExtensionInfo {
 	name: string
 	types: string[]
 	tabs: { label: string; value: string }[]
+	enabled: boolean
 }
 
 export function useCustomExtensions(): CustomExtensionInfo[] {
@@ -34,6 +36,7 @@ export function useCustomExtensions(): CustomExtensionInfo[] {
 				label: displayNames[type] ?? type,
 				value: type,
 			})),
+			enabled: ext.enabled !== false,
 		}
 	})
 

@@ -1303,7 +1303,7 @@ export function createMcpServer(config: McpConfig) {
 				return {
 					id: extId,
 					name: ext.name,
-					enabled: true,
+					enabled: ext.enabled !== false,
 					object_types: ext.types
 						.filter((t) => t in statuses)
 						.map((t) => ({
@@ -1445,6 +1445,7 @@ export function createMcpServer(config: McpConfig) {
 			customExtensions[args.id] = {
 				name: args.name ?? args.id,
 				types: args.object_types.map((ot) => ot.type),
+				enabled: true,
 				...(extRelTypes.length > 0 ? { relationship_types: extRelTypes } : {}),
 			}
 
@@ -1535,19 +1536,57 @@ export function createMcpServer(config: McpConfig) {
 						)
 					}
 
-					// Custom extensions are always enabled — enabled: true is a no-op
+					// Toggle custom extension enabled state
+					const updatedCustomExts = { ...customExtensions }
+					const extEntry = updatedCustomExts[args.id]!
+					extEntry.enabled = args.enabled
+					updatedCustomExts[args.id] = extEntry
+
+					const result = await apiCall(
+						config,
+						'PATCH',
+						`/api/workspaces/${args.workspace_id}`,
+						{
+							settings: {
+								custom_extensions: updatedCustomExts,
+							},
+						},
+						{ workspaceId: args.workspace_id },
+					)
+
 					return {
 						_meta: { toolName: 'update_extension' },
-						content: [
-							{
-								type: 'text' as const,
-								text: 'Custom extensions are always enabled. Use object_types to update type definitions, or delete_extension to remove it.',
-							},
-						],
+						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 					}
 				}
 
 				// Disable
+				// Check if it's a custom extension first
+				const { customExtensions: customExtsForDisable } = extractSettings(settings)
+				if (args.id in customExtsForDisable) {
+					const updatedCustomExts = { ...customExtsForDisable }
+					const extEntry = updatedCustomExts[args.id]!
+					extEntry.enabled = false
+					updatedCustomExts[args.id] = extEntry
+
+					const result = await apiCall(
+						config,
+						'PATCH',
+						`/api/workspaces/${args.workspace_id}`,
+						{
+							settings: {
+								custom_extensions: updatedCustomExts,
+							},
+						},
+						{ workspaceId: args.workspace_id },
+					)
+
+					return {
+						_meta: { toolName: 'update_extension' },
+						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+					}
+				}
+
 				if (!enabledModules.includes(args.id)) {
 					return {
 						_meta: { toolName: 'update_extension' },
