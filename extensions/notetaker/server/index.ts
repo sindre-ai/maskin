@@ -1,9 +1,13 @@
 import type { ModuleDefinition, ModuleEnv } from '@ai-native/module-sdk'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { MODULE_ID, MODULE_NAME } from '../shared.js'
+import healthRoutes from './routes/health.js'
+import { createUploadRoutes } from './routes/upload.js'
 
-function createRoutes(_env: ModuleEnv) {
+function createRoutes(env: ModuleEnv) {
 	const app = new OpenAPIHono()
+	app.route('/', healthRoutes)
+	app.route('/', createUploadRoutes(env))
 	return app
 }
 

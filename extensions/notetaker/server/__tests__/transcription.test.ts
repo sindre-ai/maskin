@@ -36,7 +36,7 @@ describe('transcribe', () => {
 
 		expect(result).toEqual(sampleResult)
 		expect(mockFetch).toHaveBeenCalledTimes(1)
-		const call = mockFetch.mock.calls[0]!
+		const call = mockFetch.mock.calls[0] as [string, RequestInit]
 		expect(call[0]).toBe('http://127.0.0.1:8080/inference')
 		expect(call[1].method).toBe('POST')
 		expect(call[1].body).toBeInstanceOf(FormData)
@@ -47,7 +47,7 @@ describe('transcribe', () => {
 
 		await transcribe(Buffer.from('audio'), 'test.wav', { language: 'no' })
 
-		const call = mockFetch.mock.calls[0]!
+		const call = mockFetch.mock.calls[0] as [string, RequestInit]
 		const form = call[1].body as FormData
 		expect(form.get('language')).toBe('no')
 	})
@@ -65,8 +65,7 @@ describe('transcribe', () => {
 	})
 
 	it('throws after exhausting retries on 5xx', async () => {
-		mockFetch
-			.mockResolvedValue(jsonResponse({ error: 'down' }, 500))
+		mockFetch.mockResolvedValue(jsonResponse({ error: 'down' }, 500))
 
 		await expect(transcribe(Buffer.from('audio'), 'test.wav')).rejects.toThrow(
 			'Transcription failed: 500',
