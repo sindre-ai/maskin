@@ -38,10 +38,12 @@ export function useCustomExtensions(): CustomExtensionInfo[] {
 	})
 
 	const ref = useRef(result)
+	const prevSerialized = useRef('')
 	const serialized = JSON.stringify(result)
 
-	if (serialized !== JSON.stringify(ref.current)) {
+	if (serialized !== prevSerialized.current) {
 		ref.current = result
+		prevSerialized.current = serialized
 	}
 
 	return ref.current

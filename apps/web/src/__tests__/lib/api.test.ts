@@ -143,6 +143,7 @@ describe('request', () => {
 
 		try {
 			await api.objects.list('ws-1')
+			expect.unreachable('Should have thrown')
 		} catch (err) {
 			const apiErr = err as ApiError
 			expect(apiErr.status).toBe(404)
@@ -157,6 +158,7 @@ describe('request', () => {
 
 		try {
 			await api.objects.list('ws-1')
+			expect.unreachable('Should have thrown')
 		} catch (err) {
 			const apiErr = err as ApiError
 			expect(apiErr.status).toBe(500)
