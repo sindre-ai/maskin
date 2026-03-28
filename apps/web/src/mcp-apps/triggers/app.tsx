@@ -15,20 +15,22 @@ function TriggersApp() {
 	)?.text
 	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 
-	let data: Record<string, unknown>
+	let data: unknown
 	try {
 		data = JSON.parse(text)
 	} catch {
 		return <div className="p-4 text-sm text-foreground">{text}</div>
 	}
 
+	const unwrapped = (data as { data?: unknown }).data ?? data
+
 	switch (toolResult.toolName) {
 		case 'list_triggers':
-			return <TriggerListView triggers={(data.data ?? data) as TriggerResponse[]} />
+			return <TriggerListView triggers={unwrapped as TriggerResponse[]} />
 		case 'create_trigger':
-			return <TriggerDetailView trigger={data as unknown as TriggerResponse} />
+			return <TriggerDetailView trigger={data as TriggerResponse} />
 		default:
-			return <TriggerDetailView trigger={data as unknown as TriggerResponse} />
+			return <TriggerDetailView trigger={data as TriggerResponse} />
 	}
 }
 

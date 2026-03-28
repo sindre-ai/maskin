@@ -58,24 +58,25 @@ function WorkspacesApp() {
 
 	const result = tryParseJson(text)
 	if (!result.parsed) return <MessageView message={text} />
-	const data = result.data as Record<string, unknown>
+	const data = result.data
+	const unwrapped = (data as { data?: unknown }).data ?? data
 
 	switch (toolResult.toolName) {
 		case 'list_workspaces':
-			return <WorkspaceListView workspaces={(data.data ?? data) as WorkspaceResponse[]} />
+			return <WorkspaceListView workspaces={unwrapped as WorkspaceResponse[]} />
 		case 'list_workspace_members':
-			return <MemberListView members={(data.data ?? data) as MemberResponse[]} />
+			return <MemberListView members={unwrapped as MemberResponse[]} />
 		case 'add_workspace_member':
-			return <MemberAddedView member={data as unknown as MemberResponse} />
+			return <MemberAddedView member={data as MemberResponse} />
 		case 'get_workspace_schema':
-			return <WorkspaceSchemaView schema={data as unknown as WorkspaceSchema} />
+			return <WorkspaceSchemaView schema={data as WorkspaceSchema} />
 		case 'list_extensions':
-			return <ExtensionListView extensions={result.data as Extension[]} />
+			return <ExtensionListView extensions={data as Extension[]} />
 		case 'create_extension':
 		case 'update_extension':
 			return (
 				<ExtensionConfirmView
-					data={data as unknown as WorkspaceResponse}
+					data={data as Extension}
 					action={toolResult.toolName === 'create_extension' ? 'created' : 'updated'}
 				/>
 			)
@@ -83,9 +84,9 @@ function WorkspacesApp() {
 			return <MessageView message="Extension deleted successfully." />
 		case 'create_workspace':
 		case 'update_workspace':
-			return <WorkspaceDetailView workspace={data as unknown as WorkspaceResponse} />
+			return <WorkspaceDetailView workspace={data as WorkspaceResponse} />
 		default:
-			return <WorkspaceDetailView workspace={data as unknown as WorkspaceResponse} />
+			return <WorkspaceDetailView workspace={data as WorkspaceResponse} />
 	}
 }
 
@@ -131,12 +132,74 @@ function WorkspaceDetailView({ workspace }: { workspace: WorkspaceResponse }) {
 	)
 }
 
+interface FieldDef {
+	name: string
+	type: string
+	required?: boolean
+}
+
+function ObjectTypeCard({
+	type,
+	displayName,
+	statuses,
+	fields,
+}: {
+	type: string
+	displayName: string
+	statuses: string[]
+	fields: FieldDef[]
+}) {
+	return (
+		<div className="px-3 py-2 rounded-lg bg-muted">
+			<div className="flex items-center gap-2 mb-1.5">
+				<span className="text-sm font-medium text-foreground">{displayName}</span>
+				<span className="text-xs text-muted-foreground font-mono">{type}</span>
+			</div>
+			{statuses.length > 0 && (
+				<div className="flex flex-wrap gap-1 mb-1">
+					{statuses.map((s) => (
+						<StatusBadge key={s} status={s} />
+					))}
+				</div>
+			)}
+			{fields.length > 0 && (
+				<div className="mt-2 pt-2 border-t border-border">
+					<span className="text-xs text-muted-foreground">Fields: </span>
+					{fields.map((f, i) => (
+						<span key={f.name} className="text-xs text-foreground">
+							{i > 0 && ', '}
+							{f.name}
+							<span className="text-muted-foreground"> ({f.type})</span>
+							{f.required && <span className="text-destructive">*</span>}
+						</span>
+					))}
+				</div>
+			)}
+		</div>
+	)
+}
+
+function RelationshipTypeList({ types }: { types: string[] }) {
+	return (
+		<div className="border-t border-border pt-3">
+			<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+				Relationship Types
+			</h3>
+			<div className="flex flex-wrap gap-1">
+				{types.map((rt) => (
+					<span key={rt} className="px-2 py-0.5 text-xs rounded bg-muted text-foreground">
+						{rt.replace(/_/g, ' ')}
+					</span>
+				))}
+			</div>
+		</div>
+	)
+}
+
 function SettingsView({ settings }: { settings: Record<string, unknown> }) {
 	const statuses = settings.statuses as Record<string, string[]> | undefined
 	const displayNames = settings.display_names as Record<string, string> | undefined
-	const fieldDefs = settings.field_definitions as
-		| Record<string, Array<{ name: string; type: string; required?: boolean }>>
-		| undefined
+	const fieldDefs = settings.field_definitions as Record<string, FieldDef[]> | undefined
 	const relTypes = settings.relationship_types as string[] | undefined
 
 	const hasStructuredData = statuses || displayNames || fieldDefs || relTypes
@@ -161,50 +224,18 @@ function SettingsView({ settings }: { settings: Record<string, unknown> }) {
 					</h3>
 					<div className="space-y-3">
 						{Object.entries(statuses).map(([type, statusList]) => (
-							<div key={type} className="px-3 py-2 rounded-lg bg-muted">
-								<div className="flex items-center gap-2 mb-1.5">
-									<span className="text-sm font-medium text-foreground">
-										{displayNames?.[type] ?? type}
-									</span>
-									<span className="text-xs text-muted-foreground font-mono">{type}</span>
-								</div>
-								<div className="flex flex-wrap gap-1">
-									{statusList.map((s) => (
-										<StatusBadge key={s} status={s} />
-									))}
-								</div>
-								{fieldDefs?.[type] && fieldDefs[type].length > 0 && (
-									<div className="mt-2 pt-2 border-t border-border">
-										<span className="text-xs text-muted-foreground">Fields: </span>
-										{fieldDefs[type].map((f, i) => (
-											<span key={f.name} className="text-xs text-foreground">
-												{i > 0 && ', '}
-												{f.name}
-												<span className="text-muted-foreground"> ({f.type})</span>
-												{f.required && <span className="text-destructive">*</span>}
-											</span>
-										))}
-									</div>
-								)}
-							</div>
+							<ObjectTypeCard
+								key={type}
+								type={type}
+								displayName={displayNames?.[type] ?? type}
+								statuses={statusList}
+								fields={fieldDefs?.[type] ?? []}
+							/>
 						))}
 					</div>
 				</div>
 			)}
-			{relTypes && relTypes.length > 0 && (
-				<div className="border-t border-border pt-3">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-						Relationship Types
-					</h3>
-					<div className="flex flex-wrap gap-1">
-						{relTypes.map((rt) => (
-							<span key={rt} className="px-2 py-0.5 text-xs rounded bg-muted text-foreground">
-								{rt.replace(/_/g, ' ')}
-							</span>
-						))}
-					</div>
-				</div>
-			)}
+			{relTypes && relTypes.length > 0 && <RelationshipTypeList types={relTypes} />}
 		</div>
 	)
 }
@@ -223,51 +254,19 @@ function WorkspaceSchemaView({ schema }: { schema: WorkspaceSchema }) {
 						Object Types
 					</h3>
 					{types.map(([type, typeSchema]) => (
-						<div key={type} className="px-3 py-2 rounded-lg bg-muted">
-							<div className="flex items-center gap-2 mb-1.5">
-								<span className="text-sm font-medium text-foreground">
-									{typeSchema.display_name}
-								</span>
-								<span className="text-xs text-muted-foreground font-mono">{type}</span>
-							</div>
-							{typeSchema.statuses.length > 0 && (
-								<div className="flex flex-wrap gap-1 mb-1">
-									{typeSchema.statuses.map((s) => (
-										<StatusBadge key={s} status={s} />
-									))}
-								</div>
-							)}
-							{typeSchema.fields.length > 0 && (
-								<div className="mt-2 pt-2 border-t border-border">
-									<span className="text-xs text-muted-foreground">Fields: </span>
-									{typeSchema.fields.map((f, i) => (
-										<span key={f.name} className="text-xs text-foreground">
-											{i > 0 && ', '}
-											{f.name}
-											<span className="text-muted-foreground"> ({f.type})</span>
-											{f.required && <span className="text-destructive">*</span>}
-										</span>
-									))}
-								</div>
-							)}
-						</div>
+						<ObjectTypeCard
+							key={type}
+							type={type}
+							displayName={typeSchema.display_name}
+							statuses={typeSchema.statuses}
+							fields={typeSchema.fields}
+						/>
 					))}
 				</div>
 			)}
 
 			{schema.relationship_types.length > 0 && (
-				<div className="border-t border-border pt-3">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-						Relationship Types
-					</h3>
-					<div className="flex flex-wrap gap-1">
-						{schema.relationship_types.map((rt) => (
-							<span key={rt} className="px-2 py-0.5 text-xs rounded bg-muted text-foreground">
-								{rt.replace(/_/g, ' ')}
-							</span>
-						))}
-					</div>
-				</div>
+				<RelationshipTypeList types={schema.relationship_types} />
 			)}
 		</div>
 	)
@@ -298,11 +297,33 @@ function ExtensionListView({ extensions }: { extensions: Extension[] }) {
 	)
 }
 
-function ExtensionConfirmView({ data, action }: { data: WorkspaceResponse; action: string }) {
+function ExtensionConfirmView({ data, action }: { data: Extension; action: string }) {
 	return (
 		<div className="p-4 max-w-2xl">
 			<h2 className="text-sm font-medium text-foreground mb-3 capitalize">Extension {action}</h2>
-			<WorkspaceDetailView workspace={data} />
+			<div className="flex items-center gap-2 mb-2">
+				<span
+					className={`w-2 h-2 rounded-full ${data.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
+				/>
+				<h3 className="text-lg font-semibold text-foreground">{data.name}</h3>
+			</div>
+			<div className="text-xs text-muted-foreground mb-4">ID: {data.id}</div>
+			{data.object_types.length > 0 && (
+				<div className="space-y-3">
+					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+						Object Types
+					</h3>
+					{data.object_types.map((ot) => (
+						<ObjectTypeCard
+							key={ot.type}
+							type={ot.type}
+							displayName={ot.display_name}
+							statuses={ot.statuses}
+							fields={ot.fields}
+						/>
+					))}
+				</div>
+			)}
 		</div>
 	)
 }
