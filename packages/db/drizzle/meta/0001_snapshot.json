@@ -553,7 +553,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "imports_status_check": {
+          "name": "imports_status_check",
+          "value": "\"imports\".\"status\" IN ('uploading', 'mapping', 'importing', 'completed', 'failed')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.integrations": {

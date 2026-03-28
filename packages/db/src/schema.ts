@@ -1,6 +1,8 @@
+import { sql } from 'drizzle-orm'
 import {
 	bigserial,
 	boolean,
+	check,
 	index,
 	integer,
 	jsonb,
@@ -255,7 +257,9 @@ export const imports = pgTable(
 		workspaceId: uuid('workspace_id')
 			.references(() => workspaces.id)
 			.notNull(),
-		status: text('status').notNull(),
+		status: text('status')
+			.$type<'uploading' | 'mapping' | 'importing' | 'completed' | 'failed'>()
+			.notNull(),
 		fileName: text('file_name').notNull(),
 		fileType: text('file_type').notNull(),
 		fileStorageKey: text('file_storage_key').notNull(),
@@ -274,7 +278,13 @@ export const imports = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 	},
-	(t) => [index('imports_ws_status_idx').on(t.workspaceId, t.status)],
+	(t) => [
+		index('imports_ws_status_idx').on(t.workspaceId, t.status),
+		check(
+			'imports_status_check',
+			sql`${t.status} IN ('uploading', 'mapping', 'importing', 'completed', 'failed')`,
+		),
+	],
 )
 
 // ── Notifications ─────────────────────────────────────────────────────────
