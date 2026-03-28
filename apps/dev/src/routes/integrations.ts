@@ -520,6 +520,12 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON payload'), 400)
 	}
 
+	// Allow provider to short-circuit (e.g. Slack url_verification challenge)
+	if (resolved.webhookPreHandler) {
+		const preResponse = resolved.webhookPreHandler(payload, headers)
+		if (preResponse) return preResponse
+	}
+
 	const normalized = normalizeEvent(resolved, payload, headers)
 	if (!normalized) {
 		// Event type we don't handle — acknowledge it
