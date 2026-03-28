@@ -19,7 +19,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function resolveNavigationPath(
+export function resolveNavigationPath(
 	workspaceId: string,
 	nav: { to: string; id?: string },
 	notification: NotificationResponse,
@@ -80,14 +80,20 @@ function PulseDashboard() {
 	}, [activeNotifications])
 
 	const handleAction = (id: string, response: unknown, nav?: { to: string; id?: string }) => {
-		respondNotification.mutate({ id, response })
-		if (nav) {
-			const notification = filtered.find((n) => n.id === id)
-			if (notification) {
-				const path = resolveNavigationPath(workspaceId, nav, notification)
-				if (path) navigate({ to: path })
-			}
-		}
+		respondNotification.mutate(
+			{ id, response },
+			{
+				onSuccess: () => {
+					if (nav) {
+						const notification = filtered.find((n) => n.id === id)
+						if (notification) {
+							const path = resolveNavigationPath(workspaceId, nav, notification)
+							if (path) navigate({ to: path })
+						}
+					}
+				},
+			},
+		)
 	}
 
 	const handleDismiss = (id: string) => {

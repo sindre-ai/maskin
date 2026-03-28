@@ -28,7 +28,7 @@ export interface NotificationAction {
 	navigate?: { to: string; id?: string }
 }
 
-function resolveActions(
+export function resolveActions(
 	notification: NotificationResponse,
 	metadata: Record<string, unknown>,
 ): NotificationAction[] {
@@ -85,6 +85,13 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 
 	const [replyOpen, setReplyOpen] = useState(false)
 	const [replyText, setReplyText] = useState('')
+
+	const handleReplySubmit = () => {
+		if (!replyText.trim()) return
+		onAction(notification.id, { type: 'text_reply', message: replyText })
+		setReplyText('')
+		setReplyOpen(false)
+	}
 
 	return (
 		<Card>
@@ -164,22 +171,10 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 									placeholder="Type a reply..."
 									className="h-8 text-sm"
 									onKeyDown={(e) => {
-										if (e.key === 'Enter' && replyText.trim()) {
-											onAction(notification.id, { type: 'text_reply', message: replyText })
-											setReplyText('')
-											setReplyOpen(false)
-										}
+										if (e.key === 'Enter') handleReplySubmit()
 									}}
 								/>
-								<Button
-									size="sm"
-									disabled={!replyText.trim()}
-									onClick={() => {
-										onAction(notification.id, { type: 'text_reply', message: replyText })
-										setReplyText('')
-										setReplyOpen(false)
-									}}
-								>
+								<Button size="sm" disabled={!replyText.trim()} onClick={handleReplySubmit}>
 									Send
 								</Button>
 							</div>
