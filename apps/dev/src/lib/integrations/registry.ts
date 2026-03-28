@@ -5,6 +5,7 @@ import { githubAuth } from './providers/github/auth'
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
+import { config as outlookCalendarConfig } from './providers/outlook-calendar/config'
 import { config as recallConfig, verifyRecallWebhook } from './providers/recall/config'
 import { recallEventNormalizer } from './providers/recall/webhooks'
 
@@ -26,6 +27,10 @@ providers.set('recall', {
 
 providers.set('google-calendar', {
 	config: googleCalendarConfig,
+})
+
+providers.set('outlook-calendar', {
+	config: outlookCalendarConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────
