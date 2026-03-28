@@ -69,7 +69,7 @@ describe('request', () => {
 
 		await api.objects.list('ws-1')
 
-		const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>
+		const headers = (fetchSpy.mock.calls[0][1] as RequestInit)?.headers as Record<string, string>
 		expect(headers.Authorization).toBeUndefined()
 	})
 
