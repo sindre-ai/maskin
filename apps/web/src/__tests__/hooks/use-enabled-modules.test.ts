@@ -1,10 +1,10 @@
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import type { WorkspaceContextValue } from '@/lib/workspace-context'
+import { WorkspaceContext } from '@/lib/workspace-context'
 import { renderHook } from '@testing-library/react'
 import React from 'react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { WorkspaceContextValue } from '@/lib/workspace-context'
-import { WorkspaceContext } from '@/lib/workspace-context'
-import { useEnabledModules } from '@/hooks/use-enabled-modules'
 
 let currentSettings: Record<string, unknown> = {}
 

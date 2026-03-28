@@ -12,8 +12,8 @@ vi.mock('@/lib/constants', () => ({
 	API_BASE: '/api',
 }))
 
-import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { connectSSE } from '@/lib/sse'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
 
 const workspaceId = 'ws-1'
 
@@ -85,7 +85,9 @@ describe('connectSSE', () => {
 	describe('onmessage callback', () => {
 		function getOnmessage() {
 			const call = vi.mocked(fetchEventSource).mock.calls[0]
-			const opts = call[1] as { onmessage: (msg: { data: string; id: string; event?: string }) => void }
+			const opts = call[1] as {
+				onmessage: (msg: { data: string; id: string; event?: string }) => void
+			}
 			return opts.onmessage
 		}
 

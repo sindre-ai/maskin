@@ -1,9 +1,9 @@
+import type { WorkspaceContextValue } from '@/lib/workspace-context'
+import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { renderHook } from '@testing-library/react'
 import React from 'react'
 import type { ReactNode } from 'react'
 import { describe, expect, it } from 'vitest'
-import type { WorkspaceContextValue } from '@/lib/workspace-context'
-import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 
 describe('useWorkspace', () => {
 	it('throws when used outside a WorkspaceContext provider', () => {
