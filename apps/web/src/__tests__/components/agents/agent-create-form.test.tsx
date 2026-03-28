@@ -5,7 +5,13 @@ import { buildActorResponse } from '../../factories'
 
 vi.mock('@/components/agents/mcp-servers', () => ({
 	McpServers: ({ onUpdate }: { onUpdate: () => void }) => (
-		<div data-testid="mcp-servers" onClick={onUpdate} />
+		<div
+			data-testid="mcp-servers"
+			onClick={onUpdate}
+			onKeyDown={onUpdate}
+			role="button"
+			tabIndex={0}
+		/>
 	),
 }))
 

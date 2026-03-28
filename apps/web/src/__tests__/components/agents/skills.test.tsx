@@ -69,7 +69,9 @@ describe('Skills', () => {
 
 		// Find delete button (icon button with hover:text-error)
 		const buttons = screen.getAllByRole('button')
-		const trashButton = buttons.find((b) => b.textContent === '' && b.className.includes('hover:text-error'))
+		const trashButton = buttons.find(
+			(b) => b.textContent === '' && b.className.includes('hover:text-error'),
+		)
 		if (trashButton) {
 			await user.click(trashButton)
 			expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
@@ -84,7 +86,9 @@ describe('Skills', () => {
 		render(<Skills actorId="agent-1" />)
 
 		const buttons = screen.getAllByRole('button')
-		const trashButton = buttons.find((b) => b.textContent === '' && b.className.includes('hover:text-error'))
+		const trashButton = buttons.find(
+			(b) => b.textContent === '' && b.className.includes('hover:text-error'),
+		)
 		if (trashButton) {
 			await user.click(trashButton)
 			await user.click(screen.getByRole('button', { name: 'Delete' }))
@@ -99,7 +103,9 @@ describe('Skills', () => {
 		render(<Skills actorId="agent-1" />)
 
 		const buttons = screen.getAllByRole('button')
-		const trashButton = buttons.find((b) => b.textContent === '' && b.className.includes('hover:text-error'))
+		const trashButton = buttons.find(
+			(b) => b.textContent === '' && b.className.includes('hover:text-error'),
+		)
 		if (trashButton) {
 			await user.click(trashButton)
 			await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -211,7 +217,10 @@ describe('Skills', () => {
 			// Click the edit button (pencil icon)
 			const buttons = screen.getAllByRole('button')
 			const editButton = buttons.find(
-				(b) => b.textContent === '' && b.className.includes('text-muted-foreground') && !b.className.includes('hover:text-error'),
+				(b) =>
+					b.textContent === '' &&
+					b.className.includes('text-muted-foreground') &&
+					!b.className.includes('hover:text-error'),
 			)
 			if (editButton) {
 				await user.click(editButton)
@@ -245,9 +254,7 @@ describe('Skills', () => {
 			await user.type(textarea, 'bad content')
 			await user.click(screen.getByRole('button', { name: 'Import' }))
 
-			expect(
-				screen.getByText(/Invalid SKILL.md format/),
-			).toBeInTheDocument()
+			expect(screen.getByText(/Invalid SKILL.md format/)).toBeInTheDocument()
 		})
 
 		it('shows error when name missing from frontmatter', async () => {

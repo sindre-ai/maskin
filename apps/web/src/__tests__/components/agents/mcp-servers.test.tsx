@@ -42,9 +42,7 @@ describe('McpServers', () => {
 
 	it('shows empty message when no servers configured', () => {
 		render(<McpServers tools={null} onUpdate={vi.fn()} />)
-		expect(
-			screen.getByText(/No MCP servers configured/),
-		).toBeInTheDocument()
+		expect(screen.getByText(/No MCP servers configured/)).toBeInTheDocument()
 	})
 
 	it('shows "Add Server" and "Import .mcp.json" buttons', () => {
@@ -155,7 +153,9 @@ describe('McpServers', () => {
 			)
 			// Find the delete icon button (last icon button in server card)
 			const buttons = screen.getAllByRole('button')
-			const trashButton = buttons.find((b) => b.textContent === '' && b.className.includes('hover:text-error'))
+			const trashButton = buttons.find(
+				(b) => b.textContent === '' && b.className.includes('hover:text-error'),
+			)
 			if (trashButton) {
 				await user.click(trashButton)
 				expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
@@ -170,7 +170,9 @@ describe('McpServers', () => {
 
 			// Click all icon buttons to find the trash one - look for the last icon-sized button
 			const buttons = screen.getAllByRole('button')
-			const trashButton = buttons.find((b) => b.textContent === '' && b.className.includes('hover:text-error'))
+			const trashButton = buttons.find(
+				(b) => b.textContent === '' && b.className.includes('hover:text-error'),
+			)
 			if (trashButton) {
 				await user.click(trashButton)
 				await user.click(screen.getByRole('button', { name: 'Delete' }))
@@ -183,7 +185,9 @@ describe('McpServers', () => {
 			render(<McpServers tools={stdioTools} onUpdate={vi.fn()} />)
 
 			const buttons = screen.getAllByRole('button')
-			const trashButton = buttons.find((b) => b.textContent === '' && b.className.includes('hover:text-error'))
+			const trashButton = buttons.find(
+				(b) => b.textContent === '' && b.className.includes('hover:text-error'),
+			)
 			if (trashButton) {
 				await user.click(trashButton)
 				await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -240,7 +244,10 @@ describe('McpServers', () => {
 			await user.click(screen.getByRole('button', { name: /Add Server/ }))
 			await user.type(screen.getByPlaceholderText('e.g. github'), 'test-server')
 			await user.type(screen.getByPlaceholderText('e.g. npx'), 'node')
-			await user.type(screen.getByPlaceholderText('e.g. -y, @modelcontextprotocol/server-github'), 'server.js')
+			await user.type(
+				screen.getByPlaceholderText('e.g. -y, @modelcontextprotocol/server-github'),
+				'server.js',
+			)
 			await user.click(screen.getByRole('button', { name: 'Save' }))
 
 			expect(onUpdate).toHaveBeenCalledWith({
