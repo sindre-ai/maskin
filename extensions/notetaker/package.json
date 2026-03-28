@@ -1,0 +1,33 @@
+{
+	"name": "@ai-native/ext-notetaker",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./server/index.ts",
+			"default": "./server/index.ts"
+		},
+		"./server": {
+			"types": "./server/index.ts",
+			"default": "./server/index.ts"
+		},
+		"./web": {
+			"types": "./web/index.ts",
+			"default": "./web/index.ts"
+		},
+		"./shared": {
+			"types": "./shared.ts",
+			"default": "./shared.ts"
+		}
+	},
+	"dependencies": {
+		"@ai-native/module-sdk": "workspace:*",
+		"@hono/zod-openapi": "^0.18.0",
+		"hono": "^4.7.0",
+		"zod": "^3.24.0"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.0"
+	}
+}

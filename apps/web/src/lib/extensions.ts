@@ -1,3 +1,4 @@
+import notetakerWebExtension from '@ai-native/ext-notetaker/web'
 import workWebExtension from '@ai-native/ext-work/web'
 import { registerWebModule } from '@ai-native/module-sdk'
 
@@ -5,3 +6,4 @@ import { registerWebModule } from '@ai-native/module-sdk'
 // Each extension's nav items and object type tabs become accessible
 // through the module registry for dynamic UI rendering.
 registerWebModule(workWebExtension)
+registerWebModule(notetakerWebExtension)

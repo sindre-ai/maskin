@@ -13,6 +13,7 @@
 		"test": "vitest"
 	},
 	"dependencies": {
+		"@ai-native/ext-notetaker": "workspace:*",
 		"@ai-native/ext-work": "workspace:*",
 		"@ai-native/module-sdk": "workspace:*",
 		"@ai-native/shared": "workspace:*",
