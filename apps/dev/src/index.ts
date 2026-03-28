@@ -8,6 +8,7 @@ import { createMcpServer } from '@ai-native/mcp'
 import { getAllModules } from '@ai-native/module-sdk'
 import { PgNotifyBridge } from '@ai-native/realtime'
 import { S3StorageProvider } from '@ai-native/storage'
+import type { StorageProvider } from '@ai-native/storage'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { OpenAPIHono } from '@hono/zod-openapi'
@@ -23,6 +24,7 @@ import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
 import graphRoutes from './routes/graph'
+import importsRoutes from './routes/imports'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
@@ -43,6 +45,7 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
+		storageProvider: StorageProvider
 	}
 }
 
@@ -126,6 +129,7 @@ app.use('*', async (c, next) => {
 	c.set('notifyBridge', notifyBridge)
 	c.set('sessionManager', sessionManager)
 	c.set('agentStorage', agentStorage)
+	c.set('storageProvider', storageProvider)
 	await next()
 })
 
@@ -164,6 +168,7 @@ app.route('/api/events', eventsRoutes)
 app.route('/api/sessions', sessionsRoutes)
 app.route('/api/notifications', notificationsRoutes)
 app.route('/api/graph', graphRoutes)
+app.route('/api/imports', importsRoutes)
 app.route('/api/claude-oauth', claudeOauthRoutes)
 
 // Mount extension routes at /api/m/{extensionId} — auth middleware on /api/* covers these

@@ -174,6 +174,32 @@ export const sessionLogResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 })
 
+export const importResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	status: z.string(),
+	fileName: z.string(),
+	fileType: z.string(),
+	totalRows: z.number().nullable(),
+	processedRows: z.number(),
+	successCount: z.number(),
+	errorCount: z.number(),
+	mapping: jsonbField,
+	preview: jsonbField,
+	errors: jsonbField,
+	source: z.string(),
+	createdBy: z.string().uuid(),
+	createdAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+	completedAt: z.string().nullable(),
+})
+
+export const importListItemSchema = importResponseSchema.omit({
+	preview: true,
+	errors: true,
+	mapping: true,
+})
+
 export const notificationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
