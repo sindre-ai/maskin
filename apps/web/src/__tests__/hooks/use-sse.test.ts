@@ -1,4 +1,5 @@
 import { renderHook } from '@testing-library/react'
+import { act } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockAbort = vi.fn()
@@ -27,6 +28,20 @@ describe('useSSE', () => {
 	it('returns connecting as initial status', () => {
 		const { result } = renderHook(() => useSSE('ws-1'), { wrapper: TestWrapper })
 		expect(result.current).toBe('connecting')
+	})
+
+	it('updates status when onStatusChange is called', async () => {
+		const { result } = renderHook(() => useSSE('ws-1'), { wrapper: TestWrapper })
+		expect(result.current).toBe('connecting')
+
+		const callbacks = mockConnectSSE.mock.calls[0][1] as {
+			onStatusChange: (status: string) => void
+		}
+		act(() => callbacks.onStatusChange('connected'))
+		expect(result.current).toBe('connected')
+
+		act(() => callbacks.onStatusChange('disconnected'))
+		expect(result.current).toBe('disconnected')
 	})
 
 	it('calls connectSSE with workspaceId and callbacks', () => {

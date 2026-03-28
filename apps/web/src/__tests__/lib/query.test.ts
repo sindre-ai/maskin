@@ -64,10 +64,9 @@ describe('queryClient', () => {
 
 	describe('mutation cache onError', () => {
 		function triggerMutationError(error: Error) {
-			// Access the mutation cache's onError handler
-			const cache = queryClient.getMutationCache()
-			const config = (cache as unknown as { config: { onError: (error: Error) => void } }).config
-			config.onError(error)
+			// MutationCache stores the constructor options as `config` at runtime (not in TS types)
+			// biome-ignore lint/suspicious/noExplicitAny: accessing internal config property
+			;(queryClient.getMutationCache() as any).config.onError(error)
 		}
 
 		it('shows toast for generic errors', () => {

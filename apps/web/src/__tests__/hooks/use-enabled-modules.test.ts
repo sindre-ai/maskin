@@ -6,6 +6,8 @@ import type { WorkspaceContextValue } from '@/lib/workspace-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 
+let currentSettings: Record<string, unknown> = {}
+
 function createWorkspaceWrapper(settings: Record<string, unknown> = {}) {
 	const value: WorkspaceContextValue = {
 		workspace: {
@@ -21,6 +23,23 @@ function createWorkspaceWrapper(settings: Record<string, unknown> = {}) {
 	}
 	return ({ children }: { children: ReactNode }) =>
 		React.createElement(WorkspaceContext.Provider, { value }, children)
+}
+
+/** Wrapper that reads from mutable `currentSettings`, so rerenders pick up new object references */
+function MutableSettingsWrapper({ children }: { children: ReactNode }) {
+	const value: WorkspaceContextValue = {
+		workspace: {
+			id: 'ws-1',
+			name: 'Test',
+			settings: currentSettings,
+			role: 'owner',
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+		} as WorkspaceContextValue['workspace'],
+		workspaceId: 'ws-1',
+		sseStatus: 'connected',
+	}
+	return React.createElement(WorkspaceContext.Provider, { value }, children)
 }
 
 beforeEach(() => {
@@ -50,11 +69,14 @@ describe('useEnabledModules', () => {
 	})
 
 	it('returns stable reference when values have not changed', () => {
+		currentSettings = { enabled_modules: ['work', 'pulse'] }
 		const { result, rerender } = renderHook(() => useEnabledModules(), {
-			wrapper: createWorkspaceWrapper({ enabled_modules: ['work', 'pulse'] }),
+			wrapper: MutableSettingsWrapper,
 		})
 
 		const first = result.current
+		// Create a new settings object with identical values — different reference, same content
+		currentSettings = { enabled_modules: ['work', 'pulse'] }
 		rerender()
 		expect(result.current).toBe(first)
 	})
