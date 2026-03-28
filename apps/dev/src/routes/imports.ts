@@ -28,6 +28,15 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+function findImport(db: Database, id: string, workspaceId: string) {
+	return db
+		.select()
+		.from(imports)
+		.where(and(eq(imports.id, id), eq(imports.workspaceId, workspaceId)))
+		.limit(1)
+		.then((rows) => rows[0])
+}
+
 // ── POST / — Upload file, parse, auto-map, return preview ──────────────
 
 const createImportRoute = createRoute({
@@ -235,11 +244,7 @@ app.openapi(updateMappingRoute, async (c) => {
 	const { id } = c.req.valid('param')
 	const { mapping } = c.req.valid('json')
 
-	const [importRecord] = await db
-		.select()
-		.from(imports)
-		.where(and(eq(imports.id, id), eq(imports.workspaceId, workspaceId)))
-		.limit(1)
+	const importRecord = await findImport(db, id, workspaceId)
 
 	if (!importRecord) {
 		return c.json(createApiError('NOT_FOUND', 'Import not found'), 404)
@@ -267,16 +272,17 @@ app.openapi(updateMappingRoute, async (c) => {
 
 // ── Background import execution ─────────────────────────────────────────
 
-function runImportInBackground(
-	importId: string,
-	fileStorageKey: string,
-	fileType: string,
-	mapping: z.infer<typeof importMappingSchema>,
-	workspaceId: string,
-	actorId: string,
-	db: Database,
-	storage: StorageProvider,
-) {
+function runImportInBackground(opts: {
+	importId: string
+	fileStorageKey: string
+	fileType: string
+	mapping: z.infer<typeof importMappingSchema>
+	workspaceId: string
+	actorId: string
+	db: Database
+	storage: StorageProvider
+}) {
+	const { importId, fileStorageKey, fileType, mapping, workspaceId, actorId, db, storage } = opts
 	const run = async () => {
 		const fileBuffer = await storage.get(fileStorageKey)
 		const parsed = parseFile(fileBuffer, fileType)
@@ -386,11 +392,7 @@ app.openapi(confirmImportRoute, async (c) => {
 	const { id } = c.req.valid('param')
 
 	// Fetch import record (needed for 404 and mapping check)
-	const [importRecord] = await db
-		.select()
-		.from(imports)
-		.where(and(eq(imports.id, id), eq(imports.workspaceId, workspaceId)))
-		.limit(1)
+	const importRecord = await findImport(db, id, workspaceId)
 
 	if (!importRecord) {
 		return c.json(createApiError('NOT_FOUND', 'Import not found'), 404)
@@ -425,16 +427,16 @@ app.openapi(confirmImportRoute, async (c) => {
 	})
 
 	// Run execution in background — don't block the response
-	runImportInBackground(
-		id,
-		importRecord.fileStorageKey,
-		importRecord.fileType,
-		importRecord.mapping as z.infer<typeof importMappingSchema>,
+	runImportInBackground({
+		importId: id,
+		fileStorageKey: importRecord.fileStorageKey,
+		fileType: importRecord.fileType,
+		mapping: importRecord.mapping as z.infer<typeof importMappingSchema>,
 		workspaceId,
 		actorId,
 		db,
 		storage,
-	)
+	})
 
 	return c.json(serialize(updated) as z.infer<typeof importResponseSchema>, 202)
 })
@@ -467,11 +469,7 @@ app.openapi(getImportRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id } = c.req.valid('param')
 
-	const [importRecord] = await db
-		.select()
-		.from(imports)
-		.where(and(eq(imports.id, id), eq(imports.workspaceId, workspaceId)))
-		.limit(1)
+	const importRecord = await findImport(db, id, workspaceId)
 
 	if (!importRecord) {
 		return c.json(createApiError('NOT_FOUND', 'Import not found'), 404)

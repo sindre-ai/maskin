@@ -608,22 +608,7 @@ export interface ImportResponse {
 	completedAt: string | null
 }
 
-export interface ImportListItem {
-	id: string
-	workspaceId: string
-	status: string
-	fileName: string
-	fileType: string
-	totalRows: number | null
-	processedRows: number
-	successCount: number
-	errorCount: number
-	source: string
-	createdBy: string
-	createdAt: string | null
-	updatedAt: string | null
-	completedAt: string | null
-}
+export type ImportListItem = Omit<ImportResponse, 'mapping' | 'preview' | 'errors'>
 
 export interface ImportPreview {
 	columns: string[]

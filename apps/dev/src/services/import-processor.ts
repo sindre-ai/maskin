@@ -97,6 +97,12 @@ function parseJson(buffer: Buffer): ParsedFile {
 
 // ── Auto-mapping ────────────────────────────────────────────────────────
 
+const TRANSFORM_MAP: Record<string, 'none' | 'date' | 'number' | 'boolean'> = {
+	number: 'number',
+	date: 'date',
+	boolean: 'boolean',
+}
+
 const RESERVED_ALIASES: Record<string, string[]> = {
 	title: ['title', 'name', 'subject', 'heading'],
 	content: ['content', 'description', 'notes', 'body', 'details', 'summary'],
@@ -197,14 +203,7 @@ export function generateMapping(
 		// Exact name match against field definitions
 		for (const [fieldName, fieldInfo] of allFields) {
 			if (normalize(fieldName) === norm) {
-				const transform =
-					fieldInfo.type === 'number'
-						? ('number' as const)
-						: fieldInfo.type === 'date'
-							? ('date' as const)
-							: fieldInfo.type === 'boolean'
-								? ('boolean' as const)
-								: ('none' as const)
+				const transform = TRANSFORM_MAP[fieldInfo.type] ?? 'none'
 				mappedColumns.push({
 					sourceColumn: col,
 					targetField: `metadata.${fieldName}`,

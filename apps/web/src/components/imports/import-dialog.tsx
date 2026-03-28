@@ -240,6 +240,7 @@ function MappingStep({
 
 	// Local mapping state for editing
 	const [localColumns, setLocalColumns] = useState<ColumnMappingInput[]>(mapping?.columns ?? [])
+	const isFirstRender = useRef(true)
 
 	const handleTargetChange = useCallback((sourceColumn: string, newTarget: string) => {
 		setLocalColumns((prev) =>
@@ -255,9 +256,13 @@ function MappingStep({
 		)
 	}, [])
 
-	// Save mapping on changes
+	// Save mapping on changes (skip initial render)
 	useEffect(() => {
 		if (!mapping) return
+		if (isFirstRender.current) {
+			isFirstRender.current = false
+			return
+		}
 		const updated: ImportMappingInput = {
 			...mapping,
 			columns: localColumns,
