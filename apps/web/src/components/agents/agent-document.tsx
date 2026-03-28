@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,7 +11,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useUpdateActor } from '@/hooks/use-actors'
+import { useDeleteActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
@@ -23,6 +24,7 @@ import {
 import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
+import { useNavigate } from '@tanstack/react-router'
 import {
 	Check,
 	CheckCircle2,
@@ -30,6 +32,7 @@ import {
 	ChevronRight,
 	Clock,
 	MinusCircle,
+	Trash2,
 	XCircle,
 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
@@ -461,6 +464,8 @@ function SessionRow({
 export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
+	const deleteActor = useDeleteActor(workspaceId)
+	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
 	const { data: recentSessions } = useActorSessions(agent.id, workspaceId)
@@ -468,6 +473,46 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const agentEvents = useMemo(
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),
 		[allEvents, agent.id],
+	)
+
+	const [confirmDelete, setConfirmDelete] = useState(false)
+
+	const handleDelete = useCallback(() => {
+		deleteActor.mutate(agent.id, {
+			onSuccess: () => {
+				navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
+			},
+		})
+	}, [agent.id, deleteActor, navigate, workspaceId])
+
+	const deleteActions = useMemo(
+		() =>
+			confirmDelete ? (
+				<div className="flex items-center gap-2">
+					<span className="text-xs text-error">Delete this agent?</span>
+					<Button
+						variant="destructive"
+						size="sm"
+						onClick={handleDelete}
+						disabled={deleteActor.isPending}
+					>
+						{deleteActor.isPending ? 'Deleting...' : 'Confirm'}
+					</Button>
+					<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+						Cancel
+					</Button>
+				</div>
+			) : (
+				<Button
+					variant="ghost"
+					size="icon"
+					className="h-7 w-7 text-muted-foreground hover:text-error"
+					onClick={() => setConfirmDelete(true)}
+				>
+					<Trash2 size={15} />
+				</Button>
+			),
+		[confirmDelete, handleDelete, deleteActor.isPending],
 	)
 
 	const handleUpdateName = useCallback(
@@ -514,7 +559,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 
 	return (
 		<>
-			<PageHeader />
+			<PageHeader actions={deleteActions} />
 			<AgentDocumentView
 				agent={agent}
 				workspaceId={workspaceId}

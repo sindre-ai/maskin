@@ -1,9 +1,22 @@
 import { generateApiKey, hashPassword } from '@ai-native/auth'
 import type { Database } from '@ai-native/db'
-import { actors, workspaceMembers, workspaces } from '@ai-native/db/schema'
+import {
+	events,
+	actors,
+	agentFiles,
+	integrations,
+	notifications,
+	objects,
+	relationships,
+	sessionLogs,
+	sessions,
+	triggers,
+	workspaceMembers,
+	workspaces,
+} from '@ai-native/db/schema'
 import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -11,8 +24,10 @@ import {
 	actorWithKeySchema,
 	errorSchema,
 	idParamSchema,
+	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -373,5 +388,111 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
+
+// DELETE /:id - Delete actor (agents only)
+const deleteActorRoute = createRoute({
+	method: 'delete',
+	path: '/{id}',
+	tags: ['Actors'],
+	summary: 'Delete actor (agents only)',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.object({ deleted: z.boolean() }) } },
+			description: 'Actor deleted',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Cannot delete human actors',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found',
+		},
+	},
+})
+
+app.openapi(deleteActorRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
+	}
+
+	const existingData = { ...existing }
+	await db.transaction(async (tx) => {
+		// Delete session logs for sessions owned by this actor
+		const actorSessions = await tx
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(eq(sessions.actorId, id))
+		const sessionIds = actorSessions.map((s) => s.id)
+		if (sessionIds.length > 0) {
+			await tx.delete(sessionLogs).where(inArray(sessionLogs.sessionId, sessionIds))
+		}
+		await tx.delete(sessions).where(eq(sessions.actorId, id))
+
+		// Delete triggers targeting or created by this actor
+		await tx.delete(triggers).where(or(eq(triggers.targetActorId, id), eq(triggers.createdBy, id)))
+
+		// Delete agent files
+		await tx.delete(agentFiles).where(eq(agentFiles.actorId, id))
+
+		// Delete notifications
+		await tx
+			.delete(notifications)
+			.where(or(eq(notifications.sourceActorId, id), eq(notifications.targetActorId, id)))
+
+		// Delete events
+		await tx.delete(events).where(eq(events.actorId, id))
+
+		// Delete relationships
+		await tx.delete(relationships).where(eq(relationships.createdBy, id))
+
+		// Reassign objects
+		await tx.update(objects).set({ owner: null }).where(eq(objects.owner, id))
+		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
+
+		// Clean up workspace references
+		await tx.delete(workspaceMembers).where(eq(workspaceMembers.actorId, id))
+		await tx.update(workspaces).set({ createdBy: null }).where(eq(workspaces.createdBy, id))
+		await tx.update(integrations).set({ createdBy: actorId }).where(eq(integrations.createdBy, id))
+
+		// Clean up self-references and delete
+		await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
+		await tx.delete(actors).where(eq(actors.id, id))
+	})
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'deleted',
+		entityType: 'agent',
+		entityId: id,
+		data: existingData,
+	})
+
+	return c.json({ deleted: true })
+}) as RouteHandler<typeof deleteActorRoute, Env>)
 
 export default app

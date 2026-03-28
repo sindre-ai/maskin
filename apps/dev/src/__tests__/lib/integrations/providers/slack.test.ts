@@ -41,6 +41,13 @@ describe('Slack provider config', () => {
 		}
 	})
 
+	it('has MCP server config', () => {
+		expect(config.mcp).toBeDefined()
+		expect(config.mcp?.command).toBe('npx')
+		expect(config.mcp?.args).toEqual(['-y', '@modelcontextprotocol/server-slack'])
+		expect(config.mcp?.envKey).toBe('SLACK_BOT_TOKEN')
+	})
+
 	it('defines event types', () => {
 		expect(config.events?.definitions).toBeDefined()
 		const types = config.events?.definitions.map((d) => d.entityType)
