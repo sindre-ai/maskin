@@ -425,11 +425,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	const [existing] = await db
-		.select({ id: actors.id, type: actors.type })
-		.from(actors)
-		.where(eq(actors.id, id))
-		.limit(1)
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
 
 	if (!existing) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
@@ -439,6 +435,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
 	}
 
+	const existingData = { ...existing }
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor
 		const actorSessions = await tx
@@ -480,6 +477,15 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Clean up self-references and delete
 		await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
 		await tx.delete(actors).where(eq(actors.id, id))
+	})
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'deleted',
+		entityType: 'agent',
+		entityId: id,
+		data: existingData,
 	})
 
 	return c.json({ deleted: true })

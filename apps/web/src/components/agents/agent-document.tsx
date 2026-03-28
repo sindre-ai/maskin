@@ -475,6 +475,8 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[allEvents, agent.id],
 	)
 
+	const [confirmDelete, setConfirmDelete] = useState(false)
+
 	const handleDelete = useCallback(() => {
 		deleteActor.mutate(agent.id, {
 			onSuccess: () => {
@@ -482,6 +484,36 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 			},
 		})
 	}, [agent.id, deleteActor, navigate, workspaceId])
+
+	const deleteActions = useMemo(
+		() =>
+			confirmDelete ? (
+				<div className="flex items-center gap-2">
+					<span className="text-xs text-error">Delete this agent?</span>
+					<Button
+						variant="destructive"
+						size="sm"
+						onClick={handleDelete}
+						disabled={deleteActor.isPending}
+					>
+						{deleteActor.isPending ? 'Deleting...' : 'Confirm'}
+					</Button>
+					<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+						Cancel
+					</Button>
+				</div>
+			) : (
+				<Button
+					variant="ghost"
+					size="icon"
+					className="h-7 w-7 text-muted-foreground hover:text-error"
+					onClick={() => setConfirmDelete(true)}
+				>
+					<Trash2 size={15} />
+				</Button>
+			),
+		[confirmDelete, handleDelete, deleteActor.isPending],
+	)
 
 	const handleUpdateName = useCallback(
 		(name: string) => {
@@ -527,18 +559,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 
 	return (
 		<>
-			<PageHeader
-				actions={
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7 text-muted-foreground hover:text-error"
-						onClick={handleDelete}
-					>
-						<Trash2 size={15} />
-					</Button>
-				}
-			/>
+			<PageHeader actions={deleteActions} />
 			<AgentDocumentView
 				agent={agent}
 				workspaceId={workspaceId}

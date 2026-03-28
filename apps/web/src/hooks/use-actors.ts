@@ -57,5 +57,8 @@ export function useDeleteActor(workspaceId: string) {
 			toast.success('Agent deleted')
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 		},
+		onError: () => {
+			toast.error('Failed to delete agent')
+		},
 	})
 }
