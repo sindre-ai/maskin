@@ -112,10 +112,16 @@ await storageProvider.ensureBucket()
 
 // Ensure agent-base Docker image exists
 const containers = new ContainerManager()
-await containers.ensureImage(
-	'agent-base:latest',
-	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
-)
+try {
+	await containers.ensureImage(
+		'agent-base:latest',
+		path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
+	)
+} catch (err) {
+	logger.error('Failed to build agent-base image — sessions will fail until image is available', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+}
 
 // Agent storage manager for file operations (skills, learnings, memory)
 const agentStorage = new AgentStorageManager(storageProvider, db)
