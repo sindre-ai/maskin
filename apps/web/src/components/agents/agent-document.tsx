@@ -239,6 +239,7 @@ export function AgentDocumentView({
 							onBlur={handleSystemPromptBlur}
 							placeholder="Instructions for the agent..."
 							className="min-h-[120px] font-mono text-sm"
+							autoResize
 						/>
 					</Section>
 
