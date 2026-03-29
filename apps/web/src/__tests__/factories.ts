@@ -3,6 +3,7 @@ import type {
 	ActorResponse,
 	ActorWithKey,
 	EventResponse,
+	ImportResponse,
 	IntegrationResponse,
 	NotificationResponse,
 	ObjectResponse,
@@ -210,6 +211,30 @@ export function buildIntegrationResponse(
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
+		...overrides,
+	}
+}
+
+export function buildImportResponse(overrides: Partial<ImportResponse> = {}): ImportResponse {
+	const id = overrides.id ?? nextId('imp')
+	return {
+		id,
+		workspaceId: 'ws-1',
+		status: 'pending',
+		fileName: 'data.csv',
+		fileType: 'text/csv',
+		totalRows: null,
+		processedRows: 0,
+		successCount: 0,
+		errorCount: 0,
+		mapping: null,
+		preview: null,
+		errors: null,
+		source: 'upload',
+		createdBy: 'actor-1',
+		createdAt: '2026-01-01T00:00:00Z',
+		updatedAt: null,
+		completedAt: null,
 		...overrides,
 	}
 }
