@@ -1,3 +1,4 @@
+import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
 import { ObjectList } from '@/components/objects/object-list'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -17,6 +18,7 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
+import { Upload } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
@@ -30,6 +32,7 @@ function ObjectsPage() {
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
 	const [search, setSearch] = useState('')
+	const [importOpen, setImportOpen] = useState(false)
 	const { data: actors } = useActors(workspaceId)
 	const enabledModules = useEnabledModules()
 	const customExtensions = useCustomExtensions()
@@ -37,7 +40,7 @@ function ObjectsPage() {
 
 	const tabs = useMemo(() => {
 		const moduleTabs = getEnabledObjectTypeTabs(enabledModules)
-		const customTabs = customExtensions.flatMap((ext) => ext.tabs)
+		const customTabs = customExtensions.filter((ext) => ext.enabled).flatMap((ext) => ext.tabs)
 		return [
 			{ label: 'All', value: undefined as string | undefined },
 			...moduleTabs.map((t) => ({ label: t.label, value: t.value as string | undefined })),
@@ -133,7 +136,17 @@ function ObjectsPage() {
 					placeholder="Search..."
 					className="rounded border border-border bg-card px-3 py-1 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring outline-none"
 				/>
+				<button
+					type="button"
+					className="ml-auto flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1 text-sm text-foreground hover:bg-muted transition-colors"
+					onClick={() => setImportOpen(true)}
+				>
+					<Upload size={14} />
+					Import
+				</button>
 			</div>
+
+			<ImportDialog open={importOpen} onOpenChange={setImportOpen} />
 
 			{isLoading ? <ListSkeleton /> : <ObjectList objects={filtered} workspaceId={workspaceId} />}
 		</div>

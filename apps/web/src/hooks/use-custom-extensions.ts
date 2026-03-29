@@ -1,10 +1,11 @@
 import { useWorkspace } from '@/lib/workspace-context'
-import { useMemo } from 'react'
+import { useRef } from 'react'
 
 interface CustomExtensionEntry {
 	name: string
 	types: string[]
 	relationship_types?: string[]
+	enabled?: boolean
 }
 
 export interface CustomExtensionInfo {
@@ -12,6 +13,7 @@ export interface CustomExtensionInfo {
 	name: string
 	types: string[]
 	tabs: { label: string; value: string }[]
+	enabled: boolean
 }
 
 export function useCustomExtensions(): CustomExtensionInfo[] {
@@ -24,20 +26,28 @@ export function useCustomExtensions(): CustomExtensionInfo[] {
 	>
 	const displayNames = (settings?.display_names ?? {}) as Record<string, string>
 
-	return useMemo(
-		() =>
-			Object.entries(customExtensions).map(([id, ext]) => {
-				const types = Array.isArray(ext.types) ? ext.types : []
-				return {
-					id,
-					name: ext.name,
-					types,
-					tabs: types.map((type) => ({
-						label: displayNames[type] ?? type,
-						value: type,
-					})),
-				}
-			}),
-		[customExtensions, displayNames],
-	)
+	const result = Object.entries(customExtensions).map(([id, ext]) => {
+		const types = Array.isArray(ext.types) ? ext.types : []
+		return {
+			id,
+			name: ext.name,
+			types,
+			tabs: types.map((type) => ({
+				label: displayNames[type] ?? type,
+				value: type,
+			})),
+			enabled: ext.enabled !== false,
+		}
+	})
+
+	const ref = useRef(result)
+	const prevSerialized = useRef('')
+	const serialized = JSON.stringify(result)
+
+	if (serialized !== prevSerialized.current) {
+		ref.current = result
+		prevSerialized.current = serialized
+	}
+
+	return ref.current
 }

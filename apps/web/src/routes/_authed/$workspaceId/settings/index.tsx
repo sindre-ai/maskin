@@ -105,6 +105,19 @@ function ExtensionsSection() {
 		)
 	}
 
+	const handleToggleCustomExtension = (extId: string, enabled: boolean) => {
+		const customExts = {
+			...((settings?.custom_extensions as Record<string, unknown>) ?? {}),
+		}
+		const existing = customExts[extId] as Record<string, unknown>
+		customExts[extId] = { ...existing, enabled }
+
+		updateWorkspace.mutate(
+			{ settings: { ...settings, custom_extensions: customExts } },
+			{ onError: () => toast.error('Failed to update extension') },
+		)
+	}
+
 	const handleDeleteCustomExtension = (extId: string, types: string[]) => {
 		const statuses = { ...((settings?.statuses as Record<string, string[]>) ?? {}) }
 		const displayNames = { ...((settings?.display_names as Record<string, string>) ?? {}) }
@@ -178,32 +191,38 @@ function ExtensionsSection() {
 								</span>
 							)}
 						</div>
-						{confirmDeleteId === ext.id ? (
-							<div className="flex items-center gap-1">
-								<Button
-									size="sm"
-									variant="destructive"
-									onClick={() => {
-										handleDeleteCustomExtension(ext.id, ext.types)
-										setConfirmDeleteId(null)
-									}}
+						<div className="flex items-center gap-3">
+							{confirmDeleteId === ext.id ? (
+								<div className="flex items-center gap-1">
+									<Button
+										size="sm"
+										variant="destructive"
+										onClick={() => {
+											handleDeleteCustomExtension(ext.id, ext.types)
+											setConfirmDeleteId(null)
+										}}
+									>
+										Delete
+									</Button>
+									<Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+										Cancel
+									</Button>
+								</div>
+							) : (
+								<button
+									type="button"
+									aria-label={`Delete ${ext.name}`}
+									onClick={() => setConfirmDeleteId(ext.id)}
+									className="text-muted-foreground hover:text-destructive transition-colors"
 								>
-									Delete
-								</Button>
-								<Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
-									Cancel
-								</Button>
-							</div>
-						) : (
-							<button
-								type="button"
-								aria-label={`Delete ${ext.name}`}
-								onClick={() => setConfirmDeleteId(ext.id)}
-								className="text-muted-foreground hover:text-destructive transition-colors"
-							>
-								<Trash2 size={15} />
-							</button>
-						)}
+									<Trash2 size={15} />
+								</button>
+							)}
+							<Switch
+								checked={ext.enabled}
+								onCheckedChange={(checked) => handleToggleCustomExtension(ext.id, !!checked)}
+							/>
+						</div>
 					</div>
 				))}
 			</div>

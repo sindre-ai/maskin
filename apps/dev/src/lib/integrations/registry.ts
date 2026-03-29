@@ -8,6 +8,13 @@ import { config as googleCalendarConfig } from './providers/google-calendar/conf
 import { config as outlookCalendarConfig } from './providers/outlook-calendar/config'
 import { config as recallConfig, verifyRecallWebhook } from './providers/recall/config'
 import { recallEventNormalizer } from './providers/recall/webhooks'
+import {
+	config as slackConfig,
+	parseTokenResponse as slackParseTokenResponse,
+	resolveExternalId as slackResolveExternalId,
+	slackWebhookPreHandler,
+} from './providers/slack/config'
+import { slackEventNormalizer } from './providers/slack/webhooks'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -31,6 +38,14 @@ providers.set('google-calendar', {
 
 providers.set('outlook-calendar', {
 	config: outlookCalendarConfig,
+})
+
+providers.set('slack', {
+	config: slackConfig,
+	parseTokenResponse: slackParseTokenResponse,
+	resolveExternalId: slackResolveExternalId,
+	customNormalizer: slackEventNormalizer,
+	webhookPreHandler: slackWebhookPreHandler,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

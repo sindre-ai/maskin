@@ -156,7 +156,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string (required)
-- `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` — auth config (passed through Turborepo)
 - `PORT` — server port (default 3000)
 - `S3_ENDPOINT` — S3-compatible storage endpoint (default: `http://localhost:8333` for SeaweedFS)
 - `S3_BUCKET` — storage bucket name (default: `agent-files`)

@@ -441,7 +441,7 @@ export const tools = {
 				.record(z.unknown())
 				.optional()
 				.describe(
-					'Structured data: decision options, evidence tags, confidence scores, suggestions, etc.',
+					'Structured data. Supports "actions" array to define custom action buttons: [{ label: "Button text", response: "value_sent_back", navigate?: { to: "object"|"objects"|"activity"|"agent"|"trigger", id?: "uuid" } }]. Also supports: input_type (confirmation|single_choice|multiple_choice|text), question, options ([{label, value, description?}]), tags, suggestion, urgency_label, meta_text.',
 				),
 			source_actor_id: z.string().uuid().describe('The agent actor creating this notification'),
 			target_actor_id: z
