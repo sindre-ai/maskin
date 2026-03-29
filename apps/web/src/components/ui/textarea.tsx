@@ -7,7 +7,7 @@ interface TextareaProps extends React.ComponentProps<'textarea'> {
 }
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
-	({ className, autoResize, ...props }, ref) => {
+	({ className, autoResize, onInput, ...props }, ref) => {
 		const internalRef = React.useRef<HTMLTextAreaElement | null>(null)
 
 		const setRefs = React.useCallback(
@@ -26,6 +26,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 			el.style.height = `${el.scrollHeight}px`
 		}, [autoResize])
 
+		// biome-ignore lint/correctness/useExhaustiveDependencies: props.value triggers resize on programmatic changes
 		React.useEffect(() => {
 			adjustHeight()
 		}, [adjustHeight, props.value])
@@ -38,11 +39,11 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 					className,
 				)}
 				ref={setRefs}
+				{...props}
 				onInput={(e) => {
 					adjustHeight()
-					props.onInput?.(e)
+					onInput?.(e)
 				}}
-				{...props}
 			/>
 		)
 	},
