@@ -8,11 +8,13 @@ import {
 	TableHeader,
 	TableRow,
 } from '@/components/ui/table'
+import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
 import {
 	type ColumnDef,
 	type GroupingState,
+	type OnChangeFn,
 	type RowSelectionState,
 	type VisibilityState,
 	flexRender,
@@ -26,17 +28,13 @@ import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef } from 'react'
 
 interface DataTableProps {
-	data: import('@/lib/api').ObjectResponse[]
-	columns: ColumnDef<import('@/lib/api').ObjectResponse>[]
+	data: ObjectResponse[]
+	columns: ColumnDef<ObjectResponse>[]
 	workspaceId: string
 	rowSelection: RowSelectionState
-	onRowSelectionChange: (
-		value: RowSelectionState | ((prev: RowSelectionState) => RowSelectionState),
-	) => void
+	onRowSelectionChange: OnChangeFn<RowSelectionState>
 	columnVisibility: VisibilityState
-	onColumnVisibilityChange: (
-		value: VisibilityState | ((prev: VisibilityState) => VisibilityState),
-	) => void
+	onColumnVisibilityChange: OnChangeFn<VisibilityState>
 	grouping?: GroupingState
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
@@ -70,8 +68,8 @@ export function DataTable({
 			columnVisibility,
 			grouping: grouping ?? [],
 		},
-		onRowSelectionChange: onRowSelectionChange as never,
-		onColumnVisibilityChange: onColumnVisibilityChange as never,
+		onRowSelectionChange,
+		onColumnVisibilityChange,
 		getCoreRowModel: getCoreRowModel(),
 		getGroupedRowModel: grouping?.length ? getGroupedRowModel() : undefined,
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
