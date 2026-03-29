@@ -70,6 +70,10 @@ export function DataTableToolbar({
 		setLocalSearch(search ?? '')
 	}, [search])
 
+	useEffect(() => {
+		return () => clearTimeout(debounceRef.current)
+	}, [])
+
 	const handleSearchChange = (value: string) => {
 		setLocalSearch(value)
 		clearTimeout(debounceRef.current)

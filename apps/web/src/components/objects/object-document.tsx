@@ -207,15 +207,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				navigate({
 					to: '/$workspaceId/objects',
 					params: { workspaceId },
-					search: {
-						type: undefined,
-						status: undefined,
-						owner: undefined,
-						sort: 'createdAt' as const,
-						order: 'desc' as const,
-						q: undefined,
-						groupBy: undefined,
-					},
+					search: {} as never,
 				})
 			},
 		})
