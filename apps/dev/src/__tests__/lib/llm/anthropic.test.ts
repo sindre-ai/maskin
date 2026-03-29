@@ -7,10 +7,11 @@ describe('AnthropicAdapter', () => {
 	const adapter = new AnthropicAdapter('test-api-key')
 
 	beforeEach(() => {
-		global.fetch = mockFetch
+		vi.stubGlobal('fetch', mockFetch)
 	})
 
 	afterEach(() => {
+		vi.unstubAllGlobals()
 		vi.restoreAllMocks()
 	})
 

@@ -86,8 +86,8 @@ describe('useImport', () => {
 
 		const callCount = vi.mocked(api.imports.get).mock.calls.length
 
-		// Wait a bit and verify no additional calls
-		await new Promise((resolve) => setTimeout(resolve, 3000))
+		// Wait past the polling interval (2000ms) and verify no additional calls
+		await new Promise((resolve) => setTimeout(resolve, 2500))
 		expect(vi.mocked(api.imports.get).mock.calls.length).toBe(callCount)
 	})
 })

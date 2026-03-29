@@ -5,10 +5,11 @@ const mockFetch = vi.fn()
 
 describe('OpenAIAdapter', () => {
 	beforeEach(() => {
-		global.fetch = mockFetch
+		vi.stubGlobal('fetch', mockFetch)
 	})
 
 	afterEach(() => {
+		vi.unstubAllGlobals()
 		vi.restoreAllMocks()
 	})
 

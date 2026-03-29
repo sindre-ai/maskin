@@ -2,6 +2,7 @@ import { ImportDialog } from '@/components/imports/import-dialog'
 import type { ImportResponse } from '@/lib/api'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { buildImportResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
 
 const mockCreateImportMutateAsync = vi.fn()
@@ -39,36 +40,19 @@ vi.mock('@/lib/workspace-context', () => ({
 	}),
 }))
 
-const buildImportResponse = (overrides: Partial<ImportResponse> = {}): ImportResponse => ({
-	id: 'import-1',
-	workspaceId: 'ws-1',
-	status: 'pending',
-	fileName: 'data.csv',
-	fileType: 'csv',
+const defaultMapping = {
+	objectType: 'bet',
+	columns: [
+		{ sourceColumn: 'name', targetField: 'title', transform: 'none' as const, skip: false },
+		{ sourceColumn: 'desc', targetField: 'content', transform: 'none' as const, skip: false },
+	],
+}
+
+const defaultPreview = {
+	columns: ['name', 'desc'],
+	sampleRows: [{ name: 'Sample 1', desc: 'Description' }],
 	totalRows: 10,
-	processedRows: 0,
-	successCount: 0,
-	errorCount: 0,
-	mapping: {
-		objectType: 'bet',
-		columns: [
-			{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false },
-			{ sourceColumn: 'desc', targetField: 'content', transform: 'none', skip: false },
-		],
-	},
-	preview: {
-		columns: ['name', 'desc'],
-		sampleRows: [{ name: 'Sample 1', desc: 'Description' }],
-		totalRows: 10,
-	},
-	errors: null,
-	source: 'upload',
-	createdBy: 'actor-1',
-	createdAt: '2026-01-01T00:00:00Z',
-	updatedAt: null,
-	completedAt: null,
-	...overrides,
-})
+}
 
 describe('ImportDialog', () => {
 	beforeEach(() => {
@@ -98,7 +82,7 @@ describe('ImportDialog', () => {
 	})
 
 	it('transitions to mapping step after file upload', async () => {
-		const importRecord = buildImportResponse()
+		const importRecord = buildImportResponse({ totalRows: 10, mapping: defaultMapping, preview: defaultPreview })
 		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
 		mockImportData = importRecord
 
@@ -119,7 +103,7 @@ describe('ImportDialog', () => {
 	})
 
 	it('mapping step shows column mapping interface', async () => {
-		const importRecord = buildImportResponse()
+		const importRecord = buildImportResponse({ totalRows: 10, mapping: defaultMapping, preview: defaultPreview })
 		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
 		mockImportData = importRecord
 
@@ -143,6 +127,8 @@ describe('ImportDialog', () => {
 			status: 'importing',
 			totalRows: 10,
 			processedRows: 5,
+			mapping: defaultMapping,
+			preview: defaultPreview,
 		})
 		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
 		mockConfirmImportMutateAsync.mockResolvedValue(importRecord)
@@ -175,6 +161,8 @@ describe('ImportDialog', () => {
 			processedRows: 10,
 			successCount: 8,
 			errorCount: 2,
+			mapping: defaultMapping,
+			preview: defaultPreview,
 		})
 		mockCreateImportMutateAsync.mockResolvedValue(completedImport)
 		mockConfirmImportMutateAsync.mockResolvedValue(completedImport)
@@ -205,6 +193,8 @@ describe('ImportDialog', () => {
 			processedRows: 10,
 			successCount: 8,
 			errorCount: 2,
+			mapping: defaultMapping,
+			preview: defaultPreview,
 			errors: [
 				{ row: 2, message: 'Invalid type' },
 				{ row: 4, message: 'Missing title' },
@@ -234,7 +224,7 @@ describe('ImportDialog', () => {
 	})
 
 	it('resets to upload step when dialog closes and reopens', async () => {
-		const importRecord = buildImportResponse()
+		const importRecord = buildImportResponse({ totalRows: 10, mapping: defaultMapping, preview: defaultPreview })
 		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
 		mockImportData = importRecord
 

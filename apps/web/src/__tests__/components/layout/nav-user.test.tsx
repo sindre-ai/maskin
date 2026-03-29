@@ -1,7 +1,7 @@
 import { NavUser } from '@/components/layout/nav-user'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockNavigate = vi.fn()
 
@@ -34,6 +34,10 @@ vi.mock('@/components/ui/sidebar', () => ({
 import { clearAuth, getStoredActor } from '@/lib/auth'
 
 describe('NavUser', () => {
+	beforeEach(() => {
+		vi.mocked(getStoredActor).mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human', email: 'alice@test.com' })
+	})
+
 	it('renders actor display name', () => {
 		render(<NavUser />)
 		expect(screen.getByText('Alice')).toBeInTheDocument()
@@ -50,8 +54,6 @@ describe('NavUser', () => {
 		vi.mocked(getStoredActor).mockReturnValue(null)
 		render(<NavUser />)
 		expect(screen.getByText('User')).toBeInTheDocument()
-		// Restore for other tests
-		vi.mocked(getStoredActor).mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human', email: 'alice@test.com' })
 	})
 
 	it('renders Settings menu item', async () => {

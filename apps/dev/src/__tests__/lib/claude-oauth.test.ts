@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock crypto module (identity functions)
 vi.mock('../../lib/crypto', () => ({
@@ -45,6 +45,10 @@ function createMockDb(workspace?: Record<string, unknown>) {
 		mockUpdateWhere,
 	}
 }
+
+afterEach(() => {
+	vi.unstubAllGlobals()
+})
 
 function makeTokens(overrides?: Partial<ClaudeOAuthTokens>): ClaudeOAuthTokens {
 	return {
