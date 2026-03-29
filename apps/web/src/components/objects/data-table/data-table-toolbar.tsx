@@ -134,7 +134,7 @@ export function DataTableToolbar({
 				onOrderChange={onOrderChange}
 				groupBy={groupBy}
 				onGroupByChange={onGroupByChange}
-				/>
+			/>
 
 			{/* Import */}
 			<Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onImportClick}>

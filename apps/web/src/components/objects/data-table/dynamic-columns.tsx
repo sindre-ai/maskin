@@ -1,7 +1,7 @@
 import { RelativeTime } from '@/components/shared/relative-time'
 import type { ObjectResponse } from '@/lib/api'
-import type { ColumnDef } from '@tanstack/react-table'
-import { SortableHeader } from './columns'
+import type { ColumnDef, Table } from '@tanstack/react-table'
+import { type ObjectsTableMeta, SortableHeader } from './columns'
 
 interface FieldDefinition {
 	name: string
@@ -33,16 +33,9 @@ function deduplicateFields(fields: FieldDefinition[]): FieldDefinition[] {
 	})
 }
 
-interface DynamicColumnOptions {
-	onSort?: (columnId: string) => void
-	currentSort?: string
-	currentOrder?: 'asc' | 'desc'
-}
-
 export function getDynamicColumns(
 	fieldDefinitions: Record<string, FieldDefinition[]> | undefined,
 	typeFilter?: string,
-	options?: DynamicColumnOptions,
 ): ColumnDef<ObjectResponse>[] {
 	if (!fieldDefinitions) return []
 
@@ -57,17 +50,19 @@ export function getDynamicColumns(
 			id: columnId,
 			accessorFn: (row: ObjectResponse) =>
 				(row.metadata as Record<string, unknown> | null)?.[field.name] ?? null,
-			header: () => (
-				<SortableHeader
-					label={label}
-					columnId={columnId}
-					currentSort={options?.currentSort}
-					currentOrder={options?.currentOrder}
-					onSort={options?.onSort}
-				/>
-			),
-			cell: ({ getValue }: { getValue: () => unknown }) =>
-				renderFieldValue(getValue(), field.type),
+			header: ({ table }: { table: Table<ObjectResponse> }) => {
+				const meta = table.options.meta as ObjectsTableMeta | undefined
+				return (
+					<SortableHeader
+						label={label}
+						columnId={columnId}
+						currentSort={meta?.currentSort}
+						currentOrder={meta?.currentOrder}
+						onSort={meta?.onSort}
+					/>
+				)
+			},
+			cell: ({ getValue }: { getValue: () => unknown }) => renderFieldValue(getValue(), field.type),
 			enableSorting: false,
 			enableHiding: true,
 			meta: { fieldType: field.type, isDynamic: true },

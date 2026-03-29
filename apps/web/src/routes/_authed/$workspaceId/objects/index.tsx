@@ -1,6 +1,6 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
-import { getStaticColumns } from '@/components/objects/data-table/columns'
+import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
@@ -86,7 +86,7 @@ function ObjectsPage() {
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
-		queryKey: queryKeys.objects.list(workspaceId, { ...filters, q, _infinite: 'true' }),
+		queryKey: queryKeys.objects.listInfinite(workspaceId, { ...filters, q }),
 		queryFn: ({ pageParam = 0 }) => {
 			const params: Record<string, string> = {
 				...filters,
@@ -114,9 +114,7 @@ function ObjectsPage() {
 		if (!statusMap) return {}
 		if (typeFilter) return { [typeFilter]: statusMap[typeFilter] ?? [] }
 		const enabledTypes = new Set(tabs.map((t) => t.value).filter(Boolean))
-		return Object.fromEntries(
-			Object.entries(statusMap).filter(([type]) => enabledTypes.has(type)),
-		)
+		return Object.fromEntries(Object.entries(statusMap).filter(([type]) => enabledTypes.has(type)))
 	}, [settings, typeFilter, tabs])
 
 	// Field definitions for dynamic columns
@@ -154,23 +152,22 @@ function ObjectsPage() {
 		[sort, order, updateSearch],
 	)
 
-	// Columns
+	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
+	const tableMeta: ObjectsTableMeta = useMemo(
+		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order }),
+		[handleSort, sort, order],
+	)
+
+	// Columns — stable across sort changes since sort state is in meta
 	const columns = useMemo(
 		() => [
 			...getStaticColumns({
 				workspaceId,
 				actors: actors as Array<{ id: string; name: string }> | undefined,
-				onSort: handleSort,
-				currentSort: sort,
-				currentOrder: order,
 			}),
-			...getDynamicColumns(fieldDefinitions, typeFilter, {
-				onSort: handleSort,
-				currentSort: sort,
-				currentOrder: order,
-			}),
+			...getDynamicColumns(fieldDefinitions, typeFilter),
 		],
-		[workspaceId, actors, handleSort, sort, order, fieldDefinitions, typeFilter],
+		[workspaceId, actors, fieldDefinitions, typeFilter],
 	)
 
 	// Column info for the controls popover
@@ -259,6 +256,7 @@ function ObjectsPage() {
 				columnVisibility={effectiveVisibility}
 				onColumnVisibilityChange={setColumnVisibility}
 				grouping={groupingState}
+				meta={tableMeta}
 				hasNextPage={infiniteQuery.hasNextPage}
 				isFetchingNextPage={infiniteQuery.isFetchingNextPage}
 				fetchNextPage={infiniteQuery.fetchNextPage}

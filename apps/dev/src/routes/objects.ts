@@ -41,14 +41,15 @@ const sortColumns: Record<string, Column | SQL> = {
 	createdBy: objects.createdBy,
 }
 
-/** Resolve sort expression — built-in column or metadata->>'field_name' */
-function resolveSortColumn(sortField: string): Column | SQL {
+/** Resolve sort expression — built-in column or metadata->>'field_name'. Returns null for unknown fields. */
+function resolveSortColumn(sortField: string): Column | SQL | null {
 	if (sortColumns[sortField]) return sortColumns[sortField]
 	if (sortField.startsWith('metadata.')) {
 		const fieldName = sortField.slice(9)
+		if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) return null
 		return sql`${objects.metadata}->>${fieldName}`
 	}
-	return objects.createdAt
+	return null
 }
 
 // POST / - Create object
@@ -206,6 +207,8 @@ app.openapi(listObjectsRoute, async (c) => {
 	if (query.owner) conditions.push(eq(objects.owner, query.owner))
 
 	const sortExpr = resolveSortColumn(query.sort)
+	if (!sortExpr)
+		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
 	const orderDir = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 
 	const results = await db
@@ -234,6 +237,10 @@ const searchObjectsRoute = createRoute({
 			content: { 'application/json': { schema: z.array(objectResponseSchema) } },
 			description: 'Search results',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
 	},
 })
 
@@ -251,6 +258,8 @@ app.openapi(searchObjectsRoute, async (c) => {
 	if (query.status) conditions.push(eq(objects.status, query.status))
 
 	const sortExpr = resolveSortColumn(query.sort)
+	if (!sortExpr)
+		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
 	const orderDir = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 
 	const results = await db

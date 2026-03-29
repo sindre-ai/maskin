@@ -134,6 +134,24 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it('returns 400 for unknown sort field', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(jsonGet('/api/objects?sort=foobar', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 for metadata sort field with dots', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects?sort=metadata.a.b', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
 		it('returns 400 for invalid order value', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 

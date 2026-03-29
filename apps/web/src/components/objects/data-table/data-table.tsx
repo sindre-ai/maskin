@@ -26,6 +26,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef } from 'react'
+import type { ObjectsTableMeta } from './columns'
 
 interface DataTableProps {
 	data: ObjectResponse[]
@@ -36,6 +37,7 @@ interface DataTableProps {
 	columnVisibility: VisibilityState
 	onColumnVisibilityChange: OnChangeFn<VisibilityState>
 	grouping?: GroupingState
+	meta?: ObjectsTableMeta
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
 	fetchNextPage?: () => void
@@ -51,6 +53,7 @@ export function DataTable({
 	columnVisibility,
 	onColumnVisibilityChange,
 	grouping,
+	meta,
 	hasNextPage,
 	isFetchingNextPage,
 	fetchNextPage,
@@ -68,6 +71,7 @@ export function DataTable({
 			columnVisibility,
 			grouping: grouping ?? [],
 		},
+		meta: meta as Record<string, unknown>,
 		onRowSelectionChange,
 		onColumnVisibilityChange,
 		getCoreRowModel: getCoreRowModel(),

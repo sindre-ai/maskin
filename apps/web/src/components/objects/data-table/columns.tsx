@@ -5,15 +5,20 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import type { ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef, Table } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
+
+/** Sort state passed via table.options.meta to avoid re-creating columns on every sort change */
+export interface ObjectsTableMeta {
+	[key: string]: unknown
+	onSort: (columnId: string) => void
+	currentSort: string
+	currentOrder: 'asc' | 'desc'
+}
 
 interface ColumnOptions {
 	workspaceId: string
 	actors?: Array<{ id: string; name: string }>
-	onSort?: (columnId: string) => void
-	currentSort?: string
-	currentOrder?: 'asc' | 'desc'
 }
 
 export function SortableHeader({
@@ -53,8 +58,23 @@ export function SortableHeader({
 	)
 }
 
+function sortableHeader(label: string, columnId: string) {
+	return ({ table }: { table: Table<ObjectResponse> }) => {
+		const meta = table.options.meta as ObjectsTableMeta | undefined
+		return (
+			<SortableHeader
+				label={label}
+				columnId={columnId}
+				currentSort={meta?.currentSort}
+				currentOrder={meta?.currentOrder}
+				onSort={meta?.onSort}
+			/>
+		)
+	}
+}
+
 export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectResponse>[] {
-	const { workspaceId, actors, onSort, currentSort, currentOrder } = options
+	const { workspaceId, actors } = options
 
 	return [
 		{
@@ -83,15 +103,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		},
 		{
 			accessorKey: 'title',
-			header: () => (
-				<SortableHeader
-					label="Title"
-					columnId="title"
-					currentSort={currentSort}
-					currentOrder={currentOrder}
-					onSort={onSort}
-				/>
-			),
+			header: sortableHeader('Title', 'title'),
 			cell: ({ row }) => (
 				<div className="flex items-center gap-2">
 					<span className="font-medium truncate max-w-[300px]">
@@ -106,15 +118,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		},
 		{
 			accessorKey: 'status',
-			header: () => (
-				<SortableHeader
-					label="Status"
-					columnId="status"
-					currentSort={currentSort}
-					currentOrder={currentOrder}
-					onSort={onSort}
-				/>
-			),
+			header: sortableHeader('Status', 'status'),
 			cell: ({ row }) => <StatusBadge status={row.getValue('status')} />,
 		},
 		{
@@ -146,30 +150,14 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		},
 		{
 			accessorKey: 'createdAt',
-			header: () => (
-				<SortableHeader
-					label="Created"
-					columnId="createdAt"
-					currentSort={currentSort}
-					currentOrder={currentOrder}
-					onSort={onSort}
-				/>
-			),
+			header: sortableHeader('Created', 'createdAt'),
 			cell: ({ row }) => (
 				<RelativeTime date={row.getValue('createdAt')} className="text-sm text-muted-foreground" />
 			),
 		},
 		{
 			accessorKey: 'updatedAt',
-			header: () => (
-				<SortableHeader
-					label="Updated"
-					columnId="updatedAt"
-					currentSort={currentSort}
-					currentOrder={currentOrder}
-					onSort={onSort}
-				/>
-			),
+			header: sortableHeader('Updated', 'updatedAt'),
 			cell: ({ row }) => (
 				<RelativeTime date={row.getValue('updatedAt')} className="text-sm text-muted-foreground" />
 			),

@@ -17,10 +17,16 @@ vi.mock('@/components/shared/agent-working-badge', () => ({
 function TestTable({
 	data,
 	columns,
-}: { data: ObjectResponse[]; columns: ColumnDef<ObjectResponse>[] }) {
+	meta,
+}: {
+	data: ObjectResponse[]
+	columns: ColumnDef<ObjectResponse>[]
+	meta?: Record<string, unknown>
+}) {
 	const table = useReactTable({
 		data,
 		columns,
+		meta,
 		getCoreRowModel: getCoreRowModel(),
 		getRowId: (row) => row.id,
 	})
@@ -126,14 +132,10 @@ describe('getStaticColumns', () => {
 	it('calls onSort when sortable header is clicked', async () => {
 		const user = userEvent.setup()
 		const onSort = vi.fn()
-		const columns = getStaticColumns({
-			workspaceId: 'ws-1',
-			onSort,
-			currentSort: 'createdAt',
-			currentOrder: 'desc',
-		})
+		const columns = getStaticColumns({ workspaceId: 'ws-1' })
+		const meta = { onSort, currentSort: 'createdAt', currentOrder: 'desc' }
 		const data = [buildObjectResponse()]
-		render(<TestTable data={data} columns={columns} />)
+		render(<TestTable data={data} columns={columns} meta={meta} />)
 
 		await user.click(screen.getByRole('button', { name: /title/i }))
 		expect(onSort).toHaveBeenCalledWith('title')

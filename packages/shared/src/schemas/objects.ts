@@ -26,12 +26,27 @@ export const updateObjectSchema = z.object({
 	owner: z.string().uuid().nullable().optional(),
 })
 
+/** Known built-in sort columns */
+export const KNOWN_SORT_COLUMNS = [
+	'createdAt',
+	'updatedAt',
+	'title',
+	'status',
+	'type',
+	'owner',
+	'createdBy',
+] as const
+
 /** Sort field: a built-in column or metadata.<field_name> */
 const sortFieldSchema = z
 	.string()
 	.max(100)
 	.regex(/^[a-zA-Z][a-zA-Z0-9_.]*$/)
 	.default('createdAt')
+	.refine(
+		(val) => (KNOWN_SORT_COLUMNS as readonly string[]).includes(val) || val.startsWith('metadata.'),
+		{ message: 'Sort field must be a known column or metadata.<field_name>' },
+	)
 
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
