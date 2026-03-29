@@ -1,4 +1,5 @@
 import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/cn'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
@@ -93,7 +94,10 @@ export function MarkdownContent({
 			tabIndex={editable ? 0 : undefined}
 		>
 			<div
-				className={`prose prose-invert ${size === 'xs' ? 'prose-xs' : 'prose-sm'} max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded`}
+				className={cn(
+					'prose prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded',
+					size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
+				)}
 			>
 				<ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
 			</div>
