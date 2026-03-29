@@ -1,5 +1,5 @@
 import { renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
 	api: {
@@ -26,6 +26,10 @@ const workspaceId = 'ws-1'
 
 beforeEach(() => {
 	vi.clearAllMocks()
+})
+
+afterEach(() => {
+	vi.useRealTimers()
 })
 
 describe('useImport', () => {
@@ -60,18 +64,12 @@ describe('useImport', () => {
 		})
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-
-		// The refetchInterval is set based on the query data status
-		// Verify it fetched initially
 		expect(api.imports.get).toHaveBeenCalledTimes(1)
 
-		// Wait for the poll to trigger (2000ms interval)
-		await waitFor(
-			() => {
-				expect(vi.mocked(api.imports.get).mock.calls.length).toBeGreaterThan(1)
-			},
-			{ timeout: 5000 },
-		)
+		// Wait for the refetchInterval (2000ms) to trigger at least one more call
+		await waitFor(() => {
+			expect(vi.mocked(api.imports.get).mock.calls.length).toBeGreaterThan(1)
+		}, { timeout: 5000 })
 	})
 
 	it('stops polling when status is not importing', async () => {
@@ -82,12 +80,15 @@ describe('useImport', () => {
 			wrapper: TestWrapper,
 		})
 
+		// Let initial fetch complete with real timers
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-
 		const callCount = vi.mocked(api.imports.get).mock.calls.length
 
-		// Wait past the polling interval (2000ms) and verify no additional calls
-		await new Promise((resolve) => setTimeout(resolve, 2500))
+		// Switch to fake timers and advance well past polling interval
+		vi.useFakeTimers()
+		await vi.advanceTimersByTimeAsync(5000)
+
+		// No additional calls should have been made
 		expect(vi.mocked(api.imports.get).mock.calls.length).toBe(callCount)
 	})
 })
