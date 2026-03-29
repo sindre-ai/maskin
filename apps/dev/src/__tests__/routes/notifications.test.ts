@@ -95,7 +95,7 @@ describe('Notifications Routes', () => {
 			mockResults.insert = []
 
 			const res = await app.request(
-				jsonRequest('PATCH', `/api/notifications/${notification.id}`, { status: 'seen' }, headers),
+				jsonRequest('PATCH', `/api/notifications/${notification.id}`, { status: 'seen' }),
 			)
 
 			expect(res.status).toBe(200)
@@ -108,12 +108,9 @@ describe('Notifications Routes', () => {
 			mockResults.selectQueue = [[]]
 
 			const res = await app.request(
-				jsonRequest(
-					'PATCH',
-					'/api/notifications/00000000-0000-0000-0000-000000000099',
-					{ status: 'seen' },
-					headers,
-				),
+				jsonRequest('PATCH', '/api/notifications/00000000-0000-0000-0000-000000000099', {
+					status: 'seen',
+				}),
 			)
 
 			expect(res.status).toBe(404)
@@ -186,9 +183,7 @@ describe('Notifications Routes', () => {
 			mockResults.selectQueue = [[notification], [buildWorkspaceMember()]]
 			mockResults.insert = []
 
-			const res = await app.request(
-				jsonRequest('DELETE', `/api/notifications/${notification.id}`, undefined, headers),
-			)
+			const res = await app.request(jsonRequest('DELETE', `/api/notifications/${notification.id}`))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
@@ -199,12 +194,7 @@ describe('Notifications Routes', () => {
 			const { app } = createTestApp(notificationsRoutes, '/api/notifications')
 
 			const res = await app.request(
-				jsonRequest(
-					'DELETE',
-					'/api/notifications/00000000-0000-0000-0000-000000000099',
-					undefined,
-					headers,
-				),
+				jsonDelete('/api/notifications/00000000-0000-0000-0000-000000000099'),
 			)
 
 			expect(res.status).toBe(404)
@@ -229,7 +219,7 @@ describe('Notifications Routes', () => {
 			mockResults.selectQueue = [[notification], []]
 
 			const res = await app.request(
-				jsonRequest('PATCH', `/api/notifications/${notification.id}`, { status: 'seen' }, headers),
+				jsonRequest('PATCH', `/api/notifications/${notification.id}`, { status: 'seen' }),
 			)
 			expect(res.status).toBe(404)
 		})
@@ -257,9 +247,7 @@ describe('Notifications Routes', () => {
 			// Notification found, but membership check returns empty
 			mockResults.selectQueue = [[notification], []]
 
-			const res = await app.request(
-				jsonRequest('DELETE', `/api/notifications/${notification.id}`, undefined, headers),
-			)
+			const res = await app.request(jsonDelete(`/api/notifications/${notification.id}`))
 			expect(res.status).toBe(404)
 		})
 	})
