@@ -8,7 +8,7 @@ import {
 	updateObjectSchema,
 } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import { and, eq, ilike, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, or } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import {
 	errorSchema,
@@ -30,6 +30,13 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>()
+
+const sortColumns = {
+	createdAt: objects.createdAt,
+	updatedAt: objects.updatedAt,
+	title: objects.title,
+	status: objects.status,
+} as const
 
 // POST / - Create object
 const createObjectRoute = createRoute({
@@ -185,13 +192,16 @@ app.openapi(listObjectsRoute, async (c) => {
 	if (query.status) conditions.push(eq(objects.status, query.status))
 	if (query.owner) conditions.push(eq(objects.owner, query.owner))
 
+	const sortColumn = sortColumns[query.sort]
+	const orderDir = query.order === 'desc' ? desc(sortColumn) : asc(sortColumn)
+
 	const results = await db
 		.select()
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(objects.createdAt)
+		.orderBy(orderDir)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
@@ -227,13 +237,16 @@ app.openapi(searchObjectsRoute, async (c) => {
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) conditions.push(eq(objects.status, query.status))
 
+	const sortColumn = sortColumns[query.sort]
+	const orderDir = query.order === 'desc' ? desc(sortColumn) : asc(sortColumn)
+
 	const results = await db
 		.select()
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(objects.createdAt)
+		.orderBy(orderDir)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })

@@ -30,6 +30,8 @@ export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
 	owner: z.string().uuid().optional(),
+	sort: z.enum(['createdAt', 'updatedAt', 'title', 'status']).default('createdAt'),
+	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -38,6 +40,8 @@ export const searchObjectsSchema = z.object({
 	q: z.string().min(1),
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
+	sort: z.enum(['createdAt', 'updatedAt', 'title', 'status']).default('createdAt'),
+	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
 })

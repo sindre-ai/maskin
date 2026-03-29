@@ -18,7 +18,7 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
-import { Upload } from 'lucide-react'
+import { ArrowDownNarrowWide, ArrowUpNarrowWide, Upload } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
@@ -31,6 +31,8 @@ function ObjectsPage() {
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
+	const [sort, setSort] = useState('createdAt')
+	const [order, setOrder] = useState<'asc' | 'desc'>('desc')
 	const [search, setSearch] = useState('')
 	const [importOpen, setImportOpen] = useState(false)
 	const { data: actors } = useActors(workspaceId)
@@ -52,6 +54,8 @@ function ObjectsPage() {
 	if (typeFilter) filters.type = typeFilter
 	if (statusFilter) filters.status = statusFilter
 	if (ownerFilter) filters.owner = ownerFilter
+	filters.sort = sort
+	filters.order = order
 
 	const { data: objects, isLoading } = useObjects(workspaceId, filters)
 
@@ -129,6 +133,25 @@ function ObjectsPage() {
 						))}
 					</SelectContent>
 				</Select>
+				<Select value={sort} onValueChange={setSort}>
+					<SelectTrigger>
+						<SelectValue placeholder="Sort by" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="createdAt">Created</SelectItem>
+						<SelectItem value="updatedAt">Updated</SelectItem>
+						<SelectItem value="title">Title</SelectItem>
+						<SelectItem value="status">Status</SelectItem>
+					</SelectContent>
+				</Select>
+				<button
+					type="button"
+					className="flex items-center rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground hover:bg-muted transition-colors"
+					onClick={() => setOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+					title={order === 'desc' ? 'Descending' : 'Ascending'}
+				>
+					{order === 'desc' ? <ArrowDownNarrowWide size={14} /> : <ArrowUpNarrowWide size={14} />}
+				</button>
 				<input
 					type="text"
 					value={search}
