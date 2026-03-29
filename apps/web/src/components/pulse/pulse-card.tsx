@@ -2,13 +2,7 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-	Card,
-	CardContent,
-	CardFooter,
-	CardHeader,
-	CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { useState } from 'react'
@@ -115,18 +109,18 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				</div>
 				<CardTitle className="text-base">{notification.title}</CardTitle>
 				{notification.content && (
-				<div className="text-sm text-muted-foreground">
-					<MarkdownContent content={notification.content} />
-				</div>
-			)}
+					<div className="text-sm text-muted-foreground">
+						<MarkdownContent content={notification.content} />
+					</div>
+				)}
 			</CardHeader>
 			<CardContent className="space-y-3">
 				{/* Meta info */}
 				{metaText && (
-				<div className="text-xs text-muted-foreground">
-					<MarkdownContent content={metaText} />
-				</div>
-			)}
+					<div className="text-xs text-muted-foreground">
+						<MarkdownContent content={metaText} size="xs" />
+					</div>
+				)}
 
 				{/* Tags */}
 				{tags && tags.length > 0 && (

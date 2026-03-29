@@ -9,11 +9,13 @@ export function MarkdownContent({
 	onChange,
 	editable = false,
 	className,
+	size = 'sm',
 }: {
 	content: string
 	onChange?: (value: string) => void
 	editable?: boolean
 	className?: string
+	size?: 'sm' | 'xs'
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
@@ -90,7 +92,9 @@ export function MarkdownContent({
 			}}
 			tabIndex={editable ? 0 : undefined}
 		>
-			<div className="prose prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded">
+			<div
+				className={`prose prose-invert ${size === 'xs' ? 'prose-xs' : 'prose-sm'} max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded`}
+			>
 				<ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
 			</div>
 		</div>
