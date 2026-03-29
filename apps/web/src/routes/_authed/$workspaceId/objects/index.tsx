@@ -1,45 +1,75 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
-import { ObjectList } from '@/components/objects/object-list'
-import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { getStaticColumns } from '@/components/objects/data-table/columns'
+import { DataTable } from '@/components/objects/data-table/data-table'
+import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
+import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
+import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import { RouteError } from '@/components/shared/route-error'
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { useObjects } from '@/hooks/use-objects'
-import { cn } from '@/lib/cn'
+import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
-import { createFileRoute } from '@tanstack/react-router'
-import { ArrowDownNarrowWide, ArrowUpNarrowWide, Upload } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
+import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
+import { useCallback, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	validateSearch: (search: Record<string, unknown>) => ({
+		type: typeof search.type === 'string' ? search.type : undefined,
+		status: typeof search.status === 'string' ? search.status : undefined,
+		owner: typeof search.owner === 'string' ? search.owner : undefined,
+		sort:
+			typeof search.sort === 'string' &&
+			['createdAt', 'updatedAt', 'title', 'status'].includes(search.sort)
+				? (search.sort as 'createdAt' | 'updatedAt' | 'title' | 'status')
+				: 'createdAt',
+		order:
+			typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
+				? (search.order as 'asc' | 'desc')
+				: 'desc',
+		q: typeof search.q === 'string' ? search.q : undefined,
+		groupBy:
+			typeof search.groupBy === 'string' && ['type', 'status'].includes(search.groupBy)
+				? (search.groupBy as 'type' | 'status')
+				: undefined,
+	}),
 })
+
+const PAGE_SIZE = 50
 
 function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
-	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
-	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
-	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
-	const [sort, setSort] = useState('createdAt')
-	const [order, setOrder] = useState<'asc' | 'desc'>('desc')
-	const [search, setSearch] = useState('')
+	const navigate = useNavigate()
+	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })
+	const {
+		type: typeFilter,
+		status: statusFilter,
+		owner: ownerFilter,
+		sort,
+		order,
+		q,
+		groupBy,
+	} = searchParams
+
 	const [importOpen, setImportOpen] = useState(false)
+	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
+	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+		createdBy: false,
+	})
+
 	const { data: actors } = useActors(workspaceId)
 	const enabledModules = useEnabledModules()
 	const customExtensions = useCustomExtensions()
 	const settings = workspace.settings as Record<string, unknown>
 
+	// Build tabs
 	const tabs = useMemo(() => {
 		const moduleTabs = getEnabledObjectTypeTabs(enabledModules)
 		const customTabs = customExtensions.filter((ext) => ext.enabled).flatMap((ext) => ext.tabs)
@@ -50,16 +80,42 @@ function ObjectsPage() {
 		]
 	}, [enabledModules, customExtensions])
 
-	const filters: Record<string, string> = {}
-	if (typeFilter) filters.type = typeFilter
-	if (statusFilter) filters.status = statusFilter
-	if (ownerFilter) filters.owner = ownerFilter
-	filters.sort = sort
-	filters.order = order
+	// Build API filters
+	const filters = useMemo(() => {
+		const f: Record<string, string> = {}
+		if (typeFilter) f.type = typeFilter
+		if (statusFilter) f.status = statusFilter
+		if (ownerFilter) f.owner = ownerFilter
+		f.sort = sort
+		f.order = order
+		return f
+	}, [typeFilter, statusFilter, ownerFilter, sort, order])
 
-	const { data: objects, isLoading } = useObjects(workspaceId, filters)
+	// Infinite query — use search endpoint when q is present
+	const infiniteQuery = useInfiniteQuery({
+		queryKey: queryKeys.objects.list(workspaceId, { ...filters, q, _infinite: 'true' }),
+		queryFn: ({ pageParam = 0 }) => {
+			const params: Record<string, string> = {
+				...filters,
+				limit: String(PAGE_SIZE),
+				offset: String(pageParam),
+			}
+			if (q) {
+				params.q = q
+				return api.objects.search(workspaceId, params)
+			}
+			return api.objects.list(workspaceId, params)
+		},
+		getNextPageParam: (lastPage, allPages) => {
+			if (lastPage.length < PAGE_SIZE) return undefined
+			return allPages.flat().length
+		},
+		initialPageParam: 0,
+	})
 
-	// Derive available statuses for the current type filter
+	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+
+	// Derive available statuses
 	const allStatuses = useMemo(() => {
 		const statusMap = settings?.statuses as Record<string, string[]> | undefined
 		if (!statusMap) return []
@@ -67,111 +123,147 @@ function ObjectsPage() {
 		return [...new Set(Object.values(statusMap).flat())]
 	}, [settings, typeFilter])
 
-	const filtered = search
-		? (objects ?? []).filter(
-				(o) =>
-					o.title?.toLowerCase().includes(search.toLowerCase()) ||
-					o.content?.toLowerCase().includes(search.toLowerCase()),
-			)
-		: (objects ?? [])
+	// Field definitions for dynamic columns
+	const fieldDefinitions = settings?.field_definitions as
+		| Record<string, Array<{ name: string; type: 'text' | 'number' | 'date' | 'enum' | 'boolean' }>>
+		| undefined
+
+	// Update search params helper
+	const updateSearch = useCallback(
+		(updates: Record<string, string | undefined>) => {
+			const current = { ...searchParams } as Record<string, unknown>
+			Object.assign(current, updates)
+			for (const key of Object.keys(current)) {
+				if (current[key] === undefined || current[key] === '') delete current[key]
+			}
+			navigate({
+				to: '/$workspaceId/objects',
+				params: { workspaceId },
+				search: current as typeof searchParams,
+				replace: true,
+			})
+		},
+		[navigate, searchParams, workspaceId],
+	)
+
+	// Sort handler for column headers
+	const handleSort = useCallback(
+		(columnId: string) => {
+			if (sort === columnId) {
+				updateSearch({ order: order === 'asc' ? 'desc' : 'asc' })
+			} else {
+				updateSearch({ sort: columnId, order: 'desc' })
+			}
+		},
+		[sort, order, updateSearch],
+	)
+
+	// Columns
+	const columns = useMemo(
+		() => [
+			...getStaticColumns({
+				workspaceId,
+				actors: actors as Array<{ id: string; name: string }> | undefined,
+				onSort: handleSort,
+				currentSort: sort,
+				currentOrder: order,
+			}),
+			...getDynamicColumns(fieldDefinitions, typeFilter),
+		],
+		[workspaceId, actors, handleSort, sort, order, fieldDefinitions, typeFilter],
+	)
+
+	// Column info for the controls popover
+	const columnInfo: ColumnInfo[] = useMemo(() => {
+		const staticNames: Record<string, string> = {
+			status: 'Status',
+			type: 'Type',
+			owner: 'Owner',
+			createdBy: 'Created by',
+			createdAt: 'Created',
+			updatedAt: 'Updated',
+		}
+		return columns
+			.filter((col) => {
+				const id = 'accessorKey' in col ? String(col.accessorKey) : col.id
+				return id !== 'select'
+			})
+			.map((col) => {
+				const id = 'accessorKey' in col ? String(col.accessorKey) : (col.id ?? '')
+				const canHide = col.enableHiding !== false && id !== 'title'
+				const label = id.startsWith('metadata.')
+					? id.slice(9).replace(/_/g, ' ')
+					: (staticNames[id] ?? id)
+				return { id, label, canHide }
+			})
+	}, [columns])
+
+	// Grouping state
+	const groupingState: GroupingState = groupBy ? [groupBy] : []
+
+	// Hide dynamic columns by default when in "All" tab
+	const effectiveVisibility = useMemo(() => {
+		const vis = { ...columnVisibility }
+		if (!typeFilter && fieldDefinitions) {
+			const allFields = Object.values(fieldDefinitions).flat()
+			for (const field of allFields) {
+				const colId = `metadata.${field.name}`
+				if (!(colId in vis)) {
+					vis[colId] = false
+				}
+			}
+		}
+		return vis
+	}, [columnVisibility, typeFilter, fieldDefinitions])
+
+	const handleColumnVisibilityChange = useCallback((columnId: string, visible: boolean) => {
+		setColumnVisibility((prev) => ({ ...prev, [columnId]: visible }))
+	}, [])
 
 	return (
 		<div>
 			<PageHeader title="Objects" />
 
-			{/* Tabs + Filters */}
-			<div className="flex items-center gap-4 mb-4 flex-wrap">
-				<div className="flex gap-1">
-					{tabs.map((tab) => (
-						<button
-							key={tab.label}
-							type="button"
-							className={cn(
-								'rounded px-3 py-1 text-sm',
-								typeFilter === tab.value
-									? 'bg-muted text-foreground font-medium'
-									: 'text-muted-foreground hover:text-foreground',
-							)}
-							onClick={() => {
-								setTypeFilter(tab.value)
-								setStatusFilter(undefined)
-							}}
-						>
-							{tab.label}
-						</button>
-					))}
-				</div>
-				<Select
-					value={statusFilter ?? '__all__'}
-					onValueChange={(v) => setStatusFilter(v === '__all__' ? undefined : v)}
-				>
-					<SelectTrigger>
-						<SelectValue placeholder="Any status" />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="__all__">Any status</SelectItem>
-						{allStatuses.map((s) => (
-							<SelectItem key={s} value={s}>
-								{s.replace(/_/g, ' ')}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-				<Select
-					value={ownerFilter ?? '__all__'}
-					onValueChange={(v) => setOwnerFilter(v === '__all__' ? undefined : v)}
-				>
-					<SelectTrigger>
-						<SelectValue placeholder="Any owner" />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="__all__">Any owner</SelectItem>
-						{(actors ?? []).map((a) => (
-							<SelectItem key={a.id} value={a.id}>
-								{a.name}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-				<Select value={sort} onValueChange={setSort}>
-					<SelectTrigger>
-						<SelectValue placeholder="Sort by" />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="createdAt">Created</SelectItem>
-						<SelectItem value="updatedAt">Updated</SelectItem>
-						<SelectItem value="title">Title</SelectItem>
-						<SelectItem value="status">Status</SelectItem>
-					</SelectContent>
-				</Select>
-				<button
-					type="button"
-					className="flex items-center rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground hover:bg-muted transition-colors"
-					onClick={() => setOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
-					title={order === 'desc' ? 'Descending' : 'Ascending'}
-				>
-					{order === 'desc' ? <ArrowDownNarrowWide size={14} /> : <ArrowUpNarrowWide size={14} />}
-				</button>
-				<input
-					type="text"
-					value={search}
-					onChange={(e) => setSearch(e.target.value)}
-					placeholder="Search..."
-					className="rounded border border-border bg-card px-3 py-1 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring outline-none"
-				/>
-				<button
-					type="button"
-					className="ml-auto flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1 text-sm text-foreground hover:bg-muted transition-colors"
-					onClick={() => setImportOpen(true)}
-				>
-					<Upload size={14} />
-					Import
-				</button>
-			</div>
+			<DataTableToolbar
+				columns={columnInfo}
+				columnVisibility={effectiveVisibility}
+				onColumnVisibilityChange={handleColumnVisibilityChange}
+				tabs={tabs}
+				typeFilter={typeFilter}
+				onTypeFilterChange={(value) => updateSearch({ type: value, status: undefined })}
+				search={q}
+				onSearchChange={(value) => updateSearch({ q: value || undefined })}
+				statusFilter={statusFilter}
+				onStatusFilterChange={(value) => updateSearch({ status: value })}
+				allStatuses={allStatuses}
+				ownerFilter={ownerFilter}
+				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
+				actors={actors as Array<{ id: string; name: string }> | undefined}
+				sort={sort}
+				onSortChange={(value) => updateSearch({ sort: value })}
+				order={order}
+				onOrderChange={(value) => updateSearch({ order: value })}
+				groupBy={groupBy}
+				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				onImportClick={() => setImportOpen(true)}
+			/>
 
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} />
 
-			{isLoading ? <ListSkeleton /> : <ObjectList objects={filtered} workspaceId={workspaceId} />}
+			<DataTable
+				data={allObjects}
+				columns={columns}
+				workspaceId={workspaceId}
+				rowSelection={rowSelection}
+				onRowSelectionChange={setRowSelection}
+				columnVisibility={effectiveVisibility}
+				onColumnVisibilityChange={setColumnVisibility}
+				grouping={groupingState}
+				hasNextPage={infiniteQuery.hasNextPage}
+				isFetchingNextPage={infiniteQuery.isFetchingNextPage}
+				fetchNextPage={infiniteQuery.fetchNextPage}
+				isLoading={infiniteQuery.isLoading}
+			/>
 		</div>
 	)
 }

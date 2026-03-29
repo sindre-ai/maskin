@@ -204,7 +204,19 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const handleDelete = useCallback(() => {
 		deleteObject.mutate(object.id, {
 			onSuccess: () => {
-				navigate({ to: '/$workspaceId/objects', params: { workspaceId } })
+				navigate({
+					to: '/$workspaceId/objects',
+					params: { workspaceId },
+					search: {
+						type: undefined,
+						status: undefined,
+						owner: undefined,
+						sort: 'createdAt' as const,
+						order: 'desc' as const,
+						q: undefined,
+						groupBy: undefined,
+					},
+				})
 			},
 		})
 	}, [object.id, deleteObject, navigate, workspaceId])

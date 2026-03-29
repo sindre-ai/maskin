@@ -1,5 +1,5 @@
 import type { createObjectSchema, updateObjectSchema } from '@ai-native/shared'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 import type { ObjectResponse } from '../lib/api'
@@ -13,6 +13,27 @@ export function useObjects(workspaceId: string, filters?: Record<string, string>
 	return useQuery({
 		queryKey: queryKeys.objects.list(workspaceId, filters),
 		queryFn: () => api.objects.list(workspaceId, filters),
+	})
+}
+
+const PAGE_SIZE = 50
+
+export function useInfiniteObjects(workspaceId: string, filters?: Record<string, string>) {
+	return useInfiniteQuery({
+		queryKey: queryKeys.objects.list(workspaceId, { ...filters, _infinite: 'true' }),
+		queryFn: ({ pageParam = 0 }) => {
+			const params: Record<string, string> = {
+				...filters,
+				limit: String(PAGE_SIZE),
+				offset: String(pageParam),
+			}
+			return api.objects.list(workspaceId, params)
+		},
+		getNextPageParam: (lastPage, allPages) => {
+			if (lastPage.length < PAGE_SIZE) return undefined
+			return allPages.flat().length
+		},
+		initialPageParam: 0,
 	})
 }
 
