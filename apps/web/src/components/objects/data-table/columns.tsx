@@ -16,7 +16,7 @@ interface ColumnOptions {
 	currentOrder?: 'asc' | 'desc'
 }
 
-function SortableHeader({
+export function SortableHeader({
 	label,
 	columnId,
 	currentSort,

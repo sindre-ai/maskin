@@ -25,20 +25,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 		type: typeof search.type === 'string' ? search.type : undefined,
 		status: typeof search.status === 'string' ? search.status : undefined,
 		owner: typeof search.owner === 'string' ? search.owner : undefined,
-		sort:
-			typeof search.sort === 'string' &&
-			['createdAt', 'updatedAt', 'title', 'status'].includes(search.sort)
-				? (search.sort as 'createdAt' | 'updatedAt' | 'title' | 'status')
-				: 'createdAt',
+		sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
 		order:
 			typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
 				? (search.order as 'asc' | 'desc')
 				: 'desc',
 		q: typeof search.q === 'string' ? search.q : undefined,
-		groupBy:
-			typeof search.groupBy === 'string' && ['type', 'status'].includes(search.groupBy)
-				? (search.groupBy as 'type' | 'status')
-				: undefined,
+		groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
 	}),
 })
 
@@ -115,13 +108,16 @@ function ObjectsPage() {
 
 	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
 
-	// Derive available statuses
-	const allStatuses = useMemo(() => {
+	// Derive available statuses grouped by type (scoped to enabled types only)
+	const statusesByType = useMemo(() => {
 		const statusMap = settings?.statuses as Record<string, string[]> | undefined
-		if (!statusMap) return []
-		if (typeFilter) return statusMap[typeFilter] ?? []
-		return [...new Set(Object.values(statusMap).flat())]
-	}, [settings, typeFilter])
+		if (!statusMap) return {}
+		if (typeFilter) return { [typeFilter]: statusMap[typeFilter] ?? [] }
+		const enabledTypes = new Set(tabs.map((t) => t.value).filter(Boolean))
+		return Object.fromEntries(
+			Object.entries(statusMap).filter(([type]) => enabledTypes.has(type)),
+		)
+	}, [settings, typeFilter, tabs])
 
 	// Field definitions for dynamic columns
 	const fieldDefinitions = settings?.field_definitions as
@@ -168,7 +164,11 @@ function ObjectsPage() {
 				currentSort: sort,
 				currentOrder: order,
 			}),
-			...getDynamicColumns(fieldDefinitions, typeFilter),
+			...getDynamicColumns(fieldDefinitions, typeFilter, {
+				onSort: handleSort,
+				currentSort: sort,
+				currentOrder: order,
+			}),
 		],
 		[workspaceId, actors, handleSort, sort, order, fieldDefinitions, typeFilter],
 	)
@@ -235,7 +235,7 @@ function ObjectsPage() {
 				onSearchChange={(value) => updateSearch({ q: value || undefined })}
 				statusFilter={statusFilter}
 				onStatusFilterChange={(value) => updateSearch({ status: value })}
-				allStatuses={allStatuses}
+				statusesByType={statusesByType}
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
 				actors={actors as Array<{ id: string; name: string }> | undefined}

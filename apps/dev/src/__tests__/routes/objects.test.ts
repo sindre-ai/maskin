@@ -116,10 +116,22 @@ describe('Objects Routes', () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
 			const res = await app.request(
-				jsonGet('/api/objects?sort=invalid', { 'x-workspace-id': wsId }),
+				jsonGet('/api/objects?sort=;DROP TABLE', { 'x-workspace-id': wsId }),
 			)
 
 			expect(res.status).toBe(400)
+		})
+
+		it('returns 200 for metadata sort field', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet('/api/objects?sort=metadata.priority', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
 		})
 
 		it('returns 400 for invalid order value', async () => {

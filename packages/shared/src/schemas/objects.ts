@@ -26,11 +26,18 @@ export const updateObjectSchema = z.object({
 	owner: z.string().uuid().nullable().optional(),
 })
 
+/** Sort field: a built-in column or metadata.<field_name> */
+const sortFieldSchema = z
+	.string()
+	.max(100)
+	.regex(/^[a-zA-Z][a-zA-Z0-9_.]*$/)
+	.default('createdAt')
+
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
 	owner: z.string().uuid().optional(),
-	sort: z.enum(['createdAt', 'updatedAt', 'title', 'status']).default('createdAt'),
+	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
@@ -40,7 +47,7 @@ export const searchObjectsSchema = z.object({
 	q: z.string().min(1),
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
-	sort: z.enum(['createdAt', 'updatedAt', 'title', 'status']).default('createdAt'),
+	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),

@@ -1,6 +1,7 @@
 import { RelativeTime } from '@/components/shared/relative-time'
 import type { ObjectResponse } from '@/lib/api'
 import type { ColumnDef } from '@tanstack/react-table'
+import { SortableHeader } from './columns'
 
 interface FieldDefinition {
 	name: string
@@ -32,9 +33,16 @@ function deduplicateFields(fields: FieldDefinition[]): FieldDefinition[] {
 	})
 }
 
+interface DynamicColumnOptions {
+	onSort?: (columnId: string) => void
+	currentSort?: string
+	currentOrder?: 'asc' | 'desc'
+}
+
 export function getDynamicColumns(
 	fieldDefinitions: Record<string, FieldDefinition[]> | undefined,
 	typeFilter?: string,
+	options?: DynamicColumnOptions,
 ): ColumnDef<ObjectResponse>[] {
 	if (!fieldDefinitions) return []
 
@@ -42,14 +50,27 @@ export function getDynamicColumns(
 		? (fieldDefinitions[typeFilter] ?? [])
 		: deduplicateFields(Object.values(fieldDefinitions).flat())
 
-	return fields.map((field) => ({
-		id: `metadata.${field.name}`,
-		accessorFn: (row: ObjectResponse) =>
-			(row.metadata as Record<string, unknown> | null)?.[field.name] ?? null,
-		header: field.name.replace(/_/g, ' '),
-		cell: ({ getValue }: { getValue: () => unknown }) => renderFieldValue(getValue(), field.type),
-		enableSorting: false,
-		enableHiding: true,
-		meta: { fieldType: field.type, isDynamic: true },
-	}))
+	return fields.map((field) => {
+		const columnId = `metadata.${field.name}`
+		const label = field.name.replace(/_/g, ' ')
+		return {
+			id: columnId,
+			accessorFn: (row: ObjectResponse) =>
+				(row.metadata as Record<string, unknown> | null)?.[field.name] ?? null,
+			header: () => (
+				<SortableHeader
+					label={label}
+					columnId={columnId}
+					currentSort={options?.currentSort}
+					currentOrder={options?.currentOrder}
+					onSort={options?.onSort}
+				/>
+			),
+			cell: ({ getValue }: { getValue: () => unknown }) =>
+				renderFieldValue(getValue(), field.type),
+			enableSorting: false,
+			enableHiding: true,
+			meta: { fieldType: field.type, isDynamic: true },
+		}
+	})
 }

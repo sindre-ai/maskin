@@ -73,6 +73,7 @@ export function DataTable({
 		getCoreRowModel: getCoreRowModel(),
 		getGroupedRowModel: grouping?.length ? getGroupedRowModel() : undefined,
 		getExpandedRowModel: grouping?.length ? getExpandedRowModel() : undefined,
+		groupedColumnMode: 'remove',
 		enableRowSelection: true,
 		getRowId: (row) => row.id,
 	})

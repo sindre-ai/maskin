@@ -26,7 +26,7 @@ interface DataTableToolbarProps {
 	// Controls props
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
-	allStatuses: string[]
+	statusesByType: Record<string, string[]>
 	ownerFilter?: string
 	onOwnerFilterChange: (value: string | undefined) => void
 	actors?: Array<{ id: string; name: string }>
@@ -51,7 +51,7 @@ export function DataTableToolbar({
 	onSearchChange,
 	statusFilter,
 	onStatusFilterChange,
-	allStatuses,
+	statusesByType,
 	ownerFilter,
 	onOwnerFilterChange,
 	actors,
@@ -124,7 +124,7 @@ export function DataTableToolbar({
 				onColumnVisibilityChange={onColumnVisibilityChange}
 				statusFilter={statusFilter}
 				onStatusFilterChange={onStatusFilterChange}
-				allStatuses={allStatuses}
+				statusesByType={statusesByType}
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={onOwnerFilterChange}
 				actors={actors}
@@ -134,8 +134,7 @@ export function DataTableToolbar({
 				onOrderChange={onOrderChange}
 				groupBy={groupBy}
 				onGroupByChange={onGroupByChange}
-				showGroupByType={!typeFilter}
-			/>
+				/>
 
 			{/* Import */}
 			<Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onImportClick}>

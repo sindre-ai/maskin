@@ -20,7 +20,7 @@ interface DataTableControlsProps {
 	// Filters
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
-	allStatuses: string[]
+	statusesByType: Record<string, string[]>
 	ownerFilter?: string
 	onOwnerFilterChange: (value: string | undefined) => void
 	actors?: Array<{ id: string; name: string }>
@@ -32,15 +32,7 @@ interface DataTableControlsProps {
 	// Grouping
 	groupBy?: string
 	onGroupByChange: (value: string | undefined) => void
-	showGroupByType?: boolean
 }
-
-const sortOptions = [
-	{ value: 'createdAt', label: 'Created' },
-	{ value: 'updatedAt', label: 'Updated' },
-	{ value: 'title', label: 'Title' },
-	{ value: 'status', label: 'Status' },
-]
 
 export function DataTableControls({
 	columns,
@@ -48,7 +40,7 @@ export function DataTableControls({
 	onColumnVisibilityChange,
 	statusFilter,
 	onStatusFilterChange,
-	allStatuses,
+	statusesByType,
 	ownerFilter,
 	onOwnerFilterChange,
 	actors,
@@ -58,7 +50,6 @@ export function DataTableControls({
 	onOrderChange,
 	groupBy,
 	onGroupByChange,
-	showGroupByType = true,
 }: DataTableControlsProps) {
 	const hasActiveFilters = !!statusFilter || !!ownerFilter
 
@@ -78,23 +69,37 @@ export function DataTableControls({
 			<PopoverContent align="end" className="w-64 p-0">
 				<div className="max-h-[420px] overflow-y-auto">
 					{/* Filter by Status */}
-					{allStatuses.length > 0 && (
+					{Object.keys(statusesByType).length > 0 && (
 						<>
 							<div className="p-3">
 								<p className="text-xs font-medium text-muted-foreground mb-2">Filter by status</p>
 								<div className="space-y-1">
-									{allStatuses.map((s) => (
-										<div
-											key={s}
-											className="flex items-center gap-2 py-1 px-1 rounded hover:bg-muted/50 cursor-pointer text-sm"
-										>
-											<Checkbox
-												checked={statusFilter === s}
-												onCheckedChange={(checked) => onStatusFilterChange(checked ? s : undefined)}
-											/>
-											{s.replace(/_/g, ' ')}
-										</div>
-									))}
+									{Object.entries(statusesByType).map(([type, statuses]) => {
+										const showTypeHeader = Object.keys(statusesByType).length > 1
+										return (
+											<div key={type}>
+												{showTypeHeader && (
+													<p className="text-xs font-medium text-muted-foreground mt-2 mb-1 capitalize">
+														{type}
+													</p>
+												)}
+												{statuses.map((s) => (
+													<div
+														key={s}
+														className="flex items-center gap-2 py-1 px-1 rounded hover:bg-muted/50 cursor-pointer text-sm"
+													>
+														<Checkbox
+															checked={statusFilter === s}
+															onCheckedChange={(checked) =>
+																onStatusFilterChange(checked ? s : undefined)
+															}
+														/>
+														{s.replace(/_/g, ' ')}
+													</div>
+												))}
+											</div>
+										)
+									})}
 								</div>
 							</div>
 							<Separator />
@@ -141,19 +146,19 @@ export function DataTableControls({
 							</button>
 						</div>
 						<div className="space-y-1">
-							{sortOptions.map((option) => (
+							{columns.map((col) => (
 								<button
-									key={option.value}
+									key={col.id}
 									type="button"
 									className={cn(
-										'w-full text-left py-1 px-2 rounded text-sm transition-colors',
-										sort === option.value
+										'w-full text-left py-1 px-2 rounded text-sm transition-colors capitalize',
+										sort === col.id
 											? 'bg-muted text-foreground font-medium'
 											: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
 									)}
-									onClick={() => onSortChange(option.value)}
+									onClick={() => onSortChange(col.id)}
 								>
-									{option.label}
+									{col.label}
 								</button>
 							))}
 						</div>
@@ -177,32 +182,21 @@ export function DataTableControls({
 							>
 								None
 							</button>
-							{showGroupByType && (
+							{columns.map((col) => (
 								<button
+									key={col.id}
 									type="button"
 									className={cn(
-										'w-full text-left py-1 px-2 rounded text-sm transition-colors',
-										groupBy === 'type'
+										'w-full text-left py-1 px-2 rounded text-sm transition-colors capitalize',
+										groupBy === col.id
 											? 'bg-muted text-foreground font-medium'
 											: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
 									)}
-									onClick={() => onGroupByChange('type')}
+									onClick={() => onGroupByChange(col.id)}
 								>
-									Type
+									{col.label}
 								</button>
-							)}
-							<button
-								type="button"
-								className={cn(
-									'w-full text-left py-1 px-2 rounded text-sm transition-colors',
-									groupBy === 'status'
-										? 'bg-muted text-foreground font-medium'
-										: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
-								)}
-								onClick={() => onGroupByChange('status')}
-							>
-								Status
-							</button>
+							))}
 						</div>
 					</div>
 
