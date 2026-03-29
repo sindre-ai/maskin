@@ -44,7 +44,9 @@ function RelationshipListView({ relationships }: { relationships: RelationshipRe
 					<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
 						{rel.sourceId.slice(0, 8)}
 					</span>
-					<span className="text-primary text-xs">{rel.type.replace(/_/g, ' ')}</span>
+					<span className="text-accent-foreground font-medium text-xs">
+						{rel.type.replace(/_/g, ' ')}
+					</span>
 					<span className="text-muted-foreground">→</span>
 					<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
 						{rel.targetId.slice(0, 8)}

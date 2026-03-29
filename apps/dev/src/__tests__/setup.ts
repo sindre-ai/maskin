@@ -1,5 +1,6 @@
 import type { Database } from '@ai-native/db'
 import type { PgNotifyBridge } from '@ai-native/realtime'
+import type { StorageProvider } from '@ai-native/storage'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
 import type { AgentStorageManager } from '../services/agent-storage'
@@ -13,6 +14,7 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
+		storageProvider: StorageProvider
 	}
 }
 
@@ -173,6 +175,18 @@ export function createMockSessionManager(overrides?: Record<string, unknown>) {
 	} as unknown as SessionManager
 }
 
+export function createMockStorageProvider(overrides?: Record<string, unknown>) {
+	return {
+		put: vi.fn().mockResolvedValue(undefined),
+		get: vi.fn().mockResolvedValue(Buffer.from('')),
+		list: vi.fn().mockResolvedValue([]),
+		delete: vi.fn().mockResolvedValue(undefined),
+		exists: vi.fn().mockResolvedValue(false),
+		ensureBucket: vi.fn().mockResolvedValue(undefined),
+		...overrides,
+	} as unknown as StorageProvider
+}
+
 export function createMockAgentStorage(overrides?: Record<string, unknown>) {
 	return {
 		listFileRecords: vi.fn().mockResolvedValue([]),
@@ -217,6 +231,33 @@ export function createSessionTestApp(
  * Creates a test app with agentStorage injected into context.
  * Use for routes that require c.get('agentStorage').
  */
+/**
+ * Creates a test app with storageProvider injected into context.
+ * Use for routes that require c.get('storageProvider').
+ */
+export function createImportTestApp(
+	routeModule: OpenAPIHono<Env>,
+	basePath = '/',
+	actorId = 'test-actor-id',
+	actorType = 'human',
+) {
+	const app = new CreateOpenAPIHono<Env>()
+	const { db, mockResults } = createTestContext()
+	const storageProvider = createMockStorageProvider()
+
+	app.use('*', async (c, next) => {
+		c.set('db', db)
+		c.set('actorId', actorId)
+		c.set('actorType', actorType)
+		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('storageProvider', storageProvider)
+		await next()
+	})
+
+	app.route(basePath, routeModule)
+	return { app, db, mockResults, storageProvider }
+}
+
 export function createSkillsTestApp(
 	routeModule: OpenAPIHono<Env>,
 	basePath = '/',
