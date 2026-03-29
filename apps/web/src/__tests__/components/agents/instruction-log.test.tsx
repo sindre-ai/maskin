@@ -2,7 +2,6 @@ import { InstructionLog } from '@/components/agents/instruction-log'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorResponse } from '../../factories'
-import { TestWrapper } from '../../setup'
 
 const mockMutateAsync = vi.fn()
 

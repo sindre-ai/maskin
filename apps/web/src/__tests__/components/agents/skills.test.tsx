@@ -67,16 +67,9 @@ describe('Skills', () => {
 		mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
 		render(<Skills actorId="agent-1" />)
 
-		// Find delete button (icon button with hover:text-error)
-		const buttons = screen.getAllByRole('button')
-		const trashButton = buttons.find(
-			(b) => b.textContent === '' && b.className.includes('hover:text-error'),
-		)
-		if (trashButton) {
-			await user.click(trashButton)
-			expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
-			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
-		}
+		await user.click(screen.getByRole('button', { name: 'Delete skill' }))
+		expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
 	})
 
 	it('calls deleteSkill.mutate with skill name on confirm', async () => {
@@ -85,15 +78,9 @@ describe('Skills', () => {
 		mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
 		render(<Skills actorId="agent-1" />)
 
-		const buttons = screen.getAllByRole('button')
-		const trashButton = buttons.find(
-			(b) => b.textContent === '' && b.className.includes('hover:text-error'),
-		)
-		if (trashButton) {
-			await user.click(trashButton)
-			await user.click(screen.getByRole('button', { name: 'Delete' }))
-			expect(mockDeleteMutate).toHaveBeenCalledWith('deploy')
-		}
+		await user.click(screen.getByRole('button', { name: 'Delete skill' }))
+		await user.click(screen.getByRole('button', { name: 'Delete' }))
+		expect(mockDeleteMutate).toHaveBeenCalledWith('deploy')
 	})
 
 	it('cancels delete and returns to normal state', async () => {
@@ -102,15 +89,9 @@ describe('Skills', () => {
 		mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
 		render(<Skills actorId="agent-1" />)
 
-		const buttons = screen.getAllByRole('button')
-		const trashButton = buttons.find(
-			(b) => b.textContent === '' && b.className.includes('hover:text-error'),
-		)
-		if (trashButton) {
-			await user.click(trashButton)
-			await user.click(screen.getByRole('button', { name: 'Cancel' }))
-			expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
-		}
+		await user.click(screen.getByRole('button', { name: 'Delete skill' }))
+		await user.click(screen.getByRole('button', { name: 'Cancel' }))
+		expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
 	})
 
 	it('shows SkillForm when "Add Skill" clicked', async () => {
@@ -214,19 +195,9 @@ describe('Skills', () => {
 			mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
 			render(<Skills actorId="agent-1" />)
 
-			// Click the edit button (pencil icon)
-			const buttons = screen.getAllByRole('button')
-			const editButton = buttons.find(
-				(b) =>
-					b.textContent === '' &&
-					b.className.includes('text-muted-foreground') &&
-					!b.className.includes('hover:text-error'),
-			)
-			if (editButton) {
-				await user.click(editButton)
-				const nameInput = screen.getByPlaceholderText('e.g. deploy, review-pr')
-				expect(nameInput).toBeDisabled()
-			}
+			await user.click(screen.getByRole('button', { name: 'Edit skill' }))
+			const nameInput = screen.getByPlaceholderText('e.g. deploy, review-pr')
+			expect(nameInput).toBeDisabled()
 		})
 	})
 

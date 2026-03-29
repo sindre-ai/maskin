@@ -263,7 +263,13 @@ function ServerCard({
 				</div>
 			) : (
 				<div className="flex items-center gap-1">
-					<Button size="icon" variant="ghost" className="text-muted-foreground" onClick={onEdit}>
+					<Button
+						size="icon"
+						variant="ghost"
+						className="text-muted-foreground"
+						onClick={onEdit}
+						aria-label="Edit server"
+					>
 						<Pencil className="h-3.5 w-3.5" />
 					</Button>
 					<Button
@@ -271,6 +277,7 @@ function ServerCard({
 						variant="ghost"
 						className="text-muted-foreground hover:text-error"
 						onClick={() => setConfirmDelete(true)}
+						aria-label="Delete server"
 					>
 						<Trash2 className="h-3.5 w-3.5" />
 					</Button>

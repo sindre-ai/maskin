@@ -5,13 +5,7 @@ import { buildActorResponse } from '../../factories'
 
 vi.mock('@/components/agents/mcp-servers', () => ({
 	McpServers: ({ onUpdate }: { onUpdate: () => void }) => (
-		<div
-			data-testid="mcp-servers"
-			onClick={onUpdate}
-			onKeyDown={onUpdate}
-			role="button"
-			tabIndex={0}
-		/>
+		<div onClick={onUpdate} onKeyDown={onUpdate} role="button" tabIndex={0} />
 	),
 }))
 
@@ -73,7 +67,7 @@ describe('AgentCreateForm', () => {
 		expect(onAutoCreate).toHaveBeenCalledTimes(1)
 	})
 
-	it('calls onUpdate with name on blur when agent exists and name changed', async () => {
+	it('calls onUpdate with name on blur when typed name differs from agent name', async () => {
 		const user = userEvent.setup()
 		const onUpdate = vi.fn()
 		const agent = buildActorResponse({ name: 'Old Name', type: 'agent' })
@@ -86,7 +80,7 @@ describe('AgentCreateForm', () => {
 		expect(onUpdate).toHaveBeenCalledWith({ name: 'New Name' })
 	})
 
-	it('does not call onUpdate on blur when name unchanged', async () => {
+	it('does not call onUpdate on blur when typed name matches agent name', async () => {
 		const user = userEvent.setup()
 		const onUpdate = vi.fn()
 		const agent = buildActorResponse({ name: 'Scout', type: 'agent' })

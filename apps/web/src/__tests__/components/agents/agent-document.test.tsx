@@ -4,15 +4,15 @@ import userEvent from '@testing-library/user-event'
 import { buildActorResponse, buildEventResponse, buildSessionResponse } from '../../factories'
 
 vi.mock('@/components/agents/instruction-log', () => ({
-	InstructionLog: () => <div data-testid="instruction-log" />,
+	InstructionLog: () => null,
 }))
 
 vi.mock('@/components/agents/mcp-servers', () => ({
-	McpServers: () => <div data-testid="mcp-servers" />,
+	McpServers: () => null,
 }))
 
 vi.mock('@/components/agents/skills', () => ({
-	Skills: () => <div data-testid="skills" />,
+	Skills: () => null,
 }))
 
 vi.mock('@/components/activity/activity-item', () => ({

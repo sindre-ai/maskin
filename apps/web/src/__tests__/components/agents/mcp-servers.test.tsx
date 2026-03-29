@@ -147,20 +147,9 @@ describe('McpServers', () => {
 			const user = userEvent.setup()
 			render(<McpServers tools={stdioTools} onUpdate={vi.fn()} />)
 
-			const deleteButtons = screen.getAllByRole('button')
-			const deleteBtn = deleteButtons.find(
-				(btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('svg'),
-			)
-			// Find the delete icon button (last icon button in server card)
-			const buttons = screen.getAllByRole('button')
-			const trashButton = buttons.find(
-				(b) => b.textContent === '' && b.className.includes('hover:text-error'),
-			)
-			if (trashButton) {
-				await user.click(trashButton)
-				expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
-				expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
-			}
+			await user.click(screen.getByRole('button', { name: 'Delete server' }))
+			expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
 		})
 
 		it('calls onUpdate without deleted server when confirmed', async () => {
@@ -168,31 +157,18 @@ describe('McpServers', () => {
 			const onUpdate = vi.fn()
 			render(<McpServers tools={stdioTools} onUpdate={onUpdate} />)
 
-			// Click all icon buttons to find the trash one - look for the last icon-sized button
-			const buttons = screen.getAllByRole('button')
-			const trashButton = buttons.find(
-				(b) => b.textContent === '' && b.className.includes('hover:text-error'),
-			)
-			if (trashButton) {
-				await user.click(trashButton)
-				await user.click(screen.getByRole('button', { name: 'Delete' }))
-				expect(onUpdate).toHaveBeenCalledWith({ mcpServers: {} })
-			}
+			await user.click(screen.getByRole('button', { name: 'Delete server' }))
+			await user.click(screen.getByRole('button', { name: 'Delete' }))
+			expect(onUpdate).toHaveBeenCalledWith({ mcpServers: {} })
 		})
 
 		it('cancels delete and returns to normal state', async () => {
 			const user = userEvent.setup()
 			render(<McpServers tools={stdioTools} onUpdate={vi.fn()} />)
 
-			const buttons = screen.getAllByRole('button')
-			const trashButton = buttons.find(
-				(b) => b.textContent === '' && b.className.includes('hover:text-error'),
-			)
-			if (trashButton) {
-				await user.click(trashButton)
-				await user.click(screen.getByRole('button', { name: 'Cancel' }))
-				expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
-			}
+			await user.click(screen.getByRole('button', { name: 'Delete server' }))
+			await user.click(screen.getByRole('button', { name: 'Cancel' }))
+			expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
 		})
 	})
 
