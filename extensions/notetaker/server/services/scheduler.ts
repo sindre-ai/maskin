@@ -90,6 +90,7 @@ export async function syncCalendarsForWorkspace(
 							end: meeting.end,
 							attendees: meeting.attendees,
 							organizer: meeting.organizer,
+							bot_enabled: true,
 						},
 						createdBy: integration.createdBy,
 					})

@@ -86,6 +86,14 @@ export function createUploadRoutes(env: ModuleEnv) {
 				transcribe(audioBuffer, file.name, language ? { language } : undefined),
 			])
 
+			// Store transcript as a file in S3
+			const transcriptS3Key = `notetaker/${workspaceId}/${meeting.id}/transcript.txt`
+			await env.storageProvider.put(transcriptS3Key, Buffer.from(result.text, 'utf-8'))
+
+			// Calculate duration from segments if available
+			const lastSegment = result.segments.at(-1)
+			const durationSeconds = lastSegment ? Math.ceil(lastSegment.end) : null
+
 			const [updated] = await db
 				.update(objects)
 				.set({
@@ -96,6 +104,8 @@ export function createUploadRoutes(env: ModuleEnv) {
 						original_filename: file.name,
 						language: result.language,
 						audio_s3_key: s3Key,
+						transcript_s3_key: transcriptS3Key,
+						duration_seconds: durationSeconds,
 						segments: result.segments,
 					},
 					updatedAt: new Date(),

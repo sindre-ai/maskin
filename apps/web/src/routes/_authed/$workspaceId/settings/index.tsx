@@ -1,3 +1,4 @@
+import { NotetakerSettingsDialog } from '@/components/notetaker/settings-dialog'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,7 +12,7 @@ import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getAllWebModules, getWebModule } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
-import { Monitor, Moon, Sun, Trash2 } from 'lucide-react'
+import { Monitor, Moon, Settings, Sun, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -70,6 +71,7 @@ function ExtensionsSection() {
 	const allModules = getAllWebModules()
 	const customExtensions = useCustomExtensions()
 	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+	const [notetakerSettingsOpen, setNotetakerSettingsOpen] = useState(false)
 
 	const handleToggle = (moduleId: string, enabled: boolean) => {
 		const next = enabled
@@ -171,10 +173,22 @@ function ExtensionsSection() {
 									</span>
 								)}
 							</div>
-							<Switch
-								checked={isEnabled}
-								onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
-							/>
+							<div className="flex items-center gap-2">
+								{mod.id === 'notetaker' && isEnabled && (
+									<button
+										type="button"
+										aria-label="Notetaker settings"
+										onClick={() => setNotetakerSettingsOpen(true)}
+										className="text-muted-foreground hover:text-foreground transition-colors"
+									>
+										<Settings size={15} />
+									</button>
+								)}
+								<Switch
+									checked={isEnabled}
+									onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
+								/>
+							</div>
 						</div>
 					)
 				})}
@@ -226,6 +240,10 @@ function ExtensionsSection() {
 					</div>
 				))}
 			</div>
+			<NotetakerSettingsDialog
+				open={notetakerSettingsOpen}
+				onOpenChange={setNotetakerSettingsOpen}
+			/>
 		</div>
 	)
 }

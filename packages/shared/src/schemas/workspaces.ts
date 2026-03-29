@@ -40,6 +40,12 @@ export const workspaceSettingsSchema = z.object({
 			openai: z.string().optional(),
 		})
 		.default({}),
+	notetaker_settings: z
+		.object({
+			auto_join_mode: z.enum(['all', 'organized_by_me', 'manual']).default('all'),
+			language: z.string().default(''),
+		})
+		.default({}),
 	claude_oauth: z
 		.object({
 			encryptedAccessToken: z.string(),

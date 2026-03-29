@@ -45,6 +45,23 @@ export async function processRecording(
 			transcribe(audioBuffer, filename),
 		])
 
+		// Store transcript as a file in S3
+		const transcriptS3Key = `notetaker/${workspaceId}/${meetingId}/transcript.txt`
+		await env.storageProvider.put(transcriptS3Key, Buffer.from(result.text, 'utf-8'))
+
+		// Calculate duration from segments if available
+		const lastSegment = result.segments.at(-1)
+		const durationSeconds = lastSegment ? Math.ceil(lastSegment.end) : null
+
+		// Preserve existing metadata (calendar fields) and add transcription data
+		const [existingObj] = await db
+			.select({ metadata: objects.metadata })
+			.from(objects)
+			.where(eq(objects.id, meetingId))
+			.limit(1)
+
+		const existingMetadata = (existingObj?.metadata as Record<string, unknown>) ?? {}
+
 		// Update meeting object with transcription
 		const [updated] = await db
 			.update(objects)
@@ -52,10 +69,13 @@ export async function processRecording(
 				content: result.text,
 				status: 'completed',
 				metadata: {
-					source: 'recall',
+					...existingMetadata,
+					source: existingMetadata.source ?? 'recall',
 					bot_id: botId,
 					language: result.language,
 					audio_s3_key: s3Key,
+					transcript_s3_key: transcriptS3Key,
+					duration_seconds: durationSeconds,
 					segments: result.segments,
 				},
 				updatedAt: new Date(),
