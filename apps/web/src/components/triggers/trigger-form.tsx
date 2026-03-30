@@ -504,7 +504,7 @@ export function TriggerForm({
 							<SelectTrigger className="flex-1">
 								<SelectValue placeholder="Entity type" />
 							</SelectTrigger>
-							<SelectContent>
+							<SelectContent className="max-h-[300px]">
 								{eventGroups.map((group) => (
 									<SelectGroup key={group.label}>
 										<SelectLabel>{group.label}</SelectLabel>
