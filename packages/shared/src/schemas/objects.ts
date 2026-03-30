@@ -26,10 +26,34 @@ export const updateObjectSchema = z.object({
 	owner: z.string().uuid().nullable().optional(),
 })
 
+/** Known built-in sort columns — keep in sync with sortColumns in apps/dev/src/routes/objects.ts */
+export const KNOWN_SORT_COLUMNS = [
+	'createdAt',
+	'updatedAt',
+	'title',
+	'status',
+	'type',
+	'owner',
+	'createdBy',
+] as const
+
+/** Sort field: a built-in column or metadata.<field_name> */
+const sortFieldSchema = z
+	.string()
+	.max(100)
+	.regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)?$/)
+	.default('createdAt')
+	.refine(
+		(val) => (KNOWN_SORT_COLUMNS as readonly string[]).includes(val) || val.startsWith('metadata.'),
+		{ message: 'Sort field must be a known column or metadata.<field_name>' },
+	)
+
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
 	owner: z.string().uuid().optional(),
+	sort: sortFieldSchema,
+	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -38,6 +62,8 @@ export const searchObjectsSchema = z.object({
 	q: z.string().min(1),
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
+	sort: sortFieldSchema,
+	order: z.enum(['asc', 'desc']).default('desc'),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
 })

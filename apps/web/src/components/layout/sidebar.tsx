@@ -68,6 +68,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 										<Link
 											to={item.to}
 											params={{ workspaceId }}
+											search={{}}
 											onClick={() => setOpenMobile(false)}
 										>
 											<Icon />
