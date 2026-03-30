@@ -394,7 +394,7 @@ describe('Integrations Routes', () => {
 			}
 		})
 
-		it('uses nonce-based fallback for external ID when no installation_id or resolver', async () => {
+		it('uses installation_id as external ID when provided in github callback', async () => {
 			const { encrypt } = await import('../../lib/crypto')
 			const nonce = 'fallback-nonce-1234567890'
 			const state = encrypt(
