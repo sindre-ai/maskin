@@ -9,14 +9,18 @@ beforeEach(() => {
 	vi.clearAllMocks()
 	listeners = {}
 
-	vi.spyOn(window, 'addEventListener').mockImplementation((event: string, handler: any) => {
-		if (!listeners[event]) listeners[event] = new Set()
-		listeners[event].add(handler)
-	})
+	vi.spyOn(window, 'addEventListener').mockImplementation(
+		(event: string, handler: EventListenerOrEventListenerObject | null) => {
+			if (!listeners[event]) listeners[event] = new Set()
+			listeners[event].add(handler as () => void)
+		},
+	)
 
-	vi.spyOn(window, 'removeEventListener').mockImplementation((event: string, handler: any) => {
-		listeners[event]?.delete(handler)
-	})
+	vi.spyOn(window, 'removeEventListener').mockImplementation(
+		(event: string, handler: EventListenerOrEventListenerObject | null) => {
+			listeners[event]?.delete(handler as () => void)
+		},
+	)
 })
 
 afterEach(() => {
@@ -24,7 +28,11 @@ afterEach(() => {
 })
 
 function fireEvent(event: string) {
-	listeners[event]?.forEach((handler) => handler())
+	if (listeners[event]) {
+		for (const handler of listeners[event]) {
+			handler()
+		}
+	}
 }
 
 describe('useOnlineStatus', () => {
@@ -77,12 +85,12 @@ describe('useOnlineStatus', () => {
 
 		const { unmount } = renderHook(() => useOnlineStatus())
 
-		expect(listeners['online']?.size).toBe(1)
-		expect(listeners['offline']?.size).toBe(1)
+		expect(listeners.online?.size).toBe(1)
+		expect(listeners.offline?.size).toBe(1)
 
 		unmount()
 
-		expect(listeners['online']?.size).toBe(0)
-		expect(listeners['offline']?.size).toBe(0)
+		expect(listeners.online?.size).toBe(0)
+		expect(listeners.offline?.size).toBe(0)
 	})
 })

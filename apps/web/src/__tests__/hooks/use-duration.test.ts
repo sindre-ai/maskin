@@ -5,8 +5,8 @@ vi.mock('@/lib/format-duration', () => ({
 	formatDurationMs: vi.fn(),
 }))
 
-import { formatDurationMs } from '@/lib/format-duration'
 import { useDuration } from '@/hooks/use-duration'
+import { formatDurationMs } from '@/lib/format-duration'
 
 beforeEach(() => {
 	vi.useFakeTimers()

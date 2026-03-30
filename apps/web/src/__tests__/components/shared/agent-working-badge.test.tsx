@@ -23,35 +23,25 @@ import { useSession, useSessionLatestLog } from '@/hooks/use-sessions'
 
 describe('AgentWorkingBadge', () => {
 	it('renders with compact variant showing agent name', () => {
-		render(
-			<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />,
-			{ wrapper: TestWrapper },
-		)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/Scout Agent/)).toBeInTheDocument()
 	})
 
 	it('renders with banner variant', () => {
-		render(
-			<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" />,
-			{ wrapper: TestWrapper },
-		)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" />, {
+			wrapper: TestWrapper,
+		})
 		expect(screen.getByText('Scout Agent')).toBeInTheDocument()
 	})
 
 	it('shows agent name from actor data', () => {
-		render(
-			<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />,
-			{ wrapper: TestWrapper },
-		)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/Scout Agent/)).toBeInTheDocument()
 	})
 
 	it('shows fallback text when no actor', () => {
 		vi.mocked(useActor).mockReturnValue({ data: undefined } as ReturnType<typeof useActor>)
-		render(
-			<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />,
-			{ wrapper: TestWrapper },
-		)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/Agent working/)).toBeInTheDocument()
 	})
 
@@ -62,10 +52,7 @@ describe('AgentWorkingBadge', () => {
 		vi.mocked(useSessionLatestLog).mockReturnValue({
 			data: { content: 'Analyzing codebase' },
 		} as ReturnType<typeof useSessionLatestLog>)
-		render(
-			<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />,
-			{ wrapper: TestWrapper },
-		)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/Analyzing codebase/)).toBeInTheDocument()
 	})
 
@@ -73,10 +60,7 @@ describe('AgentWorkingBadge', () => {
 		vi.mocked(useSessionLatestLog).mockReturnValue({
 			data: null,
 		} as unknown as ReturnType<typeof useSessionLatestLog>)
-		render(
-			<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />,
-			{ wrapper: TestWrapper },
-		)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/3m 15s/)).toBeInTheDocument()
 	})
 })

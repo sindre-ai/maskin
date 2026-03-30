@@ -11,7 +11,6 @@ vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn() },
 }))
 
-import { decrypt, encrypt } from '../../lib/crypto'
 import {
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
@@ -21,6 +20,7 @@ import {
 	refreshClaudeToken,
 	refreshClaudeTokenIfNeeded,
 } from '../../lib/claude-oauth'
+import { decrypt, encrypt } from '../../lib/crypto'
 
 /** Create a mock DB with chainable select/update methods */
 function createMockDb(workspace?: Record<string, unknown>) {
@@ -305,7 +305,7 @@ describe('getValidOAuthToken', () => {
 		const result = await getValidOAuthToken(db, 'ws-1')
 
 		expect(result).not.toBeNull()
-		expect(result!.accessToken).toBe('enc-access') // identity decrypt
+		expect(result?.accessToken).toBe('enc-access') // identity decrypt
 		expect(mockUpdateWhere).not.toHaveBeenCalled()
 	})
 
@@ -336,7 +336,7 @@ describe('getValidOAuthToken', () => {
 		const result = await getValidOAuthToken(db, 'ws-1')
 
 		expect(result).not.toBeNull()
-		expect(result!.accessToken).toBe('new-access')
+		expect(result?.accessToken).toBe('new-access')
 		expect(mockUpdateWhere).toHaveBeenCalled()
 	})
 })

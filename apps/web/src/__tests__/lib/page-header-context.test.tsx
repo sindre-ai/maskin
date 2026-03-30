@@ -1,5 +1,5 @@
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
-import { render, renderHook, screen, act } from '@testing-library/react'
+import { act, render, renderHook, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import React from 'react'
 import type { ReactNode } from 'react'
@@ -19,7 +19,7 @@ describe('usePageHeader', () => {
 		const { result } = renderHook(() => usePageHeader(), { wrapper })
 
 		act(() => {
-			result.current.setActions(React.createElement('button', null, 'Save'))
+			result.current.setActions(React.createElement('button', { type: 'button' }, 'Save'))
 		})
 
 		expect(result.current.actions).toBeTruthy()
@@ -37,7 +37,10 @@ describe('usePageHeader', () => {
 			const { setActions } = usePageHeader()
 			return React.createElement(
 				'button',
-				{ onClick: () => setActions(React.createElement('span', null, 'Action Content')) },
+				{
+					type: 'button',
+					onClick: () => setActions(React.createElement('span', null, 'Action Content')),
+				},
 				'Set',
 			)
 		}
@@ -68,9 +71,7 @@ describe('usePageHeader', () => {
 			React.createElement(PageHeaderProvider, null, React.createElement(Collector)),
 		)
 
-		rerender(
-			React.createElement(PageHeaderProvider, null, React.createElement(Collector)),
-		)
+		rerender(React.createElement(PageHeaderProvider, null, React.createElement(Collector)))
 
 		expect(refs.length).toBeGreaterThanOrEqual(2)
 		expect(refs[0]).toBe(refs[1])

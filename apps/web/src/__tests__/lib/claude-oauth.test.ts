@@ -67,9 +67,7 @@ describe('parseClaudeCredentials', () => {
 describe('getCredentialsCommand', () => {
 	it('returns Windows command when navigator.userAgent contains Win', () => {
 		vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })
-		expect(getCredentialsCommand()).toBe(
-			'type %USERPROFILE%\\.claude\\.credentials.json',
-		)
+		expect(getCredentialsCommand()).toBe('type %USERPROFILE%\\.claude\\.credentials.json')
 		vi.unstubAllGlobals()
 	})
 

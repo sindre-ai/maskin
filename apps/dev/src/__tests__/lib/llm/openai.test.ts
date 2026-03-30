@@ -183,9 +183,7 @@ describe('OpenAIAdapter', () => {
 				{
 					message: {
 						content: null,
-						tool_calls: [
-							{ id: 'c1', function: { name: 'fn', arguments: '{}' } },
-						],
+						tool_calls: [{ id: 'c1', function: { name: 'fn', arguments: '{}' } }],
 					},
 					finish_reason: 'tool_calls',
 				},
