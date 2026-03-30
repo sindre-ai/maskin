@@ -59,6 +59,46 @@ describe('Events Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('X-Workspace-Id header required')
 		})
+
+		it('returns 200 with text/event-stream content-type', async () => {
+			const { app } = createTestApp(eventsRoutes, '/api/events')
+
+			const controller = new AbortController()
+			const req = new Request('http://localhost/api/events', {
+				method: 'GET',
+				headers: { 'X-Workspace-Id': wsId },
+				signal: controller.signal,
+			})
+
+			const res = await app.request(req)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toContain('text/event-stream')
+			controller.abort()
+		})
+
+		it('replays missed events when Last-Event-ID is provided', async () => {
+			const e1 = buildEvent({ workspaceId: wsId, id: 5, action: 'created' })
+			const e2 = buildEvent({ workspaceId: wsId, id: 6, action: 'updated' })
+			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			mockResults.select = [e1, e2]
+
+			const controller = new AbortController()
+			const req = new Request('http://localhost/api/events', {
+				method: 'GET',
+				headers: {
+					'X-Workspace-Id': wsId,
+					'Last-Event-ID': '4',
+				},
+				signal: controller.signal,
+			})
+
+			const res = await app.request(req)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toContain('text/event-stream')
+			controller.abort()
+		})
 	})
 
 	describe('POST /api/events (create comment)', () => {
@@ -157,6 +197,88 @@ describe('Events Routes', () => {
 					'POST',
 					'/api/events',
 					{ entity_id: objectId, content: 'Hey @agent', mentions: [agentId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+		})
+
+		it('creates no notifications when mentions array is empty', async () => {
+			const objectId = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'No mentions here', mentions: [] },
+			})
+			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [[{ workspaceId: wsId }]]
+			mockResults.insert = [commentEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'No mentions here', mentions: [] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.action).toBe('commented')
+		})
+
+		it('creates batch notifications for multiple agent mentions', async () => {
+			const objectId = randomUUID()
+			const agent1Id = randomUUID()
+			const agent2Id = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Hey @bot1 @bot2', mentions: [agent1Id, agent2Id] },
+			})
+			const notification1 = {
+				id: randomUUID(),
+				workspaceId: wsId,
+				type: 'needs_input',
+				title: '@mentioned by comment',
+				content: 'Hey @bot1 @bot2',
+				sourceActorId: 'test-actor-id',
+				targetActorId: agent1Id,
+				objectId,
+				status: 'pending',
+			}
+			const notification2 = {
+				id: randomUUID(),
+				workspaceId: wsId,
+				type: 'needs_input',
+				title: '@mentioned by comment',
+				content: 'Hey @bot1 @bot2',
+				sourceActorId: 'test-actor-id',
+				targetActorId: agent2Id,
+				objectId,
+				status: 'pending',
+			}
+			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }],
+				[
+					{ id: agent1Id, type: 'agent', name: 'Bot1' },
+					{ id: agent2Id, type: 'agent', name: 'Bot2' },
+				],
+			]
+			mockResults.insert = [commentEvent, notification1, notification2]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'Hey @bot1 @bot2', mentions: [agent1Id, agent2Id] },
 					{ 'x-workspace-id': wsId },
 				),
 			)

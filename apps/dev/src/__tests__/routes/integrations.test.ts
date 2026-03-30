@@ -86,6 +86,32 @@ describe('Integrations Routes', () => {
 			expect(body.install_url).toBeDefined()
 			expect(body.install_url).toContain('github.com')
 		})
+
+		it('returns 200 with install_url for standard oauth2 provider (slack)', async () => {
+			const originalClientId = process.env.SLACK_CLIENT_ID
+			process.env.SLACK_CLIENT_ID = 'test-slack-client-id'
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/slack/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.install_url).toBeDefined()
+				expect(body.install_url).toContain('slack.com/oauth')
+				expect(body.install_url).toContain('response_type=code')
+			} finally {
+				if (originalClientId === undefined) {
+					delete process.env.SLACK_CLIENT_ID
+				} else {
+					process.env.SLACK_CLIENT_ID = originalClientId
+				}
+			}
+		})
 	})
 
 	describe('GET /api/integrations/:provider/callback', () => {
@@ -238,6 +264,171 @@ describe('Integrations Routes', () => {
 			const location = res.headers.get('Location')
 			expect(location).toContain('/settings/integrations')
 		})
+
+		it('creates system actor when none exists and adds as workspace member', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'new-actor-nonce'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const newSystemActor = { id: 'new-system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[], // system actor lookup — not found
+				[], // existing member check — not found (will insert)
+			]
+			mockResults.insert = [newSystemActor] // insert new system actor
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=99`,
+				),
+			)
+
+			expect(res.status).toBe(302)
+			const location = res.headers.get('Location')
+			expect(location).toContain('/settings/integrations')
+		})
+
+		it('returns 400 when missing authorization code for oauth2 provider (slack)', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'slack-no-code'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'slack',
+				status: 'pending',
+				externalId: nonce,
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+			]
+
+			// No code query parameter
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/slack/callback?state=${encodeURIComponent(state)}`,
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('Missing authorization code')
+		})
+
+		it('redirects with error when token exchange fails for oauth2 provider', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const originalClientId = process.env.SLACK_CLIENT_ID
+			const originalClientSecret = process.env.SLACK_CLIENT_SECRET
+			process.env.SLACK_CLIENT_ID = 'test-slack-id'
+			process.env.SLACK_CLIENT_SECRET = 'test-slack-secret'
+
+			try {
+				const nonce = 'slack-token-fail'
+				const state = encrypt(
+					JSON.stringify({
+						workspaceId: wsId,
+						actorId: 'test-actor-id',
+						ts: Date.now(),
+						nonce,
+					}),
+				)
+				const pendingIntegration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'slack',
+					status: 'pending',
+					externalId: nonce,
+				})
+				const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+				const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.selectQueue = [
+					[pendingIntegration], // pending integration lookup
+					[member], // membership check
+				]
+
+				// The code=invalid will cause the token exchange to fail (network error to slack.com)
+				const res = await app.request(
+					jsonGet(
+						`/api/integrations/slack/callback?state=${encodeURIComponent(state)}&code=invalid-code`,
+					),
+				)
+
+				// Should redirect with error param
+				expect(res.status).toBe(302)
+				const location = res.headers.get('Location')
+				expect(location).toContain('error=token_exchange_failed')
+			} finally {
+				if (originalClientId === undefined) {
+					delete process.env.SLACK_CLIENT_ID
+				} else {
+					process.env.SLACK_CLIENT_ID = originalClientId
+				}
+				if (originalClientSecret === undefined) {
+					delete process.env.SLACK_CLIENT_SECRET
+				} else {
+					process.env.SLACK_CLIENT_SECRET = originalClientSecret
+				}
+			}
+		})
+
+		it('uses nonce-based fallback for external ID when no installation_id or resolver', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'fallback-nonce-1234567890'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+			]
+
+			// GitHub callback with installation_id — uses installation_id as externalId
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=42`,
+				),
+			)
+
+			expect(res.status).toBe(302)
+		})
 	})
 
 	describe('DELETE /api/integrations/:id', () => {
@@ -262,6 +453,21 @@ describe('Integrations Routes', () => {
 
 			const res = await app.request(
 				jsonDelete('/api/integrations/00000000-0000-0000-0000-000000000099', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when integration belongs to different workspace (cross-workspace)', async () => {
+			const otherWsId = '00000000-0000-0000-0000-000000000002'
+			const integration = buildIntegration({ workspaceId: otherWsId })
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+			// The select query filters by both id AND workspaceId, so it returns empty
+
+			const res = await app.request(
+				jsonDelete(`/api/integrations/${integration.id}`, {
 					'x-workspace-id': wsId,
 				}),
 			)

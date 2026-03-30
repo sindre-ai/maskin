@@ -39,6 +39,36 @@ describe('Sessions Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(2)
 		})
+
+		it('filters sessions by status', async () => {
+			const s1 = buildSession({ workspaceId: wsId, status: 'completed' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [s1]
+
+			const res = await app.request(
+				jsonGet('/api/sessions?status=completed', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].status).toBe('completed')
+		})
+
+		it('filters sessions by actor_id', async () => {
+			const actorId = '00000000-0000-0000-0000-000000000042'
+			const s1 = buildSession({ workspaceId: wsId, actorId })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [s1]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions?actor_id=${actorId}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+		})
 	})
 
 	describe('GET /api/sessions/:id', () => {
@@ -330,6 +360,100 @@ describe('Sessions Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('returns 200 with text/event-stream content-type for active session', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'running' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			// First select: auth check, second select: session status check (running)
+			mockResults.selectQueue = [[session], [session]]
+
+			const controller = new AbortController()
+			const req = new Request(
+				`http://localhost/api/sessions/${session.id}/logs/stream`,
+				{
+					method: 'GET',
+					headers: { 'x-workspace-id': wsId },
+					signal: controller.signal,
+				},
+			)
+
+			const res = await app.request(req)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toContain('text/event-stream')
+			controller.abort()
+		})
+
+		it('replays all logs and sends done event for completed session', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'completed' })
+			const log1 = buildSessionLog({ sessionId: session.id, content: 'line 1' })
+			const log2 = buildSessionLog({ sessionId: session.id, content: 'line 2' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			// Auth check, session status check (completed), replay all logs
+			mockResults.selectQueue = [[session], [session], [log1, log2]]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/sessions/${session.id}/logs/stream`, {
+					method: 'GET',
+					headers: { 'x-workspace-id': wsId },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toContain('text/event-stream')
+			const text = await res.text()
+			expect(text).toContain('line 1')
+			expect(text).toContain('line 2')
+			expect(text).toContain('event: done')
+			expect(text).toContain('data: completed')
+		})
+
+		it('replays all logs and sends done event for failed session', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'failed' })
+			const log1 = buildSessionLog({ sessionId: session.id, content: 'error output' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session], [session], [log1]]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/sessions/${session.id}/logs/stream`, {
+					method: 'GET',
+					headers: { 'x-workspace-id': wsId },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const text = await res.text()
+			expect(text).toContain('error output')
+			expect(text).toContain('event: done')
+			expect(text).toContain('data: failed')
+		})
+
+		it('replays missed logs when Last-Event-ID is provided for active session', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'running' })
+			const missedLog = buildSessionLog({ sessionId: session.id, id: 10, content: 'missed line' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			// Auth check, session status check (running), missed logs query
+			mockResults.selectQueue = [[session], [session], [missedLog]]
+
+			const controller = new AbortController()
+			const req = new Request(
+				`http://localhost/api/sessions/${session.id}/logs/stream`,
+				{
+					method: 'GET',
+					headers: {
+						'x-workspace-id': wsId,
+						'Last-Event-ID': '5',
+					},
+					signal: controller.signal,
+				},
+			)
+
+			const res = await app.request(req)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toContain('text/event-stream')
+			controller.abort()
 		})
 	})
 })
