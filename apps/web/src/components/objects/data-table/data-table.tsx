@@ -100,7 +100,7 @@ export function DataTable({
 			(entries) => {
 				if (entries[0]?.isIntersecting) fetchNextPage?.()
 			},
-			{ rootMargin: '200px' },
+			{ root: parentRef.current, rootMargin: '200px' },
 		)
 		observer.observe(sentinelRef.current)
 		return () => observer.disconnect()
