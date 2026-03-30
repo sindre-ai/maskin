@@ -24,7 +24,8 @@
 		"LINEAR_CLIENT_ID",
 		"LINEAR_CLIENT_SECRET",
 		"LINEAR_WEBHOOK_SECRET",
-		"CORS_ORIGIN"
+		"CORS_ORIGIN",
+		"FRONTEND_URL"
 	],
 	"tasks": {
 		"build": {
