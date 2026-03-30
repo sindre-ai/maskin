@@ -16,7 +16,7 @@ import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
@@ -56,6 +56,9 @@ function ObjectsPage() {
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		createdBy: false,
 	})
+
+	const searchParamsRef = useRef(searchParams)
+	searchParamsRef.current = searchParams
 
 	const { data: actors } = useActors(workspaceId)
 	const enabledModules = useEnabledModules()
@@ -122,10 +125,10 @@ function ObjectsPage() {
 		| Record<string, Array<{ name: string; type: 'text' | 'number' | 'date' | 'enum' | 'boolean' }>>
 		| undefined
 
-	// Update search params helper
+	// Update search params helper — uses ref to stay stable across param changes
 	const updateSearch = useCallback(
 		(updates: Record<string, string | undefined>) => {
-			const next: Record<string, unknown> = { ...searchParams, ...updates }
+			const next: Record<string, unknown> = { ...searchParamsRef.current, ...updates }
 			for (const key of Object.keys(next)) {
 				if (next[key] === undefined || next[key] === '') delete next[key]
 			}
@@ -136,7 +139,7 @@ function ObjectsPage() {
 				replace: true,
 			})
 		},
-		[navigate, searchParams, workspaceId],
+		[navigate, workspaceId],
 	)
 
 	// Sort handler for column headers

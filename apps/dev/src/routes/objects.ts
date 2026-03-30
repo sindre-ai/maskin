@@ -31,6 +31,7 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+// Keep in sync with KNOWN_SORT_COLUMNS in packages/shared/src/schemas/objects.ts
 const sortColumns: Record<string, Column | SQL> = {
 	createdAt: objects.createdAt,
 	updatedAt: objects.updatedAt,

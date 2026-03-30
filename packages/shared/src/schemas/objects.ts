@@ -26,7 +26,7 @@ export const updateObjectSchema = z.object({
 	owner: z.string().uuid().nullable().optional(),
 })
 
-/** Known built-in sort columns */
+/** Known built-in sort columns — keep in sync with sortColumns in apps/dev/src/routes/objects.ts */
 export const KNOWN_SORT_COLUMNS = [
 	'createdAt',
 	'updatedAt',
@@ -41,7 +41,7 @@ export const KNOWN_SORT_COLUMNS = [
 const sortFieldSchema = z
 	.string()
 	.max(100)
-	.regex(/^[a-zA-Z][a-zA-Z0-9_.]*$/)
+	.regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)?$/)
 	.default('createdAt')
 	.refine(
 		(val) => (KNOWN_SORT_COLUMNS as readonly string[]).includes(val) || val.startsWith('metadata.'),
