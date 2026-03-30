@@ -9,6 +9,8 @@ const ENTITY_TYPE_MAP: Record<string, string> = {
 	Label: 'linear.label',
 	IssueLabel: 'linear.label',
 	ProjectUpdate: 'linear.project_update',
+	Initiative: 'linear.initiative',
+	InitiativeUpdate: 'linear.initiative_update',
 	Reaction: 'linear.reaction',
 }
 

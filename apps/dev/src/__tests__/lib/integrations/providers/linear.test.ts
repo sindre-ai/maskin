@@ -51,6 +51,8 @@ describe('Linear provider config', () => {
 		expect(types).toContain('linear.cycle')
 		expect(types).toContain('linear.label')
 		expect(types).toContain('linear.project_update')
+		expect(types).toContain('linear.initiative')
+		expect(types).toContain('linear.initiative_update')
 		expect(types).toContain('linear.reaction')
 	})
 })
@@ -241,6 +243,32 @@ describe('linearEventNormalizer', () => {
 		const result = linearEventNormalizer(payload, {})
 
 		expect(result?.entityType).toBe('linear.project_update')
+	})
+
+	it('normalizes Initiative event', () => {
+		const payload = {
+			action: 'create',
+			type: 'Initiative',
+			organizationId: 'org-123',
+			data: { id: 'initiative-1', name: 'Q1 Goals' },
+		}
+		const result = linearEventNormalizer(payload, {})
+
+		expect(result?.entityType).toBe('linear.initiative')
+		expect(result?.action).toBe('create')
+	})
+
+	it('normalizes InitiativeUpdate event', () => {
+		const payload = {
+			action: 'create',
+			type: 'InitiativeUpdate',
+			organizationId: 'org-123',
+			data: { id: 'init-update-1', body: 'Progress update' },
+		}
+		const result = linearEventNormalizer(payload, {})
+
+		expect(result?.entityType).toBe('linear.initiative_update')
+		expect(result?.action).toBe('create')
 	})
 
 	it('normalizes Reaction event', () => {
