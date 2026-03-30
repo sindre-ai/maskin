@@ -339,11 +339,9 @@ function MappingStep({
 				</table>
 			</div>
 
-			{isUpdating && (
-				<p className="text-xs text-muted-foreground flex items-center gap-1">
-					<Loader2 size={12} className="animate-spin" /> Saving mapping...
-				</p>
-			)}
+			<p aria-hidden={!isUpdating} className={cn("text-xs flex items-center gap-1", isUpdating ? "text-muted-foreground" : "invisible")}>
+				<Loader2 size={12} className="animate-spin" /> Saving mapping...
+			</p>
 
 			<DialogFooter>
 				<Button onClick={onConfirm}>Import {preview.totalRows} objects</Button>
