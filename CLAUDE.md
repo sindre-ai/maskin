@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `apps/web/CLAUDE.md` — detailed frontend guidance: product philosophy, design system, component conventions, routing, state management, SSE patterns, and styling rules
 
 ## Project Rules
+- `.claude/rules/frontend.md` — frontend component reuse, DRY, and consistency rules (shadcn/ui, Radix UI)
 - `.claude/rules/testing.md` — testing conventions for all test types (unit, integration, E2E, frontend)
 - `.claude/rules/pre-commit.md` — pre-commit checklist (lint, type-check, tests)
 
