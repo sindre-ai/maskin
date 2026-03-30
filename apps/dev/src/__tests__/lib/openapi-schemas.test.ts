@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { jsonbField, workspaceResponseSchema } from '../../lib/openapi-schemas'
+import { buildWorkspace } from '../factories'
 
 describe('jsonbField', () => {
 	it('accepts record of primitives', () => {
@@ -28,13 +29,11 @@ describe('jsonbField', () => {
 })
 
 describe('workspaceResponseSchema', () => {
+	const ws = buildWorkspace({ settings: null })
 	const validWorkspace = {
-		id: '550e8400-e29b-41d4-a716-446655440000',
-		name: 'Test Workspace',
-		settings: null,
-		createdBy: '550e8400-e29b-41d4-a716-446655440001',
-		createdAt: '2024-01-01T00:00:00Z',
-		updatedAt: '2024-01-01T00:00:00Z',
+		...ws,
+		createdAt: ws.createdAt.toISOString(),
+		updatedAt: ws.updatedAt.toISOString(),
 	}
 
 	it('transforms null settings to empty object', () => {
