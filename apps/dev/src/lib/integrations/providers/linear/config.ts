@@ -56,6 +56,16 @@ export const config: ProviderConfig = {
 				label: 'Project Update',
 			},
 			{
+				entityType: 'linear.initiative',
+				actions: ['create', 'update', 'remove'],
+				label: 'Initiative',
+			},
+			{
+				entityType: 'linear.initiative_update',
+				actions: ['create', 'update', 'remove'],
+				label: 'Initiative Update',
+			},
+			{
 				entityType: 'linear.reaction',
 				actions: ['create', 'remove'],
 				label: 'Reaction',
