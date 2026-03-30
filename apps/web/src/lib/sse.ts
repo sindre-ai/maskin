@@ -10,7 +10,6 @@ export interface SSEEvent {
 	entity_type: string
 	entity_id: string
 	event_id: string
-	data: Record<string, unknown> | null
 }
 
 const LAST_EVENT_ID_KEY = 'ai-native-last-event-id'
