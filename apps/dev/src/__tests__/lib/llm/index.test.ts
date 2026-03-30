@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createLLMAdapter } from '../../../lib/llm/index'
 import { AnthropicAdapter } from '../../../lib/llm/anthropic'
+import { createLLMAdapter } from '../../../lib/llm/index'
 import { OpenAIAdapter } from '../../../lib/llm/openai'
 
 describe('createLLMAdapter', () => {

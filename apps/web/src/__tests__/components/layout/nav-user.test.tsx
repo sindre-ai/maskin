@@ -10,7 +10,12 @@ vi.mock('@/hooks/use-workspaces', () => ({
 }))
 
 vi.mock('@/lib/auth', () => ({
-	getStoredActor: vi.fn(() => ({ id: 'actor-1', name: 'Alice', type: 'human', email: 'alice@test.com' })),
+	getStoredActor: vi.fn(() => ({
+		id: 'actor-1',
+		name: 'Alice',
+		type: 'human',
+		email: 'alice@test.com',
+	})),
 	clearAuth: vi.fn(),
 }))
 
@@ -24,8 +29,13 @@ vi.mock('@tanstack/react-router', () => ({
 
 vi.mock('@/components/ui/sidebar', () => ({
 	SidebarMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-	SidebarMenuButton: ({ children, ...props }: { children: React.ReactNode; [key: string]: unknown }) => (
-		<button type="button" {...props}>{children}</button>
+	SidebarMenuButton: ({
+		children,
+		...props
+	}: { children: React.ReactNode; [key: string]: unknown }) => (
+		<button type="button" {...props}>
+			{children}
+		</button>
 	),
 	SidebarMenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	useSidebar: () => ({ isMobile: false, setOpenMobile: vi.fn() }),
@@ -35,7 +45,12 @@ import { clearAuth, getStoredActor } from '@/lib/auth'
 
 describe('NavUser', () => {
 	beforeEach(() => {
-		vi.mocked(getStoredActor).mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human', email: 'alice@test.com' })
+		vi.mocked(getStoredActor).mockReturnValue({
+			id: 'actor-1',
+			name: 'Alice',
+			type: 'human',
+			email: 'alice@test.com',
+		})
 	})
 
 	it('renders actor display name', () => {

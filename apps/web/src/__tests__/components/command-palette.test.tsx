@@ -123,7 +123,9 @@ describe('CommandPalette', () => {
 		const user = userEvent.setup()
 		// Mock crypto.randomUUID
 		const mockUUID = '00000000-0000-0000-0000-000000000001'
-		vi.spyOn(crypto, 'randomUUID').mockReturnValue(mockUUID as `${string}-${string}-${string}-${string}-${string}`)
+		vi.spyOn(crypto, 'randomUUID').mockReturnValue(
+			mockUUID as `${string}-${string}-${string}-${string}-${string}`,
+		)
 
 		render(<CommandPalette />)
 		await user.keyboard('{Control>}n{/Control}')

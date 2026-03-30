@@ -141,10 +141,7 @@ describe('TriggerForm', () => {
 		})
 
 		await user.type(screen.getByPlaceholderText('Trigger name'), 'New trigger')
-		await user.type(
-			screen.getByPlaceholderText('Action prompt for the agent...'),
-			'Run analysis',
-		)
+		await user.type(screen.getByPlaceholderText('Action prompt for the agent...'), 'Run analysis')
 
 		expect(onAutoCreate).toHaveBeenCalledTimes(1)
 		expect(onAutoCreate).toHaveBeenCalledWith(

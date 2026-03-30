@@ -22,8 +22,8 @@ vi.mock('@/components/ui/sidebar', () => ({
 	SidebarTrigger: () => <button type="button">Toggle sidebar</button>,
 }))
 
-import { useMatches } from '@tanstack/react-router'
 import { usePageHeader } from '@/lib/page-header-context'
+import { useMatches } from '@tanstack/react-router'
 
 describe('Header', () => {
 	it('renders Create dropdown button', () => {

@@ -106,8 +106,8 @@ describe('MetadataFieldAdd', () => {
 		await user.click(screen.getByText('Custom'))
 
 		const inputs = screen.getAllByRole('textbox')
-		const keyInput = inputs.find((i) => i.getAttribute('placeholder') === 'key')!
-		const valueInput = inputs.find((i) => i.getAttribute('placeholder') === 'value')!
+		const keyInput = inputs.find((i) => i.getAttribute('placeholder') === 'key') as HTMLElement
+		const valueInput = inputs.find((i) => i.getAttribute('placeholder') === 'value') as HTMLElement
 
 		await user.type(keyInput, 'custom_field')
 		await user.type(valueInput, 'custom_value')
@@ -160,8 +160,8 @@ describe('MetadataFieldAdd', () => {
 		await user.click(screen.getByText('Custom'))
 
 		const inputs = screen.getAllByRole('textbox')
-		const keyInput = inputs.find((i) => i.getAttribute('placeholder') === 'key')!
-		const valueInput = inputs.find((i) => i.getAttribute('placeholder') === 'value')!
+		const keyInput = inputs.find((i) => i.getAttribute('placeholder') === 'key') as HTMLElement
+		const valueInput = inputs.find((i) => i.getAttribute('placeholder') === 'value') as HTMLElement
 
 		await user.type(keyInput, 'my_key')
 		await user.type(valueInput, 'my_val{Enter}')

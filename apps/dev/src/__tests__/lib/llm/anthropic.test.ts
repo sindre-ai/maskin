@@ -33,7 +33,10 @@ describe('AnthropicAdapter', () => {
 	it('sends correct headers', async () => {
 		mockOkResponse({ content: [{ type: 'text', text: 'hi' }], stop_reason: 'end_turn' })
 
-		await adapter.chat({ model: 'claude-sonnet-4-20250514', messages: [{ role: 'user', content: 'hello' }] })
+		await adapter.chat({
+			model: 'claude-sonnet-4-20250514',
+			messages: [{ role: 'user', content: 'hello' }],
+		})
 
 		expect(mockFetch).toHaveBeenCalledWith(
 			'https://api.anthropic.com/v1/messages',
@@ -59,7 +62,10 @@ describe('AnthropicAdapter', () => {
 	it('uses provided model', async () => {
 		mockOkResponse({ content: [], stop_reason: 'end_turn' })
 
-		await adapter.chat({ model: 'claude-opus-4-20250514', messages: [{ role: 'user', content: 'hi' }] })
+		await adapter.chat({
+			model: 'claude-opus-4-20250514',
+			messages: [{ role: 'user', content: 'hi' }],
+		})
 
 		const body = JSON.parse(mockFetch.mock.calls[0][1].body)
 		expect(body.model).toBe('claude-opus-4-20250514')
@@ -208,7 +214,10 @@ describe('AnthropicAdapter', () => {
 		mockErrorResponse(429, 'Rate limited')
 
 		await expect(
-			adapter.chat({ model: 'claude-sonnet-4-20250514', messages: [{ role: 'user', content: 'hi' }] }),
+			adapter.chat({
+				model: 'claude-sonnet-4-20250514',
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
 		).rejects.toThrow('Anthropic API error: 429 Rate limited')
 	})
 })

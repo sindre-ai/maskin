@@ -82,7 +82,11 @@ describe('ImportDialog', () => {
 	})
 
 	it('transitions to mapping step after file upload', async () => {
-		const importRecord = buildImportResponse({ totalRows: 10, mapping: defaultMapping, preview: defaultPreview })
+		const importRecord = buildImportResponse({
+			totalRows: 10,
+			mapping: defaultMapping,
+			preview: defaultPreview,
+		})
 		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
 		mockImportData = importRecord
 
@@ -103,7 +107,11 @@ describe('ImportDialog', () => {
 	})
 
 	it('mapping step shows column mapping interface', async () => {
-		const importRecord = buildImportResponse({ totalRows: 10, mapping: defaultMapping, preview: defaultPreview })
+		const importRecord = buildImportResponse({
+			totalRows: 10,
+			mapping: defaultMapping,
+			preview: defaultPreview,
+		})
 		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
 		mockImportData = importRecord
 
@@ -224,7 +232,11 @@ describe('ImportDialog', () => {
 	})
 
 	it('resets to upload step when dialog closes and reopens', async () => {
-		const importRecord = buildImportResponse({ totalRows: 10, mapping: defaultMapping, preview: defaultPreview })
+		const importRecord = buildImportResponse({
+			totalRows: 10,
+			mapping: defaultMapping,
+			preview: defaultPreview,
+		})
 		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
 		mockImportData = importRecord
 
