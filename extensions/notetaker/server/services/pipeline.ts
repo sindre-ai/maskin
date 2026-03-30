@@ -45,9 +45,16 @@ export async function processRecording(
 			transcribe(audioBuffer, filename),
 		])
 
-		// Store transcript as a file in S3
+		// Store transcript and segments in S3
 		const transcriptS3Key = `notetaker/${workspaceId}/${meetingId}/transcript.txt`
-		await env.storageProvider.put(transcriptS3Key, Buffer.from(result.text, 'utf-8'))
+		const segmentsS3Key = `notetaker/${workspaceId}/${meetingId}/segments.json`
+		await Promise.all([
+			env.storageProvider.put(transcriptS3Key, Buffer.from(result.text, 'utf-8')),
+			env.storageProvider.put(
+				segmentsS3Key,
+				Buffer.from(JSON.stringify(result.segments), 'utf-8'),
+			),
+		])
 
 		// Calculate duration from segments if available
 		const lastSegment = result.segments.at(-1)
@@ -75,8 +82,8 @@ export async function processRecording(
 					language: result.language,
 					audio_s3_key: s3Key,
 					transcript_s3_key: transcriptS3Key,
+					segments_s3_key: segmentsS3Key,
 					duration_seconds: durationSeconds,
-					segments: result.segments,
 				},
 				updatedAt: new Date(),
 			})

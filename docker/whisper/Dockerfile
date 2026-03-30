@@ -4,19 +4,19 @@
 FROM ubuntu:22.04 AS builder
 
 RUN apt-get update && apt-get install -y \
-    build-essential cmake git \
+    build-essential cmake git curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone https://github.com/ggerganov/whisper.cpp.git /whisper
 WORKDIR /whisper
-RUN cmake -B build && cmake --build build --config Release
+RUN cmake -B build -DBUILD_SHARED_LIBS=OFF && cmake --build build --config Release
 
 # Download the small model during build
 RUN bash ./models/download-ggml-model.sh small
 
 FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl libgomp1 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /whisper/build/bin/whisper-server /usr/local/bin/whisper-server
 COPY --from=builder /whisper/models/ggml-small.bin /models/ggml-small.bin

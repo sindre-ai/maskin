@@ -1,3 +1,5 @@
+import { convertToWav } from './audio-converter.js'
+
 const WHISPER_URL = process.env.WHISPER_URL || 'http://127.0.0.1:8080'
 const MAX_RETRIES = 2
 const BASE_DELAY_MS = 1000
@@ -28,6 +30,10 @@ export async function transcribe(
 	filename: string,
 	options?: { language?: string },
 ): Promise<TranscriptionResult> {
+	// Convert to WAV if needed — whisper.cpp only accepts WAV
+	const wavBuffer = await convertToWav(audioBuffer, filename)
+	const wavFilename = filename.replace(/\.[^.]+$/, '.wav')
+
 	let lastError: Error | null = null
 
 	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -37,8 +43,8 @@ export async function transcribe(
 
 		try {
 			const form = new FormData()
-			form.append('file', new Blob([new Uint8Array(audioBuffer)]), filename)
-			form.append('response_format', 'json')
+			form.append('file', new Blob([new Uint8Array(wavBuffer)]), wavFilename)
+			form.append('response_format', 'verbose_json')
 			if (options?.language) {
 				form.append('language', options.language)
 			}
@@ -57,7 +63,12 @@ export async function transcribe(
 				throw lastError
 			}
 
-			return (await res.json()) as TranscriptionResult
+			const json = await res.json()
+			return {
+				text: json.text ?? '',
+				language: json.language ?? 'unknown',
+				segments: json.segments ?? [],
+			}
 		} catch (err) {
 			if (lastError && lastError === err) {
 				// Non-retryable HTTP error — already set above, rethrow

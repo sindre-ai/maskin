@@ -4,6 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
+// Mock audio converter — passthrough buffer
+vi.mock('../services/audio-converter.js', () => ({
+	convertToWav: vi.fn(async (buf: Buffer) => buf),
+}))
+
 // Dynamic import so the module picks up the mocked fetch
 const { transcribe, checkWhisperHealth } = await import('../services/transcription.js')
 
