@@ -1,6 +1,7 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, triggers } from '@ai-native/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
+import { Cron } from 'croner'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
@@ -9,7 +10,7 @@ export class TriggerRunner {
 	private db: Database
 	private bridge: PgNotifyBridge
 	private sessionManager: SessionManager
-	private cronIntervals: Map<string, NodeJS.Timeout> = new Map()
+	private cronJobs: Map<string, Cron> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
 
 	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
@@ -36,10 +37,10 @@ export class TriggerRunner {
 	}
 
 	async stop() {
-		for (const [_, interval] of this.cronIntervals) {
-			clearInterval(interval)
+		for (const [_, job] of this.cronJobs) {
+			job.stop()
 		}
-		this.cronIntervals.clear()
+		this.cronJobs.clear()
 		for (const [_, timeout] of this.reminderTimeouts) {
 			clearTimeout(timeout)
 		}
@@ -151,13 +152,8 @@ export class TriggerRunner {
 		const config = trigger.config as Record<string, unknown>
 		const expression = config.expression as string
 
-		// MVP: parse simple cron expressions (every N minutes)
-		// Format: */N * * * * (every N minutes)
-		const match = expression.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/)
-		const intervalMinutes = match?.[1] ? Number.parseInt(match[1]) : 60
-
-		const interval = setInterval(
-			async () => {
+		try {
+			const job = new Cron(expression, async () => {
 				logger.info(`Cron trigger '${trigger.name}' firing`)
 
 				await this.db.insert(events).values({
@@ -180,12 +176,18 @@ export class TriggerRunner {
 						triggerId: trigger.id,
 						createdBy: trigger.createdBy,
 					})
-					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
-			},
-			intervalMinutes * 60 * 1000,
-		)
+					.catch((err) =>
+						logger.error('Container session creation failed', { error: String(err) }),
+					)
+			})
 
-		this.cronIntervals.set(trigger.id, interval)
+			this.cronJobs.set(trigger.id, job)
+		} catch (err) {
+			logger.error(`Invalid cron expression '${expression}' for trigger '${trigger.name}'`, {
+				triggerId: trigger.id,
+				error: String(err),
+			})
+		}
 	}
 
 	private async loadReminders() {
