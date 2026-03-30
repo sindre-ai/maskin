@@ -5,7 +5,7 @@ import {
 	TriggerRunner,
 	evaluateCondition,
 	evaluateConditions,
-	getObjectFromEvent,
+	getObjectFromData,
 } from '../../services/trigger-runner'
 import { buildTrigger } from '../factories'
 import { createMockSessionManager, createTestContext } from '../setup'
@@ -527,33 +527,28 @@ describe('evaluateConditions()', () => {
 	})
 })
 
-describe('getObjectFromEvent()', () => {
-	it('extracts current/previous from update event', () => {
-		const event = {
-			data: {
-				previous: { status: 'todo' },
-				updated: { status: 'done' },
-			},
-		} as unknown as PgEvent
+describe('getObjectFromData()', () => {
+	it('extracts current/previous from update event data', () => {
+		const data = {
+			previous: { status: 'todo' },
+			updated: { status: 'done' },
+		}
 
-		const result = getObjectFromEvent(event)
+		const result = getObjectFromData(data)
 		expect(result.current?.status).toBe('done')
 		expect(result.previous?.status).toBe('todo')
 	})
 
-	it('extracts current from create event', () => {
-		const event = {
-			data: { status: 'new' },
-		} as unknown as PgEvent
+	it('extracts current from create event data', () => {
+		const data = { status: 'new' }
 
-		const result = getObjectFromEvent(event)
+		const result = getObjectFromData(data)
 		expect(result.current?.status).toBe('new')
 		expect(result.previous).toBeUndefined()
 	})
 
 	it('returns empty for null data', () => {
-		const event = { data: null } as unknown as PgEvent
-		const result = getObjectFromEvent(event)
+		const result = getObjectFromData(null)
 		expect(result).toEqual({})
 	})
 })
