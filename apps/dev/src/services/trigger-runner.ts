@@ -12,6 +12,7 @@ export class TriggerRunner {
 	private sessionManager: SessionManager
 	private cronJobs: Map<string, Cron> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
+	private eventHandler: ((event: PgEvent) => void) | null = null
 
 	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
 		this.db = db
@@ -21,11 +22,12 @@ export class TriggerRunner {
 
 	async start() {
 		// Start event trigger listener
-		this.bridge.on('event', (event: PgEvent) => {
+		this.eventHandler = (event: PgEvent) => {
 			this.handleEvent(event).catch((err) =>
 				logger.error('Event handling failed', { error: String(err) }),
 			)
-		})
+		}
+		this.bridge.on('event', this.eventHandler)
 
 		// Load and start cron triggers
 		await this.loadCronTriggers()
@@ -37,6 +39,10 @@ export class TriggerRunner {
 	}
 
 	async stop() {
+		if (this.eventHandler) {
+			this.bridge.off('event', this.eventHandler)
+			this.eventHandler = null
+		}
 		for (const [_, job] of this.cronJobs) {
 			job.stop()
 		}
