@@ -104,8 +104,8 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
   - Customized with the project's color tokens (bg, bg-surface, border, text, accent, etc.)
   - Keep primitives simple — no business logic, just styling + HTML attributes
   - Don't wrap these in custom abstractions — use `<Button>`, `<Card>`, `<Dialog>` directly
-- **Shared components** in `src/components/shared/` — ActorAvatar, StatusBadge, TypeBadge, EmptyState, LoadingSkeleton, RelativeTime, MarkdownContent, RouteError
-- **Feature components** in `src/components/{feature}/` — objects/, bets/, agents/, activity/, layout/
+- **Shared components** in `src/components/shared/` — list the directory to see what's available
+- **Feature components** in `src/components/{feature}/` — check existing feature directories before creating new ones
 - Use `cn()` from `src/lib/cn.ts` (clsx + tailwind-merge) for conditional class merging
 - Icons from `lucide-react`, typically `size={15}` in nav, `size={16}` in content
 - **No raw HTML form elements** — never use `<select>`, always use Radix `Select` from `@/components/ui/select`. DropdownMenu is only for action menus (not form value selection).

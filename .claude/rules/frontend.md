@@ -25,23 +25,20 @@ Only when ALL of these are true:
 
 shadcn/ui components are built on **Radix UI** primitives and are the foundation of the design system.
 
-- **Use them plain** — default variants, default sizes. Don't override height, border, padding, or text size unless there's a documented exception (e.g., the SelectTrigger h-8 rule)
+- **Use them plain** — default variants, default sizes. Don't override height, border, padding, or text size
 - **Don't wrap shadcn/ui in custom abstractions** — use `<Button>`, `<Card>`, `<Dialog>` directly. Don't create `<MyButton>` or `<CustomDialog>`
 - **Add new primitives via CLI** — `npx shadcn@latest add <component>`. Never hand-write a UI primitive
 - **All interactive elements use Radix** — never use raw HTML `<select>`, `<dialog>`, `<input type="checkbox">`, etc. Always use the Radix-based equivalent from `src/components/ui/`
 
-## Existing Component Inventory
+## Finding Existing Components
 
-Always check these before creating anything new:
+Before creating anything new, search for what already exists:
 
-### UI Primitives (`src/components/ui/`)
-Badge, Breadcrumb, Button, ButtonGroup, Card, Checkbox, Collapsible, Dialog, DropdownMenu, Input, Label, Popover, RadioGroup, Select, Separator, Sheet, Sidebar, Skeleton, Spinner, Switch, Table, Tabs, Textarea, Tooltip
-
-### Shared Components (`src/components/shared/`)
-ActorAvatar, AgentWorkingBadge, EmptyState, FormError, LoadingSkeleton, MarkdownContent, OfflineBanner, RelativeTime, RouteError, StatusBadge, TypeBadge
-
-### Feature Directories
-`activity/`, `agents/`, `bets/`, `imports/`, `layout/`, `objects/`, `pulse/`, `settings/`, `triggers/`
+- **UI primitives**: list `apps/web/src/components/ui/` — these are shadcn/ui components
+- **Shared components**: list `apps/web/src/components/shared/` — reusable business UI
+- **Feature components**: list `apps/web/src/components/` — check if another feature already built what you need
+- **Hooks**: list `apps/web/src/hooks/` — data-fetching and mutation logic
+- **Utilities**: list `apps/web/src/lib/` — `cn()`, `api`, `queryKeys`, etc.
 
 ## DRY & Consistency Rules
 
