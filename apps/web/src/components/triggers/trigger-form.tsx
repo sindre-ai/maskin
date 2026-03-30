@@ -3,12 +3,15 @@ import { Input } from '@/components/ui/input'
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
+	SelectLabel,
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useAutoSave } from '@/hooks/use-auto-save'
+import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
@@ -54,7 +57,7 @@ export interface TriggerFormPayload {
 
 // --- Constants ---
 
-import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
+import { getAllWebModules, getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [
@@ -165,6 +168,7 @@ export function TriggerForm({
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: providers } = useProviders()
 	const enabledModules = useEnabledModules()
+	const customExtensions = useCustomExtensions()
 
 	// Build internal events dynamically from enabled extensions for this workspace
 	const internalEvents = useMemo<ProviderEventDefinition[]>(
@@ -270,13 +274,51 @@ export function TriggerForm({
 		[]
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[entityType] ?? []
 
-	// Build available event definitions from internal + connected integrations
-	const connectedProviders = new Set(
-		(integrations ?? []).filter((i) => i.status === 'active').map((i) => i.provider),
-	)
-	const externalEvents =
-		(providers ?? []).filter((p) => connectedProviders.has(p.name)).flatMap((p) => p.events) ?? []
-	const allEvents = [...internalEvents, ...externalEvents]
+	// Build grouped event definitions from modules, custom extensions, and connected integrations
+	const eventGroups = useMemo(() => {
+		const groups: { label: string; events: ProviderEventDefinition[] }[] = []
+
+		// Module groups (e.g., "Work")
+		const webModules = getAllWebModules().filter((m) => enabledModules.includes(m.id))
+		for (const mod of webModules) {
+			const events = mod.objectTypeTabs.map((t) => ({
+				entityType: t.value,
+				actions: ['created', 'updated', 'status_changed'],
+				label: t.label,
+			}))
+			if (events.length > 0) {
+				groups.push({ label: mod.name, events })
+			}
+		}
+
+		// Custom extension groups
+		for (const ext of customExtensions) {
+			if (!ext.enabled) continue
+			const events = ext.tabs.map((t) => ({
+				entityType: t.value,
+				actions: ['created', 'updated', 'status_changed'],
+				label: t.label,
+			}))
+			if (events.length > 0) {
+				groups.push({ label: ext.name, events })
+			}
+		}
+
+		// Integration provider groups (e.g., "GitHub", "Linear", "Slack")
+		const connectedProviders = new Set(
+			(integrations ?? []).filter((i) => i.status === 'active').map((i) => i.provider),
+		)
+		const connected = (providers ?? []).filter((p) => connectedProviders.has(p.name))
+		for (const provider of connected) {
+			if (provider.events.length > 0) {
+				groups.push({ label: provider.displayName, events: provider.events })
+			}
+		}
+
+		return groups
+	}, [enabledModules, customExtensions, providers, integrations])
+
+	const allEvents = useMemo(() => eventGroups.flatMap((g) => g.events), [eventGroups])
 
 	const currentEventDef = allEvents.find((e) => e.entityType === entityType)
 	const availableActions = currentEventDef?.actions ?? []
@@ -456,10 +498,15 @@ export function TriggerForm({
 								<SelectValue placeholder="Entity type" />
 							</SelectTrigger>
 							<SelectContent>
-								{allEvents.map((e) => (
-									<SelectItem key={e.entityType} value={e.entityType}>
-										{e.label}
-									</SelectItem>
+								{eventGroups.map((group) => (
+									<SelectGroup key={group.label}>
+										<SelectLabel>{group.label}</SelectLabel>
+										{group.events.map((e) => (
+											<SelectItem key={e.entityType} value={e.entityType}>
+												{e.label}
+											</SelectItem>
+										))}
+									</SelectGroup>
 								))}
 							</SelectContent>
 						</Select>
