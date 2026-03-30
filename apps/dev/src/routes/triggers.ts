@@ -72,32 +72,34 @@ app.openapi(createTriggerRoute, async (c) => {
 		}
 	}
 
-	const [created] = await db
-		.insert(triggers)
-		.values({
-			...(body.id && { id: body.id }),
+	const created = await db.transaction(async (tx) => {
+		const [row] = await tx
+			.insert(triggers)
+			.values({
+				...(body.id && { id: body.id }),
+				workspaceId,
+				name: body.name,
+				type: body.type,
+				config: body.config,
+				actionPrompt: body.action_prompt,
+				targetActorId: body.target_actor_id,
+				enabled: body.enabled,
+				createdBy: actorId,
+			})
+			.returning()
+
+		if (!row) throw new Error('Failed to create trigger')
+
+		await tx.insert(events).values({
 			workspaceId,
-			name: body.name,
-			type: body.type,
-			config: body.config,
-			actionPrompt: body.action_prompt,
-			targetActorId: body.target_actor_id,
-			enabled: body.enabled,
-			createdBy: actorId,
+			actorId,
+			action: 'created',
+			entityType: 'trigger',
+			entityId: row.id,
+			data: { trigger_name: row.name, type: row.type },
 		})
-		.returning()
 
-	if (!created) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 500)
-	}
-
-	await db.insert(events).values({
-		workspaceId,
-		actorId,
-		action: 'created',
-		entityType: 'trigger',
-		entityId: created.id,
-		data: { trigger_name: created.name, type: created.type },
+		return row
 	})
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
@@ -192,18 +194,23 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id
 	if (body.enabled !== undefined) updateData.enabled = body.enabled
 
-	const [updated] = await db.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
+	const updated = await db.transaction(async (tx) => {
+		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
+		if (!row) return null
+
+		await tx.insert(events).values({
+			workspaceId: trigger.workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'trigger',
+			entityId: row.id,
+			data: { trigger_name: row.name, type: row.type },
+		})
+
+		return row
+	})
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
-
-	await db.insert(events).values({
-		workspaceId: trigger.workspaceId,
-		actorId,
-		action: 'updated',
-		entityType: 'trigger',
-		entityId: updated.id,
-		data: { trigger_name: updated.name, type: updated.type },
-	})
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
@@ -239,15 +246,17 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
-	await db.delete(triggers).where(eq(triggers.id, id))
+	await db.transaction(async (tx) => {
+		await tx.delete(triggers).where(eq(triggers.id, id))
 
-	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
-		actorId,
-		action: 'deleted',
-		entityType: 'trigger',
-		entityId: id,
-		data: { trigger_name: existing.name, type: existing.type },
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: 'trigger',
+			entityId: id,
+			data: { trigger_name: existing.name, type: existing.type },
+		})
 	})
 
 	return c.json({ deleted: true })
