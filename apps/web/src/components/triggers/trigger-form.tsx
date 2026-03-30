@@ -172,16 +172,20 @@ export function TriggerForm({
 	const enabledModules = useEnabledModules()
 	const customExtensions = useCustomExtensions()
 
+	const webModules = useMemo(
+		() => getAllWebModules().filter((m) => enabledModules.includes(m.id)),
+		[enabledModules],
+	)
+
 	// Entity types from modules + custom extensions (not integrations) — used to gate conditions UI
 	const internalEntityTypes = useMemo(() => {
 		const types = new Set<string>()
-		const webModules = getAllWebModules().filter((m) => enabledModules.includes(m.id))
 		for (const mod of webModules) for (const t of mod.objectTypeTabs) types.add(t.value)
 		for (const ext of customExtensions) {
 			if (ext.enabled) for (const t of ext.tabs) types.add(t.value)
 		}
 		return types
-	}, [enabledModules, customExtensions])
+	}, [webModules, customExtensions])
 
 	// Parse initial config
 	const initConfig = (initialValues?.config as Record<string, unknown>) ?? {}
@@ -279,7 +283,6 @@ export function TriggerForm({
 		const seen = new Set<string>()
 
 		// Module groups (e.g., "Work")
-		const webModules = getAllWebModules().filter((m) => enabledModules.includes(m.id))
 		for (const mod of webModules) {
 			const events = mod.objectTypeTabs
 				.filter((t) => !seen.has(t.value))
@@ -320,7 +323,7 @@ export function TriggerForm({
 		}
 
 		return groups
-	}, [enabledModules, customExtensions, providers, integrations])
+	}, [webModules, customExtensions, providers, integrations])
 
 	const allEvents = useMemo(() => eventGroups.flatMap((g) => g.events), [eventGroups])
 
