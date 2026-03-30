@@ -20,6 +20,7 @@ export function useObject(id: string) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),
 		queryFn: () => api.objects.get(id),
+		enabled: !!id,
 	})
 }
 

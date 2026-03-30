@@ -40,6 +40,7 @@ interface DataTableProps {
 	meta?: ObjectsTableMeta
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
+	isError?: boolean
 	fetchNextPage?: () => void
 	isLoading?: boolean
 }
@@ -56,6 +57,7 @@ export function DataTable({
 	meta,
 	hasNextPage,
 	isFetchingNextPage,
+	isError,
 	fetchNextPage,
 	isLoading,
 }: DataTableProps) {
@@ -91,9 +93,9 @@ export function DataTable({
 		overscan: 20,
 	})
 
-	// Infinite scroll sentinel
+	// Infinite scroll sentinel — skip when fetching or errored to avoid retry loops
 	useEffect(() => {
-		if (!sentinelRef.current || !hasNextPage || isFetchingNextPage) return
+		if (!sentinelRef.current || !hasNextPage || isFetchingNextPage || isError) return
 		const observer = new IntersectionObserver(
 			(entries) => {
 				if (entries[0]?.isIntersecting) fetchNextPage?.()
@@ -102,7 +104,7 @@ export function DataTable({
 		)
 		observer.observe(sentinelRef.current)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, fetchNextPage])
+	}, [hasNextPage, isFetchingNextPage, isError, fetchNextPage])
 
 	const handleRowClick = useCallback(
 		(objectId: string) => {

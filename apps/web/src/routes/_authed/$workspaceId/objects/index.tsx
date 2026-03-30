@@ -261,6 +261,7 @@ function ObjectsPage() {
 				meta={tableMeta}
 				hasNextPage={infiniteQuery.hasNextPage}
 				isFetchingNextPage={infiniteQuery.isFetchingNextPage}
+				isError={infiniteQuery.isError}
 				fetchNextPage={infiniteQuery.fetchNextPage}
 				isLoading={infiniteQuery.isLoading}
 			/>
