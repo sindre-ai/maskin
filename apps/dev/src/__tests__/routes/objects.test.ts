@@ -99,6 +99,68 @@ describe('Objects Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(2)
 		})
+
+		it('returns 200 with sort and order params', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet('/api/objects?sort=title&order=asc', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		it('returns 400 for invalid sort field', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects?sort=;DROP TABLE', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 200 for metadata sort field', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(
+				jsonGet('/api/objects?sort=metadata.priority', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		it('returns 400 for unknown sort field', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(jsonGet('/api/objects?sort=foobar', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 for metadata sort field with dots', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects?sort=metadata.a.b', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 for invalid order value', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonGet('/api/objects?order=invalid', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
 	})
 
 	describe('GET /api/objects/:id', () => {

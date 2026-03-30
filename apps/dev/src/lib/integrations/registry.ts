@@ -9,6 +9,11 @@ import { config as outlookCalendarConfig } from './providers/outlook-calendar/co
 import { config as recallConfig, verifyRecallWebhook } from './providers/recall/config'
 import { recallEventNormalizer } from './providers/recall/webhooks'
 import {
+	config as linearConfig,
+	resolveExternalId as linearResolveExternalId,
+} from './providers/linear/config'
+import { linearEventNormalizer } from './providers/linear/webhooks'
+import {
 	config as slackConfig,
 	parseTokenResponse as slackParseTokenResponse,
 	resolveExternalId as slackResolveExternalId,
@@ -38,6 +43,12 @@ providers.set('google-calendar', {
 
 providers.set('outlook-calendar', {
 	config: outlookCalendarConfig,
+})
+
+providers.set('linear', {
+	config: linearConfig,
+	customNormalizer: linearEventNormalizer,
+	resolveExternalId: linearResolveExternalId,
 })
 
 providers.set('slack', {

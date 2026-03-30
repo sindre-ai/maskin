@@ -128,6 +128,7 @@ function createChain(returnValue?: unknown): Record<string, unknown> {
 	}
 	// biome-ignore lint/suspicious/noThenProperty: mock needs .then for Drizzle's await
 	chain.then = (resolve: (v: unknown) => void) => resolve(returnValue ?? [])
+	chain.catch = () => chain
 	return chain
 }
 

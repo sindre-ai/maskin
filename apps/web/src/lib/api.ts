@@ -94,6 +94,10 @@ export const api = {
 		update: (id: string, data: UpdateObjectInput) =>
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
 		delete: (id: string) => request<{ deleted: boolean }>(`/objects/${id}`, { method: 'DELETE' }),
+		search: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<ObjectResponse[]>(`/objects/search${qs}`, { workspaceId })
+		},
 	},
 
 	auth: {
