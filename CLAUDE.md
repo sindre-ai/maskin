@@ -164,6 +164,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `S3_REGION` — S3 region (default: `us-east-1`)
 - `CORS_ORIGIN` — comma-separated allowed origins for CORS (default: `http://localhost:5173`)
 
+**Important**: All env vars used at runtime must be listed in `turbo.json` `globalPassThroughEnv`. Turbo filters env vars — unlisted ones are silently unavailable to dev/build tasks. When adding new env vars (e.g., for integrations), always add them there too.
+
 ## Principles
 1. Simple & intuitive
 2. Speed — blazingly fast
