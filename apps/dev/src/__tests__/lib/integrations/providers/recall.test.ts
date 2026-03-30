@@ -13,9 +13,9 @@ describe('Recall.ai provider', () => {
 			expect(provider.customWebhookVerifier).toBeDefined()
 		})
 
-		it('appears in listProviders', () => {
+		it('is excluded from listProviders (internal provider)', () => {
 			const names = listProviders().map((p) => p.config.name)
-			expect(names).toContain('recall')
+			expect(names).not.toContain('recall')
 		})
 	})
 

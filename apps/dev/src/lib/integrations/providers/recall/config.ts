@@ -5,6 +5,7 @@ export const config: ProviderConfig = {
 	name: 'recall',
 	displayName: 'Recall.ai',
 	description: 'Send bots to join and record video meetings',
+	internal: true,
 
 	auth: {
 		type: 'api_key',

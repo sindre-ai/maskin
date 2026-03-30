@@ -24,5 +24,12 @@ describe('registry', () => {
 			const names = providers.map((p) => p.config.name)
 			expect(names).toContain('github')
 		})
+
+		it('excludes internal providers', () => {
+			const names = listProviders().map((p) => p.config.name)
+			expect(names).not.toContain('recall')
+			// but getProvider still works for internal providers
+			expect(getProvider('recall').config.name).toBe('recall')
+		})
 	})
 })

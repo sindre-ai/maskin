@@ -70,5 +70,5 @@ export function getProvider(name: string): ResolvedProvider {
 }
 
 export function listProviders(): ResolvedProvider[] {
-	return Array.from(providers.values())
+	return Array.from(providers.values()).filter((p) => !p.config.internal)
 }

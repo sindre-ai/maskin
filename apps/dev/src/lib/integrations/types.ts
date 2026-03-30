@@ -106,6 +106,8 @@ export interface ProviderConfig {
 		mapping?: EventMapping
 	}
 	mcp?: McpConfig
+	/** If true, this provider is hidden from the user-facing providers list (backend-only dependency). */
+	internal?: boolean
 }
 
 // ── Custom handler interfaces ──────────────────────────────────────────────

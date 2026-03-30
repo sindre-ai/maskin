@@ -61,11 +61,20 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		.from(integrations)
 		.where(eq(integrations.workspaceId, workspaceId))
 
-	// Never expose credentials
-	const safe = results.map((r) => {
-		const { credentials, ...rest } = r
-		return rest
-	})
+	// Never expose credentials or internal providers
+	const safe = results
+		.filter((r) => {
+			try {
+				const provider = getProvider(r.provider)
+				return !provider.config.internal
+			} catch {
+				return true
+			}
+		})
+		.map((r) => {
+			const { credentials, ...rest } = r
+			return rest
+		})
 
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])
 }) as RouteHandler<typeof listIntegrationsRoute, Env>)
