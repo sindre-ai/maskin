@@ -339,7 +339,7 @@ function MappingStep({
 				</table>
 			</div>
 
-			<p className={cn("text-xs flex items-center gap-1", isUpdating ? "text-muted-foreground" : "invisible")}>
+			<p aria-hidden={!isUpdating} className={cn("text-xs flex items-center gap-1", isUpdating ? "text-muted-foreground" : "invisible")}>
 				<Loader2 size={12} className="animate-spin" /> Saving mapping...
 			</p>
 
