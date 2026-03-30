@@ -55,6 +55,11 @@ export const config: ProviderConfig = {
 				actions: ['create', 'update', 'remove'],
 				label: 'Project Update',
 			},
+			{
+				entityType: 'linear.reaction',
+				actions: ['create', 'remove'],
+				label: 'Reaction',
+			},
 		],
 	},
 
@@ -79,6 +84,9 @@ export const resolveExternalId = async (credentials: StoredCredentials): Promise
 		},
 		body: JSON.stringify({ query: '{ organization { id } }' }),
 	})
+	if (!res.ok) {
+		throw new Error(`Failed to resolve Linear organization ID: HTTP ${res.status}`)
+	}
 	const data = (await res.json()) as {
 		data?: { organization?: { id?: string } }
 		errors?: unknown[]

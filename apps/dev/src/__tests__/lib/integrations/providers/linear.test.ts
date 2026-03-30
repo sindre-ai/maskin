@@ -51,6 +51,7 @@ describe('Linear provider config', () => {
 		expect(types).toContain('linear.cycle')
 		expect(types).toContain('linear.label')
 		expect(types).toContain('linear.project_update')
+		expect(types).toContain('linear.reaction')
 	})
 })
 
@@ -61,6 +62,7 @@ describe('resolveExternalId', () => {
 
 	it('returns organization ID from Linear GraphQL API', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
 			json: () =>
 				Promise.resolve({
 					data: { organization: { id: 'org-uuid-123' } },
@@ -82,6 +84,7 @@ describe('resolveExternalId', () => {
 
 	it('throws when organization ID is missing', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
 			json: () => Promise.resolve({ data: { organization: null } }),
 		} as Response)
 
@@ -90,8 +93,20 @@ describe('resolveExternalId', () => {
 		)
 	})
 
+	it('throws when HTTP status is not ok', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: false,
+			status: 401,
+		} as Response)
+
+		await expect(resolveExternalId({ accessToken: 'expired' })).rejects.toThrow(
+			'Failed to resolve Linear organization ID: HTTP 401',
+		)
+	})
+
 	it('throws when API returns errors', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
 			json: () =>
 				Promise.resolve({
 					errors: [{ message: 'Authentication required' }],
@@ -226,6 +241,19 @@ describe('linearEventNormalizer', () => {
 		const result = linearEventNormalizer(payload, {})
 
 		expect(result?.entityType).toBe('linear.project_update')
+	})
+
+	it('normalizes Reaction event', () => {
+		const payload = {
+			action: 'create',
+			type: 'Reaction',
+			organizationId: 'org-123',
+			data: { id: 'reaction-1', emoji: '👍' },
+		}
+		const result = linearEventNormalizer(payload, {})
+
+		expect(result?.entityType).toBe('linear.reaction')
+		expect(result?.action).toBe('create')
 	})
 
 	it('returns null for unknown entity type', () => {
