@@ -56,6 +56,7 @@ describe('useImport', () => {
 	})
 
 	it('polls at 2000ms when status is importing', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true })
 		const importingResponse = buildImportResponse({ id: 'imp-1', status: 'importing' })
 		vi.mocked(api.imports.get).mockResolvedValue(importingResponse)
 
@@ -66,13 +67,13 @@ describe('useImport', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.imports.get).toHaveBeenCalledTimes(1)
 
-		// Wait for the refetchInterval (2000ms) to trigger at least one more call
-		await waitFor(() => {
-			expect(vi.mocked(api.imports.get).mock.calls.length).toBeGreaterThan(1)
-		}, { timeout: 5000 })
+		// Advance past the 2000ms refetchInterval
+		await vi.advanceTimersByTimeAsync(2100)
+		expect(vi.mocked(api.imports.get).mock.calls.length).toBeGreaterThan(1)
 	})
 
 	it('stops polling when status is not importing', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true })
 		const completedResponse = buildImportResponse({ id: 'imp-1', status: 'completed' })
 		vi.mocked(api.imports.get).mockResolvedValue(completedResponse)
 
@@ -80,15 +81,11 @@ describe('useImport', () => {
 			wrapper: TestWrapper,
 		})
 
-		// Let initial fetch complete with real timers
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		const callCount = vi.mocked(api.imports.get).mock.calls.length
 
-		// Switch to fake timers and advance well past polling interval
-		vi.useFakeTimers()
+		// Advance well past polling interval — should not trigger more calls
 		await vi.advanceTimersByTimeAsync(5000)
-
-		// No additional calls should have been made
 		expect(vi.mocked(api.imports.get).mock.calls.length).toBe(callCount)
 	})
 })
