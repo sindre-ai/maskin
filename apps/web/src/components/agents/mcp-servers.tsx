@@ -47,6 +47,12 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		args: ['-y', '@modelcontextprotocol/server-github'],
 		env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
 	},
+	linear: {
+		type: 'stdio',
+		command: 'npx',
+		args: ['-y', 'mcp-linear'],
+		env: { LINEAR_API_KEY: '${LINEAR_TOKEN}' },
+	},
 	slack: {
 		type: 'stdio',
 		command: 'npx',
