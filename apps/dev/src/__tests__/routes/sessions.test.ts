@@ -40,7 +40,7 @@ describe('Sessions Routes', () => {
 			expect(body).toHaveLength(2)
 		})
 
-		it('filters sessions by status', async () => {
+		it('accepts status query parameter', async () => {
 			const s1 = buildSession({ workspaceId: wsId, status: 'completed' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.select = [s1]
@@ -55,7 +55,7 @@ describe('Sessions Routes', () => {
 			expect(body[0].status).toBe('completed')
 		})
 
-		it('filters sessions by actor_id', async () => {
+		it('accepts actor_id query parameter', async () => {
 			const actorId = '00000000-0000-0000-0000-000000000042'
 			const s1 = buildSession({ workspaceId: wsId, actorId })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')

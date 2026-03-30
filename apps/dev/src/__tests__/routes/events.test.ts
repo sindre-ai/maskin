@@ -77,7 +77,9 @@ describe('Events Routes', () => {
 			controller.abort()
 		})
 
-		it('replays missed events when Last-Event-ID is provided', async () => {
+		// Smoke test: verifies the SSE endpoint accepts Last-Event-ID without error.
+		// Cannot assert replayed content because the stream stays open (active connection).
+		it('accepts Last-Event-ID header and returns SSE stream', async () => {
 			const e1 = buildEvent({ workspaceId: wsId, id: 5, action: 'created' })
 			const e2 = buildEvent({ workspaceId: wsId, id: 6, action: 'updated' })
 			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')

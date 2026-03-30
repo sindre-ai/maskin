@@ -68,6 +68,7 @@ describe('DataTableControls', () => {
 		})
 
 		await user.click(screen.getByRole('button', { name: /controls/i }))
+		// Only status checkboxes rendered (no owner/column checkboxes): ["active", "closed"]
 		const checkboxes = screen.getAllByRole('checkbox')
 		await user.click(checkboxes[0])
 		expect(props.onStatusFilterChange).toHaveBeenCalledWith('active')
@@ -80,6 +81,7 @@ describe('DataTableControls', () => {
 		})
 
 		await user.click(screen.getByRole('button', { name: /controls/i }))
+		// Only owner checkboxes rendered (no status/column checkboxes): ["Alice"]
 		const checkboxes = screen.getAllByRole('checkbox')
 		await user.click(checkboxes[0])
 		expect(props.onOwnerFilterChange).toHaveBeenCalledWith('actor-1')

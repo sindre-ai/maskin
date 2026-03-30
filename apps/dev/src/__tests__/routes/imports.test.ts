@@ -401,8 +401,8 @@ describe('POST /api/imports (file upload)', () => {
 	})
 })
 
-describe('GET /api/imports (filtering)', () => {
-	it('filters imports by status', async () => {
+describe('GET /api/imports (query params)', () => {
+	it('accepts status query parameter', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
 		const imp = buildImport({ workspaceId: wsId, status: 'completed' })
 		mockResults.selectQueue = [[member], [imp]]
@@ -415,7 +415,7 @@ describe('GET /api/imports (filtering)', () => {
 		expect(Array.isArray(body)).toBe(true)
 	})
 
-	it('supports pagination with limit and offset', async () => {
+	it('accepts limit and offset query parameters', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
 		const imp = buildImport({ workspaceId: wsId })
 		mockResults.selectQueue = [[member], [imp]]
