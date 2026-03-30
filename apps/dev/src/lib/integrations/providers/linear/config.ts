@@ -14,7 +14,6 @@ export const config: ProviderConfig = {
 			pkce: true,
 			clientIdEnv: 'LINEAR_CLIENT_ID',
 			clientSecretEnv: 'LINEAR_CLIENT_SECRET',
-			extraAuthParams: { actor: 'application' },
 		},
 	},
 
@@ -61,7 +60,7 @@ export const config: ProviderConfig = {
 
 	mcp: {
 		command: 'npx',
-		args: ['-y', 'mcp-linear'],
+		args: ['-y', 'mcp-remote', 'https://mcp.linear.app/mcp'],
 		envKey: 'LINEAR_API_KEY',
 	},
 }
