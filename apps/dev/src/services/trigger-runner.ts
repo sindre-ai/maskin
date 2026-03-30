@@ -137,7 +137,6 @@ export class TriggerRunner {
 	}
 
 	private async loadCronTriggers() {
-		// Simple cron: parse expression to interval (MVP: only supports minute intervals)
 		const cronTriggers = await this.db
 			.select()
 			.from(triggers)
@@ -176,9 +175,7 @@ export class TriggerRunner {
 						triggerId: trigger.id,
 						createdBy: trigger.createdBy,
 					})
-					.catch((err) =>
-						logger.error('Container session creation failed', { error: String(err) }),
-					)
+					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
 			})
 
 			this.cronJobs.set(trigger.id, job)

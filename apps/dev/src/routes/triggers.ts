@@ -2,6 +2,7 @@ import type { Database } from '@ai-native/db'
 import { triggers } from '@ai-native/db/schema'
 import { createTriggerSchema, updateTriggerSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { Cron } from 'croner'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
@@ -61,6 +62,18 @@ app.openapi(createTriggerRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const body = c.req.valid('json')
+
+	// Validate cron expression eagerly so users get immediate feedback
+	if (body.type === 'cron') {
+		try {
+			new Cron(body.config.expression, { maxRuns: 0 })
+		} catch {
+			return c.json(
+				createApiError('VALIDATION_ERROR', `Invalid cron expression: '${body.config.expression}'`),
+				400,
+			)
+		}
+	}
 
 	const [created] = await db
 		.insert(triggers)

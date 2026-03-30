@@ -57,6 +57,29 @@ describe('TriggerRunner', () => {
 			vi.advanceTimersByTime(600_000)
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
+
+		it('stops croner jobs so they no longer fire', async () => {
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '*/1 * * * *' },
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers
+				[], // reminder triggers
+			]
+			mockResults.insert = []
+			await runner.start()
+
+			// Fire once to confirm it works
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+
+			// Stop and verify no further fires
+			await runner.stop()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
 	})
 
 	describe('handleEvent()', () => {
@@ -200,7 +223,7 @@ describe('TriggerRunner', () => {
 			// Should not fire yet
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 
-			// Advance to 09:00
+			// Advance 60s to reach 09:00 — croner checks on the minute boundary
 			await vi.advanceTimersByTimeAsync(60 * 1000)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
