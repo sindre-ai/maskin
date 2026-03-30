@@ -39,7 +39,7 @@ describe('Linear provider config', () => {
 		expect(config.mcp).toBeDefined()
 		expect(config.mcp?.command).toBe('npx')
 		expect(config.mcp?.args).toEqual(['-y', 'mcp-remote', 'https://mcp.linear.app/mcp'])
-		expect(config.mcp?.envKey).toBe('LINEAR_API_KEY')
+		expect(config.mcp?.envKey).toBe('LINEAR_TOKEN')
 	})
 
 	it('defines event types', () => {

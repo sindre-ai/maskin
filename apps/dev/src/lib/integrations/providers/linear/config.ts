@@ -66,7 +66,7 @@ export const config: ProviderConfig = {
 	mcp: {
 		command: 'npx',
 		args: ['-y', 'mcp-remote', 'https://mcp.linear.app/mcp'],
-		envKey: 'LINEAR_API_KEY',
+		envKey: 'LINEAR_TOKEN',
 	},
 }
 
