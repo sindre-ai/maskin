@@ -1,5 +1,5 @@
 import type { Database } from '@ai-native/db'
-import { triggers } from '@ai-native/db/schema'
+import { events, triggers } from '@ai-native/db/schema'
 import { createTriggerSchema, updateTriggerSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { Cron } from 'croner'
@@ -68,10 +68,7 @@ app.openapi(createTriggerRoute, async (c) => {
 		try {
 			new Cron(body.config.expression, { maxRuns: 0 })
 		} catch {
-			return c.json(
-				createApiError('VALIDATION_ERROR', `Invalid cron expression: '${body.config.expression}'`),
-				400,
-			)
+			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
 		}
 	}
 
@@ -93,6 +90,15 @@ app.openapi(createTriggerRoute, async (c) => {
 	if (!created) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 500)
 	}
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'created',
+		entityType: 'trigger',
+		entityId: created.id,
+		data: { trigger_name: created.name, type: created.type },
+	})
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -167,6 +173,15 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
+	// Validate cron expression if updating config on a cron trigger
+	if (body.config && trigger.type === 'cron') {
+		try {
+			new Cron((body.config as Record<string, unknown>).expression as string, { maxRuns: 0 })
+		} catch {
+			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+		}
+	}
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (body.config) updateData.config = body.config
@@ -177,6 +192,15 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	const [updated] = await db.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
+
+	await db.insert(events).values({
+		workspaceId: trigger.workspaceId,
+		actorId,
+		action: 'updated',
+		entityType: 'trigger',
+		entityId: updated.id,
+		data: { trigger_name: updated.name, type: updated.type },
+	})
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
@@ -213,6 +237,16 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	}
 
 	await db.delete(triggers).where(eq(triggers.id, id))
+
+	await db.insert(events).values({
+		workspaceId: existing.workspaceId,
+		actorId,
+		action: 'deleted',
+		entityType: 'trigger',
+		entityId: id,
+		data: { trigger_name: existing.name, type: existing.type },
+	})
+
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteTriggerRoute, Env>)
 

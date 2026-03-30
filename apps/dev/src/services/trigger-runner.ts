@@ -48,6 +48,12 @@ export class TriggerRunner {
 	}
 
 	private async handleEvent(event: PgEvent) {
+		// Hot-reload: react to trigger CRUD events
+		if (event.entity_type === 'trigger') {
+			await this.handleTriggerChange(event)
+			return
+		}
+
 		// Find matching event triggers for this workspace
 		const matchingTriggers = await this.db
 			.select()
@@ -134,6 +140,53 @@ export class TriggerRunner {
 				})
 				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
 		}
+	}
+
+	private async handleTriggerChange(event: PgEvent) {
+		const triggerId = event.entity_id
+
+		if (event.action === 'deleted') {
+			this.cronJobs.get(triggerId)?.stop()
+			this.cronJobs.delete(triggerId)
+			const timeout = this.reminderTimeouts.get(triggerId)
+			if (timeout) {
+				clearTimeout(timeout)
+				this.reminderTimeouts.delete(triggerId)
+			}
+			logger.info(`Trigger '${triggerId}' removed (deleted)`)
+			return
+		}
+
+		// For created/updated: fetch current state and (re-)schedule
+		const [trigger] = await this.db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.id, triggerId))
+			.limit(1)
+
+		if (!trigger) return
+
+		// Stop any existing schedule first
+		this.cronJobs.get(triggerId)?.stop()
+		this.cronJobs.delete(triggerId)
+		const timeout = this.reminderTimeouts.get(triggerId)
+		if (timeout) {
+			clearTimeout(timeout)
+			this.reminderTimeouts.delete(triggerId)
+		}
+
+		if (!trigger.enabled) {
+			logger.info(`Trigger '${trigger.name}' disabled, not scheduling`)
+			return
+		}
+
+		if (trigger.type === 'cron') {
+			this.scheduleCron(trigger)
+		} else if (trigger.type === 'reminder') {
+			this.scheduleReminder(trigger)
+		}
+
+		logger.info(`Trigger '${trigger.name}' ${event.action === 'created' ? 'scheduled' : 'rescheduled'}`)
 	}
 
 	private async loadCronTriggers() {
