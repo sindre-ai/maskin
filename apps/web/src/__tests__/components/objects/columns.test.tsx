@@ -111,8 +111,8 @@ describe('getStaticColumns', () => {
 		const columns = getStaticColumns({
 			workspaceId: 'ws-1',
 			actors: [
-				{ id: 'actor-1', name: 'Alice' },
-				{ id: 'actor-2', name: 'Bob' },
+				{ id: 'actor-1', name: 'Alice', type: 'human', email: null },
+				{ id: 'actor-2', name: 'Bob', type: 'human', email: null },
 			],
 		})
 		const data = [buildObjectResponse({ owner: 'actor-2', createdBy: 'actor-1' })]

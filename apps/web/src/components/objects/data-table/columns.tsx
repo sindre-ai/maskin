@@ -3,7 +3,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import type { ObjectResponse } from '@/lib/api'
+import type { ActorListItem, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { ColumnDef, Table } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
@@ -18,7 +18,7 @@ export interface ObjectsTableMeta {
 
 interface ColumnOptions {
 	workspaceId: string
-	actors?: Array<{ id: string; name: string }>
+	actors?: ActorListItem[]
 }
 
 export function SortableHeader({

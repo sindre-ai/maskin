@@ -87,7 +87,7 @@ function ObjectsPage() {
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
 		queryKey: queryKeys.objects.listInfinite(workspaceId, { ...filters, q }),
-		queryFn: ({ pageParam = 0 }) => {
+		queryFn: ({ pageParam }) => {
 			const params: Record<string, string> = {
 				...filters,
 				limit: String(PAGE_SIZE),
@@ -125,15 +125,14 @@ function ObjectsPage() {
 	// Update search params helper
 	const updateSearch = useCallback(
 		(updates: Record<string, string | undefined>) => {
-			const current = { ...searchParams } as Record<string, unknown>
-			Object.assign(current, updates)
-			for (const key of Object.keys(current)) {
-				if (current[key] === undefined || current[key] === '') delete current[key]
+			const next: Record<string, unknown> = { ...searchParams, ...updates }
+			for (const key of Object.keys(next)) {
+				if (next[key] === undefined || next[key] === '') delete next[key]
 			}
 			navigate({
 				to: '/$workspaceId/objects',
 				params: { workspaceId },
-				search: current as typeof searchParams,
+				search: next as typeof searchParams,
 				replace: true,
 			})
 		},
@@ -163,7 +162,7 @@ function ObjectsPage() {
 		() => [
 			...getStaticColumns({
 				workspaceId,
-				actors: actors as Array<{ id: string; name: string }> | undefined,
+				actors,
 			}),
 			...getDynamicColumns(fieldDefinitions, typeFilter),
 		],
@@ -235,7 +234,7 @@ function ObjectsPage() {
 				statusesByType={statusesByType}
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
-				actors={actors as Array<{ id: string; name: string }> | undefined}
+				actors={actors}
 				sort={sort}
 				onSortChange={(value) => updateSearch({ sort: value })}
 				order={order}

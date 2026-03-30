@@ -47,9 +47,16 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
 	if (sortField.startsWith('metadata.')) {
 		const fieldName = sortField.slice(9)
 		if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) return null
-		return sql`${objects.metadata}->>${fieldName}`
+		return sql`${objects.metadata}->>'${sql.raw(fieldName)}'`
 	}
 	return null
+}
+
+/** Resolve sort + order into a Drizzle orderBy expression, or null for unknown fields. */
+function resolveOrderBy(query: { sort: string; order: string }): SQL | null {
+	const sortExpr = resolveSortColumn(query.sort)
+	if (!sortExpr) return null
+	return query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 }
 
 // POST / - Create object
@@ -206,10 +213,9 @@ app.openapi(listObjectsRoute, async (c) => {
 	if (query.status) conditions.push(eq(objects.status, query.status))
 	if (query.owner) conditions.push(eq(objects.owner, query.owner))
 
-	const sortExpr = resolveSortColumn(query.sort)
-	if (!sortExpr)
+	const orderBy = resolveOrderBy(query)
+	if (!orderBy)
 		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
-	const orderDir = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 
 	const results = await db
 		.select()
@@ -217,7 +223,7 @@ app.openapi(listObjectsRoute, async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(orderDir)
+		.orderBy(orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
@@ -257,10 +263,9 @@ app.openapi(searchObjectsRoute, async (c) => {
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) conditions.push(eq(objects.status, query.status))
 
-	const sortExpr = resolveSortColumn(query.sort)
-	if (!sortExpr)
+	const orderBy = resolveOrderBy(query)
+	if (!orderBy)
 		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
-	const orderDir = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 
 	const results = await db
 		.select()
@@ -268,7 +273,7 @@ app.openapi(searchObjectsRoute, async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(orderDir)
+		.orderBy(orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })

@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
+import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, Settings2 } from 'lucide-react'
@@ -23,7 +24,7 @@ interface DataTableControlsProps {
 	statusesByType: Record<string, string[]>
 	ownerFilter?: string
 	onOwnerFilterChange: (value: string | undefined) => void
-	actors?: Array<{ id: string; name: string }>
+	actors?: ActorListItem[]
 	// Sort
 	sort: string
 	onSortChange: (value: string) => void

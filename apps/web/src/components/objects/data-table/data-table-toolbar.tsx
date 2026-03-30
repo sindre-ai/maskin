@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
 import { Search, Upload } from 'lucide-react'
@@ -29,7 +30,7 @@ interface DataTableToolbarProps {
 	statusesByType: Record<string, string[]>
 	ownerFilter?: string
 	onOwnerFilterChange: (value: string | undefined) => void
-	actors?: Array<{ id: string; name: string }>
+	actors?: ActorListItem[]
 	sort: string
 	onSortChange: (value: string) => void
 	order: 'asc' | 'desc'

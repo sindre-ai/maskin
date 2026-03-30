@@ -212,7 +212,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						status: undefined,
 						owner: undefined,
 						sort: 'createdAt',
-						order: 'desc' as const,
+						order: 'desc',
 						q: undefined,
 						groupBy: undefined,
 					},
