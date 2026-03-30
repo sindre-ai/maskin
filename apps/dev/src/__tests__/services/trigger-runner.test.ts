@@ -57,6 +57,29 @@ describe('TriggerRunner', () => {
 			vi.advanceTimersByTime(600_000)
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
+
+		it('stops croner jobs so they no longer fire', async () => {
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '*/1 * * * *' },
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers
+				[], // reminder triggers
+			]
+			mockResults.insert = []
+			await runner.start()
+
+			// Fire once to confirm it works
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+
+			// Stop and verify no further fires
+			await runner.stop()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
 	})
 
 	describe('handleEvent()', () => {
@@ -165,7 +188,7 @@ describe('TriggerRunner', () => {
 	})
 
 	describe('cron scheduling', () => {
-		it('fires cron trigger at interval', async () => {
+		it('fires cron trigger at scheduled time', async () => {
 			const trigger = buildTrigger({
 				type: 'cron',
 				config: { expression: '*/5 * * * *' },
@@ -180,6 +203,46 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('fires standard cron expression at correct time', async () => {
+			// Set fake time to 08:59:00 so that "0 9 * * *" fires at 09:00
+			vi.setSystemTime(new Date('2026-03-30T08:59:00'))
+
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '0 9 * * *' },
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers
+				[], // reminder triggers
+			]
+			mockResults.insert = []
+			await runner.start()
+
+			// Should not fire yet
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			// Advance 60s to reach 09:00 — croner checks on the minute boundary
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('logs error for invalid cron expression', async () => {
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: 'not-a-cron' },
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers
+				[], // reminder triggers
+			]
+			await runner.start()
+
+			// Should not throw, just log
+			await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 
@@ -200,6 +263,107 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(10_000)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+	})
+
+	describe('hot-reload via events', () => {
+		it('schedules a new cron trigger when created event arrives', async () => {
+			// Start with no triggers
+			mockResults.selectQueue = [[], []]
+			await runner.start()
+
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '*/1 * * * *' },
+				enabled: true,
+			})
+
+			// Mock DB to return the new trigger when fetched
+			mockResults.selectQueue = [[trigger]]
+			mockResults.insert = []
+
+			bridge.emit('event', {
+				workspace_id: trigger.workspaceId,
+				actor_id: trigger.createdBy,
+				action: 'created',
+				entity_type: 'trigger',
+				entity_id: trigger.id,
+				event_id: 'evt-1',
+			} satisfies PgEvent)
+
+			// Let the async handler run
+			await vi.advanceTimersByTimeAsync(0)
+
+			// Advance 60s to hit the cron schedule
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('stops a cron trigger when updated to disabled', async () => {
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '*/1 * * * *' },
+				enabled: true,
+			})
+			mockResults.selectQueue = [[trigger], []]
+			mockResults.insert = []
+			await runner.start()
+
+			// Verify it fires
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+
+			// Now disable via update event
+			const disabled = { ...trigger, enabled: false }
+			mockResults.selectQueue = [[disabled]]
+
+			bridge.emit('event', {
+				workspace_id: trigger.workspaceId,
+				actor_id: trigger.createdBy,
+				action: 'updated',
+				entity_type: 'trigger',
+				entity_id: trigger.id,
+				event_id: 'evt-2',
+			} satisfies PgEvent)
+
+			await vi.advanceTimersByTimeAsync(0)
+
+			// Should not fire again
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('stops a cron trigger when deleted event arrives', async () => {
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '*/1 * * * *' },
+				enabled: true,
+			})
+			mockResults.selectQueue = [[trigger], []]
+			mockResults.insert = []
+			await runner.start()
+
+			// Verify it fires
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+
+			bridge.emit('event', {
+				workspace_id: trigger.workspaceId,
+				actor_id: trigger.createdBy,
+				action: 'deleted',
+				entity_type: 'trigger',
+				entity_id: trigger.id,
+				event_id: 'evt-3',
+			} satisfies PgEvent)
+
+			await vi.advanceTimersByTimeAsync(0)
+
+			// Should not fire again
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 })
