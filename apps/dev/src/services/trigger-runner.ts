@@ -80,11 +80,11 @@ export class TriggerRunner {
 				),
 			)
 
-		// Lazily fetch event data from DB only when a trigger needs it
+		// Lazily fetch event data from DB only when a trigger needs it (data is no longer in NOTIFY payload)
 		let eventData: Record<string, unknown> | null | undefined
 		const getEventData = async () => {
 			if (eventData === undefined) {
-				eventData = event.data ?? (await this.fetchEventData(event.event_id))
+				eventData = await this.fetchEventData(event.event_id)
 			}
 			return eventData
 		}

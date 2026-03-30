@@ -89,7 +89,7 @@ describe('TriggerRunner', () => {
 			entity_id: 'obj-1',
 			action: 'created',
 			actor_id: 'actor-1',
-			data: null,
+			event_id: 'evt-1',
 		}
 
 		beforeEach(async () => {
@@ -149,10 +149,12 @@ describe('TriggerRunner', () => {
 				type: 'event',
 				config: { entity_type: 'task', action: 'created', filter: { priority: 'high' } },
 			})
-			mockResults.select = [trigger]
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[{ data: { priority: 'low' } }], // fetchEventData
+			]
 
-			const event = { ...baseEvent, data: { priority: 'low' } }
-			bridge.emit('event', event)
+			bridge.emit('event', baseEvent)
 			await vi.advanceTimersByTimeAsync(0)
 
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
@@ -169,21 +171,55 @@ describe('TriggerRunner', () => {
 					to_status: 'in_progress',
 				},
 			})
-			mockResults.select = [trigger]
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[{ data: { previous: { status: 'todo' }, updated: { status: 'in_progress' } } }], // fetchEventData
+			]
 			mockResults.insert = []
 
 			const event: PgEvent = {
 				...baseEvent,
 				action: 'updated',
-				data: {
-					previous: { status: 'todo' },
-					updated: { status: 'in_progress' },
-				},
 			}
 			bridge.emit('event', event)
 			await vi.advanceTimersByTimeAsync(0)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('fetches event data from DB when trigger has filter conditions', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'task', action: 'created', filter: { priority: 'high' } },
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[{ data: { priority: 'high' } }], // fetchEventData from DB
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', baseEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('skips trigger when event data cannot be fetched from DB', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'task', action: 'created', filter: { priority: 'high' } },
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[], // fetchEventData returns no row
+			]
+
+			bridge.emit('event', baseEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 
