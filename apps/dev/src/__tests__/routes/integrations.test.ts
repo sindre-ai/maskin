@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { afterAll, beforeAll } from 'vitest'
 import { buildIntegration, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -8,8 +9,16 @@ const { default: integrationsRoutes, webhookApp } = await import('../../routes/i
 const wsId = '00000000-0000-0000-0000-000000000001'
 
 // Set up encryption key for crypto operations used in connect/callback
+const originalEncryptionKey = process.env.INTEGRATION_ENCRYPTION_KEY
 const testEncryptionKey = randomBytes(32).toString('hex')
-process.env.INTEGRATION_ENCRYPTION_KEY = testEncryptionKey
+
+beforeAll(() => {
+	process.env.INTEGRATION_ENCRYPTION_KEY = testEncryptionKey
+})
+
+afterAll(() => {
+	process.env.INTEGRATION_ENCRYPTION_KEY = originalEncryptionKey
+})
 
 describe('Integrations Routes', () => {
 	describe('GET /api/integrations', () => {

@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { githubAuth } from '../../../../lib/integrations/providers/github/auth'
 import { config } from '../../../../lib/integrations/providers/github/config'
 import { githubEventNormalizer } from '../../../../lib/integrations/providers/github/webhooks'
@@ -80,6 +80,8 @@ describe('githubAuth', () => {
 
 	describe('getAccessToken', () => {
 		const originalFetch = globalThis.fetch
+		const originalAppId = process.env.GITHUB_APP_ID
+		const originalKey = process.env.GITHUB_APP_PRIVATE_KEY
 
 		beforeAll(() => {
 			process.env.GITHUB_APP_ID = '12345'
@@ -88,6 +90,12 @@ describe('githubAuth', () => {
 
 		afterEach(() => {
 			globalThis.fetch = originalFetch
+			process.env.GITHUB_APP_PRIVATE_KEY = testPrivateKeyPem
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_APP_ID = originalAppId
+			process.env.GITHUB_APP_PRIVATE_KEY = originalKey
 		})
 
 		it('returns token on successful API call', async () => {
@@ -138,9 +146,6 @@ describe('githubAuth', () => {
 
 			const token = await githubAuth.getAccessToken({ installation_id: '99' })
 			expect(token).toBe('ghs_escaped')
-
-			// Restore
-			process.env.GITHUB_APP_PRIVATE_KEY = testPrivateKeyPem
 		})
 
 		it('handles Base64-encoded PEM key', async () => {
@@ -154,9 +159,6 @@ describe('githubAuth', () => {
 
 			const token = await githubAuth.getAccessToken({ installation_id: '77' })
 			expect(token).toBe('ghs_base64')
-
-			// Restore
-			process.env.GITHUB_APP_PRIVATE_KEY = testPrivateKeyPem
 		})
 	})
 })
