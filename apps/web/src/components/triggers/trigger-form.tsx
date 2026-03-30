@@ -59,6 +59,8 @@ export interface TriggerFormPayload {
 
 import { getAllWebModules, getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 
+const DEFAULT_OBJECT_ACTIONS = ['created', 'updated', 'status_changed'] as const
+
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [
 		{ value: 'equals', label: 'equals' },
@@ -175,7 +177,7 @@ export function TriggerForm({
 		() =>
 			getEnabledObjectTypeTabs(enabledModules).map((t) => ({
 				entityType: t.value,
-				actions: ['created', 'updated', 'status_changed'],
+				actions: [...DEFAULT_OBJECT_ACTIONS],
 				label: t.label,
 			})),
 		[enabledModules],
@@ -278,14 +280,17 @@ export function TriggerForm({
 	const eventGroups = useMemo(() => {
 		const groups: { label: string; events: ProviderEventDefinition[] }[] = []
 
+		const seen = new Set<string>()
+
 		// Module groups (e.g., "Work")
 		const webModules = getAllWebModules().filter((m) => enabledModules.includes(m.id))
 		for (const mod of webModules) {
-			const events = mod.objectTypeTabs.map((t) => ({
-				entityType: t.value,
-				actions: ['created', 'updated', 'status_changed'],
-				label: t.label,
-			}))
+			const events = mod.objectTypeTabs
+				.filter((t) => !seen.has(t.value))
+				.map((t) => {
+					seen.add(t.value)
+					return { entityType: t.value, actions: [...DEFAULT_OBJECT_ACTIONS], label: t.label }
+				})
 			if (events.length > 0) {
 				groups.push({ label: mod.name, events })
 			}
@@ -294,11 +299,12 @@ export function TriggerForm({
 		// Custom extension groups
 		for (const ext of customExtensions) {
 			if (!ext.enabled) continue
-			const events = ext.tabs.map((t) => ({
-				entityType: t.value,
-				actions: ['created', 'updated', 'status_changed'],
-				label: t.label,
-			}))
+			const events = ext.tabs
+				.filter((t) => !seen.has(t.value))
+				.map((t) => {
+					seen.add(t.value)
+					return { entityType: t.value, actions: [...DEFAULT_OBJECT_ACTIONS], label: t.label }
+				})
 			if (events.length > 0) {
 				groups.push({ label: ext.name, events })
 			}
@@ -310,8 +316,10 @@ export function TriggerForm({
 		)
 		const connected = (providers ?? []).filter((p) => connectedProviders.has(p.name))
 		for (const provider of connected) {
-			if (provider.events.length > 0) {
-				groups.push({ label: provider.displayName, events: provider.events })
+			const events = provider.events.filter((e) => !seen.has(e.entityType))
+			for (const e of events) seen.add(e.entityType)
+			if (events.length > 0) {
+				groups.push({ label: provider.displayName, events })
 			}
 		}
 
