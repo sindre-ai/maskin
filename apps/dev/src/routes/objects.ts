@@ -54,10 +54,12 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
 }
 
 /** Resolve sort + order into a Drizzle orderBy expression, or null for unknown fields. */
-function resolveOrderBy(query: { sort: string; order: string }): SQL | null {
-	const sortExpr = resolveSortColumn(query.sort)
+function resolveOrderBy(query: { sort?: string; order?: string }): SQL | null {
+	const sort = query.sort ?? 'createdAt'
+	const order = query.order ?? 'desc'
+	const sortExpr = resolveSortColumn(sort)
 	if (!sortExpr) return null
-	return query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
+	return order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 }
 
 // POST / - Create object
