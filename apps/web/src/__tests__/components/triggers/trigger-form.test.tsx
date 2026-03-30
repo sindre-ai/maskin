@@ -17,10 +17,20 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useProviders: () => ({ data: [] }),
 }))
 
+vi.mock('@/hooks/use-custom-extensions', () => ({
+	useCustomExtensions: () => [],
+}))
+
 vi.mock('@ai-native/module-sdk', () => ({
-	getEnabledObjectTypeTabs: () => [
-		{ value: 'insight', label: 'Insights' },
-		{ value: 'bet', label: 'Bets' },
+	getAllWebModules: () => [
+		{
+			id: 'work',
+			name: 'Work',
+			objectTypeTabs: [
+				{ value: 'insight', label: 'Insights' },
+				{ value: 'bet', label: 'Bets' },
+			],
+		},
 	],
 }))
 
