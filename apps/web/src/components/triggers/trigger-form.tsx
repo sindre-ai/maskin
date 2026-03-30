@@ -57,7 +57,7 @@ export interface TriggerFormPayload {
 
 // --- Constants ---
 
-import { getAllWebModules, getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
+import { getAllWebModules } from '@ai-native/module-sdk'
 
 const DEFAULT_OBJECT_ACTIONS = ['created', 'updated', 'status_changed'] as const
 
@@ -172,20 +172,16 @@ export function TriggerForm({
 	const enabledModules = useEnabledModules()
 	const customExtensions = useCustomExtensions()
 
-	// Build internal events dynamically from enabled extensions for this workspace
-	const internalEvents = useMemo<ProviderEventDefinition[]>(
-		() =>
-			getEnabledObjectTypeTabs(enabledModules).map((t) => ({
-				entityType: t.value,
-				actions: [...DEFAULT_OBJECT_ACTIONS],
-				label: t.label,
-			})),
-		[enabledModules],
-	)
-	const internalEntityTypes = useMemo(
-		() => new Set(internalEvents.map((e) => e.entityType)),
-		[internalEvents],
-	)
+	// Entity types from modules + custom extensions (not integrations) — used to gate conditions UI
+	const internalEntityTypes = useMemo(() => {
+		const types = new Set<string>()
+		const webModules = getAllWebModules().filter((m) => enabledModules.includes(m.id))
+		for (const mod of webModules) for (const t of mod.objectTypeTabs) types.add(t.value)
+		for (const ext of customExtensions) {
+			if (ext.enabled) for (const t of ext.tabs) types.add(t.value)
+		}
+		return types
+	}, [enabledModules, customExtensions])
 
 	// Parse initial config
 	const initConfig = (initialValues?.config as Record<string, unknown>) ?? {}

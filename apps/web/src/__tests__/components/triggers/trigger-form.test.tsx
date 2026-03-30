@@ -22,10 +22,6 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 }))
 
 vi.mock('@ai-native/module-sdk', () => ({
-	getEnabledObjectTypeTabs: () => [
-		{ value: 'insight', label: 'Insights' },
-		{ value: 'bet', label: 'Bets' },
-	],
 	getAllWebModules: () => [
 		{
 			id: 'work',
