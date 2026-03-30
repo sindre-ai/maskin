@@ -175,10 +175,13 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	// Validate cron expression if updating config on a cron trigger
 	if (body.config && trigger.type === 'cron') {
-		try {
-			new Cron((body.config as Record<string, unknown>).expression as string, { maxRuns: 0 })
-		} catch {
-			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+		const expr = (body.config as Record<string, unknown>).expression
+		if (expr != null) {
+			try {
+				new Cron(expr as string, { maxRuns: 0 })
+			} catch {
+				return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+			}
 		}
 	}
 
