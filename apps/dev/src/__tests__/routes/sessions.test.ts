@@ -154,6 +154,28 @@ describe('Sessions Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('returns 400 when pauseSession throws', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Session is not running'),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('not running')
+		})
 	})
 
 	describe('POST /api/sessions/:id/resume', () => {
@@ -278,6 +300,31 @@ describe('Sessions Routes', () => {
 
 			const res = await app.request(
 				jsonRequest('POST', `/api/sessions/${session.id}/resume`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /api/sessions/:id/logs/stream (SSE)', () => {
+		it('returns 400 when x-workspace-id header is missing', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(jsonGet(`/api/sessions/${session.id}/logs/stream`))
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('Missing x-workspace-id header')
+		})
+
+		it('returns 404 when session not found', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonGet('/api/sessions/00000000-0000-0000-0000-000000000099/logs/stream', {
 					'x-workspace-id': wsId,
 				}),
 			)

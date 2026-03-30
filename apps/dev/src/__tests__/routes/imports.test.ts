@@ -150,6 +150,39 @@ describe('PATCH /api/imports/:id/mapping', () => {
 })
 
 describe('POST /api/imports/:id/confirm', () => {
+	it('returns 202 when import is confirmed and starts background execution', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		const updatedImp = { ...imp, status: 'importing' }
+		// membership check, findImport, atomic update returns updated
+		mockResults.selectQueue = [[member], [imp]]
+		mockResults.update = [updatedImp]
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/imports/${imp.id}/confirm`, undefined, {
+				'x-workspace-id': wsId,
+			}),
+		)
+		expect(res.status).toBe(202)
+		const body = await res.json()
+		expect(body.status).toBe('importing')
+	})
+
+	it('returns 409 when atomic status transition fails (concurrent claim)', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		// membership check, findImport succeeds, but atomic update returns empty (race)
+		mockResults.selectQueue = [[member], [imp]]
+		mockResults.update = []
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/imports/${imp.id}/confirm`, undefined, {
+				'x-workspace-id': wsId,
+			}),
+		)
+		expect(res.status).toBe(409)
+	})
+
 	it('returns 404 when import not found', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
 		mockResults.selectQueue = [[member], []]
