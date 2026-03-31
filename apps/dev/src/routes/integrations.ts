@@ -890,10 +890,12 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 			return c.json({ ok: true, skipped: true })
 		}
 
-		// Update meeting status based on bot action
+		// Update meeting object status based on bot action
+		// joining = bot on its way (stay scheduled), recording = actively recording,
+		// done = ready for transcription, fatal = failed
 		const statusMap: Record<string, string> = {
 			recording: 'recording',
-			call_ended: 'recording', // Call ended but recording not yet processed
+			done: 'transcribing',
 			fatal: 'failed',
 		}
 		const newStatus = statusMap[normalized.action]

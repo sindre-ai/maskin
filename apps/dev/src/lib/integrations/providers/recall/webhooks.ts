@@ -16,13 +16,21 @@ import type { CustomEventNormalizer, NormalizedEvent } from '../../types'
  */
 
 /** Map Recall status codes to normalized actions */
+/** Map Recall bot status codes to our normalized actions.
+ * Object statuses: scheduled → recording → transcribing → completed / failed
+ * - 'joining': bot is on its way but not recording yet (object stays 'scheduled')
+ * - 'recording': bot is actively recording (object → 'recording')
+ * - 'done': recording finished, ready for processing (object → 'transcribing')
+ * - 'fatal': bot failed (object → 'failed')
+ */
 const STATUS_TO_ACTION: Record<string, string> = {
-	ready: 'ready',
-	joining_call: 'ready',
-	in_waiting_room: 'ready',
-	in_call_not_recording: 'ready',
+	ready: 'joining',
+	joining_call: 'joining',
+	in_waiting_room: 'joining',
+	in_call_not_recording: 'joining',
 	in_call_recording: 'recording',
-	call_ended: 'call_ended',
+	call_ended: 'joining',
+	recording_done: 'done',
 	done: 'done',
 	fatal: 'fatal',
 	analysis_done: 'done',
