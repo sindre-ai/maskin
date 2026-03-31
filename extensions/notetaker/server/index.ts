@@ -2,6 +2,7 @@ import type { ModuleDefinition, ModuleEnv } from '@ai-native/module-sdk'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { MODULE_ID, MODULE_NAME } from '../shared.js'
 import { createBotRoutes } from './routes/bot.js'
+import { createFileRoutes } from './routes/files.js'
 import healthRoutes from './routes/health.js'
 import { createProcessRoutes } from './routes/process.js'
 import { createUploadRoutes } from './routes/upload.js'
@@ -12,6 +13,7 @@ function createRoutes(env: ModuleEnv) {
 	app.route('/', createUploadRoutes(env))
 	app.route('/', createProcessRoutes(env))
 	app.route('/', createBotRoutes(env))
+	app.route('/', createFileRoutes(env))
 	return app
 }
 
@@ -41,6 +43,11 @@ const notetakerExtension: ModuleDefinition = {
 				{ name: 'meeting_url', type: 'text' },
 				{ name: 'start', type: 'date' },
 				{ name: 'end', type: 'date' },
+				{ name: 'language', type: 'text' },
+				{ name: 'audio_s3_key', type: 'text' },
+				{ name: 'transcript_s3_key', type: 'text' },
+				{ name: 'segments_s3_key', type: 'text' },
+				{ name: 'duration_seconds', type: 'number' },
 			],
 		},
 	},

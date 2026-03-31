@@ -707,10 +707,11 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 
 		const wsSettings = ws?.settings as Record<string, unknown> | undefined
 		const notetakerSettings = wsSettings?.notetaker_settings as
-			| { auto_join_mode?: string; bot_config?: Record<string, unknown> }
+			| { auto_join_mode?: string; bot_config?: Record<string, unknown>; language?: string }
 			| undefined
 		const autoJoinMode = notetakerSettings?.auto_join_mode ?? 'all'
 		const botConfig = notetakerSettings?.bot_config
+		const defaultLanguage = notetakerSettings?.language || ''
 
 		const meetingMap = getMeetingMap(config)
 		const botMap = getBotMap(config)
@@ -782,6 +783,7 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 							end: calEvent.end_time,
 							meeting_url: calEvent.meeting_url,
 							send_meeting_bot: sendMeetingBot,
+							language: defaultLanguage,
 						},
 						createdBy: systemActorId,
 					})
@@ -904,13 +906,16 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 		if (normalized.action === 'done') {
 			const storageProvider = c.get('storageProvider') as StorageProvider
 			const moduleEnv = { db, storageProvider } as ModuleEnv
-			processRecording(meeting.id, botId, meeting.workspaceId, meeting.createdBy, moduleEnv).catch(
-				(err) =>
-					logger.error('Auto-process recording failed', {
-						meetingId: meeting.id,
-						botId,
-						error: err instanceof Error ? err.message : String(err),
-					}),
+			const meetingMeta = (meeting.metadata ?? {}) as Record<string, unknown>
+			const language = (meetingMeta.language as string) || undefined
+			processRecording(meeting.id, botId, meeting.workspaceId, meeting.createdBy, moduleEnv, {
+				language,
+			}).catch((err) =>
+				logger.error('Auto-process recording failed', {
+					meetingId: meeting.id,
+					botId,
+					error: err instanceof Error ? err.message : String(err),
+				}),
 			)
 
 			// Clean up maps after processing starts — undefined values filtered by saveMaps

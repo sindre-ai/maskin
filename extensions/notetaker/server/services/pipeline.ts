@@ -18,6 +18,7 @@ export async function processRecording(
 	workspaceId: string,
 	actorId: string,
 	env: ModuleEnv,
+	options?: { language?: string },
 ): Promise<void> {
 	const db = env.db
 
@@ -40,9 +41,10 @@ export async function processRecording(
 		const s3Key = `notetaker/${workspaceId}/${meetingId}/${filename}`
 
 		// Store in S3 and transcribe in parallel
+		const language = options?.language || undefined
 		const [, result] = await Promise.all([
 			env.storageProvider.put(s3Key, audioBuffer),
-			transcribe(audioBuffer, filename),
+			transcribe(audioBuffer, filename, { language }),
 		])
 
 		// Store transcript and segments in S3

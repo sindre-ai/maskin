@@ -187,15 +187,20 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	// Re-evaluate meetings when notetaker_settings change
 	if (body.settings?.notetaker_settings) {
 		const newSettings = (updated.settings as Record<string, unknown>)?.notetaker_settings as
-			| { auto_join_mode?: string; bot_config?: Record<string, unknown> }
+			| { auto_join_mode?: string; language?: string; bot_config?: Record<string, unknown> }
 			| undefined
 		if (newSettings) {
-			reevaluateMeetings(db, id, newSettings.auto_join_mode ?? 'all', newSettings.bot_config).catch(
-				(err) =>
-					console.error('Failed to re-evaluate meetings', {
-						workspaceId: id,
-						error: err instanceof Error ? err.message : String(err),
-					}),
+			reevaluateMeetings(
+				db,
+				id,
+				newSettings.auto_join_mode ?? 'all',
+				newSettings.language ?? '',
+				newSettings.bot_config,
+			).catch((err) =>
+				console.error('Failed to re-evaluate meetings', {
+					workspaceId: id,
+					error: err instanceof Error ? err.message : String(err),
+				}),
 			)
 		}
 	}

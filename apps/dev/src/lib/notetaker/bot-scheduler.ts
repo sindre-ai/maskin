@@ -172,12 +172,13 @@ function computeSendMeetingBot(autoJoinMode: string, metadata: Record<string, un
 
 /**
  * Re-evaluate all upcoming scheduled meetings when notetaker settings change.
- * Updates send_meeting_bot and schedules/unschedules bots accordingly.
+ * Updates send_meeting_bot, language, and schedules/unschedules bots accordingly.
  */
 export async function reevaluateMeetings(
 	db: Database,
 	workspaceId: string,
 	autoJoinMode: string,
+	language: string,
 	botConfig?: Record<string, unknown>,
 ): Promise<void> {
 	// Find calendar integration for this workspace
@@ -213,30 +214,36 @@ export async function reevaluateMeetings(
 
 	for (const meeting of scheduledMeetings) {
 		const metadata = meeting.metadata as Record<string, unknown>
-		const currentSendBot = (metadata.send_meeting_bot as boolean) ?? false
 		const newSendBot = computeSendMeetingBot(autoJoinMode, metadata)
+		const currentSendBot = (metadata.send_meeting_bot as boolean) ?? false
+		const sendBotChanged = currentSendBot !== newSendBot
+		const languageChanged = (metadata.language as string) !== language
 
-		if (currentSendBot === newSendBot) continue
+		if (!sendBotChanged && !languageChanged) continue
 
-		// Update metadata
+		// Update metadata with new defaults
+		const updatedMetadata = {
+			...metadata,
+			send_meeting_bot: newSendBot,
+			language,
+		}
 		await db
 			.update(objects)
-			.set({
-				metadata: { ...metadata, send_meeting_bot: newSendBot },
-				updatedAt: new Date(),
-			})
+			.set({ metadata: updatedMetadata, updatedAt: new Date() })
 			.where(eq(objects.id, meeting.id))
 
-		// Schedule or unschedule bot
-		await scheduleOrUnscheduleBot(
-			db,
-			meeting.id,
-			{ ...metadata, send_meeting_bot: newSendBot },
-			newSendBot,
-			integration.id,
-			config,
-			botConfig,
-		)
+		// Schedule or unschedule bot if send_meeting_bot changed
+		if (sendBotChanged) {
+			await scheduleOrUnscheduleBot(
+				db,
+				meeting.id,
+				updatedMetadata,
+				newSendBot,
+				integration.id,
+				config,
+				botConfig,
+			)
+		}
 
 		// Log event
 		await db.insert(events).values({
@@ -245,7 +252,7 @@ export async function reevaluateMeetings(
 			action: 'updated',
 			entityType: 'meeting',
 			entityId: meeting.id,
-			data: { send_meeting_bot: newSendBot, reason: 'settings_changed' },
+			data: { send_meeting_bot: newSendBot, language, reason: 'settings_changed' },
 		})
 	}
 }
