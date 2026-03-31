@@ -893,6 +893,7 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 		// Update meeting status based on bot action
 		const statusMap: Record<string, string> = {
 			recording: 'recording',
+			call_ended: 'recording', // Call ended but recording not yet processed
 			fatal: 'failed',
 		}
 		const newStatus = statusMap[normalized.action]
@@ -913,7 +914,7 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 			data: normalized.data,
 		})
 
-		// Auto-process when recording is done
+		// Auto-process when recording is fully done (not call_ended which fires before video is ready)
 		if (normalized.action === 'done') {
 			const storageProvider = c.get('storageProvider') as StorageProvider
 			const moduleEnv = { db, storageProvider } as ModuleEnv

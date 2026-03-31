@@ -29,10 +29,17 @@ export async function processRecording(
 		.where(eq(objects.id, meetingId))
 
 	try {
-		// Fetch bot to get recording URL
-		const bot = await getBot(botId)
+		// Fetch bot to get recording URL — retry if video_url not yet available
+		let bot = await getBot(botId)
 		if (!bot.video_url) {
-			throw new Error(`Bot ${botId} has no video_url`)
+			// Video may not be ready immediately after 'done' webhook — wait and retry
+			for (let attempt = 1; attempt <= 5 && !bot.video_url; attempt++) {
+				await new Promise((resolve) => setTimeout(resolve, attempt * 3000))
+				bot = await getBot(botId)
+			}
+		}
+		if (!bot.video_url) {
+			throw new Error(`Bot ${botId} has no video_url after retries`)
 		}
 
 		// Download recording

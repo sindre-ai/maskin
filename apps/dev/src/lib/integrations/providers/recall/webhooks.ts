@@ -22,7 +22,7 @@ const STATUS_TO_ACTION: Record<string, string> = {
 	in_waiting_room: 'ready',
 	in_call_not_recording: 'ready',
 	in_call_recording: 'recording',
-	call_ended: 'done',
+	call_ended: 'call_ended',
 	done: 'done',
 	fatal: 'fatal',
 	analysis_done: 'done',
