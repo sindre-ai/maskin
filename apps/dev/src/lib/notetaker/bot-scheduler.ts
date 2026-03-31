@@ -47,7 +47,7 @@ function compact<T>(record: Record<string, T | undefined | null>): Record<string
 	>
 }
 
-/** Save updated maps back to integration config */
+/** Save updated maps back to integration config. compact() removes undefined/null entries. */
 export async function saveMaps(
 	db: Database,
 	integrationId: string,
@@ -55,13 +55,21 @@ export async function saveMaps(
 	meetingMap: Record<string, MeetingMapEntry>,
 	botMap: Record<string, string>,
 ) {
+	const compactedMeetingMap = compact(meetingMap)
+	const compactedBotMap = compact(botMap)
+	logger.info('saveMaps', {
+		integrationId,
+		meetingMapKeys: Object.keys(compactedMeetingMap),
+		botMapKeys: Object.keys(compactedBotMap),
+		botMapEntries: JSON.stringify(compactedBotMap),
+	})
 	await db
 		.update(integrations)
 		.set({
 			config: {
 				...config,
-				meeting_map: compact(meetingMap),
-				bot_map: compact(botMap),
+				meeting_map: compactedMeetingMap,
+				bot_map: compactedBotMap,
 			},
 			updatedAt: new Date(),
 		})
@@ -91,6 +99,14 @@ export async function scheduleOrUnscheduleBot(
 	const entry = meetingMap[meetingId] ?? {}
 	const meetingUrl = meetingMetadata.meeting_url as string | undefined
 
+	logger.info('scheduleOrUnscheduleBot called', {
+		meetingId,
+		shouldSendBot,
+		meetingUrl,
+		hasRecallEventId: !!entry.recall_event_id,
+		existingBotId: entry.bot_id,
+	})
+
 	if (shouldSendBot && meetingUrl && !entry.bot_id) {
 		// Schedule bot
 		try {
@@ -100,11 +116,21 @@ export async function scheduleOrUnscheduleBot(
 				// Calendar-sourced: use Calendar V2 API
 				const startTime = meetingMetadata.start as string | undefined
 				const deduplicationKey = `${startTime}-${meetingUrl}`
+				logger.info('Scheduling bot via Calendar V2', {
+					meetingId,
+					recallEventId: entry.recall_event_id,
+					deduplicationKey,
+				})
 				const updatedEvent = await scheduleBotForEvent(
 					entry.recall_event_id,
 					deduplicationKey,
 					botConfig,
 				)
+				logger.info('scheduleBotForEvent response', {
+					meetingId,
+					bots: JSON.stringify(updatedEvent.bots),
+					eventId: updatedEvent.id,
+				})
 				botId = updatedEvent.bots?.[0]?.id
 			} else {
 				// Manual meeting: use V1 bot API
@@ -113,10 +139,18 @@ export async function scheduleOrUnscheduleBot(
 				botId = bot.id
 			}
 
+			logger.info('Bot scheduled', { meetingId, botId })
+
 			if (botId) {
 				entry.bot_id = botId
 				meetingMap[meetingId] = entry
 				botMap[botId] = meetingId
+				logger.info('Maps updated', {
+					meetingId,
+					botId,
+					meetingMapKeys: Object.keys(meetingMap),
+					botMapKeys: Object.keys(botMap),
+				})
 				return true
 			}
 		} catch (err) {

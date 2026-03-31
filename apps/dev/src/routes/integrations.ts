@@ -821,6 +821,12 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 			}
 
 			// Save maps if they changed but weren't already saved
+			logger.info('Calendar sync complete', {
+				mapsChanged,
+				meetingMapKeys: Object.keys(meetingMap),
+				botMapKeys: Object.keys(botMap),
+				botMapEntries: JSON.stringify(botMap),
+			})
 			if (mapsChanged) {
 				await saveMaps(db, integration.id, config, meetingMap, botMap)
 			}
@@ -838,6 +844,8 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 	if (normalized.entityType === 'recall.bot') {
 		const botId = normalized.data.bot_id as string
 
+		logger.info(`Recall bot webhook: looking up bot ${botId}, action=${normalized.action}`)
+
 		// Find meeting via bot_map in integration config
 		const [integration] = await db
 			.select()
@@ -848,7 +856,22 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 			.limit(1)
 
 		if (!integration) {
-			logger.warn(`No integration found for recall bot ${botId}`)
+			// Debug: log all active integrations and their bot_maps
+			const allIntegrations = await db
+				.select({
+					id: integrations.id,
+					config: integrations.config,
+					provider: integrations.provider,
+				})
+				.from(integrations)
+				.where(eq(integrations.status, 'active'))
+			logger.warn(`No integration found for recall bot ${botId}`, {
+				activeIntegrations: allIntegrations.map((i) => ({
+					id: i.id,
+					provider: i.provider,
+					botMapKeys: Object.keys((i.config as IntegrationMeetingConfig)?.bot_map ?? {}),
+				})),
+			})
 			return c.json({ ok: true, skipped: true })
 		}
 
