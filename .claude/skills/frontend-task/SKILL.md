@@ -1,7 +1,7 @@
 ---
 name: frontend-task
 description: Orchestrates the frontend agent team to plan, review, implement, and review frontend changes
-user_invocable: true
+user-invocable: true
 ---
 
 # Frontend Task Orchestration

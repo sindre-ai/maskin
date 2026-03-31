@@ -1,7 +1,7 @@
 ---
 name: add-shadcn-component
 description: Properly adds a shadcn/ui component to the project via the official CLI
-user_invocable: true
+user-invocable: true
 ---
 
 # Add shadcn/ui Component
