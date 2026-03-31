@@ -148,8 +148,12 @@ export async function scheduleBotForEvent(
 	deduplicationKey: string,
 	botName?: string,
 ): Promise<RecallCalendarEvent> {
-	const body: Record<string, unknown> = { deduplication_key: deduplicationKey }
-	if (botName) body.bot_name = botName
+	const body: Record<string, unknown> = {
+		deduplication_key: deduplicationKey,
+		bot_config: {
+			bot_name: botName ?? 'Maskin Notetaker',
+		},
+	}
 
 	const res = await fetch(`${RECALL_V2_BASE}/calendar-events/${eventId}/bot/`, {
 		method: 'POST',
