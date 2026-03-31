@@ -568,6 +568,9 @@ app.openapi(deleteObjectRoute, async (c) => {
 
 import {
 	type IntegrationMeetingConfig,
+	getBotMap,
+	getMeetingMap,
+	saveMaps,
 	scheduleOrUnscheduleBot,
 } from '../lib/notetaker/bot-scheduler'
 
@@ -594,6 +597,8 @@ async function handleMeetingBotChange(
 	if (!integration) return
 
 	const config = integration.config as IntegrationMeetingConfig
+	const meetingMap = getMeetingMap(config)
+	const botMap = getBotMap(config)
 
 	// Load bot_config from workspace settings
 	const [ws] = await db
@@ -606,15 +611,18 @@ async function handleMeetingBotChange(
 		| { bot_config?: Record<string, unknown> }
 		| undefined
 
-	await scheduleOrUnscheduleBot(
+	const changed = await scheduleOrUnscheduleBot(
 		db,
 		meetingId,
 		metadata,
 		shouldSendBot,
-		integration.id,
-		config,
+		meetingMap,
+		botMap,
 		notetakerSettings?.bot_config,
 	)
+	if (changed) {
+		await saveMaps(db, integration.id, config, meetingMap, botMap)
+	}
 }
 
 export default app

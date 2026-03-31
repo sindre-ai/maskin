@@ -74,17 +74,20 @@ export async function saveMaps(
  * Schedule or unschedule a bot for a meeting based on send_meeting_bot flag.
  * Updates integration config maps accordingly.
  */
+/**
+ * Schedule or unschedule a bot for a meeting based on send_meeting_bot flag.
+ * Mutates meetingMap and botMap in-place. Caller is responsible for saving.
+ * Returns true if maps were changed.
+ */
 export async function scheduleOrUnscheduleBot(
 	db: Database,
 	meetingId: string,
 	meetingMetadata: Record<string, unknown>,
 	shouldSendBot: boolean,
-	integrationId: string,
-	config: IntegrationMeetingConfig,
+	meetingMap: Record<string, MeetingMapEntry>,
+	botMap: Record<string, string>,
 	botConfig?: Record<string, unknown>,
-): Promise<void> {
-	const meetingMap = getMeetingMap(config)
-	const botMap = getBotMap(config)
+): Promise<boolean> {
 	const entry = meetingMap[meetingId] ?? {}
 	const meetingUrl = meetingMetadata.meeting_url as string | undefined
 
@@ -114,7 +117,7 @@ export async function scheduleOrUnscheduleBot(
 				entry.bot_id = botId
 				meetingMap[meetingId] = entry
 				botMap[botId] = meetingId
-				await saveMaps(db, integrationId, config, meetingMap, botMap)
+				return true
 			}
 		} catch (err) {
 			logger.error('Failed to schedule bot', {
@@ -151,8 +154,10 @@ export async function scheduleOrUnscheduleBot(
 		botMap[entry.bot_id] = undefined as unknown as string
 		entry.bot_id = undefined
 		meetingMap[meetingId] = entry
-		await saveMaps(db, integrationId, config, meetingMap, botMap)
+		return true
 	}
+
+	return false
 }
 
 // ── Re-evaluation ────────────────────────────────────────────────────────────
@@ -197,6 +202,9 @@ export async function reevaluateMeetings(
 	if (!integration) return
 
 	const config = integration.config as IntegrationMeetingConfig
+	const meetingMap = getMeetingMap(config)
+	const botMap = getBotMap(config)
+	let mapsChanged = false
 
 	// Fetch all scheduled meetings within 1 week
 	const oneWeekFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -234,15 +242,16 @@ export async function reevaluateMeetings(
 
 		// Schedule or unschedule bot if send_meeting_bot changed
 		if (sendBotChanged) {
-			await scheduleOrUnscheduleBot(
+			const changed = await scheduleOrUnscheduleBot(
 				db,
 				meeting.id,
 				updatedMetadata,
 				newSendBot,
-				integration.id,
-				config,
+				meetingMap,
+				botMap,
 				botConfig,
 			)
+			if (changed) mapsChanged = true
 		}
 
 		// Log event
@@ -254,5 +263,9 @@ export async function reevaluateMeetings(
 			entityId: meeting.id,
 			data: { send_meeting_bot: newSendBot, language, reason: 'settings_changed' },
 		})
+	}
+
+	if (mapsChanged) {
+		await saveMaps(db, integration.id, config, meetingMap, botMap)
 	}
 }

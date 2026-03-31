@@ -797,28 +797,16 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 
 				// Schedule bot if send_meeting_bot is true
 				if (sendMeetingBot) {
-					await scheduleOrUnscheduleBot(
+					const changed = await scheduleOrUnscheduleBot(
 						db,
 						meetingObj.id,
 						meetingObj.metadata as Record<string, unknown>,
 						true,
-						integration.id,
-						{ ...config, meeting_map: meetingMap, bot_map: botMap },
+						meetingMap,
+						botMap,
 						botConfig,
 					)
-					// Re-read maps since scheduleOrUnscheduleBot may have saved them
-					const updatedConfig = (
-						await db
-							.select({ config: integrations.config })
-							.from(integrations)
-							.where(eq(integrations.id, integration.id))
-							.limit(1)
-					)[0]?.config as IntegrationMeetingConfig | undefined
-					if (updatedConfig) {
-						Object.assign(meetingMap, getMeetingMap(updatedConfig))
-						Object.assign(botMap, getBotMap(updatedConfig))
-						mapsChanged = false // Already saved by scheduleOrUnscheduleBot
-					}
+					if (changed) mapsChanged = true
 				}
 
 				// Log event
