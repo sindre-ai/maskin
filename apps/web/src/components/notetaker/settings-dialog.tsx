@@ -86,36 +86,6 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 
 				<div className="space-y-4 py-4">
 					<div className="space-y-2">
-						<Label htmlFor="bot-name">Bot name</Label>
-						<Input
-							id="bot-name"
-							placeholder="Sindre"
-							value={botName}
-							onChange={(e) => setBotName(e.target.value)}
-						/>
-					</div>
-
-					<div className="space-y-2">
-						<Label htmlFor="bot-image">Bot image URL</Label>
-						<Input
-							id="bot-image"
-							placeholder="https://example.com/avatar.png"
-							value={botImage}
-							onChange={(e) => setBotImage(e.target.value)}
-						/>
-					</div>
-
-					<div className="space-y-2">
-						<Label htmlFor="entry-message">Entry message</Label>
-						<Input
-							id="entry-message"
-							placeholder="Message shown when bot joins (optional)"
-							value={entryMessage}
-							onChange={(e) => setEntryMessage(e.target.value)}
-						/>
-					</div>
-
-					<div className="space-y-2">
 						<Label>Auto-join mode</Label>
 						<RadioGroup value={autoJoinMode} onValueChange={setAutoJoinMode}>
 							<div className="flex items-center space-x-2">
@@ -150,6 +120,36 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 						<p className="text-xs text-muted-foreground">
 							ISO language code (e.g. en, no, de). Leave empty for auto-detection.
 						</p>
+					</div>
+
+					<div className="space-y-2">
+						<Label htmlFor="bot-name">Bot name</Label>
+						<Input
+							id="bot-name"
+							placeholder="Sindre"
+							value={botName}
+							onChange={(e) => setBotName(e.target.value)}
+						/>
+					</div>
+
+					<div className="space-y-2">
+						<Label htmlFor="bot-image">Bot image URL</Label>
+						<Input
+							id="bot-image"
+							placeholder="https://example.com/avatar.png"
+							value={botImage}
+							onChange={(e) => setBotImage(e.target.value)}
+						/>
+					</div>
+
+					<div className="space-y-2">
+						<Label htmlFor="entry-message">Entry message</Label>
+						<Input
+							id="entry-message"
+							placeholder="Message shown when bot joins (optional)"
+							value={entryMessage}
+							onChange={(e) => setEntryMessage(e.target.value)}
+						/>
 					</div>
 				</div>
 
