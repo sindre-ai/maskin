@@ -92,8 +92,10 @@ describe('TriggersPage', () => {
 	it('renders enabled indicator for enabled triggers', () => {
 		const trigger = buildTriggerResponse({ name: 'Active', enabled: true })
 		mockUseTriggers.mockReturnValue({ data: [trigger], isLoading: false })
-		const { container } = render(<TriggersPage />)
-		const dot = container.querySelector('.bg-success')
+		render(<TriggersPage />)
+		const link = screen.getByRole('link', { name: /Active/ })
+		const dot = link.querySelector('span')
 		expect(dot).toBeInTheDocument()
+		expect(dot).toHaveClass('bg-success')
 	})
 })

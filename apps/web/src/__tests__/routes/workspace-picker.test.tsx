@@ -7,6 +7,12 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useWorkspaces: () => mockUseWorkspaces(),
 }))
 
+vi.mock('@/components/shared/loading-skeleton', () => ({
+	Skeleton: ({ className }: { className?: string }) => (
+		<div data-testid="skeleton" className={className} />
+	),
+}))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
@@ -30,7 +36,7 @@ describe('WorkspacePicker', () => {
 	it('shows loading skeleton when workspaces are loading', () => {
 		mockUseWorkspaces.mockReturnValue({ data: undefined, isLoading: true })
 		render(<WorkspacePicker />)
-		// The loading state renders a Skeleton, which is a div with animate-pulse class
+		expect(screen.getByTestId('skeleton')).toBeInTheDocument()
 		expect(screen.queryByText('Choose workspace')).not.toBeInTheDocument()
 	})
 

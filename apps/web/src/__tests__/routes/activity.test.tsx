@@ -63,15 +63,9 @@ describe('ActivityPage', () => {
 	it('calls navigate with filter on tab click', async () => {
 		const user = userEvent.setup()
 		render(<ActivityPage />)
-		const buttons = screen.getAllByRole('button')
-		// Click a tab other than "All" in the desktop row
-		const nonAllButton = buttons.find(
-			(b) => b.textContent !== 'All' && !b.textContent?.includes('Toggle'),
-		)
-		if (nonAllButton) {
-			await user.click(nonAllButton)
-			expect(mockNavigate).toHaveBeenCalled()
-		}
+		const decisionButton = screen.getByRole('button', { name: 'Decision' })
+		await user.click(decisionButton)
+		expect(mockNavigate).toHaveBeenCalled()
 	})
 })
 
