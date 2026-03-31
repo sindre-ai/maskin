@@ -50,10 +50,7 @@ export async function processRecording(
 		const segmentsS3Key = `notetaker/${workspaceId}/${meetingId}/segments.json`
 		await Promise.all([
 			env.storageProvider.put(transcriptS3Key, Buffer.from(result.text, 'utf-8')),
-			env.storageProvider.put(
-				segmentsS3Key,
-				Buffer.from(JSON.stringify(result.segments), 'utf-8'),
-			),
+			env.storageProvider.put(segmentsS3Key, Buffer.from(JSON.stringify(result.segments), 'utf-8')),
 		])
 
 		// Calculate duration from segments if available

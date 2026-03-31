@@ -329,9 +329,7 @@ describe('Integrations Routes', () => {
 
 			// No code query parameter
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/slack/callback?state=${encodeURIComponent(state)}`,
-				),
+				jsonGet(`/api/integrations/slack/callback?state=${encodeURIComponent(state)}`),
 			)
 
 			expect(res.status).toBe(400)

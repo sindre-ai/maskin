@@ -23,6 +23,14 @@
 		"./shared": {
 			"types": "./shared.ts",
 			"default": "./shared.ts"
+		},
+		"./recall": {
+			"types": "./server/services/recall.ts",
+			"default": "./server/services/recall.ts"
+		},
+		"./pipeline": {
+			"types": "./server/services/pipeline.ts",
+			"default": "./server/services/pipeline.ts"
 		}
 	},
 	"dependencies": {

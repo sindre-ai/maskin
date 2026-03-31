@@ -5,14 +5,14 @@ import { githubAuth } from './providers/github/auth'
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
-import { config as outlookCalendarConfig } from './providers/outlook-calendar/config'
-import { config as recallConfig, verifyRecallWebhook } from './providers/recall/config'
-import { recallEventNormalizer } from './providers/recall/webhooks'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
+import { config as outlookCalendarConfig } from './providers/outlook-calendar/config'
+import { config as recallConfig, verifyRecallWebhook } from './providers/recall/config'
+import { recallEventNormalizer } from './providers/recall/webhooks'
 import {
 	config as slackConfig,
 	parseTokenResponse as slackParseTokenResponse,

@@ -1,11 +1,28 @@
 import { randomBytes } from 'node:crypto'
 import type { Database } from '@ai-native/db'
-import { events, actors, integrations, workspaceMembers } from '@ai-native/db/schema'
+import {
+	events,
+	actors,
+	integrations,
+	objects,
+	workspaceMembers,
+	workspaces,
+} from '@ai-native/db/schema'
+import { processRecording } from '@ai-native/ext-notetaker/pipeline'
+import {
+	createCalendar,
+	deleteBotFromEvent,
+	listCalendarEvents,
+	scheduleBotForEvent,
+} from '@ai-native/ext-notetaker/recall'
+import type { ModuleEnv } from '@ai-native/module-sdk'
 import type { PgNotifyBridge } from '@ai-native/realtime'
+import type { StorageProvider } from '@ai-native/storage'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
+import { getEnvOrThrow } from '../lib/integrations/env'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
@@ -29,6 +46,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
+		storageProvider: StorageProvider
 	}
 }
 
@@ -412,6 +430,51 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 		.where(eq(integrations.id, integrationId))
 
+	// Register calendar with Recall Calendar V2 for calendar providers
+	if (providerName === 'google-calendar' || providerName === 'outlook-calendar') {
+		try {
+			const platform = providerName === 'google-calendar' ? 'google_calendar' : 'microsoft_outlook'
+			const clientIdEnv =
+				providerName === 'google-calendar' ? 'GOOGLE_CALENDAR_CLIENT_ID' : 'OUTLOOK_CLIENT_ID'
+			const clientSecretEnv =
+				providerName === 'google-calendar'
+					? 'GOOGLE_CALENDAR_CLIENT_SECRET'
+					: 'OUTLOOK_CLIENT_SECRET'
+
+			if (credentials.refreshToken) {
+				const recallCalendar = await createCalendar(
+					platform as 'google_calendar' | 'microsoft_outlook',
+					credentials.refreshToken,
+					getEnvOrThrow(clientIdEnv),
+					getEnvOrThrow(clientSecretEnv),
+				)
+
+				// Store recall_calendar_id in integration config
+				await db
+					.update(integrations)
+					.set({
+						config: {
+							system_actor_id: systemActor.id,
+							recall_calendar_id: recallCalendar.id,
+						},
+					})
+					.where(eq(integrations.id, integrationId))
+
+				logger.info('Registered calendar with Recall', {
+					provider: providerName,
+					recallCalendarId: recallCalendar.id,
+					workspaceId: stateData.workspaceId,
+				})
+			}
+		} catch (err) {
+			logger.error('Failed to register calendar with Recall', {
+				provider: providerName,
+				workspaceId: stateData.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
 	// Log event
 	await db.insert(events).values({
 		workspaceId: stateData.workspaceId,
@@ -541,6 +604,14 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
+	// ── Recall-specific webhook handling ──────────────────────────────────
+	// Recall is an internal provider — no per-entity integration record exists.
+	// We look up context differently depending on the event type.
+	if (providerName === 'recall') {
+		return handleRecallWebhook(db, c, normalized)
+	}
+
+	// ── Generic provider webhook handling ─────────────────────────────────
 	// Find integration by provider + installation ID
 	const [integration] = await db
 		.select()
@@ -583,6 +654,261 @@ webhookApp.post('/:provider', async (c) => {
 
 	return c.json({ ok: true })
 })
+
+// ── Recall webhook handler ─────────────────────────────────────────────────
+
+import type { Context } from 'hono'
+import type { NormalizedEvent } from '../lib/integrations/types'
+
+async function handleRecallWebhook(db: Database, c: Context, normalized: NormalizedEvent) {
+	// ── Calendar sync events: fetch changed events and schedule bots ──────
+	if (normalized.entityType === 'recall.calendar' && normalized.action === 'sync_events') {
+		const calendarId = normalized.data.calendar_id as string
+		const lastUpdatedTs = normalized.data.last_updated_ts as string | null
+
+		// Find the calendar integration by recall_calendar_id in config
+		const [integration] = await db
+			.select()
+			.from(integrations)
+			.where(
+				and(
+					sql`${integrations.config}->>'recall_calendar_id' = ${calendarId}`,
+					eq(integrations.status, 'active'),
+				),
+			)
+			.limit(1)
+
+		if (!integration) {
+			logger.warn(`No integration found for recall calendar ${calendarId}`)
+			return c.json({ ok: true, skipped: true })
+		}
+
+		const config = integration.config as IntegrationConfig
+		const systemActorId = config?.system_actor_id
+		if (!systemActorId) {
+			return c.json({ ok: true, skipped: true })
+		}
+
+		// Load workspace notetaker settings
+		const [ws] = await db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, integration.workspaceId))
+			.limit(1)
+
+		const wsSettings = ws?.settings as Record<string, unknown> | undefined
+		const notetakerSettings = wsSettings?.notetaker_settings as
+			| { auto_join_mode?: string }
+			| undefined
+		const autoJoinMode = notetakerSettings?.auto_join_mode ?? 'all'
+
+		if (autoJoinMode === 'manual') {
+			// In manual mode, don't auto-schedule bots
+			return c.json({ ok: true, mode: 'manual' })
+		}
+
+		// Fetch changed calendar events from Recall
+		try {
+			const calendarEvents = await listCalendarEvents(calendarId, lastUpdatedTs ?? undefined)
+
+			for (const calEvent of calendarEvents) {
+				// Skip events without video links
+				if (!calEvent.meeting_url) continue
+
+				// Apply auto_join_mode filter
+				if (autoJoinMode === 'organized_by_me' && !calEvent.is_organizer) continue
+
+				if (calEvent.is_deleted) {
+					// Remove bot and mark meeting as deleted
+					if (calEvent.bots.length > 0) {
+						await deleteBotFromEvent(calEvent.id).catch((err) =>
+							logger.error('Failed to delete bot from event', {
+								eventId: calEvent.id,
+								error: err instanceof Error ? err.message : String(err),
+							}),
+						)
+					}
+					// Mark existing meeting object as failed/cancelled
+					await db
+						.update(objects)
+						.set({ status: 'failed', updatedAt: new Date() })
+						.where(
+							and(
+								eq(objects.workspaceId, integration.workspaceId),
+								eq(objects.type, 'meeting'),
+								sql`${objects.metadata}->>'recall_event_id' = ${calEvent.id}`,
+							),
+						)
+					continue
+				}
+
+				// Check if meeting object already exists for this calendar event
+				const [existingMeeting] = await db
+					.select({ id: objects.id, metadata: objects.metadata })
+					.from(objects)
+					.where(
+						and(
+							eq(objects.workspaceId, integration.workspaceId),
+							eq(objects.type, 'meeting'),
+							sql`${objects.metadata}->>'recall_event_id' = ${calEvent.id}`,
+						),
+					)
+					.limit(1)
+
+				if (existingMeeting) {
+					// Already handled — skip
+					continue
+				}
+
+				// Extract title from raw event data
+				const raw = calEvent.raw ?? {}
+				const title = (raw.summary as string) ?? (raw.subject as string) ?? '(No title)'
+
+				// Create meeting object
+				const [meetingObj] = await db
+					.insert(objects)
+					.values({
+						workspaceId: integration.workspaceId,
+						type: 'meeting',
+						title,
+						status: 'scheduled',
+						metadata: {
+							source: 'calendar',
+							recall_event_id: calEvent.id,
+							recall_calendar_id: calendarId,
+							calendar_provider: integration.provider,
+							meeting_url: calEvent.meeting_url,
+							start: calEvent.start_time,
+							end: calEvent.end_time,
+							is_organizer: calEvent.is_organizer,
+							bot_enabled: true,
+						},
+						createdBy: systemActorId,
+					})
+					.returning()
+
+				if (!meetingObj) continue
+
+				// Schedule bot via Recall Calendar V2 API
+				const deduplicationKey = `${calEvent.start_time}-${calEvent.meeting_url}`
+				try {
+					const updatedEvent = await scheduleBotForEvent(
+						calEvent.id,
+						deduplicationKey,
+						'Maskin Notetaker',
+					)
+
+					// Store bot_id from the scheduled bot
+					const botId = updatedEvent.bots?.[0]?.id
+					if (botId) {
+						await db
+							.update(objects)
+							.set({
+								metadata: {
+									...(meetingObj.metadata as Record<string, unknown>),
+									bot_id: botId,
+								},
+								updatedAt: new Date(),
+							})
+							.where(eq(objects.id, meetingObj.id))
+					}
+				} catch (botErr) {
+					logger.error('Failed to schedule bot for calendar event', {
+						eventId: calEvent.id,
+						error: botErr instanceof Error ? botErr.message : String(botErr),
+					})
+					await db
+						.update(objects)
+						.set({
+							status: 'failed',
+							metadata: {
+								...(meetingObj.metadata as Record<string, unknown>),
+								error: botErr instanceof Error ? botErr.message : 'Bot scheduling failed',
+							},
+							updatedAt: new Date(),
+						})
+						.where(eq(objects.id, meetingObj.id))
+				}
+
+				// Log event
+				await db.insert(events).values({
+					workspaceId: integration.workspaceId,
+					actorId: systemActorId,
+					action: 'created',
+					entityType: 'meeting',
+					entityId: meetingObj.id,
+					data: meetingObj,
+				})
+			}
+		} catch (err) {
+			logger.error('Failed to process calendar sync webhook', {
+				calendarId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+
+		return c.json({ ok: true })
+	}
+
+	// ── Bot status change: update meeting and trigger processing ──────────
+	if (normalized.entityType === 'recall.bot') {
+		const botId = normalized.data.bot_id as string
+
+		const [meeting] = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.type, 'meeting'), sql`${objects.metadata}->>'bot_id' = ${botId}`))
+			.limit(1)
+
+		if (!meeting) {
+			logger.warn(`No meeting found for recall bot ${botId}`)
+			return c.json({ ok: true, skipped: true })
+		}
+
+		// Update meeting status based on bot action
+		const statusMap: Record<string, string> = {
+			recording: 'recording',
+			fatal: 'failed',
+		}
+		const newStatus = statusMap[normalized.action]
+		if (newStatus) {
+			await db
+				.update(objects)
+				.set({ status: newStatus, updatedAt: new Date() })
+				.where(eq(objects.id, meeting.id))
+		}
+
+		// Insert audit event
+		await db.insert(events).values({
+			workspaceId: meeting.workspaceId,
+			actorId: meeting.createdBy,
+			action: normalized.action,
+			entityType: 'recall.bot',
+			entityId: meeting.id,
+			data: normalized.data,
+		})
+
+		// Auto-process when recording is done
+		if (normalized.action === 'done') {
+			const storageProvider = c.get('storageProvider') as StorageProvider
+			const moduleEnv = { db, storageProvider } as ModuleEnv
+			processRecording(meeting.id, botId, meeting.workspaceId, meeting.createdBy, moduleEnv).catch(
+				(err) =>
+					logger.error('Auto-process recording failed', {
+						meetingId: meeting.id,
+						botId,
+						error: err instanceof Error ? err.message : String(err),
+					}),
+			)
+		}
+
+		logger.info(`Recall bot webhook: ${normalized.action} for meeting ${meeting.id}`)
+		return c.json({ ok: true })
+	}
+
+	// Unknown recall event type
+	return c.json({ ok: true, skipped: true })
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

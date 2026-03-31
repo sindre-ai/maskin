@@ -37,7 +37,26 @@ export const recallEventNormalizer: CustomEventNormalizer = (
 	const body = payload as Record<string, unknown>
 	const event = body.event as string | undefined
 
-	// Only handle bot status change events
+	// Handle calendar sync events (Calendar V2)
+	if (event === 'calendar.sync_events') {
+		const data = body.data as Record<string, unknown> | undefined
+		if (!data) return null
+
+		const calendarId = data.calendar_id as string | undefined
+		if (!calendarId) return null
+
+		return {
+			entityType: 'recall.calendar',
+			action: 'sync_events',
+			installationId: calendarId,
+			data: {
+				calendar_id: calendarId,
+				last_updated_ts: (data.last_updated_ts as string) ?? null,
+			},
+		}
+	}
+
+	// Handle bot status change events
 	if (event !== 'bot.status_change') return null
 
 	const data = body.data as Record<string, unknown> | undefined

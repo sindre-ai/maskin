@@ -1,11 +1,13 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
+import { SendBotDialog } from '@/components/notetaker/send-bot-dialog'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
@@ -16,6 +18,7 @@ import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
+import { Bot } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
@@ -52,6 +55,7 @@ function ObjectsPage() {
 	} = searchParams
 
 	const [importOpen, setImportOpen] = useState(false)
+	const [sendBotOpen, setSendBotOpen] = useState(false)
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		createdBy: false,
@@ -219,9 +223,21 @@ function ObjectsPage() {
 		setColumnVisibility((prev) => ({ ...prev, [columnId]: visible }))
 	}, [])
 
+	const isMeetingsTab = typeFilter === 'meeting'
+
 	return (
 		<div>
-			<PageHeader title="Objects" />
+			<PageHeader
+				title="Objects"
+				actions={
+					isMeetingsTab ? (
+						<Button variant="outline" size="sm" onClick={() => setSendBotOpen(true)}>
+							<Bot className="mr-1.5 size-4" />
+							Send bot
+						</Button>
+					) : undefined
+				}
+			/>
 
 			<DataTableToolbar
 				columns={columnInfo}
@@ -248,6 +264,7 @@ function ObjectsPage() {
 			/>
 
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} />
+			{isMeetingsTab && <SendBotDialog open={sendBotOpen} onOpenChange={setSendBotOpen} />}
 
 			<DataTable
 				data={allObjects}

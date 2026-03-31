@@ -282,6 +282,15 @@ export const api = {
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
 	},
 
+	notetaker: {
+		sendBot: (workspaceId: string, data: { meeting_url: string; title?: string }) =>
+			request<{ ok: boolean; meetingId: string; botId: string }>('/m/notetaker/bot', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+	},
+
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
