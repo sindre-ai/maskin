@@ -8,6 +8,7 @@ import {
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { reevaluateMeetings } from '../lib/notetaker/bot-scheduler'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 
@@ -181,6 +182,22 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	// Re-evaluate meetings when notetaker_settings change
+	if (body.settings?.notetaker_settings) {
+		const newSettings = (updated.settings as Record<string, unknown>)?.notetaker_settings as
+			| { auto_join_mode?: string; bot_config?: Record<string, unknown> }
+			| undefined
+		if (newSettings) {
+			reevaluateMeetings(db, id, newSettings.auto_join_mode ?? 'all', newSettings.bot_config).catch(
+				(err) =>
+					console.error('Failed to re-evaluate meetings', {
+						workspaceId: id,
+						error: err instanceof Error ? err.message : String(err),
+					}),
+			)
+		}
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)

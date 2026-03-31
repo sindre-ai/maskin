@@ -57,7 +57,7 @@ export async function processRecording(
 		const lastSegment = result.segments.at(-1)
 		const durationSeconds = lastSegment ? Math.ceil(lastSegment.end) : null
 
-		// Preserve existing metadata (calendar fields) and add transcription data
+		// Preserve existing user-facing metadata and add transcription data
 		const [existingObj] = await db
 			.select({ metadata: objects.metadata })
 			.from(objects)
@@ -66,7 +66,7 @@ export async function processRecording(
 
 		const existingMetadata = (existingObj?.metadata as Record<string, unknown>) ?? {}
 
-		// Update meeting object with transcription
+		// Update meeting object with transcription — keep user-facing fields, add results
 		const [updated] = await db
 			.update(objects)
 			.set({
@@ -74,8 +74,6 @@ export async function processRecording(
 				status: 'completed',
 				metadata: {
 					...existingMetadata,
-					source: existingMetadata.source ?? 'recall',
-					bot_id: botId,
 					language: result.language,
 					audio_s3_key: s3Key,
 					transcript_s3_key: transcriptS3Key,
@@ -97,14 +95,22 @@ export async function processRecording(
 			data: updated,
 		})
 	} catch (err) {
+		// Preserve existing metadata on failure
+		const [existingObj] = await db
+			.select({ metadata: objects.metadata })
+			.from(objects)
+			.where(eq(objects.id, meetingId))
+			.limit(1)
+
+		const existingMetadata = (existingObj?.metadata as Record<string, unknown>) ?? {}
+
 		// Mark as failed
 		await db
 			.update(objects)
 			.set({
 				status: 'failed',
 				metadata: {
-					source: 'recall',
-					bot_id: botId,
+					...existingMetadata,
 					error: err instanceof Error ? err.message : 'Unknown error',
 				},
 				updatedAt: new Date(),

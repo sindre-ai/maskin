@@ -13,7 +13,6 @@ import {
 	createCalendar,
 	deleteBotFromEvent,
 	listCalendarEvents,
-	scheduleBotForEvent,
 } from '@ai-native/ext-notetaker/recall'
 import type { ModuleEnv } from '@ai-native/module-sdk'
 import type { PgNotifyBridge } from '@ai-native/realtime'
@@ -659,6 +658,16 @@ webhookApp.post('/:provider', async (c) => {
 
 import type { Context } from 'hono'
 import type { NormalizedEvent } from '../lib/integrations/types'
+import {
+	type IntegrationMeetingConfig,
+	findByRecallEventId,
+	getBotMap,
+	getMeetingMap,
+	saveMaps,
+	scheduleOrUnscheduleBot,
+} from '../lib/notetaker/bot-scheduler'
+
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
 async function handleRecallWebhook(db: Database, c: Context, normalized: NormalizedEvent) {
 	// ── Calendar sync events: fetch changed events and schedule bots ──────
@@ -683,7 +692,7 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 			return c.json({ ok: true, skipped: true })
 		}
 
-		const config = integration.config as IntegrationConfig
+		const config = integration.config as IntegrationMeetingConfig
 		const systemActorId = config?.system_actor_id
 		if (!systemActorId) {
 			return c.json({ ok: true, skipped: true })
@@ -703,69 +712,64 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 		const autoJoinMode = notetakerSettings?.auto_join_mode ?? 'all'
 		const botConfig = notetakerSettings?.bot_config
 
-		if (autoJoinMode === 'manual') {
-			// In manual mode, don't auto-schedule bots
-			return c.json({ ok: true, mode: 'manual' })
-		}
+		const meetingMap = getMeetingMap(config)
+		const botMap = getBotMap(config)
+		let mapsChanged = false
 
 		// Fetch changed calendar events from Recall
 		try {
 			const calendarEvents = await listCalendarEvents(calendarId, lastUpdatedTs ?? undefined)
+			const oneWeekFromNow = new Date(Date.now() + ONE_WEEK_MS)
 
 			for (const calEvent of calendarEvents) {
 				// Skip events without video links
 				if (!calEvent.meeting_url) continue
 
-				// Apply auto_join_mode filter
-				if (autoJoinMode === 'organized_by_me' && !calEvent.is_organizer) continue
+				// Skip events more than 1 week away
+				if (calEvent.start_time && new Date(calEvent.start_time) > oneWeekFromNow) continue
 
+				// Handle deleted events
 				if (calEvent.is_deleted) {
-					// Remove bot and mark meeting as deleted
-					if (calEvent.bots.length > 0) {
-						await deleteBotFromEvent(calEvent.id).catch((err) =>
-							logger.error('Failed to delete bot from event', {
-								eventId: calEvent.id,
-								error: err instanceof Error ? err.message : String(err),
-							}),
-						)
+					const existingId = findByRecallEventId(meetingMap, calEvent.id)
+					if (existingId) {
+						// Delete bot if scheduled
+						const entry = meetingMap[existingId]
+						if (entry?.bot_id) {
+							await deleteBotFromEvent(calEvent.id).catch((err) =>
+								logger.error('Failed to delete bot from event', {
+									eventId: calEvent.id,
+									error: err instanceof Error ? err.message : String(err),
+								}),
+							)
+							botMap[entry.bot_id] = undefined as unknown as string
+						}
+						;(meetingMap as Record<string, unknown>)[existingId] = undefined
+						mapsChanged = true
+
+						// Mark meeting as failed
+						await db
+							.update(objects)
+							.set({ status: 'failed', updatedAt: new Date() })
+							.where(eq(objects.id, existingId))
 					}
-					// Mark existing meeting object as failed/cancelled
-					await db
-						.update(objects)
-						.set({ status: 'failed', updatedAt: new Date() })
-						.where(
-							and(
-								eq(objects.workspaceId, integration.workspaceId),
-								eq(objects.type, 'meeting'),
-								sql`${objects.metadata}->>'recall_event_id' = ${calEvent.id}`,
-							),
-						)
 					continue
 				}
 
-				// Check if meeting object already exists for this calendar event
-				const [existingMeeting] = await db
-					.select({ id: objects.id, metadata: objects.metadata })
-					.from(objects)
-					.where(
-						and(
-							eq(objects.workspaceId, integration.workspaceId),
-							eq(objects.type, 'meeting'),
-							sql`${objects.metadata}->>'recall_event_id' = ${calEvent.id}`,
-						),
-					)
-					.limit(1)
+				// Check if meeting already exists (dedup via meeting_map)
+				const existingId = findByRecallEventId(meetingMap, calEvent.id)
+				if (existingId) continue
 
-				if (existingMeeting) {
-					// Already handled — skip
-					continue
-				}
+				// Compute send_meeting_bot based on auto_join_mode
+				let sendMeetingBot = false
+				if (autoJoinMode === 'all') sendMeetingBot = true
+				else if (autoJoinMode === 'organized_by_me') sendMeetingBot = calEvent.is_organizer
+				// manual → false
 
 				// Extract title from raw event data
 				const raw = calEvent.raw ?? {}
 				const title = (raw.summary as string) ?? (raw.subject as string) ?? '(No title)'
 
-				// Create meeting object
+				// Create meeting object with clean metadata
 				const [meetingObj] = await db
 					.insert(objects)
 					.values({
@@ -774,15 +778,10 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 						title,
 						status: 'scheduled',
 						metadata: {
-							source: 'calendar',
-							recall_event_id: calEvent.id,
-							recall_calendar_id: calendarId,
-							calendar_provider: integration.provider,
-							meeting_url: calEvent.meeting_url,
 							start: calEvent.start_time,
 							end: calEvent.end_time,
-							is_organizer: calEvent.is_organizer,
-							bot_enabled: true,
+							meeting_url: calEvent.meeting_url,
+							send_meeting_bot: sendMeetingBot,
 						},
 						createdBy: systemActorId,
 					})
@@ -790,41 +789,34 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 
 				if (!meetingObj) continue
 
-				// Schedule bot via Recall Calendar V2 API
-				const deduplicationKey = `${calEvent.start_time}-${calEvent.meeting_url}`
-				try {
-					const updatedEvent = await scheduleBotForEvent(calEvent.id, deduplicationKey, botConfig)
+				// Add to meeting_map
+				meetingMap[meetingObj.id] = { recall_event_id: calEvent.id }
+				mapsChanged = true
 
-					// Store bot_id from the scheduled bot
-					const botId = updatedEvent.bots?.[0]?.id
-					if (botId) {
+				// Schedule bot if send_meeting_bot is true
+				if (sendMeetingBot) {
+					await scheduleOrUnscheduleBot(
+						db,
+						meetingObj.id,
+						meetingObj.metadata as Record<string, unknown>,
+						true,
+						integration.id,
+						{ ...config, meeting_map: meetingMap, bot_map: botMap },
+						botConfig,
+					)
+					// Re-read maps since scheduleOrUnscheduleBot may have saved them
+					const updatedConfig = (
 						await db
-							.update(objects)
-							.set({
-								metadata: {
-									...(meetingObj.metadata as Record<string, unknown>),
-									bot_id: botId,
-								},
-								updatedAt: new Date(),
-							})
-							.where(eq(objects.id, meetingObj.id))
+							.select({ config: integrations.config })
+							.from(integrations)
+							.where(eq(integrations.id, integration.id))
+							.limit(1)
+					)[0]?.config as IntegrationMeetingConfig | undefined
+					if (updatedConfig) {
+						Object.assign(meetingMap, getMeetingMap(updatedConfig))
+						Object.assign(botMap, getBotMap(updatedConfig))
+						mapsChanged = false // Already saved by scheduleOrUnscheduleBot
 					}
-				} catch (botErr) {
-					logger.error('Failed to schedule bot for calendar event', {
-						eventId: calEvent.id,
-						error: botErr instanceof Error ? botErr.message : String(botErr),
-					})
-					await db
-						.update(objects)
-						.set({
-							status: 'failed',
-							metadata: {
-								...(meetingObj.metadata as Record<string, unknown>),
-								error: botErr instanceof Error ? botErr.message : 'Bot scheduling failed',
-							},
-							updatedAt: new Date(),
-						})
-						.where(eq(objects.id, meetingObj.id))
 				}
 
 				// Log event
@@ -836,6 +828,11 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 					entityId: meetingObj.id,
 					data: meetingObj,
 				})
+			}
+
+			// Save maps if they changed but weren't already saved
+			if (mapsChanged) {
+				await saveMaps(db, integration.id, config, meetingMap, botMap)
 			}
 		} catch (err) {
 			logger.error('Failed to process calendar sync webhook', {
@@ -851,14 +848,32 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 	if (normalized.entityType === 'recall.bot') {
 		const botId = normalized.data.bot_id as string
 
-		const [meeting] = await db
+		// Find meeting via bot_map in integration config
+		const [integration] = await db
 			.select()
-			.from(objects)
-			.where(and(eq(objects.type, 'meeting'), sql`${objects.metadata}->>'bot_id' = ${botId}`))
+			.from(integrations)
+			.where(
+				and(sql`${integrations.config}->'bot_map' ? ${botId}`, eq(integrations.status, 'active')),
+			)
 			.limit(1)
 
+		if (!integration) {
+			logger.warn(`No integration found for recall bot ${botId}`)
+			return c.json({ ok: true, skipped: true })
+		}
+
+		const config = integration.config as IntegrationMeetingConfig
+		const botMap = getBotMap(config)
+		const meetingId = botMap[botId]
+
+		if (!meetingId) {
+			return c.json({ ok: true, skipped: true })
+		}
+
+		const [meeting] = await db.select().from(objects).where(eq(objects.id, meetingId)).limit(1)
+
 		if (!meeting) {
-			logger.warn(`No meeting found for recall bot ${botId}`)
+			logger.warn(`Meeting ${meetingId} not found for bot ${botId}`)
 			return c.json({ ok: true, skipped: true })
 		}
 
@@ -897,6 +912,13 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 						error: err instanceof Error ? err.message : String(err),
 					}),
 			)
+
+			// Clean up maps after processing starts — undefined values filtered by saveMaps
+			const meetingMap = getMeetingMap(config)
+			botMap[botId] = undefined as unknown as string
+			const entry = meetingMap[meetingId]
+			if (entry) entry.bot_id = undefined
+			await saveMaps(db, integration.id, config, meetingMap, botMap)
 		}
 
 		logger.info(`Recall bot webhook: ${normalized.action} for meeting ${meeting.id}`)

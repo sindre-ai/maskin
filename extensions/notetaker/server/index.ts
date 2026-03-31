@@ -35,6 +35,14 @@ const notetakerExtension: ModuleDefinition = {
 		statuses: {
 			meeting: ['scheduled', 'recording', 'transcribing', 'completed', 'failed'],
 		},
+		field_definitions: {
+			meeting: [
+				{ name: 'send_meeting_bot', type: 'boolean' },
+				{ name: 'meeting_url', type: 'text' },
+				{ name: 'start', type: 'date' },
+				{ name: 'end', type: 'date' },
+			],
+		},
 	},
 }
 

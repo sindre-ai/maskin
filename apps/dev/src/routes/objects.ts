@@ -1,5 +1,5 @@
 import type { Database } from '@ai-native/db'
-import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
+import { events, integrations, objects, relationships, workspaces } from '@ai-native/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@ai-native/module-sdk'
 import {
 	createObjectSchema,
@@ -492,6 +492,29 @@ app.openapi(updateObjectRoute, async (c) => {
 		data: { previous: existing, updated },
 	})
 
+	// Post-update hook: handle send_meeting_bot / meeting_url changes for meetings
+	if (existing.type === 'meeting' && body.metadata) {
+		const oldMeta = (existing.metadata ?? {}) as Record<string, unknown>
+		const newMeta = (updated.metadata ?? {}) as Record<string, unknown>
+		const oldSendBot = oldMeta.send_meeting_bot as boolean | undefined
+		const newSendBot = newMeta.send_meeting_bot as boolean | undefined
+		const oldUrl = oldMeta.meeting_url as string | undefined
+		const newUrl = newMeta.meeting_url as string | undefined
+		const sendBotChanged = oldSendBot !== newSendBot
+		const urlAdded = !oldUrl && !!newUrl
+
+		if (sendBotChanged || (urlAdded && newSendBot)) {
+			// Fire-and-forget: schedule or unschedule bot
+			handleMeetingBotChange(db, existing.workspaceId, updated.id, newMeta, !!newSendBot).catch(
+				(err) =>
+					console.error('Meeting bot change hook failed', {
+						meetingId: updated.id,
+						error: err instanceof Error ? err.message : String(err),
+					}),
+			)
+		}
+	}
+
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
 })
 
@@ -540,5 +563,58 @@ app.openapi(deleteObjectRoute, async (c) => {
 
 	return c.json({ deleted: true as const }, 200)
 })
+
+// ── Meeting bot change hook ──────────────────────────────────────────────────
+
+import {
+	type IntegrationMeetingConfig,
+	scheduleOrUnscheduleBot,
+} from '../lib/notetaker/bot-scheduler'
+
+async function handleMeetingBotChange(
+	db: Database,
+	workspaceId: string,
+	meetingId: string,
+	metadata: Record<string, unknown>,
+	shouldSendBot: boolean,
+) {
+	// Find calendar integration for this workspace
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				inArray(integrations.provider, ['google-calendar', 'outlook-calendar']),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+
+	if (!integration) return
+
+	const config = integration.config as IntegrationMeetingConfig
+
+	// Load bot_config from workspace settings
+	const [ws] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const wsSettings = ws?.settings as Record<string, unknown> | undefined
+	const notetakerSettings = wsSettings?.notetaker_settings as
+		| { bot_config?: Record<string, unknown> }
+		| undefined
+
+	await scheduleOrUnscheduleBot(
+		db,
+		meetingId,
+		metadata,
+		shouldSendBot,
+		integration.id,
+		config,
+		notetakerSettings?.bot_config,
+	)
+}
 
 export default app

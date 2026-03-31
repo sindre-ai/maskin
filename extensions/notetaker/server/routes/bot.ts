@@ -1,8 +1,8 @@
 import type { Database } from '@ai-native/db'
-import { events, objects, workspaces } from '@ai-native/db/schema'
+import { events, integrations, objects, workspaces } from '@ai-native/db/schema'
 import type { ModuleEnv } from '@ai-native/module-sdk'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { createBot } from '../services/recall.js'
 
 type HonoEnv = {
@@ -13,11 +13,19 @@ type HonoEnv = {
 	}
 }
 
+interface IntegrationMeetingConfig {
+	system_actor_id?: string
+	recall_calendar_id?: string
+	meeting_map?: Record<string, { recall_event_id?: string; bot_id?: string }>
+	bot_map?: Record<string, string>
+}
+
 /**
  * POST /api/m/notetaker/bot
  *
  * Manually dispatch a Recall bot to a meeting URL.
  * Creates a meeting object and schedules a bot to join.
+ * Stores bot_id in integration config bot_map (not object metadata).
  */
 export function createBotRoutes(env: ModuleEnv) {
 	const app = new OpenAPIHono<HonoEnv>()
@@ -36,7 +44,7 @@ export function createBotRoutes(env: ModuleEnv) {
 			return c.json({ error: 'Missing required field: meeting_url' }, 400)
 		}
 
-		// Create meeting object
+		// Create meeting object with clean metadata
 		const [meeting] = await env.db
 			.insert(objects)
 			.values({
@@ -45,9 +53,8 @@ export function createBotRoutes(env: ModuleEnv) {
 				title: body.title || 'Manual meeting',
 				status: 'scheduled',
 				metadata: {
-					source: 'manual',
 					meeting_url: body.meeting_url,
-					bot_enabled: true,
+					send_meeting_bot: true,
 				},
 				createdBy: actorId,
 			})
@@ -69,21 +76,38 @@ export function createBotRoutes(env: ModuleEnv) {
 			| undefined
 		const botName = notetakerSettings?.bot_config?.bot_name || 'Sindre'
 
+		// Find calendar integration to store bot_id in its config
+		const [integration] = await env.db
+			.select()
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, workspaceId),
+					inArray(integrations.provider, ['google-calendar', 'outlook-calendar']),
+					eq(integrations.status, 'active'),
+				),
+			)
+			.limit(1)
+
 		// Dispatch Recall bot
 		try {
 			const bot = await createBot(body.meeting_url, { botName })
 
-			// Update meeting with bot_id
-			await env.db
-				.update(objects)
-				.set({
-					metadata: {
-						...(meeting.metadata as Record<string, unknown>),
-						bot_id: bot.id,
-					},
-					updatedAt: new Date(),
-				})
-				.where(eq(objects.id, meeting.id))
+			// Store bot_id in integration config bot_map
+			if (integration) {
+				const config = integration.config as IntegrationMeetingConfig
+				const meetingMap = config.meeting_map ?? {}
+				const botMap = config.bot_map ?? {}
+				meetingMap[meeting.id] = { bot_id: bot.id }
+				botMap[bot.id] = meeting.id
+				await env.db
+					.update(integrations)
+					.set({
+						config: { ...config, meeting_map: meetingMap, bot_map: botMap },
+						updatedAt: new Date(),
+					})
+					.where(eq(integrations.id, integration.id))
+			}
 
 			// Log event
 			await env.db.insert(events).values({
@@ -92,7 +116,7 @@ export function createBotRoutes(env: ModuleEnv) {
 				action: 'created',
 				entityType: 'meeting',
 				entityId: meeting.id,
-				data: { ...meeting, bot_id: bot.id },
+				data: meeting,
 			})
 
 			return c.json({ ok: true, meetingId: meeting.id, botId: bot.id }, 201)
