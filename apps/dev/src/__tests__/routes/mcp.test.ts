@@ -38,23 +38,26 @@ function jsonPostRequest(path: string, body: unknown, headers: Record<string, st
 	})
 }
 
-const mockNodeReq = { url: '/mcp', method: 'POST' }
-const mockNodeRes = {
-	writeHead: vi.fn(),
-	write: vi.fn(),
-	end: vi.fn(),
-	headersSent: false,
-	setHeader: vi.fn(),
+function createEnv() {
+	const mockNodeReq = { url: '/mcp', method: 'POST' }
+	const mockNodeRes = {
+		writeHead: vi.fn(),
+		write: vi.fn(),
+		end: vi.fn(),
+		headersSent: false,
+		setHeader: vi.fn(),
+	}
+	return { mockNodeReq, mockNodeRes, env: { incoming: mockNodeReq, outgoing: mockNodeRes } }
 }
 
-const env = {
-	incoming: mockNodeReq,
-	outgoing: mockNodeRes,
-}
+let mockNodeReq: ReturnType<typeof createEnv>['mockNodeReq']
+let mockNodeRes: ReturnType<typeof createEnv>['mockNodeRes']
+let env: ReturnType<typeof createEnv>['env']
 
 describe('MCP Routes', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		;({ mockNodeReq, mockNodeRes, env } = createEnv())
 	})
 
 	describe('GET /mcp', () => {
@@ -205,8 +208,27 @@ describe('MCP Routes', () => {
 				expect.objectContaining({
 					apiKey: '',
 					defaultWorkspaceId: '',
+					apiBaseUrl: 'http://localhost:3000',
 				}),
 			)
+		})
+
+		it('handles batch JSON-RPC array requests', async () => {
+			const app = await createApp()
+			const body = [
+				{ jsonrpc: '2.0', method: 'tools/list', id: 1 },
+				{ jsonrpc: '2.0', method: 'tools/call', id: 2 },
+			]
+
+			const res = await app.request(
+				jsonPostRequest('/mcp', body, { Authorization: 'Bearer ank_batch' }),
+				undefined,
+				env,
+			)
+
+			expect(mockConnect).toHaveBeenCalledTimes(1)
+			expect(mockHandleRequest).toHaveBeenCalledWith(mockNodeReq, mockNodeRes, body)
+			expect(res.headers.get('x-hono-already-sent')).toBe('1')
 		})
 	})
 })
