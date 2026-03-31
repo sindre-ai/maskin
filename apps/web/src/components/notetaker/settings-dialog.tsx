@@ -38,7 +38,7 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 	const settings = workspace.settings as Record<string, unknown>
 	const current = (settings?.notetaker_settings as NotetakerSettings) ?? {
 		auto_join_mode: 'all',
-		language: '',
+		language: 'en',
 		bot_config: {},
 	}
 
@@ -49,6 +49,11 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 	const [entryMessage, setEntryMessage] = useState(current.bot_config?.entry_message ?? '')
 
 	const handleSave = () => {
+		if (!/^[a-z]{2}$/.test(language)) {
+			toast.error('Language must be a valid 2-letter ISO code (e.g. en, no, de)')
+			return
+		}
+
 		updateWorkspace.mutate(
 			{
 				settings: {
@@ -113,13 +118,12 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 						<Label htmlFor="language">Transcription language</Label>
 						<Input
 							id="language"
-							placeholder="Auto-detect (leave empty)"
+							placeholder="en"
 							value={language}
-							onChange={(e) => setLanguage(e.target.value)}
+							onChange={(e) => setLanguage(e.target.value.toLowerCase())}
+							maxLength={2}
 						/>
-						<p className="text-xs text-muted-foreground">
-							ISO language code (e.g. en, no, de). Leave empty for auto-detection.
-						</p>
+						<p className="text-xs text-muted-foreground">ISO language code (e.g. en, no, de).</p>
 					</div>
 
 					<div className="space-y-2">

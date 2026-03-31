@@ -43,7 +43,7 @@ export const workspaceSettingsSchema = z.object({
 	notetaker_settings: z
 		.object({
 			auto_join_mode: z.enum(['all', 'organized_by_me', 'manual']).default('all'),
-			language: z.string().default(''),
+			language: z.string().default('en'),
 			bot_config: z
 				.object({
 					bot_name: z.string().optional(),
