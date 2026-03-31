@@ -49,3 +49,46 @@ Before creating anything new, search for what already exists:
 - **Consistent patterns** — if existing components use a particular pattern (e.g., `cn()` for classes, `lucide-react` for icons, semantic color tokens), all new code must follow the same pattern
 - **No custom CSS files** — all styling through Tailwind classes and `cn()`. No `.module.css`, no `styled-components`, no inline `style={}`
 - **No one-off abstractions** — don't create a utility or wrapper for something that's used in only one place
+
+## Placement Rules
+
+When adding new UI elements, placement must be consistent with existing patterns:
+
+- **Actions go near actions** — new buttons, dropdowns, and interactive elements must be placed near existing ones (toolbars, page headers, action areas)
+- **Never isolate actions** — don't add a lone button or control in the middle of a content area where no other actions exist
+- **Search first** — before placing a new element, search the codebase for where similar elements exist and match that pattern
+- **Respect the layout hierarchy** — page-level actions in page headers, row-level actions in table rows/cards, global actions in sidebar/command palette
+
+## Component Extension Over Creation
+
+When an existing component almost fits but needs a small change:
+
+- **Add a prop** to the existing component instead of creating a new one
+- Example: `StatusBadge` needs a new status → add the status to `StatusBadge`, don't create `CustomStatusBadge`
+- Example: `EmptyState` needs an icon → add an `icon` prop, don't create `EmptyStateWithIcon`
+- This keeps the component system tight and avoids divergence
+
+## Token Usage Checklist
+
+All visual values must come from the design system:
+
+- **Colors**: semantic tokens only (`text-text-secondary`, `bg-bg-surface`, `border-border`, `text-accent`, etc.) — never raw hex/rgb/oklch
+- **Spacing**: Tailwind scale (`p-4`, `gap-2`, `mt-3`) — never arbitrary values like `p-[13px]`
+- **Border radius**: theme tokens (`rounded-md`, `rounded-lg`) — never arbitrary
+- **Fonts**: theme fonts (Inter for sans-serif, JetBrains Mono for monospace) — never custom font stacks
+- **Shadows**: theme shadows (`shadow-sm`, `shadow-md`) — never custom box-shadow values
+
+## Standard UI Patterns
+
+Always use these existing components for common patterns:
+
+- **Empty states**: `<EmptyState>` from `@/components/shared/empty-state`
+- **Loading skeletons**: `<LoadingSkeleton>` from `@/components/shared/loading-skeleton`
+- **Spinners**: `<Spinner>` from `@/components/ui/spinner`
+- **Status display**: `<StatusBadge>` from `@/components/shared/status-badge`
+- **Type display**: `<TypeBadge>` from `@/components/shared/type-badge`
+- **Actor display**: `<ActorAvatar>` from `@/components/shared/actor-avatar`
+- **Relative timestamps**: `<RelativeTime>` from `@/components/shared/relative-time`
+- **Markdown rendering**: `<MarkdownContent>` from `@/components/shared/markdown-content`
+- **Form errors**: `<FormError>` from `@/components/shared/form-error`
+- **Offline indicator**: `<OfflineBanner>` from `@/components/shared/offline-banner`
