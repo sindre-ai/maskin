@@ -1,0 +1,113 @@
+- generic [ref=e3]:
+  - generic [ref=e17]:
+    - generic [ref=e20]:
+      - list [ref=e22]:
+        - listitem [ref=e23]:
+          - button "Toggle Sidebar" [ref=e24]:
+            - img
+            - generic [ref=e25]: Toggle Sidebar
+      - list [ref=e28]:
+        - listitem [ref=e29]:
+          - link "Pulse" [ref=e30] [cursor=pointer]:
+            - /url: /0dc62268-79fa-4ce4-b1d7-f53db1184eb0
+            - img [ref=e31]
+            - generic [ref=e33]: Pulse
+        - listitem [ref=e34]:
+          - link "Objects" [ref=e35] [cursor=pointer]:
+            - /url: /0dc62268-79fa-4ce4-b1d7-f53db1184eb0/objects
+            - img [ref=e36]
+            - generic [ref=e40]: Objects
+        - listitem [ref=e41]:
+          - link "Activity" [ref=e42] [cursor=pointer]:
+            - /url: /0dc62268-79fa-4ce4-b1d7-f53db1184eb0/activity
+            - img [ref=e43]
+            - generic [ref=e45]: Activity
+        - listitem [ref=e46]:
+          - link "Agents" [ref=e47] [cursor=pointer]:
+            - /url: /0dc62268-79fa-4ce4-b1d7-f53db1184eb0/agents
+            - img [ref=e48]
+            - generic [ref=e51]: Agents
+        - listitem [ref=e52]:
+          - link "Triggers" [ref=e53] [cursor=pointer]:
+            - /url: /0dc62268-79fa-4ce4-b1d7-f53db1184eb0/triggers
+            - img [ref=e54]
+            - generic [ref=e56]: Triggers
+      - generic [ref=e57]:
+        - generic [ref=e58]: No recent agent activity
+        - list [ref=e59]:
+          - listitem [ref=e60]:
+            - button "magnus" [ref=e61]:
+              - img [ref=e62]
+              - generic [ref=e66]: magnus
+              - img [ref=e67]
+      - button "Toggle Sidebar" [ref=e70]
+    - main [ref=e71]:
+      - generic [ref=e73]:
+        - generic [ref=e74]:
+          - button "Go back" [ref=e136]:
+            - img
+            - generic [ref=e137]: Go back
+          - navigation "breadcrumb" [ref=e75]:
+            - list [ref=e76]:
+              - listitem [ref=e138]:
+                - link "Objects" [ref=e139] [cursor=pointer]:
+                  - /url: /0dc62268-79fa-4ce4-b1d7-f53db1184eb0/objects/
+              - listitem [ref=e140]:
+                - img [ref=e141]
+              - listitem [ref=e143]:
+                - link "Object Details" [disabled] [ref=e144]
+        - generic [ref=e79]:
+          - button [ref=e145]:
+            - img
+          - button "Create new" [ref=e80]:
+            - img
+            - generic [ref=e81]: Create new
+      - generic [ref=e146]:
+        - textbox "Untitled" [ref=e148]: test
+        - generic [ref=e149]:
+          - generic [ref=e150]: insight
+          - combobox [ref=e151]:
+            - generic: processing
+            - img [ref=e152]
+          - generic [ref=e154]:
+            - generic "magnus" [ref=e155]: M
+            - text: magnus
+          - time [ref=e156]: 52s ago
+        - button "+ Add property" [ref=e158]
+        - textbox "Click to add content..." [ref=e160]
+        - generic [ref=e163]:
+          - heading "Related (0)" [level=3] [ref=e164]
+          - button "+ link" [ref=e165]
+        - generic [ref=e166]:
+          - heading "Activity" [level=3] [ref=e167]
+          - generic [ref=e169]:
+            - generic "magnus" [ref=e170]: M
+            - textbox "Comment or instruct an agent..." [ref=e172]
+            - button [disabled]:
+              - img
+          - generic [ref=e173]:
+            - generic [ref=e174]:
+              - generic "magnus" [ref=e175]: M
+              - generic [ref=e177]:
+                - img [ref=e178]
+                - generic [ref=e181]: magnus
+                - generic [ref=e182]: created insight
+                - button "t" [ref=e183] [cursor=pointer]
+                - time [ref=e185]: 52s ago
+            - generic [ref=e186]:
+              - generic "magnus" [ref=e187]: M
+              - generic [ref=e189]:
+                - img [ref=e190]
+                - generic [ref=e193]: magnus
+                - generic [ref=e194]: updated insight
+                - button "test" [ref=e195] [cursor=pointer]
+                - time [ref=e197]: 50s ago
+            - generic [ref=e198]:
+              - generic "magnus" [ref=e199]: M
+              - generic [ref=e201]:
+                - img [ref=e202]
+                - generic [ref=e207]: magnus
+                - generic [ref=e208]: status changed insight
+                - button "test" [ref=e209] [cursor=pointer]
+                - time [ref=e211]: 34s ago
+  - region "Notifications alt+T"
