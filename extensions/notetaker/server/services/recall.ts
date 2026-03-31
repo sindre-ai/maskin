@@ -1,5 +1,6 @@
-const RECALL_API_URL = process.env.RECALL_API_URL || 'https://api.recall.ai/api/v1'
-const RECALL_V2_BASE = process.env.RECALL_V2_BASE || 'https://us-east-1.recall.ai/api/v2'
+const RECALL_REGION = process.env.RECALL_REGION || 'us-west-2'
+const RECALL_API_URL = process.env.RECALL_API_URL || `https://${RECALL_REGION}.recall.ai/api/v1`
+const RECALL_V2_BASE = process.env.RECALL_V2_BASE || `https://${RECALL_REGION}.recall.ai/api/v2`
 const RECALL_API_KEY = process.env.RECALL_API_KEY || ''
 
 export interface RecallBot {
