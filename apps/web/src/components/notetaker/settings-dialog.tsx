@@ -50,7 +50,7 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 
 	const handleSave = () => {
 		if (!/^[a-z]{2}$/.test(language)) {
-			toast.error('Language must be a valid 2-letter ISO code (e.g. en, no, de)')
+			toast.error('Language must be a valid 2-letter ISO code (e.g. en, da, es)')
 			return
 		}
 
@@ -123,7 +123,7 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 							onChange={(e) => setLanguage(e.target.value.toLowerCase())}
 							maxLength={2}
 						/>
-						<p className="text-xs text-muted-foreground">ISO language code (e.g. en, no, de).</p>
+						<p className="text-xs text-muted-foreground">ISO language code (e.g. en, da, es).</p>
 					</div>
 
 					<div className="space-y-2">
