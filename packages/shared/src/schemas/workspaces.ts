@@ -44,6 +44,13 @@ export const workspaceSettingsSchema = z.object({
 		.object({
 			auto_join_mode: z.enum(['all', 'organized_by_me', 'manual']).default('all'),
 			language: z.string().default(''),
+			bot_config: z
+				.object({
+					bot_name: z.string().optional(),
+					bot_image: z.string().optional(),
+					entry_message: z.string().optional(),
+				})
+				.default({}),
 		})
 		.default({}),
 	claude_oauth: z

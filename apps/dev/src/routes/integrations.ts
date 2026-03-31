@@ -698,9 +698,10 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 
 		const wsSettings = ws?.settings as Record<string, unknown> | undefined
 		const notetakerSettings = wsSettings?.notetaker_settings as
-			| { auto_join_mode?: string }
+			| { auto_join_mode?: string; bot_config?: Record<string, unknown> }
 			| undefined
 		const autoJoinMode = notetakerSettings?.auto_join_mode ?? 'all'
+		const botConfig = notetakerSettings?.bot_config
 
 		if (autoJoinMode === 'manual') {
 			// In manual mode, don't auto-schedule bots
@@ -792,11 +793,7 @@ async function handleRecallWebhook(db: Database, c: Context, normalized: Normali
 				// Schedule bot via Recall Calendar V2 API
 				const deduplicationKey = `${calEvent.start_time}-${calEvent.meeting_url}`
 				try {
-					const updatedEvent = await scheduleBotForEvent(
-						calEvent.id,
-						deduplicationKey,
-						'Maskin Notetaker',
-					)
+					const updatedEvent = await scheduleBotForEvent(calEvent.id, deduplicationKey, botConfig)
 
 					// Store bot_id from the scheduled bot
 					const botId = updatedEvent.bots?.[0]?.id

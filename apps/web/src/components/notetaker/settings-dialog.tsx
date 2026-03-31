@@ -20,9 +20,16 @@ interface NotetakerSettingsDialogProps {
 	onOpenChange: (open: boolean) => void
 }
 
+interface BotConfig {
+	bot_name?: string
+	bot_image?: string
+	entry_message?: string
+}
+
 interface NotetakerSettings {
 	auto_join_mode: 'all' | 'organized_by_me' | 'manual'
 	language: string
+	bot_config?: BotConfig
 }
 
 export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSettingsDialogProps) {
@@ -32,10 +39,14 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 	const current = (settings?.notetaker_settings as NotetakerSettings) ?? {
 		auto_join_mode: 'all',
 		language: '',
+		bot_config: {},
 	}
 
 	const [autoJoinMode, setAutoJoinMode] = useState<string>(current.auto_join_mode)
 	const [language, setLanguage] = useState(current.language)
+	const [botName, setBotName] = useState(current.bot_config?.bot_name ?? '')
+	const [botImage, setBotImage] = useState(current.bot_config?.bot_image ?? '')
+	const [entryMessage, setEntryMessage] = useState(current.bot_config?.entry_message ?? '')
 
 	const handleSave = () => {
 		updateWorkspace.mutate(
@@ -45,6 +56,11 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 					notetaker_settings: {
 						auto_join_mode: autoJoinMode,
 						language,
+						bot_config: {
+							bot_name: botName || undefined,
+							bot_image: botImage || undefined,
+							entry_message: entryMessage || undefined,
+						},
 					},
 				},
 			},
@@ -69,6 +85,36 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 				</DialogHeader>
 
 				<div className="space-y-4 py-4">
+					<div className="space-y-2">
+						<Label htmlFor="bot-name">Bot name</Label>
+						<Input
+							id="bot-name"
+							placeholder="Sindre"
+							value={botName}
+							onChange={(e) => setBotName(e.target.value)}
+						/>
+					</div>
+
+					<div className="space-y-2">
+						<Label htmlFor="bot-image">Bot image URL</Label>
+						<Input
+							id="bot-image"
+							placeholder="https://example.com/avatar.png"
+							value={botImage}
+							onChange={(e) => setBotImage(e.target.value)}
+						/>
+					</div>
+
+					<div className="space-y-2">
+						<Label htmlFor="entry-message">Entry message</Label>
+						<Input
+							id="entry-message"
+							placeholder="Message shown when bot joins (optional)"
+							value={entryMessage}
+							onChange={(e) => setEntryMessage(e.target.value)}
+						/>
+					</div>
+
 					<div className="space-y-2">
 						<Label>Auto-join mode</Label>
 						<RadioGroup value={autoJoinMode} onValueChange={setAutoJoinMode}>

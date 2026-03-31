@@ -143,16 +143,16 @@ export async function listCalendarEvents(
 	return allEvents
 }
 
+const DEFAULT_BOT_CONFIG = { bot_name: 'Sindre' }
+
 export async function scheduleBotForEvent(
 	eventId: string,
 	deduplicationKey: string,
-	botName?: string,
+	botConfig?: Record<string, unknown>,
 ): Promise<RecallCalendarEvent> {
 	const body: Record<string, unknown> = {
 		deduplication_key: deduplicationKey,
-		bot_config: {
-			bot_name: botName ?? 'Maskin Notetaker',
-		},
+		bot_config: { ...DEFAULT_BOT_CONFIG, ...botConfig },
 	}
 
 	const res = await fetch(`${RECALL_V2_BASE}/calendar-events/${eventId}/bot/`, {

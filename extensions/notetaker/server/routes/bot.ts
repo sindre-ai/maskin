@@ -1,10 +1,9 @@
-import { events, objects } from '@ai-native/db/schema'
+import type { Database } from '@ai-native/db'
+import { events, objects, workspaces } from '@ai-native/db/schema'
 import type { ModuleEnv } from '@ai-native/module-sdk'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { eq } from 'drizzle-orm'
 import { createBot } from '../services/recall.js'
-
-import type { Database } from '@ai-native/db'
 
 type HonoEnv = {
 	Variables: {
@@ -58,9 +57,21 @@ export function createBotRoutes(env: ModuleEnv) {
 			return c.json({ error: 'Failed to create meeting' }, 500)
 		}
 
+		// Load workspace bot_config
+		const [ws] = await env.db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+		const wsSettings = ws?.settings as Record<string, unknown> | undefined
+		const notetakerSettings = wsSettings?.notetaker_settings as
+			| { bot_config?: { bot_name?: string } }
+			| undefined
+		const botName = notetakerSettings?.bot_config?.bot_name || 'Sindre'
+
 		// Dispatch Recall bot
 		try {
-			const bot = await createBot(body.meeting_url, { botName: 'Maskin Notetaker' })
+			const bot = await createBot(body.meeting_url, { botName })
 
 			// Update meeting with bot_id
 			await env.db
