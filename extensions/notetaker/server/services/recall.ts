@@ -83,8 +83,11 @@ export interface RecallCalendarEvent {
 	updated_at: string
 	raw: Record<string, unknown>
 	bots: Array<{
-		id: string
+		bot_id: string
+		id?: string
 		deduplication_key: string | null
+		start_time?: string
+		meeting_url?: string
 	}>
 }
 

@@ -131,7 +131,7 @@ export async function scheduleOrUnscheduleBot(
 					bots: JSON.stringify(updatedEvent.bots),
 					eventId: updatedEvent.id,
 				})
-				botId = updatedEvent.bots?.[0]?.id
+				botId = updatedEvent.bots?.[0]?.bot_id ?? updatedEvent.bots?.[0]?.id
 			} else {
 				// Manual meeting: use V1 bot API
 				const botName = (botConfig?.bot_name as string) ?? 'Sindre'
