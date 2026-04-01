@@ -283,6 +283,9 @@ importers:
 
   extensions/notetaker:
     dependencies:
+      '@ai-native/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@ai-native/db':
         specifier: workspace:*
         version: link:../../packages/db

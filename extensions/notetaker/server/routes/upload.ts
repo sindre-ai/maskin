@@ -102,7 +102,8 @@ export function createUploadRoutes(env: ModuleEnv) {
 			const durationSeconds = lastSegment ? Math.ceil(lastSegment.end) : null
 
 			// Store proxy URLs that route through our files endpoint (no expiry)
-			const filesBase = '/api/m/notetaker/files'
+			const publicBase = process.env.WEBHOOK_BASE_URL?.replace(/\/$/, '') || ''
+			const filesBase = `${publicBase}/api/m/notetaker/files`
 
 			const [updated] = await db
 				.update(objects)

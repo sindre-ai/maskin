@@ -76,7 +76,8 @@ export async function processRecording(
 		const existingMetadata = (existingObj?.metadata as Record<string, unknown>) ?? {}
 
 		// Store proxy URLs that route through our files endpoint (no expiry)
-		const filesBase = '/api/m/notetaker/files'
+		const publicBase = process.env.WEBHOOK_BASE_URL?.replace(/\/$/, '') || ''
+		const filesBase = `${publicBase}/api/m/notetaker/files`
 
 		// Update meeting object with transcription — keep user-facing fields, add results
 		const [updated] = await db

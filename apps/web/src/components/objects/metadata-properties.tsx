@@ -13,7 +13,7 @@ import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SafeJsonValue, SafeMetadata } from '@ai-native/shared'
-import { X } from 'lucide-react'
+import { ExternalLink, X } from 'lucide-react'
 import { useState } from 'react'
 
 interface FieldDefinition {
@@ -214,6 +214,16 @@ function PropertyRow({
 						}}
 						onCancel={() => setEditing(false)}
 					/>
+				) : isUrl(value) ? (
+					<a
+						href={String(value)}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="text-xs text-blue-500 hover:text-blue-600 underline inline-flex items-center gap-1"
+					>
+						Link
+						<ExternalLink className="h-3 w-3" />
+					</a>
 				) : (
 					<button
 						type="button"
@@ -547,6 +557,11 @@ function inferType(value: unknown): string {
 		return 'date'
 	}
 	return 'text'
+}
+
+function isUrl(value: unknown): boolean {
+	if (typeof value !== 'string') return false
+	return value.startsWith('http://') || value.startsWith('https://')
 }
 
 function formatDisplay(value: unknown, type: string): string {

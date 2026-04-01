@@ -153,6 +153,7 @@ app.use('/api/*', async (c, next) => {
 	if (path === '/api/actors' && method === 'POST') return next()
 	if (path === '/api/auth/login' && method === 'POST') return next()
 	if (path.startsWith('/api/webhooks/')) return next()
+	if (path.startsWith('/api/m/notetaker/files/')) return next()
 	if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 	return auth(c, next)

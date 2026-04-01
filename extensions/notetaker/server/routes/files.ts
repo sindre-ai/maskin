@@ -1,6 +1,9 @@
 import type { Database } from '@ai-native/db'
+import { workspaceMembers } from '@ai-native/db/schema'
 import type { ModuleEnv } from '@ai-native/module-sdk'
+import { validateApiKey } from '@ai-native/auth'
 import { OpenAPIHono } from '@hono/zod-openapi'
+import { and, eq } from 'drizzle-orm'
 
 type HonoEnv = {
 	Variables: {
@@ -49,6 +52,39 @@ export function createFileRoutes(env: ModuleEnv) {
 		// Only allow access to notetaker files
 		if (!key.startsWith('notetaker/')) {
 			return c.json({ error: 'Access denied' }, 403)
+		}
+
+		// Auth: accept Bearer header or ?token= query param
+		const authHeader = c.req.header('Authorization')
+		const token = authHeader?.startsWith('Bearer ')
+			? authHeader.slice(7)
+			: c.req.query('token')
+
+		if (!token) {
+			return c.json({ error: 'Missing authentication. Use Authorization header or ?token= query param' }, 401)
+		}
+
+		const result = await validateApiKey(env.db, token)
+		if (!result) {
+			return c.json({ error: 'Invalid API key' }, 401)
+		}
+
+		// Check workspace membership — workspace ID is the second segment: notetaker/{workspaceId}/...
+		const workspaceId = key.split('/')[1]
+		if (workspaceId) {
+			const [member] = await env.db
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.actorId, result.actorId),
+						eq(workspaceMembers.workspaceId, workspaceId),
+					),
+				)
+				.limit(1)
+			if (!member) {
+				return c.json({ error: 'Access denied' }, 403)
+			}
 		}
 
 		try {

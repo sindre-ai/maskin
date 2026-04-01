@@ -34,6 +34,7 @@
 		}
 	},
 	"dependencies": {
+		"@ai-native/auth": "workspace:*",
 		"@ai-native/db": "workspace:*",
 		"@ai-native/module-sdk": "workspace:*",
 		"@ffmpeg-installer/ffmpeg": "^1.1.0",
