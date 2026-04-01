@@ -187,9 +187,8 @@ export async function deleteBotFromEvent(eventId: string): Promise<void> {
 // ── Bot API ───────────────────────────────────────────────────────────────
 
 export async function downloadRecording(videoUrl: string): Promise<Buffer> {
-	const res = await fetch(videoUrl, {
-		headers: recallHeaders(),
-	})
+	// video_url is a pre-signed S3 URL — sending auth/content-type headers causes a 400
+	const res = await fetch(videoUrl)
 
 	if (!res.ok) {
 		throw new Error(`Failed to download recording (${res.status})`)

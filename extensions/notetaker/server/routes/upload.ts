@@ -101,6 +101,9 @@ export function createUploadRoutes(env: ModuleEnv) {
 			const lastSegment = result.segments.at(-1)
 			const durationSeconds = lastSegment ? Math.ceil(lastSegment.end) : null
 
+			// Store proxy URLs that route through our files endpoint (no expiry)
+			const filesBase = '/api/m/notetaker/files'
+
 			const [updated] = await db
 				.update(objects)
 				.set({
@@ -110,9 +113,9 @@ export function createUploadRoutes(env: ModuleEnv) {
 						source: 'upload',
 						original_filename: file.name,
 						language: result.language,
-						audio_s3_key: s3Key,
-						transcript_s3_key: transcriptS3Key,
-						segments_s3_key: segmentsS3Key,
+						audio_url: `${filesBase}/${s3Key}`,
+						transcript_url: `${filesBase}/${transcriptS3Key}`,
+						segments_url: `${filesBase}/${segmentsS3Key}`,
 						duration_seconds: durationSeconds,
 					},
 					updatedAt: new Date(),

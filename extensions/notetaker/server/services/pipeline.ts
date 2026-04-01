@@ -75,6 +75,9 @@ export async function processRecording(
 
 		const existingMetadata = (existingObj?.metadata as Record<string, unknown>) ?? {}
 
+		// Store proxy URLs that route through our files endpoint (no expiry)
+		const filesBase = '/api/m/notetaker/files'
+
 		// Update meeting object with transcription — keep user-facing fields, add results
 		const [updated] = await db
 			.update(objects)
@@ -84,9 +87,9 @@ export async function processRecording(
 				metadata: {
 					...existingMetadata,
 					language: result.language,
-					audio_s3_key: s3Key,
-					transcript_s3_key: transcriptS3Key,
-					segments_s3_key: segmentsS3Key,
+					audio_url: `${filesBase}/${s3Key}`,
+					transcript_url: `${filesBase}/${transcriptS3Key}`,
+					segments_url: `${filesBase}/${segmentsS3Key}`,
 					duration_seconds: durationSeconds,
 				},
 				updatedAt: new Date(),
