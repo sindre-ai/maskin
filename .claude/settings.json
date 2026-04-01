@@ -1,4 +1,7 @@
 {
+	"env": {
+		"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "true"
+	},
 	"hooks": {
 		"PreToolUse": [
 			{
@@ -8,6 +11,28 @@
 						"type": "command",
 						"command": ".claude/hooks/pre-commit-check.sh",
 						"statusMessage": "Checking for git commit..."
+					}
+				]
+			},
+			{
+				"matcher": "Write|Edit",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash -c 'FILE=\"$TOOL_INPUT_FILE_PATH$TOOL_INPUT_file_path\"; if echo \"$FILE\" | grep -q \"apps/web/src/components/\"; then echo \"COMPONENT FILE GUARD: Before modifying a component, verify: (1) You checked the component reuse hierarchy in .claude/rules/frontend.md (2) You are using cn() for class merging (3) You are using semantic color tokens, not raw values (4) You are using Radix UI primitives, not raw HTML form elements. If creating a NEW component file, justify why no existing component works.\"; fi'",
+						"statusMessage": "Checking component file rules..."
+					}
+				]
+			}
+		],
+		"SubagentStart": [
+			{
+				"matcher": "frontend-",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "echo 'FRONTEND AGENT REMINDER: Before starting work, you MUST: (1) Read .claude/rules/frontend.md for component reuse rules (2) Read apps/web/CLAUDE.md for design system and conventions (3) List existing components in apps/web/src/components/ui/, shared/, and relevant feature dirs (4) List existing hooks in apps/web/src/hooks/ (5) Follow the component reuse hierarchy strictly: existing UI primitives > shared components > feature components > compose > create new'",
+						"statusMessage": "Injecting frontend context..."
 					}
 				]
 			}

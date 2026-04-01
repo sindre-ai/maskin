@@ -4,7 +4,6 @@ import path from 'node:path'
 import { authMiddleware } from '@ai-native/auth'
 import { createDb } from '@ai-native/db'
 import type { Database } from '@ai-native/db'
-import { createMcpServer } from '@ai-native/mcp'
 import { getAllModules } from '@ai-native/module-sdk'
 import { PgNotifyBridge } from '@ai-native/realtime'
 import { S3StorageProvider } from '@ai-native/storage'
@@ -12,7 +11,6 @@ import type { StorageProvider } from '@ai-native/storage'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
@@ -26,6 +24,7 @@ import eventsRoutes from './routes/events'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import relationshipsRoutes from './routes/relationships'
@@ -191,51 +190,7 @@ for (const ext of getAllModules()) {
 }
 
 // MCP HTTP transport for MCP Apps (interactive UIs in chat clients)
-app.post('/mcp', async (c) => {
-	const url = new URL(c.req.url, 'http://localhost')
-	const mcpConfig = {
-		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
-		apiKey:
-			c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? '',
-		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
-	}
-	const mcpServer = createMcpServer(mcpConfig)
-	const transport = new StreamableHTTPServerTransport({
-		sessionIdGenerator: undefined,
-		enableJsonResponse: true,
-	})
-
-	const nodeRes = (c.env as Record<string, unknown>).outgoing as import('node:http').ServerResponse
-	const nodeReq = (c.env as Record<string, unknown>).incoming as import('node:http').IncomingMessage
-
-	let body: unknown
-	try {
-		body = await c.req.json()
-	} catch {
-		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
-	}
-	const method =
-		(body as Record<string, unknown>)?.method ??
-		(Array.isArray(body) ? body.map((b: { method?: string }) => b.method) : 'unknown')
-	console.log(`[MCP] POST /mcp — method: ${JSON.stringify(method)}`)
-	await mcpServer.connect(transport)
-	await transport.handleRequest(nodeReq, nodeRes, body)
-
-	// transport.handleRequest already wrote the response to nodeRes.
-	// Signal @hono/node-server to skip writing headers again.
-	return new Response(null, {
-		headers: { 'x-hono-already-sent': '1' },
-	})
-})
-
-// Reject GET/DELETE on /mcp — server doesn't support server-initiated SSE streams
-app.get('/mcp', (c) => {
-	return c.text('Method Not Allowed', 405)
-})
-
-app.delete('/mcp', (c) => {
-	return c.text('Method Not Allowed', 405)
-})
+app.route('/mcp', mcpRoutes)
 
 // Auto-generated OpenAPI spec from route definitions
 app.doc31('/api/openapi.json', {
