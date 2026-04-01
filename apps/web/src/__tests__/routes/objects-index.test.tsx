@@ -7,7 +7,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 		useSearch: () => ({
 			type: undefined,
 			status: undefined,
@@ -97,10 +97,12 @@ vi.mock('@/lib/query-keys', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
+// @ts-expect-error — mock returns raw route options
 const ObjectsPage = Route.component as React.FC
 
 describe('validateSearch', () => {
 	it('returns defaults for missing params', () => {
+		// @ts-expect-error — mock returns raw route options
 		const result = Route.validateSearch({})
 		expect(result).toEqual({
 			type: undefined,
@@ -114,6 +116,7 @@ describe('validateSearch', () => {
 	})
 
 	it('parses all search param types correctly', () => {
+		// @ts-expect-error — mock returns raw route options
 		const result = Route.validateSearch({
 			type: 'bet',
 			status: 'active',
@@ -135,11 +138,13 @@ describe('validateSearch', () => {
 	})
 
 	it('defaults order to desc for invalid values', () => {
+		// @ts-expect-error — mock returns raw route options
 		const result = Route.validateSearch({ order: 'invalid' })
 		expect(result.order).toBe('desc')
 	})
 
 	it('ignores non-string values', () => {
+		// @ts-expect-error — mock returns raw route options
 		const result = Route.validateSearch({ type: 123, status: true, q: null })
 		expect(result.type).toBeUndefined()
 		expect(result.status).toBeUndefined()

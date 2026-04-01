@@ -17,7 +17,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 		Navigate: ({ to, params }: { to: string; params?: Record<string, string> }) => (
 			<div data-testid="navigate" data-to={to} data-params={JSON.stringify(params)} />
 		),
@@ -26,6 +26,7 @@ vi.mock('@tanstack/react-router', async () => {
 
 import { Route } from '@/routes/_authed/index'
 
+// @ts-expect-error — mock returns raw route options
 const WorkspacePicker = Route.component as React.FC
 
 describe('WorkspacePicker', () => {

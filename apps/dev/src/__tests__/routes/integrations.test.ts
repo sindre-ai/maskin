@@ -106,7 +106,7 @@ describe('Integrations Routes', () => {
 				expect(body.install_url).toContain('response_type=code')
 			} finally {
 				if (originalClientId === undefined) {
-					delete process.env.SLACK_CLIENT_ID
+					process.env.SLACK_CLIENT_ID = undefined
 				} else {
 					process.env.SLACK_CLIENT_ID = originalClientId
 				}
@@ -380,12 +380,12 @@ describe('Integrations Routes', () => {
 				expect(location).toContain('error=token_exchange_failed')
 			} finally {
 				if (originalClientId === undefined) {
-					delete process.env.SLACK_CLIENT_ID
+					process.env.SLACK_CLIENT_ID = undefined
 				} else {
 					process.env.SLACK_CLIENT_ID = originalClientId
 				}
 				if (originalClientSecret === undefined) {
-					delete process.env.SLACK_CLIENT_SECRET
+					process.env.SLACK_CLIENT_SECRET = undefined
 				} else {
 					process.env.SLACK_CLIENT_SECRET = originalClientSecret
 				}

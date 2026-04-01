@@ -1,7 +1,7 @@
+import { validateApiKey } from '@ai-native/auth'
 import type { Database } from '@ai-native/db'
 import { workspaceMembers } from '@ai-native/db/schema'
 import type { ModuleEnv } from '@ai-native/module-sdk'
-import { validateApiKey } from '@ai-native/auth'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
 
@@ -56,12 +56,13 @@ export function createFileRoutes(env: ModuleEnv) {
 
 		// Auth: accept Bearer header or ?token= query param
 		const authHeader = c.req.header('Authorization')
-		const token = authHeader?.startsWith('Bearer ')
-			? authHeader.slice(7)
-			: c.req.query('token')
+		const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : c.req.query('token')
 
 		if (!token) {
-			return c.json({ error: 'Missing authentication. Use Authorization header or ?token= query param' }, 401)
+			return c.json(
+				{ error: 'Missing authentication. Use Authorization header or ?token= query param' },
+				401,
+			)
 		}
 
 		const result = await validateApiKey(env.db, token)

@@ -12,12 +12,13 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
 import { Route } from '@/routes/signup'
 
+// @ts-expect-error — mock returns raw route options
 const SignupPage = Route.component as React.FC
 
 describe('SignupPage', () => {
@@ -98,8 +99,12 @@ describe('SignupPage', () => {
 	})
 
 	it('shows loading state during signup', async () => {
-		let resolveSignup: () => void
-		mockSignup.mockReturnValue(new Promise<void>((r) => { resolveSignup = r }))
+		let resolveSignup: () => void = () => {}
+		mockSignup.mockReturnValue(
+			new Promise<void>((r) => {
+				resolveSignup = r
+			}),
+		)
 		const user = userEvent.setup()
 		render(<SignupPage />)
 		await user.type(screen.getByPlaceholderText('Your name'), 'Test User')
@@ -108,7 +113,7 @@ describe('SignupPage', () => {
 		await user.type(screen.getByPlaceholderText('Repeat your password'), 'password123')
 		await user.click(screen.getByRole('button', { name: 'Create account' }))
 		expect(screen.getByRole('button', { name: 'Creating...' })).toBeDisabled()
-		resolveSignup!()
+		resolveSignup()
 	})
 
 	it('displays error message when signup throws', async () => {

@@ -9,8 +9,8 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
-		useSearch: (...args: any[]) => mockUseSearch(...args),
+		createFileRoute: () => (options: Record<string, unknown>) => options,
+		useSearch: (...args: unknown[]) => mockUseSearch(...args),
 		useNavigate: () => mockNavigate,
 	}
 })
@@ -35,6 +35,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/activity'
 
+// @ts-expect-error — mock returns raw route options
 const ActivityPage = Route.component as React.FC
 
 describe('ActivityPage', () => {
@@ -71,16 +72,19 @@ describe('ActivityPage', () => {
 
 describe('validateSearch', () => {
 	it('returns filter when search.filter is a string', () => {
+		// @ts-expect-error — mock returns raw route options
 		const result = Route.validateSearch({ filter: 'comments' })
 		expect(result).toEqual({ filter: 'comments' })
 	})
 
 	it('returns undefined filter when search.filter is not a string', () => {
+		// @ts-expect-error — mock returns raw route options
 		const result = Route.validateSearch({ filter: 123 })
 		expect(result).toEqual({ filter: undefined })
 	})
 
 	it('returns undefined filter when search.filter is missing', () => {
+		// @ts-expect-error — mock returns raw route options
 		const result = Route.validateSearch({})
 		expect(result).toEqual({ filter: undefined })
 	})

@@ -7,7 +7,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 		useMatchRoute: () => mockMatchRoute,
 		Outlet: () => <div data-testid="outlet" />,
 	}
@@ -19,6 +19,7 @@ vi.mock('@/lib/workspace-context', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/settings'
 
+// @ts-expect-error — mock returns raw route options
 const SettingsLayout = Route.component as React.FC
 
 describe('SettingsLayout', () => {

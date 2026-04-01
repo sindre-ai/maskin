@@ -10,7 +10,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
@@ -52,6 +52,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/settings/index'
 
+// @ts-expect-error — mock returns raw route options
 const GeneralPage = Route.component as React.FC
 
 describe('GeneralPage', () => {

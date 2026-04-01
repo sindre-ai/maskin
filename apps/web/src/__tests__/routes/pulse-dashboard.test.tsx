@@ -10,7 +10,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
@@ -19,13 +19,13 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 vi.mock('@/hooks/use-notifications', () => ({
-	useNotifications: (...args: any[]) => mockUseNotifications(...args),
+	useNotifications: (...args: unknown[]) => mockUseNotifications(...args),
 	useRespondNotification: () => ({ mutate: vi.fn() }),
 	useUpdateNotification: () => ({ mutate: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
-	useActors: (...args: any[]) => mockUseActors(...args),
+	useActors: (...args: unknown[]) => mockUseActors(...args),
 }))
 
 vi.mock('sonner', () => ({
@@ -56,6 +56,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/index'
 
+// @ts-expect-error — mock returns raw route options
 const PulseDashboard = Route.component as React.FC
 
 describe('PulseDashboard', () => {
@@ -113,9 +114,7 @@ describe('PulseDashboard', () => {
 	})
 
 	it('renders pulse filters when notifications exist', () => {
-		const notifications = [
-			buildNotificationResponse({ id: 'n-1', status: 'pending' }),
-		]
+		const notifications = [buildNotificationResponse({ id: 'n-1', status: 'pending' })]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
 		render(<PulseDashboard />)
 		expect(screen.getByTestId('pulse-filters')).toBeInTheDocument()

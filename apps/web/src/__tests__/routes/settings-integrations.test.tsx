@@ -10,7 +10,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
@@ -19,7 +19,7 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 vi.mock('@/hooks/use-integrations', () => ({
-	useIntegrations: (...args: any[]) => mockUseIntegrations(...args),
+	useIntegrations: (...args: unknown[]) => mockUseIntegrations(...args),
 	useProviders: () => mockUseProviders(),
 	useConnectIntegration: () => ({ mutate: vi.fn(), isPending: false }),
 	useDisconnectIntegration: () => ({ mutate: vi.fn(), isPending: false }),
@@ -39,6 +39,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/settings/integrations'
 
+// @ts-expect-error — mock returns raw route options
 const IntegrationsPage = Route.component as React.FC
 
 describe('IntegrationsPage', () => {

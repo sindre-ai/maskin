@@ -98,7 +98,9 @@ export async function transcribe(
 	const chunks = await splitWavIntoChunks(wavBuffer, CHUNK_DURATION_SECONDS)
 
 	if (chunks.length === 1) {
-		return transcribeChunk(chunks[0]!.buffer, wavFilename, options)
+		const singleChunk = chunks[0]
+		if (!singleChunk) throw new Error('Expected at least one chunk')
+		return transcribeChunk(singleChunk.buffer, wavFilename, options)
 	}
 
 	// Transcribe chunks sequentially to avoid overloading whisper
