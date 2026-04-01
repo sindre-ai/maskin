@@ -91,5 +91,12 @@ export function useImportToast(workspaceId: string) {
 		prevStatus.current = status
 	}, [importData, activeImportId])
 
+	// Dismiss loading toast if component unmounts mid-import
+	useEffect(() => {
+		return () => {
+			if (toastId.current) toast.dismiss(toastId.current)
+		}
+	}, [])
+
 	return { startTracking: setActiveImportId }
 }

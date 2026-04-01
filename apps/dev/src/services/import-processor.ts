@@ -186,9 +186,8 @@ export function generateMapping(
 			// Check if sample values match an enum field
 			for (const [fieldName, fieldInfo] of allFields) {
 				if (fieldInfo.type === 'enum' && fieldInfo.values && fieldInfo.values.length > 0) {
-					const sampleValues = columns
-						.filter((c) => c === col)
-						.flatMap(() => sampleRows.map((r) => (r[col] ?? '').toLowerCase()))
+					const sampleValues = sampleRows
+						.map((r) => (r[col] ?? '').toLowerCase())
 						.filter(Boolean)
 					const enumValues = fieldInfo.values.map((v) => v.toLowerCase())
 					const overlap = sampleValues.filter((v) => enumValues.includes(v))
@@ -347,7 +346,7 @@ export async function executeImport(
 
 		const validRows: { rowIndex: number; typeMapping: TypeMapping; mapped: MappedRow }[] = []
 		for (let j = 0; j < batch.length; j++) {
-			const rowIndex = i + j
+			const rowIndex = i + j // 0-based internally; +1 for user-facing error messages
 			const row = batch[j]
 			if (!row) continue
 
@@ -495,12 +494,24 @@ export async function executeImport(
 					)
 				}
 			} catch (err) {
-				logger.error('Relationship batch failed', {
-					importId,
-					error: err instanceof Error ? err.message : String(err),
-				})
+				const message = `Relationship batch failed: ${err instanceof Error ? err.message : String(err)}`
+				logger.error(message, { importId })
+				errors.push({ row: 0, message })
+				errorCount += batch.length
 			}
 		}
+	}
+
+	// Update final counts after relationship pass
+	if (relDefs.length > 0) {
+		await db
+			.update(imports)
+			.set({
+				errorCount,
+				errors: errors.length > 0 ? errors : undefined,
+				updatedAt: new Date(),
+			})
+			.where(eq(imports.id, importId))
 	}
 
 	logger.info('Import execution completed', {
