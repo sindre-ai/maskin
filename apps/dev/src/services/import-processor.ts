@@ -402,9 +402,10 @@ export async function executeImport(
 					rowTypeToObjectId.set(key, obj.id)
 				}
 
-				successCount += validRows.length
+				successCount += createdObjects.length
 			} catch (err) {
-				for (const { rowIndex } of validRows) {
+				const uniqueRows = [...new Set(validRows.map(({ rowIndex }) => rowIndex))]
+				for (const rowIndex of uniqueRows) {
 					batchErrors.push({
 						row: rowIndex + 1,
 						message: `Batch failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -496,8 +497,7 @@ export async function executeImport(
 			} catch (err) {
 				const message = `Relationship batch failed: ${err instanceof Error ? err.message : String(err)}`
 				logger.error(message, { importId })
-				errors.push({ row: 0, message })
-				errorCount += batch.length
+				errors.push({ row: -1, message })
 			}
 		}
 	}
