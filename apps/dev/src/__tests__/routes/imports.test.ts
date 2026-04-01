@@ -13,12 +13,17 @@ vi.mock('../../services/import-processor', () => ({
 		],
 	}),
 	generateMapping: vi.fn().mockReturnValue({
-		objectType: 'task',
-		columns: [
-			{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false },
-			{ sourceColumn: 'status', targetField: 'status', transform: 'none', skip: false },
+		typeMappings: [
+			{
+				objectType: 'task',
+				columns: [
+					{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false },
+					{ sourceColumn: 'status', targetField: 'status', transform: 'none', skip: false },
+				],
+				defaultStatus: 'todo',
+			},
 		],
-		defaultStatus: 'todo',
+		relationships: [],
 	}),
 	executeImport: vi.fn(),
 }))
@@ -93,9 +98,16 @@ describe('PATCH /api/imports/:id/mapping', () => {
 		mockResults.update = [imp]
 
 		const newMapping = {
-			objectType: 'task',
-			columns: [{ sourceColumn: 'title', targetField: 'title', transform: 'none', skip: false }],
-			defaultStatus: 'todo',
+			typeMappings: [
+				{
+					objectType: 'task',
+					columns: [
+						{ sourceColumn: 'title', targetField: 'title', transform: 'none', skip: false },
+					],
+					defaultStatus: 'todo',
+				},
+			],
+			relationships: [],
 		}
 
 		const res = await app.request(
@@ -120,8 +132,7 @@ describe('PATCH /api/imports/:id/mapping', () => {
 				`/api/imports/${imp.id}/mapping`,
 				{
 					mapping: {
-						objectType: 'task',
-						columns: [],
+						typeMappings: [{ objectType: 'task', columns: [] }],
 					},
 				},
 				{ 'x-workspace-id': wsId },
@@ -140,8 +151,7 @@ describe('PATCH /api/imports/:id/mapping', () => {
 				`/api/imports/${crypto.randomUUID()}/mapping`,
 				{
 					mapping: {
-						objectType: 'task',
-						columns: [],
+						typeMappings: [{ objectType: 'task', columns: [] }],
 					},
 				},
 				{ 'x-workspace-id': wsId },
@@ -160,8 +170,7 @@ describe('PATCH /api/imports/:id/mapping', () => {
 				`/api/imports/${crypto.randomUUID()}/mapping`,
 				{
 					mapping: {
-						objectType: 'task',
-						columns: [],
+						typeMappings: [{ objectType: 'task', columns: [] }],
 					},
 				},
 				{ 'x-workspace-id': wsId },
@@ -266,7 +275,10 @@ describe('POST /api/imports (file upload)', () => {
 		mockResults.insert = [imp]
 
 		const formData = new FormData()
-		formData.append('file', new File(['name,status\nItem 1,todo'], 'test.csv', { type: 'text/csv' }))
+		formData.append(
+			'file',
+			new File(['name,status\nItem 1,todo'], 'test.csv', { type: 'text/csv' }),
+		)
 
 		const req = new Request('http://localhost/api/imports', {
 			method: 'POST',

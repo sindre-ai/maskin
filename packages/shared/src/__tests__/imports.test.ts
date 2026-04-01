@@ -93,60 +93,57 @@ describe('columnMappingSchema', () => {
 describe('importMappingSchema', () => {
 	const validColumn = { sourceColumn: 'Name', targetField: 'title' }
 
-	it('accepts objectType as string', () => {
+	it('accepts a single type mapping', () => {
 		const result = importMappingSchema.parse({
-			objectType: 'task',
-			columns: [validColumn],
+			typeMappings: [{ objectType: 'task', columns: [validColumn] }],
 		})
-		expect(result.objectType).toBe('task')
-		expect(result.columns).toHaveLength(1)
+		expect(result.typeMappings).toHaveLength(1)
+		expect(result.typeMappings[0]?.objectType).toBe('task')
+		expect(result.typeMappings[0]?.columns).toHaveLength(1)
+		expect(result.relationships).toEqual([])
 	})
 
-	it('accepts objectType as column-based mapping', () => {
+	it('accepts multiple type mappings', () => {
 		const result = importMappingSchema.parse({
-			objectType: {
-				column: 'Type',
-				typeMap: { Bug: 'task', Idea: 'insight' },
-			},
-			columns: [validColumn],
+			typeMappings: [
+				{ objectType: 'task', columns: [validColumn] },
+				{ objectType: 'insight', columns: [{ sourceColumn: 'Desc', targetField: 'content' }] },
+			],
 		})
-		expect(result.objectType).toEqual({
-			column: 'Type',
-			typeMap: { Bug: 'task', Idea: 'insight' },
-		})
+		expect(result.typeMappings).toHaveLength(2)
 	})
 
-	it('accepts optional defaultStatus', () => {
+	it('accepts optional defaultStatus per type', () => {
 		const result = importMappingSchema.parse({
-			objectType: 'task',
-			columns: [validColumn],
-			defaultStatus: 'todo',
+			typeMappings: [{ objectType: 'task', columns: [validColumn], defaultStatus: 'todo' }],
 		})
-		expect(result.defaultStatus).toBe('todo')
+		expect(result.typeMappings[0]?.defaultStatus).toBe('todo')
 	})
 
-	it('omits defaultStatus when not provided', () => {
+	it('accepts relationships with sourceType, relationshipType, targetType', () => {
 		const result = importMappingSchema.parse({
-			objectType: 'task',
-			columns: [validColumn],
+			typeMappings: [
+				{ objectType: 'task', columns: [validColumn] },
+				{ objectType: 'insight', columns: [] },
+			],
+			relationships: [
+				{ sourceType: 'task', relationshipType: 'relates_to', targetType: 'insight' },
+			],
 		})
-		expect(result.defaultStatus).toBeUndefined()
-	})
-
-	it('accepts empty columns array', () => {
-		const result = importMappingSchema.parse({
-			objectType: 'task',
-			columns: [],
+		expect(result.relationships).toHaveLength(1)
+		expect(result.relationships[0]).toEqual({
+			sourceType: 'task',
+			relationshipType: 'relates_to',
+			targetType: 'insight',
 		})
-		expect(result.columns).toHaveLength(0)
 	})
 
-	it('rejects missing objectType', () => {
-		expect(() => importMappingSchema.parse({ columns: [validColumn] })).toThrow()
+	it('rejects empty typeMappings array', () => {
+		expect(() => importMappingSchema.parse({ typeMappings: [] })).toThrow()
 	})
 
-	it('rejects missing columns', () => {
-		expect(() => importMappingSchema.parse({ objectType: 'task' })).toThrow()
+	it('rejects missing typeMappings', () => {
+		expect(() => importMappingSchema.parse({ relationships: [] })).toThrow()
 	})
 })
 
@@ -154,11 +151,12 @@ describe('updateImportMappingSchema', () => {
 	it('accepts valid mapping', () => {
 		const result = updateImportMappingSchema.parse({
 			mapping: {
-				objectType: 'task',
-				columns: [{ sourceColumn: 'Name', targetField: 'title' }],
+				typeMappings: [
+					{ objectType: 'task', columns: [{ sourceColumn: 'Name', targetField: 'title' }] },
+				],
 			},
 		})
-		expect(result.mapping.objectType).toBe('task')
+		expect(result.mapping.typeMappings[0]?.objectType).toBe('task')
 	})
 
 	it('rejects missing mapping', () => {

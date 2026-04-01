@@ -2,6 +2,8 @@ import type { ImportMappingInput, ImportResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 export function useImport(id: string | undefined, workspaceId: string) {
 	return useQuery({
@@ -28,13 +30,9 @@ export function useCreateImport(workspaceId: string) {
 }
 
 export function useUpdateImportMapping(workspaceId: string) {
-	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: ({ id, mapping }: { id: string; mapping: ImportMappingInput }) =>
 			api.imports.updateMapping(id, mapping, workspaceId),
-		onSuccess: (data) => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.imports.detail(data.id) })
-		},
 	})
 }
 
@@ -48,4 +46,50 @@ export function useConfirmImport(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 		},
 	})
+}
+
+export function useImportToast(workspaceId: string) {
+	const [activeImportId, setActiveImportId] = useState<string | undefined>()
+	const toastId = useRef<string | number | undefined>()
+	const prevStatus = useRef<string | undefined>()
+
+	const { data: importData } = useImport(activeImportId, workspaceId)
+
+	useEffect(() => {
+		if (!importData || !activeImportId) return
+
+		const { status, totalRows, processedRows, successCount, errorCount, fileName } = importData
+		const progress = totalRows ? Math.round((processedRows / totalRows) * 100) : 0
+
+		if (status === 'importing') {
+			const message = `Importing ${fileName}... ${progress}%`
+			if (toastId.current) {
+				toast.loading(message, { id: toastId.current })
+			} else {
+				toastId.current = toast.loading(message)
+			}
+		}
+
+		if ((status === 'completed' || status === 'failed') && prevStatus.current !== status) {
+			// Dismiss the loading toast
+			if (toastId.current) {
+				toast.dismiss(toastId.current)
+				toastId.current = undefined
+			}
+
+			if (status === 'completed') {
+				const parts = [`${successCount} objects created`]
+				if (errorCount > 0) parts.push(`${errorCount} failed`)
+				toast.success(`Import complete: ${parts.join(', ')}`)
+			} else {
+				toast.error(`Import failed: ${errorCount} errors`)
+			}
+
+			setActiveImportId(undefined)
+		}
+
+		prevStatus.current = status
+	}, [importData, activeImportId])
+
+	return { startTracking: setActiveImportId }
 }

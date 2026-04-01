@@ -20,20 +20,26 @@ import {
 	useImport,
 	useUpdateImportMapping,
 } from '@/hooks/use-imports'
-import type { ColumnMappingInput, ImportMappingInput, ImportResponse } from '@/lib/api'
+import type {
+	ColumnMappingInput,
+	ImportMappingInput,
+	RelationshipMappingInput,
+	TypeMappingInput,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { CheckCircle, FileUp, Loader2, Upload, XCircle } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileUp, Link2, Loader2, Plus, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-type Step = 'upload' | 'mapping' | 'progress'
+type Step = 'upload' | 'mapping'
 
 interface ImportDialogProps {
 	open: boolean
 	onOpenChange: (open: boolean) => void
+	onImportStarted?: (importId: string) => void
 }
 
-export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
+export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDialogProps) {
 	const { workspaceId, workspace } = useWorkspace()
 	const [step, setStep] = useState<Step>('upload')
 	const [importId, setImportId] = useState<string | undefined>()
@@ -67,9 +73,10 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
 
 	const handleConfirm = useCallback(async () => {
 		if (!importId) return
-		setStep('progress')
 		await confirmImport.mutateAsync(importId)
-	}, [importId, confirmImport])
+		onImportStarted?.(importId)
+		onOpenChange(false)
+	}, [importId, confirmImport, onImportStarted, onOpenChange])
 
 	const handleMappingUpdate = useCallback(
 		async (mapping: ImportMappingInput) => {
@@ -90,7 +97,6 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
 						{step === 'upload' &&
 							'Upload a CSV or JSON file to import objects into your workspace.'}
 						{step === 'mapping' && 'Review and adjust how columns map to object fields.'}
-						{step === 'progress' && 'Importing objects...'}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -106,10 +112,6 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
 						onMappingUpdate={handleMappingUpdate}
 						isUpdating={updateMapping.isPending}
 					/>
-				)}
-
-				{step === 'progress' && (
-					<ProgressStep importRecord={importRecord} onClose={() => onOpenChange(false)} />
 				)}
 			</DialogContent>
 		</Dialog>
@@ -208,75 +210,189 @@ function MappingStep({
 	const settings = workspace.settings as {
 		statuses?: Record<string, string[]>
 		field_definitions?: Record<string, { name: string; type: string }[]>
+		display_names?: Record<string, string>
+		relationship_types?: string[]
 	}
 
-	// Build list of available target fields
-	const targetOptions = useMemo(() => {
-		const options = [
-			{ value: 'title', label: 'Title' },
-			{ value: 'content', label: 'Content' },
-			{ value: 'status', label: 'Status' },
-			{ value: 'owner', label: 'Owner' },
-			{ value: 'type', label: 'Type' },
-			{ value: '__skip__', label: 'Skip' },
-		]
-
-		// Add metadata fields from all types
-		const fieldDefs = settings.field_definitions ?? {}
-		const seen = new Set<string>()
-		for (const typeDefs of Object.values(fieldDefs)) {
-			if (Array.isArray(typeDefs)) {
-				for (const fd of typeDefs) {
-					if (!seen.has(fd.name)) {
-						options.push({ value: `metadata.${fd.name}`, label: fd.name })
-						seen.add(fd.name)
-					}
-				}
-			}
-		}
-
-		return options
+	// Valid object types from workspace settings
+	const validTypes = useMemo(() => {
+		const statuses = settings.statuses ?? {}
+		return Object.keys(statuses)
 	}, [settings])
 
-	// Local mapping state for editing
-	const [localColumns, setLocalColumns] = useState<ColumnMappingInput[]>(mapping?.columns ?? [])
-	const isFirstRender = useRef(true)
+	const displayNames = settings.display_names ?? {}
+	const relationshipTypes = settings.relationship_types ?? [
+		'informs',
+		'breaks_into',
+		'blocks',
+		'relates_to',
+		'duplicates',
+	]
 
-	const handleTargetChange = useCallback((sourceColumn: string, newTarget: string) => {
-		setLocalColumns((prev) =>
-			prev.map((col) =>
-				col.sourceColumn === sourceColumn
-					? {
-							...col,
-							targetField: newTarget === '__skip__' ? `metadata.${col.sourceColumn}` : newTarget,
-							skip: newTarget === '__skip__',
-						}
-					: col,
-			),
-		)
+	// ── Local state for type mappings ─────────────────────────────────
+	const [typeMappings, setTypeMappings] = useState<TypeMappingInput[]>(mapping?.typeMappings ?? [])
+
+	// ── Local state for relationships ─────────────────────────────────
+	const [localRelationships, setLocalRelationships] = useState<RelationshipMappingInput[]>(
+		mapping?.relationships ?? [],
+	)
+	const [relSectionOpen, setRelSectionOpen] = useState((mapping?.relationships ?? []).length > 0)
+
+	const isFirstRender = useRef(true)
+	const lastSentMapping = useRef('')
+
+	// Get target field options for a specific object type
+	const getTargetOptions = useCallback(
+		(objectType: string) => {
+			const options = [
+				{ value: 'title', label: 'Title' },
+				{ value: 'content', label: 'Content' },
+				{ value: 'status', label: 'Status' },
+				{ value: 'owner', label: 'Owner' },
+				{ value: '__skip__', label: 'Skip' },
+			]
+
+			const fieldDefs = settings.field_definitions ?? {}
+			const typeDefs = fieldDefs[objectType]
+			if (Array.isArray(typeDefs)) {
+				for (const fd of typeDefs) {
+					options.push({ value: `metadata.${fd.name}`, label: fd.name })
+				}
+			}
+
+			return options
+		},
+		[settings],
+	)
+
+	const handleTargetChange = useCallback(
+		(typeMappingIndex: number, sourceColumn: string, newTarget: string) => {
+			setTypeMappings((prev) =>
+				prev.map((tm, idx) =>
+					idx === typeMappingIndex
+						? {
+								...tm,
+								columns: tm.columns.map((col) =>
+									col.sourceColumn === sourceColumn
+										? {
+												...col,
+												targetField:
+													newTarget === '__skip__' ? `metadata.${col.sourceColumn}` : newTarget,
+												skip: newTarget === '__skip__',
+											}
+										: col,
+								),
+							}
+						: tm,
+				),
+			)
+		},
+		[],
+	)
+
+	const handleTypeChange = useCallback(
+		(typeMappingIndex: number, newType: string) => {
+			setTypeMappings((prev) =>
+				prev.map((tm, idx) =>
+					idx === typeMappingIndex
+						? {
+								...tm,
+								objectType: newType,
+								defaultStatus: settings.statuses?.[newType]?.[0],
+							}
+						: tm,
+				),
+			)
+		},
+		[settings],
+	)
+
+	const handleAddType = useCallback(() => {
+		if (!preview) return
+		const usedTypes = new Set(typeMappings.map((tm) => tm.objectType))
+		const newType = validTypes.find((t) => !usedTypes.has(t)) ?? validTypes[0] ?? ''
+		const columns: ColumnMappingInput[] = preview.columns
+			.filter((col) => col !== '')
+			.map((col) => ({
+				sourceColumn: col,
+				targetField: `metadata.${normalize(col)}`,
+				transform: 'none' as const,
+				skip: true,
+			}))
+		setTypeMappings((prev) => [
+			...prev,
+			{
+				objectType: newType,
+				columns,
+				defaultStatus: settings.statuses?.[newType]?.[0],
+			},
+		])
+	}, [preview, typeMappings, validTypes, settings])
+
+	const handleRemoveType = useCallback((index: number) => {
+		setTypeMappings((prev) => prev.filter((_, i) => i !== index))
 	}, [])
 
-	// Save mapping on changes (skip initial render)
+	// Build the full mapping object from local state
+	const buildMapping = useCallback(
+		(): ImportMappingInput => ({
+			typeMappings,
+			relationships: localRelationships,
+		}),
+		[typeMappings, localRelationships],
+	)
+
+	// Save mapping on changes (skip initial render, deduplicate identical updates)
 	useEffect(() => {
 		if (!mapping) return
 		if (isFirstRender.current) {
 			isFirstRender.current = false
 			return
 		}
-		const updated: ImportMappingInput = {
-			...mapping,
-			columns: localColumns,
-		}
-		const timer = setTimeout(() => onMappingUpdate(updated), 500)
+		const updated = buildMapping()
+		const serialized = JSON.stringify(updated)
+		if (serialized === lastSentMapping.current) return
+
+		const timer = setTimeout(() => {
+			lastSentMapping.current = serialized
+			onMappingUpdate(updated)
+		}, 500)
 		return () => clearTimeout(timer)
-	}, [localColumns, mapping, onMappingUpdate])
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excluding `mapping` to avoid refetch loop
+	}, [typeMappings, localRelationships, buildMapping, onMappingUpdate])
+
+	// Relationship handlers
+	const configuredTypes = useMemo(() => typeMappings.map((tm) => tm.objectType), [typeMappings])
+
+	const handleAddRelationship = useCallback(() => {
+		const firstType = configuredTypes[0] ?? ''
+		const secondType = configuredTypes[1] ?? configuredTypes[0] ?? ''
+		const firstRelType = relationshipTypes.find((rt) => rt !== '') ?? 'relates_to'
+		setLocalRelationships((prev) => [
+			...prev,
+			{
+				sourceType: firstType,
+				relationshipType: firstRelType,
+				targetType: secondType,
+			},
+		])
+		setRelSectionOpen(true)
+	}, [configuredTypes, relationshipTypes])
+
+	const handleUpdateRelationship = useCallback(
+		(index: number, field: keyof RelationshipMappingInput, value: string) => {
+			setLocalRelationships((prev) =>
+				prev.map((rel, i) => (i === index ? { ...rel, [field]: value } : rel)),
+			)
+		},
+		[],
+	)
+
+	const handleRemoveRelationship = useCallback((index: number) => {
+		setLocalRelationships((prev) => prev.filter((_, i) => i !== index))
+	}, [])
 
 	if (!mapping || !preview) return null
-
-	const objectType =
-		typeof mapping.objectType === 'string'
-			? mapping.objectType
-			: `Multiple (via "${mapping.objectType.column}" column)`
 
 	return (
 		<div className="space-y-4">
@@ -287,56 +403,142 @@ function MappingStep({
 					<span className="font-medium">{preview.totalRows}</span>
 				</div>
 				<div>
-					<span className="text-muted-foreground">Type:</span>{' '}
-					<span className="font-medium">{objectType}</span>
-				</div>
-				<div>
 					<span className="text-muted-foreground">File:</span>{' '}
 					<span className="font-medium">{importRecord.fileName}</span>
 				</div>
 			</div>
 
-			{/* Column mapping table */}
-			<div className="border rounded-lg overflow-hidden">
-				<table className="w-full text-sm">
-					<thead>
-						<tr className="bg-muted/50">
-							<th className="text-left px-3 py-2 font-medium">Source Column</th>
-							<th className="text-left px-3 py-2 font-medium">Maps To</th>
-							<th className="text-left px-3 py-2 font-medium">Sample</th>
-						</tr>
-					</thead>
-					<tbody>
-						{localColumns.map((col) => {
-							const sampleValue = preview.sampleRows[0]?.[col.sourceColumn] ?? ''
-							return (
-								<tr key={col.sourceColumn} className="border-t">
-									<td className="px-3 py-2 font-mono text-xs">{col.sourceColumn}</td>
-									<td className="px-3 py-2">
-										<Select
-											value={col.skip ? '__skip__' : col.targetField}
-											onValueChange={(v) => handleTargetChange(col.sourceColumn, v)}
-										>
-											<SelectTrigger>
-												<SelectValue />
-											</SelectTrigger>
-											<SelectContent>
-												{targetOptions.map((opt) => (
-													<SelectItem key={opt.value} value={opt.value}>
-														{opt.label}
-													</SelectItem>
-												))}
-											</SelectContent>
-										</Select>
-									</td>
-									<td className="px-3 py-2 text-xs text-muted-foreground truncate max-w-[150px]">
-										{sampleValue}
-									</td>
-								</tr>
-							)
-						})}
-					</tbody>
-				</table>
+			{/* Type mappings */}
+			<div className="space-y-3">
+				<div className="flex items-center justify-between">
+					<span className="text-sm font-medium">Object Types</span>
+					<Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={handleAddType}>
+						<Plus size={12} />
+						Add type
+					</Button>
+				</div>
+
+				{typeMappings.map((tm, tmIndex) => (
+					<TypeMappingSection
+						key={tmIndex}
+						typeMapping={tm}
+						typeMappingIndex={tmIndex}
+						validTypes={validTypes}
+						displayNames={displayNames}
+						targetOptions={getTargetOptions(tm.objectType)}
+						sampleRows={preview.sampleRows}
+						canRemove={typeMappings.length > 1}
+						onTypeChange={handleTypeChange}
+						onTargetChange={handleTargetChange}
+						onRemove={handleRemoveType}
+					/>
+				))}
+			</div>
+
+			{/* Relationships section */}
+			<div className="border rounded-lg">
+				<div className="flex items-center justify-between w-full px-3 py-2 text-sm font-medium">
+					<button
+						type="button"
+						className="flex items-center gap-2 hover:text-accent transition-colors"
+						onClick={() => setRelSectionOpen((prev) => !prev)}
+					>
+						{relSectionOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+						<Link2 size={14} />
+						Relationships
+						{localRelationships.length > 0 && (
+							<span className="text-xs bg-muted px-1.5 py-0.5 rounded">
+								{localRelationships.length}
+							</span>
+						)}
+					</button>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-6 px-2 text-xs"
+						onClick={handleAddRelationship}
+					>
+						<Plus size={12} />
+						Add
+					</Button>
+				</div>
+
+				{relSectionOpen && localRelationships.length > 0 && (
+					<div className="border-t px-3 py-2 space-y-2">
+						{localRelationships.map((rel, idx) => (
+							<div key={idx} className="flex items-center gap-2 text-sm">
+								<Select
+									value={rel.sourceType}
+									onValueChange={(v) => handleUpdateRelationship(idx, 'sourceType', v)}
+								>
+									<SelectTrigger className="flex-1">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{configuredTypes
+											.filter((t) => t !== '')
+											.map((t) => (
+												<SelectItem key={t} value={t}>
+													{displayNames[t] ?? t}
+												</SelectItem>
+											))}
+									</SelectContent>
+								</Select>
+
+								<Select
+									value={rel.relationshipType}
+									onValueChange={(v) => handleUpdateRelationship(idx, 'relationshipType', v)}
+								>
+									<SelectTrigger className="flex-1">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{relationshipTypes
+											.filter((rt) => rt !== '')
+											.map((rt) => (
+												<SelectItem key={rt} value={rt}>
+													{rt.replace(/_/g, ' ')}
+												</SelectItem>
+											))}
+									</SelectContent>
+								</Select>
+
+								<Select
+									value={rel.targetType}
+									onValueChange={(v) => handleUpdateRelationship(idx, 'targetType', v)}
+								>
+									<SelectTrigger className="flex-1">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{configuredTypes
+											.filter((t) => t !== '')
+											.map((t) => (
+												<SelectItem key={t} value={t}>
+													{displayNames[t] ?? t}
+												</SelectItem>
+											))}
+									</SelectContent>
+								</Select>
+
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-7 w-7 p-0 shrink-0"
+									onClick={() => handleRemoveRelationship(idx)}
+								>
+									<X size={14} />
+								</Button>
+							</div>
+						))}
+					</div>
+				)}
+
+				{relSectionOpen && localRelationships.length === 0 && (
+					<div className="border-t px-3 py-4 text-center text-xs text-muted-foreground">
+						No relationships configured. Click "Add" to link objects together.
+					</div>
+				)}
 			</div>
 
 			<p
@@ -350,102 +552,123 @@ function MappingStep({
 			</p>
 
 			<DialogFooter>
-				<Button onClick={onConfirm}>Import {preview.totalRows} objects</Button>
+				<Button onClick={onConfirm}>
+					Import {preview.totalRows} rows
+					{typeMappings.length > 1 ? ` \u00d7 ${typeMappings.length} types` : ''}
+					{localRelationships.length > 0 ? ' + relationships' : ''}
+				</Button>
 			</DialogFooter>
 		</div>
 	)
 }
 
-// ── Progress Step ───────────────────────────────────────────────────────
+// ── Type Mapping Section ───────────────────────────────────────────────
 
-function ProgressStep({
-	importRecord,
-	onClose,
+function TypeMappingSection({
+	typeMapping,
+	typeMappingIndex,
+	validTypes,
+	displayNames,
+	targetOptions,
+	sampleRows,
+	canRemove,
+	onTypeChange,
+	onTargetChange,
+	onRemove,
 }: {
-	importRecord: ImportResponse | undefined
-	onClose: () => void
+	typeMapping: TypeMappingInput
+	typeMappingIndex: number
+	validTypes: string[]
+	displayNames: Record<string, string>
+	targetOptions: { value: string; label: string }[]
+	sampleRows: Record<string, string>[]
+	canRemove: boolean
+	onTypeChange: (index: number, newType: string) => void
+	onTargetChange: (typeMappingIndex: number, sourceColumn: string, newTarget: string) => void
+	onRemove: (index: number) => void
 }) {
-	if (!importRecord) {
-		return (
-			<div className="flex items-center justify-center py-8">
-				<Loader2 size={24} className="animate-spin text-muted-foreground" />
-			</div>
-		)
-	}
-
-	const { status, totalRows, processedRows, successCount, errorCount, errors } = importRecord
-	const isComplete = status === 'completed' || status === 'failed'
-	const progress = totalRows ? Math.round((processedRows / totalRows) * 100) : 0
-
 	return (
-		<div className="space-y-4">
-			{/* Progress bar */}
-			<div className="space-y-2">
-				<div className="flex justify-between text-sm">
-					<span className="text-muted-foreground">
-						{isComplete ? 'Complete' : `Processing... ${processedRows}/${totalRows}`}
-					</span>
-					<span className="font-medium">{progress}%</span>
-				</div>
-				<div className="h-2 bg-muted rounded-full overflow-hidden">
-					<div
-						className={cn(
-							'h-full rounded-full transition-all duration-300',
-							status === 'failed' ? 'bg-destructive' : 'bg-accent',
-						)}
-						style={{ width: `${progress}%` }}
-					/>
-				</div>
+		<div className="border rounded-lg overflow-hidden">
+			{/* Type header */}
+			<div className="flex items-center gap-2 px-3 py-2 bg-muted/50">
+				<Select
+					value={typeMapping.objectType}
+					onValueChange={(v) => onTypeChange(typeMappingIndex, v)}
+				>
+					<SelectTrigger className="w-fit">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{validTypes
+							.filter((t) => t !== '')
+							.map((t) => (
+								<SelectItem key={t} value={t}>
+									{displayNames[t] ?? t}
+								</SelectItem>
+							))}
+					</SelectContent>
+				</Select>
+				{canRemove && (
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 w-7 p-0 shrink-0 ml-auto"
+						onClick={() => onRemove(typeMappingIndex)}
+					>
+						<X size={14} />
+					</Button>
+				)}
 			</div>
 
-			{/* Results */}
-			{isComplete && (
-				<div className="space-y-3">
-					<div className="flex gap-4 text-sm">
-						{successCount > 0 && (
-							<div className="flex items-center gap-1 text-green-600 dark:text-green-400">
-								<CheckCircle size={14} />
-								{successCount} created
-							</div>
-						)}
-						{errorCount > 0 && (
-							<div className="flex items-center gap-1 text-destructive">
-								<XCircle size={14} />
-								{errorCount} failed
-							</div>
-						)}
-					</div>
-
-					{/* Error details */}
-					{errors && errors.length > 0 && (
-						<div className="rounded border bg-muted/30 p-3 max-h-40 overflow-y-auto">
-							<p className="text-xs font-medium mb-2">Errors:</p>
-							{errors.slice(0, 20).map((err) => (
-								<p key={`row-${err.row}`} className="text-xs text-muted-foreground">
-									Row {err.row}: {err.message}
-								</p>
-							))}
-							{errors.length > 20 && (
-								<p className="text-xs text-muted-foreground mt-1">
-									...and {errors.length - 20} more
-								</p>
-							)}
-						</div>
-					)}
-				</div>
-			)}
-
-			{!isComplete && (
-				<div className="flex items-center justify-center py-4">
-					<Loader2 size={20} className="animate-spin text-muted-foreground" />
-				</div>
-			)}
-
-			<DialogFooter>
-				<Button variant={isComplete ? 'default' : 'outline'} onClick={onClose}>
-					{isComplete ? 'Done' : 'Close'}
-				</Button>
-			</DialogFooter>
+			{/* Column mapping table */}
+			<table className="w-full text-sm">
+				<thead>
+					<tr className="bg-muted/30">
+						<th className="text-left px-3 py-2 font-medium">Source Column</th>
+						<th className="text-left px-3 py-2 font-medium">Maps To</th>
+						<th className="text-left px-3 py-2 font-medium">Sample</th>
+					</tr>
+				</thead>
+				<tbody>
+					{typeMapping.columns.map((col) => {
+						const sampleValue = sampleRows[0]?.[col.sourceColumn] ?? ''
+						return (
+							<tr key={col.sourceColumn} className="border-t">
+								<td className="px-3 py-2 font-mono text-xs">{col.sourceColumn}</td>
+								<td className="px-3 py-2">
+									<Select
+										value={col.skip ? '__skip__' : col.targetField}
+										onValueChange={(v) => onTargetChange(typeMappingIndex, col.sourceColumn, v)}
+									>
+										<SelectTrigger>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{targetOptions.map((opt) => (
+												<SelectItem key={opt.value} value={opt.value}>
+													{opt.label}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</td>
+								<td className="px-3 py-2 text-xs text-muted-foreground truncate max-w-[150px]">
+									{sampleValue}
+								</td>
+							</tr>
+						)
+					})}
+				</tbody>
+			</table>
 		</div>
 	)
+}
+
+// ── Helper ──────────────────────────────────────────────────────────────
+
+function normalize(s: string): string {
+	return s
+		.toLowerCase()
+		.trim()
+		.replace(/[\s-]+/g, '_')
 }
