@@ -297,6 +297,65 @@ app.openapi(resumeSessionRoute, (async (c) => {
 	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof resumeSessionRoute, Env>)
 
+// POST /:id/retry - Retry a failed or timed-out session
+const retrySessionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/retry',
+	tags: ['Sessions'],
+	summary: 'Retry a failed or timed-out session',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+	},
+	responses: {
+		201: {
+			content: { 'application/json': { schema: sessionResponseSchema } },
+			description: 'New session created from retry',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not in a retryable state',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(retrySessionRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const retryableStatuses = ['failed', 'timeout']
+	if (!retryableStatuses.includes(session.status)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'Session is not in a retryable state (must be failed or timeout)',
+			),
+			400,
+		)
+	}
+
+	const newSession = await sessionManager.createSession(workspaceId, {
+		actorId: session.actorId,
+		actionPrompt: session.actionPrompt,
+		config: session.config as Record<string, unknown> | undefined,
+		triggerId: session.triggerId ?? undefined,
+		createdBy: actorId,
+		autoStart: true,
+	})
+
+	return c.json(serialize(newSession) as z.infer<typeof sessionResponseSchema>, 201)
+}) as RouteHandler<typeof retrySessionRoute, Env>)
+
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({
 	method: 'get',

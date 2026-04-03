@@ -16,7 +16,7 @@ import { useEvents } from '@/hooks/use-events'
 import {
 	useActiveSessionsForActor,
 	useActorSessions,
-	useCreateSession,
+	useRetrySession,
 	useSessionErrorLog,
 	useSessionLatestLog,
 } from '@/hooks/use-sessions'
@@ -30,6 +30,7 @@ import {
 	ChevronRight,
 	Clock,
 	MinusCircle,
+	RefreshCw,
 	XCircle,
 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
@@ -207,12 +208,7 @@ export function AgentDocumentView({
 				<Section title="Sessions">
 					<div className="space-y-1">
 						{pastSessions.map((session) => (
-							<SessionRow
-								key={session.id}
-								session={session}
-								workspaceId={workspaceId}
-								agentId={agent.id}
-							/>
+							<SessionRow key={session.id} session={session} workspaceId={workspaceId} />
 						))}
 					</div>
 				</Section>
@@ -386,16 +382,14 @@ function SessionStatusIcon({ status }: { status: string }) {
 function SessionRow({
 	session,
 	workspaceId,
-	agentId,
 }: {
 	session: SessionResponse
 	workspaceId: string
-	agentId: string
 }) {
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
 	const [showError, setShowError] = useState(false)
-	const createSession = useCreateSession(workspaceId)
+	const retrySession = useRetrySession(workspaceId)
 
 	const result = session.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
@@ -430,16 +424,12 @@ function SessionRow({
 						</button>
 						<button
 							type="button"
-							className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer"
-							onClick={() =>
-								createSession.mutate({
-									actor_id: agentId,
-									action_prompt: session.actionPrompt,
-								})
-							}
-							disabled={createSession.isPending}
+							className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors shrink-0 cursor-pointer"
+							onClick={() => retrySession.mutate(session.id)}
+							disabled={retrySession.isPending}
 						>
-							{createSession.isPending ? 'Retrying…' : 'Retry'}
+							<RefreshCw size={12} className={retrySession.isPending ? 'animate-spin' : ''} />
+							{retrySession.isPending ? 'Retrying…' : 'Retry'}
 						</button>
 					</>
 				)}

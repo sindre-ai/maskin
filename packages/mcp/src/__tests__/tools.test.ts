@@ -36,6 +36,7 @@ const ALL_TOOL_NAMES = [
 	'stop_session',
 	'pause_session',
 	'resume_session',
+	'retry_session',
 	'run_agent',
 	'create_notification',
 	'list_notifications',

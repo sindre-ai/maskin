@@ -393,6 +393,14 @@ export const tools = {
 			id: z.string().uuid(),
 		}),
 	},
+	retry_session: {
+		description:
+			'Retry a failed or timed-out session. Creates a new session with the same parameters (actor, prompt, config, trigger) and starts it immediately.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('The session ID to retry'),
+		}),
+	},
 	run_agent: {
 		description:
 			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session + get_session_logs separately if you need non-blocking execution.',

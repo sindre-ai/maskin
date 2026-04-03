@@ -228,6 +228,8 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<SessionLogResponse[]>(`/sessions/${id}/logs${qs}`, { workspaceId })
 		},
+		retry: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/retry`, { method: 'POST', workspaceId }),
 	},
 
 	events: {

@@ -198,6 +198,84 @@ describe('Sessions Routes', () => {
 		})
 	})
 
+	describe('POST /api/sessions/:id/retry', () => {
+		it('returns 201 when retrying a failed session', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'failed' })
+			const newSession = buildSession({ workspaceId: wsId, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(newSession)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/retry`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.id).toBe(newSession.id)
+			expect(sessionManager.createSession).toHaveBeenCalledWith(wsId, {
+				actorId: session.actorId,
+				actionPrompt: session.actionPrompt,
+				config: session.config,
+				triggerId: undefined,
+				createdBy: 'test-actor-id',
+				autoStart: true,
+			})
+		})
+
+		it('returns 201 when retrying a timed-out session', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'timeout' })
+			const newSession = buildSession({ workspaceId: wsId, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(newSession)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/retry`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(201)
+		})
+
+		it('returns 400 when session is running', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'running' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/retry`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('not in a retryable state')
+		})
+
+		it('returns 404 when session not found', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/sessions/00000000-0000-0000-0000-000000000099/retry', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
 	describe('GET /api/sessions/:id/logs', () => {
 		it('returns 200 with session logs', async () => {
 			const session = buildSession({ workspaceId: wsId })
