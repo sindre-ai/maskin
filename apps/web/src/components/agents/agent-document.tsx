@@ -356,7 +356,7 @@ function ActiveSessionCard({
 	const duration = useDuration(session.startedAt)
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2">
+		<div className="flex items-center gap-2.5 rounded-md border border-border bg-muted px-3 py-2">
 			<Spinner />
 			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
 			{latestLog && (

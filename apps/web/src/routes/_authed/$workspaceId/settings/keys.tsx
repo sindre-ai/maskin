@@ -153,7 +153,7 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 						value={pasteValue}
 						onChange={(e) => setPasteValue(e.target.value)}
 						placeholder="Paste the contents of .credentials.json here..."
-						className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono min-h-[80px] resize-y focus:outline-none focus:ring-1 focus:ring-accent"
+						className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono min-h-[80px] resize-y focus:outline-none focus:ring-1 focus:ring-ring"
 					/>
 					{(parseError || importMutation.isError) && (
 						<p className="text-xs text-error">
