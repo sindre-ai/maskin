@@ -19,6 +19,7 @@ import {
 	useSession,
 	useSessionErrorLog,
 	useSessionLatestLog,
+	useSessionStdoutLogs,
 	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
@@ -314,5 +315,56 @@ describe('useActorSessions', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Server error')
+	})
+})
+
+describe('useSessionStdoutLogs', () => {
+	it('returns joined stdout content', async () => {
+		const logs = [
+			buildLog({ id: 1, stream: 'stdout', content: 'Line 1' }),
+			buildLog({ id: 2, stream: 'stdout', content: 'Line 2' }),
+			buildLog({ id: 3, stream: 'stdout', content: 'Line 3' }),
+		]
+		vi.mocked(api.sessions.logs).mockResolvedValue(logs)
+
+		const { result } = renderHook(() => useSessionStdoutLogs('session-1', workspaceId, true), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toBe('Line 1\nLine 2\nLine 3')
+		expect(api.sessions.logs).toHaveBeenCalledWith('session-1', workspaceId, {
+			limit: '100',
+			stream: 'stdout',
+		})
+	})
+
+	it('returns null when no logs', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+
+		const { result } = renderHook(() => useSessionStdoutLogs('session-1', workspaceId, true), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toBeNull()
+	})
+
+	it('is not enabled when sessionId is null', async () => {
+		const { result } = renderHook(() => useSessionStdoutLogs(null, workspaceId, true), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.isFetching).toBe(false)
+		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+
+	it('is not enabled when enabled flag is false', async () => {
+		const { result } = renderHook(() => useSessionStdoutLogs('session-1', workspaceId, false), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.isFetching).toBe(false)
+		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})
 })
