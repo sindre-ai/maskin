@@ -50,8 +50,14 @@ export function useRetrySession(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (sessionId: string) => api.sessions.retry(sessionId, workspaceId),
-		onSuccess: () => {
+		onSuccess: (result) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.byActor(workspaceId, result.actorId),
+			})
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.byActorAll(workspaceId, result.actorId),
+			})
 		},
 	})
 }

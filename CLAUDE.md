@@ -123,6 +123,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `POST /api/sessions/:id/stop` — stop session
 - `POST /api/sessions/:id/pause` — pause & snapshot session
 - `POST /api/sessions/:id/resume` — resume paused session
+- `POST /api/sessions/:id/retry` — retry a failed or timed-out session
 - `GET /api/sessions/:id/logs` — paginated log history
 - `GET /api/sessions/:id/logs/stream` — SSE stream of live logs
 

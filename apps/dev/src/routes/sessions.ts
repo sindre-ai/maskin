@@ -344,16 +344,21 @@ app.openapi(retrySessionRoute, (async (c) => {
 		)
 	}
 
-	const newSession = await sessionManager.createSession(workspaceId, {
-		actorId: session.actorId,
-		actionPrompt: session.actionPrompt,
-		config: session.config as Record<string, unknown> | undefined,
-		triggerId: session.triggerId ?? undefined,
-		createdBy: actorId,
-		autoStart: true,
-	})
+	try {
+		const newSession = await sessionManager.createSession(workspaceId, {
+			actorId: session.actorId,
+			actionPrompt: session.actionPrompt,
+			config: session.config as Record<string, unknown> | undefined,
+			triggerId: session.triggerId ?? undefined,
+			createdBy: actorId,
+			autoStart: true,
+		})
 
-	return c.json(serialize(newSession) as z.infer<typeof sessionResponseSchema>, 201)
+		return c.json(serialize(newSession) as z.infer<typeof sessionResponseSchema>, 201)
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		return c.json(createApiError('BAD_REQUEST', message), 400)
+	}
 }) as RouteHandler<typeof retrySessionRoute, Env>)
 
 // GET /:id/logs - Paginated log history

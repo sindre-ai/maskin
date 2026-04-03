@@ -247,6 +247,40 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(201)
 		})
 
+		it('forwards config and triggerId from the original session', async () => {
+			const triggerId = '00000000-0000-0000-0000-000000000010'
+			const config = { timeout_seconds: 1200, runtime: 'codex' }
+			const session = buildSession({
+				workspaceId: wsId,
+				status: 'failed',
+				triggerId,
+				config,
+			})
+			const newSession = buildSession({ workspaceId: wsId, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(newSession)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/retry`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			expect(sessionManager.createSession).toHaveBeenCalledWith(wsId, {
+				actorId: session.actorId,
+				actionPrompt: session.actionPrompt,
+				config,
+				triggerId,
+				createdBy: 'test-actor-id',
+				autoStart: true,
+			})
+		})
+
 		it('returns 400 when session is running', async () => {
 			const session = buildSession({ workspaceId: wsId, status: 'running' })
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
