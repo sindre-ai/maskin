@@ -6,9 +6,10 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { PageHeaderProvider } from '@/lib/page-header-context'
+import { ScrollContainerProvider } from '@/lib/scroll-container-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
 
@@ -47,6 +48,7 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
+	const scrollRef = useRef<HTMLDivElement>(null)
 	const [open, setOpenState] = useState(getInitialOpen)
 
 	const setOpen = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
@@ -72,9 +74,11 @@ function WorkspaceLayout() {
 					<AppSidebar />
 					<SidebarInset className="min-w-0">
 						<Header />
-						<div className="flex-1 overflow-auto p-8">
-							<Outlet />
-						</div>
+						<ScrollContainerProvider value={scrollRef}>
+							<div ref={scrollRef} className="flex-1 overflow-auto p-8">
+								<Outlet />
+							</div>
+						</ScrollContainerProvider>
 					</SidebarInset>
 				</SidebarProvider>
 			</PageHeaderProvider>
