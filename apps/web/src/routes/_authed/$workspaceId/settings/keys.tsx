@@ -94,7 +94,7 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 			</p>
 
 			{isConnected ? (
-				<div className="rounded-lg border border-border bg-bg-surface p-3 space-y-2">
+				<div className="rounded-lg border border-border bg-card p-3 space-y-2">
 					<div className="flex items-center justify-between">
 						<div className="flex items-center gap-2">
 							<div className="size-2 rounded-full bg-success" />
