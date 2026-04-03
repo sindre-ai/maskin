@@ -6,6 +6,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useTriggers } from '@/hooks/use-triggers'
 import type { TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { countBy } from '@/lib/count-by'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
@@ -21,25 +22,14 @@ function TriggersPage() {
 	const { data: actors } = useActors(workspaceId)
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 
-	const tabs = useMemo(() => {
-		const types = new Set((triggers ?? []).map((t) => t.type))
-		return [
-			{ label: 'All', value: undefined as string | undefined },
-			...[...types].map((t) => ({
-				label: t.charAt(0).toUpperCase() + t.slice(1),
-				value: t as string | undefined,
-			})),
-		]
-	}, [triggers])
+	const tabs: { label: string; value: string | undefined }[] = [
+		{ label: 'All', value: undefined },
+		{ label: 'Cron', value: 'cron' },
+		{ label: 'Event', value: 'event' },
+		{ label: 'Reminder', value: 'reminder' },
+	]
 
-	const counts = useMemo(() => {
-		const list = triggers ?? []
-		const c: Record<string, number> = { all: list.length }
-		for (const t of list) {
-			c[t.type] = (c[t.type] ?? 0) + 1
-		}
-		return c
-	}, [triggers])
+	const counts = useMemo(() => countBy(triggers ?? [], (t) => t.type), [triggers])
 
 	const filtered = useMemo(
 		() => (typeFilter ? (triggers ?? []).filter((t) => t.type === typeFilter) : (triggers ?? [])),

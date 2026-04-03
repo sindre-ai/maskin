@@ -10,6 +10,7 @@ import {
 	useUpdateNotification,
 } from '@/hooks/use-notifications'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { countBy } from '@/lib/count-by'
 import { resolveNavigationPath } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -47,13 +48,7 @@ function PulseDashboard() {
 		return activeNotifications.filter((n) => n.type === activeFilter)
 	}, [activeNotifications, activeFilter])
 
-	const counts = useMemo(() => {
-		const c: Record<string, number> = { all: activeNotifications.length }
-		for (const n of activeNotifications) {
-			c[n.type] = (c[n.type] ?? 0) + 1
-		}
-		return c
-	}, [activeNotifications])
+	const counts = useMemo(() => countBy(activeNotifications, (n) => n.type), [activeNotifications])
 
 	const handleAction = (
 		notification: NotificationResponse,
