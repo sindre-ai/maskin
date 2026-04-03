@@ -227,15 +227,23 @@ export function AgentDocumentView({
 				<CollapsibleContent>
 					{/* System Prompt */}
 					<Section title="System Prompt">
-						<Textarea
+						<textarea
 							value={systemPromptDraft}
 							onChange={(e) => {
 								setSystemPromptDraft(e.target.value)
 								setSystemPromptDirty(true)
+								e.target.style.height = 'auto'
+								e.target.style.height = `${e.target.scrollHeight}px`
 							}}
 							onBlur={handleSystemPromptBlur}
 							placeholder="Instructions for the agent..."
-							className="min-h-[120px] font-mono text-sm"
+							className="min-h-[120px] font-mono text-sm w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:text-sm resize-none overflow-hidden"
+							ref={(el) => {
+								if (el) {
+									el.style.height = 'auto'
+									el.style.height = `${el.scrollHeight}px`
+								}
+							}}
 						/>
 					</Section>
 
