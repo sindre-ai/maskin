@@ -212,7 +212,7 @@ export function LinkedObjects({
 	asTarget: RelationshipResponse[]
 }) {
 	const { workspaceId, workspace } = useWorkspace()
-	const { data: objectsResponse } = useObjects(workspaceId)
+	const { data: objectsResponse } = useObjects(workspaceId, { limit: '100' })
 	const allObjects = objectsResponse?.data ?? []
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, objectId)

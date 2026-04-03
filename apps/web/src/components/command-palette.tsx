@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 export function CommandPalette() {
 	const [open, setOpen] = useState(false)
 	const { workspaceId } = useWorkspace()
-	const { data: response } = useObjects(workspaceId)
+	const { data: response } = useObjects(workspaceId, { limit: '100' })
 	const objects = response?.data
 	const navigate = useNavigate()
 
