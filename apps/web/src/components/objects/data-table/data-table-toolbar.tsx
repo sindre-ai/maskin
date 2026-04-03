@@ -19,6 +19,7 @@ interface DataTableToolbarProps {
 	onColumnVisibilityChange: (columnId: string, visible: boolean) => void
 	// Tabs
 	tabs: Tab[]
+	counts?: Record<string, number>
 	typeFilter?: string
 	onTypeFilterChange: (value: string | undefined) => void
 	// Search
@@ -46,6 +47,7 @@ export function DataTableToolbar({
 	columnVisibility,
 	onColumnVisibilityChange,
 	tabs,
+	counts,
 	typeFilter,
 	onTypeFilterChange,
 	search,
@@ -100,6 +102,7 @@ export function DataTableToolbar({
 						onClick={() => onTypeFilterChange(tab.value)}
 					>
 						{tab.label}
+						{counts && ` (${counts[tab.value ?? 'all'] ?? 0})`}
 					</button>
 				))}
 			</div>
