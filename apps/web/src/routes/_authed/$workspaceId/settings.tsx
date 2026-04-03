@@ -21,11 +21,18 @@ function SettingsLayout() {
 	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 
-	const currentIndex = settingsNav.findIndex((item) =>
-		item.exact
+	// Iterate in reverse to prefer the most specific (deepest) fuzzy match
+	let currentIndex = -1
+	for (let i = settingsNav.length - 1; i >= 0; i--) {
+		const item = settingsNav[i]
+		const matches = item.exact
 			? !!matchRoute({ to: item.to, params: { workspaceId } })
-			: !!matchRoute({ to: item.to, params: { workspaceId }, fuzzy: true }),
-	)
+			: !!matchRoute({ to: item.to, params: { workspaceId }, fuzzy: true })
+		if (matches) {
+			currentIndex = i
+			break
+		}
+	}
 
 	const overscroll = useOverscrollNavigate(settingsNav, currentIndex, workspaceId)
 

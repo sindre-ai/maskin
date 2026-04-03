@@ -35,6 +35,8 @@ export function useOverscrollNavigate(
 	const directionRef = useRef<'next' | 'prev' | null>(null)
 	const decayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const navigatingRef = useRef(false)
+	const touchStartYRef = useRef<number | null>(null)
+	const lastTouchYRef = useRef<number | null>(null)
 
 	const hasNext = currentIndex >= 0 && currentIndex < pages.length - 1
 	const hasPrev = currentIndex > 0
@@ -55,20 +57,16 @@ export function useOverscrollNavigate(
 		setState(INITIAL_STATE)
 	}
 
-	useEffect(() => {
-		const el = scrollContainerRef?.current
-		if (!el) return
-
-		const handleWheel = (e: WheelEvent) => {
+	const handleDelta = useCallback(
+		(el: HTMLElement, deltaY: number, preventDefaultFn?: () => void) => {
 			if (navigatingRef.current) return
 
 			const hasOverflow = el.scrollHeight > el.clientHeight + 2
 			const atBottom = !hasOverflow || el.scrollHeight - el.scrollTop - el.clientHeight < 2
 			const atTop = !hasOverflow || el.scrollTop < 2
-			const scrollingDown = e.deltaY > 0
-			const scrollingUp = e.deltaY < 0
+			const scrollingDown = deltaY > 0
+			const scrollingUp = deltaY < 0
 
-			// Determine if we should accumulate
 			let dir: 'next' | 'prev' | null = null
 			if (atBottom && scrollingDown && hasNext) {
 				dir = 'next'
@@ -77,20 +75,18 @@ export function useOverscrollNavigate(
 			}
 
 			if (!dir) {
-				// If user scrolled away from boundary, reset
 				if (directionRef.current) reset()
 				return
 			}
 
-			// If direction changed, reset
 			if (directionRef.current && directionRef.current !== dir) {
 				reset()
 			}
 
-			e.preventDefault()
+			preventDefaultFn?.()
 
 			directionRef.current = dir
-			accumulatedRef.current += Math.abs(e.deltaY)
+			accumulatedRef.current += Math.abs(deltaY)
 
 			const progress = Math.min(accumulatedRef.current / THRESHOLD, 1)
 			const targetLabel =
@@ -98,11 +94,9 @@ export function useOverscrollNavigate(
 
 			setState({ direction: dir, progress, targetLabel: targetLabel ?? null })
 
-			// Clear existing decay timer
 			if (decayTimerRef.current) clearTimeout(decayTimerRef.current)
 			decayTimerRef.current = setTimeout(reset, DECAY_MS)
 
-			// Trigger navigation
 			if (progress >= 1) {
 				navigatingRef.current = true
 				if (decayTimerRef.current) clearTimeout(decayTimerRef.current)
@@ -119,15 +113,55 @@ export function useOverscrollNavigate(
 					})
 				}
 			}
+		},
+		[hasNext, hasPrev, currentIndex, pages, workspaceId, navigate, reset],
+	)
+
+	useEffect(() => {
+		const el = scrollContainerRef?.current
+		if (!el) return
+
+		const handleWheel = (e: WheelEvent) => {
+			handleDelta(el, e.deltaY, () => e.preventDefault())
+		}
+
+		const handleTouchStart = (e: TouchEvent) => {
+			const touch = e.touches[0]
+			if (touch) {
+				touchStartYRef.current = touch.clientY
+				lastTouchYRef.current = touch.clientY
+			}
+		}
+
+		const handleTouchMove = (e: TouchEvent) => {
+			const touch = e.touches[0]
+			if (!touch || lastTouchYRef.current === null) return
+
+			// Touch delta is inverted: swipe up (negative clientY change) = scroll down
+			const deltaY = lastTouchYRef.current - touch.clientY
+			lastTouchYRef.current = touch.clientY
+
+			handleDelta(el, deltaY, () => e.preventDefault())
+		}
+
+		const handleTouchEnd = () => {
+			touchStartYRef.current = null
+			lastTouchYRef.current = null
 		}
 
 		el.addEventListener('wheel', handleWheel, { passive: false })
+		el.addEventListener('touchstart', handleTouchStart, { passive: true })
+		el.addEventListener('touchmove', handleTouchMove, { passive: false })
+		el.addEventListener('touchend', handleTouchEnd)
 
 		return () => {
 			el.removeEventListener('wheel', handleWheel)
+			el.removeEventListener('touchstart', handleTouchStart)
+			el.removeEventListener('touchmove', handleTouchMove)
+			el.removeEventListener('touchend', handleTouchEnd)
 			if (decayTimerRef.current) clearTimeout(decayTimerRef.current)
 		}
-	}, [scrollContainerRef, hasNext, hasPrev, currentIndex, pages, workspaceId, navigate, reset])
+	}, [scrollContainerRef, handleDelta])
 
 	return state
 }
