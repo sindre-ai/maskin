@@ -29,7 +29,7 @@ export function OverscrollIndicator({
 					style={{ width: `${progress * 100}%` }}
 				/>
 				<div className="relative flex items-center gap-1.5 text-sm text-muted-foreground">
-					<Icon size={14} className={cn(isNext ? 'animate-bounce' : 'animate-bounce')} />
+					<Icon size={14} className="animate-bounce" />
 					<span>
 						Keep scrolling for <span className="font-medium text-foreground">{targetLabel}</span>
 					</span>

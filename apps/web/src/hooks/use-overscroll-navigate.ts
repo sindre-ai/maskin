@@ -15,6 +15,11 @@ interface OverscrollState {
 
 const THRESHOLD = 300
 const DECAY_MS = 500
+const INITIAL_STATE: OverscrollState = {
+	direction: null,
+	progress: 0,
+	targetLabel: null,
+}
 
 export function useOverscrollNavigate(
 	pages: PageDef[],
@@ -24,13 +29,7 @@ export function useOverscrollNavigate(
 	const scrollContainerRef = useScrollContainer()
 	const navigate = useNavigate()
 
-	const initialState: OverscrollState = {
-		direction: null,
-		progress: 0,
-		targetLabel: null,
-	}
-
-	const [state, setState] = useState<OverscrollState>(initialState)
+	const [state, setState] = useState<OverscrollState>(INITIAL_STATE)
 
 	const accumulatedRef = useRef(0)
 	const directionRef = useRef<'next' | 'prev' | null>(null)
@@ -53,7 +52,7 @@ export function useOverscrollNavigate(
 		navigatingRef.current = false
 		accumulatedRef.current = 0
 		directionRef.current = null
-		setState(initialState)
+		setState(INITIAL_STATE)
 	}
 
 	useEffect(() => {
@@ -63,8 +62,9 @@ export function useOverscrollNavigate(
 		const handleWheel = (e: WheelEvent) => {
 			if (navigatingRef.current) return
 
-			const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 2
-			const atTop = el.scrollTop < 2
+			const hasOverflow = el.scrollHeight > el.clientHeight + 2
+			const atBottom = !hasOverflow || el.scrollHeight - el.scrollTop - el.clientHeight < 2
+			const atTop = !hasOverflow || el.scrollTop < 2
 			const scrollingDown = e.deltaY > 0
 			const scrollingUp = e.deltaY < 0
 
@@ -118,7 +118,6 @@ export function useOverscrollNavigate(
 						})
 					})
 				}
-				reset()
 			}
 		}
 
