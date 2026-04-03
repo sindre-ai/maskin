@@ -181,7 +181,7 @@ export function AgentDocumentView({
 				<TypeBadge type="agent" />
 				<span className="flex items-center gap-1.5 text-xs">
 					<span
-						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
+						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-muted-foreground'}`}
 					/>
 					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
 				</span>

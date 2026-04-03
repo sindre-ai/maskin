@@ -11,7 +11,7 @@ export function StatusBadge({
 	onClick?: () => void
 	className?: string
 }) {
-	const colors = statusColors[status] ?? { bg: 'bg-zinc-700', text: 'text-zinc-300' }
+	const colors = statusColors[status] ?? { bg: 'bg-muted', text: 'text-muted-foreground' }
 
 	return (
 		<Badge

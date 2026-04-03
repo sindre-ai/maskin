@@ -103,7 +103,7 @@ export function AgentCreateForm({
 					agent
 				</span>
 				<span className="flex items-center gap-1.5 text-xs">
-					<span className="h-1.5 w-1.5 rounded-full bg-text-muted" />
+					<span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
 					<span className="text-muted-foreground">idle</span>
 				</span>
 			</div>
