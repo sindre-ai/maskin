@@ -618,7 +618,9 @@ export function TriggerForm({
 						enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
 					}`}
 				>
-					<span className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`} />
+					<span
+						className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-muted-foreground'}`}
+					/>
 					{enabled ? 'Enabled' : 'Disabled'}
 				</span>
 				<Button
