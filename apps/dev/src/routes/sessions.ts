@@ -30,6 +30,8 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+const RETRYABLE_STATUSES: readonly string[] = ['failed', 'timeout']
+
 /** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
 	const [session] = await db
@@ -333,8 +335,7 @@ app.openapi(retrySessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	const retryableStatuses = ['failed', 'timeout']
-	if (!retryableStatuses.includes(session.status)) {
+	if (!RETRYABLE_STATUSES.includes(session.status)) {
 		return c.json(
 			createApiError(
 				'BAD_REQUEST',
