@@ -35,7 +35,6 @@ export function useOverscrollNavigate(
 	const directionRef = useRef<'next' | 'prev' | null>(null)
 	const decayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const navigatingRef = useRef(false)
-	const touchStartYRef = useRef<number | null>(null)
 	const lastTouchYRef = useRef<number | null>(null)
 
 	const hasNext = currentIndex >= 0 && currentIndex < pages.length - 1
@@ -128,7 +127,6 @@ export function useOverscrollNavigate(
 		const handleTouchStart = (e: TouchEvent) => {
 			const touch = e.touches[0]
 			if (touch) {
-				touchStartYRef.current = touch.clientY
 				lastTouchYRef.current = touch.clientY
 			}
 		}
@@ -145,7 +143,6 @@ export function useOverscrollNavigate(
 		}
 
 		const handleTouchEnd = () => {
-			touchStartYRef.current = null
 			lastTouchYRef.current = null
 		}
 
