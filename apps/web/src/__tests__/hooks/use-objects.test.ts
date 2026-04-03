@@ -1,17 +1,22 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/api', () => ({
-	api: {
-		objects: {
-			list: vi.fn(),
-			get: vi.fn(),
-			create: vi.fn(),
-			update: vi.fn(),
-			delete: vi.fn(),
+vi.mock('@/lib/api', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@/lib/api')>()
+	return {
+		...actual,
+		api: {
+			...actual.api,
+			objects: {
+				list: vi.fn(),
+				get: vi.fn(),
+				create: vi.fn(),
+				update: vi.fn(),
+				delete: vi.fn(),
+			},
 		},
-	},
-}))
+	}
+})
 
 // Suppress toast in tests
 vi.mock('sonner', () => ({
@@ -25,8 +30,7 @@ import {
 	useObjects,
 	useUpdateObject,
 } from '@/hooks/use-objects'
-import type { ObjectResponse } from '@/lib/api'
-import { api } from '@/lib/api'
+import { ApiError, type ObjectResponse, api } from '@/lib/api'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -100,15 +104,16 @@ describe('useObject', () => {
 		expect(api.objects.get).toHaveBeenCalledWith('obj-2')
 	})
 
-	it('exposes error when object not found', async () => {
-		vi.mocked(api.objects.get).mockRejectedValue(new Error('Not found'))
+	it('exposes error when object not found (404)', async () => {
+		vi.mocked(api.objects.get).mockRejectedValue(new ApiError(404, 'Object not found'))
 
 		const { result } = renderHook(() => useObject('nonexistent', workspaceId), {
 			wrapper: TestWrapper,
 		})
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
-		expect(result.current.error?.message).toBe('Not found')
+		expect(result.current.error).toBeInstanceOf(ApiError)
+		expect((result.current.error as ApiError).status).toBe(404)
 	})
 })
 

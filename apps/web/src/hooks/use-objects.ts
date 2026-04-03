@@ -1,9 +1,8 @@
 import type { createObjectSchema, updateObjectSchema } from '@ai-native/shared'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-import type { ObjectResponse } from '../lib/api'
-import { api } from '../lib/api'
+import { ApiError, type ObjectResponse, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 type CreateObjectInput = z.input<typeof createObjectSchema>
@@ -21,6 +20,11 @@ export function useObject(id: string, _workspaceId: string) {
 		queryKey: queryKeys.objects.detail(id),
 		queryFn: () => api.objects.get(id),
 		enabled: !!id,
+		placeholderData: keepPreviousData,
+		retry: (failureCount, error) => {
+			if (error instanceof ApiError && error.status === 404) return false
+			return failureCount < 3
+		},
 	})
 }
 
