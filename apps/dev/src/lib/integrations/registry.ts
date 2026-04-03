@@ -4,6 +4,18 @@ import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
+import {
+	config as linearConfig,
+	resolveExternalId as linearResolveExternalId,
+} from './providers/linear/config'
+import { linearEventNormalizer } from './providers/linear/webhooks'
+import {
+	config as slackConfig,
+	parseTokenResponse as slackParseTokenResponse,
+	resolveExternalId as slackResolveExternalId,
+	slackWebhookPreHandler,
+} from './providers/slack/config'
+import { slackEventNormalizer } from './providers/slack/webhooks'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -13,6 +25,20 @@ providers.set('github', {
 	config: githubConfig,
 	customAuth: githubAuth,
 	customNormalizer: githubEventNormalizer,
+})
+
+providers.set('linear', {
+	config: linearConfig,
+	customNormalizer: linearEventNormalizer,
+	resolveExternalId: linearResolveExternalId,
+})
+
+providers.set('slack', {
+	config: slackConfig,
+	parseTokenResponse: slackParseTokenResponse,
+	resolveExternalId: slackResolveExternalId,
+	customNormalizer: slackEventNormalizer,
+	webhookPreHandler: slackWebhookPreHandler,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

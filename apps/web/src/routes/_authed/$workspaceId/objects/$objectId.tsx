@@ -24,7 +24,7 @@ function ObjectDetailPage() {
 	const statusMap = (settings?.statuses ?? {}) as Record<string, string[]>
 	const getDefaultStatus = (type: string) =>
 		statusMap[type]?.[0] ?? getDefaultStatusForType(type) ?? 'new'
-	const { data: object, isLoading } = useObject(objectId, workspaceId)
+	const { data: object, isLoading } = useObject(objectId)
 	const createObject = useCreateObject(workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 	const isCreatedRef = useRef(false)
