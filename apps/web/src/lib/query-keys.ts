@@ -4,6 +4,8 @@ export const queryKeys = {
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'list', filters] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
+		search: (workspaceId: string, params?: Record<string, unknown>) =>
+			['objects', workspaceId, 'search', params] as const,
 	},
 	bets: {
 		all: (workspaceId: string) => ['bets', workspaceId] as const,

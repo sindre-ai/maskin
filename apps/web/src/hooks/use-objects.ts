@@ -16,6 +16,24 @@ export function useObjects(workspaceId: string, filters?: Record<string, string>
 	})
 }
 
+export function useSearchObjects(
+	workspaceId: string,
+	q: string,
+	filters?: { type?: string; status?: string },
+) {
+	return useQuery({
+		queryKey: queryKeys.objects.search(workspaceId, { q, ...filters }),
+		queryFn: () =>
+			api.objects.search(workspaceId, {
+				q,
+				type: filters?.type,
+				status: filters?.status,
+				limit: 100,
+			}),
+		enabled: q.length > 0,
+	})
+}
+
 export function useObject(id: string, workspaceId: string) {
 	const { data: objects, ...rest } = useObjects(workspaceId)
 	return {

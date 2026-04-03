@@ -11,12 +11,12 @@ import {
 } from '@/components/ui/select'
 import { useActors } from '@/hooks/use-actors'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { useObjects } from '@/hooks/use-objects'
+import { useObjects, useSearchObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
@@ -29,6 +29,11 @@ function ObjectsPage() {
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
 	const [ownerFilter, setOwnerFilter] = useState<string | undefined>(undefined)
 	const [search, setSearch] = useState('')
+	const [debouncedSearch, setDebouncedSearch] = useState('')
+	useEffect(() => {
+		const timer = setTimeout(() => setDebouncedSearch(search), 300)
+		return () => clearTimeout(timer)
+	}, [search])
 	const { data: actors } = useActors(workspaceId)
 	const enabledModules = useEnabledModules()
 	const settings = workspace.settings as Record<string, unknown>
@@ -47,6 +52,11 @@ function ObjectsPage() {
 	if (ownerFilter) filters.owner = ownerFilter
 
 	const { data: objects, isLoading } = useObjects(workspaceId, filters)
+	const { data: searchResults, isLoading: isSearching } = useSearchObjects(
+		workspaceId,
+		debouncedSearch,
+		{ type: typeFilter, status: statusFilter },
+	)
 
 	// Derive available statuses for the current type filter
 	const allStatuses = useMemo(() => {
@@ -56,13 +66,10 @@ function ObjectsPage() {
 		return [...new Set(Object.values(statusMap).flat())]
 	}, [settings, typeFilter])
 
-	const filtered = search
-		? (objects ?? []).filter(
-				(o) =>
-					o.title?.toLowerCase().includes(search.toLowerCase()) ||
-					o.content?.toLowerCase().includes(search.toLowerCase()),
-			)
-		: (objects ?? [])
+	const isSearchActive = debouncedSearch.length > 0
+	const baseResults = isSearchActive ? (searchResults ?? []) : (objects ?? [])
+	const filtered =
+		ownerFilter && isSearchActive ? baseResults.filter((o) => o.owner === ownerFilter) : baseResults
 
 	return (
 		<div>
@@ -131,7 +138,11 @@ function ObjectsPage() {
 				/>
 			</div>
 
-			{isLoading ? <ListSkeleton /> : <ObjectList objects={filtered} workspaceId={workspaceId} />}
+			{isLoading || isSearching ? (
+				<ListSkeleton />
+			) : (
+				<ObjectList objects={filtered} workspaceId={workspaceId} />
+			)}
 		</div>
 	)
 }

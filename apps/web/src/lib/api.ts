@@ -88,6 +88,16 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
 		},
+		search: (
+			workspaceId: string,
+			params: { q: string; type?: string; status?: string; limit?: number },
+		) => {
+			const qs = new URLSearchParams({ q: params.q })
+			if (params.type) qs.set('type', params.type)
+			if (params.status) qs.set('status', params.status)
+			if (params.limit) qs.set('limit', String(params.limit))
+			return request<ObjectResponse[]>(`/objects/search?${qs}`, { workspaceId })
+		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		create: (workspaceId: string, data: CreateObjectInput) =>
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
