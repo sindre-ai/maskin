@@ -8,6 +8,7 @@ vi.mock('@/lib/api', () => ({
 			list: vi.fn(),
 			logs: vi.fn(),
 			create: vi.fn(),
+			retry: vi.fn(),
 		},
 	},
 }))
@@ -16,6 +17,7 @@ import {
 	useActiveSessionsForActor,
 	useActorSessions,
 	useCreateSession,
+	useRetrySession,
 	useSession,
 	useSessionErrorLog,
 	useSessionLatestLog,
@@ -188,6 +190,33 @@ describe('useCreateSession', () => {
 		result.current.mutate({ actor_id: 'actor-1', action_prompt: 'Bad' })
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Forbidden')
+	})
+})
+
+describe('useRetrySession', () => {
+	it('calls api.sessions.retry with session id', async () => {
+		const newSession = buildSession({ id: 'session-retried' })
+		vi.mocked(api.sessions.retry).mockResolvedValue(newSession)
+
+		const { result } = renderHook(() => useRetrySession(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate('session-failed')
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.sessions.retry).toHaveBeenCalledWith('session-failed', workspaceId)
+	})
+
+	it('exposes error when retry fails', async () => {
+		vi.mocked(api.sessions.retry).mockRejectedValue(new Error('Not retryable'))
+
+		const { result } = renderHook(() => useRetrySession(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate('session-running')
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(result.current.error?.message).toBe('Not retryable')
 	})
 })
 

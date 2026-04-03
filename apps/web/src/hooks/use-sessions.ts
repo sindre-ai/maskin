@@ -46,6 +46,22 @@ export function useCreateSession(workspaceId: string) {
 	})
 }
 
+export function useRetrySession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (sessionId: string) => api.sessions.retry(sessionId, workspaceId),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.byActor(workspaceId, result.actorId),
+			})
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.byActorAll(workspaceId, result.actorId),
+			})
+		},
+	})
+}
+
 export function useActiveSessionsForActor(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActor(workspaceId, actorId),

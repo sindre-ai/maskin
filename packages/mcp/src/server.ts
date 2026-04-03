@@ -1090,6 +1090,25 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'retry_session',
+		{
+			description: tools.retry_session.description,
+			inputSchema: tools.retry_session.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/retry`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: { toolName: 'retry_session' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'run_agent',
 		{
 			description: tools.run_agent.description,
