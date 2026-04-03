@@ -16,12 +16,12 @@ export function useObjects(workspaceId: string, filters?: Record<string, string>
 	})
 }
 
-export function useObject(id: string, workspaceId: string) {
-	const { data: objects, ...rest } = useObjects(workspaceId)
-	return {
-		...rest,
-		data: objects?.find((o) => o.id === id),
-	}
+export function useObject(id: string, _workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.objects.detail(id),
+		queryFn: () => api.objects.get(id),
+		enabled: !!id,
+	})
 }
 
 export function useCreateObject(workspaceId: string) {
