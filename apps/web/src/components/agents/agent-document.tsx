@@ -9,7 +9,6 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { Textarea } from '@/components/ui/textarea'
 import { useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
@@ -290,14 +289,22 @@ export function AgentDocumentView({
 
 					{/* Memory */}
 					<Section title="Memory">
-						<Textarea
+						<textarea
 							value={memoryDraft}
 							onChange={(e) => {
 								setMemoryDraft(e.target.value)
 								setMemoryDirty(true)
+								e.target.style.height = 'auto'
+								e.target.style.height = `${e.target.scrollHeight}px`
 							}}
 							placeholder="{}"
-							className="min-h-[100px] font-mono text-sm"
+							className="min-h-[100px] font-mono text-sm w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:text-sm resize-none overflow-hidden"
+							ref={(el) => {
+								if (el) {
+									el.style.height = 'auto'
+									el.style.height = `${el.scrollHeight}px`
+								}
+							}}
 						/>
 						{memoryError && <p className="text-xs text-error mt-1">{memoryError}</p>}
 						{memoryDirty && (
