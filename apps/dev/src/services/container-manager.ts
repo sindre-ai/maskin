@@ -33,21 +33,7 @@ export class ContainerManager {
 		this.docker = new Docker()
 	}
 
-	async imageExists(image: string): Promise<boolean> {
-		try {
-			await this.docker.getImage(image).inspect()
-			return true
-		} catch {
-			return false
-		}
-	}
-
 	async ensureImage(image: string, buildContext: string): Promise<void> {
-		if (await this.imageExists(image)) {
-			logger.info(`Image already exists: ${image}`)
-			return
-		}
-
 		logger.info(`Building image: ${image} from ${buildContext}`)
 
 		// Pack build context into a tar stream for dockerode

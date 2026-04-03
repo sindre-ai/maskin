@@ -1,11 +1,15 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardFooter,
+	CardHeader,
+	CardTitle,
+} from '@/components/ui/card'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
-import { useState } from 'react'
 import { NotificationInput } from './notification-input'
 
 const typeLabels: Record<string, string> = {
@@ -15,66 +19,14 @@ const typeLabels: Record<string, string> = {
 	alert: 'Alert',
 }
 
-export interface NotificationAction {
-	label: string
-	response: unknown
-	variant?: 'default' | 'outline' | 'ghost'
-	navigate?: { to: string; id?: string }
-}
-
-export function resolveActions(
-	notification: NotificationResponse,
-	metadata: Record<string, unknown>,
-): NotificationAction[] {
-	const defined = metadata.actions as NotificationAction[] | undefined
-	if (defined && Array.isArray(defined) && defined.length > 0) {
-		const valid = defined.filter(
-			(a) => a && typeof a === 'object' && typeof a.label === 'string' && 'response' in a,
-		)
-		if (valid.length > 0) return valid
-	}
-
-	if (metadata.input_type) return []
-
-	const hasObject = !!notification.objectId
-	switch (notification.type) {
-		case 'recommendation':
-			return [
-				{
-					label: hasObject ? 'View object' : 'View objects',
-					response: 'view_object',
-					navigate: { to: hasObject ? 'object' : 'objects' },
-				},
-			]
-		case 'alert':
-			return [
-				{
-					label: hasObject ? 'Review' : 'Review tasks',
-					response: 'acknowledged',
-					navigate: { to: hasObject ? 'object' : 'objects' },
-				},
-			]
-		case 'good_news':
-			return hasObject
-				? [{ label: 'View', response: 'acknowledged', navigate: { to: 'object' } }]
-				: []
-		default:
-			return []
-	}
-}
-
 interface PulseCardProps {
 	notification: NotificationResponse
 	actorsById: Map<string, ActorListItem>
-	onAction: (
-		notification: NotificationResponse,
-		response: unknown,
-		navigate?: { to: string; id?: string },
-	) => void
+	onRespond: (id: string, response: unknown) => void
 	onDismiss: (id: string) => void
 }
 
-export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
+export function PulseCard({ notification, actorsById, onRespond, onDismiss }: PulseCardProps) {
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const tags = metadata.tags as string[] | undefined
@@ -82,19 +34,6 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const urgencyLabel = metadata.urgency_label as string | undefined
 	const inputType = metadata.input_type as string | undefined
 	const sourceActor = actorsById.get(notification.sourceActorId)
-
-	const actions = resolveActions(notification, metadata)
-	const showReplyInput = !!notification.sessionId && !inputType
-
-	const [replyOpen, setReplyOpen] = useState(false)
-	const [replyText, setReplyText] = useState('')
-
-	const handleReplySubmit = () => {
-		if (!replyText.trim()) return
-		onAction(notification, { type: 'text_reply', message: replyText })
-		setReplyText('')
-		setReplyOpen(false)
-	}
 
 	return (
 		<Card>
@@ -108,19 +47,11 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 					)}
 				</div>
 				<CardTitle className="text-base">{notification.title}</CardTitle>
-				{notification.content && (
-					<div className="text-sm text-muted-foreground">
-						<MarkdownContent content={notification.content} />
-					</div>
-				)}
+				{notification.content && <CardDescription>{notification.content}</CardDescription>}
 			</CardHeader>
 			<CardContent className="space-y-3">
 				{/* Meta info */}
-				{metaText && (
-					<div className="text-xs text-muted-foreground">
-						<MarkdownContent content={metaText} size="xs" />
-					</div>
-				)}
+				{metaText && <p className="text-xs text-muted-foreground">{metaText}</p>}
 
 				{/* Tags */}
 				{tags && tags.length > 0 && (
@@ -137,64 +68,40 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{inputType && (
 					<NotificationInput
 						metadata={metadata}
-						onSubmit={(response) => onAction(notification, response)}
+						onSubmit={(response) => onRespond(notification.id, response)}
 					/>
 				)}
 
 				{/* Agent suggestion */}
 				{suggestion && (
-					<div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
-						<MarkdownContent content={suggestion} />
-					</div>
+					<div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">{suggestion}</div>
 				)}
 
 				{/* Action buttons */}
 				<div className="flex gap-2">
-					{actions.map((action, i) => (
-						<Button
-							key={action.label}
-							size="sm"
-							variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
-							onClick={() => onAction(notification, action.response, action.navigate)}
-						>
-							{action.label}
+					{notification.type === 'recommendation' && !inputType && (
+						<>
+							<Button size="sm" onClick={() => onRespond(notification.id, 'create_bet')}>
+								Create bet
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => onRespond(notification.id, 'show_data')}
+							>
+								Show data
+							</Button>
+						</>
+					)}
+					{notification.type === 'alert' && !inputType && (
+						<Button size="sm" onClick={() => onRespond(notification.id, 'acknowledged')}>
+							Review tasks
 						</Button>
-					))}
+					)}
 					<Button size="sm" variant="ghost" onClick={() => onDismiss(notification.id)}>
 						Dismiss
 					</Button>
 				</div>
-
-				{/* Collapsible text reply for session-linked notifications */}
-				{showReplyInput && (
-					<div>
-						{!replyOpen ? (
-							<Button
-								variant="link"
-								size="sm"
-								className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
-								onClick={() => setReplyOpen(true)}
-							>
-								Reply to agent...
-							</Button>
-						) : (
-							<div className="flex gap-2">
-								<Input
-									value={replyText}
-									onChange={(e) => setReplyText(e.target.value)}
-									placeholder="Type a reply..."
-									className="h-8 text-sm"
-									onKeyDown={(e) => {
-										if (e.key === 'Enter') handleReplySubmit()
-									}}
-								/>
-								<Button size="sm" disabled={!replyText.trim()} onClick={handleReplySubmit}>
-									Send
-								</Button>
-							</div>
-						)}
-					</div>
-				)}
 			</CardContent>
 			<CardFooter className="text-xs text-muted-foreground border-t pt-3 gap-1.5">
 				{sourceActor && (

@@ -302,6 +302,8 @@ dist/
 
 ```
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_native_oss
+BETTER_AUTH_SECRET=change-me-in-production
+BETTER_AUTH_URL=http://localhost:3000
 ```
 
 ### `docker-compose.yml`
@@ -332,6 +334,8 @@ services:
       - "3000:3000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_native_oss
+      BETTER_AUTH_SECRET: dev-secret-change-in-production
+      BETTER_AUTH_URL: http://localhost:3000
       PORT: "3000"
     depends_on:
       postgres:
@@ -1960,7 +1964,7 @@ app.get('/api/openapi.json', (c) => {
 			version: '0.1.0',
 			description: 'Unified API for insights, bets, tasks, actors, and automation',
 		},
-		servers: [{ url: `http://localhost:${Number(process.env.PORT) || 3000}` }],
+		servers: [{ url: process.env.BETTER_AUTH_URL || 'http://localhost:3000' }],
 		paths: {},
 	})
 })

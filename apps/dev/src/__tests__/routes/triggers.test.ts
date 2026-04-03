@@ -25,23 +25,6 @@ describe('Triggers Routes', () => {
 			expect(body.name).toBe(trigger.name)
 			expect(body.enabled).toBe(true)
 		})
-
-		it('returns 400 for invalid cron expression', async () => {
-			const { app } = createTestApp(triggersRoutes, '/api/triggers')
-
-			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/triggers',
-					buildCreateTriggerBody({ type: 'cron', config: { expression: 'not-valid' } }),
-					{ 'x-workspace-id': wsId },
-				),
-			)
-
-			expect(res.status).toBe(400)
-			const body = await res.json()
-			expect(body.error.code).toBe('VALIDATION_ERROR')
-		})
 	})
 
 	describe('GET /api/triggers', () => {
@@ -84,22 +67,6 @@ describe('Triggers Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
-		})
-
-		it('returns 400 for invalid cron expression on cron trigger', async () => {
-			const trigger = buildTrigger({ type: 'cron', config: { expression: '*/5 * * * *' } })
-			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
-			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
-
-			const res = await app.request(
-				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
-					config: { expression: 'bad' },
-				}),
-			)
-
-			expect(res.status).toBe(400)
-			const body = await res.json()
-			expect(body.error.code).toBe('VALIDATION_ERROR')
 		})
 	})
 

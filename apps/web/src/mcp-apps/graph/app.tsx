@@ -71,9 +71,7 @@ function GraphApp() {
 							<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
 								{edge.source.slice(0, 8)}
 							</span>
-							<span className="text-accent-foreground font-medium text-xs">
-								{edge.type.replace(/_/g, ' ')}
-							</span>
+							<span className="text-primary text-xs">{edge.type.replace(/_/g, ' ')}</span>
 							<span className="text-muted-foreground">→</span>
 							<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
 								{edge.target.slice(0, 8)}

@@ -1,7 +1,6 @@
 import type { Database } from '@ai-native/db'
 import { events, objects, triggers } from '@ai-native/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
-import { Cron } from 'croner'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
@@ -10,9 +9,8 @@ export class TriggerRunner {
 	private db: Database
 	private bridge: PgNotifyBridge
 	private sessionManager: SessionManager
-	private cronJobs: Map<string, Cron> = new Map()
+	private cronIntervals: Map<string, NodeJS.Timeout> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
-	private eventHandler: ((event: PgEvent) => void) | null = null
 
 	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
 		this.db = db
@@ -22,12 +20,11 @@ export class TriggerRunner {
 
 	async start() {
 		// Start event trigger listener
-		this.eventHandler = (event: PgEvent) => {
+		this.bridge.on('event', (event: PgEvent) => {
 			this.handleEvent(event).catch((err) =>
 				logger.error('Event handling failed', { error: String(err) }),
 			)
-		}
-		this.bridge.on('event', this.eventHandler)
+		})
 
 		// Load and start cron triggers
 		await this.loadCronTriggers()
@@ -39,35 +36,17 @@ export class TriggerRunner {
 	}
 
 	async stop() {
-		if (this.eventHandler) {
-			this.bridge.off('event', this.eventHandler)
-			this.eventHandler = null
+		for (const [_, interval] of this.cronIntervals) {
+			clearInterval(interval)
 		}
-		for (const [_, job] of this.cronJobs) {
-			job.stop()
-		}
-		this.cronJobs.clear()
+		this.cronIntervals.clear()
 		for (const [_, timeout] of this.reminderTimeouts) {
 			clearTimeout(timeout)
 		}
 		this.reminderTimeouts.clear()
 	}
 
-	private async fetchEventData(eventId: string): Promise<Record<string, unknown> | null> {
-		const [row] = await this.db
-			.select({ data: events.data })
-			.from(events)
-			.where(eq(events.id, Number(eventId)))
-		return (row?.data as Record<string, unknown>) ?? null
-	}
-
 	private async handleEvent(event: PgEvent) {
-		// Hot-reload: react to trigger CRUD events
-		if (event.entity_type === 'trigger') {
-			await this.handleTriggerChange(event)
-			return
-		}
-
 		// Find matching event triggers for this workspace
 		const matchingTriggers = await this.db
 			.select()
@@ -80,15 +59,6 @@ export class TriggerRunner {
 				),
 			)
 
-		// Lazily fetch event data from DB only when a trigger needs it (data is no longer in NOTIFY payload)
-		let eventData: Record<string, unknown> | null | undefined
-		const getEventData = async () => {
-			if (eventData === undefined) {
-				eventData = await this.fetchEventData(event.event_id)
-			}
-			return eventData
-		}
-
 		for (const trigger of matchingTriggers) {
 			const config = trigger.config as Record<string, unknown>
 
@@ -97,26 +67,23 @@ export class TriggerRunner {
 			if (config.action && config.action !== event.action) continue
 
 			// Check filter conditions
-			if (config.filter) {
-				const data = await getEventData()
-				if (!data) continue
+			if (config.filter && event.data) {
 				const filter = config.filter as Record<string, unknown>
+				const data = event.data as Record<string, unknown>
 				const matches = Object.entries(filter).every(([key, value]) => data[key] === value)
 				if (!matches) continue
 			}
 
 			// Check status transition conditions
 			if (config.from_status || config.to_status) {
-				const data = await getEventData()
-				const { previous, current } = getObjectFromData(data)
+				const { previous, current } = getObjectFromEvent(event)
 				if (config.from_status && previous?.status !== config.from_status) continue
 				if (config.to_status && current?.status !== config.to_status) continue
 			}
 
 			// Check metadata conditions
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
-				const data = await getEventData()
-				const { current } = getObjectFromData(data)
+				const { current } = getObjectFromEvent(event)
 				if (!current || !evaluateConditions(config.conditions, current)) continue
 			}
 
@@ -168,54 +135,8 @@ export class TriggerRunner {
 		}
 	}
 
-	private async handleTriggerChange(event: PgEvent) {
-		const triggerId = event.entity_id
-
-		if (event.action === 'deleted') {
-			this.cronJobs.get(triggerId)?.stop()
-			this.cronJobs.delete(triggerId)
-			const timeout = this.reminderTimeouts.get(triggerId)
-			if (timeout) {
-				clearTimeout(timeout)
-				this.reminderTimeouts.delete(triggerId)
-			}
-			logger.info(`Trigger '${triggerId}' removed (deleted)`)
-			return
-		}
-
-		// For created/updated: fetch current state and (re-)schedule
-		const [trigger] = await this.db
-			.select()
-			.from(triggers)
-			.where(eq(triggers.id, triggerId))
-			.limit(1)
-
-		if (!trigger) return
-
-		// Stop any existing schedule first
-		this.cronJobs.get(triggerId)?.stop()
-		this.cronJobs.delete(triggerId)
-		const timeout = this.reminderTimeouts.get(triggerId)
-		if (timeout) {
-			clearTimeout(timeout)
-			this.reminderTimeouts.delete(triggerId)
-		}
-
-		if (!trigger.enabled) {
-			logger.info(`Trigger '${trigger.name}' disabled, not scheduling`)
-			return
-		}
-
-		if (trigger.type === 'cron') {
-			this.scheduleCron(trigger)
-		} else if (trigger.type === 'reminder') {
-			this.scheduleReminder(trigger)
-		}
-
-		logger.info(`Trigger '${trigger.name}' ${event.action === 'created' ? 'scheduled' : 'rescheduled'}`)
-	}
-
 	private async loadCronTriggers() {
+		// Simple cron: parse expression to interval (MVP: only supports minute intervals)
 		const cronTriggers = await this.db
 			.select()
 			.from(triggers)
@@ -230,8 +151,13 @@ export class TriggerRunner {
 		const config = trigger.config as Record<string, unknown>
 		const expression = config.expression as string
 
-		try {
-			const job = new Cron(expression, async () => {
+		// MVP: parse simple cron expressions (every N minutes)
+		// Format: */N * * * * (every N minutes)
+		const match = expression.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/)
+		const intervalMinutes = match?.[1] ? Number.parseInt(match[1]) : 60
+
+		const interval = setInterval(
+			async () => {
 				logger.info(`Cron trigger '${trigger.name}' firing`)
 
 				await this.db.insert(events).values({
@@ -255,15 +181,11 @@ export class TriggerRunner {
 						createdBy: trigger.createdBy,
 					})
 					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
-			})
+			},
+			intervalMinutes * 60 * 1000,
+		)
 
-			this.cronJobs.set(trigger.id, job)
-		} catch (err) {
-			logger.error(`Invalid cron expression '${expression}' for trigger '${trigger.name}'`, {
-				triggerId: trigger.id,
-				error: String(err),
-			})
-		}
+		this.cronIntervals.set(trigger.id, interval)
 	}
 
 	private async loadReminders() {
@@ -326,10 +248,11 @@ export interface ObjectData {
 	metadata?: Record<string, unknown>
 }
 
-export function getObjectFromData(data: Record<string, unknown> | null | undefined): {
+export function getObjectFromEvent(event: PgEvent): {
 	current?: ObjectData
 	previous?: ObjectData
 } {
+	const data = event.data as Record<string, unknown> | undefined
 	if (!data) return {}
 
 	// updated / status_changed events have { previous, updated }

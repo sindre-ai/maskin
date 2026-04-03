@@ -4,13 +4,14 @@ import path from 'node:path'
 import { authMiddleware } from '@ai-native/auth'
 import { createDb } from '@ai-native/db'
 import type { Database } from '@ai-native/db'
+import { createMcpServer } from '@ai-native/mcp'
 import { getAllModules } from '@ai-native/module-sdk'
 import { PgNotifyBridge } from '@ai-native/realtime'
 import { S3StorageProvider } from '@ai-native/storage'
-import type { StorageProvider } from '@ai-native/storage'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { OpenAPIHono } from '@hono/zod-openapi'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
@@ -22,9 +23,7 @@ import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
 import graphRoutes from './routes/graph'
-import importsRoutes from './routes/imports'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
-import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import relationshipsRoutes from './routes/relationships'
@@ -44,7 +43,6 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
-		storageProvider: StorageProvider
 	}
 }
 
@@ -111,16 +109,10 @@ await storageProvider.ensureBucket()
 
 // Ensure agent-base Docker image exists
 const containers = new ContainerManager()
-try {
-	await containers.ensureImage(
-		'agent-base:latest',
-		path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
-	)
-} catch (err) {
-	logger.error('Failed to build agent-base image — sessions will fail until image is available', {
-		error: err instanceof Error ? err.message : String(err),
-	})
-}
+await containers.ensureImage(
+	'agent-base:latest',
+	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
+)
 
 // Agent storage manager for file operations (skills, learnings, memory)
 const agentStorage = new AgentStorageManager(storageProvider, db)
@@ -134,7 +126,6 @@ app.use('*', async (c, next) => {
 	c.set('notifyBridge', notifyBridge)
 	c.set('sessionManager', sessionManager)
 	c.set('agentStorage', agentStorage)
-	c.set('storageProvider', storageProvider)
 	await next()
 })
 
@@ -173,7 +164,6 @@ app.route('/api/events', eventsRoutes)
 app.route('/api/sessions', sessionsRoutes)
 app.route('/api/notifications', notificationsRoutes)
 app.route('/api/graph', graphRoutes)
-app.route('/api/imports', importsRoutes)
 app.route('/api/claude-oauth', claudeOauthRoutes)
 
 // Mount extension routes at /api/m/{extensionId} — auth middleware on /api/* covers these
@@ -189,7 +179,51 @@ for (const ext of getAllModules()) {
 }
 
 // MCP HTTP transport for MCP Apps (interactive UIs in chat clients)
-app.route('/mcp', mcpRoutes)
+app.post('/mcp', async (c) => {
+	const url = new URL(c.req.url, 'http://localhost')
+	const mcpConfig = {
+		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
+		apiKey:
+			c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? '',
+		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
+	}
+	const mcpServer = createMcpServer(mcpConfig)
+	const transport = new StreamableHTTPServerTransport({
+		sessionIdGenerator: undefined,
+		enableJsonResponse: true,
+	})
+
+	const nodeRes = (c.env as Record<string, unknown>).outgoing as import('node:http').ServerResponse
+	const nodeReq = (c.env as Record<string, unknown>).incoming as import('node:http').IncomingMessage
+
+	let body: unknown
+	try {
+		body = await c.req.json()
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
+	}
+	const method =
+		(body as Record<string, unknown>)?.method ??
+		(Array.isArray(body) ? body.map((b: { method?: string }) => b.method) : 'unknown')
+	console.log(`[MCP] POST /mcp — method: ${JSON.stringify(method)}`)
+	await mcpServer.connect(transport)
+	await transport.handleRequest(nodeReq, nodeRes, body)
+
+	// transport.handleRequest already wrote the response to nodeRes.
+	// Signal @hono/node-server to skip writing headers again.
+	return new Response(null, {
+		headers: { 'x-hono-already-sent': '1' },
+	})
+})
+
+// Reject GET/DELETE on /mcp — server doesn't support server-initiated SSE streams
+app.get('/mcp', (c) => {
+	return c.text('Method Not Allowed', 405)
+})
+
+app.delete('/mcp', (c) => {
+	return c.text('Method Not Allowed', 405)
+})
 
 // Auto-generated OpenAPI spec from route definitions
 app.doc31('/api/openapi.json', {
@@ -199,7 +233,7 @@ app.doc31('/api/openapi.json', {
 		version: '0.1.0',
 		description: 'Unified API for insights, bets, tasks, actors, and automation',
 	},
-	servers: [{ url: `http://localhost:${Number(process.env.PORT) || 3000}` }],
+	servers: [{ url: process.env.BETTER_AUTH_URL || 'http://localhost:3000' }],
 })
 
 // Start session manager (container-based agent execution)

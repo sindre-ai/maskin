@@ -27,6 +27,7 @@ function buildPgEvent(overrides: Partial<PgEvent> = {}): PgEvent {
 		entity_type: 'object',
 		entity_id: 'obj-test-001',
 		event_id: 'evt-test-001',
+		data: null,
 		...overrides,
 	}
 }
@@ -60,6 +61,19 @@ describe('PgNotifyBridge', () => {
 
 		expect(handler).toHaveBeenCalledOnce()
 		expect(handler).toHaveBeenCalledWith(event)
+	})
+
+	it('emits event with correct data field when data is present', async () => {
+		const bridge = new PgNotifyBridge('postgres://localhost/test')
+		await bridge.start()
+
+		const handler = vi.fn()
+		bridge.on('event', handler)
+
+		const event = buildPgEvent({ data: { key: 'value', nested: { a: 1 } } })
+		listenCallback?.(JSON.stringify(event))
+
+		expect(handler.mock.calls[0]?.[0].data).toEqual({ key: 'value', nested: { a: 1 } })
 	})
 
 	it('silently ignores malformed JSON payloads', async () => {

@@ -1,8 +1,7 @@
 import type { Database } from '@ai-native/db'
-import { events, triggers } from '@ai-native/db/schema'
+import { triggers } from '@ai-native/db/schema'
 import { createTriggerSchema, updateTriggerSchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { Cron } from 'croner'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
@@ -63,44 +62,24 @@ app.openapi(createTriggerRoute, async (c) => {
 
 	const body = c.req.valid('json')
 
-	// Validate cron expression eagerly so users get immediate feedback
-	if (body.type === 'cron') {
-		try {
-			new Cron(body.config.expression, { maxRuns: 0 })
-		} catch {
-			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
-		}
-	}
-
-	const created = await db.transaction(async (tx) => {
-		const [row] = await tx
-			.insert(triggers)
-			.values({
-				...(body.id && { id: body.id }),
-				workspaceId,
-				name: body.name,
-				type: body.type,
-				config: body.config,
-				actionPrompt: body.action_prompt,
-				targetActorId: body.target_actor_id,
-				enabled: body.enabled,
-				createdBy: actorId,
-			})
-			.returning()
-
-		if (!row) throw new Error('Failed to create trigger')
-
-		await tx.insert(events).values({
+	const [created] = await db
+		.insert(triggers)
+		.values({
+			...(body.id && { id: body.id }),
 			workspaceId,
-			actorId,
-			action: 'created',
-			entityType: 'trigger',
-			entityId: row.id,
-			data: { trigger_name: row.name, type: row.type },
+			name: body.name,
+			type: body.type,
+			config: body.config,
+			actionPrompt: body.action_prompt,
+			targetActorId: body.target_actor_id,
+			enabled: body.enabled,
+			createdBy: actorId,
 		})
+		.returning()
 
-		return row
-	})
+	if (!created) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 500)
+	}
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -175,18 +154,6 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
-	// Validate cron expression if updating config on a cron trigger
-	if (body.config && trigger.type === 'cron') {
-		const expr = (body.config as Record<string, unknown>).expression
-		if (expr != null) {
-			try {
-				new Cron(expr as string, { maxRuns: 0 })
-			} catch {
-				return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
-			}
-		}
-	}
-
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (body.config) updateData.config = body.config
@@ -194,21 +161,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id
 	if (body.enabled !== undefined) updateData.enabled = body.enabled
 
-	const updated = await db.transaction(async (tx) => {
-		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
-		if (!row) return null
-
-		await tx.insert(events).values({
-			workspaceId: trigger.workspaceId,
-			actorId,
-			action: 'updated',
-			entityType: 'trigger',
-			entityId: row.id,
-			data: { trigger_name: row.name, type: row.type },
-		})
-
-		return row
-	})
+	const [updated] = await db.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 
@@ -246,19 +199,7 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
-	await db.transaction(async (tx) => {
-		await tx.delete(triggers).where(eq(triggers.id, id))
-
-		await tx.insert(events).values({
-			workspaceId: existing.workspaceId,
-			actorId,
-			action: 'deleted',
-			entityType: 'trigger',
-			entityId: id,
-			data: { trigger_name: existing.name, type: existing.type },
-		})
-	})
-
+	await db.delete(triggers).where(eq(triggers.id, id))
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteTriggerRoute, Env>)
 

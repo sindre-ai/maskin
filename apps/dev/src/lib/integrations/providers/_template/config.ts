@@ -78,9 +78,6 @@ export const config: ProviderConfig = {
 	//   args: ['-y', '@some-org/mcp-server-provider'],
 	//   envKey: 'PROVIDER_ACCESS_TOKEN',
 	// },
-	// NOTE: Also add a matching entry to INTEGRATION_MCP_PRESETS in
-	// apps/web/src/components/agents/mcp-servers.tsx so the "Add {Provider}"
-	// quick-add button appears in the agent MCP UI.
 }
 
 // Optional: resolve a stable external ID for webhook matching.

@@ -11,7 +11,6 @@ const customExtensionEntrySchema = z.object({
 	name: z.string(),
 	types: z.array(z.string()),
 	relationship_types: z.array(z.string()).optional(),
-	enabled: z.boolean().default(true),
 })
 
 export type CustomExtensionEntry = z.infer<typeof customExtensionEntrySchema>

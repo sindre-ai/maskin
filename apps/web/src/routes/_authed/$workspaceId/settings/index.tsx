@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
@@ -11,7 +10,7 @@ import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getAllWebModules, getWebModule } from '@ai-native/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
-import { Monitor, Moon, Sun, Trash2 } from 'lucide-react'
+import { Monitor, Moon, Sun } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -68,8 +67,6 @@ function ExtensionsSection() {
 	const settings = workspace.settings as Record<string, unknown>
 	const enabledModules = useEnabledModules()
 	const allModules = getAllWebModules()
-	const customExtensions = useCustomExtensions()
-	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
 	const handleToggle = (moduleId: string, enabled: boolean) => {
 		const next = enabled
@@ -105,50 +102,6 @@ function ExtensionsSection() {
 		)
 	}
 
-	const handleToggleCustomExtension = (extId: string, enabled: boolean) => {
-		const customExts = {
-			...((settings?.custom_extensions as Record<string, unknown>) ?? {}),
-		}
-		const existing = customExts[extId] as Record<string, unknown>
-		customExts[extId] = { ...existing, enabled }
-
-		updateWorkspace.mutate(
-			{ settings: { ...settings, custom_extensions: customExts } },
-			{ onError: () => toast.error('Failed to update extension') },
-		)
-	}
-
-	const handleDeleteCustomExtension = (extId: string, types: string[]) => {
-		const statuses = { ...((settings?.statuses as Record<string, string[]>) ?? {}) }
-		const displayNames = { ...((settings?.display_names as Record<string, string>) ?? {}) }
-		const fieldDefs = {
-			...((settings?.field_definitions as Record<string, unknown[]>) ?? {}),
-		}
-		const customExts = {
-			...((settings?.custom_extensions as Record<string, unknown>) ?? {}),
-		}
-
-		for (const type of types) {
-			delete statuses[type]
-			delete displayNames[type]
-			delete fieldDefs[type]
-		}
-		delete customExts[extId]
-
-		updateWorkspace.mutate(
-			{
-				settings: {
-					...settings,
-					statuses,
-					display_names: displayNames,
-					field_definitions: fieldDefs,
-					custom_extensions: customExts,
-				},
-			},
-			{ onError: () => toast.error('Failed to delete extension') },
-		)
-	}
-
 	return (
 		<div>
 			<Label className="mb-1 text-muted-foreground">Extensions</Label>
@@ -178,53 +131,6 @@ function ExtensionsSection() {
 						</div>
 					)
 				})}
-				{customExtensions.map((ext) => (
-					<div
-						key={ext.id}
-						className="flex items-center justify-between rounded-lg border border-border p-3"
-					>
-						<div>
-							<span className="text-sm font-medium">{ext.name}</span>
-							{ext.tabs.length > 0 && (
-								<span className="text-sm text-muted-foreground ml-2">
-									{ext.tabs.map((t) => t.label).join(', ')}
-								</span>
-							)}
-						</div>
-						<div className="flex items-center gap-3">
-							{confirmDeleteId === ext.id ? (
-								<div className="flex items-center gap-1">
-									<Button
-										size="sm"
-										variant="destructive"
-										onClick={() => {
-											handleDeleteCustomExtension(ext.id, ext.types)
-											setConfirmDeleteId(null)
-										}}
-									>
-										Delete
-									</Button>
-									<Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
-										Cancel
-									</Button>
-								</div>
-							) : (
-								<button
-									type="button"
-									aria-label={`Delete ${ext.name}`}
-									onClick={() => setConfirmDeleteId(ext.id)}
-									className="text-muted-foreground hover:text-destructive transition-colors"
-								>
-									<Trash2 size={15} />
-								</button>
-							)}
-							<Switch
-								checked={ext.enabled}
-								onCheckedChange={(checked) => handleToggleCustomExtension(ext.id, !!checked)}
-							/>
-						</div>
-					</div>
-				))}
 			</div>
 		</div>
 	)

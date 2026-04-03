@@ -147,12 +147,4 @@ export interface ResolvedProvider {
 	 * Only needed for providers that receive webhooks via standard OAuth2 (not oauth2_custom).
 	 */
 	resolveExternalId?: (credentials: StoredCredentials) => Promise<string>
-	/**
-	 * Pre-handler for webhook payloads. Runs after signature verification but before normalization.
-	 * Return a Response to short-circuit normal processing (e.g. Slack url_verification challenge).
-	 */
-	webhookPreHandler?: (
-		payload: unknown,
-		headers: Record<string, string>,
-	) => { body: unknown; status?: number } | null
 }

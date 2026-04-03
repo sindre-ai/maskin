@@ -8,8 +8,7 @@ export interface PgEvent {
 	entity_type: string
 	entity_id: string
 	event_id: string
-	/** @deprecated No longer included in NOTIFY payload — fetch from events table if needed */
-	data?: Record<string, unknown> | null
+	data: Record<string, unknown> | null
 }
 
 export class PgNotifyBridge extends EventEmitter {

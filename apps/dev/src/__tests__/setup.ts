@@ -1,6 +1,5 @@
 import type { Database } from '@ai-native/db'
 import type { PgNotifyBridge } from '@ai-native/realtime'
-import type { StorageProvider } from '@ai-native/storage'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
 import type { AgentStorageManager } from '../services/agent-storage'
@@ -14,7 +13,6 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
-		storageProvider: StorageProvider
 	}
 }
 
@@ -52,23 +50,15 @@ export function createTestContext() {
 
 	const db = new Proxy({} as Database, {
 		get: (_target, prop) => {
-			if (
-				prop === 'select' ||
-				prop === 'selectDistinct' ||
-				prop === 'insert' ||
-				prop === 'update' ||
-				prop === 'delete'
-			) {
-				// Map selectDistinct to the same bucket as select
-				const key = prop === 'selectDistinct' ? 'select' : (prop as string)
+			if (prop === 'select' || prop === 'insert' || prop === 'update' || prop === 'delete') {
 				return () => {
 					// Use queue if available, fall back to static mockResults
-					const queueKey = `${key}Queue`
+					const queueKey = `${String(prop)}Queue`
 					const queue = queues[queueKey]
 					if (queue && queue.length > 0) {
 						return createChain(queue.shift())
 					}
-					return createChain(mockResults[key])
+					return createChain(mockResults[prop as string])
 				}
 			}
 			if (prop === 'transaction') {
@@ -128,7 +118,6 @@ function createChain(returnValue?: unknown): Record<string, unknown> {
 	}
 	// biome-ignore lint/suspicious/noThenProperty: mock needs .then for Drizzle's await
 	chain.then = (resolve: (v: unknown) => void) => resolve(returnValue ?? [])
-	chain.catch = () => chain
 	return chain
 }
 
@@ -176,18 +165,6 @@ export function createMockSessionManager(overrides?: Record<string, unknown>) {
 	} as unknown as SessionManager
 }
 
-export function createMockStorageProvider(overrides?: Record<string, unknown>) {
-	return {
-		put: vi.fn().mockResolvedValue(undefined),
-		get: vi.fn().mockResolvedValue(Buffer.from('')),
-		list: vi.fn().mockResolvedValue([]),
-		delete: vi.fn().mockResolvedValue(undefined),
-		exists: vi.fn().mockResolvedValue(false),
-		ensureBucket: vi.fn().mockResolvedValue(undefined),
-		...overrides,
-	} as unknown as StorageProvider
-}
-
 export function createMockAgentStorage(overrides?: Record<string, unknown>) {
 	return {
 		listFileRecords: vi.fn().mockResolvedValue([]),
@@ -232,33 +209,6 @@ export function createSessionTestApp(
  * Creates a test app with agentStorage injected into context.
  * Use for routes that require c.get('agentStorage').
  */
-/**
- * Creates a test app with storageProvider injected into context.
- * Use for routes that require c.get('storageProvider').
- */
-export function createImportTestApp(
-	routeModule: OpenAPIHono<Env>,
-	basePath = '/',
-	actorId = 'test-actor-id',
-	actorType = 'human',
-) {
-	const app = new CreateOpenAPIHono<Env>()
-	const { db, mockResults } = createTestContext()
-	const storageProvider = createMockStorageProvider()
-
-	app.use('*', async (c, next) => {
-		c.set('db', db)
-		c.set('actorId', actorId)
-		c.set('actorType', actorType)
-		c.set('notifyBridge', {} as PgNotifyBridge)
-		c.set('storageProvider', storageProvider)
-		await next()
-	})
-
-	app.route(basePath, routeModule)
-	return { app, db, mockResults, storageProvider }
-}
-
 export function createSkillsTestApp(
 	routeModule: OpenAPIHono<Env>,
 	basePath = '/',

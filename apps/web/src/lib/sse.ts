@@ -10,6 +10,7 @@ export interface SSEEvent {
 	entity_type: string
 	entity_id: string
 	event_id: string
+	data: Record<string, unknown> | null
 }
 
 const LAST_EVENT_ID_KEY = 'ai-native-last-event-id'
@@ -48,22 +49,19 @@ export function connectSSE(workspaceId: string, callbacks: SSECallbacks): AbortC
 		onmessage(msg) {
 			if (!msg.data) return
 
-			let parsed: SSEEvent
 			try {
-				parsed = JSON.parse(msg.data) as SSEEvent
+				const parsed = JSON.parse(msg.data) as SSEEvent
+				parsed.id = msg.id
+				parsed.action = msg.event || parsed.action
+
+				if (msg.id) {
+					setLastEventId(workspaceId, msg.id)
+				}
+
+				callbacks.onEvent(parsed)
 			} catch {
-				// Ignore malformed JSON from server
-				return
+				// ignore parse errors
 			}
-
-			parsed.id = msg.id
-			parsed.action = msg.event || parsed.action
-
-			if (msg.id) {
-				setLastEventId(workspaceId, msg.id)
-			}
-
-			callbacks.onEvent(parsed)
 		},
 		onerror(err) {
 			callbacks.onStatusChange?.('disconnected')

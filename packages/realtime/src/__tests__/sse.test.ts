@@ -12,6 +12,7 @@ function buildPgEvent(overrides: Partial<PgEvent> = {}): PgEvent {
 		entity_type: 'object',
 		entity_id: 'obj-test-001',
 		event_id: 'evt-test-001',
+		data: null,
 		...overrides,
 	}
 }
@@ -149,6 +150,7 @@ describe('createSSEHandler', () => {
 		const pgEvent = buildPgEvent({
 			event_id: 'evt-format',
 			action: 'object.updated',
+			data: { changed: true },
 		})
 
 		const { events } = await collectSSEEvents(app, '/events', bridge, [pgEvent])
@@ -232,4 +234,15 @@ describe('createSSEHandler', () => {
 		expect(events2.find((e) => e.id === 'evt-for-1')).toBeUndefined()
 	})
 
+	it('handles events with null data field', async () => {
+		const { app, bridge } = createTestSetup()
+		const pgEvent = buildPgEvent({ data: null, event_id: 'evt-null-data' })
+
+		const { events } = await collectSSEEvents(app, '/events', bridge, [pgEvent])
+
+		const sseEvent = events.find((e) => e.id === 'evt-null-data')
+		expect(sseEvent).toBeDefined()
+		const parsed = JSON.parse(sseEvent?.data ?? '')
+		expect(parsed.data).toBeNull()
+	})
 })

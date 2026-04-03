@@ -187,6 +187,7 @@ const updateNotificationRoute = createRoute({
 	tags: ['Notifications'],
 	summary: 'Update a notification',
 	request: {
+		headers: workspaceIdHeader,
 		params: idParamSchema,
 		body: {
 			content: {
@@ -212,6 +213,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
 	// Verify notification exists and actor is a workspace member
@@ -240,7 +242,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 500)
 
 	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
+		workspaceId,
 		actorId,
 		action: 'updated',
 		entityType: 'notification',
@@ -351,6 +353,7 @@ const deleteNotificationRoute = createRoute({
 	tags: ['Notifications'],
 	summary: 'Delete a notification',
 	request: {
+		headers: workspaceIdHeader,
 		params: idParamSchema,
 	},
 	responses: {
@@ -369,6 +372,7 @@ app.openapi(deleteNotificationRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [existing] = await db.select().from(notifications).where(eq(notifications.id, id)).limit(1)
 
@@ -379,7 +383,7 @@ app.openapi(deleteNotificationRoute, (async (c) => {
 	await db.delete(notifications).where(eq(notifications.id, id))
 
 	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
+		workspaceId,
 		actorId,
 		action: 'deleted',
 		entityType: 'notification',
