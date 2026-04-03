@@ -1,18 +1,22 @@
 import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-import type { ObjectResponse } from '../lib/api'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 type CreateObjectInput = z.input<typeof createObjectSchema>
 type UpdateObjectInput = z.input<typeof updateObjectSchema>
 
-export function useObjects(workspaceId: string, filters?: Record<string, string>) {
+export function useObjects(
+	workspaceId: string,
+	filters?: Record<string, string>,
+	options?: { keepPrevious?: boolean },
+) {
 	return useQuery({
 		queryKey: queryKeys.objects.list(workspaceId, filters),
 		queryFn: () => api.objects.list(workspaceId, filters),
+		placeholderData: options?.keepPrevious ? keepPreviousData : undefined,
 	})
 }
 

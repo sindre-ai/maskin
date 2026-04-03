@@ -86,7 +86,7 @@ export const api = {
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
-			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
+			return request<PaginatedResponse<ObjectResponse>>(`/objects${qs}`, { workspaceId })
 		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		create: (workspaceId: string, data: CreateObjectInput) =>
@@ -318,6 +318,13 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
+}
+
+export interface PaginatedResponse<T> {
+	data: T[]
+	total: number
+	limit: number
+	offset: number
 }
 
 // Types derived from backend response schemas

@@ -5,10 +5,12 @@ import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	createObjectSchema,
 	objectQuerySchema,
+	paginatedResponseSchema,
 	searchObjectsSchema,
 	updateObjectSchema,
+<<<<<<< HEAD
 } from '@maskin/shared'
-import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { type Column, type SQL, and, asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import {
 	errorSchema,
@@ -194,8 +196,10 @@ const listObjectsRoute = createRoute({
 	},
 	responses: {
 		200: {
-			content: { 'application/json': { schema: z.array(objectResponseSchema) } },
-			description: 'List of objects',
+			content: {
+				'application/json': { schema: paginatedResponseSchema(objectResponseSchema) },
+			},
+			description: 'Paginated list of objects',
 		},
 		400: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -218,15 +222,30 @@ app.openapi(listObjectsRoute, async (c) => {
 	if (!orderBy)
 		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
 
-	const results = await db
-		.select()
-		.from(objects)
-		.where(and(...conditions))
-		.limit(query.limit)
-		.offset(query.offset)
-		.orderBy(orderBy)
+	const whereClause = and(...conditions)
 
-	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	const [results, countResult] = await Promise.all([
+		db
+			.select()
+			.from(objects)
+			.where(whereClause)
+			.limit(query.limit)
+			.offset(query.offset)
+			.orderBy(orderBy),
+		db.select({ count: count() }).from(objects).where(whereClause),
+	])
+
+	const total = countResult[0]?.count ?? 0
+
+	return c.json(
+		{
+			data: serializeArray(results) as z.infer<typeof objectResponseSchema>[],
+			total,
+			limit: query.limit,
+			offset: query.offset,
+		},
+		200,
+	)
 })
 
 // GET /search - Search objects by text

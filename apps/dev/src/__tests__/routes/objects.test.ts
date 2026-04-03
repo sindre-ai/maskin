@@ -87,17 +87,20 @@ describe('Objects Routes', () => {
 	})
 
 	describe('GET /api/objects', () => {
-		it('returns 200 with list of objects', async () => {
+		it('returns 200 with paginated list of objects', async () => {
 			const obj1 = buildObject({ workspaceId: wsId })
 			const obj2 = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.select = [obj1, obj2]
+			mockResults.selectQueue = [[obj1, obj2], [{ count: 2 }]]
 
 			const res = await app.request(jsonGet('/api/objects', { 'x-workspace-id': wsId }))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body).toHaveLength(2)
+			expect(body.data).toHaveLength(2)
+			expect(body.total).toBe(2)
+			expect(body.limit).toBe(50)
+			expect(body.offset).toBe(0)
 		})
 
 		it('returns 200 with sort and order params', async () => {

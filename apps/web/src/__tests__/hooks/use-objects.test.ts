@@ -25,7 +25,7 @@ import {
 	useObjects,
 	useUpdateObject,
 } from '@/hooks/use-objects'
-import type { ObjectResponse } from '@/lib/api'
+import type { ObjectResponse, PaginatedResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
 
@@ -45,6 +45,18 @@ function buildObject(overrides: Partial<ObjectResponse> & { id: string }): Objec
 		createdAt: null,
 		updatedAt: null,
 		...overrides,
+	}
+}
+
+function buildPaginatedResponse(
+	objects: ObjectResponse[],
+	total?: number,
+): PaginatedResponse<ObjectResponse> {
+	return {
+		data: objects,
+		total: total ?? objects.length,
+		limit: 50,
+		offset: 0,
 	}
 }
 
@@ -68,17 +80,18 @@ describe('useObjects', () => {
 			buildObject({ id: 'obj-1', title: 'Task 1', type: 'task' }),
 			buildObject({ id: 'obj-2', title: 'Bet 1', type: 'bet' }),
 		]
-		vi.mocked(api.objects.list).mockResolvedValue(mockObjects)
+		vi.mocked(api.objects.list).mockResolvedValue(buildPaginatedResponse(mockObjects))
 
 		const { result } = renderHook(() => useObjects(workspaceId), { wrapper: TestWrapper })
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data).toEqual(mockObjects)
+		expect(result.current.data?.data).toEqual(mockObjects)
+		expect(result.current.data?.total).toBe(2)
 		expect(api.objects.list).toHaveBeenCalledWith(workspaceId, undefined)
 	})
 
 	it('passes filters to API call', async () => {
-		vi.mocked(api.objects.list).mockResolvedValue([])
+		vi.mocked(api.objects.list).mockResolvedValue(buildPaginatedResponse([]))
 		const filters = { type: 'task', status: 'todo' }
 
 		const { result } = renderHook(() => useObjects(workspaceId, filters), { wrapper: TestWrapper })

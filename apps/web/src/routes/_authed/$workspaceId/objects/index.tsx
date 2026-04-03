@@ -102,7 +102,7 @@ function ObjectsPage() {
 				params.q = q
 				return api.objects.search(workspaceId, params)
 			}
-			return api.objects.list(workspaceId, params)
+			return api.objects.list(workspaceId, params).then((res) => res.data)
 		},
 		getNextPageParam: (lastPage, allPages) => {
 			if (lastPage.length < PAGE_SIZE) return undefined

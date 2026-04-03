@@ -212,7 +212,8 @@ export function LinkedObjects({
 	asTarget: RelationshipResponse[]
 }) {
 	const { workspaceId, workspace } = useWorkspace()
-	const { data: allObjects } = useObjects(workspaceId)
+	const { data: objectsResponse } = useObjects(workspaceId)
+	const allObjects = objectsResponse?.data ?? []
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, objectId)
 
@@ -232,7 +233,7 @@ export function LinkedObjects({
 			asSource={asSource}
 			asTarget={asTarget}
 			workspaceId={workspaceId}
-			allObjects={allObjects ?? []}
+			allObjects={allObjects}
 			relationshipTypes={relationshipTypes}
 			onCreateRelationship={(data) => createRelationship.mutate(data)}
 			onDeleteRelationship={(id) => deleteRelationship.mutate(id)}
