@@ -158,6 +158,15 @@ export class TriggerRunner {
 				return
 			}
 
+			// Node.js setTimeout uses a 32-bit signed int (~24.8 days max).
+			// For longer delays, set a shorter timeout that re-checks.
+			const MAX_TIMEOUT = 2_147_483_647
+			if (delay > MAX_TIMEOUT) {
+				const timeout = setTimeout(schedule, MAX_TIMEOUT)
+				this.cronTimeouts.set(trigger.id, timeout)
+				return
+			}
+
 			const timeout = setTimeout(async () => {
 				logger.info(`Cron trigger '${trigger.name}' firing`)
 
