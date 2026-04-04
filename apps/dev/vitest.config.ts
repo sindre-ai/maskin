@@ -9,6 +9,12 @@ export default defineConfig({
 			provider: 'v8',
 			reporter: ['text', 'lcov'],
 			include: ['src/routes/**', 'src/lib/**', 'src/middleware/**'],
+			thresholds: {
+				lines: 60,
+				branches: 60,
+				functions: 60,
+				statements: 60,
+			},
 		},
 	},
 })

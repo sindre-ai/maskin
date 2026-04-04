@@ -39,8 +39,6 @@ services:
       - "3000:3000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_native_oss
-      BETTER_AUTH_SECRET: dev-secret-change-in-production
-      BETTER_AUTH_URL: http://localhost:3000
       PORT: "3000"
       S3_ENDPOINT: http://seaweedfs:8333
       S3_BUCKET: agent-files

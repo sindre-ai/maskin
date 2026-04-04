@@ -3,6 +3,8 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'list', filters] as const,
+		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
+			['objects', workspaceId, 'listInfinite', filters] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
 	},
 	bets: {
@@ -52,6 +54,10 @@ export const queryKeys = {
 		history: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['events', workspaceId, 'history', filters] as const,
 		byEntity: (entityId: string) => ['events', 'entity', entityId] as const,
+	},
+	imports: {
+		all: (workspaceId: string) => ['imports', workspaceId] as const,
+		detail: (id: string) => ['imports', 'detail', id] as const,
 	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,

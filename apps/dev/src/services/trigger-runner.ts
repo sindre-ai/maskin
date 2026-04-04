@@ -12,6 +12,7 @@ export class TriggerRunner {
 	private sessionManager: SessionManager
 	private cronJobs: Map<string, Cron> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
+	private eventHandler: ((event: PgEvent) => void) | null = null
 
 	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
 		this.db = db
@@ -21,11 +22,12 @@ export class TriggerRunner {
 
 	async start() {
 		// Start event trigger listener
-		this.bridge.on('event', (event: PgEvent) => {
+		this.eventHandler = (event: PgEvent) => {
 			this.handleEvent(event).catch((err) =>
 				logger.error('Event handling failed', { error: String(err) }),
 			)
-		})
+		}
+		this.bridge.on('event', this.eventHandler)
 
 		// Load and start cron triggers
 		await this.loadCronTriggers()
@@ -37,6 +39,10 @@ export class TriggerRunner {
 	}
 
 	async stop() {
+		if (this.eventHandler) {
+			this.bridge.off('event', this.eventHandler)
+			this.eventHandler = null
+		}
 		for (const [_, job] of this.cronJobs) {
 			job.stop()
 		}
@@ -47,7 +53,21 @@ export class TriggerRunner {
 		this.reminderTimeouts.clear()
 	}
 
+	private async fetchEventData(eventId: string): Promise<Record<string, unknown> | null> {
+		const [row] = await this.db
+			.select({ data: events.data })
+			.from(events)
+			.where(eq(events.id, Number(eventId)))
+		return (row?.data as Record<string, unknown>) ?? null
+	}
+
 	private async handleEvent(event: PgEvent) {
+		// Hot-reload: react to trigger CRUD events
+		if (event.entity_type === 'trigger') {
+			await this.handleTriggerChange(event)
+			return
+		}
+
 		// Find matching event triggers for this workspace
 		const matchingTriggers = await this.db
 			.select()
@@ -60,6 +80,15 @@ export class TriggerRunner {
 				),
 			)
 
+		// Lazily fetch event data from DB only when a trigger needs it (data is no longer in NOTIFY payload)
+		let eventData: Record<string, unknown> | null | undefined
+		const getEventData = async () => {
+			if (eventData === undefined) {
+				eventData = await this.fetchEventData(event.event_id)
+			}
+			return eventData
+		}
+
 		for (const trigger of matchingTriggers) {
 			const config = trigger.config as Record<string, unknown>
 
@@ -68,23 +97,26 @@ export class TriggerRunner {
 			if (config.action && config.action !== event.action) continue
 
 			// Check filter conditions
-			if (config.filter && event.data) {
+			if (config.filter) {
+				const data = await getEventData()
+				if (!data) continue
 				const filter = config.filter as Record<string, unknown>
-				const data = event.data as Record<string, unknown>
 				const matches = Object.entries(filter).every(([key, value]) => data[key] === value)
 				if (!matches) continue
 			}
 
 			// Check status transition conditions
 			if (config.from_status || config.to_status) {
-				const { previous, current } = getObjectFromEvent(event)
+				const data = await getEventData()
+				const { previous, current } = getObjectFromData(data)
 				if (config.from_status && previous?.status !== config.from_status) continue
 				if (config.to_status && current?.status !== config.to_status) continue
 			}
 
 			// Check metadata conditions
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
-				const { current } = getObjectFromEvent(event)
+				const data = await getEventData()
+				const { current } = getObjectFromData(data)
 				if (!current || !evaluateConditions(config.conditions, current)) continue
 			}
 
@@ -134,6 +166,53 @@ export class TriggerRunner {
 				})
 				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
 		}
+	}
+
+	private async handleTriggerChange(event: PgEvent) {
+		const triggerId = event.entity_id
+
+		if (event.action === 'deleted') {
+			this.cronJobs.get(triggerId)?.stop()
+			this.cronJobs.delete(triggerId)
+			const timeout = this.reminderTimeouts.get(triggerId)
+			if (timeout) {
+				clearTimeout(timeout)
+				this.reminderTimeouts.delete(triggerId)
+			}
+			logger.info(`Trigger '${triggerId}' removed (deleted)`)
+			return
+		}
+
+		// For created/updated: fetch current state and (re-)schedule
+		const [trigger] = await this.db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.id, triggerId))
+			.limit(1)
+
+		if (!trigger) return
+
+		// Stop any existing schedule first
+		this.cronJobs.get(triggerId)?.stop()
+		this.cronJobs.delete(triggerId)
+		const timeout = this.reminderTimeouts.get(triggerId)
+		if (timeout) {
+			clearTimeout(timeout)
+			this.reminderTimeouts.delete(triggerId)
+		}
+
+		if (!trigger.enabled) {
+			logger.info(`Trigger '${trigger.name}' disabled, not scheduling`)
+			return
+		}
+
+		if (trigger.type === 'cron') {
+			this.scheduleCron(trigger)
+		} else if (trigger.type === 'reminder') {
+			this.scheduleReminder(trigger)
+		}
+
+		logger.info(`Trigger '${trigger.name}' ${event.action === 'created' ? 'scheduled' : 'rescheduled'}`)
 	}
 
 	private async loadCronTriggers() {
@@ -247,11 +326,10 @@ export interface ObjectData {
 	metadata?: Record<string, unknown>
 }
 
-export function getObjectFromEvent(event: PgEvent): {
+export function getObjectFromData(data: Record<string, unknown> | null | undefined): {
 	current?: ObjectData
 	previous?: ObjectData
 } {
-	const data = event.data as Record<string, unknown> | undefined
 	if (!data) return {}
 
 	// updated / status_changed events have { previous, updated }

@@ -5,6 +5,7 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		objects: {
 			list: vi.fn(),
+			get: vi.fn(),
 			create: vi.fn(),
 			update: vi.fn(),
 			delete: vi.fn(),
@@ -88,28 +89,26 @@ describe('useObjects', () => {
 })
 
 describe('useObject', () => {
-	it('returns matching object from list', async () => {
-		const mockObjects = [
-			buildObject({ id: 'obj-1', title: 'Task 1', type: 'task' }),
-			buildObject({ id: 'obj-2', title: 'Bet 1', type: 'bet' }),
-		]
-		vi.mocked(api.objects.list).mockResolvedValue(mockObjects)
+	it('fetches single object by id', async () => {
+		const mockObject = buildObject({ id: 'obj-2', title: 'Bet 1', type: 'bet' })
+		vi.mocked(api.objects.get).mockResolvedValue(mockObject)
 
-		const { result } = renderHook(() => useObject('obj-2', workspaceId), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useObject('obj-2'), { wrapper: TestWrapper })
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data?.id).toBe('obj-2')
+		expect(api.objects.get).toHaveBeenCalledWith('obj-2')
 	})
 
-	it('returns undefined when object not found', async () => {
-		vi.mocked(api.objects.list).mockResolvedValue([])
+	it('exposes error when API rejects', async () => {
+		vi.mocked(api.objects.get).mockRejectedValue(new Error('Not found'))
 
-		const { result } = renderHook(() => useObject('nonexistent', workspaceId), {
+		const { result } = renderHook(() => useObject('nonexistent'), {
 			wrapper: TestWrapper,
 		})
 
-		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data).toBeUndefined()
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(result.current.error?.message).toBe('Not found')
 	})
 })
 

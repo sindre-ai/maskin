@@ -35,5 +35,5 @@ export function getCredentialsCommand(): string {
 	if (ua.includes('win')) {
 		return 'type %USERPROFILE%\\.claude\\.credentials.json'
 	}
-	return 'cat ~/.claude/.credentials.json'
+	return 'cat $HOME/.claude/.credentials.json'
 }

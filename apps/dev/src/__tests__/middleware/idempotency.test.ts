@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { idempotencyMiddleware } from '../../middleware/idempotency'
 
 function createApp(actorId = 'actor-1') {
@@ -20,6 +20,16 @@ function createApp(actorId = 'actor-1') {
 	})
 
 	app.get('/test', (c) => {
+		callCount++
+		return c.json({ count: callCount })
+	})
+
+	app.patch('/test', (c) => {
+		callCount++
+		return c.json({ count: callCount })
+	})
+
+	app.delete('/test', (c) => {
 		callCount++
 		return c.json({ count: callCount })
 	})
@@ -124,5 +134,41 @@ describe('idempotency middleware', () => {
 		// Different actors with same key should both invoke handler
 		expect(body1.count).toBe(1)
 		expect(body2.count).toBe(1) // separate app instance, so count resets
+	})
+
+	it('caches PATCH requests with Idempotency-Key', async () => {
+		const { app, getCallCount } = createApp()
+
+		const headers = {
+			'Content-Type': 'application/json',
+			'Idempotency-Key': 'patch-key',
+		}
+
+		const res1 = await app.request('/test', { method: 'PATCH', headers })
+		const body1 = await res1.json()
+		expect(body1.count).toBe(1)
+
+		const res2 = await app.request('/test', { method: 'PATCH', headers })
+		const body2 = await res2.json()
+		expect(body2.count).toBe(1)
+		expect(getCallCount()).toBe(1)
+	})
+
+	it('caches DELETE requests with Idempotency-Key', async () => {
+		const { app, getCallCount } = createApp()
+
+		const headers = {
+			'Content-Type': 'application/json',
+			'Idempotency-Key': 'delete-key',
+		}
+
+		const res1 = await app.request('/test', { method: 'DELETE', headers })
+		const body1 = await res1.json()
+		expect(body1.count).toBe(1)
+
+		const res2 = await app.request('/test', { method: 'DELETE', headers })
+		const body2 = await res2.json()
+		expect(body2.count).toBe(1)
+		expect(getCallCount()).toBe(1)
 	})
 })

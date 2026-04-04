@@ -51,6 +51,23 @@ Document the required env vars in the provider's config.ts comments and add them
 - `{PROVIDER}_CLIENT_SECRET`
 - `{PROVIDER}_WEBHOOK_SECRET` (if webhooks are used)
 
+**Critical: Add to `turbo.json` `globalPassThroughEnv`** — Turbo only passes explicitly listed env vars to child processes. If you skip this step, the env vars will be silently unavailable at runtime even if they are set in `.env`. Add all new provider env vars to the `globalPassThroughEnv` array in `turbo.json`.
+
+### 5. Add frontend MCP preset (if MCP server exists)
+
+If the provider has an `mcp` field in its config, add a matching entry to `INTEGRATION_MCP_PRESETS` in `apps/web/src/components/agents/mcp-servers.tsx`:
+
+```typescript
+'provider-name': {
+  type: 'stdio',
+  command: 'npx',
+  args: ['-y', '@some-org/mcp-server-provider'],
+  env: { PROVIDER_ACCESS_TOKEN: '${PROVIDER_TOKEN}' },
+},
+```
+
+The env value `${PROVIDER_TOKEN}` is a placeholder — at runtime the session manager injects `{PROVIDER}_TOKEN` (uppercase provider name + `_TOKEN`) from OAuth credentials into the container environment.
+
 ## Auth Types
 
 | Type | When to use | What to implement |
@@ -81,6 +98,7 @@ Handle provider-specific behavior through these escape hatches:
 | `apps/dev/src/lib/integrations/events/normalizer.ts` | Event normalization |
 | `apps/dev/src/lib/integrations/providers/` | Provider configs |
 | `apps/dev/src/routes/integrations.ts` | Route handlers |
+| `apps/web/src/components/agents/mcp-servers.tsx` | Frontend MCP presets & quick-add UI |
 
 ## Testing
 
