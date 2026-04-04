@@ -57,7 +57,7 @@ export function MarkdownContent({
 		return (
 			<Textarea
 				ref={textareaRef}
-				className="w-full bg-transparent text-sm text-muted-foreground font-sans resize-none outline-none border-none p-0 focus:outline-none overflow-hidden"
+				className="w-full bg-transparent text-sm text-foreground font-sans resize-none outline-none border-none p-0 focus:outline-none overflow-hidden"
 				style={{ minHeight: containerHeight, lineHeight: '1.7142857' }}
 				value={draft}
 				onChange={(e) => {
@@ -95,7 +95,7 @@ export function MarkdownContent({
 		>
 			<div
 				className={cn(
-					'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded',
+					'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-foreground prose-p:leading-[1.7142857] prose-li:text-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded prose-blockquote:text-muted-foreground',
 					size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
 				)}
 			>
