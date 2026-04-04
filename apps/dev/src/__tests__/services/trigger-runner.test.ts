@@ -43,6 +43,7 @@ describe('TriggerRunner', () => {
 
 	describe('stop()', () => {
 		it('clears all intervals and timeouts', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
 			mockResults.selectQueue = [
 				// cron triggers
 				[buildTrigger({ type: 'cron', config: { expression: '*/5 * * * *' } })],
@@ -165,7 +166,8 @@ describe('TriggerRunner', () => {
 	})
 
 	describe('cron scheduling', () => {
-		it('fires cron trigger at interval', async () => {
+		it('fires cron trigger at correct interval', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
 			const trigger = buildTrigger({
 				type: 'cron',
 				config: { expression: '*/5 * * * *' },
@@ -180,6 +182,54 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('fires daily cron at the correct time', async () => {
+			vi.setSystemTime(new Date('2026-01-01T08:59:00Z'))
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '0 9 * * *' },
+			})
+			mockResults.selectQueue = [[trigger], []]
+			mockResults.insert = []
+			await runner.start()
+
+			// Should NOT have fired yet (still before 9:00)
+			await vi.advanceTimersByTimeAsync(30_000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			// Advance to 9:00 AM
+			await vi.advanceTimersByTimeAsync(30_000)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+		})
+
+		it('fires weekday-only cron on correct days', async () => {
+			// 2026-01-01 is a Thursday
+			vi.setSystemTime(new Date('2026-01-01T08:00:00Z'))
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '30 8 * * 1-5' },
+			})
+			mockResults.selectQueue = [[trigger], []]
+			mockResults.insert = []
+			await runner.start()
+
+			// Advance 30 minutes to 8:30 — Thursday is a weekday, should fire
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+		})
+
+		it('handles invalid cron expression gracefully', async () => {
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: 'not-a-cron' },
+			})
+			mockResults.selectQueue = [[trigger], []]
+			await runner.start()
+
+			// Should not throw, should not create a session
+			await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 
