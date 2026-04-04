@@ -36,7 +36,7 @@ interface ActivityItemViewProps {
 	event: EventResponse
 	actor?: ActorResponse
 	compact?: boolean
-	onNavigate?: (workspaceId: string, objectId: string) => void
+	onNavigate?: (workspaceId: string, entityId: string, entityType?: string) => void
 }
 
 export function ActivityItemView({
@@ -72,7 +72,7 @@ export function ActivityItemView({
 						(onNavigate ? (
 							<button
 								type="button"
-								onClick={() => onNavigate(event.workspaceId, event.entityId)}
+								onClick={() => onNavigate(event.workspaceId, event.entityId, event.entityType)}
 								className="text-primary hover:underline cursor-pointer truncate text-sm"
 							>
 								{title}
@@ -104,10 +104,14 @@ export function ActivityItem({
 	const { data: actor } = useActor(event.actorId)
 	const navigate = useNavigate()
 
-	function handleNavigate(workspaceId: string, objectId: string): void {
+	function handleNavigate(workspaceId: string, entityId: string, entityType?: string): void {
+		if (entityType === 'notification') {
+			navigate({ to: '/$workspaceId', params: { workspaceId } })
+			return
+		}
 		navigate({
 			to: '/$workspaceId/objects/$objectId',
-			params: { workspaceId, objectId },
+			params: { workspaceId, objectId: entityId },
 		})
 	}
 

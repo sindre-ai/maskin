@@ -8,7 +8,7 @@ import {
 	updateObjectSchema,
 } from '@ai-native/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import { and, eq, ilike, inArray, or } from 'drizzle-orm'
+import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import {
 	errorSchema,
@@ -30,6 +30,35 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>()
+
+// Keep in sync with KNOWN_SORT_COLUMNS in packages/shared/src/schemas/objects.ts
+const sortColumns: Record<string, Column | SQL> = {
+	createdAt: objects.createdAt,
+	updatedAt: objects.updatedAt,
+	title: objects.title,
+	status: objects.status,
+	type: objects.type,
+	owner: objects.owner,
+	createdBy: objects.createdBy,
+}
+
+/** Resolve sort expression — built-in column or metadata->>'field_name'. Returns null for unknown fields. */
+function resolveSortColumn(sortField: string): Column | SQL | null {
+	if (sortColumns[sortField]) return sortColumns[sortField]
+	if (sortField.startsWith('metadata.')) {
+		const fieldName = sortField.slice(9)
+		if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) return null
+		return sql`${objects.metadata}->>'${sql.raw(fieldName)}'`
+	}
+	return null
+}
+
+/** Resolve sort + order into a Drizzle orderBy expression, or null for unknown fields. */
+function resolveOrderBy(query: { sort: string; order: string }): SQL | null {
+	const sortExpr = resolveSortColumn(query.sort)
+	if (!sortExpr) return null
+	return query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
+}
 
 // POST / - Create object
 const createObjectRoute = createRoute({
@@ -185,13 +214,17 @@ app.openapi(listObjectsRoute, async (c) => {
 	if (query.status) conditions.push(eq(objects.status, query.status))
 	if (query.owner) conditions.push(eq(objects.owner, query.owner))
 
+	const orderBy = resolveOrderBy(query)
+	if (!orderBy)
+		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
+
 	const results = await db
 		.select()
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(objects.createdAt)
+		.orderBy(orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
@@ -211,6 +244,10 @@ const searchObjectsRoute = createRoute({
 			content: { 'application/json': { schema: z.array(objectResponseSchema) } },
 			description: 'Search results',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
 	},
 })
 
@@ -227,13 +264,17 @@ app.openapi(searchObjectsRoute, async (c) => {
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) conditions.push(eq(objects.status, query.status))
 
+	const orderBy = resolveOrderBy(query)
+	if (!orderBy)
+		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
+
 	const results = await db
 		.select()
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(objects.createdAt)
+		.orderBy(orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
@@ -419,14 +460,20 @@ app.openapi(updateObjectRoute, async (c) => {
 		}
 	}
 
-	const [updated] = await db
-		.update(objects)
-		.set({
-			...body,
-			updatedAt: new Date(),
-		})
-		.where(eq(objects.id, id))
-		.returning()
+	const updateData = {
+		...body,
+		updatedAt: new Date(),
+	}
+
+	// Shallow-merge metadata: new fields are added/overwritten, existing fields are preserved
+	if (body.metadata && existing.metadata) {
+		updateData.metadata = {
+			...(existing.metadata as typeof body.metadata),
+			...body.metadata,
+		}
+	}
+
+	const [updated] = await db.update(objects).set(updateData).where(eq(objects.id, id)).returning()
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)

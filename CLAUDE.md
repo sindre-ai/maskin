@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `apps/web/CLAUDE.md` — detailed frontend guidance: product philosophy, design system, component conventions, routing, state management, SSE patterns, and styling rules
 
 ## Project Rules
+- `.claude/rules/frontend.md` — frontend component reuse, DRY, and consistency rules (shadcn/ui, Radix UI)
 - `.claude/rules/testing.md` — testing conventions for all test types (unit, integration, E2E, frontend)
 - `.claude/rules/pre-commit.md` — pre-commit checklist (lint, type-check, tests)
 
@@ -156,13 +157,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string (required)
-- `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` — auth config (passed through Turborepo)
 - `PORT` — server port (default 3000)
 - `S3_ENDPOINT` — S3-compatible storage endpoint (default: `http://localhost:8333` for SeaweedFS)
 - `S3_BUCKET` — storage bucket name (default: `agent-files`)
 - `S3_ACCESS_KEY`, `S3_SECRET_KEY` — S3 credentials (default: `admin`/`admin` for dev)
 - `S3_REGION` — S3 region (default: `us-east-1`)
 - `CORS_ORIGIN` — comma-separated allowed origins for CORS (default: `http://localhost:5173`)
+
+**Important**: All env vars used at runtime must be listed in `turbo.json` `globalPassThroughEnv`. Turbo filters env vars — unlisted ones are silently unavailable to dev/build tasks. When adding new env vars (e.g., for integrations), always add them there too.
 
 ## Principles
 1. Simple & intuitive

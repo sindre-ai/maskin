@@ -8,6 +8,13 @@
       "when": 1774351837978,
       "tag": "0000_outstanding_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1774695399422,
+      "tag": "0001_same_shadow_king",
+      "breakpoints": true
     }
   ]
 }

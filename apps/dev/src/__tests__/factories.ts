@@ -314,6 +314,39 @@ export function buildSaveSkillBody(overrides?: Record<string, unknown>) {
 	}
 }
 
+export function buildImport(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		id: randomUUID(),
+		workspaceId: randomUUID(),
+		status: 'mapping',
+		fileName: `import-${n}.csv`,
+		fileType: 'csv',
+		fileStorageKey: `imports/ws/${randomUUID()}/import-${n}.csv`,
+		totalRows: 10,
+		processedRows: 0,
+		successCount: 0,
+		errorCount: 0,
+		mapping: {
+			objectType: 'task',
+			columns: [{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false }],
+			defaultStatus: 'todo',
+		},
+		preview: {
+			columns: ['name'],
+			sampleRows: [{ name: 'Test' }],
+			totalRows: 10,
+		},
+		errors: null,
+		source: 'file',
+		createdBy: randomUUID(),
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		completedAt: null,
+		...overrides,
+	}
+}
+
 export function buildCreateGraphBody(overrides?: Record<string, unknown>) {
 	return {
 		nodes: [
