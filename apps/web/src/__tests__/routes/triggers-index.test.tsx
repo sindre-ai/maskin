@@ -10,7 +10,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
@@ -19,11 +19,11 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 vi.mock('@/hooks/use-triggers', () => ({
-	useTriggers: (...args: any[]) => mockUseTriggers(...args),
+	useTriggers: (...args: unknown[]) => mockUseTriggers(...args),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
-	useActors: (...args: any[]) => mockUseActors(...args),
+	useActors: (...args: unknown[]) => mockUseActors(...args),
 }))
 
 vi.mock('@/components/layout/page-header', () => ({
@@ -44,7 +44,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/triggers/index'
 
-const TriggersPage = Route.component as React.FC
+const TriggersPage = (Route as unknown as { component: React.FC }).component
 
 describe('TriggersPage', () => {
 	beforeEach(() => {

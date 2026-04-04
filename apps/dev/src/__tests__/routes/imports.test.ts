@@ -266,7 +266,10 @@ describe('POST /api/imports (file upload)', () => {
 		mockResults.insert = [imp]
 
 		const formData = new FormData()
-		formData.append('file', new File(['name,status\nItem 1,todo'], 'test.csv', { type: 'text/csv' }))
+		formData.append(
+			'file',
+			new File(['name,status\nItem 1,todo'], 'test.csv', { type: 'text/csv' }),
+		)
 
 		const req = new Request('http://localhost/api/imports', {
 			method: 'POST',

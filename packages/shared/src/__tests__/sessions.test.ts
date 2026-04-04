@@ -113,7 +113,7 @@ describe('sessionConfigSchema', () => {
 		expect(result.runtime).toBe('claude-code')
 		expect(result.runtime_config).toEqual({})
 		expect(result.timeout_seconds).toBe(600)
-		expect(result.memory_mb).toBe(1024)
+		expect(result.memory_mb).toBe(8192)
 		expect(result.cpu_shares).toBe(1024)
 		expect(result.mcps).toEqual([])
 		expect(result.env_vars).toEqual({})

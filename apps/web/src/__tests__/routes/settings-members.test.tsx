@@ -7,7 +7,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
@@ -16,7 +16,7 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 vi.mock('@/hooks/use-workspaces', () => ({
-	useWorkspaceMembers: (...args: any[]) => mockUseWorkspaceMembers(...args),
+	useWorkspaceMembers: (...args: unknown[]) => mockUseWorkspaceMembers(...args),
 	useAddWorkspaceMember: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }))
 
@@ -38,7 +38,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/settings/members'
 
-const MembersPage = Route.component as React.FC
+const MembersPage = (Route as unknown as { component: React.FC }).component
 
 describe('MembersPage', () => {
 	beforeEach(() => {
