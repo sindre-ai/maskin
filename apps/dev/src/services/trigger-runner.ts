@@ -137,7 +137,6 @@ export class TriggerRunner {
 	}
 
 	private async loadCronTriggers() {
-		// Simple cron: parse expression to interval (MVP: only supports minute intervals)
 		const cronTriggers = await this.db
 			.select()
 			.from(triggers)
