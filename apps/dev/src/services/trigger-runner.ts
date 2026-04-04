@@ -9,7 +9,7 @@ export class TriggerRunner {
 	private db: Database
 	private bridge: PgNotifyBridge
 	private sessionManager: SessionManager
-	private cronIntervals: Map<string, NodeJS.Timeout> = new Map()
+	private cronTimeouts: Map<string, NodeJS.Timeout> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
 
 	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
@@ -36,10 +36,10 @@ export class TriggerRunner {
 	}
 
 	async stop() {
-		for (const [_, interval] of this.cronIntervals) {
-			clearInterval(interval)
+		for (const [_, timeout] of this.cronTimeouts) {
+			clearTimeout(timeout)
 		}
-		this.cronIntervals.clear()
+		this.cronTimeouts.clear()
 		for (const [_, timeout] of this.reminderTimeouts) {
 			clearTimeout(timeout)
 		}
@@ -151,13 +151,14 @@ export class TriggerRunner {
 		const config = trigger.config as Record<string, unknown>
 		const expression = config.expression as string
 
-		// MVP: parse simple cron expressions (every N minutes)
-		// Format: */N * * * * (every N minutes)
-		const match = expression.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/)
-		const intervalMinutes = match?.[1] ? Number.parseInt(match[1]) : 60
+		const schedule = () => {
+			const delay = getNextCronDelay(expression)
+			if (delay === null) {
+				logger.error(`Invalid cron expression for trigger '${trigger.name}', skipping`)
+				return
+			}
 
-		const interval = setInterval(
-			async () => {
+			const timeout = setTimeout(async () => {
 				logger.info(`Cron trigger '${trigger.name}' firing`)
 
 				await this.db.insert(events).values({
@@ -181,11 +182,15 @@ export class TriggerRunner {
 						createdBy: trigger.createdBy,
 					})
 					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
-			},
-			intervalMinutes * 60 * 1000,
-		)
 
-		this.cronIntervals.set(trigger.id, interval)
+				// Schedule next run
+				schedule()
+			}, delay)
+
+			this.cronTimeouts.set(trigger.id, timeout)
+		}
+
+		schedule()
 	}
 
 	private async loadReminders() {
@@ -241,6 +246,89 @@ export class TriggerRunner {
 
 		this.reminderTimeouts.set(trigger.id, timeout)
 	}
+}
+
+// Parse a single cron field into a set of matching values.
+// Supports: wildcard, step, literal, range, list, and combinations.
+export function parseCronField(field: string, min: number, max: number): Set<number> | null {
+	const values = new Set<number>()
+	for (const part of field.split(',')) {
+		const stepMatch = part.match(/^(\d+)-(\d+)\/(\d+)$/)
+		if (stepMatch) {
+			const [, start, end, step] = stepMatch
+			const s = Number(start)
+			const e = Number(end)
+			const st = Number(step)
+			if (s < min || e > max || st <= 0) return null
+			for (let i = s; i <= e; i += st) values.add(i)
+			continue
+		}
+		const wildStep = part.match(/^\*\/(\d+)$/)
+		if (wildStep) {
+			const step = Number(wildStep[1])
+			if (step <= 0) return null
+			for (let i = min; i <= max; i += step) values.add(i)
+			continue
+		}
+		if (part === '*') {
+			for (let i = min; i <= max; i++) values.add(i)
+			continue
+		}
+		const rangeMatch = part.match(/^(\d+)-(\d+)$/)
+		if (rangeMatch) {
+			const s = Number(rangeMatch[1])
+			const e = Number(rangeMatch[2])
+			if (s < min || e > max || s > e) return null
+			for (let i = s; i <= e; i++) values.add(i)
+			continue
+		}
+		const num = Number(part)
+		if (Number.isNaN(num) || num < min || num > max) return null
+		values.add(num)
+	}
+	return values.size > 0 ? values : null
+}
+
+/**
+ * Calculate ms until the next time a 5-field cron expression matches.
+ * Returns null if the expression is invalid.
+ * Scans up to 366 days ahead to find a match (covers leap years + all month/dow combos).
+ */
+export function getNextCronDelay(expression: string, now?: Date): number | null {
+	const parts = expression.trim().split(/\s+/)
+	if (parts.length !== 5) return null
+	const [minF, hourF, domF, monF, dowF] = parts as [string, string, string, string, string]
+
+	const minutes = parseCronField(minF, 0, 59)
+	const hours = parseCronField(hourF, 0, 23)
+	const daysOfMonth = parseCronField(domF, 1, 31)
+	const months = parseCronField(monF, 1, 12)
+	const daysOfWeek = parseCronField(dowF, 0, 6)
+
+	if (!minutes || !hours || !daysOfMonth || !months || !daysOfWeek) return null
+
+	const current = now ?? new Date()
+	// Start from the next minute boundary
+	const candidate = new Date(current)
+	candidate.setSeconds(0, 0)
+	candidate.setMinutes(candidate.getMinutes() + 1)
+
+	// Scan up to 366 days * 24 hours * 60 minutes = 527040 minutes
+	const maxMinutes = 366 * 24 * 60
+	for (let i = 0; i < maxMinutes; i++) {
+		if (
+			months.has(candidate.getMonth() + 1) &&
+			daysOfMonth.has(candidate.getDate()) &&
+			daysOfWeek.has(candidate.getDay()) &&
+			hours.has(candidate.getHours()) &&
+			minutes.has(candidate.getMinutes())
+		) {
+			return candidate.getTime() - current.getTime()
+		}
+		candidate.setMinutes(candidate.getMinutes() + 1)
+	}
+
+	return null
 }
 
 export interface ObjectData {

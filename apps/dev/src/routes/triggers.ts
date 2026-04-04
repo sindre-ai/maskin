@@ -12,6 +12,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { getNextCronDelay } from '../services/trigger-runner'
 
 type Env = {
 	Variables: {
@@ -61,6 +62,14 @@ app.openapi(createTriggerRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const body = c.req.valid('json')
+
+	if (body.type === 'cron') {
+		const config = body.config as Record<string, unknown>
+		const expression = config?.expression as string | undefined
+		if (!expression || getNextCronDelay(expression) === null) {
+			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+		}
+	}
 
 	const [created] = await db
 		.insert(triggers)
@@ -152,6 +161,14 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	const [trigger] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
 	if (!trigger || !(await isWorkspaceMember(db, actorId, trigger.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
+	}
+
+	if (body.config && trigger.type === 'cron') {
+		const config = body.config as Record<string, unknown>
+		const expression = config?.expression as string | undefined
+		if (expression && getNextCronDelay(expression) === null) {
+			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
+		}
 	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }

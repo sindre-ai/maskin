@@ -5,7 +5,9 @@ import {
 	TriggerRunner,
 	evaluateCondition,
 	evaluateConditions,
+	getNextCronDelay,
 	getObjectFromEvent,
+	parseCronField,
 } from '../../services/trigger-runner'
 import { buildTrigger } from '../factories'
 import { createMockSessionManager, createTestContext } from '../setup'
@@ -165,7 +167,8 @@ describe('TriggerRunner', () => {
 	})
 
 	describe('cron scheduling', () => {
-		it('fires cron trigger at interval', async () => {
+		it('fires cron trigger at the next matching minute', async () => {
+			// Use */5 so the next match is at most 5 minutes away
 			const trigger = buildTrigger({
 				type: 'cron',
 				config: { expression: '*/5 * * * *' },
@@ -177,9 +180,26 @@ describe('TriggerRunner', () => {
 			mockResults.insert = []
 			await runner.start()
 
+			// Advance enough time to reach the next */5 boundary (at most 5 min)
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fire for invalid cron expression', async () => {
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: 'invalid cron' },
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers
+				[], // reminder triggers
+			]
+			await runner.start()
+
+			await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 
@@ -201,6 +221,79 @@ describe('TriggerRunner', () => {
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
+	})
+})
+
+describe('parseCronField()', () => {
+	it('parses wildcard', () => {
+		const result = parseCronField('*', 0, 5)
+		expect(result).toEqual(new Set([0, 1, 2, 3, 4, 5]))
+	})
+
+	it('parses step', () => {
+		const result = parseCronField('*/15', 0, 59)
+		expect(result).toEqual(new Set([0, 15, 30, 45]))
+	})
+
+	it('parses literal', () => {
+		const result = parseCronField('9', 0, 23)
+		expect(result).toEqual(new Set([9]))
+	})
+
+	it('parses range', () => {
+		const result = parseCronField('1-3', 1, 12)
+		expect(result).toEqual(new Set([1, 2, 3]))
+	})
+
+	it('parses list', () => {
+		const result = parseCronField('1,3,5', 0, 6)
+		expect(result).toEqual(new Set([1, 3, 5]))
+	})
+
+	it('parses range with step', () => {
+		const result = parseCronField('0-20/5', 0, 59)
+		expect(result).toEqual(new Set([0, 5, 10, 15, 20]))
+	})
+
+	it('returns null for out-of-range value', () => {
+		expect(parseCronField('99', 0, 59)).toBeNull()
+	})
+
+	it('returns null for invalid string', () => {
+		expect(parseCronField('abc', 0, 59)).toBeNull()
+	})
+})
+
+describe('getNextCronDelay()', () => {
+	it('returns delay for every-5-minutes expression', () => {
+		// 10:02 → next */5 match is 10:05, so 3 min = 180000ms
+		const now = new Date('2025-06-15T10:02:30Z')
+		const delay = getNextCronDelay('*/5 * * * *', now)
+		expect(delay).toBe(3 * 60 * 1000 - 30_000) // 2.5 min (to 10:05:00)
+	})
+
+	it('returns delay for daily at 9am', () => {
+		const now = new Date('2025-06-15T08:00:00Z')
+		const delay = getNextCronDelay('0 9 * * *', now)
+		// Next match is 09:00, 60 min away
+		expect(delay).toBe(60 * 60 * 1000)
+	})
+
+	it('returns delay for specific day of week', () => {
+		// 2025-06-15 is a Sunday (day 0)
+		const now = new Date('2025-06-15T00:00:00Z')
+		// "0 9 * * 1" = Monday at 9am → next Monday is June 16 at 09:00
+		const delay = getNextCronDelay('0 9 * * 1', now)
+		// Sunday 00:00 → Monday 09:00 = 33 hours
+		expect(delay).toBe(33 * 60 * 60 * 1000)
+	})
+
+	it('returns null for invalid expression', () => {
+		expect(getNextCronDelay('not valid')).toBeNull()
+	})
+
+	it('returns null for wrong number of fields', () => {
+		expect(getNextCronDelay('* * *')).toBeNull()
 	})
 })
 
