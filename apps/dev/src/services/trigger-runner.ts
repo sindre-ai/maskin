@@ -212,7 +212,9 @@ export class TriggerRunner {
 			this.scheduleReminder(trigger)
 		}
 
-		logger.info(`Trigger '${trigger.name}' ${event.action === 'created' ? 'scheduled' : 'rescheduled'}`)
+		logger.info(
+			`Trigger '${trigger.name}' ${event.action === 'created' ? 'scheduled' : 'rescheduled'}`,
+		)
 	}
 
 	private async loadCronTriggers() {

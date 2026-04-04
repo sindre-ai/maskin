@@ -1,6 +1,6 @@
 import {
-	DataTableControls,
 	type ColumnInfo,
+	DataTableControls,
 } from '@/components/objects/data-table/data-table-controls'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

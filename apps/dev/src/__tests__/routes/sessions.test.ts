@@ -369,14 +369,11 @@ describe('Sessions Routes', () => {
 			mockResults.selectQueue = [[session], [session]]
 
 			const controller = new AbortController()
-			const req = new Request(
-				`http://localhost/api/sessions/${session.id}/logs/stream`,
-				{
-					method: 'GET',
-					headers: { 'x-workspace-id': wsId },
-					signal: controller.signal,
-				},
-			)
+			const req = new Request(`http://localhost/api/sessions/${session.id}/logs/stream`, {
+				method: 'GET',
+				headers: { 'x-workspace-id': wsId },
+				signal: controller.signal,
+			})
 
 			const res = await app.request(req)
 
@@ -437,17 +434,14 @@ describe('Sessions Routes', () => {
 			mockResults.selectQueue = [[session], [session], [missedLog]]
 
 			const controller = new AbortController()
-			const req = new Request(
-				`http://localhost/api/sessions/${session.id}/logs/stream`,
-				{
-					method: 'GET',
-					headers: {
-						'x-workspace-id': wsId,
-						'Last-Event-ID': '5',
-					},
-					signal: controller.signal,
+			const req = new Request(`http://localhost/api/sessions/${session.id}/logs/stream`, {
+				method: 'GET',
+				headers: {
+					'x-workspace-id': wsId,
+					'Last-Event-ID': '5',
 				},
-			)
+				signal: controller.signal,
+			})
 
 			const res = await app.request(req)
 
