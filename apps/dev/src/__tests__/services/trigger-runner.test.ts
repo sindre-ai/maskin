@@ -178,6 +178,7 @@ describe('TriggerRunner', () => {
 				[], // reminder triggers
 			]
 			mockResults.insert = []
+			mockResults.update = []
 			await runner.start()
 
 			// Advance enough time to reach the next */5 boundary (at most 5 min)
@@ -198,6 +199,96 @@ describe('TriggerRunner', () => {
 			await runner.start()
 
 			await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('missed run detection', () => {
+		it('fires catch-up when a cron run was missed', async () => {
+			// lastFiredAt 2 hours ago, expression is every 30 min → missed
+			const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '*/30 * * * *' },
+				lastFiredAt: twoHoursAgo,
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers
+				[], // reminder triggers
+			]
+			mockResults.insert = []
+			mockResults.update = []
+			await runner.start()
+
+			// The catch-up fires synchronously during start, flush microtasks
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fire catch-up when no run was missed', async () => {
+			// lastFiredAt 1 minute ago, expression is daily → not missed
+			const oneMinAgo = new Date(Date.now() - 60 * 1000)
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '0 9 * * *' },
+				lastFiredAt: oneMinAgo,
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers
+				[], // reminder triggers
+			]
+			await runner.start()
+
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('hot-reload', () => {
+		it('reschedules a cron trigger when reloaded', async () => {
+			mockResults.selectQueue = [
+				[], // initial cron triggers
+				[], // initial reminder triggers
+			]
+			await runner.start()
+
+			// Simulate creating a new cron trigger
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '*/5 * * * *' },
+				enabled: true,
+			})
+			mockResults.select = [trigger]
+			mockResults.insert = []
+			mockResults.update = []
+			await runner.reloadTrigger(trigger.id)
+
+			// Advance time to trigger it
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('unschedules a disabled trigger when reloaded', async () => {
+			const trigger = buildTrigger({
+				type: 'cron',
+				config: { expression: '*/5 * * * *' },
+				enabled: true,
+			})
+			mockResults.selectQueue = [
+				[trigger], // initial cron triggers
+				[], // initial reminder triggers
+			]
+			await runner.start()
+
+			// Now reload with trigger disabled
+			mockResults.select = [{ ...trigger, enabled: false }]
+			await runner.reloadTrigger(trigger.id)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
 
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
@@ -286,6 +377,29 @@ describe('getNextCronDelay()', () => {
 		const delay = getNextCronDelay('0 9 * * 1', now)
 		// Sunday 00:00 → Monday 09:00 = 33 hours
 		expect(delay).toBe(33 * 60 * 60 * 1000)
+	})
+
+	it('uses OR semantics when both dom and dow are restricted', () => {
+		// 2025-06-15 is a Sunday (day 0), date is 15th
+		// "0 9 15 * 1" = 15th of month OR Monday at 9am
+		// Next match: 15th at 09:00 (today) since both are restricted → OR
+		const now = new Date('2025-06-15T00:00:00Z')
+		const delay = getNextCronDelay('0 9 15 * 1', now)
+		// Sunday the 15th at 09:00 = 9 hours from 00:00:00
+		expect(delay).toBe(9 * 60 * 60 * 1000)
+	})
+
+	it('supports timezone parameter', () => {
+		// UTC 20:00 = US Eastern 16:00 (EDT, UTC-4)
+		// Cron "0 17 * * *" in America/New_York = 17:00 ET = 21:00 UTC
+		const now = new Date('2025-06-15T20:00:00Z')
+		const delay = getNextCronDelay('0 17 * * *', now, 'America/New_York')
+		// Next match at 17:00 ET = 21:00 UTC, so 60 min away
+		expect(delay).toBe(60 * 60 * 1000)
+	})
+
+	it('returns null for invalid timezone', () => {
+		expect(getNextCronDelay('* * * * *', undefined, 'Invalid/Timezone')).toBeNull()
 	})
 
 	it('returns null for invalid expression', () => {

@@ -12,13 +12,14 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
-import { getNextCronDelay } from '../services/trigger-runner'
+import { type TriggerRunner, getNextCronDelay } from '../services/trigger-runner'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		triggerRunner: TriggerRunner
 	}
 }
 
@@ -66,7 +67,8 @@ app.openapi(createTriggerRoute, async (c) => {
 	if (body.type === 'cron') {
 		const config = body.config as Record<string, unknown>
 		const expression = config?.expression as string | undefined
-		if (!expression || getNextCronDelay(expression) === null) {
+		const timezone = config?.timezone as string | undefined
+		if (!expression || getNextCronDelay(expression, undefined, timezone) === null) {
 			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
 		}
 	}
@@ -89,6 +91,10 @@ app.openapi(createTriggerRoute, async (c) => {
 	if (!created) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create trigger'), 500)
 	}
+
+	// Hot-reload: schedule the new trigger immediately
+	const triggerRunner = c.get('triggerRunner')
+	triggerRunner.reloadTrigger(created.id).catch(() => {})
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -166,7 +172,8 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	if (body.config && trigger.type === 'cron') {
 		const config = body.config as Record<string, unknown>
 		const expression = config?.expression as string | undefined
-		if (expression && getNextCronDelay(expression) === null) {
+		const timezone = config?.timezone as string | undefined
+		if (expression && getNextCronDelay(expression, undefined, timezone) === null) {
 			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
 		}
 	}
@@ -181,6 +188,10 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	const [updated] = await db.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
+
+	// Hot-reload: reschedule the updated trigger
+	const triggerRunner = c.get('triggerRunner')
+	triggerRunner.reloadTrigger(id).catch(() => {})
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
@@ -217,6 +228,11 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	}
 
 	await db.delete(triggers).where(eq(triggers.id, id))
+
+	// Hot-reload: unschedule the deleted trigger
+	const triggerRunner = c.get('triggerRunner')
+	triggerRunner.reloadTrigger(id).catch(() => {})
+
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteTriggerRoute, Env>)
 

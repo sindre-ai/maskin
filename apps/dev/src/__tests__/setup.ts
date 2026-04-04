@@ -4,6 +4,7 @@ import type { OpenAPIHono } from '@hono/zod-openapi'
 import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
+import type { TriggerRunner } from '../services/trigger-runner'
 
 type Env = {
 	Variables: {
@@ -13,6 +14,7 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
+		triggerRunner: TriggerRunner
 	}
 }
 
@@ -132,6 +134,7 @@ export function withTestEnv(
 		c.set('actorId', actorId)
 		c.set('actorType', actorType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('triggerRunner', { reloadTrigger: async () => {} } as unknown as TriggerRunner)
 		await next()
 	})
 }
@@ -198,6 +201,7 @@ export function createSessionTestApp(
 		c.set('actorType', actorType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('sessionManager', sessionManager)
+		c.set('triggerRunner', { reloadTrigger: async () => {} } as unknown as TriggerRunner)
 		await next()
 	})
 
@@ -225,6 +229,7 @@ export function createSkillsTestApp(
 		c.set('actorType', actorType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('agentStorage', agentStorage)
+		c.set('triggerRunner', { reloadTrigger: async () => {} } as unknown as TriggerRunner)
 		await next()
 	})
 

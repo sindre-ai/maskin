@@ -163,6 +163,7 @@ export const triggers = pgTable('triggers', {
 		.references(() => actors.id)
 		.notNull(),
 	enabled: boolean('enabled').notNull().default(true),
+	lastFiredAt: timestamp('last_fired_at', { withTimezone: true }),
 	createdBy: uuid('created_by')
 		.references(() => actors.id)
 		.notNull(),

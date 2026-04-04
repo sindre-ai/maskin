@@ -5,6 +5,7 @@ export const triggerTypeSchema = z.enum(['cron', 'event', 'reminder'])
 
 export const cronConfigSchema = z.object({
 	expression: z.string(),
+	timezone: z.string().optional(),
 })
 
 export const conditionOperatorSchema = z.enum([

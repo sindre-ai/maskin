@@ -120,6 +120,7 @@ export function buildTrigger(overrides?: Record<string, unknown>) {
 		actionPrompt: `Handle trigger ${n}`,
 		targetActorId: randomUUID(),
 		enabled: true,
+		lastFiredAt: null as Date | null,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),

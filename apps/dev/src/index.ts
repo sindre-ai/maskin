@@ -43,6 +43,7 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
+		triggerRunner: TriggerRunner
 	}
 }
 
@@ -120,12 +121,16 @@ const agentStorage = new AgentStorageManager(storageProvider, db)
 // Session manager for container-based agent execution
 const sessionManager = new SessionManager(db, storageProvider)
 
-// Inject db, bridge, session manager, and agent storage into context
+// Start trigger runner (cron + event-based automation)
+const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
+
+// Inject db, bridge, session manager, agent storage, and trigger runner into context
 app.use('*', async (c, next) => {
 	c.set('db', db)
 	c.set('notifyBridge', notifyBridge)
 	c.set('sessionManager', sessionManager)
 	c.set('agentStorage', agentStorage)
+	c.set('triggerRunner', triggerRunner)
 	await next()
 })
 
@@ -241,8 +246,7 @@ sessionManager.start().then(() => {
 	logger.info('Session manager started')
 })
 
-// Start trigger runner (cron + event-based automation)
-const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
+// Start trigger runner
 triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
 })

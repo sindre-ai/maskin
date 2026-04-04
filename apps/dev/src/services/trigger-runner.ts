@@ -26,7 +26,7 @@ export class TriggerRunner {
 			)
 		})
 
-		// Load and start cron triggers
+		// Load and start cron triggers (with missed-run detection)
 		await this.loadCronTriggers()
 
 		// Load and schedule reminder triggers
@@ -44,6 +44,41 @@ export class TriggerRunner {
 			clearTimeout(timeout)
 		}
 		this.reminderTimeouts.clear()
+	}
+
+	// Hot-reload: called by routes when a trigger is created, updated, or deleted
+	async reloadTrigger(triggerId: string) {
+		// Cancel existing schedule if any
+		const existing = this.cronTimeouts.get(triggerId)
+		if (existing) {
+			clearTimeout(existing)
+			this.cronTimeouts.delete(triggerId)
+		}
+		const existingReminder = this.reminderTimeouts.get(triggerId)
+		if (existingReminder) {
+			clearTimeout(existingReminder)
+			this.reminderTimeouts.delete(triggerId)
+		}
+
+		// Reload from DB
+		const [trigger] = await this.db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.id, triggerId))
+			.limit(1)
+
+		if (!trigger || !trigger.enabled) {
+			logger.info(`Trigger ${triggerId} unscheduled`)
+			return
+		}
+
+		if (trigger.type === 'cron') {
+			this.scheduleCron(trigger)
+			logger.info(`Trigger '${trigger.name}' (re)scheduled`)
+		} else if (trigger.type === 'reminder') {
+			this.scheduleReminder(trigger)
+			logger.info(`Reminder '${trigger.name}' (re)scheduled`)
+		}
 	}
 
 	private async handleEvent(event: PgEvent) {
@@ -136,23 +171,75 @@ export class TriggerRunner {
 	}
 
 	private async loadCronTriggers() {
-		// Simple cron: parse expression to interval (MVP: only supports minute intervals)
 		const cronTriggers = await this.db
 			.select()
 			.from(triggers)
 			.where(and(eq(triggers.type, 'cron'), eq(triggers.enabled, true)))
 
 		for (const trigger of cronTriggers) {
+			await this.detectMissedRun(trigger)
 			this.scheduleCron(trigger)
 		}
+	}
+
+	private async detectMissedRun(trigger: typeof triggers.$inferSelect) {
+		if (!trigger.lastFiredAt) return
+
+		const config = trigger.config as Record<string, unknown>
+		const expression = config.expression as string
+		const timezone = (config.timezone as string | undefined) ?? undefined
+
+		// Check if a run was missed: compute when the next run *should have been*
+		// after lastFiredAt — if that time is in the past, we missed it
+		const nextAfterLast = getNextCronDelay(expression, trigger.lastFiredAt, timezone)
+		if (nextAfterLast === null) return
+
+		const expectedRunTime = trigger.lastFiredAt.getTime() + nextAfterLast
+		if (expectedRunTime < Date.now()) {
+			logger.info(`Missed cron run detected for trigger '${trigger.name}', firing catch-up`)
+			await this.fireCronTrigger(trigger)
+		}
+	}
+
+	private async fireCronTrigger(trigger: typeof triggers.$inferSelect) {
+		logger.info(`Cron trigger '${trigger.name}' firing`)
+
+		// Update lastFiredAt
+		await this.db
+			.update(triggers)
+			.set({ lastFiredAt: new Date(), updatedAt: new Date() })
+			.where(eq(triggers.id, trigger.id))
+
+		await this.db.insert(events).values({
+			workspaceId: trigger.workspaceId,
+			actorId: trigger.targetActorId,
+			action: 'trigger_fired',
+			entityType: 'trigger',
+			entityId: trigger.id,
+			data: {
+				trigger_name: trigger.name,
+				prompt: trigger.actionPrompt,
+				target_actor_id: trigger.targetActorId,
+			},
+		})
+
+		this.sessionManager
+			.createSession(trigger.workspaceId, {
+				actorId: trigger.targetActorId,
+				actionPrompt: trigger.actionPrompt,
+				triggerId: trigger.id,
+				createdBy: trigger.createdBy,
+			})
+			.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
 	}
 
 	private scheduleCron(trigger: typeof triggers.$inferSelect) {
 		const config = trigger.config as Record<string, unknown>
 		const expression = config.expression as string
+		const timezone = (config.timezone as string | undefined) ?? undefined
 
 		const schedule = () => {
-			const delay = getNextCronDelay(expression)
+			const delay = getNextCronDelay(expression, undefined, timezone)
 			if (delay === null) {
 				logger.error(`Invalid cron expression for trigger '${trigger.name}', skipping`)
 				return
@@ -168,31 +255,7 @@ export class TriggerRunner {
 			}
 
 			const timeout = setTimeout(async () => {
-				logger.info(`Cron trigger '${trigger.name}' firing`)
-
-				await this.db.insert(events).values({
-					workspaceId: trigger.workspaceId,
-					actorId: trigger.targetActorId,
-					action: 'trigger_fired',
-					entityType: 'trigger',
-					entityId: trigger.id,
-					data: {
-						trigger_name: trigger.name,
-						prompt: trigger.actionPrompt,
-						target_actor_id: trigger.targetActorId,
-					},
-				})
-
-				this.sessionManager
-					.createSession(trigger.workspaceId, {
-						actorId: trigger.targetActorId,
-						actionPrompt: trigger.actionPrompt,
-						triggerId: trigger.id,
-						createdBy: trigger.createdBy,
-					})
-					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
-
-				// Schedule next run
+				await this.fireCronTrigger(trigger)
 				schedule()
 			}, delay)
 
@@ -298,12 +361,38 @@ export function parseCronField(field: string, min: number, max: number): Set<num
 	return values.size > 0 ? values : null
 }
 
+// Convert a Date to a specific timezone using Intl.DateTimeFormat.
+// Returns an object with the local time components in the target timezone.
+function dateInTimezone(date: Date, timezone: string) {
+	const fmt = new Intl.DateTimeFormat('en-US', {
+		timeZone: timezone,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		weekday: 'short',
+		hour12: false,
+	})
+	const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]))
+	return {
+		month: Number(parts.month),
+		day: Number(parts.day),
+		hour: Number(parts.hour === '24' ? '0' : parts.hour),
+		minute: Number(parts.minute),
+		weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday ?? ''),
+	}
+}
+
 /**
  * Calculate ms until the next time a 5-field cron expression matches.
  * Returns null if the expression is invalid.
- * Scans up to 366 days ahead to find a match (covers leap years + all month/dow combos).
+ * Scans up to 366 days ahead to find a match.
+ *
+ * Standard cron OR semantics: when both day-of-month and day-of-week are
+ * restricted (not *), a date matches if EITHER field matches.
  */
-export function getNextCronDelay(expression: string, now?: Date): number | null {
+export function getNextCronDelay(expression: string, now?: Date, timezone?: string): number | null {
 	const parts = expression.trim().split(/\s+/)
 	if (parts.length !== 5) return null
 	const [minF, hourF, domF, monF, dowF] = parts as [string, string, string, string, string]
@@ -316,22 +405,56 @@ export function getNextCronDelay(expression: string, now?: Date): number | null 
 
 	if (!minutes || !hours || !daysOfMonth || !months || !daysOfWeek) return null
 
+	// Standard cron OR semantics: when both dom and dow are restricted (not *),
+	// match if EITHER matches. When one or both are *, use AND.
+	const domRestricted = domF !== '*'
+	const dowRestricted = dowF !== '*'
+	const useDayOr = domRestricted && dowRestricted
+
 	const current = now ?? new Date()
 	// Start from the next minute boundary
 	const candidate = new Date(current)
 	candidate.setSeconds(0, 0)
 	candidate.setMinutes(candidate.getMinutes() + 1)
 
+	// Validate timezone if provided
+	if (timezone) {
+		try {
+			Intl.DateTimeFormat('en-US', { timeZone: timezone })
+		} catch {
+			return null
+		}
+	}
+
 	// Scan up to 366 days * 24 hours * 60 minutes = 527040 minutes
 	const maxMinutes = 366 * 24 * 60
 	for (let i = 0; i < maxMinutes; i++) {
-		if (
-			months.has(candidate.getMonth() + 1) &&
-			daysOfMonth.has(candidate.getDate()) &&
-			daysOfWeek.has(candidate.getDay()) &&
-			hours.has(candidate.getHours()) &&
-			minutes.has(candidate.getMinutes())
-		) {
+		let month: number
+		let day: number
+		let hour: number
+		let minute: number
+		let weekday: number
+
+		if (timezone) {
+			const tz = dateInTimezone(candidate, timezone)
+			month = tz.month
+			day = tz.day
+			hour = tz.hour
+			minute = tz.minute
+			weekday = tz.weekday
+		} else {
+			month = candidate.getMonth() + 1
+			day = candidate.getDate()
+			hour = candidate.getHours()
+			minute = candidate.getMinutes()
+			weekday = candidate.getDay()
+		}
+
+		const dayMatches = useDayOr
+			? daysOfMonth.has(day) || daysOfWeek.has(weekday)
+			: daysOfMonth.has(day) && daysOfWeek.has(weekday)
+
+		if (months.has(month) && dayMatches && hours.has(hour) && minutes.has(minute)) {
 			return candidate.getTime() - current.getTime()
 		}
 		candidate.setMinutes(candidate.getMinutes() + 1)
