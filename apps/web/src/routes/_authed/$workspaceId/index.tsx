@@ -11,7 +11,7 @@ import {
 } from '@/hooks/use-notifications'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -123,11 +123,12 @@ function PulseDashboard() {
 
 	return (
 		<div>
-			<p className="text-sm text-muted-foreground pb-6">
-				{pendingCount > 0
-					? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
-					: ''}
-			</p>
+			{pendingCount > 0 && (
+				<p className="text-sm text-muted-foreground pb-6">
+					{pendingCount} {pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The
+					rest is handled.
+				</p>
+			)}
 
 			{isLoading ? (
 				<div className="space-y-4">
@@ -137,8 +138,17 @@ function PulseDashboard() {
 				</div>
 			) : activeNotifications.length === 0 ? (
 				<EmptyState
-					title="No notifications yet"
-					description="Agents will notify you here when they need your input or have recommendations."
+					title="You're all caught up"
+					description="When your agents need input, have recommendations, or encounter issues, notifications will appear here."
+					action={
+						<Link
+							to="/$workspaceId/agents"
+							params={{ workspaceId }}
+							className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground transition-colors"
+						>
+							View agents
+						</Link>
+					}
 				/>
 			) : (
 				<>

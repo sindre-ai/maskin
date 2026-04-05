@@ -73,7 +73,7 @@ describe('PulseDashboard', () => {
 	it('shows empty state when no active notifications', () => {
 		mockUseNotifications.mockReturnValue({ data: [], isLoading: false })
 		render(<PulseDashboard />)
-		expect(screen.getByText('No notifications yet')).toBeInTheDocument()
+		expect(screen.getByText("You're all caught up")).toBeInTheDocument()
 	})
 
 	it('renders pulse cards for pending/seen notifications', () => {
