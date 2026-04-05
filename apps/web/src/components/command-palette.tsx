@@ -49,7 +49,7 @@ export function CommandPalette() {
 				role="button"
 				tabIndex={0}
 			/>
-			<div className="relative w-full max-w-lg bg-popover rounded-xl shadow-2xl">
+			<div className="relative w-[calc(100%-2rem)] max-w-lg mx-auto bg-popover rounded-xl shadow-2xl">
 				<Command className="w-full">
 					<Command.Input
 						placeholder="Search objects, navigate..."
