@@ -1,4 +1,4 @@
-import { NotificationInput } from '@/components/pulse/notification-input'
+import { NotificationInput } from '@/components/notifications/notification-input'
 import { useObjectNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { AlertTriangle } from 'lucide-react'
 

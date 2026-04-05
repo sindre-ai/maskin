@@ -1,15 +1,15 @@
-import { PulseCard } from '@/components/pulse/pulse-card'
+import { NotificationCard } from '@/components/notifications/notification-card'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorListItem, buildNotificationResponse } from '../../factories'
 
-describe('PulseCard', () => {
+describe('NotificationCard', () => {
 	const actorsById = new Map([['actor-1', buildActorListItem({ id: 'actor-1', name: 'Bot' })]])
 
 	it('renders notification title', () => {
 		const notification = buildNotificationResponse({ title: 'New Pattern' })
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -22,7 +22,7 @@ describe('PulseCard', () => {
 	it('renders notification content', () => {
 		const notification = buildNotificationResponse({ content: 'Details here' })
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -35,7 +35,7 @@ describe('PulseCard', () => {
 	it('shows type label badge', () => {
 		const notification = buildNotificationResponse({ type: 'recommendation' })
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -50,7 +50,7 @@ describe('PulseCard', () => {
 			metadata: { urgency_label: 'Critical' },
 		})
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -65,7 +65,7 @@ describe('PulseCard', () => {
 			metadata: { tags: ['bug', 'performance'] },
 		})
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -81,7 +81,7 @@ describe('PulseCard', () => {
 			metadata: { suggestion: 'Consider upgrading' },
 		})
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -94,7 +94,7 @@ describe('PulseCard', () => {
 	it('shows Dismiss button', () => {
 		const notification = buildNotificationResponse()
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -109,7 +109,7 @@ describe('PulseCard', () => {
 		const onDismiss = vi.fn()
 		const notification = buildNotificationResponse({ id: 'n-1' })
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -124,7 +124,7 @@ describe('PulseCard', () => {
 	it('shows View objects for recommendation type', () => {
 		const notification = buildNotificationResponse({ type: 'recommendation' })
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -137,7 +137,7 @@ describe('PulseCard', () => {
 	it('shows Review tasks for alert type', () => {
 		const notification = buildNotificationResponse({ type: 'alert' })
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}
@@ -150,7 +150,7 @@ describe('PulseCard', () => {
 	it('shows source actor name when available', () => {
 		const notification = buildNotificationResponse({ sourceActorId: 'actor-1' })
 		render(
-			<PulseCard
+			<NotificationCard
 				notification={notification}
 				actorsById={actorsById}
 				onAction={vi.fn()}

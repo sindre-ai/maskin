@@ -1,6 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { PulseCard } from '@/components/pulse/pulse-card'
-import { PulseFilters } from '@/components/pulse/pulse-filters'
+import { NotificationCard } from '@/components/notifications/notification-card'
+import { NotificationFilters } from '@/components/notifications/notification-filters'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -144,10 +144,10 @@ function ForYouPage() {
 				/>
 			) : (
 				<>
-					<PulseFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
+					<NotificationFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
 					<div className="space-y-4">
 						{filtered.map((notification) => (
-							<PulseCard
+							<NotificationCard
 								key={notification.id}
 								notification={notification}
 								actorsById={actorsById}

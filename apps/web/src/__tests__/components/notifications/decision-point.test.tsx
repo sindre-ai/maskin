@@ -1,4 +1,4 @@
-import { DecisionPoint } from '@/components/pulse/decision-point'
+import { DecisionPoint } from '@/components/notifications/decision-point'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 

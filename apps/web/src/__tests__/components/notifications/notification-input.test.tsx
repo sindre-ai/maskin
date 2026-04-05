@@ -1,4 +1,4 @@
-import { NotificationInput } from '@/components/pulse/notification-input'
+import { NotificationInput } from '@/components/notifications/notification-input'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 

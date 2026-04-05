@@ -32,14 +32,14 @@ vi.mock('sonner', () => ({
 	toast: { error: vi.fn(), warning: vi.fn() },
 }))
 
-vi.mock('@/components/pulse/pulse-card', () => ({
-	PulseCard: ({ notification }: { notification: { title: string } }) => (
-		<div data-testid="pulse-card">{notification.title}</div>
+vi.mock('@/components/notifications/notification-card', () => ({
+	NotificationCard: ({ notification }: { notification: { title: string } }) => (
+		<div data-testid="notification-card">{notification.title}</div>
 	),
 }))
 
-vi.mock('@/components/pulse/pulse-filters', () => ({
-	PulseFilters: () => <div data-testid="pulse-filters" />,
+vi.mock('@/components/notifications/notification-filters', () => ({
+	NotificationFilters: () => <div data-testid="notification-filters" />,
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
@@ -80,14 +80,14 @@ describe('ForYouPage', () => {
 		expect(screen.getByText('No notifications yet')).toBeInTheDocument()
 	})
 
-	it('renders pulse cards for pending/seen notifications', () => {
+	it('renders notification cards for pending/seen notifications', () => {
 		const notifications = [
 			buildNotificationResponse({ id: 'n-1', title: 'Pending One', status: 'pending' }),
 			buildNotificationResponse({ id: 'n-2', title: 'Seen One', status: 'seen' }),
 		]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
 		render(<ForYouPage />)
-		expect(screen.getAllByTestId('pulse-card')).toHaveLength(2)
+		expect(screen.getAllByTestId('notification-card')).toHaveLength(2)
 		expect(screen.getByText('Pending One')).toBeInTheDocument()
 		expect(screen.getByText('Seen One')).toBeInTheDocument()
 	})
@@ -100,7 +100,7 @@ describe('ForYouPage', () => {
 		]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
 		render(<ForYouPage />)
-		expect(screen.getAllByTestId('pulse-card')).toHaveLength(1)
+		expect(screen.getAllByTestId('notification-card')).toHaveLength(1)
 		expect(screen.getByText('Active')).toBeInTheDocument()
 		expect(screen.queryByText('Resolved')).not.toBeInTheDocument()
 	})
@@ -116,10 +116,10 @@ describe('ForYouPage', () => {
 		expect(screen.getByText(/2 things need your attention/)).toBeInTheDocument()
 	})
 
-	it('renders pulse filters when notifications exist', () => {
+	it('renders notification filters when notifications exist', () => {
 		const notifications = [buildNotificationResponse({ id: 'n-1', status: 'pending' })]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
 		render(<ForYouPage />)
-		expect(screen.getByTestId('pulse-filters')).toBeInTheDocument()
+		expect(screen.getByTestId('notification-filters')).toBeInTheDocument()
 	})
 })
