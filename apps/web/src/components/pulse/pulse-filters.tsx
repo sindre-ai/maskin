@@ -5,6 +5,7 @@ const filters = [
 	{ label: 'Needs you', value: 'needs_input' },
 	{ label: 'Recommendations', value: 'recommendation' },
 	{ label: 'Good news', value: 'good_news' },
+	{ label: 'Alerts', value: 'alert' },
 ] as const
 
 interface PulseFiltersProps {

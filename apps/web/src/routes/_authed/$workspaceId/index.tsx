@@ -1,3 +1,4 @@
+import { PageHeader } from '@/components/layout/page-header'
 import { PulseCard } from '@/components/pulse/pulse-card'
 import { PulseFilters } from '@/components/pulse/pulse-filters'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -16,7 +17,7 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
-	component: PulseDashboard,
+	component: ForYouPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
@@ -50,7 +51,7 @@ export function resolveNavigationPath(
 	}
 }
 
-function PulseDashboard() {
+function ForYouPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: notifications, isLoading } = useNotifications(workspaceId)
 	const { data: actors } = useActors(workspaceId)
@@ -123,6 +124,7 @@ function PulseDashboard() {
 
 	return (
 		<div>
+			<PageHeader title="For You" />
 			<p className="text-sm text-muted-foreground pb-6">
 				{pendingCount > 0
 					? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`

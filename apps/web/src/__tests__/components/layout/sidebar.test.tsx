@@ -51,7 +51,7 @@ import { useEnabledModules } from '@/hooks/use-enabled-modules'
 describe('AppSidebar', () => {
 	it('renders core navigation items', () => {
 		render(<AppSidebar />)
-		expect(screen.getByText('Pulse')).toBeInTheDocument()
+		expect(screen.getByText('For You')).toBeInTheDocument()
 		expect(screen.getByText('Activity')).toBeInTheDocument()
 		expect(screen.getByText('Agents')).toBeInTheDocument()
 		expect(screen.getByText('Triggers')).toBeInTheDocument()
