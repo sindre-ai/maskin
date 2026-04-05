@@ -1,25 +1,27 @@
-# AI-Native OSS Workspace
+# Maskin
 
 <!-- badges placeholder -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-green.svg)](https://nodejs.org/)
 
-An open-source workspace where AI agents run product development autonomously. Humans set direction, agents execute.
+An open-source agent operating system. Humans set direction. Agents execute.
 
-## What is this?
+## What is Maskin?
 
-- **Open-source workspace** where AI agents run product development end-to-end
-- **Core pipeline:** Insights (signals from users, data, market) -> Bets (hypotheses to validate) -> Tasks (concrete work items) -> Feedback Loop
-- **Agents are first-class citizens** -- they create insights, propose bets, break down tasks, and execute. Humans course-correct
-- **Everything is an API** -- UI and agents use the same endpoints. No special agent interface, no separate human interface
-- **Unified object model** -- insights, bets, and tasks are all "objects" with the same schema, connected by relationships
+Maskin is an agent operating system — a platform where AI agents and humans work together through a shared API, a shared data model, and a shared real-time event stream. Agents are first-class actors: they surface insights, propose strategies, execute tasks, and trigger other agents. Humans stay in control by deciding *what* to pursue.
+
+Work flows through a simple pipeline:
+
+**Insights** (signals and opportunities) → **Bets** (strategic decisions) → **Tasks** (concrete execution) → feedback loop
+
+Everything is an API. The UI and agents use the same endpoints. No separate interfaces.
 
 ## Quick Start
 
 ```bash
 # Clone and install
-git clone https://github.com/your-org/ai-native-oss.git && cd ai-native-oss
+git clone https://github.com/your-org/maskin.git && cd maskin
 pnpm install
 
 # Start everything (Docker, migrations, backend + frontend)
@@ -39,7 +41,7 @@ Backend starts at `http://localhost:3000` (`/api/health` to verify). Frontend st
 ## Architecture
 
 ```
-ai-native-oss/
+maskin/
 ├── apps/
 │   ├── dev/                    # Backend API server (Hono.js)
 │   │   ├── src/
@@ -118,7 +120,7 @@ ai-native-oss/
 
 ## Data Model
 
-All product work is represented as **unified objects** -- insights, bets, and tasks share the same table with a `type` discriminator. This keeps the schema flat and lets agents reason across object types uniformly.
+All work is represented as **unified objects** -- insights, bets, and tasks share the same table with a `type` discriminator. This keeps the schema flat and lets agents reason across object types uniformly.
 
 ### Tables
 
@@ -281,7 +283,7 @@ To connect Claude Code (or any MCP client) to the workspace:
    ```json
    {
      "mcpServers": {
-       "ai-native-oss": {
+       "maskin": {
          "command": "npx",
          "args": ["tsx", "packages/mcp/src/server.ts"],
          "env": {
