@@ -106,7 +106,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			header: sortableHeader('Title', 'title'),
 			cell: ({ row }) => (
 				<div className="flex items-center gap-2">
-					<span className="font-medium truncate max-w-[300px]">
+					<span className="font-medium truncate max-w-[150px] sm:max-w-[300px]">
 						{row.getValue('title') || 'Untitled'}
 					</span>
 					{row.original.activeSessionId && (

@@ -83,7 +83,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+			<DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[80vh] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>Import Objects</DialogTitle>
 					<DialogDescription>
@@ -297,8 +297,8 @@ function MappingStep({
 			</div>
 
 			{/* Column mapping table */}
-			<div className="border rounded-lg overflow-hidden">
-				<table className="w-full text-sm">
+			<div className="border rounded-lg overflow-x-auto">
+				<table className="w-full text-sm min-w-[400px]">
 					<thead>
 						<tr className="bg-muted/50">
 							<th className="text-left px-3 py-2 font-medium">Source Column</th>

@@ -245,7 +245,7 @@ export function AgentDocumentView({
 
 					{/* LLM Configuration */}
 					<Section title="LLM Configuration">
-						<div className="flex gap-3">
+						<div className="flex flex-col sm:flex-row gap-3">
 							<div className="flex-1">
 								<Label>Provider</Label>
 								<Select
@@ -356,11 +356,11 @@ function ActiveSessionCard({
 	const duration = useDuration(session.startedAt)
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2">
+		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-w-0">
 			<Spinner />
-			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
+			<span className="text-sm truncate flex-1 min-w-0">{session.actionPrompt}</span>
 			{latestLog && (
-				<span className="text-xs text-muted-foreground truncate max-w-[200px]">
+				<span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[200px] hidden sm:inline">
 					{latestLog.content}
 				</span>
 			)}

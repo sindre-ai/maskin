@@ -168,7 +168,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 					<div>
 						<Label>Endpoint URL</Label>
 						<div className="flex gap-2">
-							<div className="flex-1 rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs select-all">
+							<div className="flex-1 min-w-0 rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs select-all break-all">
 								{mcpUrl}
 							</div>
 							<CopyButton text={mcpUrl} />
@@ -176,7 +176,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 					</div>
 					<div>
 						<Label>Required Headers</Label>
-						<div className="rounded-md border border-border bg-muted p-3 font-mono text-xs space-y-1">
+						<div className="rounded-md border border-border bg-muted p-3 font-mono text-xs space-y-1 break-all">
 							<div>
 								<span className="text-muted-foreground">Authorization:</span> Bearer {apiKey}
 							</div>
@@ -193,7 +193,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 						<div>
 							<Label>Quick setup (run in terminal)</Label>
 							<div className="relative">
-								<pre className="rounded-md border border-border bg-muted p-3 pr-12 font-mono text-xs overflow-x-auto whitespace-pre">
+								<pre className="rounded-md border border-border bg-muted p-3 pr-12 font-mono text-xs overflow-x-auto whitespace-pre-wrap break-all">
 									{cliCommand}
 								</pre>
 								<CopyButton text={cliCommand} className="absolute top-2 right-2" />
@@ -207,7 +207,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 								: 'Add to claude_desktop_config.json'}
 						</Label>
 						<div className="relative">
-							<pre className="rounded-md border border-border bg-muted p-3 pr-12 font-mono text-xs overflow-x-auto whitespace-pre">
+							<pre className="rounded-md border border-border bg-muted p-3 pr-12 font-mono text-xs overflow-x-auto whitespace-pre-wrap break-all">
 								{configJson}
 							</pre>
 							<CopyButton text={configJson ?? ''} label className="absolute top-2 right-2" />

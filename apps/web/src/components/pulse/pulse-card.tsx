@@ -149,7 +149,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				)}
 
 				{/* Action buttons */}
-				<div className="flex gap-2">
+				<div className="flex flex-wrap gap-2">
 					{actions.map((action, i) => (
 						<Button
 							key={action.label}

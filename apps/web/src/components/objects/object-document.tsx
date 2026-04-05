@@ -226,7 +226,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const deleteActions = useMemo(
 		() =>
 			confirmDelete ? (
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-2 flex-wrap">
 					<span className="text-xs text-error">Delete this {object.type}?</span>
 					<Button
 						variant="destructive"
