@@ -17,6 +17,21 @@ Work flows through a simple pipeline:
 
 Everything is an API. The UI and agents use the same endpoints. No separate interfaces.
 
+### Why an "agent operating system"?
+
+Most agent platforms treat AI as an assistant — human drives, agent helps. Maskin inverts this: humans set strategy, agents execute autonomously. The platform provides the coordination layer that makes this safe and observable — shared identity, shared events, shared state.
+
+### Key ideas
+
+- **Agents are actors, not tools.** Agents and humans share the same identity model, the same API, and the same workspace. An agent can do anything a human can — create objects, propose strategies, trigger other agents.
+- **Container-native execution.** Each agent session runs in an ephemeral Docker container (Claude Code, Codex, or any CLI). Sessions are pausable, resumable, and streamable via SSE.
+- **Event-driven automation.** Cron and event-based triggers spawn agent sessions automatically. Every mutation is logged as an event. Agents and humans see the same real-time audit trail.
+- **MCP-native.** 42 tools exposed via Model Context Protocol (stdio + HTTP transport). Connect Claude Code, Claude Desktop, or any MCP-compatible client directly.
+- **Extensible object model.** The built-in insight/bet/task types are just one extension (`ext-work`). Define your own object types, statuses, metadata fields, and relationship types through the module system.
+- **Everything's an API.** The frontend is just one client. External agents, scripts, CI/CD pipelines, and integrations are all first-class consumers.
+- **Real-time by default.** PostgreSQL NOTIFY pipes every mutation through SSE — no Redis, no WebSocket server, no polling. Agents and humans see changes instantly.
+- **Integrations.** Connect external services (GitHub, Slack, Linear) via OAuth. Webhooks flow in, agent sessions flow out.
+
 ## Quick Start
 
 ```bash
@@ -86,7 +101,7 @@ maskin/
 │   ├── shared/                 # Zod schemas for validation
 │   ├── realtime/               # PG NOTIFY -> SSE bridge
 │   ├── storage/                # Abstract StorageProvider with S3 implementation
-│   └── mcp/                    # MCP server (39 tools, stdio + HTTP transport)
+│   └── mcp/                    # MCP server (42 tools, stdio + HTTP transport)
 ├── docker-compose.yml
 ├── turbo.json
 └── package.json
@@ -261,7 +276,7 @@ Agents run as container sessions — ephemeral Docker containers running CLI age
 
 ### External Agents (MCP)
 
-External agents connect via the Model Context Protocol (39 tools available), supporting both stdio and HTTP transport.
+External agents connect via the Model Context Protocol (42 tools), supporting both stdio and HTTP transport.
 
 - **Full workspace access** -- CRUD for objects, relationships, actors, workspaces, triggers, sessions, integrations
 - **Works with any MCP-compatible client** -- Claude Code, Claude Desktop, OpenAI agents, custom implementations
@@ -361,6 +376,17 @@ pnpm db:seed
 | `S3_ACCESS_KEY` | No | `admin` | S3 access key |
 | `S3_SECRET_KEY` | No | `admin` | S3 secret key |
 | `S3_REGION` | No | `us-east-1` | S3 region |
+| `CORS_ORIGIN` | No | `http://localhost:5173` | Comma-separated allowed origins for CORS |
+
+## Contributing
+
+Contributions are welcome. To get started:
+
+1. Fork the repo and create a branch from `main`
+2. `pnpm install` and `pnpm dev` to start the full stack
+3. Make your changes
+4. Run `pnpm lint`, `pnpm type-check`, and `pnpm test -- --run` before committing
+5. Open a pull request
 
 ## License
 
