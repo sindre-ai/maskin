@@ -21,7 +21,7 @@ Everything is an API. The UI and agents use the same endpoints. No separate inte
 
 ```bash
 # Clone and install
-git clone https://github.com/your-org/maskin.git && cd maskin
+git clone https://github.com/sindre-ai/maskin.git && cd maskin
 pnpm install
 
 # Start everything (Docker, migrations, backend + frontend)
