@@ -167,6 +167,24 @@ export function getEnabledObjectTypeTabs(enabledModuleIds: string[]): ObjectType
 		.flatMap((m) => m.objectTypeTabs)
 }
 
+/**
+ * Get the custom view component for an object type from enabled modules.
+ * Returns the first matching component, or undefined if none registered.
+ */
+export function getViewComponent(
+	enabledModuleIds: string[],
+	objectType: string,
+	// biome-ignore lint/suspicious/noExplicitAny: React.ComponentType not available in SDK
+): any | undefined {
+	for (const id of enabledModuleIds) {
+		const mod = webModules.get(id)
+		if (mod?.viewComponents?.[objectType]) {
+			return mod.viewComponents[objectType]
+		}
+	}
+	return undefined
+}
+
 /** Clear all frontend modules (for testing) */
 export function clearWebModules(): void {
 	webModules.clear()
