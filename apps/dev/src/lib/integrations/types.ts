@@ -25,6 +25,8 @@ export interface ApiKeyConfig {
 	headerName: string
 	headerPrefix?: string
 	envKeyName: string
+	/** Additional credential fields to inject as env vars: { credentialField → envVarName } */
+	extraCredentialEnvKeys?: Record<string, string>
 }
 
 export type AuthConfig =

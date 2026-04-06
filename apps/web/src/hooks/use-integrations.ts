@@ -27,6 +27,27 @@ export function useConnectIntegration(workspaceId: string) {
 	})
 }
 
+export function useConnectApiKeyIntegration(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (params: {
+			provider: string
+			apiKey: string
+			projectId?: string
+			contextId?: string
+		}) =>
+			api.integrations.connectApiKey(workspaceId, params.provider, {
+				apiKey: params.apiKey,
+				projectId: params.projectId,
+				contextId: params.contextId,
+			}),
+		onSuccess: () => {
+			toast.success('Integration connected')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 export function useDisconnectIntegration(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

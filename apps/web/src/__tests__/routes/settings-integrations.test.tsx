@@ -22,6 +22,7 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: (...args: unknown[]) => mockUseIntegrations(...args),
 	useProviders: () => mockUseProviders(),
 	useConnectIntegration: () => ({ mutate: vi.fn(), isPending: false }),
+	useConnectApiKeyIntegration: () => ({ mutate: vi.fn(), isPending: false }),
 	useDisconnectIntegration: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
@@ -64,8 +65,13 @@ describe('IntegrationsPage', () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
-				{ name: 'slack', displayName: 'Slack', events: [] },
-				{ name: 'github', displayName: 'GitHub', events: [{ type: 'push' }] },
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+				{
+					name: 'github',
+					displayName: 'GitHub',
+					authType: 'oauth2_custom',
+					events: [{ type: 'push' }],
+				},
 			],
 			isLoading: false,
 		})
@@ -82,8 +88,8 @@ describe('IntegrationsPage', () => {
 		mockUseIntegrations.mockReturnValue({ data: [integration], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
-				{ name: 'slack', displayName: 'Slack', events: [] },
-				{ name: 'github', displayName: 'GitHub', events: [] },
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom', events: [] },
 			],
 			isLoading: false,
 		})

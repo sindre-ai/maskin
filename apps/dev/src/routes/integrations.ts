@@ -89,6 +89,7 @@ app.openapi(listProvidersRoute, (async (c) => {
 	const providers = listProviders().map((p) => ({
 		name: p.config.name,
 		displayName: p.config.displayName,
+		authType: p.config.auth.type,
 		events: p.config.events?.definitions ?? [],
 	}))
 
@@ -200,6 +201,143 @@ app.openapi(connectRoute, (async (c) => {
 
 	return c.json({ install_url: installUrl })
 }) as RouteHandler<typeof connectRoute, Env>)
+
+// ── POST /api/integrations/:provider/connect-api-key ──────────────────────
+
+const connectApiKeyBodySchema = z.object({
+	apiKey: z.string().min(1),
+	projectId: z.string().optional(),
+	contextId: z.string().optional(),
+})
+
+const connectApiKeyRoute = createRoute({
+	method: 'post',
+	path: '/{provider}/connect-api-key',
+	tags: ['integrations'],
+	summary: 'Connect an API key integration',
+	request: {
+		params: providerParamSchema,
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: connectApiKeyBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Integration connected',
+			content: { 'application/json': { schema: z.object({ connected: z.boolean() }) } },
+		},
+		400: {
+			description: 'Error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(connectApiKeyRoute, (async (c) => {
+	const db = c.get('db')
+	const { provider: providerName } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const actorId = c.get('actorId')
+	const body = c.req.valid('json')
+
+	let resolved: ResolvedProvider
+	try {
+		resolved = getProvider(providerName)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', `Unknown provider: ${providerName}`), 400)
+	}
+
+	if (resolved.config.auth.type !== 'api_key') {
+		return c.json(
+			createApiError('BAD_REQUEST', `Provider ${providerName} does not use API key auth`),
+			400,
+		)
+	}
+
+	// Store API key + any extra fields as credentials
+	const credentials: StoredCredentials = {
+		accessToken: body.apiKey,
+		...(body.projectId ? { projectId: body.projectId } : {}),
+		...(body.contextId ? { contextId: body.contextId } : {}),
+	}
+
+	const encryptedCredentials = encrypt(JSON.stringify(credentials))
+
+	// Create or find system actor for this provider
+	const systemActorName = resolved.config.displayName
+	let [systemActor] = await db
+		.select()
+		.from(actors)
+		.where(and(eq(actors.type, 'system'), eq(actors.name, systemActorName)))
+		.limit(1)
+
+	if (!systemActor) {
+		const [newActor] = await db
+			.insert(actors)
+			.values({ type: 'system', name: systemActorName, createdBy: actorId })
+			.returning()
+		if (!newActor) {
+			return c.json(
+				createApiError('INTERNAL_ERROR', 'Failed to create system actor for integration'),
+				500,
+			)
+		}
+		systemActor = newActor
+	}
+
+	// Ensure system actor is workspace member
+	const [existingMember] = await db
+		.select()
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(workspaceMembers.actorId, systemActor.id),
+			),
+		)
+		.limit(1)
+
+	if (!existingMember) {
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: systemActor.id,
+			role: 'system',
+		})
+	}
+
+	// Upsert the integration as active
+	await db
+		.insert(integrations)
+		.values({
+			workspaceId,
+			provider: providerName,
+			status: 'active',
+			externalId: `api-key-${providerName}`,
+			credentials: encryptedCredentials,
+			config: { system_actor_id: systemActor.id },
+			createdBy: actorId,
+		})
+		.onConflictDoUpdate({
+			target: [integrations.workspaceId, integrations.provider],
+			set: {
+				status: 'active',
+				credentials: encryptedCredentials,
+				config: { system_actor_id: systemActor.id },
+				updatedAt: new Date(),
+			},
+		})
+
+	// Log event
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'created',
+		entityType: 'integration',
+		entityId: providerName,
+		data: { provider: providerName },
+	})
+
+	return c.json({ connected: true })
+}) as RouteHandler<typeof connectApiKeyRoute, Env>)
 
 // ── GET /api/integrations/:provider/callback ───────────────────────────────
 

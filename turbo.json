@@ -25,7 +25,8 @@
 		"LINEAR_CLIENT_SECRET",
 		"LINEAR_WEBHOOK_SECRET",
 		"CORS_ORIGIN",
-		"FRONTEND_URL"
+		"FRONTEND_URL",
+		"STEEL_API_KEY"
 	],
 	"tasks": {
 		"build": {

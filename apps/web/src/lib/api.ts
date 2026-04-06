@@ -178,6 +178,16 @@ export const api = {
 				method: 'POST',
 				workspaceId,
 			}),
+		connectApiKey: (
+			workspaceId: string,
+			provider: string,
+			body: { apiKey: string; projectId?: string; contextId?: string },
+		) =>
+			request<{ connected: boolean }>(`/integrations/${provider}/connect-api-key`, {
+				method: 'POST',
+				workspaceId,
+				body,
+			}),
 		disconnect: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/integrations/${id}`, {
 				method: 'DELETE',
@@ -499,6 +509,7 @@ export interface ProviderEventDefinition {
 export interface ProviderInfo {
 	name: string
 	displayName: string
+	authType: string
 	events: ProviderEventDefinition[]
 }
 

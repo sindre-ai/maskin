@@ -106,4 +106,19 @@ export class TokenManager {
 
 		return updated.accessToken
 	}
+
+	/** Return the full stored credentials for an integration (without refreshing). */
+	async getCredentials(db: Database, integrationId: string): Promise<StoredCredentials> {
+		const [integration] = await db
+			.select()
+			.from(integrations)
+			.where(eq(integrations.id, integrationId))
+			.limit(1)
+
+		if (!integration) {
+			throw new Error(`Integration ${integrationId} not found`)
+		}
+
+		return JSON.parse(decrypt(integration.credentials)) as StoredCredentials
+	}
 }
