@@ -1,6 +1,7 @@
 {
 	"name": "ai-native-oss",
 	"private": true,
+	"license": "Apache-2.0",
 	"scripts": {
 		"dev": "bash scripts/dev.sh",
 		"dev:win": "node scripts/dev.mjs",
