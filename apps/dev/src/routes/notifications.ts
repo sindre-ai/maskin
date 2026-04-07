@@ -127,11 +127,10 @@ app.openapi(listNotificationsRoute, (async (c) => {
 
 	const conditions = [eq(notifications.workspaceId, workspaceId)]
 	if (status) {
-		const statuses = status.split(',').map((s) => s.trim()).filter(Boolean)
-		if (statuses.length === 1) {
-			conditions.push(eq(notifications.status, statuses[0]!))
-		} else if (statuses.length > 1) {
-			conditions.push(inArray(notifications.status, statuses))
+		if (status.length === 1) {
+			conditions.push(eq(notifications.status, status[0]!))
+		} else {
+			conditions.push(inArray(notifications.status, status))
 		}
 	}
 	if (type) conditions.push(eq(notifications.type, type))
