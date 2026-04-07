@@ -1,5 +1,5 @@
 import type { NotificationResponse } from '@/lib/api'
-import { resolveNavigationPath } from '@/routes/_authed/$workspaceId/index'
+import { resolveNavigationPath } from '@/lib/navigation'
 import { describe, expect, it } from 'vitest'
 
 const VALID_UUID = '00000000-0000-0000-0000-000000000001'
