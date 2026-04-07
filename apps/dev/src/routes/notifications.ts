@@ -7,7 +7,7 @@ import {
 	updateNotificationSchema,
 } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
@@ -126,7 +126,14 @@ app.openapi(listNotificationsRoute, (async (c) => {
 	const { status, type, object_id, limit, offset } = c.req.valid('query')
 
 	const conditions = [eq(notifications.workspaceId, workspaceId)]
-	if (status) conditions.push(eq(notifications.status, status))
+	if (status) {
+		const statuses = status.split(',').map((s) => s.trim()).filter(Boolean)
+		if (statuses.length === 1) {
+			conditions.push(eq(notifications.status, statuses[0]!))
+		} else if (statuses.length > 1) {
+			conditions.push(inArray(notifications.status, statuses))
+		}
+	}
 	if (type) conditions.push(eq(notifications.type, type))
 	if (object_id) conditions.push(eq(notifications.objectId, object_id))
 

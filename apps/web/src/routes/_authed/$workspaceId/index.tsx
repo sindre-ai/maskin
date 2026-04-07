@@ -52,7 +52,9 @@ export function resolveNavigationPath(
 
 function PulseDashboard() {
 	const { workspaceId } = useWorkspace()
-	const { data: notifications, isLoading } = useNotifications(workspaceId)
+	const { data: notifications, isLoading } = useNotifications(workspaceId, {
+		status: 'pending,seen',
+	})
 	const { data: actors } = useActors(workspaceId)
 	const updateNotification = useUpdateNotification(workspaceId)
 	const respondNotification = useRespondNotification(workspaceId)
@@ -67,31 +69,20 @@ function PulseDashboard() {
 		return map
 	}, [actors])
 
-	const activeNotifications = useMemo(
-		() => (notifications ?? []).filter((n) => n.status === 'pending' || n.status === 'seen'),
-		[notifications],
-	)
-
-	const pastNotifications = useMemo(
-		() => (notifications ?? []).filter((n) => n.status === 'resolved' || n.status === 'dismissed'),
-		[notifications],
-	)
-
-	const displayNotifications =
-		activeNotifications.length > 0 ? activeNotifications : pastNotifications
+	const activeNotifications = notifications ?? []
 
 	const filtered = useMemo(() => {
-		if (activeFilter === 'all') return displayNotifications
-		return displayNotifications.filter((n) => n.type === activeFilter)
-	}, [displayNotifications, activeFilter])
+		if (activeFilter === 'all') return activeNotifications
+		return activeNotifications.filter((n) => n.type === activeFilter)
+	}, [activeNotifications, activeFilter])
 
 	const counts = useMemo(() => {
-		const c: Record<string, number> = { all: displayNotifications.length }
-		for (const n of displayNotifications) {
+		const c: Record<string, number> = { all: activeNotifications.length }
+		for (const n of activeNotifications) {
 			c[n.type] = (c[n.type] ?? 0) + 1
 		}
 		return c
-	}, [displayNotifications])
+	}, [activeNotifications])
 
 	const handleAction = (
 		notification: NotificationResponse,
@@ -127,16 +118,13 @@ function PulseDashboard() {
 	}
 
 	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length
-	const showingPast = activeNotifications.length === 0 && pastNotifications.length > 0
 
 	return (
 		<div>
 			<p className="text-sm text-muted-foreground pb-6">
 				{pendingCount > 0
 					? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
-					: showingPast
-						? "You're all caught up. Here's what was handled recently."
-						: ''}
+					: ''}
 			</p>
 
 			{isLoading ? (
@@ -145,7 +133,7 @@ function PulseDashboard() {
 					<CardSkeleton />
 					<CardSkeleton />
 				</div>
-			) : displayNotifications.length === 0 ? (
+			) : activeNotifications.length === 0 ? (
 				<EmptyState
 					title="No notifications yet"
 					description="Agents will notify you here when they need your input or have recommendations."

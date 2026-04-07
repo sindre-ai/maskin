@@ -82,7 +82,6 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const urgencyLabel = metadata.urgency_label as string | undefined
 	const inputType = metadata.input_type as string | undefined
 	const sourceActor = actorsById.get(notification.sourceActorId)
-	const isResolved = notification.status === 'resolved' || notification.status === 'dismissed'
 
 	const actions = resolveActions(notification, metadata)
 	const showReplyInput = !!notification.sessionId && !inputType
@@ -98,17 +97,10 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	}
 
 	return (
-		<Card className={isResolved ? 'opacity-60' : undefined}>
+		<Card>
 			<CardHeader className="pb-2">
 				<div className="flex items-center justify-between">
-					<div className="flex items-center gap-2">
-						<Badge variant="secondary">{typeLabels[notification.type] ?? notification.type}</Badge>
-						{isResolved && (
-							<Badge variant="outline">
-								{notification.status === 'resolved' ? 'Resolved' : 'Dismissed'}
-							</Badge>
-						)}
-					</div>
+					<Badge variant="secondary">{typeLabels[notification.type] ?? notification.type}</Badge>
 					{urgencyLabel && (
 						<Badge variant={notification.type === 'needs_input' ? 'destructive' : 'outline'}>
 							{urgencyLabel}
@@ -157,26 +149,24 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				)}
 
 				{/* Action buttons */}
-				{!isResolved && (
-					<div className="flex gap-2">
-						{actions.map((action, i) => (
-							<Button
-								key={action.label}
-								size="sm"
-								variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
-								onClick={() => onAction(notification, action.response, action.navigate)}
-							>
-								{action.label}
-							</Button>
-						))}
-						<Button size="sm" variant="ghost" onClick={() => onDismiss(notification.id)}>
-							Dismiss
+				<div className="flex gap-2">
+					{actions.map((action, i) => (
+						<Button
+							key={action.label}
+							size="sm"
+							variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
+							onClick={() => onAction(notification, action.response, action.navigate)}
+						>
+							{action.label}
 						</Button>
-					</div>
-				)}
+					))}
+					<Button size="sm" variant="ghost" onClick={() => onDismiss(notification.id)}>
+						Dismiss
+					</Button>
+				</div>
 
 				{/* Collapsible text reply for session-linked notifications */}
-				{showReplyInput && !isResolved && (
+				{showReplyInput && (
 					<div>
 						{!replyOpen ? (
 							<Button

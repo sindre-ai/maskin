@@ -4,7 +4,6 @@ const filters = [
 	{ label: 'All', value: 'all' },
 	{ label: 'Needs you', value: 'needs_input' },
 	{ label: 'Recommendations', value: 'recommendation' },
-	{ label: 'Alerts', value: 'alert' },
 	{ label: 'Good news', value: 'good_news' },
 ] as const
 
