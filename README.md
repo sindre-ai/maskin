@@ -1,7 +1,7 @@
 # AI-Native OSS Workspace
 
 <!-- badges placeholder -->
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-green.svg)](https://nodejs.org/)
 
@@ -362,4 +362,4 @@ pnpm db:seed
 
 ## License
 
-MIT
+Apache 2.0 — see [LICENSE](LICENSE) for details.
