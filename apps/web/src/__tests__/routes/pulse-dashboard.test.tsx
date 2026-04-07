@@ -76,6 +76,12 @@ describe('PulseDashboard', () => {
 		expect(screen.getByText('No notifications yet')).toBeInTheDocument()
 	})
 
+	it('passes status filter to useNotifications', () => {
+		mockUseNotifications.mockReturnValue({ data: [], isLoading: false })
+		render(<PulseDashboard />)
+		expect(mockUseNotifications).toHaveBeenCalledWith('ws-1', { status: 'pending,seen' })
+	})
+
 	it('renders pulse cards for pending/seen notifications', () => {
 		const notifications = [
 			buildNotificationResponse({ id: 'n-1', title: 'Pending One', status: 'pending' }),
@@ -88,17 +94,16 @@ describe('PulseDashboard', () => {
 		expect(screen.getByText('Seen One')).toBeInTheDocument()
 	})
 
-	it('filters out resolved and dismissed notifications', () => {
+	it('renders all notifications returned by the API', () => {
 		const notifications = [
-			buildNotificationResponse({ id: 'n-1', title: 'Active', status: 'pending' }),
-			buildNotificationResponse({ id: 'n-2', title: 'Resolved', status: 'resolved' }),
-			buildNotificationResponse({ id: 'n-3', title: 'Dismissed', status: 'dismissed' }),
+			buildNotificationResponse({ id: 'n-1', title: 'Pending', status: 'pending' }),
+			buildNotificationResponse({ id: 'n-2', title: 'Seen', status: 'seen' }),
 		]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
 		render(<PulseDashboard />)
-		expect(screen.getAllByTestId('pulse-card')).toHaveLength(1)
-		expect(screen.getByText('Active')).toBeInTheDocument()
-		expect(screen.queryByText('Resolved')).not.toBeInTheDocument()
+		expect(screen.getAllByTestId('pulse-card')).toHaveLength(2)
+		expect(screen.getByText('Pending')).toBeInTheDocument()
+		expect(screen.getByText('Seen')).toBeInTheDocument()
 	})
 
 	it('displays pending count message', () => {

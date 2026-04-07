@@ -52,7 +52,9 @@ export function resolveNavigationPath(
 
 function PulseDashboard() {
 	const { workspaceId } = useWorkspace()
-	const { data: notifications, isLoading } = useNotifications(workspaceId)
+	const { data: notifications, isLoading } = useNotifications(workspaceId, {
+		status: 'pending,seen',
+	})
 	const { data: actors } = useActors(workspaceId)
 	const updateNotification = useUpdateNotification(workspaceId)
 	const respondNotification = useRespondNotification(workspaceId)
@@ -67,11 +69,7 @@ function PulseDashboard() {
 		return map
 	}, [actors])
 
-	// Only show pending/seen notifications (not resolved/dismissed)
-	const activeNotifications = useMemo(
-		() => (notifications ?? []).filter((n) => n.status === 'pending' || n.status === 'seen'),
-		[notifications],
-	)
+	const activeNotifications = notifications ?? []
 
 	const filtered = useMemo(() => {
 		if (activeFilter === 'all') return activeNotifications
