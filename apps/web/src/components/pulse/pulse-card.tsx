@@ -78,7 +78,9 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags
-	const tags = Array.isArray(rawTags) ? rawTags : undefined
+	const tags = Array.isArray(rawTags)
+		? rawTags.filter((t): t is string => typeof t === 'string')
+		: undefined
 	const suggestion = metadata.suggestion as string | undefined
 	const urgencyLabel = metadata.urgency_label as string | undefined
 	const inputType = metadata.input_type as string | undefined
