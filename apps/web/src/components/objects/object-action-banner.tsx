@@ -18,7 +18,8 @@ interface ObjectActionBannerProps {
 
 export function ObjectActionBanner({ objectId, workspaceId }: ObjectActionBannerProps) {
 	const { data: notifications } = useObjectNotifications(workspaceId, objectId)
-	const { data: actors } = useActors(workspaceId)
+	const hasNotifications = !!notifications?.length
+	const { data: actors } = useActors(workspaceId, { enabled: hasNotifications })
 	const respond = useRespondNotification(workspaceId)
 	const update = useUpdateNotification(workspaceId)
 	const navigate = useNavigate()
