@@ -12,6 +12,15 @@ import { useCallback, useMemo, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
 
+// Migrate old key
+try {
+	const old = localStorage.getItem('ai-native-sidebar-open')
+	if (old && !localStorage.getItem(STORAGE_KEY)) {
+		localStorage.setItem(STORAGE_KEY, old)
+		localStorage.removeItem('ai-native-sidebar-open')
+	}
+} catch {}
+
 function getInitialOpen(): boolean {
 	try {
 		const stored = localStorage.getItem(STORAGE_KEY)

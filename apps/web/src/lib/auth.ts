@@ -1,6 +1,17 @@
 const AUTH_KEY = 'maskin-api-key'
 const ACTOR_KEY = 'maskin-actor'
 
+// Migrate localStorage keys from old ai-native naming
+function migrateKey(oldKey: string, newKey: string) {
+	const old = localStorage.getItem(oldKey)
+	if (old && !localStorage.getItem(newKey)) {
+		localStorage.setItem(newKey, old)
+		localStorage.removeItem(oldKey)
+	}
+}
+migrateKey('ai-native-api-key', AUTH_KEY)
+migrateKey('ai-native-actor', ACTOR_KEY)
+
 export interface StoredActor {
 	id: string
 	name: string

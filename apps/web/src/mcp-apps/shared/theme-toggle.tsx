@@ -2,6 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-mcp-theme'
 
+// Migrate old key
+if (typeof window !== 'undefined') {
+	const old = localStorage.getItem('ai-native-mcp-theme')
+	if (old && !localStorage.getItem(STORAGE_KEY)) {
+		localStorage.setItem(STORAGE_KEY, old)
+		localStorage.removeItem('ai-native-mcp-theme')
+	}
+}
+
 function getTheme(): 'light' | 'dark' {
 	if (typeof window === 'undefined') return 'dark'
 	const stored = localStorage.getItem(STORAGE_KEY)

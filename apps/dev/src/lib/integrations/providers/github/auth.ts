@@ -42,7 +42,7 @@ function parsePrivateKey(raw: string): string {
 
 export const githubAuth: CustomAuthHandler = {
 	getInstallUrl(state: string): string {
-		return `https://github.com/apps/${process.env.GITHUB_APP_SLUG || 'maskin'}/installations/new?state=${encodeURIComponent(state)}`
+		return `https://github.com/apps/${process.env.GITHUB_APP_SLUG || 'sindre-maskin'}/installations/new?state=${encodeURIComponent(state)}`
 	},
 
 	async handleCallback(params: Record<string, string>): Promise<StoredCredentials> {

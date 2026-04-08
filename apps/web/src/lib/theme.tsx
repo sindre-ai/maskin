@@ -12,6 +12,15 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 
 const STORAGE_KEY = 'maskin-theme'
 
+// Migrate from old ai-native key
+if (typeof window !== 'undefined') {
+	const old = localStorage.getItem('ai-native-theme')
+	if (old && !localStorage.getItem(STORAGE_KEY)) {
+		localStorage.setItem(STORAGE_KEY, old)
+		localStorage.removeItem('ai-native-theme')
+	}
+}
+
 function getSystemTheme(): 'light' | 'dark' {
 	if (typeof window === 'undefined') return 'light'
 	return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
