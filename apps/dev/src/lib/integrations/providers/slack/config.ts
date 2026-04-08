@@ -43,7 +43,10 @@ export const config: ProviderConfig = {
 
 	events: {
 		definitions: [
-			{ entityType: 'slack.message', actions: ['created'], label: 'Message' },
+			{ entityType: 'slack.message', actions: ['created'], label: 'Message (any)' },
+			{ entityType: 'slack.channel_message', actions: ['created'], label: 'Channel Message' },
+			{ entityType: 'slack.group_message', actions: ['created'], label: 'Group Message' },
+			{ entityType: 'slack.direct_message', actions: ['created'], label: 'Direct Message' },
 			{ entityType: 'slack.app_mention', actions: ['created'], label: 'App Mention' },
 			{ entityType: 'slack.reaction', actions: ['added', 'removed'], label: 'Reaction' },
 			{
