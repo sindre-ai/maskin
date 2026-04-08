@@ -72,7 +72,6 @@ beforeAll(async () => {
 		'..',
 		'..',
 		'..',
-		'..',
 		'packages',
 		'db',
 		'drizzle',
