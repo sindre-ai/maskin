@@ -1,6 +1,6 @@
-import type { Database } from '@ai-native/db'
-import type { PgNotifyBridge } from '@ai-native/realtime'
-import type { StorageProvider } from '@ai-native/storage'
+import type { Database } from '@maskin/db'
+import type { PgNotifyBridge } from '@maskin/realtime'
+import type { StorageProvider } from '@maskin/storage'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { z } from 'zod'
 

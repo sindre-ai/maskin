@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execAsync = promisify(execCb)
-import type { Database } from '@ai-native/db'
+import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
@@ -15,8 +15,8 @@ import {
 	sessionLogs,
 	sessions,
 	workspaces,
-} from '@ai-native/db/schema'
-import type { StorageProvider } from '@ai-native/storage'
+} from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, lt } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -449,7 +449,7 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Inject agent's API key for AI Native MCP access
+		// Inject agent's API key for Maskin MCP access
 		if (agent.apiKey) {
 			envVars.AI_NATIVE_API_KEY = agent.apiKey
 		}

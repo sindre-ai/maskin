@@ -186,7 +186,7 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 					{!hasAiNative && (
 						<Button size="sm" variant="outline" onClick={handleAddAiNative}>
 							<Globe className="h-3.5 w-3.5 mr-1" />
-							Add AI Native
+							Add Maskin
 						</Button>
 					)}
 					<Button size="sm" variant="outline" onClick={() => setAddingServer(true)}>

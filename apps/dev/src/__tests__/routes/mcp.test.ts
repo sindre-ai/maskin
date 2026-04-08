@@ -12,7 +12,7 @@ const { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer } = v
 	return { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer }
 })
 
-vi.mock('@ai-native/mcp', () => ({
+vi.mock('@maskin/mcp', () => ({
 	createMcpServer: mockCreateMcpServer,
 }))
 

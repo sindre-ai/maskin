@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import type { Database } from '@ai-native/db'
-import { events, sessionLogs, sessions } from '@ai-native/db/schema'
-import type { PgNotifyBridge } from '@ai-native/realtime'
+import type { Database } from '@maskin/db'
+import { events, sessionLogs, sessions } from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
 import {

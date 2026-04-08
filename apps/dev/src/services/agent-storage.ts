@@ -1,8 +1,8 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Database } from '@ai-native/db'
-import { agentFiles } from '@ai-native/db/schema'
-import type { StorageProvider } from '@ai-native/storage'
+import type { Database } from '@maskin/db'
+import { agentFiles } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 

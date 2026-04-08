@@ -1,5 +1,5 @@
 {
-	"name": "@ai-native/module-sdk",
+	"name": "@maskin/module-sdk",
 	"version": "0.0.1",
 	"private": true,
 	"license": "Apache-2.0",
@@ -16,9 +16,9 @@
 		"test": "vitest"
 	},
 	"dependencies": {
-		"@ai-native/db": "workspace:*",
-		"@ai-native/realtime": "workspace:*",
-		"@ai-native/storage": "workspace:*",
+		"@maskin/db": "workspace:*",
+		"@maskin/realtime": "workspace:*",
+		"@maskin/storage": "workspace:*",
 		"@hono/zod-openapi": "^0.18.0",
 		"hono": "^4.7.0",
 		"zod": "^3.24.0"

@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { type Database, createDb } from '@ai-native/db'
-import type { PgNotifyBridge } from '@ai-native/realtime'
+import { type Database, createDb } from '@maskin/db'
+import type { PgNotifyBridge } from '@maskin/realtime'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import postgres from 'postgres'
 

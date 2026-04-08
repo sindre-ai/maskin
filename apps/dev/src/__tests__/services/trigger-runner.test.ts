@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
+import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import {
 	TriggerRunner,

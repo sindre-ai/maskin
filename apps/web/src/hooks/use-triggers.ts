@@ -1,4 +1,4 @@
-import type { createTriggerSchema, updateTriggerSchema } from '@ai-native/shared'
+import type { createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'

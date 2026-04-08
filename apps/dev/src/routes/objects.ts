@@ -1,12 +1,12 @@
-import type { Database } from '@ai-native/db'
-import { events, objects, relationships, workspaces } from '@ai-native/db/schema'
-import { getAllValidTypes, getEnabledModuleIds } from '@ai-native/module-sdk'
+import type { Database } from '@maskin/db'
+import { events, objects, relationships, workspaces } from '@maskin/db/schema'
+import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	createObjectSchema,
 	objectQuerySchema,
 	searchObjectsSchema,
 	updateObjectSchema,
-} from '@ai-native/shared'
+} from '@maskin/shared'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'

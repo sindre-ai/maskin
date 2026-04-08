@@ -1,4 +1,4 @@
-import { generateApiKey } from '@ai-native/auth'
+import { generateApiKey } from '@maskin/auth'
 import { describe, expect, it } from 'vitest'
 
 describe('API Key generation', () => {

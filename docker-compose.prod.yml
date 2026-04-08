@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-ai_native_oss}
+      POSTGRES_DB: ${POSTGRES_DB:-maskin}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -44,7 +44,7 @@ services:
       - "${DOCKER_GID:-999}"
     command: ["sh", "-c", "node packages/db/dist/migrate.js && node apps/dev/dist/index.js"]
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_native_oss}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-maskin}
       POSTGRES_URL: ${POSTGRES_URL:-}
       DATABASE_URL_DIRECT: ${DATABASE_URL_DIRECT:-}
       PORT: "3000"

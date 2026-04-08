@@ -1,5 +1,5 @@
-import { generateApiKey, hashPassword } from '@ai-native/auth'
-import type { Database } from '@ai-native/db'
+import { generateApiKey, hashPassword } from '@maskin/auth'
+import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
@@ -13,8 +13,8 @@ import {
 	triggers,
 	workspaceMembers,
 	workspaces,
-} from '@ai-native/db/schema'
-import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@ai-native/shared'
+} from '@maskin/db/schema'
+import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@maskin/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'

@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getAllModules, getModuleDefaultSettings } from '@ai-native/module-sdk'
-import type { CustomExtensionEntry } from '@ai-native/shared'
+import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
+import type { CustomExtensionEntry } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -227,13 +227,13 @@ function loadHtml(config: McpConfig, filename: string): string {
 		return html
 	} catch (err) {
 		console.error(`[MCP] Failed to load HTML resource: ${fullPath}`, err)
-		return '<html><body><p>MCP App UI not built yet. Run <code>pnpm --filter @ai-native/web build:mcp</code> first.</p></body></html>'
+		return '<html><body><p>MCP App UI not built yet. Run <code>pnpm --filter @maskin/web build:mcp</code> first.</p></body></html>'
 	}
 }
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
-		name: 'ai-native-oss',
+		name: 'maskin',
 		version: '0.1.0',
 	})
 
