@@ -18,6 +18,8 @@ interface McpConfig {
 	defaultWorkspaceId: string
 	/** Path to the directory containing built MCP app HTML files */
 	htmlBasePath?: string
+	/** Base URL of the web UI (e.g. https://maskin.sindre.ai). When set, tool responses include clickable links. */
+	frontendUrl?: string
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -231,6 +233,21 @@ function loadHtml(config: McpConfig, filename: string): string {
 	}
 }
 
+/** Build a web UI URL for a resource. Returns undefined when frontendUrl is not configured. */
+function buildWebUrl(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	resource: 'object' | 'trigger' | 'agent',
+	id: string,
+): string | undefined {
+	if (!config.frontendUrl) return undefined
+	const wsId = workspaceId ?? config.defaultWorkspaceId
+	if (!wsId) return undefined
+	const base = config.frontendUrl.replace(/\/$/, '')
+	const plural = resource === 'object' ? 'objects' : resource === 'trigger' ? 'triggers' : 'agents'
+	return `${base}/${wsId}/${plural}/${id}`
+}
+
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
 		name: 'maskin',
@@ -261,9 +278,15 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', '/api/graph', body, {
 				workspaceId: workspace_id,
 			})
+			const json = JSON.stringify(result, null, 2)
+			const resultObj = result as { nodes?: Array<{ id: string }> }
+			const urls = resultObj.nodes
+				?.map((n) => buildWebUrl(config, workspace_id, 'object', n.id))
+				.filter(Boolean)
+			const text = urls?.length ? `Web UI:\n${urls.join('\n')}\n\n${json}` : json
 			return {
 				_meta: { toolName: 'create_objects' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text }],
 			}
 		},
 	)
@@ -284,7 +307,12 @@ export function createMcpServer(config: McpConfig) {
 						const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
 							workspaceId: workspace_id,
 						})
-						return { id, success: true, result }
+						return {
+							id,
+							success: true,
+							result,
+							web_url: buildWebUrl(config, workspace_id, 'object', id),
+						}
 					} catch (error) {
 						return { id, success: false, error: String(error) }
 					}
@@ -322,7 +350,13 @@ export function createMcpServer(config: McpConfig) {
 					args.updates.map(async ({ id, ...body }) => {
 						try {
 							const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
-							return { type: 'object' as const, id, success: true, result }
+							return {
+								type: 'object' as const,
+								id,
+								success: true,
+								result,
+								web_url: buildWebUrl(config, workspace_id, 'object', id),
+							}
 						} catch (error) {
 							return { type: 'object' as const, id, success: false, error: String(error) }
 						}
@@ -411,9 +445,14 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
+			const json = JSON.stringify(result, null, 2)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const base = config.frontendUrl?.replace(/\/$/, '')
+			const hint = base && wsId ? `Hint: View any object at ${base}/${wsId}/objects/{id}` : ''
+			const text = hint ? `${hint}\n\n${json}` : json
 			return {
 				_meta: { toolName: 'list_objects' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text }],
 			}
 		},
 	)
@@ -436,9 +475,14 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
+			const json = JSON.stringify(result, null, 2)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const base = config.frontendUrl?.replace(/\/$/, '')
+			const hint = base && wsId ? `Hint: View any object at ${base}/${wsId}/objects/{id}` : ''
+			const text = hint ? `${hint}\n\n${json}` : json
 			return {
 				_meta: { toolName: 'search_objects' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text }],
 			}
 		},
 	)
@@ -2002,6 +2046,7 @@ async function main() {
 		apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
 		apiKey: process.env.API_KEY || '',
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
+		frontendUrl: process.env.FRONTEND_URL,
 	}
 
 	const server = createMcpServer(config)

@@ -615,6 +615,160 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('web URL enrichment', () => {
+		let urlHandlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+		const frontendConfig = {
+			...config,
+			frontendUrl: 'https://maskin.example.com',
+		}
+
+		function getUrlHandler(name: string) {
+			const handler = urlHandlers.get(name)
+			if (!handler) throw new Error(`Handler ${name} not registered`)
+			return handler
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			urlHandlers = new Map()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				urlHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer(frontendConfig)
+		})
+
+		it('get_objects includes web_url per object when frontendUrl is set', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ id: 'obj-1', title: 'Test' }),
+			} as Response)
+
+			const handler = getUrlHandler('get_objects')
+			const result = (await handler({ ids: ['obj-1'] })) as {
+				content: Array<{ text: string }>
+			}
+
+			const parsed = JSON.parse(result.content[0].text)
+			const expectedUrl = 'https://maskin.example.com/ws-default-123/objects/obj-1'
+			expect(parsed[0].web_url).toBe(expectedUrl)
+		})
+
+		it('get_objects omits web_url when frontendUrl is not set', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ id: 'obj-1', title: 'Test' }),
+			} as Response)
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['obj-1'] })) as {
+				content: Array<{ text: string }>
+			}
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed[0].web_url).toBeUndefined()
+		})
+
+		it('create_objects prepends Web UI URLs when frontendUrl is set', async () => {
+			const mockResult = { nodes: [{ id: 'n-1' }, { id: 'n-2' }], edges: [] }
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve(mockResult),
+			} as Response)
+
+			const handler = getUrlHandler('create_objects')
+			const result = (await handler({
+				nodes: [
+					{ $id: 'a', type: 'bet', status: 'active' },
+					{ $id: 'b', type: 'task', status: 'todo' },
+				],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+
+			const text = result.content[0].text
+			expect(text).toContain('Web UI:')
+			expect(text).toContain('https://maskin.example.com/ws-default-123/objects/n-1')
+			expect(text).toContain('https://maskin.example.com/ws-default-123/objects/n-2')
+		})
+
+		it('list_objects includes hint line when frontendUrl is set', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve([]),
+			} as Response)
+
+			const handler = getUrlHandler('list_objects')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const expectedHint =
+				'Hint: View any object at https://maskin.example.com/ws-default-123/objects/{id}'
+			expect(result.content[0].text).toContain(expectedHint)
+		})
+
+		it('search_objects includes hint line when frontendUrl is set', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve([]),
+			} as Response)
+
+			const handler = getUrlHandler('search_objects')
+			const result = (await handler({ q: 'test' })) as {
+				content: Array<{ text: string }>
+			}
+
+			const expectedHint =
+				'Hint: View any object at https://maskin.example.com/ws-default-123/objects/{id}'
+			expect(result.content[0].text).toContain(expectedHint)
+		})
+
+		it('uses workspace_id from args over default for URLs', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ id: 'obj-1', title: 'Test' }),
+			} as Response)
+
+			const handler = getUrlHandler('get_objects')
+			const result = (await handler({
+				ids: ['obj-1'],
+				workspace_id: 'ws-custom',
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed[0].web_url).toBe('https://maskin.example.com/ws-custom/objects/obj-1')
+		})
+
+		it('handles trailing slash in frontendUrl', async () => {
+			const trailingHandlers = new Map<
+				string,
+				(args: Record<string, unknown>) => Promise<unknown>
+			>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				trailingHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, frontendUrl: 'https://maskin.example.com/' })
+
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ id: 'obj-1', title: 'Test' }),
+			} as Response)
+
+			const handler = trailingHandlers.get('get_objects')
+			if (!handler) throw new Error('Handler get_objects not registered')
+			const result = (await handler({ ids: ['obj-1'] })) as {
+				content: Array<{ text: string }>
+			}
+
+			const parsed = JSON.parse(result.content[0].text)
+			const expectedUrl = 'https://maskin.example.com/ws-default-123/objects/obj-1'
+			expect(parsed[0].web_url).toBe(expectedUrl)
+		})
+	})
+
 	describe('auth validation', () => {
 		it('throws when no API key configured', async () => {
 			const noKeyHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
