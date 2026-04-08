@@ -46,7 +46,7 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 				{question && <p className="text-sm font-medium mb-3">{question}</p>}
 
 				{/* Single choice — radio buttons */}
-				{inputType === 'single_choice' && options && (
+				{inputType === 'single_choice' && Array.isArray(options) && (
 					<>
 						<RadioGroup
 							value={singleValue}
@@ -77,7 +77,7 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 				)}
 
 				{/* Multiple choice — checkboxes */}
-				{inputType === 'multiple_choice' && options && (
+				{inputType === 'multiple_choice' && Array.isArray(options) && (
 					<>
 						<div className="space-y-2 mb-3">
 							{options.map((opt) => (
