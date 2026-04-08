@@ -172,7 +172,7 @@ describe('slackEventNormalizer', () => {
 		const result = slackEventNormalizer(payload, {})
 
 		expect(result).toEqual({
-			entityType: 'slack.message',
+			entityType: 'slack.channel_message',
 			action: 'created',
 			installationId: 'T123',
 			data: payload,

@@ -636,8 +636,19 @@ export interface ColumnMappingInput {
 	skip: boolean
 }
 
-export interface ImportMappingInput {
-	objectType: string | { column: string; typeMap: Record<string, string> }
+export interface TypeMappingInput {
+	objectType: string
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
+}
+
+export interface RelationshipMappingInput {
+	sourceType: string
+	relationshipType: string
+	targetType: string
+}
+
+export interface ImportMappingInput {
+	typeMappings: TypeMappingInput[]
+	relationships?: RelationshipMappingInput[]
 }
