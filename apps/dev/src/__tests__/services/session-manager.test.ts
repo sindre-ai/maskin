@@ -44,7 +44,7 @@ vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
 
-import type { StorageProvider } from '@ai-native/storage'
+import type { StorageProvider } from '@maskin/storage'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'

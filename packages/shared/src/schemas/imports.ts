@@ -17,16 +17,21 @@ export const columnMappingSchema = z.object({
 	skip: z.boolean().default(false),
 })
 
-export const importMappingSchema = z.object({
-	objectType: z.union([
-		z.string(),
-		z.object({
-			column: z.string(),
-			typeMap: z.record(z.string(), z.string()),
-		}),
-	]),
+export const typeMappingSchema = z.object({
+	objectType: z.string(),
 	columns: z.array(columnMappingSchema),
 	defaultStatus: z.string().optional(),
+})
+
+export const relationshipMappingSchema = z.object({
+	sourceType: z.string(),
+	relationshipType: z.string(),
+	targetType: z.string(),
+})
+
+export const importMappingSchema = z.object({
+	typeMappings: z.array(typeMappingSchema).min(1),
+	relationships: z.array(relationshipMappingSchema).default([]),
 })
 
 export const updateImportMappingSchema = z.object({
@@ -46,4 +51,6 @@ export const importParamsSchema = z.object({
 export type ImportStatus = z.infer<typeof importStatusSchema>
 export type ImportFileType = z.infer<typeof importFileTypeSchema>
 export type ColumnMapping = z.infer<typeof columnMappingSchema>
+export type TypeMapping = z.infer<typeof typeMappingSchema>
+export type RelationshipMapping = z.infer<typeof relationshipMappingSchema>
 export type ImportMapping = z.infer<typeof importMappingSchema>

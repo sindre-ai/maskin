@@ -113,10 +113,15 @@ describe('useUpdateImportMapping', () => {
 		vi.mocked(api.imports.updateMapping).mockResolvedValue(mockImport)
 
 		const mapping = {
-			objectType: 'task',
-			columns: [
-				{ sourceColumn: 'name', targetField: 'title', transform: 'none' as const, skip: false },
+			typeMappings: [
+				{
+					objectType: 'task',
+					columns: [
+						{ sourceColumn: 'name', targetField: 'title', transform: 'none' as const, skip: false },
+					],
+				},
 			],
+			relationships: [],
 		}
 
 		const { result } = renderHook(() => useUpdateImportMapping(workspaceId), {

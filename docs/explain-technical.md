@@ -1,4 +1,4 @@
-# AI-Native OS — Technical Overview
+# Maskin — Technical Overview
 
 ## What It Is
 
@@ -75,4 +75,4 @@ pnpm dev
 
 ## Platform Vision
 
-This dev workspace is the first product. Future products (CRM, meeting notes, etc.) will be separate repos importing shared packages from `@ai-native/core`. Each runs standalone or composes into a unified platform with shared auth, database, and billing.
+This dev workspace is the first product. Future products (CRM, meeting notes, etc.) will be separate repos importing shared packages from `@maskin/core`. Each runs standalone or composes into a unified platform with shared auth, database, and billing.

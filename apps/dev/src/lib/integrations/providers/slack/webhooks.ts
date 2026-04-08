@@ -46,7 +46,7 @@ export const slackEventNormalizer: CustomEventNormalizer = (payload, _headers) =
 		const channel = event.channel as string | undefined
 		const prefix = channel?.[0]
 		if (prefix && prefix in messageEntityByChannelPrefix) {
-			entityType = messageEntityByChannelPrefix[prefix]
+			entityType = messageEntityByChannelPrefix[prefix] as string
 		}
 	}
 

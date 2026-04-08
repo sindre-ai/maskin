@@ -1,5 +1,5 @@
-import type { Database } from '@ai-native/db'
-import { actors } from '@ai-native/db/schema'
+import type { Database } from '@maskin/db'
+import { actors } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 
 export function generateApiKey(): { key: string } {

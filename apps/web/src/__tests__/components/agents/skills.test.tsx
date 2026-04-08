@@ -25,7 +25,7 @@ vi.mock('@/hooks/use-skills', () => ({
 const mockUseSkills = vi.fn()
 const mockUseSkill = vi.fn()
 
-vi.mock('@ai-native/shared', () => ({
+vi.mock('@maskin/shared', () => ({
 	parseSkillMd: vi.fn(),
 }))
 
@@ -213,7 +213,7 @@ describe('Skills', () => {
 
 		it('shows error for invalid SKILL.md format', async () => {
 			const user = userEvent.setup()
-			const { parseSkillMd } = await import('@ai-native/shared')
+			const { parseSkillMd } = await import('@maskin/shared')
 			vi.mocked(parseSkillMd).mockImplementation(() => {
 				throw new Error('parse error')
 			})
@@ -230,7 +230,7 @@ describe('Skills', () => {
 
 		it('shows error when name missing from frontmatter', async () => {
 			const user = userEvent.setup()
-			const { parseSkillMd } = await import('@ai-native/shared')
+			const { parseSkillMd } = await import('@maskin/shared')
 			vi.mocked(parseSkillMd).mockReturnValue({
 				name: '',
 				description: 'test',

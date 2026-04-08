@@ -12,7 +12,7 @@ import { useUpdateObject } from '@/hooks/use-objects'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import type { SafeJsonValue, SafeMetadata } from '@ai-native/shared'
+import type { SafeJsonValue, SafeMetadata } from '@maskin/shared'
 import { X } from 'lucide-react'
 import { useState } from 'react'
 

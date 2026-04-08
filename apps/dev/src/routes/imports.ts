@@ -1,8 +1,8 @@
-import type { Database } from '@ai-native/db'
-import { events, imports, workspaces } from '@ai-native/db/schema'
-import { importMappingSchema, importQuerySchema } from '@ai-native/shared'
-import type { StorageProvider } from '@ai-native/storage'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { events, imports, workspaces } from '@maskin/db/schema'
+import { importMappingSchema, importQuerySchema } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -325,13 +325,14 @@ function runImportInBackground(opts: {
 			db,
 		)
 
+		const totalErrors = result.errorCount + result.relationshipErrorCount
 		const finalStatus = result.successCount > 0 ? 'completed' : 'failed'
 		await db
 			.update(imports)
 			.set({
 				status: finalStatus,
 				successCount: result.successCount,
-				errorCount: result.errorCount,
+				errorCount: totalErrors,
 				errors: result.errors.length > 0 ? result.errors : null,
 				processedRows: parsed.rows.length,
 				completedAt: new Date(),
@@ -345,7 +346,11 @@ function runImportInBackground(opts: {
 			action: finalStatus === 'completed' ? 'import_completed' : 'import_failed',
 			entityType: 'import',
 			entityId: importId,
-			data: { successCount: result.successCount, errorCount: result.errorCount },
+			data: {
+				successCount: result.successCount,
+				errorCount: totalErrors,
+				relationshipCount: result.relationshipCount,
+			},
 		})
 
 		logger.info('Import finished', {
@@ -353,6 +358,8 @@ function runImportInBackground(opts: {
 			status: finalStatus,
 			successCount: result.successCount,
 			errorCount: result.errorCount,
+			relationshipCount: result.relationshipCount,
+			relationshipErrorCount: result.relationshipErrorCount,
 		})
 	}
 

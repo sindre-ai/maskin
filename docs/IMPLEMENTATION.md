@@ -1,4 +1,4 @@
-# AI-Native OSS Workspace — Implementation Reference
+# Maskin Workspace — Implementation Reference
 
 ## Table of Contents
 
@@ -76,7 +76,7 @@
 ## Project Structure
 
 ```
-ai-native-oss/
+maskin/
 ├── .env.example
 ├── .gitignore
 ├── biome.json
@@ -167,7 +167,7 @@ ai-native-oss/
 
 ```json
 {
-	"name": "ai-native-oss",
+	"name": "maskin",
 	"private": true,
 	"scripts": {
 		"dev": "turbo dev",
@@ -301,7 +301,7 @@ dist/
 ### `.env.example`
 
 ```
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_native_oss
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/maskin
 ```
 
 ### `docker-compose.yml`
@@ -313,7 +313,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: ai_native_oss
+      POSTGRES_DB: maskin
     ports:
       - "5432:5432"
     volumes:
@@ -331,7 +331,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_native_oss
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/maskin
       PORT: "3000"
     depends_on:
       postgres:
@@ -349,7 +349,7 @@ volumes:
 
 ```json
 {
-	"name": "@ai-native/db",
+	"name": "@maskin/db",
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
@@ -901,7 +901,7 @@ CREATE OR REPLACE TRIGGER events_notify
 
 ```json
 {
-	"name": "@ai-native/shared",
+	"name": "@maskin/shared",
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
@@ -1155,7 +1155,7 @@ export * from './schemas/index'
 
 ```json
 {
-	"name": "@ai-native/auth",
+	"name": "@maskin/auth",
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
@@ -1167,7 +1167,7 @@ export * from './schemas/index'
 		"build": "tsc"
 	},
 	"dependencies": {
-		"@ai-native/db": "workspace:*",
+		"@maskin/db": "workspace:*",
 		"better-auth": "^1.2.0",
 		"drizzle-orm": "^0.38.0",
 		"hono": "^4.7.0"
@@ -1209,8 +1209,8 @@ export type Auth = ReturnType<typeof createAuth>
 ### `packages/auth/src/api-keys.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
-import { actors } from '@ai-native/db/schema'
+import type { Database } from '@maskin/db'
+import { actors } from '@maskin/db/schema'
 import { eq, isNotNull } from 'drizzle-orm'
 
 async function sha256(input: string): Promise<string> {
@@ -1246,7 +1246,7 @@ export async function validateApiKey(
 ### `packages/auth/src/middleware.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
+import type { Database } from '@maskin/db'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
 
@@ -1305,7 +1305,7 @@ export { authMiddleware } from './middleware'
 
 ```json
 {
-	"name": "@ai-native/realtime",
+	"name": "@maskin/realtime",
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
@@ -1435,7 +1435,7 @@ export { createSSEHandler } from './sse'
 
 ```json
 {
-	"name": "@ai-native/mcp",
+	"name": "@maskin/mcp",
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
@@ -1497,7 +1497,7 @@ async function apiCall(
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
-		name: 'ai-native-oss',
+		name: 'maskin',
 		version: '0.1.0',
 	})
 
@@ -1860,7 +1860,7 @@ export { tools } from './tools.js'
 
 ```json
 {
-	"name": "@ai-native/dev",
+	"name": "@maskin/dev",
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
@@ -1871,10 +1871,10 @@ export { tools } from './tools.js'
 		"test": "vitest"
 	},
 	"dependencies": {
-		"@ai-native/auth": "workspace:*",
-		"@ai-native/db": "workspace:*",
-		"@ai-native/realtime": "workspace:*",
-		"@ai-native/shared": "workspace:*",
+		"@maskin/auth": "workspace:*",
+		"@maskin/db": "workspace:*",
+		"@maskin/realtime": "workspace:*",
+		"@maskin/shared": "workspace:*",
 		"@hono/node-server": "^1.13.0",
 		"@hono/zod-openapi": "^0.18.0",
 		"bcryptjs": "^2.4.3",
@@ -1896,10 +1896,10 @@ export { tools } from './tools.js'
 ### `apps/dev/src/index.ts`
 
 ```typescript
-import { authMiddleware } from '@ai-native/auth'
-import { createDb } from '@ai-native/db'
-import type { Database } from '@ai-native/db'
-import { PgNotifyBridge } from '@ai-native/realtime'
+import { authMiddleware } from '@maskin/auth'
+import { createDb } from '@maskin/db'
+import type { Database } from '@maskin/db'
+import { PgNotifyBridge } from '@maskin/realtime'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
@@ -1956,7 +1956,7 @@ app.get('/api/openapi.json', (c) => {
 	return c.json({
 		openapi: '3.1.0',
 		info: {
-			title: 'AI-Native OSS Dev Workspace API',
+			title: 'Maskin Dev Workspace API',
 			version: '0.1.0',
 			description: 'Unified API for insights, bets, tasks, actors, and automation',
 		},
@@ -2002,9 +2002,9 @@ export type AppType = typeof app
 ### `apps/dev/src/routes/objects.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
-import { events, objects, workspaces } from '@ai-native/db/schema'
-import { createObjectSchema, objectQuerySchema, updateObjectSchema } from '@ai-native/shared'
+import type { Database } from '@maskin/db'
+import { events, objects, workspaces } from '@maskin/db/schema'
+import { createObjectSchema, objectQuerySchema, updateObjectSchema } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 
@@ -2213,11 +2213,11 @@ export default app
 ### `apps/dev/src/routes/actors.ts`
 
 ```typescript
-import { generateApiKey } from '@ai-native/auth'
-import type { Database } from '@ai-native/db'
-import { actors, workspaceMembers, workspaces } from '@ai-native/db/schema'
-import { createActorSchema, updateActorSchema } from '@ai-native/shared'
-import { workspaceSettingsSchema } from '@ai-native/shared'
+import { generateApiKey } from '@maskin/auth'
+import type { Database } from '@maskin/db'
+import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
+import { createActorSchema, updateActorSchema } from '@maskin/shared'
+import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 
@@ -2408,13 +2408,13 @@ export default app
 ### `apps/dev/src/routes/workspaces.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
-import { actors, workspaceMembers, workspaces } from '@ai-native/db/schema'
+import type { Database } from '@maskin/db'
+import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
 	createWorkspaceSchema,
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
-} from '@ai-native/shared'
+} from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 
@@ -2547,9 +2547,9 @@ export default app
 ### `apps/dev/src/routes/relationships.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
-import { events, relationships } from '@ai-native/db/schema'
-import { createRelationshipSchema, relationshipQuerySchema } from '@ai-native/shared'
+import type { Database } from '@maskin/db'
+import { events, relationships } from '@maskin/db/schema'
+import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 
@@ -2650,9 +2650,9 @@ export default app
 ### `apps/dev/src/routes/triggers.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
-import { triggers } from '@ai-native/db/schema'
-import { createTriggerSchema, updateTriggerSchema } from '@ai-native/shared'
+import type { Database } from '@maskin/db'
+import { triggers } from '@maskin/db/schema'
+import { createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 
@@ -2741,10 +2741,10 @@ export default app
 ### `apps/dev/src/routes/events.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
-import { events } from '@ai-native/db/schema'
-import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
-import { eventQuerySchema } from '@ai-native/shared'
+import type { Database } from '@maskin/db'
+import { events } from '@maskin/db/schema'
+import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
+import { eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
@@ -2843,8 +2843,8 @@ export default app
 ### `apps/dev/src/services/agent-runner.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
-import { events, actors, objects, relationships } from '@ai-native/db/schema'
+import type { Database } from '@maskin/db'
+import { events, actors, objects, relationships } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import type { LLMMessage, LLMTool, LLMToolCall } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
@@ -3191,9 +3191,9 @@ export async function runAgent(
 ### `apps/dev/src/services/trigger-runner.ts`
 
 ```typescript
-import type { Database } from '@ai-native/db'
-import { events, triggers } from '@ai-native/db/schema'
-import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
+import type { Database } from '@maskin/db'
+import { events, triggers } from '@maskin/db/schema'
+import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { runAgent } from './agent-runner'
 

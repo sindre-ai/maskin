@@ -53,7 +53,7 @@ describe('createMcpSession', () => {
 		await createMcpSession('node', [], {})
 
 		expect(Client).toHaveBeenCalledWith(
-			{ name: 'ai-native-agent', version: '1.0.0' },
+			{ name: 'maskin-agent', version: '1.0.0' },
 			{ capabilities: {} },
 		)
 	})

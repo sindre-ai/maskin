@@ -1,4 +1,4 @@
-import type { workspaceSettingsSchema } from '@ai-native/shared'
+import type { workspaceSettingsSchema } from '@maskin/shared'
 import type { z } from 'zod'
 
 /** Typed workspace settings — derived from the shared Zod schema. */

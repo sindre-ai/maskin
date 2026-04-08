@@ -2,15 +2,15 @@ import { z } from '@hono/zod-openapi'
 import type { ZodError, ZodIssue } from 'zod'
 
 // Re-export shared error types and helpers
-export { ApiErrorCode, mapStatusToCode } from '@ai-native/shared'
+export { ApiErrorCode, mapStatusToCode } from '@maskin/shared'
 export type {
 	ApiErrorCode as ApiErrorCodeType,
 	ApiErrorDetail,
 	ApiErrorResponse,
-} from '@ai-native/shared'
+} from '@maskin/shared'
 
-import { createApiError } from '@ai-native/shared'
-import type { ApiErrorDetail } from '@ai-native/shared'
+import { createApiError } from '@maskin/shared'
+import type { ApiErrorDetail } from '@maskin/shared'
 
 export { createApiError }
 

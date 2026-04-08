@@ -1,4 +1,4 @@
-import type { Database } from '@ai-native/db'
+import type { Database } from '@maskin/db'
 
 /**
  * Creates a mock Drizzle DB with queued results. Each db.select() call

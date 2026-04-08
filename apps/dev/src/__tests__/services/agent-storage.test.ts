@@ -8,7 +8,7 @@ vi.mock('node:fs/promises', () => ({
 }))
 
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import type { StorageProvider } from '@ai-native/storage'
+import type { StorageProvider } from '@maskin/storage'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { createTestContext } from '../setup'
 
