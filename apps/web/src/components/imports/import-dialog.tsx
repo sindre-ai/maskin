@@ -344,6 +344,7 @@ function MappingStep({
 	)
 
 	// Save mapping on changes (skip initial render, deduplicate identical updates)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: mapping is derived from buildMapping deps, adding it causes refetch loop
 	useEffect(() => {
 		if (!mapping) return
 		if (isFirstRender.current) {
@@ -360,7 +361,7 @@ function MappingStep({
 		}, 500)
 		return () => clearTimeout(timer)
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excluding `mapping` to avoid refetch loop
-	}, [typeMappings, localRelationships, buildMapping, onMappingUpdate])
+	}, [buildMapping, onMappingUpdate])
 
 	// Relationship handlers
 	const configuredTypes = useMemo(() => typeMappings.map((tm) => tm.objectType), [typeMappings])
@@ -421,6 +422,7 @@ function MappingStep({
 
 				{typeMappings.map((tm, tmIndex) => (
 					<TypeMappingSection
+						// biome-ignore lint/suspicious/noArrayIndexKey: type mappings have no stable ID
 						key={tmIndex}
 						typeMapping={tm}
 						typeMappingIndex={tmIndex}
@@ -467,6 +469,7 @@ function MappingStep({
 				{relSectionOpen && localRelationships.length > 0 && (
 					<div className="border-t px-3 py-2 space-y-2">
 						{localRelationships.map((rel, idx) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: relationships have no stable ID
 							<div key={idx} className="flex items-center gap-2 text-sm">
 								<Select
 									value={rel.sourceType}
