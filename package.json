@@ -15,7 +15,8 @@
 		"type-check": "turbo type-check",
 		"db:generate": "turbo db:generate",
 		"db:migrate": "turbo db:migrate",
-		"db:seed": "turbo db:seed"
+		"db:seed": "turbo db:seed",
+		"demo": "npx tsx scripts/demo.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.0",
