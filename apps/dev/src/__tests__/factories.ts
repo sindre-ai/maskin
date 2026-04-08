@@ -331,9 +331,7 @@ export function buildImport(overrides?: Record<string, unknown>) {
 			typeMappings: [
 				{
 					objectType: 'task',
-					columns: [
-						{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false },
-					],
+					columns: [{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false }],
 					defaultStatus: 'todo',
 				},
 			],

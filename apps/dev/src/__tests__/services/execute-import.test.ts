@@ -58,7 +58,15 @@ describe('executeImport', () => {
 
 		mockResults.insert = [makeObj('obj-1', 'task'), makeObj('obj-2', 'task')]
 
-		const result = await executeImport(importId, rows, mapping, workspaceId, actorId, defaultSettings, db)
+		const result = await executeImport(
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			db,
+		)
 
 		expect(result.successCount).toBe(2)
 		expect(result.errorCount).toBe(0)
@@ -97,7 +105,15 @@ describe('executeImport', () => {
 		// Both type mappings produce objects from the same row
 		mockResults.insert = [makeObj('obj-1', 'task'), makeObj('obj-2', 'insight')]
 
-		const result = await executeImport(importId, rows, mapping, workspaceId, actorId, defaultSettings, db)
+		const result = await executeImport(
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			db,
+		)
 
 		// 1 row × 2 type mappings = 2 objects
 		expect(result.successCount).toBe(2)
@@ -135,7 +151,15 @@ describe('executeImport', () => {
 		// Only the task mapping produces an object
 		mockResults.insert = [makeObj('obj-1', 'task')]
 
-		const result = await executeImport(importId, rows, mapping, workspaceId, actorId, defaultSettings, db)
+		const result = await executeImport(
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			db,
+		)
 
 		expect(result.successCount).toBe(1)
 	})
@@ -164,9 +188,7 @@ describe('executeImport', () => {
 					],
 				},
 			],
-			relationships: [
-				{ sourceType: 'insight', relationshipType: 'informs', targetType: 'task' },
-			],
+			relationships: [{ sourceType: 'insight', relationshipType: 'informs', targetType: 'task' }],
 		}
 
 		// Pass 1: object creation returns both objects
@@ -178,7 +200,15 @@ describe('executeImport', () => {
 			[], // relationship events
 		]
 
-		const result = await executeImport(importId, rows, mapping, workspaceId, actorId, defaultSettings, db)
+		const result = await executeImport(
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			db,
+		)
 
 		expect(result.successCount).toBe(2)
 		expect(result.relationshipCount).toBe(1)
@@ -210,15 +240,21 @@ describe('executeImport', () => {
 					],
 				},
 			],
-			relationships: [
-				{ sourceType: 'insight', relationshipType: 'informs', targetType: 'task' },
-			],
+			relationships: [{ sourceType: 'insight', relationshipType: 'informs', targetType: 'task' }],
 		}
 
 		// Only task is created, insight mapping returns null (empty description)
 		mockResults.insert = [makeObj('task-1', 'task')]
 
-		const result = await executeImport(importId, rows, mapping, workspaceId, actorId, defaultSettings, db)
+		const result = await executeImport(
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			db,
+		)
 
 		expect(result.successCount).toBe(1)
 		// No relationships created because insight was not created for this row
@@ -252,9 +288,7 @@ describe('executeImport', () => {
 					],
 				},
 			],
-			relationships: [
-				{ sourceType: 'insight', relationshipType: 'informs', targetType: 'task' },
-			],
+			relationships: [{ sourceType: 'insight', relationshipType: 'informs', targetType: 'task' }],
 		}
 
 		mockResults.insertQueue = [
@@ -271,7 +305,15 @@ describe('executeImport', () => {
 			[], // relationship events
 		]
 
-		const result = await executeImport(importId, rows, mapping, workspaceId, actorId, defaultSettings, db)
+		const result = await executeImport(
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			db,
+		)
 
 		expect(result.successCount).toBe(4)
 		expect(result.relationshipCount).toBe(2)
@@ -300,9 +342,7 @@ describe('executeImport', () => {
 					],
 				},
 			],
-			relationships: [
-				{ sourceType: 'insight', relationshipType: 'informs', targetType: 'task' },
-			],
+			relationships: [{ sourceType: 'insight', relationshipType: 'informs', targetType: 'task' }],
 		}
 
 		// Build a custom mock DB that throws on the 3rd insert (relationship insert)
@@ -326,8 +366,7 @@ describe('executeImport', () => {
 				return chain
 			}
 			// biome-ignore lint/suspicious/noThenProperty: mock
-			chain.then = (_res: unknown, rej: (e: Error) => void) =>
-				rej(new Error('DB constraint error'))
+			chain.then = (_res: unknown, rej: (e: Error) => void) => rej(new Error('DB constraint error'))
 			chain.catch = (fn: (e: Error) => void) => fn(new Error('DB constraint error'))
 			return chain
 		}
@@ -335,9 +374,21 @@ describe('executeImport', () => {
 		const createNormalChain = (returnValue?: unknown) => {
 			const chain: Record<string, unknown> = {}
 			for (const m of [
-				'select', 'from', 'where', 'limit', 'offset', 'orderBy', 'insert',
-				'values', 'returning', 'update', 'set', 'delete', 'innerJoin',
-				'onConflictDoUpdate', 'onConflictDoNothing',
+				'select',
+				'from',
+				'where',
+				'limit',
+				'offset',
+				'orderBy',
+				'insert',
+				'values',
+				'returning',
+				'update',
+				'set',
+				'delete',
+				'innerJoin',
+				'onConflictDoUpdate',
+				'onConflictDoNothing',
 			]) {
 				chain[m] = () => chain
 			}
@@ -369,7 +420,15 @@ describe('executeImport', () => {
 			},
 		})
 
-		const result = await executeImport(importId, rows, mapping, workspaceId, actorId, defaultSettings, db)
+		const result = await executeImport(
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			db,
+		)
 
 		expect(result.successCount).toBe(2)
 		expect(result.errorCount).toBe(0)
@@ -423,7 +482,13 @@ describe('executeImport', () => {
 		})
 
 		const result = await executeImport(
-			importId, rows, mapping, workspaceId, actorId, defaultSettings, failingDb,
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			failingDb,
 		)
 
 		expect(result.successCount).toBe(0)
@@ -441,7 +506,12 @@ describe('executeImport', () => {
 				{
 					objectType: 'task',
 					columns: [
-						{ sourceColumn: 'age', targetField: 'metadata.age', transform: 'number' as const, skip: false },
+						{
+							sourceColumn: 'age',
+							targetField: 'metadata.age',
+							transform: 'number' as const,
+							skip: false,
+						},
 					],
 					defaultStatus: 'todo',
 				},
@@ -449,7 +519,15 @@ describe('executeImport', () => {
 			relationships: [],
 		}
 
-		const result = await executeImport(importId, rows, mapping, workspaceId, actorId, defaultSettings, db)
+		const result = await executeImport(
+			importId,
+			rows,
+			mapping,
+			workspaceId,
+			actorId,
+			defaultSettings,
+			db,
+		)
 
 		// Row has metadata but no title/content, so mapRowForType returns null
 		expect(result.successCount).toBe(0)

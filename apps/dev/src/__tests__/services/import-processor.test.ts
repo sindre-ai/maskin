@@ -132,7 +132,7 @@ describe('generateMapping', () => {
 		const columns = ['name', 'description', 'status']
 		const sampleRows = [{ name: 'Alice', description: 'A contact', status: 'active' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
-		const cols = mapping.typeMappings[0]!.columns
+		const cols = mapping.typeMappings[0]?.columns ?? []
 
 		const titleCol = cols.find((c) => c.targetField === 'title')
 		expect(titleCol?.sourceColumn).toBe('name')
@@ -148,7 +148,7 @@ describe('generateMapping', () => {
 		const columns = ['name', 'email', 'phone']
 		const sampleRows = [{ name: 'Alice', email: 'a@test.com', phone: '123' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
-		const cols = mapping.typeMappings[0]!.columns
+		const cols = mapping.typeMappings[0]?.columns ?? []
 
 		const emailCol = cols.find((c) => c.sourceColumn === 'email')
 		expect(emailCol?.targetField).toBe('metadata.email')
@@ -181,7 +181,7 @@ describe('generateMapping', () => {
 		const columns = ['name', 'unknown_field']
 		const sampleRows = [{ name: 'Alice', unknown_field: 'value' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
-		const cols = mapping.typeMappings[0]!.columns
+		const cols = mapping.typeMappings[0]?.columns ?? []
 
 		const unknownCol = cols.find((c) => c.sourceColumn === 'unknown_field')
 		expect(unknownCol?.skip).toBe(true)
@@ -192,7 +192,7 @@ describe('generateMapping', () => {
 		const columns = ['name', 'age']
 		const sampleRows = [{ name: 'Alice', age: '30' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
-		const cols = mapping.typeMappings[0]!.columns
+		const cols = mapping.typeMappings[0]?.columns ?? []
 
 		const ageCol = cols.find((c) => c.sourceColumn === 'age')
 		expect(ageCol?.transform).toBe('number')
@@ -203,7 +203,7 @@ describe('generateMapping', () => {
 		const columns = ['name', 'active']
 		const sampleRows = [{ name: 'Alice', active: 'true' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
-		const cols = mapping.typeMappings[0]!.columns
+		const cols = mapping.typeMappings[0]?.columns ?? []
 
 		const activeCol = cols.find((c) => c.sourceColumn === 'active')
 		expect(activeCol?.transform).toBe('boolean')
@@ -216,7 +216,7 @@ describe('generateMapping', () => {
 			{ name: 'Bob', urgency: 'low' },
 		]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
-		const cols = mapping.typeMappings[0]!.columns
+		const cols = mapping.typeMappings[0]?.columns ?? []
 
 		const urgencyCol = cols.find((c) => c.sourceColumn === 'urgency')
 		expect(urgencyCol?.targetField).toBe('metadata.priority')

@@ -83,6 +83,10 @@ vi.mock('@/components/imports/import-dialog', () => ({
 	ImportDialog: () => null,
 }))
 
+vi.mock('@/hooks/use-imports', () => ({
+	useImportToast: () => ({ startTracking: vi.fn() }),
+}))
+
 vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
@@ -92,7 +96,10 @@ vi.mock('@/lib/api', () => ({
 }))
 
 vi.mock('@/lib/query-keys', () => ({
-	queryKeys: { objects: { listInfinite: () => ['objects'] } },
+	queryKeys: {
+		objects: { listInfinite: () => ['objects'] },
+		imports: { detail: (id: string) => ['imports', 'detail', id] },
+	},
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'

@@ -192,9 +192,7 @@ export function generateMapping(
 			// Check if sample values match an enum field
 			for (const [fieldName, fieldInfo] of allFields) {
 				if (fieldInfo.type === 'enum' && fieldInfo.values && fieldInfo.values.length > 0) {
-					const sampleValues = sampleRows
-						.map((r) => (r[col] ?? '').toLowerCase())
-						.filter(Boolean)
+					const sampleValues = sampleRows.map((r) => (r[col] ?? '').toLowerCase()).filter(Boolean)
 					const enumValues = fieldInfo.values.map((v) => v.toLowerCase())
 					const overlap = sampleValues.filter((v) => enumValues.includes(v))
 					if (overlap.length > 0 && overlap.length >= sampleValues.length * 0.5) {
