@@ -1,100 +1,107 @@
-# AI-Native OSS Workspace
+<p align="center">
+  <h1 align="center">Maskin</h1>
+  <p align="center">An open-source workspace where AI agents run product development.<br/>Insights in, shipped features out.</p>
+</p>
 
-<!-- badges placeholder -->
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
-[![Node](https://img.shields.io/badge/Node-%3E%3D20-green.svg)](https://nodejs.org/)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.7+-blue.svg" alt="TypeScript"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%3E%3D20-green.svg" alt="Node"></a>
+</p>
 
-An open-source workspace where AI agents run product development autonomously. Humans set direction, agents execute.
+---
 
-## What is this?
+## What is Maskin?
 
-- **Open-source workspace** where AI agents run product development end-to-end
-- **Core pipeline:** Insights (signals from users, data, market) -> Bets (hypotheses to validate) -> Tasks (concrete work items) -> Feedback Loop
-- **Agents are first-class citizens** -- they create insights, propose bets, break down tasks, and execute. Humans course-correct
-- **Everything is an API** -- UI and agents use the same endpoints. No special agent interface, no separate human interface
-- **Unified object model** -- insights, bets, and tasks are all "objects" with the same schema, connected by relationships
+Maskin is a **product development workspace** where AI agents do the work. Humans set direction. Agents analyze signals, propose strategies, break down work, write code, review PRs, and improve the system itself.
+
+Everything follows one loop:
+
+```
+Insights  -->  Bets  -->  Tasks  -->  Feedback  -->  Insights
+   |              |            |                         |
+ signals      hypotheses   execution              the loop closes
+```
+
+- **Insights** are signals from users, data, competitors, or the system itself
+- **Bets** are hypotheses worth validating — proposed by agents, approved by humans
+- **Tasks** are concrete work items — agents execute them autonomously
+- **The loop closes** when a Workspace Observer agent generates meta-insights about what happened, feeding the next cycle
+
+This isn't another AI framework. It's a self-improving product development OS.
+
+## Demo
+
+<!-- TODO: Replace with actual demo video/GIF after Task 7 -->
+
+> Run `pnpm db:seed` to see Maskin in action. The seed populates a full Product Development workspace with agents, triggers, insights, bets, and tasks — showing the complete Insight > Bet > Task cycle.
+
+The demo seed includes:
+- **5 AI agents** — Insight Analyzer, Bet Planner, Senior Developer, Code Reviewer, Workspace Observer
+- **Automated triggers** — agents fire on status changes and cron schedules
+- **Sample objects** — insights, bets, and tasks in various stages of the pipeline
+- **Meta-insights** — the Workspace Observer analyzing its own system, demonstrating the self-improving loop
 
 ## Quick Start
 
 ```bash
 # Clone and install
-git clone https://github.com/your-org/ai-native-oss.git && cd ai-native-oss
+git clone https://github.com/sindre-ai/maskin.git && cd maskin
 pnpm install
+
+# Seed the demo workspace
+pnpm db:seed
 
 # Start everything (Docker, migrations, backend + frontend)
 pnpm dev
-
-# On Windows (cmd/PowerShell), use:
-pnpm dev:win
-
-# Seed demo data (optional)
-pnpm db:seed
 ```
 
-`pnpm dev` automatically starts PostgreSQL + SeaweedFS via Docker, runs pending migrations, then launches all services.
+> On Windows, use `pnpm dev:win` instead.
 
-Backend starts at `http://localhost:3000` (`/api/health` to verify). Frontend starts at `http://localhost:5173`.
+Backend runs at `http://localhost:3000` (`/api/health` to verify). Frontend at `http://localhost:5173`.
+
+## How It Works
+
+Maskin runs on a simple loop that compounds over time:
+
+1. **Insights arrive** — from integrations, user feedback, agent observations, or manual entry
+2. **Agents analyze** — the Insight Analyzer clusters signals and identifies patterns
+3. **Bets get proposed** — the Bet Planner turns patterns into strategic hypotheses with success criteria
+4. **Tasks get created** — bets break down into concrete, executable tasks
+5. **Agents execute** — the Senior Developer writes code, the Code Reviewer reviews PRs
+6. **The system observes itself** — the Workspace Observer creates meta-insights about what worked and what didn't
+
+Humans stay in the loop at decision points: approving bets, course-correcting priorities, reviewing critical work. Everything else runs autonomously.
 
 ## Architecture
 
 ```
-ai-native-oss/
+maskin/
 ├── apps/
-│   ├── dev/                    # Backend API server (Hono.js)
-│   │   ├── src/
-│   │   │   ├── index.ts        # App entry, middleware, route mounting
-│   │   │   ├── routes/         # REST endpoints
-│   │   │   │   ├── objects.ts
-│   │   │   │   ├── actors.ts
-│   │   │   │   ├── workspaces.ts
-│   │   │   │   ├── relationships.ts
-│   │   │   │   ├── triggers.ts
-│   │   │   │   ├── events.ts
-│   │   │   │   ├── sessions.ts
-│   │   │   │   ├── integrations.ts
-│   │   │   │   └── graph.ts
-│   │   │   ├── services/
-│   │   │   │   ├── trigger-runner.ts     # Cron + event-based automation
-│   │   │   │   ├── session-manager.ts    # Container-based agent sessions
-│   │   │   │   ├── container-manager.ts  # Docker container lifecycle
-│   │   │   │   └── agent-storage.ts      # S3 agent file pull/push
-│   │   │   └── lib/
-│   │   │       └── llm/        # LLM provider adapters
-│   │   │           ├── openai.ts
-│   │   │           └── anthropic.ts
-│   │   └── Dockerfile
+│   ├── dev/                    # Backend API (Hono.js)
+│   │   └── src/
+│   │       ├── routes/         # REST endpoints
+│   │       ├── services/       # Trigger runner, session manager, containers
+│   │       └── lib/            # LLM adapters, integrations
 │   ├── web/                    # Frontend (React + TanStack)
 │   │   └── src/
-│   │       ├── routes/         # File-based routing (TanStack Router)
-│   │       ├── components/     # UI primitives, shared, and feature components
-│   │       ├── hooks/          # TanStack Query hooks per resource
-│   │       └── lib/            # API client, auth, SSE, utilities
+│   │       ├── routes/         # File-based routing
+│   │       ├── components/     # UI components
+│   │       └── hooks/          # Data fetching
 │   └── e2e/                    # E2E tests (Playwright)
-│       └── src/
-│           ├── tests/          # Test specs (auth, CRUD, navigation)
-│           ├── fixtures/       # Auth fixtures
-│           └── helpers/        # API test helpers
-├── scripts/
-│   ├── dev.sh                  # Dev startup script (bash/macOS/Linux)
-│   └── dev.mjs                 # Dev startup script (Windows cmd/PowerShell)
 ├── packages/
 │   ├── db/                     # Drizzle ORM schema + migrations
-│   ├── auth/                   # API key auth (SHA-256 hashed)
-│   ├── shared/                 # Zod schemas for validation
+│   ├── auth/                   # API key auth (SHA-256)
+│   ├── shared/                 # Zod validation schemas
 │   ├── realtime/               # PG NOTIFY -> SSE bridge
-│   ├── storage/                # Abstract StorageProvider with S3 implementation
-│   └── mcp/                    # MCP server (39 tools, stdio + HTTP transport)
+│   ├── storage/                # S3-compatible file storage
+│   └── mcp/                    # MCP server (39 tools, stdio + HTTP)
+├── extensions/                 # Custom object types via module system
+├── scripts/                    # Dev startup scripts
 ├── docker-compose.yml
 ├── turbo.json
 └── package.json
 ```
-
-**Key design decisions:**
-
-- **Modular monorepo** -- pnpm workspaces + Turborepo for builds. Each package is independently importable
-- **Event-sourced activity** -- every mutation logs an event. Agents and humans see the same audit trail
-- **Container-based agent execution** -- Docker container sessions (SessionManager) for running Claude Code, Codex, or custom CLIs
 
 ## Tech Stack
 
@@ -102,264 +109,86 @@ ai-native-oss/
 |-------|--------|-----|
 | Runtime | Node.js >= 20 | Native fetch, stable ESM |
 | Language | TypeScript 5.7+ | Type safety across monorepo |
-| API Framework | Hono.js + OpenAPIHono | Fast, lightweight, edge-ready |
-| ORM | Drizzle ORM | Type-safe SQL, zero overhead |
-| Database | PostgreSQL 16 | JSONB for metadata, NOTIFY for real-time |
-| Validation | Zod | Shared schemas between API, frontend, and MCP |
-| Auth | API keys (SHA-256) | Simple, agent-friendly. No cookies or sessions |
-| Real-time | PG NOTIFY -> SSE | No extra infra (no Redis, no WebSocket server) |
-| Agent Protocol | MCP (Model Context Protocol) | Standard protocol for external AI agents |
-| Frontend | React 19 + TanStack Router + TanStack Query | File-based routing, server state caching |
-| Styling | Tailwind CSS 4 + shadcn/ui | Utility-first CSS with Radix UI primitives |
-| Object Storage | S3-compatible (SeaweedFS for dev) | Agent file persistence (skills, learnings, memory) |
+| API | Hono.js + OpenAPIHono | Fast, lightweight, edge-ready |
+| Database | PostgreSQL 16 + Drizzle ORM | JSONB metadata, PG NOTIFY for real-time |
+| Validation | Zod | Shared schemas across API, frontend, MCP |
+| Auth | API keys (SHA-256) | Simple, agent-friendly — no cookies or sessions |
+| Real-time | PG NOTIFY -> SSE | No extra infra needed |
+| Agent Protocol | MCP (Model Context Protocol) | Standard protocol for AI agents |
+| Frontend | React 19 + TanStack Router/Query | File-based routing, server state caching |
+| Styling | Tailwind CSS 4 + shadcn/ui | Utility-first with Radix primitives |
+| Storage | S3-compatible (SeaweedFS for dev) | Agent file persistence |
 | Containers | Docker + dockerode | Ephemeral agent execution environments |
-| Build | Turborepo | Parallel builds, dependency-aware caching |
+| Build | Turborepo + pnpm workspaces | Parallel builds, dependency-aware caching |
 | Linting | Biome | Fast, replaces ESLint + Prettier |
 
-## Data Model
+## MCP Setup
 
-All product work is represented as **unified objects** -- insights, bets, and tasks share the same table with a `type` discriminator. This keeps the schema flat and lets agents reason across object types uniformly.
+Maskin exposes 39 tools via the [Model Context Protocol](https://modelcontextprotocol.io/), so any MCP-compatible client can interact with the workspace.
 
-### Tables
-
-| Table | Purpose |
-|-------|---------|
-| **actors** | Humans and AI agents. Both are first-class. Stores type, name, API key hash, system prompt, LLM config, and memory |
-| **workspaces** | Isolated environments. Each workspace has its own settings including valid statuses per object type |
-| **workspace_members** | Many-to-many join between actors and workspaces with roles (owner, member) |
-| **objects** | The core table. Every insight, bet, and task is an object with: type, title, content, status, metadata (JSONB), and owner |
-| **relationships** | Typed edges between objects: `informs`, `breaks_into`, `blocks`, `relates_to`, `duplicates` |
-| **events** | Append-only activity log. Every mutation is recorded with actor, action, entity reference, and data payload |
-| **triggers** | Automation rules. Either cron-based or event-based. Each trigger targets an actor and includes an action prompt |
-| **integrations** | External service connections per workspace (OAuth-based) |
-| **sessions** | Container-based agent execution sessions. Tracks lifecycle: pending -> running -> completed/paused/failed/timeout |
-| **session_logs** | Append-only log output from container sessions (stdout/stderr/system), used for SSE streaming |
-| **agent_files** | Metadata index for agent files stored in S3 (skills, learnings, memory) |
-
-## API Endpoints
-
-All endpoints are under `/api`. Most require `Authorization: Bearer <api-key>` and `X-Workspace-Id` headers.
-
-### Health and Metadata
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Health check (no auth) |
-| GET | `/api/openapi.json` | OpenAPI spec (no auth) |
-
-### Objects (Insights, Bets, Tasks)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/objects` | Create an object |
-| GET | `/api/objects` | List objects (filter by type, status, owner) |
-| GET | `/api/objects/search` | Search objects by text in title/content |
-| GET | `/api/objects/:id` | Get object by ID |
-| GET | `/api/objects/:id/graph` | Get object with all relationships and connected objects |
-| PATCH | `/api/objects/:id` | Update object (title, content, status, metadata) |
-| DELETE | `/api/objects/:id` | Delete object |
-
-### Actors
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/actors` | Create actor and get API key (no auth) |
-| GET | `/api/actors` | List actors (optionally filtered by workspace) |
-| GET | `/api/actors/:id` | Get actor details |
-| PATCH | `/api/actors/:id` | Update actor |
-| POST | `/api/actors/:id/api-keys` | Regenerate API key |
-
-### Workspaces
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/workspaces` | Create workspace |
-| GET | `/api/workspaces` | List workspaces for current actor |
-| PATCH | `/api/workspaces/:id` | Update workspace (name, settings) |
-| POST | `/api/workspaces/:id/members` | Add member to workspace |
-| GET | `/api/workspaces/:id/members` | List workspace members |
-
-### Relationships
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/relationships` | Create relationship between objects |
-| GET | `/api/relationships` | List relationships (filter by source, target, type) |
-| DELETE | `/api/relationships/:id` | Delete relationship |
-
-### Triggers
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/triggers` | Create automation trigger |
-| GET | `/api/triggers` | List triggers in workspace |
-| PATCH | `/api/triggers/:id` | Update trigger |
-| DELETE | `/api/triggers/:id` | Delete trigger |
-
-### Events
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/events` | SSE stream of real-time events (supports `Last-Event-ID` for replay) |
-| GET | `/api/events/history` | Paginated event history (filter by entity_type, action, since) |
-
-### Sessions (Container-based Agent Execution)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/sessions` | Create a container session |
-| GET | `/api/sessions` | List sessions |
-| GET | `/api/sessions/:id` | Get session details |
-| POST | `/api/sessions/:id/stop` | Stop a running session |
-| POST | `/api/sessions/:id/pause` | Pause and snapshot a session |
-| POST | `/api/sessions/:id/resume` | Resume a paused session |
-| GET | `/api/sessions/:id/logs` | Paginated log history |
-| GET | `/api/sessions/:id/logs/stream` | SSE stream of live logs |
-
-### Graph (Batch Operations)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/graph` | Atomic batch create (objects + relationships in one transaction) |
-
-### Integrations
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/integrations` | List integrations for workspace |
-| GET | `/api/integrations/providers` | List available providers |
-| POST | `/api/integrations/:provider/connect` | Start OAuth/connection flow |
-| GET | `/api/integrations/:provider/callback` | OAuth callback (no auth) |
-| DELETE | `/api/integrations/:id` | Disconnect integration |
-
-### Webhooks
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/webhooks/:provider` | Incoming webhook handler (no auth) |
-
-### MCP HTTP Transport
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/mcp` | Streamable HTTP transport for MCP clients |
-
-## Agent System
-
-Agents run as container sessions — ephemeral Docker containers running CLI agents (Claude Code, Codex, custom CLIs).
-
-- **Triggered by events or cron** -- the TriggerRunner watches for matching events or schedules and spawns container sessions
-- **All actions logged as events** -- every agent action appears in the event stream, attributed to the agent actor
-- **Configurable per agent** -- each agent has its own system prompt, tools list, and persistent memory
-
-- **Full lifecycle management** -- create, run, stop, pause (snapshot), resume
-- **Live log streaming** -- stdout/stderr streamed via SSE in real-time
-- **Persistent agent files** -- skills, learnings, and memory stored in S3-compatible storage, pulled into containers on start and pushed back on completion
-- **Configurable** -- custom images, environment variables, timeouts, working directories
-
-### External Agents (MCP)
-
-External agents connect via the Model Context Protocol (39 tools available), supporting both stdio and HTTP transport.
-
-- **Full workspace access** -- CRUD for objects, relationships, actors, workspaces, triggers, sessions, integrations
-- **Works with any MCP-compatible client** -- Claude Code, Claude Desktop, OpenAI agents, custom implementations
-- **Authenticated via API key** -- same auth as any other actor
-
-## MCP Server Setup
-
-To connect Claude Code (or any MCP client) to the workspace:
-
-1. Create an actor to get an API key:
-   ```bash
-   curl -X POST http://localhost:3000/api/actors \
-     -H "Content-Type: application/json" \
-     -d '{"type": "agent", "name": "Claude Code"}'
-   ```
-   Save the `api_key` from the response.
-
-2. Add to your MCP client config (e.g., `.claude/claude_desktop_config.json`):
-   ```json
-   {
-     "mcpServers": {
-       "ai-native-oss": {
-         "command": "npx",
-         "args": ["tsx", "packages/mcp/src/server.ts"],
-         "env": {
-           "API_BASE_URL": "http://localhost:3000",
-           "API_KEY": "your-api-key",
-           "WORKSPACE_ID": "your-workspace-id"
-         }
-       }
-     }
-   }
-   ```
-
-3. The agent can now create insights, propose bets, break down tasks, manage sessions, and query the event log -- all through tool calls.
-
-## Docker
+**1. Create an actor to get an API key:**
 
 ```bash
-# Full stack (PostgreSQL + SeaweedFS + dev server)
-docker-compose up
-
-# Just the database and storage
-docker-compose up postgres seaweedfs -d
+curl -X POST http://localhost:3000/api/actors \
+  -H "Content-Type: application/json" \
+  -d '{"type": "agent", "name": "My Agent"}'
 ```
 
-The dev server container runs migrations on startup and serves at `http://localhost:3000`.
+**2. Add to your MCP client config** (e.g., Claude Code, Claude Desktop):
 
-## Development
+```json
+{
+  "mcpServers": {
+    "maskin": {
+      "command": "npx",
+      "args": ["tsx", "packages/mcp/src/server.ts"],
+      "env": {
+        "API_BASE_URL": "http://localhost:3000",
+        "API_KEY": "your-api-key",
+        "WORKSPACE_ID": "your-workspace-id"
+      }
+    }
+  }
+}
+```
+
+**3. Your agent can now** create insights, propose bets, break down tasks, manage sessions, and query the event log — all through tool calls.
+
+## Contributing
+
+We welcome contributions! Here's how to get started:
 
 ```bash
-# Start everything (Docker + migrations + dev servers)
+# Fork and clone
+git clone https://github.com/your-username/maskin.git && cd maskin
+pnpm install
+
+# Start the dev environment
 pnpm dev
 
-# On Windows (cmd/PowerShell):
-pnpm dev:win
-
-# Build all packages
-pnpm build
-
-# Run tests
-pnpm test
-
-# Run E2E tests (requires running dev server)
-pnpm test:e2e
-
-# Lint (Biome)
+# Run checks before committing
 pnpm lint
-
-# Lint and auto-fix
-pnpm lint:fix
-
-# Format
-pnpm format
-
-# Type checking
 pnpm type-check
-
-# Database: generate migration from schema changes
-pnpm db:generate
-
-# Database: run pending migrations (automatically run by pnpm dev)
-pnpm db:migrate
-
-# Database: seed demo data
-pnpm db:seed
+pnpm test -- --run
 ```
 
-### Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | -- | PostgreSQL connection string |
-| `PORT` | No | `3000` | Server port |
-| `S3_ENDPOINT` | No | `http://localhost:8333` | S3-compatible storage endpoint (SeaweedFS for dev) |
-| `S3_BUCKET` | No | `agent-files` | Storage bucket name |
-| `S3_ACCESS_KEY` | No | `admin` | S3 access key |
-| `S3_SECRET_KEY` | No | `admin` | S3 secret key |
-| `S3_REGION` | No | `us-east-1` | S3 region |
+Please open an issue first for significant changes. PRs should be focused and include tests where applicable.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) for details.
+[Apache 2.0](LICENSE) — use it, modify it, ship it. The explicit patent grant protects both the project and users.
+
+## What's Next
+
+- [ ] Demo video showing the full Insight > Bet > Task > Meta-insight loop
+- [ ] Comprehensive docs (setup guide, agent team guide, extension guide)
+- [ ] More integration providers (Slack, Linear, GitHub, Google Calendar)
+- [ ] Plugin marketplace for community extensions
+- [ ] Hosted version for teams who don't want to self-host
+
+---
+
+<p align="center">
+  <strong>Built by <a href="https://github.com/sindre-ai">Sindre AI</a></strong><br/>
+  Star the repo if you believe product development should run itself.
+</p>
