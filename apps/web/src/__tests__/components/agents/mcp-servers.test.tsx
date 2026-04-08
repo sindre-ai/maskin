@@ -51,13 +51,13 @@ describe('McpServers', () => {
 		expect(screen.getByRole('button', { name: /Import .mcp.json/ })).toBeInTheDocument()
 	})
 
-	it('shows "Add Maskin" button when ai-native not present', () => {
+	it('shows "Add Maskin" button when maskin not present', () => {
 		render(<McpServers tools={null} onUpdate={vi.fn()} />)
 		expect(screen.getByRole('button', { name: /Add Maskin/ })).toBeInTheDocument()
 	})
 
-	it('hides "Add Maskin" button when ai-native already present', () => {
-		const tools = { mcpServers: { 'ai-native': { type: 'http', url: 'http://example.com' } } }
+	it('hides "Add Maskin" button when maskin already present', () => {
+		const tools = { mcpServers: { maskin: { type: 'http', url: 'http://example.com' } } }
 		render(<McpServers tools={tools} onUpdate={vi.fn()} />)
 		expect(screen.queryByRole('button', { name: /Add Maskin/ })).not.toBeInTheDocument()
 	})
@@ -111,7 +111,7 @@ describe('McpServers', () => {
 		expect(screen.queryByRole('button', { name: /Add jira/ })).not.toBeInTheDocument()
 	})
 
-	it('calls onUpdate with ai-native server when "Add Maskin" clicked', async () => {
+	it('calls onUpdate with maskin server when "Add Maskin" clicked', async () => {
 		const user = userEvent.setup()
 		const onUpdate = vi.fn()
 		render(<McpServers tools={null} onUpdate={onUpdate} />)
@@ -120,7 +120,7 @@ describe('McpServers', () => {
 
 		expect(onUpdate).toHaveBeenCalledWith({
 			mcpServers: expect.objectContaining({
-				'ai-native': expect.objectContaining({ type: 'http' }),
+				maskin: expect.objectContaining({ type: 'http' }),
 			}),
 		})
 	})

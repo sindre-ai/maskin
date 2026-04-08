@@ -10,7 +10,7 @@ import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
 
-const STORAGE_KEY = 'ai-native-sidebar-open'
+const STORAGE_KEY = 'maskin-sidebar-open'
 
 function getInitialOpen(): boolean {
 	try {

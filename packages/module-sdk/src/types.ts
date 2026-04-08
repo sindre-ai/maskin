@@ -1,7 +1,7 @@
+import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
-import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { z } from 'zod'
 
 /** Field definition for custom metadata fields on objects */

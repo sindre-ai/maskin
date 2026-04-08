@@ -33,8 +33,8 @@ export const test = base.extend<AuthFixtures>({
 				apiKey: string
 				actor: { id: string; name: string; type: string; email: string | null }
 			}) => {
-				localStorage.setItem('ai-native-api-key', data.apiKey)
-				localStorage.setItem('ai-native-actor', JSON.stringify(data.actor))
+				localStorage.setItem('maskin-api-key', data.apiKey)
+				localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
 			},
 			{
 				apiKey: actor.api_key,

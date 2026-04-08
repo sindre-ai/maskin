@@ -12,7 +12,7 @@ export interface SSEEvent {
 	event_id: string
 }
 
-const LAST_EVENT_ID_KEY = 'ai-native-last-event-id'
+const LAST_EVENT_ID_KEY = 'maskin-last-event-id'
 
 function getLastEventId(workspaceId: string): string | undefined {
 	return sessionStorage.getItem(`${LAST_EVENT_ID_KEY}-${workspaceId}`) ?? undefined

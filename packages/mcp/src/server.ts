@@ -24,13 +24,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // Tool-to-resource URI mapping
 const UI_RESOURCES = {
-	objects: 'ui://ai-native/objects',
-	relationships: 'ui://ai-native/relationships',
-	actors: 'ui://ai-native/actors',
-	workspaces: 'ui://ai-native/workspaces',
-	events: 'ui://ai-native/events',
-	triggers: 'ui://ai-native/triggers',
-	graph: 'ui://ai-native/graph',
+	objects: 'ui://maskin/objects',
+	relationships: 'ui://maskin/relationships',
+	actors: 'ui://maskin/actors',
+	workspaces: 'ui://maskin/workspaces',
+	events: 'ui://maskin/events',
+	triggers: 'ui://maskin/triggers',
+	graph: 'ui://maskin/graph',
 } as const
 
 const CSP = {

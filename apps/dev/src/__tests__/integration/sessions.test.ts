@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, sessionLogs, sessions } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { OpenAPIHono } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
 import {
 	buildCreateSessionBody,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-const STORAGE_KEY = 'ai-native-mcp-theme'
+const STORAGE_KEY = 'maskin-mcp-theme'
 
 function getTheme(): 'light' | 'dark' {
 	if (typeof window === 'undefined') return 'dark'

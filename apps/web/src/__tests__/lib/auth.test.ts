@@ -18,7 +18,7 @@ describe('getApiKey', () => {
 	})
 
 	it('returns stored key', () => {
-		localStorage.setItem('ai-native-api-key', 'ank_test123')
+		localStorage.setItem('maskin-api-key', 'ank_test123')
 		expect(getApiKey()).toBe('ank_test123')
 	})
 })
@@ -26,7 +26,7 @@ describe('getApiKey', () => {
 describe('setApiKey', () => {
 	it('stores key in localStorage', () => {
 		setApiKey('ank_mykey')
-		expect(localStorage.getItem('ai-native-api-key')).toBe('ank_mykey')
+		expect(localStorage.getItem('maskin-api-key')).toBe('ank_mykey')
 	})
 })
 
@@ -37,12 +37,12 @@ describe('getStoredActor', () => {
 
 	it('returns parsed actor', () => {
 		const actor = { id: '1', name: 'Alice', type: 'human', email: 'a@b.com' }
-		localStorage.setItem('ai-native-actor', JSON.stringify(actor))
+		localStorage.setItem('maskin-actor', JSON.stringify(actor))
 		expect(getStoredActor()).toEqual(actor)
 	})
 
 	it('returns null for invalid JSON', () => {
-		localStorage.setItem('ai-native-actor', 'not-json')
+		localStorage.setItem('maskin-actor', 'not-json')
 		expect(getStoredActor()).toBeNull()
 	})
 })
@@ -51,7 +51,7 @@ describe('setStoredActor', () => {
 	it('stores serialized actor', () => {
 		const actor = { id: '1', name: 'Bob', type: 'agent', email: null }
 		setStoredActor(actor)
-		expect(JSON.parse(localStorage.getItem('ai-native-actor') ?? '{}')).toEqual(actor)
+		expect(JSON.parse(localStorage.getItem('maskin-actor') ?? '{}')).toEqual(actor)
 	})
 })
 

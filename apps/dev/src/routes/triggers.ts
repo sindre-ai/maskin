@@ -1,7 +1,7 @@
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, triggers } from '@maskin/db/schema'
 import { createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
-import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { Cron } from 'croner'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
