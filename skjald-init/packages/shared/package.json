@@ -1,0 +1,22 @@
+{
+	"name": "@skjald/shared",
+	"version": "0.0.1",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc",
+		"type-check": "tsc --noEmit",
+		"test": "vitest"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}
