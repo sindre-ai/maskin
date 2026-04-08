@@ -233,7 +233,7 @@ function loadHtml(config: McpConfig, filename: string): string {
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
-		name: 'ai-native-oss',
+		name: 'maskin',
 		version: '0.1.0',
 	})
 

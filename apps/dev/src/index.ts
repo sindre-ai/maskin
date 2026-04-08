@@ -195,7 +195,7 @@ app.route('/mcp', mcpRoutes)
 app.doc31('/api/openapi.json', {
 	openapi: '3.1.0',
 	info: {
-		title: 'AI-Native OSS Dev Workspace API',
+		title: 'Maskin API',
 		version: '0.1.0',
 		description: 'Unified API for insights, bets, tasks, actors, and automation',
 	},

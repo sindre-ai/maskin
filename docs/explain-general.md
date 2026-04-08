@@ -1,4 +1,4 @@
-# AI-Native OS — What Is It?
+# Maskin — What Is It?
 
 **One-liner:** An open-source workspace where AI agents run your product development — and humans just steer.
 

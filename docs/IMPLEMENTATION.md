@@ -1,4 +1,4 @@
-# AI-Native OSS Workspace — Implementation Reference
+# Maskin — Implementation Reference
 
 ## Table of Contents
 
@@ -76,7 +76,7 @@
 ## Project Structure
 
 ```
-ai-native-oss/
+maskin/
 ├── .env.example
 ├── .gitignore
 ├── biome.json
@@ -167,7 +167,7 @@ ai-native-oss/
 
 ```json
 {
-	"name": "ai-native-oss",
+	"name": "maskin",
 	"private": true,
 	"scripts": {
 		"dev": "turbo dev",
@@ -301,7 +301,7 @@ dist/
 ### `.env.example`
 
 ```
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_native_oss
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/maskin
 ```
 
 ### `docker-compose.yml`
@@ -313,7 +313,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: ai_native_oss
+      POSTGRES_DB: maskin
     ports:
       - "5432:5432"
     volumes:
@@ -331,7 +331,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_native_oss
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/maskin
       PORT: "3000"
     depends_on:
       postgres:
@@ -1497,7 +1497,7 @@ async function apiCall(
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
-		name: 'ai-native-oss',
+		name: 'maskin',
 		version: '0.1.0',
 	})
 
@@ -1956,7 +1956,7 @@ app.get('/api/openapi.json', (c) => {
 	return c.json({
 		openapi: '3.1.0',
 		info: {
-			title: 'AI-Native OSS Dev Workspace API',
+			title: 'Maskin API',
 			version: '0.1.0',
 			description: 'Unified API for insights, bets, tasks, actors, and automation',
 		},
