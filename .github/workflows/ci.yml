@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-and-build:
+  lint-typecheck-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,10 +27,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: pnpm type-check
       - run: pnpm build
 
   unit-tests:
-    needs: lint-and-build
+    needs: lint-typecheck-build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +49,7 @@ jobs:
       - run: pnpm test -- --run
 
   integration-tests:
-    needs: lint-and-build
+    needs: lint-typecheck-build
     runs-on: ubuntu-latest
     services:
       postgres:
