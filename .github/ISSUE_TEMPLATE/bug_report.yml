@@ -7,6 +7,22 @@ body:
       value: |
         Thanks for reporting a bug! Please fill out the sections below so we can reproduce and fix the issue.
 
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Maskin is affected?
+      options:
+        - Frontend (Web UI)
+        - Backend (API)
+        - Agents / Sessions
+        - MCP Server
+        - Integrations
+        - CLI / Dev Tooling
+        - Other
+    validations:
+      required: true
+
   - type: textarea
     id: description
     attributes:

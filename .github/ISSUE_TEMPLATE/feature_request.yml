@@ -7,6 +7,22 @@ body:
       value: |
         Thanks for suggesting a feature! Please describe what you'd like to see and why.
 
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Maskin does this relate to?
+      options:
+        - Frontend (Web UI)
+        - Backend (API)
+        - Agents / Sessions
+        - MCP Server
+        - Integrations
+        - CLI / Dev Tooling
+        - Other
+    validations:
+      required: true
+
   - type: textarea
     id: problem
     attributes:
