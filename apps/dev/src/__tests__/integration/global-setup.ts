@@ -65,17 +65,7 @@ beforeAll(async () => {
 
 	// Run migrations
 	const __dirname = dirname(fileURLToPath(import.meta.url))
-	const migrationsDir = join(
-		__dirname,
-		'..',
-		'..',
-		'..',
-		'..',
-		'..',
-		'packages',
-		'db',
-		'drizzle',
-	)
+	const migrationsDir = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
 	const files = readdirSync(migrationsDir)
 		.filter((f) => f.endsWith('.sql'))
 		.sort()
