@@ -43,13 +43,13 @@ describe('createMcpServer', () => {
 		// Verify all expected URIs are present
 		const resourceUris = vi.mocked(registerAppResource).mock.calls.map((call) => call[2])
 		const expectedUris = [
-			'ui://ai-native/objects',
-			'ui://ai-native/actors',
-			'ui://ai-native/workspaces',
-			'ui://ai-native/events',
-			'ui://ai-native/triggers',
-			'ui://ai-native/relationships',
-			'ui://ai-native/graph',
+			'ui://maskin/objects',
+			'ui://maskin/actors',
+			'ui://maskin/workspaces',
+			'ui://maskin/events',
+			'ui://maskin/triggers',
+			'ui://maskin/relationships',
+			'ui://maskin/graph',
 		]
 		for (const uri of expectedUris) {
 			expect(resourceUris).toContain(uri)

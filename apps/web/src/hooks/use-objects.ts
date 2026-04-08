@@ -1,4 +1,4 @@
-import type { createObjectSchema, updateObjectSchema } from '@ai-native/shared'
+import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'

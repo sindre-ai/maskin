@@ -1,4 +1,4 @@
-import { createMcpServer } from '@ai-native/mcp'
+import { createMcpServer } from '@maskin/mcp'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'

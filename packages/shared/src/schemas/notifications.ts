@@ -32,7 +32,12 @@ export const respondNotificationSchema = z.object({
 
 const commaSeparatedStatuses = z
 	.string()
-	.transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean))
+	.transform((s) =>
+		s
+			.split(',')
+			.map((v) => v.trim())
+			.filter(Boolean),
+	)
 	.pipe(z.array(notificationStatusSchema).min(1))
 
 export const notificationQuerySchema = z.object({

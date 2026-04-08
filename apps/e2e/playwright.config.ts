@@ -18,13 +18,13 @@ export default defineConfig({
 	],
 	webServer: [
 		{
-			command: 'pnpm --filter @ai-native/dev dev',
+			command: 'pnpm --filter @maskin/dev dev',
 			port: 3000,
 			reuseExistingServer: !process.env.CI,
 			cwd: '../../',
 		},
 		{
-			command: 'pnpm --filter @ai-native/web dev',
+			command: 'pnpm --filter @maskin/web dev',
 			port: 5173,
 			reuseExistingServer: !process.env.CI,
 			cwd: '../../',

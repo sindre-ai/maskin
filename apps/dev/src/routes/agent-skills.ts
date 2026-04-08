@@ -1,13 +1,13 @@
-import type { Database } from '@ai-native/db'
-import { workspaceMembers } from '@ai-native/db/schema'
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { workspaceMembers } from '@maskin/db/schema'
 import {
 	type SaveSkillInput,
 	parseSkillMd,
 	saveSkillSchema,
 	serializeSkillMd,
 	skillNameSchema,
-} from '@ai-native/shared'
-import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+} from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'

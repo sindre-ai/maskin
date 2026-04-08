@@ -12,7 +12,25 @@ export interface SSEEvent {
 	event_id: string
 }
 
-const LAST_EVENT_ID_KEY = 'ai-native-last-event-id'
+const LAST_EVENT_ID_KEY = 'maskin-last-event-id'
+
+// Migrate old sessionStorage keys
+try {
+	const keys: string[] = []
+	for (let i = 0; i < sessionStorage.length; i++) {
+		const key = sessionStorage.key(i)
+		if (key?.startsWith('ai-native-last-event-id-')) keys.push(key)
+	}
+	for (const key of keys) {
+		const suffix = key.slice('ai-native-last-event-id-'.length)
+		const newKey = `${LAST_EVENT_ID_KEY}-${suffix}`
+		const val = sessionStorage.getItem(key)
+		if (val && !sessionStorage.getItem(newKey)) {
+			sessionStorage.setItem(newKey, val)
+		}
+		sessionStorage.removeItem(key)
+	}
+} catch {}
 
 function getLastEventId(workspaceId: string): string | undefined {
 	return sessionStorage.getItem(`${LAST_EVENT_ID_KEY}-${workspaceId}`) ?? undefined

@@ -1,4 +1,4 @@
-import { parseSkillMd, saveSkillSchema, serializeSkillMd, skillNameSchema } from '@ai-native/shared'
+import { parseSkillMd, saveSkillSchema, serializeSkillMd, skillNameSchema } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 
 describe('skillNameSchema', () => {
