@@ -74,7 +74,7 @@ describe('ActivityItemView', () => {
 		render(<ActivityItemView event={event} actor={actor} onNavigate={onNavigate} />)
 
 		await user.click(screen.getByText('Clickable'))
-		expect(onNavigate).toHaveBeenCalledWith('ws-1', 'obj-1')
+		expect(onNavigate).toHaveBeenCalledWith('ws-1', 'obj-1', 'bet')
 	})
 
 	it('applies reduced opacity for agent actors', () => {

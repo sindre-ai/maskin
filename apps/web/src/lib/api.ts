@@ -1,4 +1,4 @@
-import type { SafeMetadata } from '@ai-native/shared'
+import type { SafeMetadata } from '@maskin/shared'
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 

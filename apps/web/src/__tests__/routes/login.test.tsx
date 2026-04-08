@@ -12,13 +12,13 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
 import { Route } from '@/routes/login'
 
-const LoginPage = Route.component as React.FC
+const LoginPage = (Route as unknown as { component: React.FC }).component
 
 describe('LoginPage', () => {
 	beforeEach(() => {
@@ -71,15 +71,19 @@ describe('LoginPage', () => {
 	})
 
 	it('shows loading state while login is in progress', async () => {
-		let resolveLogin: () => void
-		mockLogin.mockReturnValue(new Promise<void>((r) => { resolveLogin = r }))
+		let resolveLogin: (() => void) | undefined
+		mockLogin.mockReturnValue(
+			new Promise<void>((r) => {
+				resolveLogin = r
+			}),
+		)
 		const user = userEvent.setup()
 		render(<LoginPage />)
 		await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
 		await user.type(screen.getByPlaceholderText('Your password'), 'secret')
 		await user.click(screen.getByRole('button', { name: 'Sign in' }))
 		expect(screen.getByRole('button', { name: 'Signing in...' })).toBeDisabled()
-		resolveLogin!()
+		resolveLogin?.()
 	})
 
 	it('displays error message when login throws', async () => {

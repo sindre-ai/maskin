@@ -1,4 +1,4 @@
-import type { ModuleDefinition } from '@ai-native/module-sdk'
+import type { ModuleDefinition } from '@maskin/module-sdk'
 import { MODULE_ID, MODULE_NAME } from '../shared.js'
 
 const workExtension: ModuleDefinition = {

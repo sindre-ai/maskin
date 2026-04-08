@@ -7,7 +7,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 		useSearch: () => ({
 			type: undefined,
 			status: undefined,
@@ -40,7 +40,7 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 	useCustomExtensions: () => [],
 }))
 
-vi.mock('@ai-native/module-sdk', () => ({
+vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [],
 }))
 
@@ -97,11 +97,15 @@ vi.mock('@/lib/query-keys', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
-const ObjectsPage = Route.component as React.FC
+const RouteOptions = Route as unknown as {
+	component: React.FC
+	validateSearch: (input: Record<string, unknown>) => Record<string, unknown>
+}
+const ObjectsPage = RouteOptions.component
 
 describe('validateSearch', () => {
 	it('returns defaults for missing params', () => {
-		const result = Route.validateSearch({})
+		const result = RouteOptions.validateSearch({})
 		expect(result).toEqual({
 			type: undefined,
 			status: undefined,
@@ -114,7 +118,7 @@ describe('validateSearch', () => {
 	})
 
 	it('parses all search param types correctly', () => {
-		const result = Route.validateSearch({
+		const result = RouteOptions.validateSearch({
 			type: 'bet',
 			status: 'active',
 			owner: 'actor-1',
@@ -135,12 +139,12 @@ describe('validateSearch', () => {
 	})
 
 	it('defaults order to desc for invalid values', () => {
-		const result = Route.validateSearch({ order: 'invalid' })
+		const result = RouteOptions.validateSearch({ order: 'invalid' })
 		expect(result.order).toBe('desc')
 	})
 
 	it('ignores non-string values', () => {
-		const result = Route.validateSearch({ type: 123, status: true, q: null })
+		const result = RouteOptions.validateSearch({ type: 123, status: true, q: null })
 		expect(result.type).toBeUndefined()
 		expect(result.status).toBeUndefined()
 		expect(result.q).toBeUndefined()

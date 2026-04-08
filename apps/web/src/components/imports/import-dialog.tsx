@@ -23,6 +23,7 @@ import {
 import type {
 	ColumnMappingInput,
 	ImportMappingInput,
+	ImportResponse,
 	RelationshipMappingInput,
 	TypeMappingInput,
 } from '@/lib/api'
@@ -312,8 +313,8 @@ function MappingStep({
 		const usedTypes = new Set(typeMappings.map((tm) => tm.objectType))
 		const newType = validTypes.find((t) => !usedTypes.has(t)) ?? validTypes[0] ?? ''
 		const columns: ColumnMappingInput[] = preview.columns
-			.filter((col) => col !== '')
-			.map((col) => ({
+			.filter((col: string) => col !== '')
+			.map((col: string) => ({
 				sourceColumn: col,
 				targetField: `metadata.${normalize(col)}`,
 				transform: 'none' as const,

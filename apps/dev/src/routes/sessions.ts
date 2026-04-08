@@ -1,12 +1,12 @@
-import type { Database } from '@ai-native/db'
-import { sessionLogs, sessions } from '@ai-native/db/schema'
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { sessionLogs, sessions } from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	sessionLogQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
-} from '@ai-native/shared'
-import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+} from '@maskin/shared'
 import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'

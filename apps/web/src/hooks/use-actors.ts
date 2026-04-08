@@ -3,10 +3,11 @@ import { toast } from 'sonner'
 import { type CreateActorInput, type UpdateActorInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
-export function useActors(workspaceId?: string) {
+export function useActors(workspaceId?: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.actors.all(workspaceId),
 		queryFn: () => api.actors.list(workspaceId),
+		enabled: options?.enabled,
 	})
 }
 

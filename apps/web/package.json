@@ -1,7 +1,8 @@
 {
-	"name": "@ai-native/web",
+	"name": "@maskin/web",
 	"private": true,
 	"version": "0.1.0",
+	"license": "Apache-2.0",
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
@@ -13,9 +14,9 @@
 		"test": "vitest"
 	},
 	"dependencies": {
-		"@ai-native/ext-work": "workspace:*",
-		"@ai-native/module-sdk": "workspace:*",
-		"@ai-native/shared": "workspace:*",
+		"@maskin/ext-work": "workspace:*",
+		"@maskin/module-sdk": "workspace:*",
+		"@maskin/shared": "workspace:*",
 		"@microsoft/fetch-event-source": "^2.0.1",
 		"@modelcontextprotocol/ext-apps": "^1.2.2",
 		"@radix-ui/react-checkbox": "^1.3.3",

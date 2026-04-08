@@ -1,7 +1,8 @@
 {
-	"name": "@ai-native/db",
+	"name": "@maskin/db",
 	"version": "0.0.1",
 	"private": true,
+	"license": "Apache-2.0",
 	"type": "module",
 	"exports": {
 		".": {

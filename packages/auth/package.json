@@ -1,7 +1,8 @@
 {
-	"name": "@ai-native/auth",
+	"name": "@maskin/auth",
 	"version": "0.0.1",
 	"private": true,
+	"license": "Apache-2.0",
 	"type": "module",
 	"exports": {
 		".": {
@@ -19,8 +20,8 @@
 		"test": "vitest"
 	},
 	"dependencies": {
-		"@ai-native/db": "workspace:*",
-		"@ai-native/shared": "workspace:*",
+		"@maskin/db": "workspace:*",
+		"@maskin/shared": "workspace:*",
 		"bcryptjs": "^2.4.3",
 		"drizzle-orm": "^0.38.0",
 		"hono": "^4.7.0"

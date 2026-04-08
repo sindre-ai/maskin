@@ -77,11 +77,15 @@ interface PulseCardProps {
 export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
-	const tags = metadata.tags as string[] | undefined
+	const rawTags = metadata.tags
+	const tags = Array.isArray(rawTags)
+		? rawTags.filter((t): t is string => typeof t === 'string')
+		: undefined
 	const suggestion = metadata.suggestion as string | undefined
 	const urgencyLabel = metadata.urgency_label as string | undefined
 	const inputType = metadata.input_type as string | undefined
 	const sourceActor = actorsById.get(notification.sourceActorId)
+	const isResolved = notification.status === 'resolved' || notification.status === 'dismissed'
 
 	const actions = resolveActions(notification, metadata)
 	const showReplyInput = !!notification.sessionId && !inputType
@@ -97,10 +101,17 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	}
 
 	return (
-		<Card>
+		<Card className={isResolved ? 'opacity-60' : undefined}>
 			<CardHeader className="pb-2">
 				<div className="flex items-center justify-between">
-					<Badge variant="secondary">{typeLabels[notification.type] ?? notification.type}</Badge>
+					<div className="flex items-center gap-2">
+						<Badge variant="secondary">{typeLabels[notification.type] ?? notification.type}</Badge>
+						{isResolved && (
+							<Badge variant="outline">
+								{notification.status === 'resolved' ? 'Resolved' : 'Dismissed'}
+							</Badge>
+						)}
+					</div>
 					{urgencyLabel && (
 						<Badge variant={notification.type === 'needs_input' ? 'destructive' : 'outline'}>
 							{urgencyLabel}
@@ -149,24 +160,26 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				)}
 
 				{/* Action buttons */}
-				<div className="flex gap-2">
-					{actions.map((action, i) => (
-						<Button
-							key={action.label}
-							size="sm"
-							variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
-							onClick={() => onAction(notification, action.response, action.navigate)}
-						>
-							{action.label}
+				{!isResolved && (
+					<div className="flex gap-2">
+						{actions.map((action, i) => (
+							<Button
+								key={action.label}
+								size="sm"
+								variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
+								onClick={() => onAction(notification, action.response, action.navigate)}
+							>
+								{action.label}
+							</Button>
+						))}
+						<Button size="sm" variant="ghost" onClick={() => onDismiss(notification.id)}>
+							Dismiss
 						</Button>
-					))}
-					<Button size="sm" variant="ghost" onClick={() => onDismiss(notification.id)}>
-						Dismiss
-					</Button>
-				</div>
+					</div>
+				)}
 
 				{/* Collapsible text reply for session-linked notifications */}
-				{showReplyInput && (
+				{showReplyInput && !isResolved && (
 					<div>
 						{!replyOpen ? (
 							<Button

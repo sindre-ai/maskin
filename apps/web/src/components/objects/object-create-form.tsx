@@ -2,7 +2,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
+import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
 import { LinkedObjects } from './linked-objects'
@@ -29,10 +29,10 @@ export function ObjectCreateForm({
 
 	const availableTypes = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
 
-	const [type, setType] = useState(availableTypes[0]?.value ?? '')
+	const [type, setType] = useState('')
 	const [title, setTitle] = useState('')
 	const hasAutoCreatedRef = useRef(false)
-	const isValid = title.trim().length > 0
+	const isValid = title.trim().length > 0 && type !== ''
 
 	// Auto-create when form first becomes valid
 	useEffect(() => {

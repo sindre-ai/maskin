@@ -106,7 +106,7 @@ describe('Integrations Routes', () => {
 				expect(body.install_url).toContain('response_type=code')
 			} finally {
 				if (originalClientId === undefined) {
-					delete process.env.SLACK_CLIENT_ID
+					Reflect.deleteProperty(process.env, 'SLACK_CLIENT_ID')
 				} else {
 					process.env.SLACK_CLIENT_ID = originalClientId
 				}
@@ -329,9 +329,7 @@ describe('Integrations Routes', () => {
 
 			// No code query parameter
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/slack/callback?state=${encodeURIComponent(state)}`,
-				),
+				jsonGet(`/api/integrations/slack/callback?state=${encodeURIComponent(state)}`),
 			)
 
 			expect(res.status).toBe(400)
@@ -382,12 +380,12 @@ describe('Integrations Routes', () => {
 				expect(location).toContain('error=token_exchange_failed')
 			} finally {
 				if (originalClientId === undefined) {
-					delete process.env.SLACK_CLIENT_ID
+					Reflect.deleteProperty(process.env, 'SLACK_CLIENT_ID')
 				} else {
 					process.env.SLACK_CLIENT_ID = originalClientId
 				}
 				if (originalClientSecret === undefined) {
-					delete process.env.SLACK_CLIENT_SECRET
+					Reflect.deleteProperty(process.env, 'SLACK_CLIENT_SECRET')
 				} else {
 					process.env.SLACK_CLIENT_SECRET = originalClientSecret
 				}

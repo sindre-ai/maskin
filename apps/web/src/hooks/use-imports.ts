@@ -50,8 +50,8 @@ export function useConfirmImport(workspaceId: string) {
 
 export function useImportToast(workspaceId: string) {
 	const [activeImportId, setActiveImportId] = useState<string | undefined>()
-	const toastId = useRef<string | number | undefined>()
-	const prevStatus = useRef<string | undefined>()
+	const toastId = useRef<string | number | undefined>(undefined)
+	const prevStatus = useRef<string | undefined>(undefined)
 
 	const { data: importData } = useImport(activeImportId, workspaceId)
 

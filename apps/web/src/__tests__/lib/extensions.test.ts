@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@ai-native/ext-work/web', () => ({
+vi.mock('@maskin/ext-work/web', () => ({
 	default: { name: 'work-web-extension' },
 }))
 
 const mockRegisterWebModule = vi.fn()
-vi.mock('@ai-native/module-sdk', () => ({
+vi.mock('@maskin/module-sdk', () => ({
 	registerWebModule: mockRegisterWebModule,
 }))
 

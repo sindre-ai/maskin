@@ -20,7 +20,7 @@ export async function createMcpSession(
 		env: { ...process.env, ...env } as Record<string, string>,
 	})
 
-	const client = new Client({ name: 'ai-native-agent', version: '1.0.0' }, { capabilities: {} })
+	const client = new Client({ name: 'maskin-agent', version: '1.0.0' }, { capabilities: {} })
 
 	await client.connect(transport)
 

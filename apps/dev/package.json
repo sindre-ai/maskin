@@ -1,7 +1,8 @@
 {
-	"name": "@ai-native/dev",
+	"name": "@maskin/dev",
 	"version": "0.0.1",
 	"private": true,
+	"license": "Apache-2.0",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"
@@ -15,14 +16,14 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@ai-native/auth": "workspace:*",
-		"@ai-native/db": "workspace:*",
-		"@ai-native/ext-work": "workspace:*",
-		"@ai-native/mcp": "workspace:*",
-		"@ai-native/module-sdk": "workspace:*",
-		"@ai-native/realtime": "workspace:*",
-		"@ai-native/shared": "workspace:*",
-		"@ai-native/storage": "workspace:*",
+		"@maskin/auth": "workspace:*",
+		"@maskin/db": "workspace:*",
+		"@maskin/ext-work": "workspace:*",
+		"@maskin/mcp": "workspace:*",
+		"@maskin/module-sdk": "workspace:*",
+		"@maskin/realtime": "workspace:*",
+		"@maskin/shared": "workspace:*",
+		"@maskin/storage": "workspace:*",
 		"@hono/node-server": "^1.13.0",
 		"@hono/zod-openapi": "^0.18.0",
 		"@modelcontextprotocol/sdk": "^1.6.0",

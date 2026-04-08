@@ -3,10 +3,21 @@ import { render, screen } from '@testing-library/react'
 import { buildNotificationResponse } from '../../factories'
 
 const mockNotifications = vi.fn()
+const mockActors = vi.fn(() => [])
+const mockNavigate = vi.fn()
 
 vi.mock('@/hooks/use-notifications', () => ({
 	useObjectNotifications: () => ({ data: mockNotifications() }),
 	useRespondNotification: () => ({ mutate: vi.fn() }),
+	useUpdateNotification: () => ({ mutate: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: mockActors() }),
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+	useNavigate: () => mockNavigate,
 }))
 
 describe('ObjectActionBanner', () => {
@@ -48,5 +59,21 @@ describe('ObjectActionBanner', () => {
 		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
 		expect(screen.getByRole('button', { name: 'Yes' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'No' })).toBeInTheDocument()
+	})
+
+	it('renders type badge from PulseCard', () => {
+		mockNotifications.mockReturnValue([
+			buildNotificationResponse({ title: 'Test', type: 'needs_input' }),
+		])
+		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		expect(screen.getByText('Agent needs you')).toBeInTheDocument()
+	})
+
+	it('shows dismiss button for pending notifications', () => {
+		mockNotifications.mockReturnValue([
+			buildNotificationResponse({ title: 'Test', status: 'pending' }),
+		])
+		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
 	})
 })

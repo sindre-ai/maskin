@@ -231,5 +231,4 @@ describe('createSSEHandler', () => {
 		expect(events2.find((e) => e.id === 'evt-for-2')).toBeDefined()
 		expect(events2.find((e) => e.id === 'evt-for-1')).toBeUndefined()
 	})
-
 })

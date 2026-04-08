@@ -9,7 +9,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
@@ -18,15 +18,15 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
-	useActors: (...args: any[]) => mockUseActors(...args),
+	useActors: (...args: unknown[]) => mockUseActors(...args),
 }))
 
 vi.mock('@/hooks/use-sessions', () => ({
-	useWorkspaceSessions: (...args: any[]) => mockUseWorkspaceSessions(...args),
+	useWorkspaceSessions: (...args: unknown[]) => mockUseWorkspaceSessions(...args),
 }))
 
 vi.mock('@/lib/agent-status', () => ({
-	deriveAgentStatus: (_id: string, _map: Map<string, any>) => 'idle',
+	deriveAgentStatus: (_id: string, _map: Map<string, unknown>) => 'idle',
 	getLatestSession: () => null,
 	groupSessionsByAgent: () => new Map(),
 }))
@@ -57,7 +57,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/agents/index'
 
-const AgentsPage = Route.component as React.FC
+const AgentsPage = (Route as unknown as { component: React.FC }).component
 
 describe('AgentsPage', () => {
 	beforeEach(() => {

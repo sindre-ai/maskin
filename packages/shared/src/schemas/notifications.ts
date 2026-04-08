@@ -30,8 +30,18 @@ export const respondNotificationSchema = z.object({
 	response: safeJsonValue,
 })
 
+const commaSeparatedStatuses = z
+	.string()
+	.transform((s) =>
+		s
+			.split(',')
+			.map((v) => v.trim())
+			.filter(Boolean),
+	)
+	.pipe(z.array(notificationStatusSchema).min(1))
+
 export const notificationQuerySchema = z.object({
-	status: z.string().optional(),
+	status: commaSeparatedStatuses.optional(),
 	type: z.string().optional(),
 	object_id: z.string().uuid().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(50),

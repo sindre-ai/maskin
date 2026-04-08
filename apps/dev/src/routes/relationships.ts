@@ -1,7 +1,7 @@
-import type { Database } from '@ai-native/db'
-import { events, objects, relationships } from '@ai-native/db/schema'
-import { createRelationshipSchema, relationshipQuerySchema } from '@ai-native/shared'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { events, objects, relationships } from '@maskin/db/schema'
+import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {

@@ -1,6 +1,6 @@
-import type { Database } from '@ai-native/db'
-import { workspaceMembers, workspaces } from '@ai-native/db/schema'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { workspaceMembers, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import {
 	type ClaudeOAuthTokens,

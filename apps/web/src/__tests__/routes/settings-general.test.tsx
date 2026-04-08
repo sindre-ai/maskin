@@ -10,7 +10,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: any) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
 
@@ -37,7 +37,7 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 	useCustomExtensions: () => [],
 }))
 
-vi.mock('@ai-native/module-sdk', () => ({
+vi.mock('@maskin/module-sdk', () => ({
 	getAllWebModules: () => [],
 	getWebModule: () => null,
 }))
@@ -52,7 +52,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/settings/index'
 
-const GeneralPage = Route.component as React.FC
+const GeneralPage = (Route as unknown as { component: React.FC }).component
 
 describe('GeneralPage', () => {
 	beforeEach(() => {

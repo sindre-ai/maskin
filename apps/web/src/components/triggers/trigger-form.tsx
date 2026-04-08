@@ -15,7 +15,7 @@ import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
-import type { SafeJsonValue } from '@ai-native/shared'
+import type { SafeJsonValue } from '@maskin/shared'
 import { Check, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -57,7 +57,7 @@ export interface TriggerFormPayload {
 
 // --- Constants ---
 
-import { getAllWebModules } from '@ai-native/module-sdk'
+import { getAllWebModules } from '@maskin/module-sdk'
 
 const DEFAULT_OBJECT_ACTIONS = ['created', 'updated', 'status_changed'] as const
 

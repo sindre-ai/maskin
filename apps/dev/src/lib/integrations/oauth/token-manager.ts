@@ -1,5 +1,5 @@
-import type { Database } from '@ai-native/db'
-import { integrations } from '@ai-native/db/schema'
+import type { Database } from '@maskin/db'
+import { integrations } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../crypto'
 import type { ResolvedProvider, StoredCredentials } from '../types'

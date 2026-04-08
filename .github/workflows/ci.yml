@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-and-build:
+  lint-typecheck-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,10 +27,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: pnpm type-check
       - run: pnpm build
 
   unit-tests:
-    needs: lint-and-build
+    needs: lint-typecheck-build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +49,7 @@ jobs:
       - run: pnpm test -- --run
 
   integration-tests:
-    needs: lint-and-build
+    needs: lint-typecheck-build
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -56,7 +57,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ai_native_test
+          POSTGRES_DB: maskin_test
         ports:
           - 5432:5432
         options: >-
@@ -80,4 +81,4 @@ jobs:
       - run: pnpm build
       - run: pnpm test:integration -- --run
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_native_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
