@@ -1,4 +1,4 @@
-# AI-Native OS — Technical Overview
+# Maskin — Technical Overview
 
 ## What It Is
 
