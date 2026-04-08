@@ -11,7 +11,7 @@
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public GitHub issue
-2. Email **security@sindre.ai** with a description of the vulnerability
+2. Email **magnus@meshfirm.com** with a description of the vulnerability
 3. Include steps to reproduce if possible
 4. We will acknowledge receipt within 48 hours and aim to provide a fix within 7 days for critical issues
 
