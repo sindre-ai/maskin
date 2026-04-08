@@ -11,7 +11,9 @@ import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
 import { useObjectRelationships } from '@/hooks/use-relationships'
 import type { ActorResponse, EventResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getViewComponent } from '@ai-native/module-sdk'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
@@ -31,6 +33,7 @@ interface ObjectDocumentViewProps {
 	object: ObjectResponse
 	workspaceId: string
 	statuses: string[]
+	enabledModules?: string[]
 	creator?: ActorResponse
 	relationships?: {
 		asSource: RelationshipResponse[]
@@ -49,6 +52,7 @@ export function ObjectDocumentView({
 	object,
 	workspaceId,
 	statuses,
+	enabledModules,
 	creator,
 	relationships,
 	events,
@@ -59,6 +63,7 @@ export function ObjectDocumentView({
 	isDeleting = false,
 	showSaved = false,
 }: ObjectDocumentViewProps) {
+	const CustomView = getViewComponent(enabledModules ?? [], object.type)
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 
 	const handleTitleBlur = useCallback(() => {
@@ -145,9 +150,13 @@ export function ObjectDocumentView({
 				<MetadataProperties object={object} />
 			</div>
 
-			{/* Content */}
+			{/* Content — custom view component if registered by an extension, else default */}
 			<div className="mb-8">
-				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+				{CustomView ? (
+					<CustomView object={object} onChange={handleContentChange} editable />
+				) : (
+					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+				)}
 			</div>
 
 			{/* Linked objects */}
@@ -171,6 +180,7 @@ export function ObjectDocumentView({
 export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
+	const enabledModules = useEnabledModules()
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const { data: creator } = useActor(object.createdBy)
@@ -260,6 +270,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				object={object}
 				workspaceId={workspaceId}
 				statuses={statuses}
+				enabledModules={enabledModules}
 				creator={creator}
 				relationships={relationships}
 				events={events}

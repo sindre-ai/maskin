@@ -152,6 +152,21 @@ export interface ObjectTypeTab {
 	value: string
 }
 
+/** Props passed to custom object view components registered by extensions */
+export interface ObjectViewProps {
+	object: {
+		id: string
+		type: string
+		content: string | null
+		title: string | null
+		// biome-ignore lint/suspicious/noExplicitAny: metadata shape varies by extension
+		metadata: Record<string, any> | null
+		workspace_id: string
+	}
+	onChange: (content: string) => void
+	editable: boolean
+}
+
 /** Frontend module definition — registered in the web app */
 export interface ModuleWebDefinition {
 	/** Must match the server module's id */
@@ -164,4 +179,12 @@ export interface ModuleWebDefinition {
 	objectTypeTabs: ObjectTypeTab[]
 	/** Default workspace settings to merge when enabling this module */
 	defaultSettings?: ModuleDefaultSettings
+	/**
+	 * Custom React components for rendering specific object types.
+	 * Key is the object type string (e.g. 'document').
+	 * Component receives ObjectViewProps.
+	 * Using any to keep module-sdk framework-agnostic — type safety comes from the extension side.
+	 */
+	// biome-ignore lint/suspicious/noExplicitAny: React.ComponentType not available in SDK
+	viewComponents?: Record<string, any>
 }
