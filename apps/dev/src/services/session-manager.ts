@@ -482,6 +482,19 @@ export class SessionManager extends EventEmitter {
 				const resolved = getProvider(integration.provider)
 				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
 				envVars[`${integration.provider.toUpperCase()}_TOKEN`] = accessToken
+
+				// Inject extra credential fields (e.g. projectId, contextId for Browserbase)
+				if (
+					resolved.config.auth.type === 'api_key' &&
+					resolved.config.auth.config.extraCredentialEnvKeys
+				) {
+					const creds = await tokenManager.getCredentials(this.db, integration.id)
+					for (const [field, envKey] of Object.entries(
+						resolved.config.auth.config.extraCredentialEnvKeys,
+					)) {
+						if (creds[field] != null) envVars[envKey] = String(creds[field])
+					}
+				}
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {
 					error: String(err),

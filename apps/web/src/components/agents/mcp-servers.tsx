@@ -41,6 +41,12 @@ interface McpServersProps {
 }
 
 const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
+	steel: {
+		type: 'stdio',
+		command: 'npx',
+		args: ['-y', '@steel-dev/steel-mcp-server'],
+		env: { STEEL_API_KEY: '${STEEL_TOKEN}' },
+	},
 	github: {
 		type: 'stdio',
 		command: 'npx',

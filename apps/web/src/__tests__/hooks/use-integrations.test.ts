@@ -72,8 +72,8 @@ describe('useIntegrations', () => {
 	describe('useProviders', () => {
 		it('returns available providers', async () => {
 			const providers: ProviderInfo[] = [
-				{ name: 'github', displayName: 'GitHub', events: [] },
-				{ name: 'slack', displayName: 'Slack', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom', events: [] },
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
 			]
 			vi.mocked(api.integrations.providers).mockResolvedValue(providers)
 

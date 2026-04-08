@@ -1,7 +1,6 @@
 import type { ResolvedProvider } from './types'
 
 import { githubAuth } from './providers/github/auth'
-// Import provider configs
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
 import {
@@ -16,10 +15,16 @@ import {
 	slackWebhookPreHandler,
 } from './providers/slack/config'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+// Import provider configs
+import { config as steelConfig } from './providers/steel/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
 // ── Register providers ─────────────────────────────────────────────────────
+
+providers.set('steel', {
+	config: steelConfig,
+})
 
 providers.set('github', {
 	config: githubConfig,

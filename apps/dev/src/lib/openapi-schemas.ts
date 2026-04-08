@@ -130,6 +130,7 @@ export const providerEventSchema = z.object({
 export const providerInfoSchema = z.object({
 	name: z.string(),
 	displayName: z.string(),
+	authType: z.string(),
 	events: z.array(providerEventSchema),
 })
 
