@@ -350,6 +350,61 @@ app.openapi(respondNotificationRoute, (async (c) => {
 	return c.json(serialize(updated) as z.infer<typeof notificationResponseSchema>)
 }) as RouteHandler<typeof respondNotificationRoute, Env>)
 
+// POST /api/notifications/dismiss-all
+const dismissAllNotificationsRoute = createRoute({
+	method: 'post',
+	path: '/dismiss-all',
+	tags: ['Notifications'],
+	summary: 'Dismiss all pending/seen notifications in workspace',
+	request: {
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'All notifications dismissed',
+			content: {
+				'application/json': {
+					schema: z.object({ dismissed: z.number() }),
+				},
+			},
+		},
+		400: {
+			description: 'Missing workspace ID',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(dismissAllNotificationsRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const updated = await db
+		.update(notifications)
+		.set({ status: 'dismissed', updatedAt: new Date() })
+		.where(
+			and(
+				eq(notifications.workspaceId, workspaceId),
+				inArray(notifications.status, ['pending', 'seen']),
+			),
+		)
+		.returning({ id: notifications.id })
+
+	if (updated.length > 0) {
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'notification',
+			entityId: updated[0]?.id,
+			data: { bulk_dismiss: true, count: updated.length },
+		})
+	}
+
+	return c.json({ dismissed: updated.length })
+}) as RouteHandler<typeof dismissAllNotificationsRoute, Env>)
+
 // DELETE /api/notifications/:id
 const deleteNotificationRoute = createRoute({
 	method: 'delete',

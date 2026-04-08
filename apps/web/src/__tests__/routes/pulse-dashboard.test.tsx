@@ -22,6 +22,7 @@ vi.mock('@/hooks/use-notifications', () => ({
 	useNotifications: (...args: unknown[]) => mockUseNotifications(...args),
 	useRespondNotification: () => ({ mutate: vi.fn() }),
 	useUpdateNotification: () => ({ mutate: vi.fn() }),
+	useDismissAllNotifications: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -52,6 +53,10 @@ vi.mock('@/components/shared/loading-skeleton', () => ({
 
 vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
+}))
+
+vi.mock('@/components/layout/page-header', () => ({
+	PageHeader: () => null,
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/index'
