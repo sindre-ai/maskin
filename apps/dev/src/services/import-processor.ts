@@ -25,8 +25,14 @@ export interface ImportError {
 }
 
 export interface ImportResult {
+	/** Number of objects created (can exceed totalRows when multiple type mappings produce objects per row) */
 	successCount: number
+	/** Number of row-level errors during object creation */
 	errorCount: number
+	/** Number of relationships created in Pass 2 */
+	relationshipCount: number
+	/** Number of relationship-level errors */
+	relationshipErrorCount: number
 	errors: ImportError[]
 }
 
@@ -333,6 +339,8 @@ export async function executeImport(
 ): Promise<ImportResult> {
 	let successCount = 0
 	let errorCount = 0
+	let relationshipCount = 0
+	let relationshipErrorCount = 0
 	const errors: ImportError[] = []
 
 	const relDefs = mapping.relationships ?? []
@@ -481,6 +489,8 @@ export async function executeImport(
 					.onConflictDoNothing()
 					.returning()
 
+				relationshipCount += created.length
+
 				// Log relationship events
 				if (created.length > 0) {
 					await db.insert(events).values(
@@ -497,7 +507,7 @@ export async function executeImport(
 			} catch (err) {
 				const message = `Relationship batch failed: ${err instanceof Error ? err.message : String(err)}`
 				logger.error(message, { importId })
-				errorCount += batch.length
+				relationshipErrorCount += batch.length
 				errors.push({ row: -1, message })
 			}
 		}
@@ -508,7 +518,7 @@ export async function executeImport(
 		await db
 			.update(imports)
 			.set({
-				errorCount,
+				errorCount: errorCount + relationshipErrorCount,
 				errors: errors.length > 0 ? errors : undefined,
 				updatedAt: new Date(),
 			})
@@ -519,8 +529,10 @@ export async function executeImport(
 		importId,
 		successCount,
 		errorCount,
+		relationshipCount,
+		relationshipErrorCount,
 		totalRows: rows.length,
 	})
 
-	return { successCount, errorCount, errors }
+	return { successCount, errorCount, relationshipCount, relationshipErrorCount, errors }
 }
