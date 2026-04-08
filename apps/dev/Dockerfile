@@ -24,8 +24,8 @@ COPY apps/web/ apps/web/
 
 # Build sequentially to stay within 8GB server memory
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter='./packages/*' build
-RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@ai-native/dev build
-RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@ai-native/web build
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/dev build
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/web build
 
 COPY docker/agent-base/ docker/agent-base/
 

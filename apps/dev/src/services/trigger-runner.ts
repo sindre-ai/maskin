@@ -1,6 +1,6 @@
-import type { Database } from '@ai-native/db'
-import { events, objects, triggers } from '@ai-native/db/schema'
-import type { PgEvent, PgNotifyBridge } from '@ai-native/realtime'
+import type { Database } from '@maskin/db'
+import { events, objects, triggers } from '@maskin/db/schema'
+import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { Cron } from 'croner'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
@@ -93,7 +93,16 @@ export class TriggerRunner {
 			const config = trigger.config as Record<string, unknown>
 
 			// Check if event matches trigger config
-			if (config.entity_type && config.entity_type !== event.entity_type) continue
+			// slack.message is a catch-all that matches any slack message subtype
+			if (config.entity_type && config.entity_type !== event.entity_type) {
+				if (
+					config.entity_type !== 'slack.message' ||
+					!event.entity_type.startsWith('slack.') ||
+					!event.entity_type.endsWith('_message')
+				) {
+					continue
+				}
+			}
 			if (config.action && config.action !== event.action) continue
 
 			// Check filter conditions

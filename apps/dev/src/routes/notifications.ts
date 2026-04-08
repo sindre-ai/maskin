@@ -1,12 +1,12 @@
-import type { Database } from '@ai-native/db'
-import { events, notifications } from '@ai-native/db/schema'
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { events, notifications } from '@maskin/db/schema'
 import {
 	createNotificationSchema,
 	notificationQuerySchema,
 	respondNotificationSchema,
 	updateNotificationSchema,
-} from '@ai-native/shared'
-import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+} from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {

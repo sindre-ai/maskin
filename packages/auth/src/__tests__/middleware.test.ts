@@ -1,4 +1,4 @@
-import type { Database } from '@ai-native/db'
+import type { Database } from '@maskin/db'
 import { Hono } from 'hono'
 import { describe, expect, it } from 'vitest'
 import { authMiddleware } from '../middleware'

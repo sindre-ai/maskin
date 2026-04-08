@@ -1,4 +1,4 @@
-import { createGraphSchema } from '@ai-native/shared'
+import { createGraphSchema } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 
 describe('Graph schema validation', () => {

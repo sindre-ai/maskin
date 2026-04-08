@@ -20,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useDeleteSkill, useSaveSkill, useSkill, useSkills } from '@/hooks/use-skills'
 import type { SkillListItem } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { parseSkillMd } from '@ai-native/shared'
+import { parseSkillMd } from '@maskin/shared'
 import { BookOpen, FileText, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 

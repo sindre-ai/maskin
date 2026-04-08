@@ -1,4 +1,4 @@
-import { events } from '@ai-native/db/schema'
+import { events } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { buildCreateObjectBody, insertActor, insertObject, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'

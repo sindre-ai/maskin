@@ -1,4 +1,4 @@
-# AI-Native OS — Explained Simply
+# Maskin — Explained Simply
 
 ## The Short Version
 

@@ -62,10 +62,10 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 
 const PLATFORM_MCP_PRESET: McpServer = {
 	type: 'http',
-	url: '${AI_NATIVE_API_URL}/mcp',
+	url: '${MASKIN_API_URL}/mcp',
 	headers: {
-		Authorization: 'Bearer ${AI_NATIVE_API_KEY}',
-		'X-Workspace-Id': '${AI_NATIVE_WORKSPACE_ID}',
+		Authorization: 'Bearer ${MASKIN_API_KEY}',
+		'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
 	},
 }
 
@@ -131,8 +131,8 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 		[servers, onUpdate],
 	)
 
-	const handleAddAiNative = useCallback(() => {
-		const updated = { ...servers, 'ai-native': PLATFORM_MCP_PRESET }
+	const handleAddMaskin = useCallback(() => {
+		const updated = { ...servers, maskin: PLATFORM_MCP_PRESET }
 		onUpdate({ mcpServers: updated })
 	}, [servers, onUpdate])
 
@@ -142,7 +142,7 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 			i.status === 'active' && INTEGRATION_MCP_PRESETS[i.provider] && !servers[i.provider],
 	)
 
-	const hasAiNative = !!servers['ai-native']
+	const hasMaskin = !!servers.maskin
 
 	return (
 		<div>
@@ -183,10 +183,10 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 				/>
 			) : (
 				<div className="flex flex-wrap items-center gap-2">
-					{!hasAiNative && (
-						<Button size="sm" variant="outline" onClick={handleAddAiNative}>
+					{!hasMaskin && (
+						<Button size="sm" variant="outline" onClick={handleAddMaskin}>
 							<Globe className="h-3.5 w-3.5 mr-1" />
-							Add AI Native
+							Add Maskin
 						</Button>
 					)}
 					<Button size="sm" variant="outline" onClick={() => setAddingServer(true)}>

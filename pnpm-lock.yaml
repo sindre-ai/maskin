@@ -29,28 +29,28 @@ importers:
 
   apps/dev:
     dependencies:
-      '@ai-native/auth':
+      '@maskin/auth':
         specifier: workspace:*
         version: link:../../packages/auth
-      '@ai-native/db':
+      '@maskin/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@ai-native/ext-work':
+      '@maskin/ext-work':
         specifier: workspace:*
         version: link:../../extensions/work
-      '@ai-native/mcp':
+      '@maskin/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
-      '@ai-native/module-sdk':
+      '@maskin/module-sdk':
         specifier: workspace:*
         version: link:../../packages/module-sdk
-      '@ai-native/realtime':
+      '@maskin/realtime':
         specifier: workspace:*
         version: link:../../packages/realtime
-      '@ai-native/shared':
+      '@maskin/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@ai-native/storage':
+      '@maskin/storage':
         specifier: workspace:*
         version: link:../../packages/storage
       '@hono/node-server':
@@ -126,13 +126,13 @@ importers:
 
   apps/web:
     dependencies:
-      '@ai-native/ext-work':
+      '@maskin/ext-work':
         specifier: workspace:*
         version: link:../../extensions/work
-      '@ai-native/module-sdk':
+      '@maskin/module-sdk':
         specifier: workspace:*
         version: link:../../packages/module-sdk
-      '@ai-native/shared':
+      '@maskin/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@microsoft/fetch-event-source':
@@ -283,7 +283,7 @@ importers:
 
   extensions/work:
     dependencies:
-      '@ai-native/module-sdk':
+      '@maskin/module-sdk':
         specifier: workspace:*
         version: link:../../packages/module-sdk
     devDependencies:
@@ -293,10 +293,10 @@ importers:
 
   packages/auth:
     dependencies:
-      '@ai-native/db':
+      '@maskin/db':
         specifier: workspace:*
         version: link:../db
-      '@ai-native/shared':
+      '@maskin/shared':
         specifier: workspace:*
         version: link:../shared
       bcryptjs:
@@ -340,10 +340,10 @@ importers:
 
   packages/mcp:
     dependencies:
-      '@ai-native/module-sdk':
+      '@maskin/module-sdk':
         specifier: workspace:*
         version: link:../module-sdk
-      '@ai-native/shared':
+      '@maskin/shared':
         specifier: workspace:*
         version: link:../shared
       '@modelcontextprotocol/ext-apps':
@@ -365,13 +365,13 @@ importers:
 
   packages/module-sdk:
     dependencies:
-      '@ai-native/db':
+      '@maskin/db':
         specifier: workspace:*
         version: link:../db
-      '@ai-native/realtime':
+      '@maskin/realtime':
         specifier: workspace:*
         version: link:../realtime
-      '@ai-native/storage':
+      '@maskin/storage':
         specifier: workspace:*
         version: link:../storage
       '@hono/zod-openapi':

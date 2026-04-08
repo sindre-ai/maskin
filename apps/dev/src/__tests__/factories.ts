@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Database } from '@ai-native/db'
+import type { Database } from '@maskin/db'
 import {
 	actors,
 	notifications,
@@ -10,7 +10,7 @@ import {
 	triggers,
 	workspaceMembers,
 	workspaces,
-} from '@ai-native/db/schema'
+} from '@maskin/db/schema'
 
 let counter = 0
 function next() {

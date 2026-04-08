@@ -44,7 +44,7 @@ describe('connectSSE', () => {
 	})
 
 	it('includes Last-Event-ID header when sessionStorage has a stored ID', () => {
-		sessionStorage.setItem(`ai-native-last-event-id-${workspaceId}`, 'evt-42')
+		sessionStorage.setItem(`maskin-last-event-id-${workspaceId}`, 'evt-42')
 
 		connectSSE(workspaceId, { onEvent: vi.fn() })
 
@@ -145,7 +145,7 @@ describe('connectSSE', () => {
 				id: 'evt-99',
 			})
 
-			expect(sessionStorage.getItem(`ai-native-last-event-id-${workspaceId}`)).toBe('evt-99')
+			expect(sessionStorage.getItem(`maskin-last-event-id-${workspaceId}`)).toBe('evt-99')
 		})
 
 		it('does not store event ID when msg.id is empty', () => {
@@ -157,7 +157,7 @@ describe('connectSSE', () => {
 				id: '',
 			})
 
-			expect(sessionStorage.getItem(`ai-native-last-event-id-${workspaceId}`)).toBeNull()
+			expect(sessionStorage.getItem(`maskin-last-event-id-${workspaceId}`)).toBeNull()
 		})
 
 		it('ignores messages with empty data', () => {

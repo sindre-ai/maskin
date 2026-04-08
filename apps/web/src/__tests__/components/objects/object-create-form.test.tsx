@@ -7,7 +7,7 @@ vi.mock('@/hooks/use-enabled-modules', () => ({
 	useEnabledModules: () => [],
 }))
 
-vi.mock('@ai-native/module-sdk', () => ({
+vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => mockGetTabs(),
 }))
 
