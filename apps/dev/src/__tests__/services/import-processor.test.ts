@@ -118,18 +118,29 @@ describe('parseFile', () => {
 })
 
 describe('generateMapping', () => {
+	it('returns a typeMappings array with one entry', () => {
+		const columns = ['name']
+		const sampleRows = [{ name: 'Alice' }]
+		const mapping = generateMapping(columns, sampleRows, defaultSettings)
+
+		expect(mapping.typeMappings).toHaveLength(1)
+		expect(mapping.typeMappings[0]?.objectType).toBe('insight')
+		expect(mapping.relationships).toEqual([])
+	})
+
 	it('maps reserved field aliases', () => {
 		const columns = ['name', 'description', 'status']
 		const sampleRows = [{ name: 'Alice', description: 'A contact', status: 'active' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
+		const cols = mapping.typeMappings[0]!.columns
 
-		const titleCol = mapping.columns.find((c) => c.targetField === 'title')
+		const titleCol = cols.find((c) => c.targetField === 'title')
 		expect(titleCol?.sourceColumn).toBe('name')
 
-		const contentCol = mapping.columns.find((c) => c.targetField === 'content')
+		const contentCol = cols.find((c) => c.targetField === 'content')
 		expect(contentCol?.sourceColumn).toBe('description')
 
-		const statusCol = mapping.columns.find((c) => c.targetField === 'status')
+		const statusCol = cols.find((c) => c.targetField === 'status')
 		expect(statusCol?.sourceColumn).toBe('status')
 	})
 
@@ -137,29 +148,14 @@ describe('generateMapping', () => {
 		const columns = ['name', 'email', 'phone']
 		const sampleRows = [{ name: 'Alice', email: 'a@test.com', phone: '123' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
+		const cols = mapping.typeMappings[0]!.columns
 
-		const emailCol = mapping.columns.find((c) => c.sourceColumn === 'email')
+		const emailCol = cols.find((c) => c.sourceColumn === 'email')
 		expect(emailCol?.targetField).toBe('metadata.email')
 		expect(emailCol?.skip).toBe(false)
 
-		const phoneCol = mapping.columns.find((c) => c.sourceColumn === 'phone')
+		const phoneCol = cols.find((c) => c.sourceColumn === 'phone')
 		expect(phoneCol?.targetField).toBe('metadata.phone')
-	})
-
-	it('detects type column with matching workspace types', () => {
-		const columns = ['name', 'type']
-		const sampleRows = [
-			{ name: 'Alice', type: 'contact' },
-			{ name: 'Insight 1', type: 'insight' },
-		]
-		const mapping = generateMapping(columns, sampleRows, defaultSettings)
-
-		expect(typeof mapping.objectType).toBe('object')
-		if (typeof mapping.objectType === 'object') {
-			expect(mapping.objectType.column).toBe('type')
-			expect(mapping.objectType.typeMap).toHaveProperty('contact', 'contact')
-			expect(mapping.objectType.typeMap).toHaveProperty('insight', 'insight')
-		}
 	})
 
 	it('defaults to first valid type when no type column', () => {
@@ -167,7 +163,7 @@ describe('generateMapping', () => {
 		const sampleRows = [{ name: 'Alice' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
 
-		expect(typeof mapping.objectType).toBe('string')
+		expect(mapping.typeMappings[0]?.objectType).toBe('insight')
 	})
 
 	it('sets default status from first status of inferred type', () => {
@@ -178,15 +174,16 @@ describe('generateMapping', () => {
 			statuses: { task: ['todo', 'done'] },
 		})
 
-		expect(mapping.defaultStatus).toBe('todo')
+		expect(mapping.typeMappings[0]?.defaultStatus).toBe('todo')
 	})
 
 	it('marks unmatched columns as skipped metadata', () => {
 		const columns = ['name', 'unknown_field']
 		const sampleRows = [{ name: 'Alice', unknown_field: 'value' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
+		const cols = mapping.typeMappings[0]!.columns
 
-		const unknownCol = mapping.columns.find((c) => c.sourceColumn === 'unknown_field')
+		const unknownCol = cols.find((c) => c.sourceColumn === 'unknown_field')
 		expect(unknownCol?.skip).toBe(true)
 		expect(unknownCol?.targetField).toMatch(/^metadata\./)
 	})
@@ -195,8 +192,9 @@ describe('generateMapping', () => {
 		const columns = ['name', 'age']
 		const sampleRows = [{ name: 'Alice', age: '30' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
+		const cols = mapping.typeMappings[0]!.columns
 
-		const ageCol = mapping.columns.find((c) => c.sourceColumn === 'age')
+		const ageCol = cols.find((c) => c.sourceColumn === 'age')
 		expect(ageCol?.transform).toBe('number')
 		expect(ageCol?.targetField).toBe('metadata.age')
 	})
@@ -205,8 +203,9 @@ describe('generateMapping', () => {
 		const columns = ['name', 'active']
 		const sampleRows = [{ name: 'Alice', active: 'true' }]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
+		const cols = mapping.typeMappings[0]!.columns
 
-		const activeCol = mapping.columns.find((c) => c.sourceColumn === 'active')
+		const activeCol = cols.find((c) => c.sourceColumn === 'active')
 		expect(activeCol?.transform).toBe('boolean')
 	})
 
@@ -217,8 +216,9 @@ describe('generateMapping', () => {
 			{ name: 'Bob', urgency: 'low' },
 		]
 		const mapping = generateMapping(columns, sampleRows, defaultSettings)
+		const cols = mapping.typeMappings[0]!.columns
 
-		const urgencyCol = mapping.columns.find((c) => c.sourceColumn === 'urgency')
+		const urgencyCol = cols.find((c) => c.sourceColumn === 'urgency')
 		expect(urgencyCol?.targetField).toBe('metadata.priority')
 		expect(urgencyCol?.skip).toBe(false)
 	})
