@@ -497,6 +497,7 @@ export async function executeImport(
 			} catch (err) {
 				const message = `Relationship batch failed: ${err instanceof Error ? err.message : String(err)}`
 				logger.error(message, { importId })
+				errorCount += batch.length
 				errors.push({ row: -1, message })
 			}
 		}

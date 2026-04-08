@@ -2,7 +2,7 @@ import type { ImportMappingInput, ImportResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export function useImport(id: string | undefined, workspaceId: string) {
@@ -98,5 +98,10 @@ export function useImportToast(workspaceId: string) {
 		}
 	}, [])
 
-	return { startTracking: setActiveImportId }
+	const startTracking = useCallback((id: string | undefined) => {
+		prevStatus.current = undefined
+		setActiveImportId(id)
+	}, [])
+
+	return { startTracking }
 }
