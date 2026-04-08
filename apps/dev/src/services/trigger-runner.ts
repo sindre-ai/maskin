@@ -93,7 +93,16 @@ export class TriggerRunner {
 			const config = trigger.config as Record<string, unknown>
 
 			// Check if event matches trigger config
-			if (config.entity_type && config.entity_type !== event.entity_type) continue
+			// slack.message is a catch-all that matches any slack message subtype
+			if (config.entity_type && config.entity_type !== event.entity_type) {
+				if (
+					config.entity_type !== 'slack.message' ||
+					!event.entity_type.startsWith('slack.') ||
+					!event.entity_type.endsWith('_message')
+				) {
+					continue
+				}
+			}
 			if (config.action && config.action !== event.action) continue
 
 			// Check filter conditions

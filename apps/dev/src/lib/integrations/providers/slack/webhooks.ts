@@ -1,5 +1,11 @@
 import type { CustomEventNormalizer } from '../../types'
 
+const messageEntityByChannelPrefix: Record<string, string> = {
+	C: 'slack.channel_message',
+	G: 'slack.group_message',
+	D: 'slack.direct_message',
+}
+
 const eventMapping: Record<string, { entityType: string; action: string }> = {
 	message: { entityType: 'slack.message', action: 'created' },
 	app_mention: { entityType: 'slack.app_mention', action: 'created' },
@@ -34,8 +40,18 @@ export const slackEventNormalizer: CustomEventNormalizer = (payload, _headers) =
 	const mapped = eventMapping[eventType]
 	if (!mapped) return null
 
+	// For message events, refine entity type based on channel prefix (C=public, G=private, D=DM)
+	let entityType = mapped.entityType
+	if (eventType === 'message') {
+		const channel = event.channel as string | undefined
+		const prefix = channel?.[0]
+		if (prefix && prefix in messageEntityByChannelPrefix) {
+			entityType = messageEntityByChannelPrefix[prefix]
+		}
+	}
+
 	return {
-		entityType: mapped.entityType,
+		entityType,
 		action: mapped.action,
 		installationId: teamId,
 		data: data,
