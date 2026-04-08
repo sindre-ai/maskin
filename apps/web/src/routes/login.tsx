@@ -11,8 +11,8 @@ export const Route = createFileRoute('/login')({
 
 function LoginPage() {
 	const { login } = useAuth()
-	const [email, setEmail] = useState('')
-	const [password, setPassword] = useState('')
+	const [email, setEmail] = useState(import.meta.env.DEV ? 'demo@example.com' : '')
+	const [password, setPassword] = useState(import.meta.env.DEV ? 'password' : '')
 	const [error, setError] = useState('')
 	const [loading, setLoading] = useState(false)
 

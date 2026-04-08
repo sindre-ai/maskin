@@ -20,12 +20,13 @@
 	},
 	"scripts": {
 		"db:generate": "drizzle-kit generate",
-		"db:migrate": "tsx src/migrate.ts",
-		"db:seed": "tsx src/seed.ts",
+		"db:migrate": "node --env-file=../../.env --import tsx/esm src/migrate.ts",
+		"db:seed": "node --env-file=../../.env --import tsx/esm src/seed.ts",
 		"build": "tsc",
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
+		"bcryptjs": "^2.4.3",
 		"drizzle-orm": "^0.38.0",
 		"postgres": "^3.4.0"
 	},

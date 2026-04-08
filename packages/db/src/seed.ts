@@ -1,3 +1,5 @@
+import bcrypt from 'bcryptjs'
+import crypto from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { createDb } from './connection'
 import {
@@ -41,12 +43,20 @@ if (existing.length > 0) {
 	await db.delete(objects).where(eq(objects.workspaceId, wsId))
 	await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, wsId))
 	await db.delete(workspaces).where(eq(workspaces.id, wsId))
-	// Delete the demo user
+	// Delete agent actors created by the demo user, then the demo user
+	const [demoActor] = await db.select().from(actors).where(eq(actors.email, 'demo@example.com'))
+	if (demoActor) {
+		await db.delete(actors).where(eq(actors.createdBy, demoActor.id))
+	}
 	await db.delete(actors).where(eq(actors.email, 'demo@example.com'))
 	console.log('Cleaned up existing seed data')
 }
 
 // ── Actor: Demo User ───────────────────────────────────────────────────────
+
+const demoPassword = 'password'
+const demoPasswordHash = await bcrypt.hash(demoPassword, 12)
+const demoApiKey = `ank_${crypto.randomUUID().replace(/-/g, '')}`
 
 const [rawDemoUser] = await db
 	.insert(actors)
@@ -54,6 +64,8 @@ const [rawDemoUser] = await db
 		type: 'human',
 		name: 'Demo User',
 		email: 'demo@example.com',
+		passwordHash: demoPasswordHash,
+		apiKey: demoApiKey,
 	})
 	.onConflictDoNothing({ target: actors.email })
 	.returning()
@@ -1048,7 +1060,7 @@ await db.insert(notifications).values([
 
 console.log('Seed complete — Product Development workspace created')
 console.log(`  Workspace: ${workspace.id}`)
-console.log(`  Demo user: ${demoUser.id} (demo@example.com)`)
+console.log(`  Demo user: ${demoUser.id} (demo@example.com / ${demoPassword})`)
 console.log(
 	`  Agents: ${[insightAnalyzer, betPlanner, seniorDev, codeReviewer, observer].map((a) => a.name).join(', ')}`,
 )
