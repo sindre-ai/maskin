@@ -1,10 +1,21 @@
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
+
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
+
 import { PulseCard } from '@/components/pulse/pulse-card'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorListItem, buildNotificationResponse } from '../../factories'
 
 describe('PulseCard', () => {
-	const actorsById = new Map([['actor-1', buildActorListItem({ id: 'actor-1', name: 'Bot' })]])
+	const actorsById = new Map([
+		['actor-1', buildActorListItem({ id: 'actor-1', name: 'Bot', type: 'agent' })],
+	])
 
 	it('renders notification title', () => {
 		const notification = buildNotificationResponse({ title: 'New Pattern' })
@@ -158,5 +169,36 @@ describe('PulseCard', () => {
 			/>,
 		)
 		expect(screen.getByText('Bot')).toBeInTheDocument()
+	})
+
+	it('renders agent name as a link to the agent page', () => {
+		const notification = buildNotificationResponse({ sourceActorId: 'actor-1' })
+		render(
+			<PulseCard
+				notification={notification}
+				actorsById={actorsById}
+				onAction={vi.fn()}
+				onDismiss={vi.fn()}
+			/>,
+		)
+		const link = screen.getByRole('link', { name: /Bot/ })
+		expect(link).toHaveAttribute('href', '/$workspaceId/agents/$agentId')
+	})
+
+	it('does not render link for human actors', () => {
+		const humanActors = new Map([
+			['actor-2', buildActorListItem({ id: 'actor-2', name: 'Alice', type: 'human' })],
+		])
+		const notification = buildNotificationResponse({ sourceActorId: 'actor-2' })
+		render(
+			<PulseCard
+				notification={notification}
+				actorsById={humanActors}
+				onAction={vi.fn()}
+				onDismiss={vi.fn()}
+			/>,
+		)
+		expect(screen.getByText('Alice')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: /Alice/ })).not.toBeInTheDocument()
 	})
 })

@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { useWorkspace } from '@/lib/workspace-context'
+import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { NotificationInput } from './notification-input'
 
@@ -75,6 +77,7 @@ interface PulseCardProps {
 }
 
 export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
+	const { workspaceId } = useWorkspace()
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags
@@ -212,10 +215,25 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 			<CardFooter className="text-xs text-muted-foreground border-t pt-3 gap-1.5">
 				{sourceActor && (
 					<>
-						<span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
-							{sourceActor.name.charAt(0).toUpperCase()}
-						</span>
-						<span>{sourceActor.name}</span>
+						{sourceActor.type === 'agent' ? (
+							<Link
+								to="/$workspaceId/agents/$agentId"
+								params={{ workspaceId, agentId: sourceActor.id }}
+								className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors"
+							>
+								<span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
+									{sourceActor.name.charAt(0).toUpperCase()}
+								</span>
+								<span>{sourceActor.name}</span>
+							</Link>
+						) : (
+							<>
+								<span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
+									{sourceActor.name.charAt(0).toUpperCase()}
+								</span>
+								<span>{sourceActor.name}</span>
+							</>
+						)}
 						<span>&middot;</span>
 					</>
 				)}
