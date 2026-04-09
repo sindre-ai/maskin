@@ -1,6 +1,7 @@
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
+import { PlaygroundBanner } from '@/components/shared/playground-banner'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useSSE } from '@/hooks/use-sse'
@@ -71,6 +72,7 @@ function WorkspaceLayout() {
 				<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
 					<AppSidebar />
 					<SidebarInset className="min-w-0">
+						<PlaygroundBanner />
 						<Header />
 						<div className="flex-1 overflow-auto p-8">
 							<Outlet />
