@@ -22,12 +22,12 @@
 	"dependencies": {
 		"@maskin/db": "workspace:*",
 		"@maskin/shared": "workspace:*",
-		"bcryptjs": "^2.4.3",
+		"bcryptjs": "^3.0.3",
 		"drizzle-orm": "^0.38.0",
 		"hono": "^4.12.12"
 	},
 	"devDependencies": {
-		"@types/bcryptjs": "^2.4.6",
+		"@types/bcryptjs": "^3.0.0",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"
 	}
