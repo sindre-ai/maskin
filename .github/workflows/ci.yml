@@ -46,7 +46,7 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test -- --run
+      - run: pnpm test -- -- --run
 
   integration-tests:
     needs: lint-typecheck-build

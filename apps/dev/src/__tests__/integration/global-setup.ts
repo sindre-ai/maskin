@@ -5,6 +5,7 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { type Database, createDb } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import postgres from 'postgres'
+import { createApiError, formatZodError } from '../../lib/errors'
 
 type Env = {
 	Variables: {
@@ -29,7 +30,21 @@ let testActorId: string
 export function createIntegrationApp(
 	...routeModules: Array<{ path: string; module: OpenAPIHono<Env> }>
 ) {
-	const app = new OpenAPIHono<Env>()
+	const app = new OpenAPIHono<Env>({
+		defaultHook: (result, c) => {
+			if (!result.success) {
+				return c.json(
+					createApiError(
+						'VALIDATION_ERROR',
+						'Request validation failed',
+						formatZodError(result.error),
+					),
+					400,
+				)
+			}
+			return undefined
+		},
+	})
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
@@ -63,20 +78,13 @@ beforeAll(async () => {
 	sql = postgres(url)
 	db = createDb(url)
 
+	// Drop and recreate schema so migrations are idempotent across CI runs
+	await sql`DROP SCHEMA public CASCADE`
+	await sql`CREATE SCHEMA public`
+
 	// Run migrations
 	const __dirname = dirname(fileURLToPath(import.meta.url))
-	const migrationsDir = join(
-		__dirname,
-		'..',
-		'..',
-		'..',
-		'..',
-		'..',
-		'..',
-		'packages',
-		'db',
-		'drizzle',
-	)
+	const migrationsDir = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
 	const files = readdirSync(migrationsDir)
 		.filter((f) => f.endsWith('.sql'))
 		.sort()
