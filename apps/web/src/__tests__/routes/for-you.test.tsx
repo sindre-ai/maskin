@@ -32,14 +32,14 @@ vi.mock('sonner', () => ({
 	toast: { error: vi.fn(), warning: vi.fn() },
 }))
 
-vi.mock('@/components/pulse/pulse-card', () => ({
-	PulseCard: ({ notification }: { notification: { title: string } }) => (
-		<div data-testid="pulse-card">{notification.title}</div>
+vi.mock('@/components/notifications/notification-card', () => ({
+	NotificationCard: ({ notification }: { notification: { title: string } }) => (
+		<div data-testid="notification-card">{notification.title}</div>
 	),
 }))
 
-vi.mock('@/components/pulse/pulse-filters', () => ({
-	PulseFilters: () => <div data-testid="pulse-filters" />,
+vi.mock('@/components/notifications/notification-filters', () => ({
+	NotificationFilters: () => <div data-testid="notification-filters" />,
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
@@ -54,11 +54,15 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/layout/page-header', () => ({
+	PageHeader: () => null,
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/index'
 
-const PulseDashboard = (Route as unknown as { component: React.FC }).component
+const ForYouPage = (Route as unknown as { component: React.FC }).component
 
-describe('PulseDashboard', () => {
+describe('ForYouPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockUseActors.mockReturnValue({ data: [] })
@@ -66,30 +70,30 @@ describe('PulseDashboard', () => {
 
 	it('shows loading skeletons when loading', () => {
 		mockUseNotifications.mockReturnValue({ data: undefined, isLoading: true })
-		render(<PulseDashboard />)
+		render(<ForYouPage />)
 		expect(screen.getAllByTestId('card-skeleton')).toHaveLength(3)
 	})
 
 	it('shows empty state when no active notifications', () => {
 		mockUseNotifications.mockReturnValue({ data: [], isLoading: false })
-		render(<PulseDashboard />)
+		render(<ForYouPage />)
 		expect(screen.getByText('No notifications yet')).toBeInTheDocument()
 	})
 
 	it('passes status filter to useNotifications', () => {
 		mockUseNotifications.mockReturnValue({ data: [], isLoading: false })
-		render(<PulseDashboard />)
+		render(<ForYouPage />)
 		expect(mockUseNotifications).toHaveBeenCalledWith('ws-1', { status: 'pending,seen' })
 	})
 
-	it('renders pulse cards for pending/seen notifications', () => {
+	it('renders notification cards for pending/seen notifications', () => {
 		const notifications = [
 			buildNotificationResponse({ id: 'n-1', title: 'Pending One', status: 'pending' }),
 			buildNotificationResponse({ id: 'n-2', title: 'Seen One', status: 'seen' }),
 		]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
-		render(<PulseDashboard />)
-		expect(screen.getAllByTestId('pulse-card')).toHaveLength(2)
+		render(<ForYouPage />)
+		expect(screen.getAllByTestId('notification-card')).toHaveLength(2)
 		expect(screen.getByText('Pending One')).toBeInTheDocument()
 		expect(screen.getByText('Seen One')).toBeInTheDocument()
 	})
@@ -100,8 +104,8 @@ describe('PulseDashboard', () => {
 			buildNotificationResponse({ id: 'n-2', title: 'Seen', status: 'seen' }),
 		]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
-		render(<PulseDashboard />)
-		expect(screen.getAllByTestId('pulse-card')).toHaveLength(2)
+		render(<ForYouPage />)
+		expect(screen.getAllByTestId('notification-card')).toHaveLength(2)
 		expect(screen.getByText('Pending')).toBeInTheDocument()
 		expect(screen.getByText('Seen')).toBeInTheDocument()
 	})
@@ -113,14 +117,14 @@ describe('PulseDashboard', () => {
 			buildNotificationResponse({ id: 'n-3', status: 'seen' }),
 		]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
-		render(<PulseDashboard />)
+		render(<ForYouPage />)
 		expect(screen.getByText(/2 things need your attention/)).toBeInTheDocument()
 	})
 
-	it('renders pulse filters when notifications exist', () => {
+	it('renders notification filters when notifications exist', () => {
 		const notifications = [buildNotificationResponse({ id: 'n-1', status: 'pending' })]
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
-		render(<PulseDashboard />)
-		expect(screen.getByTestId('pulse-filters')).toBeInTheDocument()
+		render(<ForYouPage />)
+		expect(screen.getByTestId('notification-filters')).toBeInTheDocument()
 	})
 })

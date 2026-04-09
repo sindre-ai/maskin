@@ -1,4 +1,4 @@
-import { resolveActions } from '@/components/pulse/pulse-card'
+import { resolveActions } from '@/components/notifications/notification-card'
 import type { NotificationResponse } from '@/lib/api'
 import { describe, expect, it } from 'vitest'
 

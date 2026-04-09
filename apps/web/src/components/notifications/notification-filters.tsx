@@ -6,15 +6,16 @@ const filters = [
 	{ label: 'Recommendations', value: 'recommendation' },
 	{ label: 'Alerts', value: 'alert' },
 	{ label: 'Good news', value: 'good_news' },
+	{ label: 'Alerts', value: 'alert' },
 ] as const
 
-interface PulseFiltersProps {
+interface NotificationFiltersProps {
 	active: string
 	onChange: (value: string) => void
 	counts: Record<string, number>
 }
 
-export function PulseFilters({ active, onChange, counts }: PulseFiltersProps) {
+export function NotificationFilters({ active, onChange, counts }: NotificationFiltersProps) {
 	return (
 		<div className="flex gap-2 mb-6">
 			{filters.map((f) => {

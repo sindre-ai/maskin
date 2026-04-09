@@ -63,7 +63,7 @@ export function resolveActions(
 	}
 }
 
-interface PulseCardProps {
+interface NotificationCardProps {
 	notification: NotificationResponse
 	actorsById: Map<string, ActorListItem>
 	onAction: (
@@ -74,7 +74,12 @@ interface PulseCardProps {
 	onDismiss: (id: string) => void
 }
 
-export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
+export function NotificationCard({
+	notification,
+	actorsById,
+	onAction,
+	onDismiss,
+}: NotificationCardProps) {
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags

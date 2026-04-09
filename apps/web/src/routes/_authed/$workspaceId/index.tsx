@@ -1,5 +1,6 @@
-import { PulseCard } from '@/components/pulse/pulse-card'
-import { PulseFilters } from '@/components/pulse/pulse-filters'
+import { PageHeader } from '@/components/layout/page-header'
+import { NotificationCard } from '@/components/notifications/notification-card'
+import { NotificationFilters } from '@/components/notifications/notification-filters'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -17,11 +18,11 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
-	component: PulseDashboard,
+	component: ForYouPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function PulseDashboard() {
+function ForYouPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: notifications, isLoading } = useNotifications(workspaceId, {
 		status: 'pending,seen',
@@ -92,6 +93,7 @@ function PulseDashboard() {
 
 	return (
 		<div>
+			<PageHeader title="For You" />
 			<p className="text-sm text-muted-foreground pb-6">
 				{pendingCount > 0
 					? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
@@ -111,10 +113,10 @@ function PulseDashboard() {
 				/>
 			) : (
 				<>
-					<PulseFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
+					<NotificationFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
 					<div className="space-y-4">
 						{filtered.map((notification) => (
-							<PulseCard
+							<NotificationCard
 								key={notification.id}
 								notification={notification}
 								actorsById={actorsById}

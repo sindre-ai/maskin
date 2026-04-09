@@ -1,4 +1,4 @@
-import { PulseCard } from '@/components/pulse/pulse-card'
+import { NotificationCard } from '@/components/notifications/notification-card'
 import { useActors } from '@/hooks/use-actors'
 import {
 	useObjectNotifications,
@@ -70,7 +70,7 @@ export function ObjectActionBanner({ objectId, workspaceId }: ObjectActionBanner
 	return (
 		<div className="space-y-3 mb-4 max-h-[50vh] overflow-y-auto">
 			{notifications.map((notification) => (
-				<PulseCard
+				<NotificationCard
 					key={notification.id}
 					notification={notification}
 					actorsById={actorsById}
