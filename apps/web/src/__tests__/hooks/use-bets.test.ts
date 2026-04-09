@@ -26,7 +26,12 @@ describe('useBets', () => {
 			buildObjectResponse({ id: 'bet-1', type: 'bet', title: 'Bet A' }),
 			buildObjectResponse({ id: 'bet-2', type: 'bet', title: 'Bet B' }),
 		]
-		vi.mocked(api.objects.list).mockResolvedValue(mockBets)
+		vi.mocked(api.objects.list).mockResolvedValue({
+			data: mockBets,
+			total: mockBets.length,
+			limit: 50,
+			offset: 0,
+		})
 
 		const { result } = renderHook(() => useBets(workspaceId), { wrapper: TestWrapper })
 
@@ -46,7 +51,12 @@ describe('useBets', () => {
 	})
 
 	it('returns empty array when no bets exist', async () => {
-		vi.mocked(api.objects.list).mockResolvedValue([])
+		vi.mocked(api.objects.list).mockResolvedValue({
+			data: [],
+			total: 0,
+			limit: 50,
+			offset: 0,
+		})
 
 		const { result } = renderHook(() => useBets(workspaceId), { wrapper: TestWrapper })
 

@@ -98,7 +98,9 @@ describe('CommandPalette', () => {
 			buildObjectResponse({ id: 'obj-1', title: 'Alpha Insight', type: 'insight' }),
 			buildObjectResponse({ id: 'obj-2', title: 'Beta Bet', type: 'bet' }),
 		]
-		vi.mocked(useObjects).mockReturnValue({ data: objects } as ReturnType<typeof useObjects>)
+		vi.mocked(useObjects).mockReturnValue({
+			data: { data: objects, total: objects.length, limit: 50, offset: 0 },
+		} as ReturnType<typeof useObjects>)
 		const user = userEvent.setup()
 
 		render(<CommandPalette />)
