@@ -342,6 +342,7 @@ export function createMcpServer(config: McpConfig) {
 				success: boolean
 				result?: unknown
 				error?: string
+				web_url?: string
 			}> = []
 
 			// Update objects in parallel
