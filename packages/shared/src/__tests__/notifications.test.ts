@@ -130,14 +130,23 @@ describe('notificationQuerySchema', () => {
 		expect(result.offset).toBe(0)
 	})
 
-	it('accepts optional filters', () => {
+	it('accepts single status filter', () => {
 		const result = notificationQuerySchema.parse({
 			status: 'pending',
 			type: 'alert',
 			object_id: uuid,
 		})
-		expect(result.status).toBe('pending')
+		expect(result.status).toEqual(['pending'])
 		expect(result.type).toBe('alert')
+	})
+
+	it('accepts comma-separated status filter', () => {
+		const result = notificationQuerySchema.parse({ status: 'pending,seen' })
+		expect(result.status).toEqual(['pending', 'seen'])
+	})
+
+	it('rejects invalid status in comma-separated list', () => {
+		expect(() => notificationQuerySchema.parse({ status: 'pending,invalid' })).toThrow()
 	})
 
 	it('coerces limit and offset from strings', () => {

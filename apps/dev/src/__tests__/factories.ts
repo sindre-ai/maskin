@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Database } from '@ai-native/db'
+import type { Database } from '@maskin/db'
 import {
 	actors,
 	notifications,
@@ -10,7 +10,7 @@ import {
 	triggers,
 	workspaceMembers,
 	workspaces,
-} from '@ai-native/db/schema'
+} from '@maskin/db/schema'
 
 let counter = 0
 function next() {
@@ -328,9 +328,14 @@ export function buildImport(overrides?: Record<string, unknown>) {
 		successCount: 0,
 		errorCount: 0,
 		mapping: {
-			objectType: 'task',
-			columns: [{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false }],
-			defaultStatus: 'todo',
+			typeMappings: [
+				{
+					objectType: 'task',
+					columns: [{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false }],
+					defaultStatus: 'todo',
+				},
+			],
+			relationships: [],
 		},
 		preview: {
 			columns: ['name'],

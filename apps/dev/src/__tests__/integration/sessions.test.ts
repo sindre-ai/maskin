@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import type { Database } from '@ai-native/db'
-import { events, sessionLogs, sessions } from '@ai-native/db/schema'
-import type { PgNotifyBridge } from '@ai-native/realtime'
 import { OpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { events, sessionLogs, sessions } from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
+import { createApiError, formatZodError } from '../../lib/errors'
 import {
 	buildCreateSessionBody,
 	insertActor,
@@ -134,7 +135,21 @@ function createMockSessionManager(database: Database) {
 }
 
 function createSessionApp() {
-	const app = new OpenAPIHono<Env>()
+	const app = new OpenAPIHono<Env>({
+		defaultHook: (result, c) => {
+			if (!result.success) {
+				return c.json(
+					createApiError(
+						'VALIDATION_ERROR',
+						'Request validation failed',
+						formatZodError(result.error),
+					),
+					400,
+				)
+			}
+			return undefined
+		},
+	})
 	const sessionManager = createMockSessionManager(db)
 
 	app.use('*', async (c, next) => {

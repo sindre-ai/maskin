@@ -28,7 +28,7 @@ function buildConfig(tab: Tab, mcpUrl: string, apiKey: string, workspaceId: stri
 		return JSON.stringify(
 			{
 				mcpServers: {
-					'ai-native': {
+					maskin: {
 						type: 'http',
 						url: mcpUrl,
 						headers: {
@@ -47,7 +47,7 @@ function buildConfig(tab: Tab, mcpUrl: string, apiKey: string, workspaceId: stri
 		return JSON.stringify(
 			{
 				mcpServers: {
-					'ai-native': {
+					maskin: {
 						command: 'npx',
 						args: [
 							'-y',
@@ -70,7 +70,7 @@ function buildConfig(tab: Tab, mcpUrl: string, apiKey: string, workspaceId: stri
 }
 
 function buildCliCommand(mcpUrl: string, apiKey: string, workspaceId: string) {
-	return `claude mcp add --transport http ai-native ${mcpUrl} --header "Authorization: Bearer ${apiKey}" --header "X-Workspace-Id: ${workspaceId}"`
+	return `claude mcp add --transport http maskin ${mcpUrl} --header "Authorization: Bearer ${apiKey}" --header "X-Workspace-Id: ${workspaceId}"`
 }
 
 function CopyButton({

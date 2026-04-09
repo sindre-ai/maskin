@@ -21,7 +21,7 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 	useCustomExtensions: () => [],
 }))
 
-vi.mock('@ai-native/module-sdk', () => ({
+vi.mock('@maskin/module-sdk', () => ({
 	getAllWebModules: () => [
 		{
 			id: 'work',

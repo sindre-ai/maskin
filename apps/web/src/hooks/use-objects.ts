@@ -1,4 +1,4 @@
-import type { createObjectSchema, updateObjectSchema } from '@ai-native/shared'
+import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'
@@ -28,6 +28,9 @@ export function useCreateObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateObjectInput) => api.objects.create(workspaceId, data),
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
+		},
 		onSettled: (_data, _err, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			if (variables.type === 'bet') {

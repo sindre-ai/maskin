@@ -1,7 +1,8 @@
 {
-	"name": "@ai-native/mcp",
+	"name": "@maskin/mcp",
 	"version": "0.0.1",
 	"private": true,
+	"license": "Apache-2.0",
 	"type": "module",
 	"exports": {
 		".": {
@@ -15,8 +16,8 @@
 		"test": "vitest"
 	},
 	"dependencies": {
-		"@ai-native/module-sdk": "workspace:*",
-		"@ai-native/shared": "workspace:*",
+		"@maskin/module-sdk": "workspace:*",
+		"@maskin/shared": "workspace:*",
 		"@modelcontextprotocol/ext-apps": "^1.2.2",
 		"@modelcontextprotocol/sdk": "^1.27.1",
 		"zod": "^3.24.0"

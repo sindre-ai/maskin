@@ -37,8 +37,8 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - **TypeScript types**: `src/types/api.ts` + interfaces at bottom of `src/lib/api.ts` — derived from backend response shapes
 
 ## Auth Pattern
-- API key stored in localStorage (`ai-native-api-key`)
-- Actor info stored in localStorage (`ai-native-actor`)
+- API key stored in localStorage (`maskin-api-key`)
+- Actor info stored in localStorage (`maskin-actor`)
 - `src/lib/auth.ts` — getApiKey(), setApiKey(), isAuthenticated(), getStoredActor(), clearAuth()
 - Auth guard: `src/routes/_authed.tsx` — redirects to `/login` if no API key
 - Bearer token sent on every request via `api.ts` request wrapper
@@ -70,7 +70,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 
 ### Theming Architecture
 - **Theme provider**: `src/lib/theme.tsx` — `ThemeProvider` + `useTheme()` hook
-- **Modes**: `system` | `light` | `dark` — stored in localStorage (`ai-native-theme`), default is `light`
+- **Modes**: `system` | `light` | `dark` — stored in localStorage (`maskin-theme`), default is `light`
 - **CSS architecture**: `@theme inline` maps Tailwind tokens to CSS variables; `:root` defines light values, `.dark` overrides for dark mode
 - **FOUC prevention**: inline script in `index.html` applies `.dark` class before first paint
 

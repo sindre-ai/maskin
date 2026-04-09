@@ -1,4 +1,4 @@
-import { workspaceSettingsSchema } from '@ai-native/shared'
+import { workspaceSettingsSchema } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 
 describe('Workspace settings', () => {

@@ -1,7 +1,8 @@
 {
-	"name": "@ai-native/e2e",
+	"name": "@maskin/e2e",
 	"version": "0.0.0",
 	"private": true,
+	"license": "Apache-2.0",
 	"scripts": {
 		"test:e2e": "playwright test",
 		"test:e2e:ui": "playwright test --ui"

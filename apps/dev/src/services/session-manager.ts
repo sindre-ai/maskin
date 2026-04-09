@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execAsync = promisify(execCb)
-import type { Database } from '@ai-native/db'
+import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
@@ -15,8 +15,8 @@ import {
 	sessionLogs,
 	sessions,
 	workspaces,
-} from '@ai-native/db/schema'
-import type { StorageProvider } from '@ai-native/storage'
+} from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, lt } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -397,8 +397,8 @@ export class SessionManager extends EventEmitter {
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
 			ACTION_PROMPT: session.actionPrompt,
-			AI_NATIVE_API_URL: 'http://host.docker.internal:3000',
-			AI_NATIVE_WORKSPACE_ID: session.workspaceId,
+			MASKIN_API_URL: 'http://host.docker.internal:3000',
+			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}
 
 		// Inject LLM API key: agent-level first, then workspace-level fallback
@@ -449,9 +449,9 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Inject agent's API key for AI Native MCP access
+		// Inject agent's API key for Maskin MCP access
 		if (agent.apiKey) {
-			envVars.AI_NATIVE_API_KEY = agent.apiKey
+			envVars.MASKIN_API_KEY = agent.apiKey
 		}
 
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } })
@@ -495,8 +495,8 @@ export class SessionManager extends EventEmitter {
 			'AGENT_RUNTIME',
 			'SYSTEM_PROMPT',
 			'ACTION_PROMPT',
-			'AI_NATIVE_API_URL',
-			'AI_NATIVE_WORKSPACE_ID',
+			'MASKIN_API_URL',
+			'MASKIN_WORKSPACE_ID',
 			'ANTHROPIC_API_KEY',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
@@ -504,7 +504,7 @@ export class SessionManager extends EventEmitter {
 			'CUSTOM_COMMAND',
 			'MCP_SERVERS_JSON',
 			'AGENT_MCP_JSON',
-			'AI_NATIVE_API_KEY',
+			'MASKIN_API_KEY',
 			'CLAUDE_OAUTH_ACCESS_TOKEN',
 			'CLAUDE_OAUTH_REFRESH_TOKEN',
 			'CLAUDE_OAUTH_EXPIRES_AT',
@@ -537,7 +537,7 @@ export class SessionManager extends EventEmitter {
 			image: (sessionConfig.base_image as string) ?? 'agent-base:latest',
 			name,
 			env: envVars,
-			memoryMb: (sessionConfig.memory_mb as number) ?? 1024,
+			memoryMb: (sessionConfig.memory_mb as number) ?? 8192,
 			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
 			binds: [`${tempDir}:/agent:rw`],
 		})

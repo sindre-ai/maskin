@@ -10,6 +10,7 @@ import {
 	useUpdateNotification,
 } from '@/hooks/use-notifications'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { resolveNavigationPath } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
@@ -20,39 +21,11 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-export function resolveNavigationPath(
-	workspaceId: string,
-	nav: { to: string; id?: string },
-	notification: NotificationResponse,
-): string | null {
-	const id = nav.id && UUID_RE.test(nav.id) ? nav.id : undefined
-	switch (nav.to) {
-		case 'object': {
-			const fallbackId =
-				notification.objectId && UUID_RE.test(notification.objectId)
-					? notification.objectId
-					: undefined
-			const objectId = id ?? fallbackId
-			return objectId ? `/${workspaceId}/objects/${objectId}` : `/${workspaceId}/objects`
-		}
-		case 'objects':
-			return `/${workspaceId}/objects`
-		case 'activity':
-			return `/${workspaceId}/activity`
-		case 'agent':
-			return id ? `/${workspaceId}/agents/${id}` : null
-		case 'trigger':
-			return id ? `/${workspaceId}/triggers/${id}` : null
-		default:
-			return null
-	}
-}
-
 function PulseDashboard() {
 	const { workspaceId } = useWorkspace()
-	const { data: notifications, isLoading } = useNotifications(workspaceId)
+	const { data: notifications, isLoading } = useNotifications(workspaceId, {
+		status: 'pending,seen',
+	})
 	const { data: actors } = useActors(workspaceId)
 	const updateNotification = useUpdateNotification(workspaceId)
 	const respondNotification = useRespondNotification(workspaceId)
@@ -67,11 +40,7 @@ function PulseDashboard() {
 		return map
 	}, [actors])
 
-	// Only show pending/seen notifications (not resolved/dismissed)
-	const activeNotifications = useMemo(
-		() => (notifications ?? []).filter((n) => n.status === 'pending' || n.status === 'seen'),
-		[notifications],
-	)
+	const activeNotifications = notifications ?? []
 
 	const filtered = useMemo(() => {
 		if (activeFilter === 'all') return activeNotifications
