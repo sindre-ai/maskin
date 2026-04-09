@@ -13,3 +13,4 @@ coverage/
 .claude/settings.local.json
 .pnpmfile.cjs
 .worktrees/
+.playwright-mcp/

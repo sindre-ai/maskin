@@ -9,7 +9,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
-import { createApiError } from '../lib/errors'
+import { createApiError, formatZodError } from '../lib/errors'
 import {
 	errorSchema,
 	sessionLogResponseSchema,
@@ -28,7 +28,21 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({
+	defaultHook: (result, c) => {
+		if (!result.success) {
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					'Request validation failed',
+					formatZodError(result.error),
+				),
+				400,
+			)
+		}
+		return undefined
+	},
+})
 
 /** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
