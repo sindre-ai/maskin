@@ -1,3 +1,4 @@
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Badge } from '@/components/ui/badge'
@@ -221,16 +222,12 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 								params={{ workspaceId, agentId: sourceActor.id }}
 								className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors"
 							>
-								<span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
-									{sourceActor.name.charAt(0).toUpperCase()}
-								</span>
+								<ActorAvatar name={sourceActor.name} type={sourceActor.type} size="sm" />
 								<span>{sourceActor.name}</span>
 							</Link>
 						) : (
 							<>
-								<span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
-									{sourceActor.name.charAt(0).toUpperCase()}
-								</span>
+								<ActorAvatar name={sourceActor.name} type={sourceActor.type} size="sm" />
 								<span>{sourceActor.name}</span>
 							</>
 						)}
