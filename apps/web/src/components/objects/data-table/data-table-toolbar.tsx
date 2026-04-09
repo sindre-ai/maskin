@@ -31,6 +31,7 @@ interface DataTableToolbarProps {
 	ownerFilter?: string
 	onOwnerFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	currentActorId?: string
 	sort: string
 	onSortChange: (value: string) => void
 	order: 'asc' | 'desc'
@@ -56,6 +57,7 @@ export function DataTableToolbar({
 	ownerFilter,
 	onOwnerFilterChange,
 	actors,
+	currentActorId,
 	sort,
 	onSortChange,
 	order,
@@ -129,6 +131,7 @@ export function DataTableToolbar({
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={onOwnerFilterChange}
 				actors={actors}
+				currentActorId={currentActorId}
 				sort={sort}
 				onSortChange={onSortChange}
 				order={order}

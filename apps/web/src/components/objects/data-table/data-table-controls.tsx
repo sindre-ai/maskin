@@ -5,7 +5,7 @@ import { Separator } from '@/components/ui/separator'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
-import { ArrowDown, ArrowUp, Settings2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Settings2, User } from 'lucide-react'
 
 export interface ColumnInfo {
 	id: string
@@ -25,6 +25,7 @@ interface DataTableControlsProps {
 	ownerFilter?: string
 	onOwnerFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	currentActorId?: string
 	// Sort
 	sort: string
 	onSortChange: (value: string) => void
@@ -45,6 +46,7 @@ export function DataTableControls({
 	ownerFilter,
 	onOwnerFilterChange,
 	actors,
+	currentActorId,
 	sort,
 	onSortChange,
 	order,
@@ -112,6 +114,25 @@ export function DataTableControls({
 						<>
 							<div className="p-3">
 								<p className="text-xs font-medium text-muted-foreground mb-2">Filter by owner</p>
+								{currentActorId && (
+									<button
+										type="button"
+										className={cn(
+											'inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm transition-colors mb-2 w-fit',
+											ownerFilter === currentActorId
+												? 'bg-muted text-foreground font-medium'
+												: 'text-muted-foreground hover:text-foreground',
+										)}
+										onClick={() =>
+											onOwnerFilterChange(
+												ownerFilter === currentActorId ? undefined : currentActorId,
+											)
+										}
+									>
+										<User size={14} />
+										Assigned to me
+									</button>
+								)}
 								<div className="space-y-1">
 									{actors.map((a) => (
 										<div

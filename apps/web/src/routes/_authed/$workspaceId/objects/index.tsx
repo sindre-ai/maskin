@@ -10,7 +10,9 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
+import { useNotifications } from '@/hooks/use-notifications'
 import { api } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
@@ -66,6 +68,21 @@ function ObjectsPage() {
 	const enabledModules = useEnabledModules()
 	const customExtensions = useCustomExtensions()
 	const settings = workspace.settings as Record<string, unknown>
+	const actor = useMemo(() => getStoredActor(), [])
+
+	// Fetch pending notifications for unread dot
+	const { data: notifications } = useNotifications(workspaceId, { status: 'pending' })
+	const unreadObjectIds = useMemo(() => {
+		if (!notifications || !actor) return new Set<string>()
+		return new Set(
+			notifications
+				.filter(
+					(n): n is typeof n & { objectId: string } =>
+						n.objectId != null && n.targetActorId === actor.id,
+				)
+				.map((n) => n.objectId),
+		)
+	}, [notifications, actor])
 
 	// Build tabs
 	const tabs = useMemo(() => {
@@ -158,8 +175,8 @@ function ObjectsPage() {
 
 	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
 	const tableMeta: ObjectsTableMeta = useMemo(
-		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order }),
-		[handleSort, sort, order],
+		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order, unreadObjectIds }),
+		[handleSort, sort, order, unreadObjectIds],
 	)
 
 	// Columns — stable across sort changes since sort state is in meta
@@ -240,6 +257,7 @@ function ObjectsPage() {
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
 				actors={actors}
+				currentActorId={actor?.id}
 				sort={sort}
 				onSortChange={(value) => updateSearch({ sort: value })}
 				order={order}

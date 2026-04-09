@@ -14,6 +14,7 @@ export interface ObjectsTableMeta {
 	onSort: (columnId: string) => void
 	currentSort: string
 	currentOrder: 'asc' | 'desc'
+	unreadObjectIds?: Set<string>
 }
 
 interface ColumnOptions {
@@ -104,16 +105,24 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		{
 			accessorKey: 'title',
 			header: sortableHeader('Title', 'title'),
-			cell: ({ row }) => (
-				<div className="flex items-center gap-2">
-					<span className="font-medium truncate max-w-[300px]">
-						{row.getValue('title') || 'Untitled'}
-					</span>
-					{row.original.activeSessionId && (
-						<AgentWorkingBadge sessionId={row.original.activeSessionId} workspaceId={workspaceId} />
-					)}
-				</div>
-			),
+			cell: ({ row, table }) => {
+				const meta = table.options.meta as ObjectsTableMeta | undefined
+				const isUnread = meta?.unreadObjectIds?.has(row.original.id) ?? false
+				return (
+					<div className="flex items-center gap-2">
+						{isUnread && <span className="h-2 w-2 rounded-full bg-accent shrink-0" />}
+						<span className="font-medium truncate max-w-[300px]">
+							{row.getValue('title') || 'Untitled'}
+						</span>
+						{row.original.activeSessionId && (
+							<AgentWorkingBadge
+								sessionId={row.original.activeSessionId}
+								workspaceId={workspaceId}
+							/>
+						)}
+					</div>
+				)
+			},
 			enableHiding: false,
 		},
 		{
