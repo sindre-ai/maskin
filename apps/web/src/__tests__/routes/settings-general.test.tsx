@@ -67,8 +67,8 @@ describe('GeneralPage', () => {
 
 	it('disables Save button when name matches current workspace name', () => {
 		render(<GeneralPage />)
-		const saveButton = screen.getByRole('button', { name: 'Save' })
-		expect(saveButton).toBeDisabled()
+		const saveButtons = screen.getAllByRole('button', { name: 'Save' })
+		expect(saveButtons[0]).toBeDisabled()
 	})
 
 	it('enables Save button when name is changed', async () => {
@@ -77,7 +77,8 @@ describe('GeneralPage', () => {
 		const input = screen.getByDisplayValue('My Workspace')
 		await user.clear(input)
 		await user.type(input, 'New Name')
-		expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+		const saveButtons = screen.getAllByRole('button', { name: 'Save' })
+		expect(saveButtons[0]).toBeEnabled()
 	})
 
 	it('calls updateWorkspace.mutate with new name on save', async () => {
@@ -86,7 +87,8 @@ describe('GeneralPage', () => {
 		const input = screen.getByDisplayValue('My Workspace')
 		await user.clear(input)
 		await user.type(input, 'New Name')
-		await user.click(screen.getByRole('button', { name: 'Save' }))
+		const saveButtons = screen.getAllByRole('button', { name: 'Save' })
+		await user.click(saveButtons[0])
 		expect(mockMutate).toHaveBeenCalledWith({ name: 'New Name' })
 	})
 

@@ -17,6 +17,7 @@ const customExtensionEntrySchema = z.object({
 export type CustomExtensionEntry = z.infer<typeof customExtensionEntrySchema>
 
 export const workspaceSettingsSchema = z.object({
+	logo_url: z.string().url().optional(),
 	display_names: z.record(z.string()).default({
 		insight: 'Insight',
 		bet: 'Bet',

@@ -46,6 +46,10 @@ vi.mock('@/components/layout/nav-user', () => ({
 	NavUser: () => <div data-testid="nav-user">NavUser</div>,
 }))
 
+vi.mock('@/components/layout/workspace-switcher', () => ({
+	WorkspaceSwitcher: () => <div data-testid="workspace-switcher">WorkspaceSwitcher</div>,
+}))
+
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 
 describe('AppSidebar', () => {
@@ -66,6 +70,11 @@ describe('AppSidebar', () => {
 		vi.mocked(useEnabledModules).mockReturnValue([])
 		render(<AppSidebar />)
 		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
+	})
+
+	it('renders WorkspaceSwitcher in header', () => {
+		render(<AppSidebar />)
+		expect(screen.getByText('WorkspaceSwitcher')).toBeInTheDocument()
 	})
 
 	it('renders AgentPulse and NavUser in footer', () => {

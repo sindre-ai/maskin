@@ -19,6 +19,7 @@ import { Activity, Bot, Layers, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
+import { WorkspaceSwitcher } from './workspace-switcher'
 
 const coreNavItems = [
 	{ label: 'Pulse', to: '/$workspaceId' as const, exact: true, icon: Zap },
@@ -45,11 +46,12 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	return (
 		<Sidebar collapsible="icon" {...props}>
 			<SidebarHeader className="h-16 justify-center">
-				<SidebarMenu>
-					<SidebarMenuItem>
-						<SidebarTrigger />
-					</SidebarMenuItem>
-				</SidebarMenu>
+				<div className="flex items-center gap-2">
+					<div className="min-w-0 flex-1">
+						<WorkspaceSwitcher />
+					</div>
+					<SidebarTrigger className="shrink-0 group-data-[collapsible=icon]:hidden" />
+				</div>
 			</SidebarHeader>
 			<SidebarContent>
 				<SidebarGroup>
