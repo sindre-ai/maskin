@@ -641,4 +641,32 @@ describe('mapRowForType', () => {
 		expect(result).not.toBeNull()
 		expect(result?.title).toBe('John Doe')
 	})
+
+	it('uses last value for metadata when transforms produce non-strings', () => {
+		const row = { name: 'Test', score1: '10', score2: '20' }
+		const typeMapping = {
+			objectType: 'task' as const,
+			columns: [
+				{ sourceColumn: 'name', targetField: 'title', transform: 'none' as const, skip: false },
+				{
+					sourceColumn: 'score1',
+					targetField: 'metadata.score',
+					transform: 'number' as const,
+					skip: false,
+				},
+				{
+					sourceColumn: 'score2',
+					targetField: 'metadata.score',
+					transform: 'number' as const,
+					skip: false,
+				},
+			],
+			defaultStatus: 'todo',
+		}
+
+		const result = mapRowForType(row, typeMapping, defaultSettings)
+
+		expect(result).not.toBeNull()
+		expect(result?.metadata.score).toBe(20)
+	})
 })

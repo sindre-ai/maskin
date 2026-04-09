@@ -310,6 +310,8 @@ export function mapRowForType(
 		} else if (col.targetField.startsWith('metadata.')) {
 			const fieldName = col.targetField.slice('metadata.'.length)
 			const transformed = applyTransform(value, col.transform)
+			// Only concatenate when both values are strings — transforms can produce
+			// numbers/booleans where concatenation doesn't make sense (last value wins).
 			if (
 				metadata[fieldName] !== undefined &&
 				typeof metadata[fieldName] === 'string' &&
