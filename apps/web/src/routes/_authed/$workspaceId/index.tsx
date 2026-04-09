@@ -1,10 +1,13 @@
+import { PageHeader } from '@/components/layout/page-header'
 import { PulseCard } from '@/components/pulse/pulse-card'
 import { PulseFilters } from '@/components/pulse/pulse-filters'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import {
+	useDismissAllNotifications,
 	useNotifications,
 	useRespondNotification,
 	useUpdateNotification,
@@ -13,6 +16,7 @@ import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { resolveNavigationPath } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { XCircle } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -29,6 +33,7 @@ function PulseDashboard() {
 	const { data: actors } = useActors(workspaceId)
 	const updateNotification = useUpdateNotification(workspaceId)
 	const respondNotification = useRespondNotification(workspaceId)
+	const dismissAllNotifications = useDismissAllNotifications(workspaceId)
 	const navigate = useNavigate()
 	const [activeFilter, setActiveFilter] = useState('all')
 
@@ -88,10 +93,33 @@ function PulseDashboard() {
 		)
 	}
 
+	const handleDismissAll = () => {
+		dismissAllNotifications.mutate(undefined, {
+			onError: () => {
+				toast.error('Failed to dismiss all. Please try again.')
+			},
+		})
+	}
+
 	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length
 
 	return (
 		<div>
+			<PageHeader
+				actions={
+					activeNotifications.length > 0 ? (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={handleDismissAll}
+							disabled={dismissAllNotifications.isPending}
+						>
+							<XCircle />
+							Dismiss all
+						</Button>
+					) : undefined
+				}
+			/>
 			<p className="text-sm text-muted-foreground pb-6">
 				{pendingCount > 0
 					? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`

@@ -350,6 +350,71 @@ app.openapi(respondNotificationRoute, (async (c) => {
 	return c.json(serialize(updated) as z.infer<typeof notificationResponseSchema>)
 }) as RouteHandler<typeof respondNotificationRoute, Env>)
 
+// POST /api/notifications/dismiss-all
+const dismissAllNotificationsRoute = createRoute({
+	method: 'post',
+	path: '/dismiss-all',
+	tags: ['Notifications'],
+	summary: 'Dismiss all pending/seen notifications in workspace',
+	request: {
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'All notifications dismissed',
+			content: {
+				'application/json': {
+					schema: z.object({ dismissed: z.number() }),
+				},
+			},
+		},
+		400: {
+			description: 'Missing workspace ID',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(dismissAllNotificationsRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	const updated = await db
+		.update(notifications)
+		.set({ status: 'dismissed', updatedAt: new Date() })
+		.where(
+			and(
+				eq(notifications.workspaceId, workspaceId),
+				inArray(notifications.status, ['pending', 'seen']),
+			),
+		)
+		.returning({ id: notifications.id })
+
+	if (updated.length > 0) {
+		await db.insert(events).values(
+			updated.map((n) => ({
+				workspaceId,
+				actorId,
+				action: 'updated' as const,
+				entityType: 'notification' as const,
+				entityId: n.id,
+				data: { bulk_dismiss: true, count: updated.length },
+			})),
+		)
+	}
+
+	return c.json({ dismissed: updated.length })
+}) as RouteHandler<typeof dismissAllNotificationsRoute, Env>)
+
 // DELETE /api/notifications/:id
 const deleteNotificationRoute = createRoute({
 	method: 'delete',

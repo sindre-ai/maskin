@@ -201,6 +201,52 @@ describe('Notifications Routes', () => {
 		})
 	})
 
+	describe('POST /api/notifications/dismiss-all', () => {
+		it('dismisses all pending/seen notifications and returns count', async () => {
+			const n1 = buildNotification({ workspaceId: wsId, status: 'pending' })
+			const n2 = buildNotification({ workspaceId: wsId, status: 'seen' })
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			// First select: membership check
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			mockResults.update = [{ id: n1.id }, { id: n2.id }]
+			mockResults.insert = []
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/notifications/dismiss-all', undefined, headers),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.dismissed).toBe(2)
+		})
+
+		it('returns 0 when no notifications to dismiss', async () => {
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			mockResults.update = []
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/notifications/dismiss-all', undefined, headers),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.dismissed).toBe(0)
+		})
+
+		it('returns 403 when actor is not a workspace member', async () => {
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			// Membership check returns empty
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/notifications/dismiss-all', undefined, headers),
+			)
+
+			expect(res.status).toBe(403)
+		})
+	})
+
 	describe('Workspace membership enforcement', () => {
 		it('GET /:id returns 404 when actor is not a workspace member', async () => {
 			const notification = buildNotification({ workspaceId: wsId })

@@ -87,6 +87,44 @@ export function useObjectNotifications(workspaceId: string, objectId: string) {
 	})
 }
 
+export function useDismissAllNotifications(workspaceId: string) {
+	const queryClient = useQueryClient()
+
+	return useMutation({
+		mutationFn: () => api.notifications.dismissAll(workspaceId),
+		onMutate: async () => {
+			await queryClient.cancelQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
+
+			const previousQueries: [readonly unknown[], NotificationResponse[] | undefined][] = []
+			const queries = queryClient.getQueriesData<NotificationResponse[]>({
+				queryKey: queryKeys.notifications.all(workspaceId),
+			})
+			for (const [key, existing] of queries) {
+				if (existing) {
+					previousQueries.push([key, existing])
+					queryClient.setQueryData(
+						key,
+						existing.map((n) =>
+							n.status === 'pending' || n.status === 'seen'
+								? { ...n, status: 'dismissed' as const }
+								: n,
+						),
+					)
+				}
+			}
+			return { previousQueries }
+		},
+		onError: (_err, _vars, context) => {
+			for (const [key, data] of context?.previousQueries ?? []) {
+				queryClient.setQueryData(key, data)
+			}
+		},
+		onSettled: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
+		},
+	})
+}
+
 export function useDeleteNotification(workspaceId: string) {
 	const queryClient = useQueryClient()
 

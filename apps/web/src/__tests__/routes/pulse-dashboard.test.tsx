@@ -1,10 +1,12 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { buildNotificationResponse } from '../factories'
 
 const mockUseNotifications = vi.fn()
 const mockUseActors = vi.fn()
+const mockDismissAllMutate = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -22,6 +24,7 @@ vi.mock('@/hooks/use-notifications', () => ({
 	useNotifications: (...args: unknown[]) => mockUseNotifications(...args),
 	useRespondNotification: () => ({ mutate: vi.fn() }),
 	useUpdateNotification: () => ({ mutate: vi.fn() }),
+	useDismissAllNotifications: () => ({ mutate: mockDismissAllMutate, isPending: false }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -52,6 +55,12 @@ vi.mock('@/components/shared/loading-skeleton', () => ({
 
 vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
+}))
+
+vi.mock('@/components/layout/page-header', () => ({
+	PageHeader: ({ actions }: { actions?: React.ReactNode }) => (
+		<div data-testid="page-header">{actions}</div>
+	),
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/index'
@@ -122,5 +131,27 @@ describe('PulseDashboard', () => {
 		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
 		render(<PulseDashboard />)
 		expect(screen.getByTestId('pulse-filters')).toBeInTheDocument()
+	})
+
+	it('shows dismiss all button when notifications exist', () => {
+		const notifications = [buildNotificationResponse({ id: 'n-1', status: 'pending' })]
+		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
+		render(<PulseDashboard />)
+		expect(screen.getByRole('button', { name: /dismiss all/i })).toBeInTheDocument()
+	})
+
+	it('hides dismiss all button when no notifications', () => {
+		mockUseNotifications.mockReturnValue({ data: [], isLoading: false })
+		render(<PulseDashboard />)
+		expect(screen.queryByRole('button', { name: /dismiss all/i })).not.toBeInTheDocument()
+	})
+
+	it('calls dismiss all mutation on click', async () => {
+		const user = userEvent.setup()
+		const notifications = [buildNotificationResponse({ id: 'n-1', status: 'pending' })]
+		mockUseNotifications.mockReturnValue({ data: notifications, isLoading: false })
+		render(<PulseDashboard />)
+		await user.click(screen.getByRole('button', { name: /dismiss all/i }))
+		expect(mockDismissAllMutate).toHaveBeenCalledTimes(1)
 	})
 })

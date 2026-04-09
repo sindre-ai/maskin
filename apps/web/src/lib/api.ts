@@ -201,6 +201,11 @@ export const api = {
 			}),
 		delete: (id: string) =>
 			request<{ deleted: boolean }>(`/notifications/${id}`, { method: 'DELETE' }),
+		dismissAll: (workspaceId: string) =>
+			request<{ dismissed: number }>('/notifications/dismiss-all', {
+				method: 'POST',
+				workspaceId,
+			}),
 	},
 
 	skills: {
