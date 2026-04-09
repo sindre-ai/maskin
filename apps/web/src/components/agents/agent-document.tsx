@@ -181,7 +181,7 @@ export function AgentDocumentView({
 				<TypeBadge type="agent" />
 				<span className="flex items-center gap-1.5 text-xs">
 					<span
-						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
+						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-muted-foreground'}`}
 					/>
 					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
 				</span>
@@ -356,7 +356,7 @@ function ActiveSessionCard({
 	const duration = useDuration(session.startedAt)
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2">
+		<div className="flex items-center gap-2.5 rounded-md border border-border bg-muted px-3 py-2">
 			<Spinner />
 			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
 			{latestLog && (
@@ -434,7 +434,7 @@ function SessionRow({
 						</button>
 						<button
 							type="button"
-							className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer"
+							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
 							onClick={() =>
 								createSession.mutate({
 									actor_id: agentId,

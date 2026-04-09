@@ -172,7 +172,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 						placeholder="Comment or instruct an agent..."
 						rows={1}
 						className={cn(
-							'w-full resize-none rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border-focus',
+							'w-full resize-none rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring',
 							compact && 'text-xs py-1.5 px-2',
 						)}
 						style={{ minHeight: compact ? '32px' : '38px' }}

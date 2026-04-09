@@ -18,7 +18,7 @@ export function ActorAvatar({
 		<span
 			className={cn(
 				'inline-flex items-center justify-center rounded-full font-medium',
-				isAgent ? 'bg-primary/20 text-primary' : 'bg-zinc-700 text-zinc-300',
+				isAgent ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
 				sizeClasses,
 				className,
 			)}

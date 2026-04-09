@@ -154,7 +154,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 
 				{/* Agent suggestion */}
 				{suggestion && (
-					<div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+					<div className="rounded-md bg-muted p-3 text-sm text-foreground">
 						<MarkdownContent content={suggestion} />
 					</div>
 				)}

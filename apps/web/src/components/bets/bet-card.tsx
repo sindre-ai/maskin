@@ -30,13 +30,13 @@ export function BetCard({
 				<span>
 					{insightCount} insight{insightCount !== 1 ? 's' : ''}
 				</span>
-				<span className="text-border">·</span>
+				<span className="text-muted-foreground">·</span>
 				<span>
 					{taskCount} task{taskCount !== 1 ? 's' : ''}
 				</span>
 				{bet.updatedAt && (
 					<>
-						<span className="text-border">·</span>
+						<span className="text-muted-foreground">·</span>
 						<RelativeTime date={bet.updatedAt} />
 					</>
 				)}

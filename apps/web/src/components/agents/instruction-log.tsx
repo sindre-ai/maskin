@@ -201,7 +201,7 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 			<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
 				Instruction Log
 			</h3>
-			<div className="rounded-md border border-border bg-surface/50">
+			<div className="rounded-md border border-border bg-card">
 				{/* Messages area */}
 				{messages.length > 0 && (
 					<div className="max-h-[400px] overflow-y-auto p-3 space-y-3">
@@ -227,7 +227,7 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 						type="button"
 						onClick={handleSend}
 						disabled={!input.trim() || isStreaming}
-						className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+						className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
 					>
 						<SendHorizontal size={16} />
 					</button>
@@ -241,7 +241,7 @@ function MessageBubble({ message }: { message: Message }) {
 	if (message.role === 'user') {
 		return (
 			<div className="flex justify-end">
-				<div className="max-w-[80%] rounded-lg bg-accent/10 px-3 py-2 text-sm">
+				<div className="max-w-[80%] rounded-lg bg-primary/10 px-3 py-2 text-sm">
 					{message.content}
 				</div>
 			</div>
@@ -251,7 +251,7 @@ function MessageBubble({ message }: { message: Message }) {
 	// Agent message
 	return (
 		<div className="flex justify-start">
-			<div className="max-w-[80%] rounded-lg bg-secondary/50 px-3 py-2 text-sm">
+			<div className="max-w-[80%] rounded-lg bg-muted px-3 py-2 text-sm">
 				{message.status === 'streaming' && message.logs.length === 0 && (
 					<span className="flex items-center gap-2 text-muted-foreground">
 						<Spinner />

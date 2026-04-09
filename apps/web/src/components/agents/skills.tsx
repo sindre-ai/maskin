@@ -110,7 +110,7 @@ function SkillCard({
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2">
 			<BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground">{skill.name}</p>
@@ -221,7 +221,7 @@ function SkillForm({
 	}
 
 	return (
-		<div className="rounded-md border border-border bg-bg-surface p-3 space-y-2">
+		<div className="rounded-md border border-border bg-card p-3 space-y-2">
 			<div className="flex gap-2">
 				<div className="flex-1">
 					<Label>Name</Label>

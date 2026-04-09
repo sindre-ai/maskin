@@ -239,7 +239,7 @@ function ServerCard({
 		: Object.keys(server.env ?? {}).length
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2">
 			{http ? (
 				<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
 			) : (
@@ -250,7 +250,7 @@ function ServerCard({
 				<p className="text-xs text-muted-foreground truncate">
 					{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
 					{detailCount > 0 && (
-						<span className="ml-2 text-text-muted">
+						<span className="ml-2 text-muted-foreground">
 							{detailCount} {http ? 'header' : 'env var'}
 							{detailCount > 1 ? 's' : ''}
 						</span>
@@ -354,7 +354,7 @@ function ServerForm({
 	}
 
 	return (
-		<div className="rounded-md border border-border bg-bg-surface p-3 space-y-2">
+		<div className="rounded-md border border-border bg-card p-3 space-y-2">
 			<div className="flex gap-2">
 				<div className="flex-1">
 					<Label>Name</Label>

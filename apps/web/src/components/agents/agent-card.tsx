@@ -27,8 +27,8 @@ export function AgentCard({
 			to="/$workspaceId/agents/$agentId"
 			params={{ workspaceId, agentId: agent.id }}
 			className={cn(
-				'block rounded-lg border bg-card p-4 shadow-md transition-colors hover:border-border-hover',
-				status === 'working' && 'border-accent bg-accent/5',
+				'block rounded-lg border bg-card p-4 shadow-md transition-colors hover:border-ring',
+				status === 'working' && 'border-success bg-success/5',
 				status === 'failed' && 'border-error',
 				status === 'idle' && 'border-border',
 			)}
@@ -55,11 +55,14 @@ export function AgentCard({
 
 function StatusIndicator({ status }: { status: AgentStatus }) {
 	if (status === 'working') {
-		return <Spinner className="size-3 text-accent" />
+		return <Spinner className="size-3 text-success" />
 	}
 	return (
 		<span
-			className={cn('h-1.5 w-1.5 rounded-full', status === 'failed' ? 'bg-error' : 'bg-text-muted')}
+			className={cn(
+				'h-1.5 w-1.5 rounded-full',
+				status === 'failed' ? 'bg-error' : 'bg-muted-foreground',
+			)}
 		/>
 	)
 }
@@ -69,7 +72,7 @@ function StatusLabel({ status }: { status: AgentStatus }) {
 		<span
 			className={cn(
 				'text-xs font-medium',
-				status === 'working' && 'text-accent',
+				status === 'working' && 'text-success',
 				status === 'failed' && 'text-error',
 				status === 'idle' && 'text-muted-foreground',
 			)}
@@ -120,7 +123,7 @@ function WorkingActivity({ session }: { session: SessionResponse }) {
 	const duration = useDuration(session.startedAt)
 
 	return (
-		<p className="text-xs text-accent truncate">
+		<p className="text-xs text-success truncate">
 			{session.actionPrompt}
 			{duration && ` · ${duration}`}
 		</p>

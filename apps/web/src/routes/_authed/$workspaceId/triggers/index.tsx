@@ -61,7 +61,7 @@ function TriggerRow({
 			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
 		>
 			<span
-				className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
+				className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 			/>
 			<div className="flex-1">
 				<p className="text-sm font-medium text-foreground">{trigger.name}</p>

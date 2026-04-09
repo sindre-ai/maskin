@@ -23,7 +23,7 @@ export function AgentWorkingBadge({
 
 	if (variant === 'banner') {
 		return (
-			<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 mb-4">
+			<div className="flex items-center gap-2.5 rounded-md border border-border bg-muted px-3 py-2 mb-4">
 				<Spinner />
 				{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 				<span className="text-sm font-medium">{actor?.name ?? 'Agent working'}</span>
