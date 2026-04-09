@@ -282,6 +282,11 @@ export const api = {
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
 	},
 
+	metrics: {
+		get: () => request<MetricsResponse>('/metrics'),
+		public: () => request<PublicMetricsResponse>('/metrics/public'),
+	},
+
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
@@ -651,4 +656,40 @@ export interface RelationshipMappingInput {
 export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
+}
+
+// Metrics
+export interface MetricsResponse {
+	workspaces: {
+		total: number
+		daily: number
+		weekly: number
+	}
+	objects: {
+		total: number
+		byType: { type: string; count: number }[]
+		daily: number
+		weekly: number
+	}
+	agents: {
+		configured: number
+		sessionsRun: number
+		sessionsDaily: number
+		sessionsWeekly: number
+	}
+	agentHours: {
+		totalSeconds: number
+		weeklySeconds: number
+	}
+	integrations: {
+		connected: number
+		byProvider: { provider: string; count: number }[]
+	}
+}
+
+export interface PublicMetricsResponse {
+	workspacesCreated: number
+	agentSessionsRun: number
+	agentHoursThisWeek: number
+	objectsCreated: number
 }
