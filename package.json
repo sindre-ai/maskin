@@ -18,7 +18,7 @@
 		"db:seed": "turbo db:seed"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^1.9.0",
+		"@biomejs/biome": "^2.4.10",
 		"@types/node": "^25.5.0",
 		"@vitest/coverage-v8": "^3.2.4",
 		"dotenv-cli": "^11.0.0",
