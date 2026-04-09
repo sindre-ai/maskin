@@ -24,10 +24,21 @@ function GeneralPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const [name, setName] = useState(workspace.name)
+	const settings = workspace.settings as Record<string, unknown>
+	const [logoUrl, setLogoUrl] = useState((settings?.logo_url as string) ?? '')
 
 	const handleSave = () => {
 		if (name !== workspace.name) {
 			updateWorkspace.mutate({ name })
+		}
+	}
+
+	const handleSaveLogo = () => {
+		const currentLogoUrl = (settings?.logo_url as string) ?? ''
+		if (logoUrl !== currentLogoUrl) {
+			updateWorkspace.mutate({
+				settings: { ...settings, logo_url: logoUrl || undefined },
+			})
 		}
 	}
 
@@ -45,6 +56,30 @@ function GeneralPage() {
 					<Button
 						onClick={handleSave}
 						disabled={name === workspace.name || updateWorkspace.isPending}
+					>
+						Save
+					</Button>
+				</div>
+			</div>
+
+			<div className="border-t border-border pt-6">
+				<Label className="mb-1 text-muted-foreground">Workspace logo</Label>
+				<p className="mb-2 text-sm text-muted-foreground">
+					Enter a URL for your workspace logo. Leave empty to use the default.
+				</p>
+				<div className="flex gap-2">
+					<Input
+						type="url"
+						value={logoUrl}
+						onChange={(e) => setLogoUrl(e.target.value)}
+						placeholder="https://example.com/logo.png"
+						className="flex-1"
+					/>
+					<Button
+						onClick={handleSaveLogo}
+						disabled={
+							logoUrl === ((settings?.logo_url as string) ?? '') || updateWorkspace.isPending
+						}
 					>
 						Save
 					</Button>

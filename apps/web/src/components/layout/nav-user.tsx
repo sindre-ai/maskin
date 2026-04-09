@@ -4,9 +4,6 @@ import {
 	DropdownMenuItem,
 	DropdownMenuLabel,
 	DropdownMenuSeparator,
-	DropdownMenuSub,
-	DropdownMenuSubContent,
-	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -15,15 +12,13 @@ import {
 	SidebarMenuItem,
 	useSidebar,
 } from '@/components/ui/sidebar'
-import { useWorkspaces } from '@/hooks/use-workspaces'
 import { clearAuth, getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { ChevronsUpDown, LogOut, Settings, UserCircle } from 'lucide-react'
 
 export function NavUser() {
-	const { workspace, workspaceId } = useWorkspace()
-	const { data: workspaces } = useWorkspaces()
+	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const { isMobile, setOpenMobile } = useSidebar()
 	const actor = getStoredActor()
@@ -31,8 +26,6 @@ export function NavUser() {
 	const displayName = actor?.name ?? 'User'
 	const displayEmail = actor?.email ?? ''
 	const initial = displayName.charAt(0).toUpperCase()
-
-	const otherWorkspaces = workspaces?.filter((ws) => ws.id !== workspaceId) ?? []
 
 	return (
 		<SidebarMenu>
@@ -80,51 +73,6 @@ export function NavUser() {
 							<Settings className="mr-2 size-4" />
 							Settings
 						</DropdownMenuItem>
-						{otherWorkspaces.length > 0 &&
-							(isMobile ? (
-								<>
-									<DropdownMenuSeparator />
-									<DropdownMenuLabel className="text-xs text-muted-foreground">
-										Switch workspace
-									</DropdownMenuLabel>
-									{otherWorkspaces.map((ws) => (
-										<DropdownMenuItem
-											key={ws.id}
-											onClick={() =>
-												navigate({
-													to: '/$workspaceId',
-													params: { workspaceId: ws.id },
-												})
-											}
-										>
-											{ws.name}
-										</DropdownMenuItem>
-									))}
-								</>
-							) : (
-								<DropdownMenuSub>
-									<DropdownMenuSubTrigger>
-										<UserCircle className="mr-2 size-4" />
-										Switch workspace
-									</DropdownMenuSubTrigger>
-									<DropdownMenuSubContent className="min-w-48">
-										{otherWorkspaces.map((ws) => (
-											<DropdownMenuItem
-												key={ws.id}
-												onClick={() =>
-													navigate({
-														to: '/$workspaceId',
-														params: { workspaceId: ws.id },
-													})
-												}
-											>
-												{ws.name}
-											</DropdownMenuItem>
-										))}
-									</DropdownMenuSubContent>
-								</DropdownMenuSub>
-							))}
-
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							onClick={() => {
