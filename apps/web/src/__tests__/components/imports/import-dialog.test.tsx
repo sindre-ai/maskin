@@ -41,11 +41,16 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 const defaultMapping = {
-	objectType: 'bet',
-	columns: [
-		{ sourceColumn: 'name', targetField: 'title', transform: 'none' as const, skip: false },
-		{ sourceColumn: 'desc', targetField: 'content', transform: 'none' as const, skip: false },
+	typeMappings: [
+		{
+			objectType: 'bet',
+			columns: [
+				{ sourceColumn: 'name', targetField: 'title', transform: 'none' as const, skip: false },
+				{ sourceColumn: 'desc', targetField: 'content', transform: 'none' as const, skip: false },
+			],
+		},
 	],
+	relationships: [],
 }
 
 const defaultPreview = {
@@ -130,11 +135,10 @@ describe('ImportDialog', () => {
 		})
 	})
 
-	it('progress step shows progress bar', async () => {
+	it('closes dialog and calls onImportStarted when import is confirmed', async () => {
 		const importRecord = buildImportResponse({
-			status: 'importing',
+			id: 'imp-123',
 			totalRows: 10,
-			processedRows: 5,
 			mapping: defaultMapping,
 			preview: defaultPreview,
 		})
@@ -142,7 +146,13 @@ describe('ImportDialog', () => {
 		mockConfirmImportMutateAsync.mockResolvedValue(importRecord)
 		mockImportData = importRecord
 
-		render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+		const onOpenChange = vi.fn()
+		const onImportStarted = vi.fn()
+
+		render(
+			<ImportDialog open={true} onOpenChange={onOpenChange} onImportStarted={onImportStarted} />,
+			{ wrapper: TestWrapper },
+		)
 
 		// Upload file
 		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
@@ -150,84 +160,16 @@ describe('ImportDialog', () => {
 		await userEvent.upload(fileInput, file)
 
 		await waitFor(() => {
-			expect(screen.getByText(/Import 10 objects/)).toBeInTheDocument()
+			expect(screen.getByText(/Import 10 rows/)).toBeInTheDocument()
 		})
 
-		// Click import button to go to progress step
-		await userEvent.click(screen.getByText(/Import 10 objects/))
+		// Click import button
+		await userEvent.click(screen.getByText(/Import 10 rows/))
 
 		await waitFor(() => {
-			expect(screen.getByText('50%')).toBeInTheDocument()
-			expect(screen.getByText('Processing... 5/10')).toBeInTheDocument()
-		})
-	})
-
-	it('progress step shows success count on completion', async () => {
-		const completedImport = buildImportResponse({
-			status: 'completed',
-			totalRows: 10,
-			processedRows: 10,
-			successCount: 8,
-			errorCount: 2,
-			mapping: defaultMapping,
-			preview: defaultPreview,
-		})
-		mockCreateImportMutateAsync.mockResolvedValue(completedImport)
-		mockConfirmImportMutateAsync.mockResolvedValue(completedImport)
-		mockImportData = completedImport
-
-		render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
-
-		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
-		const file = new File(['test'], 'data.csv', { type: 'text/csv' })
-		await userEvent.upload(fileInput, file)
-
-		await waitFor(() => {
-			expect(screen.getByText(/Import 10 objects/)).toBeInTheDocument()
-		})
-
-		await userEvent.click(screen.getByText(/Import 10 objects/))
-
-		await waitFor(() => {
-			expect(screen.getByText('8 created')).toBeInTheDocument()
-			expect(screen.getByText('2 failed')).toBeInTheDocument()
-		})
-	})
-
-	it('progress step shows error details', async () => {
-		const importWithErrors = buildImportResponse({
-			status: 'completed',
-			totalRows: 10,
-			processedRows: 10,
-			successCount: 8,
-			errorCount: 2,
-			mapping: defaultMapping,
-			preview: defaultPreview,
-			errors: [
-				{ row: 2, message: 'Invalid type' },
-				{ row: 4, message: 'Missing title' },
-			],
-		})
-		mockCreateImportMutateAsync.mockResolvedValue(importWithErrors)
-		mockConfirmImportMutateAsync.mockResolvedValue(importWithErrors)
-		mockImportData = importWithErrors
-
-		render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
-
-		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
-		const file = new File(['test'], 'data.csv', { type: 'text/csv' })
-		await userEvent.upload(fileInput, file)
-
-		// The button text "Import 10 objects" may be split across elements
-		await waitFor(() => {
-			expect(screen.getByRole('button', { name: /Import.*10.*objects/ })).toBeInTheDocument()
-		})
-
-		await userEvent.click(screen.getByRole('button', { name: /Import.*10.*objects/ }))
-
-		await waitFor(() => {
-			expect(screen.getByText('Row 2: Invalid type')).toBeInTheDocument()
-			expect(screen.getByText('Row 4: Missing title')).toBeInTheDocument()
+			expect(mockConfirmImportMutateAsync).toHaveBeenCalledWith('imp-123')
+			expect(onImportStarted).toHaveBeenCalledWith('imp-123')
+			expect(onOpenChange).toHaveBeenCalledWith(false)
 		})
 	})
 
