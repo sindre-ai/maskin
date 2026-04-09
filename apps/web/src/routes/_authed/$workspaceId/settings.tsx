@@ -1,3 +1,5 @@
+import { OverscrollIndicator } from '@/components/shared/overscroll-indicator'
+import { useOverscrollNavigate } from '@/hooks/use-overscroll-navigate'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -19,8 +21,30 @@ function SettingsLayout() {
 	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 
+	// Iterate in reverse to prefer the most specific (deepest) fuzzy match
+	let currentIndex = -1
+	for (let i = settingsNav.length - 1; i >= 0; i--) {
+		const item = settingsNav[i]
+		const matches = item.exact
+			? !!matchRoute({ to: item.to, params: { workspaceId } })
+			: !!matchRoute({ to: item.to, params: { workspaceId }, fuzzy: true })
+		if (matches) {
+			currentIndex = i
+			break
+		}
+	}
+
+	const overscroll = useOverscrollNavigate(settingsNav, currentIndex, workspaceId)
+
 	return (
 		<div className="mx-auto w-full max-w-4xl">
+			{overscroll.direction === 'prev' && overscroll.targetLabel && (
+				<OverscrollIndicator
+					direction="prev"
+					progress={overscroll.progress}
+					targetLabel={overscroll.targetLabel}
+				/>
+			)}
 			<h1 className="text-lg font-semibold text-foreground mb-6">Settings</h1>
 			<div className="flex flex-col md:flex-row gap-6 md:gap-8">
 				<nav className="md:w-48 md:shrink-0">
@@ -52,6 +76,13 @@ function SettingsLayout() {
 					<Outlet />
 				</div>
 			</div>
+			{overscroll.direction === 'next' && overscroll.targetLabel && (
+				<OverscrollIndicator
+					direction="next"
+					progress={overscroll.progress}
+					targetLabel={overscroll.targetLabel}
+				/>
+			)}
 		</div>
 	)
 }
