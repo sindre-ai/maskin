@@ -537,7 +537,7 @@ export class SessionManager extends EventEmitter {
 			image: (sessionConfig.base_image as string) ?? 'agent-base:latest',
 			name,
 			env: envVars,
-			memoryMb: (sessionConfig.memory_mb as number) ?? 1024,
+			memoryMb: (sessionConfig.memory_mb as number) ?? 8192,
 			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
 			binds: [`${tempDir}:/agent:rw`],
 		})

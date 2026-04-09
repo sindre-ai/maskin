@@ -20,7 +20,7 @@
 		"@maskin/realtime": "workspace:*",
 		"@maskin/storage": "workspace:*",
 		"@hono/zod-openapi": "^0.18.0",
-		"hono": "^4.7.0",
+		"hono": "^4.12.12",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {

@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
-import { events, imports, objects } from '@maskin/db/schema'
-import type { ImportMapping } from '@maskin/shared'
+import { events, imports, objects, relationships } from '@maskin/db/schema'
+import type { ImportMapping, TypeMapping } from '@maskin/shared'
 import { parse } from 'csv-parse/sync'
 import { eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
@@ -25,8 +25,14 @@ export interface ImportError {
 }
 
 export interface ImportResult {
+	/** Number of objects created (can exceed totalRows when multiple type mappings produce objects per row) */
 	successCount: number
+	/** Number of row-level errors during object creation */
 	errorCount: number
+	/** Number of relationships created in Pass 2 */
+	relationshipCount: number
+	/** Number of relationship-level errors */
+	relationshipErrorCount: number
 	errors: ImportError[]
 }
 
@@ -107,7 +113,6 @@ const RESERVED_ALIASES: Record<string, string[]> = {
 	title: ['title', 'name', 'subject', 'heading'],
 	content: ['content', 'description', 'notes', 'body', 'details', 'summary'],
 	status: ['status', 'state', 'stage'],
-	type: ['type', 'record_type', 'category', 'kind', 'object_type'],
 	owner: ['owner', 'assigned_to', 'assignee', 'responsible'],
 }
 
@@ -118,20 +123,14 @@ function normalize(s: string): string {
 		.replace(/[\s-]+/g, '_')
 }
 
-function getColumnValues(rows: Record<string, string>[], col: string): string[] {
-	return rows.map((r) => r[col] ?? '').filter((v) => v !== '')
-}
-
 export function generateMapping(
 	columns: string[],
 	sampleRows: Record<string, string>[],
 	settings: WorkspaceSettings,
 ): ImportMapping {
-	const mappedColumns: ImportMapping['columns'] = []
+	const mappedColumns: TypeMapping['columns'] = []
 	const usedTargets = new Set<string>()
 
-	// Detect type column and resolve object type
-	let detectedObjectType: ImportMapping['objectType'] | undefined
 	const validTypes = Object.keys(settings.statuses ?? {})
 
 	// Phase 1: Match reserved fields
@@ -140,40 +139,14 @@ export function generateMapping(
 
 		for (const [targetField, aliases] of Object.entries(RESERVED_ALIASES)) {
 			if (aliases.includes(norm) && !usedTargets.has(targetField)) {
-				if (targetField === 'type') {
-					// Check if values match known types
-					const sampleValues = getColumnValues(sampleRows, col).map((v) => normalize(v))
-					const matchingTypes = sampleValues.filter((v) => validTypes.includes(v))
-					if (matchingTypes.length > 0) {
-						// Build type map from sample values
-						const uniqueValues = [...new Set(getColumnValues(sampleRows, col))]
-						const typeMap: Record<string, string> = {}
-						for (const val of uniqueValues) {
-							const normVal = normalize(val)
-							if (validTypes.includes(normVal)) {
-								typeMap[val] = normVal
-							}
-						}
-						detectedObjectType = { column: col, typeMap }
-						mappedColumns.push({
-							sourceColumn: col,
-							targetField: 'type',
-							transform: 'none' as const,
-							skip: false,
-						})
-						usedTargets.add('type')
-						break
-					}
-				} else {
-					mappedColumns.push({
-						sourceColumn: col,
-						targetField,
-						transform: 'none' as const,
-						skip: false,
-					})
-					usedTargets.add(targetField)
-					break
-				}
+				mappedColumns.push({
+					sourceColumn: col,
+					targetField,
+					transform: 'none' as const,
+					skip: false,
+				})
+				usedTargets.add(targetField)
+				break
 			}
 		}
 	}
@@ -219,7 +192,7 @@ export function generateMapping(
 			// Check if sample values match an enum field
 			for (const [fieldName, fieldInfo] of allFields) {
 				if (fieldInfo.type === 'enum' && fieldInfo.values && fieldInfo.values.length > 0) {
-					const sampleValues = getColumnValues(sampleRows, col).map((v) => v.toLowerCase())
+					const sampleValues = sampleRows.map((r) => (r[col] ?? '').toLowerCase()).filter(Boolean)
 					const enumValues = fieldInfo.values.map((v) => v.toLowerCase())
 					const overlap = sampleValues.filter((v) => enumValues.includes(v))
 					if (overlap.length > 0 && overlap.length >= sampleValues.length * 0.5) {
@@ -264,20 +237,19 @@ export function generateMapping(
 		}
 	}
 
-	// Determine object type if not detected from a column
-	if (!detectedObjectType) {
-		// Default to first valid type
-		detectedObjectType = validTypes[0] ?? 'insight'
-	}
-
-	// Determine default status
-	const staticType = typeof detectedObjectType === 'string' ? detectedObjectType : undefined
-	const defaultStatus = staticType ? (settings.statuses?.[staticType]?.[0] ?? undefined) : undefined
+	// Default to first valid type
+	const objectType = validTypes[0] ?? 'insight'
+	const defaultStatus = settings.statuses?.[objectType]?.[0] ?? undefined
 
 	return {
-		objectType: detectedObjectType,
-		columns: mappedColumns,
-		defaultStatus,
+		typeMappings: [
+			{
+				objectType,
+				columns: mappedColumns,
+				defaultStatus,
+			},
+		],
+		relationships: [],
 	}
 }
 
@@ -307,30 +279,26 @@ function applyTransform(value: string, transform: string): string | number | boo
 	return value
 }
 
-function mapRow(
+function mapRowForType(
 	row: Record<string, string>,
-	mapping: ImportMapping,
+	typeMapping: TypeMapping,
 	settings: WorkspaceSettings,
-): MappedRow {
-	let type: string
-	if (typeof mapping.objectType === 'string') {
-		type = mapping.objectType
-	} else {
-		const rawType = row[mapping.objectType.column] ?? ''
-		type = mapping.objectType.typeMap[rawType] ?? rawType
-	}
+): MappedRow | null {
+	const type = typeMapping.objectType
 
 	let title: string | undefined
 	let content: string | undefined
 	let status: string | undefined
 	let owner: string | undefined
 	const metadata: Record<string, unknown> = {}
+	let hasValue = false
 
-	for (const col of mapping.columns) {
+	for (const col of typeMapping.columns) {
 		if (col.skip) continue
 		const value = row[col.sourceColumn]
 		if (value === undefined || value === '') continue
 
+		hasValue = true
 		if (col.targetField === 'title') {
 			title = value
 		} else if (col.targetField === 'content') {
@@ -339,17 +307,20 @@ function mapRow(
 			status = value
 		} else if (col.targetField === 'owner') {
 			owner = value
-		} else if (col.targetField === 'type') {
-			// Already handled via objectType
 		} else if (col.targetField.startsWith('metadata.')) {
 			const fieldName = col.targetField.slice('metadata.'.length)
 			metadata[fieldName] = applyTransform(value, col.transform)
 		}
 	}
 
+	// Skip this type for this row if no non-skipped columns had values
+	if (!hasValue) return null
+	// Must have at least a title or content
+	if (!title && !content) return null
+
 	// Fall back to default status
 	if (!status) {
-		status = mapping.defaultStatus ?? settings.statuses?.[type]?.[0] ?? 'new'
+		status = typeMapping.defaultStatus ?? settings.statuses?.[type]?.[0] ?? 'new'
 	}
 
 	return { type, title, content, status, metadata, owner }
@@ -366,35 +337,37 @@ export async function executeImport(
 ): Promise<ImportResult> {
 	let successCount = 0
 	let errorCount = 0
+	let relationshipCount = 0
+	let relationshipErrorCount = 0
 	const errors: ImportError[] = []
 
+	const relDefs = mapping.relationships ?? []
+	// Track (rowIndex, objectType) → created object ID for relationship pass
+	const rowTypeToObjectId = new Map<string, string>()
+
+	// ── Pass 1: Create objects ──────────────────────────────────────────
 	for (let i = 0; i < rows.length; i += BATCH_SIZE) {
 		const batch = rows.slice(i, i + BATCH_SIZE)
 		const batchErrors: ImportError[] = []
 
-		// Phase 1: Validate and map rows before the transaction
-		const validRows: { rowIndex: number; mapped: MappedRow }[] = []
+		const validRows: { rowIndex: number; typeMapping: TypeMapping; mapped: MappedRow }[] = []
 		for (let j = 0; j < batch.length; j++) {
-			const rowIndex = i + j + 1 // 1-based
+			const rowIndex = i + j // 0-based internally; +1 for user-facing error messages
 			const row = batch[j]
 			if (!row) continue
 
-			const mapped = mapRow(row, mapping, settings)
-			if (!mapped.title && !mapped.content) {
-				batchErrors.push({
-					row: rowIndex,
-					message: 'Row has no title or content',
-				})
-				continue
+			for (const typeMapping of mapping.typeMappings) {
+				const mapped = mapRowForType(row, typeMapping, settings)
+				if (mapped) {
+					validRows.push({ rowIndex, typeMapping, mapped })
+				}
 			}
-			validRows.push({ rowIndex, mapped })
 		}
 
-		// Phase 2: Bulk insert all valid rows in a single transaction
 		if (validRows.length > 0) {
 			try {
-				await db.transaction(async (tx) => {
-					const createdObjects = await tx
+				const createdObjects = await db.transaction(async (tx) => {
+					const created = await tx
 						.insert(objects)
 						.values(
 							validRows.map(({ mapped }) => ({
@@ -410,9 +383,9 @@ export async function executeImport(
 						)
 						.returning()
 
-					if (createdObjects.length > 0) {
+					if (created.length > 0) {
 						await tx.insert(events).values(
-							createdObjects.map((obj) => ({
+							created.map((obj) => ({
 								workspaceId,
 								actorId,
 								action: 'created' as const,
@@ -422,13 +395,25 @@ export async function executeImport(
 							})),
 						)
 					}
+					return created
 				})
-				successCount += validRows.length
+
+				// Index created objects for relationship matching
+				for (let k = 0; k < validRows.length; k++) {
+					const validRow = validRows[k]
+					const obj = createdObjects[k]
+					if (!validRow || !obj) continue
+
+					const key = `${validRow.rowIndex}::${obj.type}`
+					rowTypeToObjectId.set(key, obj.id)
+				}
+
+				successCount += createdObjects.length
 			} catch (err) {
-				// Entire batch transaction failed — all valid rows in this batch are errors
-				for (const { rowIndex } of validRows) {
+				const uniqueRows = [...new Set(validRows.map(({ rowIndex }) => rowIndex))]
+				for (const rowIndex of uniqueRows) {
 					batchErrors.push({
-						row: rowIndex,
+						row: rowIndex + 1,
 						message: `Batch failed: ${err instanceof Error ? err.message : String(err)}`,
 					})
 				}
@@ -438,7 +423,6 @@ export async function executeImport(
 		errorCount += batchErrors.length
 		errors.push(...batchErrors)
 
-		// Update progress on the import row
 		await db
 			.update(imports)
 			.set({
@@ -451,12 +435,102 @@ export async function executeImport(
 			.where(eq(imports.id, importId))
 	}
 
+	// ── Pass 2: Create relationships ────────────────────────────────────
+	if (relDefs.length > 0 && rowTypeToObjectId.size > 0) {
+		const relBatch: {
+			sourceType: string
+			sourceId: string
+			targetType: string
+			targetId: string
+			type: string
+		}[] = []
+		const seen = new Set<string>()
+
+		for (let i = 0; i < rows.length; i++) {
+			for (const relDef of relDefs) {
+				const sourceKey = `${i}::${relDef.sourceType}`
+				const targetKey = `${i}::${relDef.targetType}`
+				const sourceId = rowTypeToObjectId.get(sourceKey)
+				const targetId = rowTypeToObjectId.get(targetKey)
+				if (!sourceId || !targetId || sourceId === targetId) continue
+
+				const dedupKey = `${sourceId}::${targetId}::${relDef.relationshipType}`
+				if (seen.has(dedupKey)) continue
+				seen.add(dedupKey)
+
+				relBatch.push({
+					sourceType: relDef.sourceType,
+					sourceId,
+					targetType: relDef.targetType,
+					targetId,
+					type: relDef.relationshipType,
+				})
+			}
+		}
+
+		// Insert relationships in batches
+		for (let i = 0; i < relBatch.length; i += BATCH_SIZE) {
+			const batch = relBatch.slice(i, i + BATCH_SIZE)
+			try {
+				const created = await db
+					.insert(relationships)
+					.values(
+						batch.map((r) => ({
+							sourceType: r.sourceType,
+							sourceId: r.sourceId,
+							targetType: r.targetType,
+							targetId: r.targetId,
+							type: r.type,
+							createdBy: actorId,
+						})),
+					)
+					.onConflictDoNothing()
+					.returning()
+
+				relationshipCount += created.length
+
+				// Log relationship events
+				if (created.length > 0) {
+					await db.insert(events).values(
+						created.map((rel) => ({
+							workspaceId,
+							actorId,
+							action: 'created' as const,
+							entityType: 'relationship',
+							entityId: rel.id,
+							data: rel,
+						})),
+					)
+				}
+			} catch (err) {
+				const message = `Relationship batch failed: ${err instanceof Error ? err.message : String(err)}`
+				logger.error(message, { importId })
+				relationshipErrorCount += batch.length
+				errors.push({ row: -1, message })
+			}
+		}
+	}
+
+	// Update final counts after relationship pass
+	if (relDefs.length > 0) {
+		await db
+			.update(imports)
+			.set({
+				errorCount: errorCount + relationshipErrorCount,
+				errors: errors.length > 0 ? errors : undefined,
+				updatedAt: new Date(),
+			})
+			.where(eq(imports.id, importId))
+	}
+
 	logger.info('Import execution completed', {
 		importId,
 		successCount,
 		errorCount,
+		relationshipCount,
+		relationshipErrorCount,
 		totalRows: rows.length,
 	})
 
-	return { successCount, errorCount, errors }
+	return { successCount, errorCount, relationshipCount, relationshipErrorCount, errors }
 }

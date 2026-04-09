@@ -24,7 +24,7 @@
 		"@maskin/shared": "workspace:*",
 		"bcryptjs": "^3.0.3",
 		"drizzle-orm": "^0.38.0",
-		"hono": "^4.7.0"
+		"hono": "^4.12.12"
 	},
 	"devDependencies": {
 		"@types/bcryptjs": "^3.0.0",
