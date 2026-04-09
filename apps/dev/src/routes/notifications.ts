@@ -372,6 +372,10 @@ const dismissAllNotificationsRoute = createRoute({
 			description: 'Missing workspace ID',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		403: {
+			description: 'Not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -379,6 +383,10 @@ app.openapi(dismissAllNotificationsRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
 
 	const updated = await db
 		.update(notifications)
@@ -392,14 +400,16 @@ app.openapi(dismissAllNotificationsRoute, (async (c) => {
 		.returning({ id: notifications.id })
 
 	if (updated.length > 0) {
-		await db.insert(events).values({
-			workspaceId,
-			actorId,
-			action: 'updated',
-			entityType: 'notification',
-			entityId: updated[0]?.id,
-			data: { bulk_dismiss: true, count: updated.length },
-		})
+		await db.insert(events).values(
+			updated.map((n) => ({
+				workspaceId,
+				actorId,
+				action: 'updated' as const,
+				entityType: 'notification' as const,
+				entityId: n.id,
+				data: { bulk_dismiss: true, count: updated.length },
+			})),
+		)
 	}
 
 	return c.json({ dismissed: updated.length })

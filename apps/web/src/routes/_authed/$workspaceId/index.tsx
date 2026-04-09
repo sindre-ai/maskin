@@ -114,7 +114,7 @@ function PulseDashboard() {
 							onClick={handleDismissAll}
 							disabled={dismissAllNotifications.isPending}
 						>
-							<XCircle className="h-4 w-4 mr-1.5" />
+							<XCircle />
 							Dismiss all
 						</Button>
 					) : undefined
