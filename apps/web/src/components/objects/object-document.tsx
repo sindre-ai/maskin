@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
+import { useDeleteObject, useToggleStar, useUpdateObject } from '@/hooks/use-objects'
 import { useObjectRelationships } from '@/hooks/use-relationships'
 import type { ActorResponse, EventResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -222,9 +222,11 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		})
 	}, [object.id, deleteObject, navigate, workspaceId])
 
+	const toggleStar = useToggleStar(workspaceId)
+
 	const handleToggleStar = useCallback(() => {
-		updateObject.mutate({ id: object.id, data: { isStarred: !object.isStarred } })
-	}, [object.id, object.isStarred, updateObject])
+		toggleStar.mutate({ id: object.id, isStarred: !object.isStarred })
+	}, [object.id, object.isStarred, toggleStar])
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
 

@@ -479,14 +479,14 @@ app.openapi(updateObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	// Log event
+	// Log event — status_changed takes priority over starred/unstarred
 	const action =
-		body.isStarred !== undefined && body.isStarred !== existing.isStarred
-			? body.isStarred
-				? 'starred'
-				: 'unstarred'
-			: body.status && body.status !== existing.status
-				? 'status_changed'
+		body.status && body.status !== existing.status
+			? 'status_changed'
+			: body.isStarred !== undefined && body.isStarred !== existing.isStarred
+				? body.isStarred
+					? 'starred'
+					: 'unstarred'
 				: 'updated'
 	await db.insert(events).values({
 		workspaceId: existing.workspaceId,

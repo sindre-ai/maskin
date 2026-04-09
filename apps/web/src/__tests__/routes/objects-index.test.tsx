@@ -88,7 +88,7 @@ vi.mock('@/hooks/use-imports', () => ({
 }))
 
 vi.mock('@/hooks/use-objects', () => ({
-	useUpdateObject: () => ({ mutate: vi.fn() }),
+	useToggleStar: () => ({ mutate: vi.fn() }),
 }))
 
 vi.mock('@/components/shared/route-error', () => ({

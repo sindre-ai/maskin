@@ -399,6 +399,42 @@ describe('Objects Routes', () => {
 		})
 	})
 
+	describe('PATCH /api/objects/:id - starring', () => {
+		it('returns 200 with isStarred true when starring an object', async () => {
+			const existing = buildObject({ isStarred: false })
+			const updated = { ...existing, isStarred: true }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}] // event insert
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { isStarred: true }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.isStarred).toBe(true)
+		})
+
+		it('returns 200 with isStarred false when unstarring an object', async () => {
+			const existing = buildObject({ isStarred: true })
+			const updated = { ...existing, isStarred: false }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}] // event insert
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { isStarred: false }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.isStarred).toBe(false)
+		})
+	})
+
 	describe('Workspace membership enforcement', () => {
 		it('GET /:id returns 404 when actor is not a workspace member', async () => {
 			const obj = buildObject()

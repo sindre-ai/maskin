@@ -10,7 +10,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
-import { useUpdateObject } from '@/hooks/use-objects'
+import { useToggleStar } from '@/hooks/use-objects'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -145,13 +145,13 @@ function ObjectsPage() {
 		[navigate, workspaceId],
 	)
 
-	const updateObject = useUpdateObject(workspaceId)
+	const toggleStar = useToggleStar(workspaceId)
 
 	const handleToggleStar = useCallback(
 		(id: string, isStarred: boolean) => {
-			updateObject.mutate({ id, data: { isStarred } })
+			toggleStar.mutate({ id, isStarred })
 		},
-		[updateObject],
+		[toggleStar],
 	)
 
 	// Sort handler for column headers
