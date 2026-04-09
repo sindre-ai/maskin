@@ -470,7 +470,7 @@ function MappingStep({
 					<div className="border-t px-3 py-2 space-y-2">
 						{localRelationships.map((rel, idx) => (
 							// biome-ignore lint/suspicious/noArrayIndexKey: relationships have no stable ID
-							<div key={idx} className="flex items-center gap-2 text-sm">
+							<div key={idx} className="flex flex-wrap items-center gap-2 text-sm">
 								<Select
 									value={rel.sourceType}
 									onValueChange={(v) => handleUpdateRelationship(idx, 'sourceType', v)}
