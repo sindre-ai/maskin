@@ -282,6 +282,11 @@ export const api = {
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
 	},
 
+	graph: {
+		create: (workspaceId: string, data: CreateGraphInput) =>
+			request<GraphResponse>('/graph', { method: 'POST', body: data, workspaceId }),
+	},
+
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
@@ -651,4 +656,31 @@ export interface RelationshipMappingInput {
 export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
+}
+
+// Graph
+export interface GraphNodeInput {
+	$id: string
+	type: string
+	title?: string
+	content?: string
+	status: string
+	metadata?: Record<string, unknown>
+	owner?: string
+}
+
+export interface GraphEdgeInput {
+	source: string
+	target: string
+	type: string
+}
+
+export interface CreateGraphInput {
+	nodes: GraphNodeInput[]
+	edges: GraphEdgeInput[]
+}
+
+export interface GraphResponse {
+	nodes: (ObjectResponse & { $id: string })[]
+	edges: RelationshipResponse[]
 }

@@ -7,7 +7,7 @@ import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { PageHeaderProvider } from '@/lib/page-header-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
-import { Outlet, createFileRoute } from '@tanstack/react-router'
+import { Navigate, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
@@ -47,6 +47,12 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
+	const matchRoute = useMatchRoute()
+	const isOnboardingRoute = matchRoute({
+		to: '/$workspaceId/onboarding',
+		params: { workspaceId },
+	})
+
 	const [open, setOpenState] = useState(getInitialOpen)
 
 	const setOpen = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
@@ -62,6 +68,21 @@ function WorkspaceLayout() {
 			<div className="flex min-h-screen items-center justify-center">
 				<p className="text-sm text-muted-foreground">Loading workspace...</p>
 			</div>
+		)
+	}
+
+	// Redirect to onboarding if not completed and not already on the onboarding page
+	const settings = workspace.settings as Record<string, unknown> | undefined
+	if (!settings?.onboarding_completed && !isOnboardingRoute) {
+		return <Navigate to="/$workspaceId/onboarding" params={{ workspaceId }} />
+	}
+
+	// If on onboarding page, render without sidebar/header chrome
+	if (isOnboardingRoute) {
+		return (
+			<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
+				<Outlet />
+			</WorkspaceContext.Provider>
 		)
 	}
 
