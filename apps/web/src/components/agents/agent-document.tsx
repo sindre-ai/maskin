@@ -20,6 +20,7 @@ import {
 	useCreateSession,
 	useSessionErrorLog,
 	useSessionLatestLog,
+	useSessionStdoutLogs,
 } from '@/hooks/use-sessions'
 import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { formatDurationBetween } from '@/lib/format-duration'
@@ -398,7 +399,9 @@ function SessionRow({
 }) {
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
+	const isTerminal = ['completed', 'failed', 'timeout'].includes(session.status)
 	const [showError, setShowError] = useState(false)
+	const [showLogs, setShowLogs] = useState(false)
 	const createSession = useCreateSession(workspaceId)
 
 	const result = session.result as Record<string, unknown> | null
@@ -412,6 +415,12 @@ function SessionRow({
 		showError && !hasResultError,
 	)
 
+	const { data: stdoutLogs, isLoading: logsLoading } = useSessionStdoutLogs(
+		session.id,
+		workspaceId,
+		showLogs,
+	)
+
 	const errorDetail =
 		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
 	const displayError = errorDetail ?? stderrLog
@@ -423,6 +432,15 @@ function SessionRow({
 				<span className={`text-sm truncate flex-1 ${isFailed ? 'text-error' : ''}`}>
 					{session.actionPrompt || 'Untitled session'}
 				</span>
+				{isTerminal && (
+					<button
+						type="button"
+						className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+						onClick={() => setShowLogs((v) => !v)}
+					>
+						{showLogs ? 'Hide Logs' : 'Logs'}
+					</button>
+				)}
 				{isFailed && (
 					<>
 						<button
@@ -430,7 +448,7 @@ function SessionRow({
 							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
 							onClick={() => setShowError((v) => !v)}
 						>
-							{showError ? 'Hide' : 'Error'}
+							{showError ? 'Hide Error' : 'Error'}
 						</button>
 						<button
 							type="button"
@@ -453,6 +471,11 @@ function SessionRow({
 					className="text-xs text-muted-foreground shrink-0"
 				/>
 			</div>
+			{showLogs && (
+				<pre className="text-xs font-mono text-text-secondary bg-bg-surface rounded p-2 mx-3 mt-1 whitespace-pre-wrap max-h-64 overflow-y-auto">
+					{logsLoading ? 'Loading...' : (stdoutLogs ?? 'No logs available')}
+				</pre>
+			)}
 			{showError && displayError && (
 				<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
 					{displayError}

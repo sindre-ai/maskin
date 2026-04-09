@@ -72,6 +72,24 @@ export function useSessionErrorLog(
 	})
 }
 
+export function useSessionStdoutLogs(
+	sessionId: string | null,
+	workspaceId: string,
+	enabled: boolean,
+) {
+	return useQuery({
+		queryKey: [...queryKeys.sessions.logs(sessionId ?? ''), 'stdout-detail'],
+		queryFn: async () => {
+			const logs = await api.sessions.logs(sessionId as string, workspaceId, {
+				limit: '100',
+				stream: 'stdout',
+			})
+			return logs.length > 0 ? logs.map((l) => l.content).join('\n') : null
+		},
+		enabled: !!sessionId && enabled,
+	})
+}
+
 export function useActorSessions(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),

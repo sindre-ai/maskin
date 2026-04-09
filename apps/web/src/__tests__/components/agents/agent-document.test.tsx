@@ -30,6 +30,7 @@ vi.mock('@/components/shared/relative-time', () => ({
 vi.mock('@/hooks/use-sessions', () => ({
 	useSessionLatestLog: () => ({ data: null }),
 	useSessionErrorLog: () => ({ data: null }),
+	useSessionStdoutLogs: () => ({ data: null, isLoading: false }),
 	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
