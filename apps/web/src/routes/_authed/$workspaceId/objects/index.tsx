@@ -11,6 +11,7 @@ import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
 import { api } from '@/lib/api'
+import { countBy } from '@/lib/count-by'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
@@ -112,6 +113,8 @@ function ObjectsPage() {
 	})
 
 	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+
+	const counts = useMemo(() => countBy(allObjects, (o) => o.type), [allObjects])
 
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
@@ -230,6 +233,7 @@ function ObjectsPage() {
 				columnVisibility={effectiveVisibility}
 				onColumnVisibilityChange={handleColumnVisibilityChange}
 				tabs={tabs}
+				counts={counts}
 				typeFilter={typeFilter}
 				onTypeFilterChange={(value) => updateSearch({ type: value, status: undefined })}
 				search={q}
