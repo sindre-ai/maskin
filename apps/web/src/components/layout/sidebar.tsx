@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/sidebar'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
+import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
 import { Activity, Bot, Home, Layers, Zap } from 'lucide-react'
 import { useMemo } from 'react'

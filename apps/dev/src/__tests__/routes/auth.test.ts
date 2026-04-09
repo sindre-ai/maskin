@@ -4,8 +4,8 @@ import { createTestApp } from '../setup'
 
 // Mock verifyPassword before importing the route
 const mockVerifyPassword = vi.fn()
-vi.mock('@ai-native/auth', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('@ai-native/auth')>()
+vi.mock('@maskin/auth', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@maskin/auth')>()
 	return {
 		...actual,
 		verifyPassword: mockVerifyPassword,

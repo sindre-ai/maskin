@@ -6,7 +6,7 @@ vi.mock('@/hooks/use-enabled-modules', () => ({
 	useEnabledModules: vi.fn(() => ['work']),
 }))
 
-vi.mock('@ai-native/module-sdk', () => ({
+vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: vi.fn((ids: string[]) =>
 		ids.includes('work') ? [{ label: 'Bets', value: 'bet' }] : [],
 	),

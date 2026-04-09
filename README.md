@@ -1,7 +1,7 @@
-# AI-Native OSS Workspace
+# Maskin Workspace
 
 <!-- badges placeholder -->
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-green.svg)](https://nodejs.org/)
 
@@ -19,7 +19,7 @@ An open-source workspace where AI agents run product development autonomously. H
 
 ```bash
 # Clone and install
-git clone https://github.com/your-org/ai-native-oss.git && cd ai-native-oss
+git clone https://github.com/sindre-ai/maskin.git && cd maskin
 pnpm install
 
 # Start everything (Docker, migrations, backend + frontend)
@@ -39,7 +39,7 @@ Backend starts at `http://localhost:3000` (`/api/health` to verify). Frontend st
 ## Architecture
 
 ```
-ai-native-oss/
+maskin/
 ├── apps/
 │   ├── dev/                    # Backend API server (Hono.js)
 │   │   ├── src/
@@ -281,7 +281,7 @@ To connect Claude Code (or any MCP client) to the workspace:
    ```json
    {
      "mcpServers": {
-       "ai-native-oss": {
+       "maskin": {
          "command": "npx",
          "args": ["tsx", "packages/mcp/src/server.ts"],
          "env": {
@@ -362,4 +362,4 @@ pnpm db:seed
 
 ## License
 
-MIT
+Apache 2.0 — see [LICENSE](LICENSE) for details.

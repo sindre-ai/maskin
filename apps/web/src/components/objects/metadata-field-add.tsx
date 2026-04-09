@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import type { SafeJsonValue } from '@ai-native/shared'
+import type { SafeJsonValue } from '@maskin/shared'
 import { useState } from 'react'
 
 interface FieldDefinition {

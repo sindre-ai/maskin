@@ -9,7 +9,7 @@ import {
 	runtimeConfigSchema,
 	safeMetadataSchema,
 	updateActorSchema,
-} from '@ai-native/shared'
+} from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 
 describe('Object validation', () => {

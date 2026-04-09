@@ -9,10 +9,11 @@ import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useImportToast } from '@/hooks/use-imports'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getEnabledObjectTypeTabs } from '@ai-native/module-sdk'
+import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
@@ -52,6 +53,7 @@ function ObjectsPage() {
 	} = searchParams
 
 	const [importOpen, setImportOpen] = useState(false)
+	const { startTracking: trackImport } = useImportToast(workspaceId)
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		createdBy: false,
@@ -247,7 +249,7 @@ function ObjectsPage() {
 				onImportClick={() => setImportOpen(true)}
 			/>
 
-			<ImportDialog open={importOpen} onOpenChange={setImportOpen} />
+			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 
 			<DataTable
 				data={allObjects}

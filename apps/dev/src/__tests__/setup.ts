@@ -1,8 +1,8 @@
-import type { Database } from '@ai-native/db'
-import type { PgNotifyBridge } from '@ai-native/realtime'
-import type { StorageProvider } from '@ai-native/storage'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import type { PgNotifyBridge } from '@maskin/realtime'
+import type { StorageProvider } from '@maskin/storage'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 

@@ -1,16 +1,16 @@
 import './extensions'
 import fs from 'node:fs'
 import path from 'node:path'
-import { authMiddleware } from '@ai-native/auth'
-import { createDb } from '@ai-native/db'
-import type { Database } from '@ai-native/db'
-import { getAllModules } from '@ai-native/module-sdk'
-import { PgNotifyBridge } from '@ai-native/realtime'
-import { S3StorageProvider } from '@ai-native/storage'
-import type { StorageProvider } from '@ai-native/storage'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { OpenAPIHono } from '@hono/zod-openapi'
+import { authMiddleware } from '@maskin/auth'
+import { createDb } from '@maskin/db'
+import type { Database } from '@maskin/db'
+import { getAllModules } from '@maskin/module-sdk'
+import { PgNotifyBridge } from '@maskin/realtime'
+import { S3StorageProvider } from '@maskin/storage'
+import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
@@ -195,7 +195,7 @@ app.route('/mcp', mcpRoutes)
 app.doc31('/api/openapi.json', {
 	openapi: '3.1.0',
 	info: {
-		title: 'AI-Native OSS Dev Workspace API',
+		title: 'Maskin Dev Workspace API',
 		version: '0.1.0',
 		description: 'Unified API for insights, bets, tasks, actors, and automation',
 	},

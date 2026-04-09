@@ -45,7 +45,7 @@ describe('ThemeProvider', () => {
 	})
 
 	it('reads stored theme from localStorage', () => {
-		localStorage.setItem('ai-native-theme', 'dark')
+		localStorage.setItem('maskin-theme', 'dark')
 		const { result } = renderHook(() => useTheme(), { wrapper })
 		expect(result.current.theme).toBe('dark')
 		expect(result.current.resolvedTheme).toBe('dark')
@@ -58,7 +58,7 @@ describe('ThemeProvider', () => {
 			result.current.setTheme('dark')
 		})
 
-		expect(localStorage.getItem('ai-native-theme')).toBe('dark')
+		expect(localStorage.getItem('maskin-theme')).toBe('dark')
 	})
 
 	it('applies dark class to documentElement when dark', () => {
@@ -72,7 +72,7 @@ describe('ThemeProvider', () => {
 	})
 
 	it('removes dark class when switching to light', () => {
-		localStorage.setItem('ai-native-theme', 'dark')
+		localStorage.setItem('maskin-theme', 'dark')
 		const { result } = renderHook(() => useTheme(), { wrapper })
 
 		act(() => {
@@ -94,14 +94,14 @@ describe('ThemeProvider', () => {
 			dispatchEvent: vi.fn(),
 		}))
 
-		localStorage.setItem('ai-native-theme', 'system')
+		localStorage.setItem('maskin-theme', 'system')
 		const { result } = renderHook(() => useTheme(), { wrapper })
 		expect(result.current.theme).toBe('system')
 		expect(result.current.resolvedTheme).toBe('dark')
 	})
 
 	it('listens for OS preference changes in system mode', () => {
-		localStorage.setItem('ai-native-theme', 'system')
+		localStorage.setItem('maskin-theme', 'system')
 		const { result } = renderHook(() => useTheme(), { wrapper })
 
 		expect(result.current.resolvedTheme).toBe('light')
