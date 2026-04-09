@@ -399,7 +399,7 @@ function SessionRow({
 }) {
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
-	const isTerminal = ['completed', 'failed', 'timeout', 'cancelled'].includes(session.status)
+	const isTerminal = ['completed', 'failed', 'timeout'].includes(session.status)
 	const [showError, setShowError] = useState(false)
 	const [showLogs, setShowLogs] = useState(false)
 	const createSession = useCreateSession(workspaceId)
@@ -438,7 +438,7 @@ function SessionRow({
 						className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
 						onClick={() => setShowLogs((v) => !v)}
 					>
-						{showLogs ? 'Hide' : 'Logs'}
+						{showLogs ? 'Hide Logs' : 'Logs'}
 					</button>
 				)}
 				{isFailed && (
@@ -448,7 +448,7 @@ function SessionRow({
 							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
 							onClick={() => setShowError((v) => !v)}
 						>
-							{showError ? 'Hide' : 'Error'}
+							{showError ? 'Hide Error' : 'Error'}
 						</button>
 						<button
 							type="button"
