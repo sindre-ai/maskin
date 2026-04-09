@@ -131,7 +131,10 @@ export function DataTable({
 	}
 
 	return (
-		<div ref={parentRef} className="h-[calc(100vh-180px)] overflow-auto rounded-md border">
+		<div
+			ref={parentRef}
+			className="h-[calc(100vh-220px)] md:h-[calc(100vh-180px)] overflow-auto rounded-md border"
+		>
 			<Table>
 				<TableHeader className="sticky top-0 z-10 bg-background">
 					{table.getHeaderGroups().map((headerGroup) => (

@@ -16,7 +16,7 @@ interface PulseFiltersProps {
 
 export function PulseFilters({ active, onChange, counts }: PulseFiltersProps) {
 	return (
-		<div className="flex gap-2 mb-6">
+		<div className="flex flex-wrap gap-2 mb-6">
 			{filters.map((f) => {
 				const count = f.value === 'all' ? counts.all : (counts[f.value] ?? 0)
 				return (

@@ -23,23 +23,27 @@ export function AgentWorkingBadge({
 
 	if (variant === 'banner') {
 		return (
-			<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 mb-4">
+			<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 mb-4 min-w-0">
 				<Spinner />
 				{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
-				<span className="text-sm font-medium">{actor?.name ?? 'Agent working'}</span>
+				<span className="text-sm font-medium truncate">{actor?.name ?? 'Agent working'}</span>
 				{latestLog && (
 					<>
-						<span className="text-muted-foreground">·</span>
-						<span className="text-sm text-muted-foreground">{latestLog.content}</span>
+						<span className="text-muted-foreground hidden sm:inline">·</span>
+						<span className="text-sm text-muted-foreground truncate hidden sm:inline">
+							{latestLog.content}
+						</span>
 					</>
 				)}
-				{duration && <span className="ml-auto text-xs text-muted-foreground">{duration}</span>}
+				{duration && (
+					<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
+				)}
 			</div>
 		)
 	}
 
 	return (
-		<Badge variant="secondary" className="gap-1.5 max-w-[280px]">
+		<Badge variant="secondary" className="gap-1.5 max-w-[200px] sm:max-w-[280px]">
 			<Spinner />
 			<span className="truncate">
 				{actor?.name ?? 'Agent working'}
