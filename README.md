@@ -5,21 +5,43 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-green.svg)](https://nodejs.org/)
 
-An open-source agent operating system. Humans set direction. Agents execute.
+An open-source agent operating system. Agents carry the process. Humans carry the product.
 
 ## What is Maskin?
 
-Maskin is an agent operating system — a platform where AI agents and humans work together through a shared API, a shared data model, and a shared real-time event stream. Agents are first-class actors: they surface insights, propose strategies, execute tasks, and trigger other agents. Humans stay in control by deciding *what* to pursue.
+Maskin is an open-source agent operating system — a shared environment where AI agents and humans see the same data, share context, and hand off to each other without a human acting as the integration layer.
 
-Work flows through a simple pipeline:
+Agents in Maskin are not tools you query and put down. They are digital colleagues with persistent memory, defined roles, and ongoing responsibilities. They surface signals, propose strategies, execute work, and trigger other agents — through the same API and the same identity model as humans.
 
-**Insights** (signals and opportunities) → **Bets** (strategic decisions) → **Tasks** (concrete execution) → feedback loop
+The result: the process runs itself, so humans can focus on what only humans can do — judgment, creative leaps, relationships, and craft.
 
-Everything is an API. The UI and agents use the same endpoints. No separate interfaces.
+### Objects and the scientific method
 
-### Why an "agent operating system"?
+Three primitives mirror the oldest rigorous loop for operating under uncertainty: observe, hypothesise, experiment.
 
-Most agent platforms treat AI as an assistant — human drives, agent helps. Maskin inverts this: humans set strategy, agents execute autonomously. The platform provides the coordination layer that makes this safe and observable — shared identity, shared events, shared state.
+- **Insights** capture signals. A customer complaint, a market shift, a pattern in the data.
+- **Bets** turn signals into testable hypotheses with defined investment and success criteria. This is the step most tooling skips — and it's why teams build things nobody wanted.
+- **Tasks** make it happen. Concrete execution, broken down and tracked.
+
+### The graph
+
+Everything connects. An insight *informs* a bet. A bet *breaks into* tasks. A task *blocks* another. Agents navigate this graph the way you'd navigate a codebase — by following relationships, not re-reading every document from scratch.
+
+Extensions add domain-specific types on top. Triggers fire agents on schedules or state changes. Workspaces scope it all.
+
+### Actors
+
+Humans and agents are first-class citizens with the same API surface. Both can create objects, update state, traverse relationships, and trigger workflows. Agents carry a system prompt, persistent memory, configurable tools, and their own LLM. Everything speaks MCP. Bring your own model.
+
+### How it composes
+
+The same primitives work differently depending on the team.
+
+**A product team.** A signal arrives. An agent catches it, enriches it, links it to a cluster of related signals. Another agent sees the cluster and proposes a bet: two weeks, a clear success metric, a scoped investment. The product manager gets a notification. Reviews the proposal. Accepts it. *One decision.* An agent breaks it into tasks with dependencies mapped. Another monitors progress. The daily briefing closes the loop each morning.
+
+**A growth team.** An agent running weekly analysis spots the pattern before anyone asks: one ICP segment is converting at 3x the average, but outreach volume is flat. It surfaces the opportunity. Another agent proposes a campaign. Another drafts personalised messages — researched, unique, queued for human review before anything sends. The revenue lead reviews, adjusts one message. The rest runs.
+
+In both cases: agents carry the process. Humans carry the product.
 
 ### Key ideas
 
@@ -27,7 +49,7 @@ Most agent platforms treat AI as an assistant — human drives, agent helps. Mas
 - **Container-native execution.** Each agent session runs in an ephemeral Docker container (Claude Code, Codex, or any CLI). Sessions are pausable, resumable, and streamable via SSE.
 - **Event-driven automation.** Cron and event-based triggers spawn agent sessions automatically. Every mutation is logged as an event. Agents and humans see the same real-time audit trail.
 - **MCP-native.** 42 tools exposed via Model Context Protocol (stdio + HTTP transport). Connect Claude Code, Claude Desktop, or any MCP-compatible client directly.
-- **Extensible object model.** The built-in insight/bet/task types are just one extension (`ext-work`). Define your own object types, statuses, metadata fields, and relationship types through the module system.
+- **Extensible object model.** The built-in insight/bet/task types are just one extension. Define your own object types, statuses, metadata fields, and relationship types through the module system.
 - **Everything's an API.** The frontend is just one client. External agents, scripts, CI/CD pipelines, and integrations are all first-class consumers.
 - **Real-time by default.** PostgreSQL NOTIFY pipes every mutation through SSE — no Redis, no WebSocket server, no polling. Agents and humans see changes instantly.
 - **Integrations.** Connect external services (GitHub, Slack, Linear) via OAuth. Webhooks flow in, agent sessions flow out.
@@ -377,6 +399,12 @@ pnpm db:seed
 | `S3_SECRET_KEY` | No | `admin` | S3 secret key |
 | `S3_REGION` | No | `us-east-1` | S3 region |
 | `CORS_ORIGIN` | No | `http://localhost:5173` | Comma-separated allowed origins for CORS |
+
+## Why open source
+
+An agent operating system only works if you trust it. How decisions flow, how data moves, how agents behave — that should be visible, not hidden behind an API key.
+
+Open source means you can inspect every layer, run it on your own infrastructure, bring your own models, and extend it for your domain.
 
 ## Contributing
 
