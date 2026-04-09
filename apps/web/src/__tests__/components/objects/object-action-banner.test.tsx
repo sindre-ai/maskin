@@ -16,8 +16,16 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: mockActors() }),
 }))
 
-vi.mock('@tanstack/react-router', () => ({
-	useNavigate: () => mockNavigate,
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return {
+		...mockTanStackRouter(),
+		useNavigate: () => mockNavigate,
+	}
+})
+
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
 describe('ObjectActionBanner', () => {
