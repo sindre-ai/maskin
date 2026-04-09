@@ -10,9 +10,9 @@ vi.mock('../../../lib/crypto', () => ({
 // Mock OAuth2Handler
 const mockRefreshToken = vi.fn()
 vi.mock('../../../lib/integrations/oauth/handler', () => ({
-	OAuth2Handler: vi.fn().mockImplementation(() => ({
-		refreshToken: mockRefreshToken,
-	})),
+	OAuth2Handler: vi.fn().mockImplementation(function () {
+		return { refreshToken: mockRefreshToken }
+	}),
 }))
 
 import { decrypt, encrypt } from '../../../lib/crypto'

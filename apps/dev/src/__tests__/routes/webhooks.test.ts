@@ -13,9 +13,9 @@ vi.mock('../../lib/integrations/registry', () => ({
 // Mock the webhook handler
 const mockVerify = vi.fn()
 vi.mock('../../lib/integrations/webhooks/handler', () => ({
-	WebhookHandler: vi.fn().mockImplementation(() => ({
-		verify: (...args: unknown[]) => mockVerify(...args),
-	})),
+	WebhookHandler: vi.fn().mockImplementation(function () {
+		return { verify: (...args: unknown[]) => mockVerify(...args) }
+	}),
 }))
 
 // Mock the event normalizer

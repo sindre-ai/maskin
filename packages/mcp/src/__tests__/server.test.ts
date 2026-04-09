@@ -8,7 +8,9 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 }))
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn().mockImplementation(function () {
+		return {}
+	}),
 }))
 
 vi.mock('node:fs', () => ({

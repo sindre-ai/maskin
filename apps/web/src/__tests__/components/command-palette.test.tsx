@@ -4,11 +4,13 @@ import userEvent from '@testing-library/user-event'
 import { buildObjectResponse } from '../factories'
 
 // cmdk uses ResizeObserver and scrollIntoView internally
-global.ResizeObserver = vi.fn().mockImplementation(() => ({
-	observe: vi.fn(),
-	unobserve: vi.fn(),
-	disconnect: vi.fn(),
-}))
+global.ResizeObserver = vi.fn().mockImplementation(function () {
+	return {
+		observe: vi.fn(),
+		unobserve: vi.fn(),
+		disconnect: vi.fn(),
+	}
+})
 
 Element.prototype.scrollIntoView = vi.fn()
 
