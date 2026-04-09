@@ -41,6 +41,7 @@ function buildObject(overrides: Partial<ObjectResponse> & { id: string }): Objec
 		metadata: null,
 		owner: null,
 		activeSessionId: null,
+		isStarred: false,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,

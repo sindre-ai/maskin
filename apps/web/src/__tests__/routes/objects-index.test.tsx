@@ -87,6 +87,10 @@ vi.mock('@/hooks/use-imports', () => ({
 	useImportToast: () => ({ startTracking: vi.fn() }),
 }))
 
+vi.mock('@/hooks/use-objects', () => ({
+	useUpdateObject: () => ({ mutate: vi.fn() }),
+}))
+
 vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))

@@ -78,6 +78,7 @@ export const objects = pgTable(
 		metadata: jsonb('metadata'),
 		owner: uuid('owner').references(() => actors.id),
 		activeSessionId: uuid('active_session_id'),
+		isStarred: boolean('is_starred').notNull().default(false),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),

@@ -10,6 +10,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
+import { useUpdateObject } from '@/hooks/use-objects'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -144,6 +145,15 @@ function ObjectsPage() {
 		[navigate, workspaceId],
 	)
 
+	const updateObject = useUpdateObject(workspaceId)
+
+	const handleToggleStar = useCallback(
+		(id: string, isStarred: boolean) => {
+			updateObject.mutate({ id, data: { isStarred } })
+		},
+		[updateObject],
+	)
+
 	// Sort handler for column headers
 	const handleSort = useCallback(
 		(columnId: string) => {
@@ -158,8 +168,13 @@ function ObjectsPage() {
 
 	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
 	const tableMeta: ObjectsTableMeta = useMemo(
-		() => ({ onSort: handleSort, currentSort: sort, currentOrder: order }),
-		[handleSort, sort, order],
+		() => ({
+			onSort: handleSort,
+			currentSort: sort,
+			currentOrder: order,
+			onToggleStar: handleToggleStar,
+		}),
+		[handleSort, sort, order, handleToggleStar],
 	)
 
 	// Columns — stable across sort changes since sort state is in meta

@@ -87,6 +87,10 @@ export const tools = {
 							.describe(
 								'Key-value metadata. Call get_workspace_schema to discover available fields and types.',
 							),
+						isStarred: z
+							.boolean()
+							.optional()
+							.describe('Star (pin) this object to the top of lists'),
 					}),
 				)
 				.default([])

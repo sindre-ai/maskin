@@ -73,6 +73,8 @@ export function buildObject(overrides?: Record<string, unknown>) {
 		status: 'todo',
 		metadata: null,
 		owner: null,
+		activeSessionId: null,
+		isStarred: false,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),

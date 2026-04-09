@@ -37,6 +37,7 @@ export const objectResponseSchema = z.object({
 	metadata: jsonbField,
 	owner: z.string().uuid().nullable(),
 	activeSessionId: z.string().uuid().nullable(),
+	isStarred: z.boolean(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
