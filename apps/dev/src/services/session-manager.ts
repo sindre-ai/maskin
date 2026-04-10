@@ -456,7 +456,7 @@ export class SessionManager extends EventEmitter {
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
 			ACTION_PROMPT: session.actionPrompt,
-			MASKIN_API_URL: 'http://host.docker.internal:3000',
+			MASKIN_API_URL: process.env.MASKIN_API_URL ?? `http://${this.backend.getHostAddress()}:${process.env.PORT ?? 3000}`,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}
 
