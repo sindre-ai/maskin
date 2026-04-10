@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `.claude/rules/frontend.md` — frontend component reuse, DRY, and consistency rules (shadcn/ui, Radix UI)
 - `.claude/rules/testing.md` — testing conventions for all test types (unit, integration, E2E, frontend)
 - `.claude/rules/pre-commit.md` — pre-commit checklist (lint, type-check, tests)
+- `.claude/rules/pr-merge.md` — PR merge checklist (up to date with main, lint, type-check, tests)
 
 ## Architecture
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
