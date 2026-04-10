@@ -71,9 +71,11 @@ function WorkspaceLayout() {
 		)
 	}
 
-	// Redirect to onboarding if not completed and not already on the onboarding page
+	// Redirect to onboarding only when explicitly marked as not completed (false).
+	// Using strict equality avoids redirecting existing workspaces where the field
+	// is undefined (predating this feature).
 	const settings = workspace.settings as Record<string, unknown> | undefined
-	if (!settings?.onboarding_completed && !isOnboardingRoute) {
+	if (settings?.onboarding_completed === false && !isOnboardingRoute) {
 		return <Navigate to="/$workspaceId/onboarding" params={{ workspaceId }} />
 	}
 
