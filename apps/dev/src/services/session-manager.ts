@@ -45,6 +45,7 @@ export class SessionManager extends EventEmitter {
 	private agentStorage: AgentStorageManager
 	private watchdogInterval: NodeJS.Timeout | null = null
 	private activeSessions: Map<string, { tempDir: string }> = new Map()
+	private agentBaseBuildContext: string | null = null
 
 	constructor(
 		private db: Database,
@@ -53,6 +54,10 @@ export class SessionManager extends EventEmitter {
 		super()
 		this.containers = new ContainerManager()
 		this.agentStorage = new AgentStorageManager(storage, db)
+	}
+
+	setAgentBaseBuildContext(buildContext: string) {
+		this.agentBaseBuildContext = buildContext
 	}
 
 	async start() {
@@ -533,8 +538,15 @@ export class SessionManager extends EventEmitter {
 		}
 
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
+		const image = (sessionConfig.base_image as string) ?? 'agent-base:latest'
+
+		// Ensure the image exists — rebuild if it was pruned or lost
+		if (image === 'agent-base:latest' && this.agentBaseBuildContext) {
+			await this.containers.ensureImage(image, this.agentBaseBuildContext)
+		}
+
 		const containerId = await this.containers.create({
-			image: (sessionConfig.base_image as string) ?? 'agent-base:latest',
+			image,
 			name,
 			env: envVars,
 			memoryMb: (sessionConfig.memory_mb as number) ?? 8192,
