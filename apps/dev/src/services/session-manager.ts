@@ -24,7 +24,7 @@ import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager } from './agent-storage'
-import { ContainerManager, type LogChunk } from './container-manager'
+import type { LogChunk, RuntimeBackend } from './runtime-backend'
 
 export interface CreateSessionParams {
 	actorId: string
@@ -41,24 +41,18 @@ export interface SessionLogEvent extends LogChunk {
 }
 
 export class SessionManager extends EventEmitter {
-	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
 	private watchdogInterval: NodeJS.Timeout | null = null
 	private activeSessions: Map<string, { tempDir: string }> = new Map()
-	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 
 	constructor(
 		private db: Database,
 		private storage: StorageProvider,
+		private backend: RuntimeBackend,
 	) {
 		super()
-		this.containers = new ContainerManager()
 		this.agentStorage = new AgentStorageManager(storage, db)
-	}
-
-	setAgentBaseBuildContext(buildContext: string) {
-		this.agentBaseBuildContext = buildContext
 	}
 
 	async start() {
@@ -220,7 +214,7 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
-		await this.containers.stop(session.containerId)
+		await this.backend.stop(session.containerId)
 		// handleCompletion will be called by the exit watcher
 	}
 
@@ -242,22 +236,25 @@ export class SessionManager extends EventEmitter {
 
 		try {
 			// Tar the agent workspace
-			await this.containers.exec(session.containerId, [
+			await this.backend.exec(session.containerId, [
 				'tar',
 				'-czf',
 				'/tmp/snapshot.tar.gz',
 				'/agent/',
 			])
 
-			const tarStream = await this.containers.copyFrom(session.containerId, '/tmp/snapshot.tar.gz')
+			const hostSnapshotPath = join(tmpdir(), `snapshot-${sessionId}.tar.gz`)
+			await this.backend.copyFileOut(session.containerId, '/tmp/snapshot.tar.gz', hostSnapshotPath)
 
-			// Stream snapshot directly to S3
+			// Upload snapshot to S3
 			const snapshotKey = `snapshots/${sessionId}.tar.gz`
-			await this.storage.put(snapshotKey, tarStream as import('node:stream').Readable)
+			const { createReadStream } = await import('node:fs')
+			await this.storage.put(snapshotKey, createReadStream(hostSnapshotPath))
+			await rm(hostSnapshotPath, { force: true })
 
 			// Stop and remove container
-			await this.containers.stop(session.containerId)
-			await this.containers.remove(session.containerId)
+			await this.backend.stop(session.containerId)
+			await this.backend.remove(session.containerId)
 
 			await this.db
 				.update(sessions)
@@ -599,12 +596,9 @@ export class SessionManager extends EventEmitter {
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
 		const image = (sessionConfig.base_image as string) ?? 'agent-base:latest'
 
-		// Ensure the image exists — rebuild if it was pruned or lost
-		if (image === 'agent-base:latest' && this.agentBaseBuildContext) {
-			await this.containers.ensureImage(image, this.agentBaseBuildContext)
-		}
+		await this.backend.ensureImage(image)
 
-		const containerId = await this.containers.create({
+		const containerId = await this.backend.create({
 			image,
 			name,
 			env: envVars,
@@ -613,7 +607,7 @@ export class SessionManager extends EventEmitter {
 			binds: [`${tempDir}:/agent:rw`],
 		})
 
-		await this.containers.start(containerId)
+		await this.backend.start(containerId)
 		return containerId
 	}
 
@@ -626,7 +620,7 @@ export class SessionManager extends EventEmitter {
 	private streamContainerLogs(sessionId: string, containerId: string) {
 		;(async () => {
 			try {
-				for await (const chunk of this.containers.logs(containerId)) {
+				for await (const chunk of this.backend.logs(containerId)) {
 					const [log] = await this.db
 						.insert(sessionLogs)
 						.values({
@@ -657,7 +651,7 @@ export class SessionManager extends EventEmitter {
 	private watchContainerExit(sessionId: string, containerId: string) {
 		const poll = async () => {
 			try {
-				const status = await this.containers.inspect(containerId)
+				const status = await this.backend.inspect(containerId)
 				if (!status.running) {
 					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
 					return
@@ -733,9 +727,9 @@ export class SessionManager extends EventEmitter {
 		await this.clearActiveSession(sessionId)
 
 		// Cleanup
-		await this.containers
+		await this.backend
 			.remove(containerId)
-			.catch((err) =>
+			.catch((err: unknown) =>
 				logger.warn('Failed to remove container', { sessionId, containerId, error: String(err) }),
 			)
 		await this.cleanupSession(sessionId)
@@ -774,14 +768,14 @@ export class SessionManager extends EventEmitter {
 			}
 
 			if (session.containerId) {
-				await this.containers.stop(session.containerId).catch((err) =>
+				await this.backend.stop(session.containerId).catch((err) =>
 					logger.warn('Failed to stop timed-out container', {
 						sessionId: session.id,
 						containerId: session.containerId,
 						error: String(err),
 					}),
 				)
-				await this.containers.remove(session.containerId).catch((err) =>
+				await this.backend.remove(session.containerId).catch((err) =>
 					logger.warn('Failed to remove timed-out container', {
 						sessionId: session.id,
 						containerId: session.containerId,
