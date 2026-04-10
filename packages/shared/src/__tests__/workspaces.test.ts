@@ -31,7 +31,7 @@ describe('workspaceSettingsSchema', () => {
 			'relates_to',
 			'duplicates',
 		])
-		expect(result.max_concurrent_sessions).toBe(5)
+		expect(result.max_concurrent_sessions).toBe(3)
 		expect(result.llm_keys).toEqual({})
 	})
 

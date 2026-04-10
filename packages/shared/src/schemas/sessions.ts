@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 export const sessionStatusSchema = z.enum([
 	'pending',
+	'queued',
 	'starting',
 	'running',
 	'snapshotting',
@@ -49,7 +50,7 @@ export const sessionConfigSchema = z.object({
 	runtime: sessionRuntimeSchema.default('claude-code'),
 	runtime_config: runtimeConfigSchema.default({}),
 	timeout_seconds: z.coerce.number().int().min(30).max(3600).default(600),
-	memory_mb: z.coerce.number().int().min(256).max(8192).default(8192),
+	memory_mb: z.coerce.number().int().min(256).max(8192).default(4096),
 	cpu_shares: z.coerce.number().int().min(256).max(4096).default(1024),
 	mcps: z.array(mcpServerSchema).default([]),
 	env_vars: z.record(z.string()).default({}),

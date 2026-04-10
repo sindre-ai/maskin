@@ -33,7 +33,7 @@ export const workspaceSettingsSchema = z.object({
 		.default(['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']),
 	custom_extensions: z.record(customExtensionEntrySchema).default({}),
 	enabled_modules: z.array(z.string()).default(['work']),
-	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(5),
+	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
 	llm_keys: z
 		.object({
 			anthropic: z.string().optional(),

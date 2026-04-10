@@ -125,12 +125,22 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || session.status !== 'pending') {
-			throw new Error(`Session ${sessionId} not found or not in pending state`)
+		if (!session || (session.status !== 'pending' && session.status !== 'queued')) {
+			throw new Error(`Session ${sessionId} not found or not in pending/queued state`)
 		}
 
-		// Check workspace concurrency limit
-		await this.checkConcurrencyLimit(session.workspaceId)
+		// Check workspace concurrency limit — queue instead of rejecting
+		const hasCapacity = await this.hasCapacity(session.workspaceId)
+		if (!hasCapacity) {
+			await this.db
+				.update(sessions)
+				.set({ status: 'queued', updatedAt: new Date() })
+				.where(eq(sessions.id, sessionId))
+
+			await this.insertSystemLog(sessionId, 'Session queued — waiting for capacity')
+			logger.info(`Session queued: ${sessionId}`, { workspaceId: session.workspaceId })
+			return
+		}
 
 		// Update status to starting
 		await this.db
@@ -354,7 +364,7 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
-	private async checkConcurrencyLimit(workspaceId: string): Promise<void> {
+	private async hasCapacity(workspaceId: string): Promise<boolean> {
 		const [workspace] = await this.db
 			.select()
 			.from(workspaces)
@@ -362,18 +372,40 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 
 		const settings = (workspace?.settings as WorkspaceSettings) ?? {}
-		const maxConcurrent = settings.max_concurrent_sessions ?? 5
+		const maxConcurrent = settings.max_concurrent_sessions ?? 3
 
 		const [result] = await this.db
 			.select({ count: countFn() })
 			.from(sessions)
 			.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'running')))
 
-		if (result && result.count >= maxConcurrent) {
-			throw new Error(
-				`Workspace has reached its concurrent session limit (${maxConcurrent}). Wait for a session to complete or increase the limit.`,
-			)
-		}
+		return !result || result.count < maxConcurrent
+	}
+
+	/**
+	 * Drain the queue: start the oldest queued session for a workspace if capacity is available.
+	 * Called after a session completes, fails, or times out.
+	 */
+	private async drainQueue(workspaceId: string): Promise<void> {
+		const canRun = await this.hasCapacity(workspaceId)
+		if (!canRun) return
+
+		const [nextQueued] = await this.db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued')))
+			.orderBy(sessions.createdAt)
+			.limit(1)
+
+		if (!nextQueued) return
+
+		logger.info(`Draining queue: starting session ${nextQueued.id}`, { workspaceId })
+		this.startSession(nextQueued.id).catch((err) =>
+			logger.error('Failed to start queued session', {
+				sessionId: nextQueued.id,
+				error: String(err),
+			}),
+		)
 	}
 
 	/**
@@ -549,7 +581,7 @@ export class SessionManager extends EventEmitter {
 			image,
 			name,
 			env: envVars,
-			memoryMb: (sessionConfig.memory_mb as number) ?? 8192,
+			memoryMb: (sessionConfig.memory_mb as number) ?? 4096,
 			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
 			binds: [`${tempDir}:/agent:rw`],
 		})
@@ -682,6 +714,11 @@ export class SessionManager extends EventEmitter {
 		await this.cleanupSession(sessionId)
 
 		logger.info(`Session ${status}: ${sessionId}`, { exitCode })
+
+		// Start next queued session if capacity is available
+		await this.drainQueue(session.workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after completion', { error: String(err) }),
+		)
 	}
 
 	private async runWatchdog(): Promise<void> {
@@ -747,6 +784,11 @@ export class SessionManager extends EventEmitter {
 
 			await this.clearActiveSession(session.id)
 			await this.cleanupSession(session.id)
+
+			// Start next queued session if capacity is available
+			await this.drainQueue(session.workspaceId).catch((err) =>
+				logger.error('Failed to drain queue after timeout', { error: String(err) }),
+			)
 		}
 
 		// 2. Auto-pause idle sessions (no log output for >10 minutes)
