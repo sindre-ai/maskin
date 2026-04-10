@@ -10,6 +10,7 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	done: { bg: 'bg-status-done-bg', text: 'text-status-done-text' },
 	completed: { bg: 'bg-status-completed-bg', text: 'text-status-completed-text' },
 	succeeded: { bg: 'bg-status-succeeded-bg', text: 'text-status-succeeded-text' },
+	queued: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	blocked: { bg: 'bg-status-blocked-bg', text: 'text-status-blocked-text' },
 	failed: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
 	paused: { bg: 'bg-status-paused-bg', text: 'text-status-paused-text' },
