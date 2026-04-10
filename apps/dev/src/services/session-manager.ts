@@ -17,7 +17,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, lt } from 'drizzle-orm'
+import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
@@ -46,6 +46,7 @@ export class SessionManager extends EventEmitter {
 	private watchdogInterval: NodeJS.Timeout | null = null
 	private activeSessions: Map<string, { tempDir: string }> = new Map()
 	private agentBaseBuildContext: string | null = null
+	private drainingWorkspaces: Set<string> = new Set()
 
 	constructor(
 		private db: Database,
@@ -388,39 +389,48 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Drain the queue: start the oldest queued session for a workspace if capacity is available.
-	 * Called after a session completes, fails, or times out.
+	 * Drain the queue: start queued sessions for a workspace until capacity is full or queue is empty.
+	 * Called after a session completes, fails, or times out, and from the watchdog as a safety net.
+	 * Uses a per-workspace lock to prevent concurrent drain calls from racing.
 	 */
 	private async drainQueue(workspaceId: string): Promise<void> {
-		const canRun = await this.hasCapacity(workspaceId)
-		if (!canRun) return
+		// Prevent concurrent drains for the same workspace
+		if (this.drainingWorkspaces.has(workspaceId)) return
+		this.drainingWorkspaces.add(workspaceId)
 
-		// Atomically claim the oldest queued session by transitioning its status.
-		// If two callers race, only one gets a non-empty result from the UPDATE.
-		const [nextQueued] = await this.db
-			.select()
-			.from(sessions)
-			.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued')))
-			.orderBy(sessions.createdAt)
-			.limit(1)
+		try {
+			while (await this.hasCapacity(workspaceId)) {
+				// Atomically claim the oldest queued session by transitioning its status.
+				// If two callers race, only one gets a non-empty result from the UPDATE.
+				const [nextQueued] = await this.db
+					.select()
+					.from(sessions)
+					.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued')))
+					.orderBy(sessions.createdAt)
+					.limit(1)
 
-		if (!nextQueued) return
+				if (!nextQueued) break
 
-		const [claimed] = await this.db
-			.update(sessions)
-			.set({ status: 'pending', updatedAt: new Date() })
-			.where(and(eq(sessions.id, nextQueued.id), eq(sessions.status, 'queued')))
-			.returning()
+				const [claimed] = await this.db
+					.update(sessions)
+					.set({ status: 'pending', updatedAt: new Date() })
+					.where(and(eq(sessions.id, nextQueued.id), eq(sessions.status, 'queued')))
+					.returning()
 
-		if (!claimed) return
+				if (!claimed) break
 
-		logger.info(`Draining queue: starting session ${claimed.id}`, { workspaceId })
-		this.startSession(claimed.id).catch((err) =>
-			logger.error('Failed to start queued session', {
-				sessionId: claimed.id,
-				error: String(err),
-			}),
-		)
+				logger.info(`Draining queue: starting session ${claimed.id}`, { workspaceId })
+				// Await start so capacity check on next iteration reflects the new running session
+				await this.startSession(claimed.id).catch((err) =>
+					logger.error('Failed to start queued session', {
+						sessionId: claimed.id,
+						error: String(err),
+					}),
+				)
+			}
+		} finally {
+			this.drainingWorkspaces.delete(workspaceId)
+		}
 	}
 
 	/**
@@ -862,11 +872,36 @@ export class SessionManager extends EventEmitter {
 		const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 		await this.db.delete(sessionLogs).where(lt(sessionLogs.createdAt, thirtyDaysAgo))
 
-		// 5. Drain queued sessions for workspaces that have capacity
+		// 5. Recover stuck pending sessions — sessions stuck in 'pending' for >2 minutes
+		// without being started (e.g., startSession promise was lost or never called)
+		const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000)
+		const stuckPending = await this.db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.status, 'pending'), lt(sessions.updatedAt, twoMinutesAgo)))
+
+		for (const session of stuckPending) {
+			logger.warn(`Recovering stuck pending session: ${session.id}`, {
+				workspaceId: session.workspaceId,
+			})
+			// Move to queued so drainQueue picks them up in order
+			await this.db
+				.update(sessions)
+				.set({ status: 'queued', updatedAt: new Date() })
+				.where(and(eq(sessions.id, session.id), eq(sessions.status, 'pending')))
+				.catch((err) =>
+					logger.error('Failed to recover stuck pending session', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+		}
+
+		// 6. Drain queued sessions for workspaces that have capacity
 		const queuedSessions = await this.db
 			.select({ workspaceId: sessions.workspaceId })
 			.from(sessions)
-			.where(eq(sessions.status, 'queued'))
+			.where(or(eq(sessions.status, 'queued'), eq(sessions.status, 'pending')))
 			.groupBy(sessions.workspaceId)
 
 		for (const { workspaceId } of queuedSessions) {
