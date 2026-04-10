@@ -859,6 +859,28 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
+
+			// Auto-parse metadata.actions if LLM passed it as a JSON string instead of an array
+			if (body.metadata?.actions != null) {
+				if (typeof body.metadata.actions === 'string') {
+					try {
+						const parsed = JSON.parse(body.metadata.actions)
+						if (Array.isArray(parsed)) {
+							body.metadata.actions = parsed
+						} else {
+							throw new Error('metadata.actions must be an array')
+						}
+					} catch (e) {
+						if (e instanceof SyntaxError) {
+							throw new Error('metadata.actions must be a valid JSON array or native array')
+						}
+						throw e
+					}
+				} else if (!Array.isArray(body.metadata.actions)) {
+					throw new Error('metadata.actions must be an array')
+				}
+			}
+
 			const result = await apiCall(config, 'POST', '/api/notifications', body, {
 				workspaceId: workspace_id,
 			})
