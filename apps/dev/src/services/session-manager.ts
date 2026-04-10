@@ -273,6 +273,11 @@ export class SessionManager extends EventEmitter {
 			await this.cleanupSession(sessionId)
 
 			logger.info(`Session paused: ${sessionId}`)
+
+			// Start next queued session if capacity is available
+			await this.drainQueue(session.workspaceId).catch((err) =>
+				logger.error('Failed to drain queue after pause', { error: String(err) }),
+			)
 		} catch (err) {
 			// Revert status on failure
 			await this.db
@@ -390,6 +395,8 @@ export class SessionManager extends EventEmitter {
 		const canRun = await this.hasCapacity(workspaceId)
 		if (!canRun) return
 
+		// Atomically claim the oldest queued session by transitioning its status.
+		// If two callers race, only one gets a non-empty result from the UPDATE.
 		const [nextQueued] = await this.db
 			.select()
 			.from(sessions)
@@ -399,10 +406,18 @@ export class SessionManager extends EventEmitter {
 
 		if (!nextQueued) return
 
-		logger.info(`Draining queue: starting session ${nextQueued.id}`, { workspaceId })
-		this.startSession(nextQueued.id).catch((err) =>
+		const [claimed] = await this.db
+			.update(sessions)
+			.set({ status: 'pending', updatedAt: new Date() })
+			.where(and(eq(sessions.id, nextQueued.id), eq(sessions.status, 'queued')))
+			.returning()
+
+		if (!claimed) return
+
+		logger.info(`Draining queue: starting session ${claimed.id}`, { workspaceId })
+		this.startSession(claimed.id).catch((err) =>
 			logger.error('Failed to start queued session', {
-				sessionId: nextQueued.id,
+				sessionId: claimed.id,
 				error: String(err),
 			}),
 		)
@@ -844,6 +859,19 @@ export class SessionManager extends EventEmitter {
 		// 4. Prune old session logs (30 days)
 		const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 		await this.db.delete(sessionLogs).where(lt(sessionLogs.createdAt, thirtyDaysAgo))
+
+		// 5. Drain queued sessions for workspaces that have capacity
+		const queuedSessions = await this.db
+			.select({ workspaceId: sessions.workspaceId })
+			.from(sessions)
+			.where(eq(sessions.status, 'queued'))
+			.groupBy(sessions.workspaceId)
+
+		for (const { workspaceId } of queuedSessions) {
+			await this.drainQueue(workspaceId).catch((err) =>
+				logger.error('Failed to drain queue in watchdog', { workspaceId, error: String(err) }),
+			)
+		}
 	}
 
 	private async insertSystemLog(sessionId: string, content: string): Promise<void> {
