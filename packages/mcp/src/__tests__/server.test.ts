@@ -631,4 +631,93 @@ describe('tool handlers', () => {
 			await expect(handler({})).rejects.toThrow('Not authenticated')
 		})
 	})
+
+	describe('create_notification handler', () => {
+		it('passes native array metadata.actions through unchanged', async () => {
+			const mockResult = { id: 'notif-1' }
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('create_notification')
+			const actions = [{ label: 'Approve', response: 'approved' }]
+			await handler({
+				type: 'needs_input',
+				title: 'Test',
+				source_actor_id: '00000000-0000-0000-0000-000000000001',
+				metadata: { actions },
+			})
+
+			const fetchCall = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse(fetchCall[1]?.body as string)
+			expect(body.metadata.actions).toEqual(actions)
+		})
+
+		it('auto-parses JSON string metadata.actions into an array', async () => {
+			const mockResult = { id: 'notif-1' }
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('create_notification')
+			const actions = [{ label: 'Approve', response: 'approved' }]
+			await handler({
+				type: 'needs_input',
+				title: 'Test',
+				source_actor_id: '00000000-0000-0000-0000-000000000001',
+				metadata: { actions: JSON.stringify(actions) },
+			})
+
+			const fetchCall = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse(fetchCall[1]?.body as string)
+			expect(body.metadata.actions).toEqual(actions)
+		})
+
+		it('throws when metadata.actions is an invalid JSON string', async () => {
+			const handler = getHandler('create_notification')
+			await expect(
+				handler({
+					type: 'needs_input',
+					title: 'Test',
+					source_actor_id: '00000000-0000-0000-0000-000000000001',
+					metadata: { actions: 'not valid json' },
+				}),
+			).rejects.toThrow('metadata.actions must be a valid JSON array or native array')
+		})
+
+		it('throws when metadata.actions is a JSON string of a non-array', async () => {
+			const handler = getHandler('create_notification')
+			await expect(
+				handler({
+					type: 'needs_input',
+					title: 'Test',
+					source_actor_id: '00000000-0000-0000-0000-000000000001',
+					metadata: { actions: '{"label": "test"}' },
+				}),
+			).rejects.toThrow('metadata.actions must be an array')
+		})
+
+		it('throws when metadata.actions is a non-array non-string', async () => {
+			const handler = getHandler('create_notification')
+			await expect(
+				handler({
+					type: 'needs_input',
+					title: 'Test',
+					source_actor_id: '00000000-0000-0000-0000-000000000001',
+					metadata: { actions: 42 },
+				}),
+			).rejects.toThrow('metadata.actions must be an array')
+		})
+
+		it('works when metadata has no actions field', async () => {
+			const mockResult = { id: 'notif-1' }
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('create_notification')
+			await handler({
+				type: 'needs_input',
+				title: 'Test',
+				source_actor_id: '00000000-0000-0000-0000-000000000001',
+				metadata: { urgency_label: 'high' },
+			})
+
+			expect(fetch).toHaveBeenCalledTimes(1)
+		})
+	})
 })
