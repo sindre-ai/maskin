@@ -127,6 +127,9 @@ const agentStorage = new AgentStorageManager(storageProvider, db)
 
 // Session manager for container-based agent execution
 const sessionManager = new SessionManager(db, storageProvider)
+sessionManager.setAgentBaseBuildContext(
+	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
+)
 
 // Inject db, bridge, session manager, and agent storage into context
 app.use('*', async (c, next) => {
