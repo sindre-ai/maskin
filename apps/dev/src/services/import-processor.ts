@@ -279,15 +279,15 @@ function applyTransform(value: string, transform: string): string | number | boo
 	return value
 }
 
-function mapRowForType(
+export function mapRowForType(
 	row: Record<string, string>,
 	typeMapping: TypeMapping,
 	settings: WorkspaceSettings,
 ): MappedRow | null {
 	const type = typeMapping.objectType
 
-	let title: string | undefined
-	let content: string | undefined
+	const titleParts: string[] = []
+	const contentParts: string[] = []
 	let status: string | undefined
 	let owner: string | undefined
 	const metadata: Record<string, unknown> = {}
@@ -300,21 +300,34 @@ function mapRowForType(
 
 		hasValue = true
 		if (col.targetField === 'title') {
-			title = value
+			titleParts.push(value)
 		} else if (col.targetField === 'content') {
-			content = value
+			contentParts.push(value)
 		} else if (col.targetField === 'status') {
 			status = value
 		} else if (col.targetField === 'owner') {
 			owner = value
 		} else if (col.targetField.startsWith('metadata.')) {
 			const fieldName = col.targetField.slice('metadata.'.length)
-			metadata[fieldName] = applyTransform(value, col.transform)
+			const transformed = applyTransform(value, col.transform)
+			// Only concatenate when both values are strings — transforms can produce
+			// numbers/booleans where concatenation doesn't make sense (last value wins).
+			if (
+				metadata[fieldName] !== undefined &&
+				typeof metadata[fieldName] === 'string' &&
+				typeof transformed === 'string'
+			) {
+				metadata[fieldName] = `${metadata[fieldName]} ${transformed}`
+			} else {
+				metadata[fieldName] = transformed
+			}
 		}
 	}
 
 	// Skip this type for this row if no non-skipped columns had values
 	if (!hasValue) return null
+	const title = titleParts.length > 0 ? titleParts.join(' ') : undefined
+	const content = contentParts.length > 0 ? contentParts.join(' ') : undefined
 	// Must have at least a title or content
 	if (!title && !content) return null
 
