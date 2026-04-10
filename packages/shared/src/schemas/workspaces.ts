@@ -40,6 +40,7 @@ export const workspaceSettingsSchema = z.object({
 			openai: z.string().optional(),
 		})
 		.default({}),
+	onboarding_completed: z.boolean().default(false),
 	claude_oauth: z
 		.object({
 			encryptedAccessToken: z.string(),
