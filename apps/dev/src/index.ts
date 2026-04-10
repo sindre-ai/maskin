@@ -32,7 +32,7 @@ import sessionsRoutes from './routes/sessions'
 import triggersRoutes from './routes/triggers'
 import workspacesRoutes from './routes/workspaces'
 import { AgentStorageManager } from './services/agent-storage'
-import { ContainerManager } from './services/container-manager'
+import { createRuntimeBackend } from './services/runtime-backend'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
 
@@ -109,10 +109,10 @@ const storageProvider = new S3StorageProvider({
 // Ensure S3 bucket exists
 await storageProvider.ensureBucket()
 
-// Ensure agent-base Docker image exists
-const containers = new ContainerManager()
+// Create runtime backend (Docker or microsandbox based on RUNTIME_BACKEND env)
+const runtimeBackend = await createRuntimeBackend()
 try {
-	await containers.ensureImage(
+	await runtimeBackend.ensureImage(
 		'agent-base:latest',
 		path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
 	)
@@ -126,10 +126,7 @@ try {
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
 // Session manager for container-based agent execution
-const sessionManager = new SessionManager(db, storageProvider)
-sessionManager.setAgentBaseBuildContext(
-	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
-)
+const sessionManager = new SessionManager(db, storageProvider, runtimeBackend)
 
 // Inject db, bridge, session manager, and agent storage into context
 app.use('*', async (c, next) => {

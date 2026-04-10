@@ -13,24 +13,29 @@ vi.mock('node:child_process', () => ({
 	exec: vi.fn((_cmd: string, cb: (err: Error | null) => void) => cb(null)),
 }))
 
-const mockContainerManager = {
+vi.mock('node:fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('node:fs')>()
+	return {
+		...actual,
+		createReadStream: vi.fn().mockReturnValue({ pipe: vi.fn() }),
+	}
+})
+
+const mockBackend = {
 	ensureImage: vi.fn().mockResolvedValue(undefined),
 	create: vi.fn().mockResolvedValue('container-id-123'),
 	start: vi.fn().mockResolvedValue(undefined),
 	stop: vi.fn().mockResolvedValue(undefined),
 	remove: vi.fn().mockResolvedValue(undefined),
 	exec: vi.fn().mockResolvedValue({ exitCode: 0, output: '' }),
-	copyTo: vi.fn().mockResolvedValue(undefined),
-	copyFrom: vi.fn().mockResolvedValue({}),
+	copyFileIn: vi.fn().mockResolvedValue(undefined),
+	copyFileOut: vi.fn().mockResolvedValue(undefined),
 	inspect: vi.fn().mockResolvedValue({ running: false, exitCode: 0 }),
+	getHostAddress: vi.fn().mockReturnValue('host.docker.internal'),
 	logs: vi.fn().mockReturnValue({
 		[Symbol.asyncIterator]: async function* () {},
 	}),
 }
-
-vi.mock('../../services/container-manager', () => ({
-	ContainerManager: vi.fn().mockImplementation(() => mockContainerManager),
-}))
 
 vi.mock('../../lib/claude-oauth', () => ({
 	getValidOAuthToken: vi.fn().mockResolvedValue(null),
@@ -45,6 +50,7 @@ vi.mock('../../lib/integrations/registry', () => ({
 }))
 
 import type { StorageProvider } from '@maskin/storage'
+import type { RuntimeBackend } from '../../services/runtime-backend'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
@@ -70,7 +76,11 @@ describe('SessionManager', () => {
 		storageProvider = createMockStorageProvider()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
-		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
+		manager = new SessionManager(
+			ctx.db,
+			storageProvider as StorageProvider,
+			mockBackend as unknown as RuntimeBackend,
+		)
 	})
 
 	afterEach(async () => {
@@ -118,7 +128,7 @@ describe('SessionManager', () => {
 
 			await manager.stopSession(session.id)
 
-			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-abc')
+			expect(mockBackend.stop).toHaveBeenCalledWith('container-abc')
 		})
 
 		it('throws when session not found', async () => {
@@ -148,14 +158,14 @@ describe('SessionManager', () => {
 
 			await manager.pauseSession(session.id)
 
-			expect(mockContainerManager.exec).toHaveBeenCalledWith('container-xyz', [
+			expect(mockBackend.exec).toHaveBeenCalledWith('container-xyz', [
 				'tar',
 				'-czf',
 				'/tmp/snapshot.tar.gz',
 				'/agent/',
 			])
-			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-xyz')
-			expect(mockContainerManager.remove).toHaveBeenCalledWith('container-xyz')
+			expect(mockBackend.stop).toHaveBeenCalledWith('container-xyz')
+			expect(mockBackend.remove).toHaveBeenCalledWith('container-xyz')
 			expect(storageProvider.put).toHaveBeenCalledWith(
 				`snapshots/${session.id}.tar.gz`,
 				expect.anything(),
@@ -175,7 +185,7 @@ describe('SessionManager', () => {
 				containerId: 'container-fail',
 			})
 			mockResults.select = [session]
-			mockContainerManager.exec.mockRejectedValueOnce(new Error('exec failed'))
+			mockBackend.exec.mockRejectedValueOnce(new Error('exec failed'))
 
 			await expect(manager.pauseSession(session.id)).rejects.toThrow('exec failed')
 			// Status should be reverted to running (via the catch block's db.update call)
