@@ -58,6 +58,48 @@ describe('parseFile', () => {
 			expect(result.rows[0]?.name).toBe('Alice')
 			expect(result.rows[0]?.email).toBe('alice@test.com')
 		})
+
+		it('skips preamble notes before the actual header row', () => {
+			const csv = [
+				'Notes:',
+				'"This file was exported from LinkedIn"',
+				'',
+				'First Name,Last Name,Email Address,Company,Position',
+				'Alice,Smith,alice@test.com,Acme,Engineer',
+				'Bob,Jones,bob@test.com,Globex,Designer',
+			].join('\n')
+			const result = parseFile(Buffer.from(csv), 'csv')
+
+			expect(result.columns).toEqual([
+				'First Name',
+				'Last Name',
+				'Email Address',
+				'Company',
+				'Position',
+			])
+			expect(result.rows).toHaveLength(2)
+			expect(result.rows[0]).toEqual({
+				'First Name': 'Alice',
+				'Last Name': 'Smith',
+				'Email Address': 'alice@test.com',
+				Company: 'Acme',
+				Position: 'Engineer',
+			})
+		})
+
+		it('handles preamble with key-value metadata rows', () => {
+			const csv = [
+				'Report: Q1 Contacts',
+				'Generated: 2024-01-15',
+				'',
+				'name,email,status',
+				'Alice,alice@test.com,active',
+			].join('\n')
+			const result = parseFile(Buffer.from(csv), 'csv')
+
+			expect(result.columns).toEqual(['name', 'email', 'status'])
+			expect(result.rows).toHaveLength(1)
+		})
 	})
 
 	describe('JSON parsing', () => {
