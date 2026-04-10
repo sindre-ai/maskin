@@ -50,6 +50,7 @@ vi.mock('../../lib/integrations/registry', () => ({
 }))
 
 import type { StorageProvider } from '@maskin/storage'
+import type { RuntimeBackend } from '../../services/runtime-backend'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
@@ -75,7 +76,11 @@ describe('SessionManager', () => {
 		storageProvider = createMockStorageProvider()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
-		manager = new SessionManager(ctx.db, storageProvider as StorageProvider, mockBackend as any)
+		manager = new SessionManager(
+			ctx.db,
+			storageProvider as StorageProvider,
+			mockBackend as unknown as RuntimeBackend,
+		)
 	})
 
 	afterEach(async () => {
