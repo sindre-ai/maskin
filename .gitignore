@@ -14,3 +14,5 @@ coverage/
 .pnpmfile.cjs
 .worktrees/
 .playwright-mcp/
+docs-site/build/
+docs-site/.docusaurus/
