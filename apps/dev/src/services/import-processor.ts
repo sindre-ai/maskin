@@ -48,12 +48,40 @@ export function parseFile(buffer: Buffer, fileType: string): ParsedFile {
 	throw new Error(`Unsupported file type: ${fileType}`)
 }
 
+/**
+ * Detect the 1-based line number of the actual header row in a CSV.
+ * Some exports (e.g. LinkedIn Connections) prepend notes/metadata rows before
+ * the real column headers. We find the header by looking for the first line
+ * that contains at least 2 comma-separated values — preamble rows are typically
+ * single-value lines or key/value pairs.
+ */
+function detectHeaderLine(text: string): number {
+	const lines = text.split(/\r?\n/)
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]?.trim()
+		if (!line) continue
+		// A row with at least one comma that yields ≥2 non-empty fields is likely the header
+		const fields = line
+			.split(',')
+			.map((f) => f.trim())
+			.filter(Boolean)
+		if (fields.length >= 2) {
+			return i + 1 // csv-parse from_line is 1-based
+		}
+	}
+	return 1 // fallback: first line
+}
+
 function parseCsv(buffer: Buffer): ParsedFile {
-	const records = parse(buffer, {
+	const text = buffer.toString('utf-8').replace(/^\uFEFF/, '') // strip BOM
+	const headerLine = detectHeaderLine(text)
+
+	const records = parse(text, {
 		columns: true,
 		skip_empty_lines: true,
 		trim: true,
 		bom: true,
+		from_line: headerLine,
 	}) as Record<string, string>[]
 
 	if (records.length === 0) {
