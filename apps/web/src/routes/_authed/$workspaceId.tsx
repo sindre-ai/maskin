@@ -72,7 +72,7 @@ function WorkspaceLayout() {
 					<AppSidebar />
 					<SidebarInset className="min-w-0">
 						<Header />
-						<div className="flex-1 overflow-auto p-8">
+						<div className="flex flex-col flex-1 overflow-auto p-8">
 							<Outlet />
 						</div>
 					</SidebarInset>
