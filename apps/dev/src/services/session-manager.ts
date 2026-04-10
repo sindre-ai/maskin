@@ -486,7 +486,8 @@ export class SessionManager extends EventEmitter {
 			try {
 				const resolved = getProvider(integration.provider)
 				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
-				envVars[`${integration.provider.toUpperCase()}_TOKEN`] = accessToken
+				const envVarName = resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
+				envVars[envVarName] = accessToken
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {
 					error: String(err),
