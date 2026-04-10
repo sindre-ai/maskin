@@ -31,6 +31,7 @@ export function buildObjectResponse(overrides: Partial<ObjectResponse> = {}): Ob
 		metadata: null,
 		owner: null,
 		activeSessionId: null,
+		isStarred: false,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,

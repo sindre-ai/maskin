@@ -24,6 +24,7 @@ export const updateObjectSchema = z.object({
 	status: z.string().optional(),
 	metadata: safeMetadataSchema.optional(),
 	owner: z.string().uuid().nullable().optional(),
+	isStarred: z.boolean().optional(),
 })
 
 /** Known built-in sort columns — keep in sync with sortColumns in apps/dev/src/routes/objects.ts */

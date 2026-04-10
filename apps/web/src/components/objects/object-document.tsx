@@ -8,12 +8,13 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
+import { useDeleteObject, useToggleStar, useUpdateObject } from '@/hooks/use-objects'
 import { useObjectRelationships } from '@/hooks/use-relationships'
 import type { ActorResponse, EventResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, Trash2 } from 'lucide-react'
+import { Check, Star, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
@@ -221,41 +222,70 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		})
 	}, [object.id, deleteObject, navigate, workspaceId])
 
+	const toggleStar = useToggleStar(workspaceId)
+
+	const handleToggleStar = useCallback(() => {
+		toggleStar.mutate({ id: object.id, isStarred: !object.isStarred })
+	}, [object.id, object.isStarred, toggleStar])
+
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
-	const deleteActions = useMemo(
-		() =>
-			confirmDelete ? (
-				<div className="flex items-center gap-2">
-					<span className="text-xs text-error">Delete this {object.type}?</span>
-					<Button
-						variant="destructive"
-						size="sm"
-						onClick={handleDelete}
-						disabled={deleteObject.isPending}
-					>
-						{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
-					</Button>
-					<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
-						Cancel
-					</Button>
-				</div>
-			) : (
+	const headerActions = useMemo(
+		() => (
+			<div className="flex items-center gap-1">
 				<Button
 					variant="ghost"
 					size="icon"
-					className="h-7 w-7 text-muted-foreground hover:text-error"
-					onClick={() => setConfirmDelete(true)}
+					className={cn(
+						'h-7 w-7',
+						object.isStarred
+							? 'text-amber-500 hover:text-amber-600'
+							: 'text-muted-foreground hover:text-foreground',
+					)}
+					onClick={handleToggleStar}
 				>
-					<Trash2 size={15} />
+					<Star size={15} fill={object.isStarred ? 'currentColor' : 'none'} />
 				</Button>
-			),
-		[confirmDelete, handleDelete, deleteObject.isPending, object.type],
+				{confirmDelete ? (
+					<div className="flex items-center gap-2">
+						<span className="text-xs text-error">Delete this {object.type}?</span>
+						<Button
+							variant="destructive"
+							size="sm"
+							onClick={handleDelete}
+							disabled={deleteObject.isPending}
+						>
+							{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
+						</Button>
+						<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+							Cancel
+						</Button>
+					</div>
+				) : (
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7 text-muted-foreground hover:text-error"
+						onClick={() => setConfirmDelete(true)}
+					>
+						<Trash2 size={15} />
+					</Button>
+				)}
+			</div>
+		),
+		[
+			object.isStarred,
+			handleToggleStar,
+			confirmDelete,
+			handleDelete,
+			deleteObject.isPending,
+			object.type,
+		],
 	)
 
 	return (
 		<>
-			<PageHeader actions={deleteActions} />
+			<PageHeader actions={headerActions} />
 			<ObjectDocumentView
 				object={object}
 				workspaceId={workspaceId}

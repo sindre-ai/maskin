@@ -224,7 +224,7 @@ app.openapi(listObjectsRoute, async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(orderBy)
+		.orderBy(desc(objects.isStarred), orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
@@ -274,7 +274,7 @@ app.openapi(searchObjectsRoute, async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(orderBy)
+		.orderBy(desc(objects.isStarred), orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
@@ -479,8 +479,15 @@ app.openapi(updateObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	// Log event
-	const action = body.status && body.status !== existing.status ? 'status_changed' : 'updated'
+	// Log event — status_changed takes priority over starred/unstarred
+	const action =
+		body.status && body.status !== existing.status
+			? 'status_changed'
+			: body.isStarred !== undefined && body.isStarred !== existing.isStarred
+				? body.isStarred
+					? 'starred'
+					: 'unstarred'
+				: 'updated'
 	await db.insert(events).values({
 		workspaceId: existing.workspaceId,
 		actorId,

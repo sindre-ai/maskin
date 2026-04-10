@@ -331,6 +331,7 @@ export interface ObjectResponse {
 	metadata: SafeMetadata | null
 	owner: string | null
 	activeSessionId: string | null
+	isStarred: boolean
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
@@ -352,6 +353,7 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	owner?: string | null
+	isStarred?: boolean
 }
 
 export interface ActorListItem {
