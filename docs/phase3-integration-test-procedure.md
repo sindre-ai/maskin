@@ -38,7 +38,7 @@ The script handles starting services, running tests, and cleanup automatically.
 ### Step 1: Database
 - Starts PostgreSQL via `docker compose up postgres`
 - Waits for healthcheck to pass
-- Runs database migrations via `pnpm --filter @maskin/db db:push`
+- Runs database migrations via `pnpm --filter @maskin/db db:migrate`
 
 ### Step 2: Agent-Server
 - Starts `apps/agent-server` on port 3001 with `RUNTIME_BACKEND=docker`
@@ -79,7 +79,7 @@ The script handles starting services, running tests, and cleanup automatically.
 If you prefer to run steps manually instead of using the script:
 
 - [ ] `docker compose up -d postgres` — database is running and healthy
-- [ ] `pnpm --filter @maskin/db db:push` — migrations applied
+- [ ] `pnpm --filter @maskin/db db:migrate` — migrations applied
 - [ ] Start agent-server: `RUNTIME_BACKEND=docker AGENT_SERVER_SECRET=test-secret pnpm --filter @maskin/agent-server dev`
 - [ ] Verify: `curl http://localhost:3001/health` returns `{"status":"ok"}`
 - [ ] Start main app: `AGENT_SERVER_URL=http://localhost:3001 AGENT_SERVER_SECRET=test-secret pnpm --filter @maskin/dev dev`

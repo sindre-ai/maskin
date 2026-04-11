@@ -122,7 +122,7 @@ fi
 
 # Run migrations
 log "Running database migrations..."
-if pnpm --filter @maskin/db db:push 2>&1 | tail -5; then
+if pnpm --filter @maskin/db db:migrate 2>&1 | tail -5; then
   pass "Database migrations applied"
 else
   fail "Database migrations failed"
