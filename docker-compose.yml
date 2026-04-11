@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: maskin
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +19,7 @@ services:
     image: chrislusf/seaweedfs
     command: "server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data"
     ports:
-      - "8333:8333"
+      - "8334:8333"
       - "9333:9333"
     volumes:
       - seaweed_data:/data

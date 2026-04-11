@@ -48,7 +48,7 @@ console.log('Ensuring S3 bucket exists...')
 for (let i = 0; i < 10; i++) {
 	try {
 		execSync(
-			'curl -s --aws-sigv4 "aws:amz:us-east-1:s3" --user "admin:admin" -X PUT http://localhost:8333/agent-files',
+			'curl -s --aws-sigv4 "aws:amz:us-east-1:s3" --user "admin:admin" -X PUT http://localhost:8334/agent-files',
 			{ stdio: 'ignore' },
 		)
 		break
