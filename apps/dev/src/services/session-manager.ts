@@ -1,5 +1,6 @@
 import { exec as execCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { createReadStream } from 'node:fs'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -229,13 +230,17 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in running state`)
 		}
 
+		const sessionData = this.activeSessions.get(sessionId)
+		if (!sessionData) {
+			throw new Error(`Session ${sessionId} has no active temp directory`)
+		}
+
 		await this.db
 			.update(sessions)
 			.set({ status: 'snapshotting', updatedAt: new Date() })
 			.where(eq(sessions.id, sessionId))
 
 		try {
-			// Tar the agent workspace
 			await this.backend.exec(session.containerId, [
 				'tar',
 				'-czf',
@@ -243,14 +248,11 @@ export class SessionManager extends EventEmitter {
 				'/agent/',
 			])
 
-			const hostSnapshotPath = join(tmpdir(), `snapshot-${sessionId}.tar.gz`)
-			await this.backend.copyFileOut(session.containerId, '/tmp/snapshot.tar.gz', hostSnapshotPath)
+			const localSnapshotPath = join(sessionData.tempDir, 'snapshot.tar.gz')
+			await this.backend.copyFileOut(session.containerId, '/tmp/snapshot.tar.gz', localSnapshotPath)
 
-			// Upload snapshot to S3
 			const snapshotKey = `snapshots/${sessionId}.tar.gz`
-			const { createReadStream } = await import('node:fs')
-			await this.storage.put(snapshotKey, createReadStream(hostSnapshotPath))
-			await rm(hostSnapshotPath, { force: true })
+			await this.storage.put(snapshotKey, createReadStream(localSnapshotPath))
 
 			// Stop and remove container
 			await this.backend.stop(session.containerId)
