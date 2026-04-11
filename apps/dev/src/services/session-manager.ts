@@ -59,12 +59,23 @@ export class SessionManager extends EventEmitter {
 	async start() {
 		// Pre-build agent-base image so sessions don't block on first launch
 		try {
-			const buildContext = join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', 'docker', 'agent-base')
+			const buildContext = join(
+				import.meta.dirname ?? __dirname,
+				'..',
+				'..',
+				'..',
+				'..',
+				'docker',
+				'agent-base',
+			)
 			await this.backend.ensureImage('agent-base:latest', buildContext)
 		} catch (err) {
-			logger.error('Failed to build agent-base image — sessions will fail until image is available', {
-				error: err instanceof Error ? err.message : String(err),
-			})
+			logger.error(
+				'Failed to build agent-base image — sessions will fail until image is available',
+				{
+					error: err instanceof Error ? err.message : String(err),
+				},
+			)
 		}
 
 		// Start watchdog for timeouts and idle sessions
@@ -468,7 +479,9 @@ export class SessionManager extends EventEmitter {
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
 			ACTION_PROMPT: session.actionPrompt,
-			MASKIN_API_URL: process.env.MASKIN_API_URL ?? `http://${this.backend.getHostAddress()}:${process.env.PORT ?? 3000}`,
+			MASKIN_API_URL:
+				process.env.MASKIN_API_URL ??
+				`http://${this.backend.getHostAddress()}:${process.env.PORT ?? 3000}`,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}
 
