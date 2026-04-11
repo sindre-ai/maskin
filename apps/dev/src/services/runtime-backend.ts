@@ -3,7 +3,7 @@
  *
  * Implementations:
  *  - DockerBackend   (Docker via dockerode)
- *  - MicrosandboxBackend (microsandbox microVMs) — future
+ *  - MicrosandboxBackend (microsandbox microVMs)
  */
 
 export interface SandboxCreateOptions {
@@ -84,8 +84,10 @@ export async function createRuntimeBackend(): Promise<RuntimeBackend> {
 			const { DockerBackend } = await import('./docker-backend')
 			return new DockerBackend()
 		}
-		case 'microsandbox':
-			throw new Error('MicrosandboxBackend is not yet implemented. It will be added in Phase 2.')
+		case 'microsandbox': {
+			const { MicrosandboxBackend } = await import('./microsandbox-backend')
+			return new MicrosandboxBackend()
+		}
 		default:
 			throw new Error(`Unknown RUNTIME_BACKEND: ${type}. Expected 'docker' or 'microsandbox'.`)
 	}
