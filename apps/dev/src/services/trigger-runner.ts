@@ -158,7 +158,6 @@ export class TriggerRunner {
 					createdBy: trigger.createdBy,
 				})
 				.then(async (session) => {
-					// Link the object to the active session
 					if (event.entity_id) {
 						await this.db
 							.update(objects)
@@ -173,7 +172,13 @@ export class TriggerRunner {
 							)
 					}
 				})
-				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				.catch((err) =>
+					logger.error('Trigger session creation failed', {
+						triggerId: trigger.id,
+						triggerName: trigger.name,
+						error: String(err),
+					}),
+				)
 		}
 	}
 
@@ -265,7 +270,13 @@ export class TriggerRunner {
 						triggerId: trigger.id,
 						createdBy: trigger.createdBy,
 					})
-					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+					.catch((err) =>
+						logger.error('Trigger session creation failed', {
+							triggerId: trigger.id,
+							triggerName: trigger.name,
+							error: String(err),
+						}),
+					)
 			})
 
 			this.cronJobs.set(trigger.id, job)
@@ -317,7 +328,13 @@ export class TriggerRunner {
 					triggerId: trigger.id,
 					createdBy: trigger.createdBy,
 				})
-				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				.catch((err) =>
+					logger.error('Trigger session creation failed', {
+						triggerId: trigger.id,
+						triggerName: trigger.name,
+						error: String(err),
+					}),
+				)
 
 			// Auto-disable after firing
 			await this.db
