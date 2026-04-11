@@ -19,7 +19,8 @@ const app = new Hono<Env>()
 app.get('/', async (c) => {
 	const db = c.get('db')
 	const status = c.req.query('status')
-	const limit = Math.min(Number(c.req.query('limit') ?? 50), 200)
+	const parsed = Number(c.req.query('limit') ?? 50)
+	const limit = Math.min(Number.isNaN(parsed) || parsed < 1 ? 50 : Math.floor(parsed), 200)
 
 	const conditions = status ? [eq(sessions.status, status)] : []
 
