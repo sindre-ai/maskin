@@ -35,6 +35,7 @@ const mockBackend = {
 	logs: vi.fn().mockReturnValue({
 		[Symbol.asyncIterator]: async function* () {},
 	}),
+	onExit: undefined,
 }
 
 vi.mock('../../lib/claude-oauth', () => ({
@@ -54,6 +55,11 @@ import type { RuntimeBackend } from '../../services/runtime-backend'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
+
+function registerActiveSession(mgr: SessionManager, sessionId: string, tempDir: string) {
+	const internal = mgr as unknown as { activeSessions: Map<string, { tempDir: string }> }
+	internal.activeSessions.set(sessionId, { tempDir })
+}
 
 function createMockStorageProvider() {
 	return {
@@ -155,6 +161,7 @@ describe('SessionManager', () => {
 			})
 			mockResults.select = [session]
 			mockResults.insert = [] // for system log
+			registerActiveSession(manager, session.id, '/tmp/anko-session-test')
 
 			await manager.pauseSession(session.id)
 
@@ -164,6 +171,11 @@ describe('SessionManager', () => {
 				'/tmp/snapshot.tar.gz',
 				'/agent/',
 			])
+			expect(mockBackend.copyFileOut).toHaveBeenCalledWith(
+				'container-xyz',
+				'/tmp/snapshot.tar.gz',
+				expect.stringContaining('snapshot.tar.gz'),
+			)
 			expect(mockBackend.stop).toHaveBeenCalledWith('container-xyz')
 			expect(mockBackend.remove).toHaveBeenCalledWith('container-xyz')
 			expect(storageProvider.put).toHaveBeenCalledWith(
@@ -185,10 +197,10 @@ describe('SessionManager', () => {
 				containerId: 'container-fail',
 			})
 			mockResults.select = [session]
+			registerActiveSession(manager, session.id, '/tmp/anko-session-test')
 			mockBackend.exec.mockRejectedValueOnce(new Error('exec failed'))
 
 			await expect(manager.pauseSession(session.id)).rejects.toThrow('exec failed')
-			// Status should be reverted to running (via the catch block's db.update call)
 		})
 	})
 
