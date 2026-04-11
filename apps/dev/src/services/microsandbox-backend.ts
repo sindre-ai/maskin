@@ -155,16 +155,35 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		throw new Error('MicrosandboxBackend.inspect() is not yet implemented.')
 	}
 
-	async exec(_sandboxId: string, _cmd: string[]): Promise<ExecResult> {
-		throw new Error('MicrosandboxBackend.exec() is not yet implemented.')
+	async exec(sandboxId: string, cmd: string[]): Promise<ExecResult> {
+		const sandbox = this.sandboxes.get(sandboxId)
+		if (!sandbox) {
+			throw new Error(`Sandbox not found: ${sandboxId}`)
+		}
+
+		const result = await sandbox.exec(cmd[0], cmd.slice(1))
+		return {
+			exitCode: result.code,
+			output: result.stdout() + result.stderr(),
+		}
 	}
 
-	async copyFileOut(_sandboxId: string, _guestPath: string, _hostPath: string): Promise<void> {
-		throw new Error('MicrosandboxBackend.copyFileOut() is not yet implemented.')
+	async copyFileOut(sandboxId: string, guestPath: string, hostPath: string): Promise<void> {
+		const sandbox = this.sandboxes.get(sandboxId)
+		if (!sandbox) {
+			throw new Error(`Sandbox not found: ${sandboxId}`)
+		}
+
+		await sandbox.fs().copyToHost(guestPath, hostPath)
 	}
 
-	async copyFileIn(_sandboxId: string, _hostPath: string, _guestPath: string): Promise<void> {
-		throw new Error('MicrosandboxBackend.copyFileIn() is not yet implemented.')
+	async copyFileIn(sandboxId: string, hostPath: string, guestPath: string): Promise<void> {
+		const sandbox = this.sandboxes.get(sandboxId)
+		if (!sandbox) {
+			throw new Error(`Sandbox not found: ${sandboxId}`)
+		}
+
+		await sandbox.fs().copyFromHost(hostPath, guestPath)
 	}
 
 	getHostAddress(): string {
