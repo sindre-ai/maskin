@@ -13,6 +13,14 @@ function shellEscape(s: string): string {
 	return `'${s.replace(/'/g, "'\\''")}'`
 }
 
+const SAFE_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function validateEnvKey(key: string): void {
+	if (!SAFE_ENV_KEY.test(key)) {
+		throw new Error(`Invalid environment variable name: ${key}`)
+	}
+}
+
 export class MicrosandboxBackend implements RuntimeBackend {
 	private sandboxes = new Map<string, BaseSandbox>()
 	private exitCodes = new Map<string, number>()
@@ -80,6 +88,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 
 		const parts: string[] = []
 		for (const [key, value] of Object.entries(classified.env)) {
+			validateEnvKey(key)
 			parts.push(`export ${key}=${shellEscape(value)}`)
 		}
 		for (const [key, { value }] of Object.entries(classified.secrets)) {
@@ -87,6 +96,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			// For now, secrets are passed as env vars. Once Secret.env() is available, secrets
 			// will never enter the VM — real values will only be substituted at the network
 			// level for requests to allowed hosts.
+			validateEnvKey(key)
 			parts.push(`export ${key}=${shellEscape(value)}`)
 		}
 		return parts.join('; ')
