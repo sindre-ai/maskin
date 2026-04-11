@@ -192,6 +192,11 @@ app.get('/:id/logs/stream', async (c) => {
 					await stream.writeSSE({ event: 'done', data: 'failed' })
 					cleanup()
 				}
+				if (event.stream === 'system' && event.data.startsWith('Session timed out')) {
+					closed = true
+					await stream.writeSSE({ event: 'done', data: 'timeout' })
+					cleanup()
+				}
 			} catch {
 				closed = true
 				cleanup()
