@@ -1,0 +1,37 @@
+{
+	"name": "@maskin/agent-server",
+	"version": "0.0.1",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"dev": "tsx watch src/index.ts",
+		"build": "tsx build.mjs",
+		"start": "node dist/index.js",
+		"test": "vitest --passWithNoTests",
+		"type-check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@maskin/db": "workspace:*",
+		"@maskin/shared": "workspace:*",
+		"@maskin/storage": "workspace:*",
+		"@hono/node-server": "^1.19.13",
+		"dockerode": "^4.0.0",
+		"drizzle-orm": "^0.38.0",
+		"hono": "^4.12.12",
+		"postgres": "^3.4.0"
+	},
+	"optionalDependencies": {
+		"microsandbox": "^0.1.0"
+	},
+	"devDependencies": {
+		"@types/dockerode": "^3.3.0",
+		"@types/node": "^25.5.0",
+		"tsx": "^4.19.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}
