@@ -11,7 +11,7 @@
 		"dev": "tsx watch src/index.ts",
 		"build": "tsx build.mjs",
 		"start": "node dist/index.js",
-		"test": "vitest",
+		"test": "vitest --passWithNoTests",
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
