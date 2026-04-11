@@ -1,4 +1,4 @@
-import { type ExecHandle, Mount, Sandbox } from 'microsandbox'
+import { type BaseSandbox, NodeSandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
 import type {
 	ExecResult,
@@ -9,46 +9,29 @@ import type {
 } from './runtime-backend'
 
 export class MicrosandboxBackend implements RuntimeBackend {
-	private sandboxes = new Map<string, Sandbox>()
-	private execHandles = new Map<string, ExecHandle>()
+	private sandboxes = new Map<string, BaseSandbox>()
 	private exitCodes = new Map<string, number>()
 	private exitPromises = new Map<string, Promise<{ exitCode: number }>>()
 	private exitResolvers = new Map<string, (result: { exitCode: number }) => void>()
 	private startTimes = new Map<string, string>()
 	private finishTimes = new Map<string, string>()
-	private logsConsuming = new Set<string>()
+	private createOptions = new Map<string, SandboxCreateOptions>()
 
 	async ensureImage(_image: string, _buildContext?: string): Promise<void> {
-		// Microsandbox pulls OCI images automatically in Sandbox.create().
+		// Microsandbox pulls OCI images automatically on start.
 	}
 
 	async create(options: SandboxCreateOptions): Promise<string> {
-		const sandbox = await Sandbox.create({
+		const sandbox = await NodeSandbox.create({
 			name: options.name,
 			image: options.image,
-			memoryMib: options.memoryMb,
+			memory: options.memoryMb,
 			cpus: Math.max(1, Math.round(options.cpuShares / 1024)),
-			env: options.env,
-			volumes: this.parseBinds(options.binds),
-			cmd: ['sleep', 'infinity'],
-			maxDurationSecs: options.maxDurationSecs,
 		})
 		this.sandboxes.set(options.name, sandbox)
+		this.createOptions.set(options.name, options)
 		logger.info(`Microsandbox created: ${options.name}`, { image: options.image })
 		return options.name
-	}
-
-	parseBinds(binds: string[]): Record<string, Mount> {
-		const volumes: Record<string, Mount> = {}
-		for (const bind of binds) {
-			const parts = bind.split(':')
-			if (parts.length < 2) continue
-			const hostPath = parts[0]
-			const guestPath = parts[1]
-			const mode = parts[2] ?? 'rw'
-			volumes[guestPath] = Mount.bind(hostPath, { readonly: mode === 'ro' })
-		}
-		return volumes
 	}
 
 	async start(sandboxId: string): Promise<void> {
@@ -57,8 +40,12 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
 
-		const handle = await sandbox.execStream('/entrypoint.sh')
-		this.execHandles.set(sandboxId, handle)
+		const options = this.createOptions.get(sandboxId)
+		await sandbox.start(
+			options?.image,
+			options?.memoryMb,
+			options ? Math.max(1, Math.round(options.cpuShares / 1024)) : undefined,
+		)
 		this.startTimes.set(sandboxId, new Date().toISOString())
 
 		this.exitPromises.set(
@@ -82,28 +69,23 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	}
 
 	async *logs(sandboxId: string): AsyncGenerator<LogChunk> {
-		const handle = this.execHandles.get(sandboxId)
-		if (!handle) return
+		const sandbox = this.sandboxes.get(sandboxId)
+		if (!sandbox) return
 
-		this.logsConsuming.add(sandboxId)
 		try {
-			while (true) {
-				const event = await handle.recv()
-				if (!event) break
-				if (event.type === 'stdout') {
-					yield { stream: 'stdout', data: event.data.toString() }
-				} else if (event.type === 'stderr') {
-					yield { stream: 'stderr', data: event.data.toString() }
-				} else if (event.type === 'exited') {
-					this.resolveExit(sandboxId, event.exitCode ?? 1)
-					break
-				}
+			const result = await sandbox.command.run('/entrypoint.sh')
+			const stdout = await result.output()
+			const stderr = await result.error()
+			if (stdout) {
+				yield { stream: 'stdout', data: stdout }
 			}
+			if (stderr) {
+				yield { stream: 'stderr', data: stderr }
+			}
+			this.resolveExit(sandboxId, result.exitCode)
 		} catch (err) {
 			logger.error(`Log streaming error: ${sandboxId}`, { error: err })
 			this.resolveExit(sandboxId, 1)
-		} finally {
-			this.logsConsuming.delete(sandboxId)
 		}
 	}
 
@@ -113,34 +95,11 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			return { exitCode }
 		}
 
-		if (!this.logsConsuming.has(sandboxId)) {
-			this.drainEvents(sandboxId)
-		}
-
 		const promise = this.exitPromises.get(sandboxId)
 		if (!promise) {
 			throw new Error(`No exit promise for sandbox: ${sandboxId}`)
 		}
 		return promise
-	}
-
-	private async drainEvents(sandboxId: string): Promise<void> {
-		const handle = this.execHandles.get(sandboxId)
-		if (!handle) return
-
-		try {
-			while (true) {
-				const event = await handle.recv()
-				if (!event) break
-				if (event.type === 'exited') {
-					this.resolveExit(sandboxId, event.exitCode ?? 1)
-					break
-				}
-			}
-		} catch (err) {
-			logger.error(`Drain events error: ${sandboxId}`, { error: err })
-			this.resolveExit(sandboxId, 1)
-		}
 	}
 
 	async stop(sandboxId: string): Promise<void> {
@@ -156,20 +115,22 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	async remove(sandboxId: string): Promise<void> {
 		const sandbox = this.sandboxes.get(sandboxId)
 		if (sandbox) {
-			await sandbox.kill()
+			try {
+				await sandbox.stop()
+			} catch {
+				// Already stopped
+			}
 		}
-		// Resolve exit promise before cleanup so any onExit() awaiters don't hang
 		if (!this.exitCodes.has(sandboxId)) {
 			this.resolveExit(sandboxId, 137)
 		}
 		this.sandboxes.delete(sandboxId)
-		this.execHandles.delete(sandboxId)
 		this.exitCodes.delete(sandboxId)
 		this.exitPromises.delete(sandboxId)
 		this.exitResolvers.delete(sandboxId)
 		this.startTimes.delete(sandboxId)
 		this.finishTimes.delete(sandboxId)
-		this.logsConsuming.delete(sandboxId)
+		this.createOptions.delete(sandboxId)
 		logger.info(`Microsandbox removed: ${sandboxId}`)
 	}
 
@@ -188,10 +149,15 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
 
-		const result = await sandbox.exec(cmd[0], cmd.slice(1))
+		if (!cmd[0]) {
+			throw new Error('Command array must not be empty')
+		}
+		const result = await sandbox.command.run(cmd[0], cmd.slice(1))
+		const stdout = await result.output()
+		const stderr = await result.error()
 		return {
-			exitCode: result.code,
-			output: result.stdout() + result.stderr(),
+			exitCode: result.exitCode,
+			output: stdout + stderr,
 		}
 	}
 
@@ -201,7 +167,14 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
 
-		await sandbox.fs().copyToHost(guestPath, hostPath)
+		const result = await sandbox.command.run('base64', [guestPath])
+		const encoded = await result.output()
+		if (result.exitCode !== 0) {
+			throw new Error(`Failed to read file ${guestPath}: exit code ${result.exitCode}`)
+		}
+
+		const { writeFile } = await import('node:fs/promises')
+		await writeFile(hostPath, Buffer.from(encoded.trim(), 'base64'))
 	}
 
 	async copyFileIn(sandboxId: string, hostPath: string, guestPath: string): Promise<void> {
@@ -210,12 +183,14 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
 
-		await sandbox.fs().copyFromHost(hostPath, guestPath)
+		const { readFile } = await import('node:fs/promises')
+		const data = await readFile(hostPath)
+		const encoded = data.toString('base64')
+
+		await sandbox.command.run('sh', ['-c', `echo '${encoded}' | base64 -d > ${guestPath}`])
 	}
 
 	getHostAddress(): string {
-		// MicroVMs reach the host via the default gateway IP.
-		// This is the standard gateway address for microsandbox's virtual network.
 		return '172.17.0.1'
 	}
 }

@@ -190,7 +190,11 @@ describe.skipIf(SKIP)('MicrosandboxBackend integration', () => {
 	describe('8. Pause/resume via tar-based snapshot', () => {
 		it('creates a tar snapshot of /agent directory', async () => {
 			// Create test data in /tmp (alpine doesn't have /agent)
-			await backend.exec(sandboxId, ['sh', '-c', 'mkdir -p /tmp/agent && echo snapshot-test > /tmp/agent/data.txt'])
+			await backend.exec(sandboxId, [
+				'sh',
+				'-c',
+				'mkdir -p /tmp/agent && echo snapshot-test > /tmp/agent/data.txt',
+			])
 
 			// Create tar snapshot
 			const tarResult = await backend.exec(sandboxId, [
@@ -239,7 +243,7 @@ describe.skipIf(SKIP)('MicrosandboxBackend integration', () => {
 			await backend.start(secondSandboxId)
 
 			expect(backend.onExit).toBeDefined()
-			const exitPromise = backend.onExit!(secondSandboxId)
+			const exitPromise = backend.onExit?.(secondSandboxId)
 
 			// Stop the sandbox to trigger exit
 			await backend.stop(secondSandboxId)
