@@ -143,16 +143,39 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		}
 	}
 
-	async stop(_sandboxId: string): Promise<void> {
-		throw new Error('MicrosandboxBackend.stop() is not yet implemented.')
+	async stop(sandboxId: string): Promise<void> {
+		const sandbox = this.sandboxes.get(sandboxId)
+		if (!sandbox) {
+			throw new Error(`Sandbox not found: ${sandboxId}`)
+		}
+		await sandbox.stop()
+		this.resolveExit(sandboxId, 137)
+		logger.info(`Microsandbox stopped: ${sandboxId}`)
 	}
 
-	async remove(_sandboxId: string): Promise<void> {
-		throw new Error('MicrosandboxBackend.remove() is not yet implemented.')
+	async remove(sandboxId: string): Promise<void> {
+		const sandbox = this.sandboxes.get(sandboxId)
+		if (sandbox) {
+			await sandbox.kill()
+		}
+		this.sandboxes.delete(sandboxId)
+		this.execHandles.delete(sandboxId)
+		this.exitCodes.delete(sandboxId)
+		this.exitPromises.delete(sandboxId)
+		this.exitResolvers.delete(sandboxId)
+		this.startTimes.delete(sandboxId)
+		this.finishTimes.delete(sandboxId)
+		this.logsConsuming.delete(sandboxId)
+		logger.info(`Microsandbox removed: ${sandboxId}`)
 	}
 
-	async inspect(_sandboxId: string): Promise<SandboxStatus> {
-		throw new Error('MicrosandboxBackend.inspect() is not yet implemented.')
+	async inspect(sandboxId: string): Promise<SandboxStatus> {
+		const running = this.sandboxes.has(sandboxId) && !this.exitCodes.has(sandboxId)
+		const exitCode = this.exitCodes.get(sandboxId) ?? null
+		const startedAt = this.startTimes.get(sandboxId) ?? null
+		const finishedAt = this.finishTimes.get(sandboxId) ?? null
+
+		return { running, exitCode, startedAt, finishedAt }
 	}
 
 	async exec(sandboxId: string, cmd: string[]): Promise<ExecResult> {
@@ -187,6 +210,8 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	}
 
 	getHostAddress(): string {
-		throw new Error('MicrosandboxBackend.getHostAddress() is not yet implemented.')
+		// MicroVMs reach the host via the default gateway IP.
+		// This is the standard gateway address for microsandbox's virtual network.
+		return '172.17.0.1'
 	}
 }
