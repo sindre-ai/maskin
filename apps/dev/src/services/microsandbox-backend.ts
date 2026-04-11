@@ -158,6 +158,10 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (sandbox) {
 			await sandbox.kill()
 		}
+		// Resolve exit promise before cleanup so any onExit() awaiters don't hang
+		if (!this.exitCodes.has(sandboxId)) {
+			this.resolveExit(sandboxId, 137)
+		}
 		this.sandboxes.delete(sandboxId)
 		this.execHandles.delete(sandboxId)
 		this.exitCodes.delete(sandboxId)
