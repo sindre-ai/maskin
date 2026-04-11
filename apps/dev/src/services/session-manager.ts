@@ -57,6 +57,16 @@ export class SessionManager extends EventEmitter {
 	}
 
 	async start() {
+		// Pre-build agent-base image so sessions don't block on first launch
+		try {
+			const buildContext = join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', 'docker', 'agent-base')
+			await this.backend.ensureImage('agent-base:latest', buildContext)
+		} catch (err) {
+			logger.error('Failed to build agent-base image — sessions will fail until image is available', {
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+
 		// Start watchdog for timeouts and idle sessions
 		this.watchdogInterval = setInterval(() => {
 			this.runWatchdog().catch((err) =>
