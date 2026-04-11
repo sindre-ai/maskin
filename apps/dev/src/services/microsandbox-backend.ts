@@ -1,4 +1,4 @@
-import { Mount, Sandbox } from 'microsandbox'
+import { type ExecHandle, Mount, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
 import type {
 	ExecResult,
@@ -10,7 +10,7 @@ import type {
 
 export class MicrosandboxBackend implements RuntimeBackend {
 	private sandboxes = new Map<string, Sandbox>()
-	private execHandles = new Map<string, unknown>()
+	private execHandles = new Map<string, ExecHandle>()
 	private exitCodes = new Map<string, number>()
 	private exitPromises = new Map<string, Promise<{ exitCode: number }>>()
 	private startTimes = new Map<string, string>()
@@ -50,8 +50,52 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		return volumes
 	}
 
-	async start(_sandboxId: string): Promise<void> {
-		throw new Error('MicrosandboxBackend.start() is not yet implemented.')
+	async start(sandboxId: string): Promise<void> {
+		const sandbox = this.sandboxes.get(sandboxId)
+		if (!sandbox) {
+			throw new Error(`Sandbox not found: ${sandboxId}`)
+		}
+
+		const handle = await sandbox.execStream('/entrypoint.sh')
+		this.execHandles.set(sandboxId, handle)
+		this.startTimes.set(sandboxId, new Date().toISOString())
+
+		this.exitPromises.set(sandboxId, this.watchExecHandle(sandboxId, handle))
+
+		logger.info(`Microsandbox started: ${sandboxId}`)
+	}
+
+	private async watchExecHandle(sandboxId: string, handle: ExecHandle): Promise<{ exitCode: number }> {
+		try {
+			while (true) {
+				const event = await handle.recv()
+				if (!event) break
+				if (event.type === 'exited') {
+					const exitCode = event.exitCode ?? 1
+					this.exitCodes.set(sandboxId, exitCode)
+					this.finishTimes.set(sandboxId, new Date().toISOString())
+					logger.info(`Microsandbox process exited: ${sandboxId}`, { exitCode })
+					return { exitCode }
+				}
+			}
+		} catch (err) {
+			logger.error(`Microsandbox exec handle error: ${sandboxId}`, { error: err })
+			this.exitCodes.set(sandboxId, 1)
+			this.finishTimes.set(sandboxId, new Date().toISOString())
+		}
+		return { exitCode: this.exitCodes.get(sandboxId) ?? 1 }
+	}
+
+	async onExit(sandboxId: string): Promise<{ exitCode: number }> {
+		const promise = this.exitPromises.get(sandboxId)
+		if (!promise) {
+			const exitCode = this.exitCodes.get(sandboxId)
+			if (exitCode !== undefined) {
+				return { exitCode }
+			}
+			throw new Error(`No exit promise for sandbox: ${sandboxId}`)
+		}
+		return promise
 	}
 
 	async stop(_sandboxId: string): Promise<void> {
