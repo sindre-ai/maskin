@@ -74,21 +74,25 @@ export interface RuntimeBackend {
 
 /**
  * Factory — reads RUNTIME_BACKEND env var and returns the appropriate backend.
- * Defaults to 'docker' if not set.
+ * Defaults to 'docker' on Windows, 'microsandbox' elsewhere.
  */
 export async function createRuntimeBackend(): Promise<RuntimeBackend> {
-	const type = process.env.RUNTIME_BACKEND ?? 'docker'
+	const type =
+		process.env.RUNTIME_BACKEND ?? (process.platform === 'win32' ? 'docker' : 'microsandbox')
 
-	switch (type) {
-		case 'docker': {
-			const { DockerBackend } = await import('./docker-backend')
-			return new DockerBackend()
-		}
-		case 'microsandbox': {
+	if (type === 'docker') {
+		const { DockerBackend } = await import('./docker-backend')
+		return new DockerBackend()
+	}
+	if (type === 'microsandbox') {
+		try {
 			const { MicrosandboxBackend } = await import('./microsandbox-backend')
 			return new MicrosandboxBackend()
+		} catch (err) {
+			throw new Error(
+				`microsandbox not available on ${process.platform}/${process.arch}. Set RUNTIME_BACKEND=docker.`,
+			)
 		}
-		default:
-			throw new Error(`Unknown RUNTIME_BACKEND: ${type}. Expected 'docker' or 'microsandbox'.`)
 	}
+	throw new Error(`Unknown RUNTIME_BACKEND: ${type}`)
 }
