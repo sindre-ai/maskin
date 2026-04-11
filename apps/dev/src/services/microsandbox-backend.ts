@@ -13,12 +13,13 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	private execHandles = new Map<string, ExecHandle>()
 	private exitCodes = new Map<string, number>()
 	private exitPromises = new Map<string, Promise<{ exitCode: number }>>()
+	private exitResolvers = new Map<string, (result: { exitCode: number }) => void>()
 	private startTimes = new Map<string, string>()
 	private finishTimes = new Map<string, string>()
+	private logsConsuming = new Set<string>()
 
 	async ensureImage(_image: string, _buildContext?: string): Promise<void> {
 		// Microsandbox pulls OCI images automatically in Sandbox.create().
-		// No-op for now — first sandbox creation will pull the image.
 	}
 
 	async create(options: SandboxCreateOptions): Promise<string> {
@@ -60,45 +61,86 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		this.execHandles.set(sandboxId, handle)
 		this.startTimes.set(sandboxId, new Date().toISOString())
 
-		this.exitPromises.set(sandboxId, this.watchExecHandle(sandboxId, handle))
+		this.exitPromises.set(
+			sandboxId,
+			new Promise((resolve) => {
+				this.exitResolvers.set(sandboxId, resolve)
+			}),
+		)
 
 		logger.info(`Microsandbox started: ${sandboxId}`)
 	}
 
-	private async watchExecHandle(
-		sandboxId: string,
-		handle: ExecHandle,
-	): Promise<{ exitCode: number }> {
+	private resolveExit(sandboxId: string, exitCode: number): void {
+		this.exitCodes.set(sandboxId, exitCode)
+		this.finishTimes.set(sandboxId, new Date().toISOString())
+		const resolver = this.exitResolvers.get(sandboxId)
+		if (resolver) {
+			resolver({ exitCode })
+			this.exitResolvers.delete(sandboxId)
+		}
+	}
+
+	async *logs(sandboxId: string): AsyncGenerator<LogChunk> {
+		const handle = this.execHandles.get(sandboxId)
+		if (!handle) return
+
+		this.logsConsuming.add(sandboxId)
+		try {
+			while (true) {
+				const event = await handle.recv()
+				if (!event) break
+				if (event.type === 'stdout') {
+					yield { stream: 'stdout', data: event.data.toString() }
+				} else if (event.type === 'stderr') {
+					yield { stream: 'stderr', data: event.data.toString() }
+				} else if (event.type === 'exited') {
+					this.resolveExit(sandboxId, event.exitCode ?? 1)
+					break
+				}
+			}
+		} catch (err) {
+			logger.error(`Log streaming error: ${sandboxId}`, { error: err })
+			this.resolveExit(sandboxId, 1)
+		} finally {
+			this.logsConsuming.delete(sandboxId)
+		}
+	}
+
+	async onExit(sandboxId: string): Promise<{ exitCode: number }> {
+		const exitCode = this.exitCodes.get(sandboxId)
+		if (exitCode !== undefined) {
+			return { exitCode }
+		}
+
+		if (!this.logsConsuming.has(sandboxId)) {
+			this.drainEvents(sandboxId)
+		}
+
+		const promise = this.exitPromises.get(sandboxId)
+		if (!promise) {
+			throw new Error(`No exit promise for sandbox: ${sandboxId}`)
+		}
+		return promise
+	}
+
+	private async drainEvents(sandboxId: string): Promise<void> {
+		const handle = this.execHandles.get(sandboxId)
+		if (!handle) return
+
 		try {
 			while (true) {
 				const event = await handle.recv()
 				if (!event) break
 				if (event.type === 'exited') {
-					const exitCode = event.exitCode ?? 1
-					this.exitCodes.set(sandboxId, exitCode)
-					this.finishTimes.set(sandboxId, new Date().toISOString())
-					logger.info(`Microsandbox process exited: ${sandboxId}`, { exitCode })
-					return { exitCode }
+					this.resolveExit(sandboxId, event.exitCode ?? 1)
+					break
 				}
 			}
 		} catch (err) {
-			logger.error(`Microsandbox exec handle error: ${sandboxId}`, { error: err })
-			this.exitCodes.set(sandboxId, 1)
-			this.finishTimes.set(sandboxId, new Date().toISOString())
+			logger.error(`Drain events error: ${sandboxId}`, { error: err })
+			this.resolveExit(sandboxId, 1)
 		}
-		return { exitCode: this.exitCodes.get(sandboxId) ?? 1 }
-	}
-
-	async onExit(sandboxId: string): Promise<{ exitCode: number }> {
-		const promise = this.exitPromises.get(sandboxId)
-		if (!promise) {
-			const exitCode = this.exitCodes.get(sandboxId)
-			if (exitCode !== undefined) {
-				return { exitCode }
-			}
-			throw new Error(`No exit promise for sandbox: ${sandboxId}`)
-		}
-		return promise
 	}
 
 	async stop(_sandboxId: string): Promise<void> {
@@ -107,10 +149,6 @@ export class MicrosandboxBackend implements RuntimeBackend {
 
 	async remove(_sandboxId: string): Promise<void> {
 		throw new Error('MicrosandboxBackend.remove() is not yet implemented.')
-	}
-
-	async *logs(_sandboxId: string): AsyncGenerator<LogChunk> {
-		throw new Error('MicrosandboxBackend.logs() is not yet implemented.')
 	}
 
 	async inspect(_sandboxId: string): Promise<SandboxStatus> {
@@ -130,8 +168,6 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	}
 
 	getHostAddress(): string {
-		// Microsandbox VMs use hypervisor isolation — host.docker.internal does not exist.
-		// The correct host address depends on the microsandbox network config and needs testing.
 		throw new Error('MicrosandboxBackend.getHostAddress() is not yet implemented.')
 	}
 }
