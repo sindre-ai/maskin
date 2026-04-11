@@ -849,6 +849,8 @@ export class SessionManager extends EventEmitter {
 				data: {},
 			})
 
+			await this.insertSystemLog(session.id, 'Session timed out')
+
 			await this.clearActiveSession(session.id)
 			await this.cleanupSession(session.id)
 
