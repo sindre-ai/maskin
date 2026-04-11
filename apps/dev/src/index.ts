@@ -4,7 +4,6 @@ import path from 'node:path'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { createRuntimeBackend } from '@maskin/agent-server/runtime'
 import { authMiddleware } from '@maskin/auth'
 import { createDb } from '@maskin/db'
 import type { Database } from '@maskin/db'
@@ -109,14 +108,18 @@ const storageProvider = new S3StorageProvider({
 // Ensure S3 bucket exists
 await storageProvider.ensureBucket()
 
-// Create runtime backend (Docker or microsandbox based on RUNTIME_BACKEND env)
-const runtimeBackend = await createRuntimeBackend()
+// Agent-server connection for delegating session execution
+const agentServerUrl = process.env.AGENT_SERVER_URL ?? 'http://localhost:3001'
+const agentServerSecret = process.env.AGENT_SERVER_SECRET
+if (!agentServerSecret) {
+	throw new Error('AGENT_SERVER_SECRET environment variable is required')
+}
 
 // Agent storage manager for file operations (skills, learnings, memory)
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
-// Session manager for container-based agent execution
-const sessionManager = new SessionManager(db, storageProvider, runtimeBackend)
+// Session manager — thin client that delegates execution to agent-server
+const sessionManager = new SessionManager(db, agentServerUrl, agentServerSecret)
 
 // Inject db, bridge, session manager, and agent storage into context
 app.use('*', async (c, next) => {
@@ -192,7 +195,7 @@ app.doc31('/api/openapi.json', {
 	servers: [{ url: `http://localhost:${Number(process.env.PORT) || 3000}` }],
 })
 
-// Start session manager (container-based agent execution)
+// Start session manager (thin client — reconnects to agent-server log streams)
 sessionManager.start().then(() => {
 	logger.info('Session manager started')
 })
