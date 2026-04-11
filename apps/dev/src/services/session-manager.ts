@@ -651,6 +651,22 @@ export class SessionManager extends EventEmitter {
 	}
 
 	private watchContainerExit(sessionId: string, containerId: string) {
+		if (this.backend.onExit) {
+			this.backend.onExit(containerId).then(
+				({ exitCode }) => {
+					this.handleCompletion(sessionId, containerId, exitCode)
+				},
+				(err) => {
+					logger.error('Event-driven exit detection failed', {
+						sessionId,
+						containerId,
+						error: String(err),
+					})
+				},
+			)
+			return
+		}
+
 		const poll = async () => {
 			try {
 				const status = await this.backend.inspect(containerId)
