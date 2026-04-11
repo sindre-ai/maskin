@@ -17,6 +17,7 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@maskin/agent-server": "workspace:*",
 		"@maskin/auth": "workspace:*",
 		"@maskin/db": "workspace:*",
 		"@maskin/ext-work": "workspace:*",

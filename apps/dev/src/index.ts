@@ -32,7 +32,7 @@ import sessionsRoutes from './routes/sessions'
 import triggersRoutes from './routes/triggers'
 import workspacesRoutes from './routes/workspaces'
 import { AgentStorageManager } from './services/agent-storage'
-import { createRuntimeBackend } from './services/runtime-backend'
+import { createRuntimeBackend } from '@maskin/agent-server/runtime'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
 
