@@ -1,5 +1,6 @@
 import { type BaseSandbox, NodeSandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
+import { type ClassifiedEnv, classifySecrets } from '../lib/secret-policies'
 import type {
 	ExecResult,
 	LogChunk,
@@ -7,6 +8,10 @@ import type {
 	SandboxCreateOptions,
 	SandboxStatus,
 } from './runtime-backend'
+
+function shellEscape(s: string): string {
+	return `'${s.replace(/'/g, "'\\''")}'`
+}
 
 export class MicrosandboxBackend implements RuntimeBackend {
 	private sandboxes = new Map<string, BaseSandbox>()
@@ -16,12 +21,23 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	private startTimes = new Map<string, string>()
 	private finishTimes = new Map<string, string>()
 	private createOptions = new Map<string, SandboxCreateOptions>()
+	private classifiedEnvs = new Map<string, ClassifiedEnv>()
 
 	async ensureImage(_image: string, _buildContext?: string): Promise<void> {
 		// Microsandbox pulls OCI images automatically on start.
 	}
 
 	async create(options: SandboxCreateOptions): Promise<string> {
+		const classified = classifySecrets(options.env)
+		this.classifiedEnvs.set(options.name, classified)
+
+		const secretKeys = Object.keys(classified.secrets)
+		if (secretKeys.length > 0) {
+			logger.info(`Classified ${secretKeys.length} secret(s) for sandbox ${options.name}`, {
+				secretKeys,
+			})
+		}
+
 		const sandbox = await NodeSandbox.create({
 			name: options.name,
 			image: options.image,
@@ -58,6 +74,24 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		logger.info(`Microsandbox started: ${sandboxId}`)
 	}
 
+	private buildEnvExports(sandboxId: string): string {
+		const classified = this.classifiedEnvs.get(sandboxId)
+		if (!classified) return ''
+
+		const parts: string[] = []
+		for (const [key, value] of Object.entries(classified.env)) {
+			parts.push(`export ${key}=${shellEscape(value)}`)
+		}
+		for (const [key, { value }] of Object.entries(classified.secrets)) {
+			// TODO: Use microsandbox Secret.env() when SDK supports network-level secret injection.
+			// For now, secrets are passed as env vars. Once Secret.env() is available, secrets
+			// will never enter the VM — real values will only be substituted at the network
+			// level for requests to allowed hosts.
+			parts.push(`export ${key}=${shellEscape(value)}`)
+		}
+		return parts.join('; ')
+	}
+
 	private resolveExit(sandboxId: string, exitCode: number): void {
 		this.exitCodes.set(sandboxId, exitCode)
 		this.finishTimes.set(sandboxId, new Date().toISOString())
@@ -73,7 +107,9 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (!sandbox) return
 
 		try {
-			const result = await sandbox.command.run('/entrypoint.sh')
+			const envExports = this.buildEnvExports(sandboxId)
+			const cmd = envExports ? `${envExports}; exec /entrypoint.sh` : 'exec /entrypoint.sh'
+			const result = await sandbox.command.run('sh', ['-c', cmd])
 			const stdout = await result.output()
 			const stderr = await result.error()
 			if (stdout) {
@@ -131,6 +167,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		this.startTimes.delete(sandboxId)
 		this.finishTimes.delete(sandboxId)
 		this.createOptions.delete(sandboxId)
+		this.classifiedEnvs.delete(sandboxId)
 		logger.info(`Microsandbox removed: ${sandboxId}`)
 	}
 
@@ -152,7 +189,10 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (!cmd[0]) {
 			throw new Error('Command array must not be empty')
 		}
-		const result = await sandbox.command.run(cmd[0], cmd.slice(1))
+		const envExports = this.buildEnvExports(sandboxId)
+		const escapedCmd = cmd.map(shellEscape).join(' ')
+		const fullCmd = envExports ? `${envExports}; ${escapedCmd}` : escapedCmd
+		const result = await sandbox.command.run('sh', ['-c', fullCmd])
 		const stdout = await result.output()
 		const stderr = await result.error()
 		return {
