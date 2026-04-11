@@ -71,6 +71,9 @@ try {
 // Run migrations
 run('pnpm db:migrate')
 
+// Windows dev always uses Docker as the runtime backend
+process.env.RUNTIME_BACKEND = 'docker'
+
 // Start dev servers
 console.log('Starting dev servers...')
 const child = spawn('pnpm', ['turbo', 'dev'], {
