@@ -38,20 +38,20 @@ const mockBackend = {
 	onExit: undefined,
 }
 
-vi.mock('../../lib/claude-oauth', () => ({
+vi.mock('../../../../agent-server/src/lib/claude-oauth', () => ({
 	getValidOAuthToken: vi.fn().mockResolvedValue(null),
 }))
 
-vi.mock('../../lib/crypto', () => ({
+vi.mock('../../../../agent-server/src/lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
 
-vi.mock('../../lib/integrations/registry', () => ({
+vi.mock('../../../../agent-server/src/lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
 
+import type { RuntimeBackend } from '@maskin/agent-server/runtime'
 import type { StorageProvider } from '@maskin/storage'
-import type { RuntimeBackend } from '../../services/runtime-backend'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
