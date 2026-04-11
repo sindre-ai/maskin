@@ -6,7 +6,9 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
-		"./runtime": "./src/services/runtime-backend.ts"
+		"./runtime": "./src/services/runtime-backend.ts",
+		"./session-manager": "./src/services/session-manager.ts",
+		"./agent-storage": "./src/services/agent-storage.ts"
 	},
 	"scripts": {
 		"dev": "tsx watch src/index.ts",
@@ -24,7 +26,8 @@
 		"drizzle-orm": "^0.38.0",
 		"hono": "^4.12.12",
 		"postgres": "^3.4.0",
-		"tar-stream": "^3.1.0"
+		"tar-stream": "^3.1.0",
+		"zod": "^3.24.0"
 	},
 	"optionalDependencies": {
 		"microsandbox": "^0.1.0"
