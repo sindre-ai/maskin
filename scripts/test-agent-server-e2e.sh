@@ -422,10 +422,10 @@ else
   fail "Agent-server should return 401 with wrong secret, got HTTP ${BAD_AUTH_STATUS}"
 fi
 
-# Request with correct secret should succeed
+# Request with correct secret should succeed on a protected endpoint
 GOOD_AUTH_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
   -H "X-Agent-Server-Secret: ${AGENT_SERVER_SECRET}" \
-  "${AGENT_SERVER_URL}/health" 2>/dev/null || echo "000")
+  "${AGENT_SERVER_URL}/sessions" 2>/dev/null || echo "000")
 
 if [ "$GOOD_AUTH_STATUS" = "200" ]; then
   pass "Agent-server accepts valid secret (HTTP 200)"
