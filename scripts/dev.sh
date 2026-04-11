@@ -8,6 +8,19 @@ if [ -f .env ]; then
   set +a
 fi
 
+# Set microsandbox as default runtime backend for Mac/Linux
+export RUNTIME_BACKEND="${RUNTIME_BACKEND:-microsandbox}"
+
+# Check for KVM availability; fall back to Docker if not present
+if [ "$RUNTIME_BACKEND" = "microsandbox" ]; then
+  if [ ! -e /dev/kvm ]; then
+    echo "Warning: KVM not available, using Docker as runtime backend"
+    export RUNTIME_BACKEND=docker
+  fi
+fi
+
+echo "Using runtime backend: $RUNTIME_BACKEND"
+
 echo "Starting Docker services (postgres, seaweedfs)..."
 docker-compose up -d postgres seaweedfs
 
