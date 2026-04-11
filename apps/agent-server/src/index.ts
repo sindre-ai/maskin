@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server'
-import { createDatabase } from '@maskin/db'
-import { createStorageProvider } from '@maskin/storage'
+import { createDb } from '@maskin/db'
+import type { Database } from '@maskin/db'
+import { S3StorageProvider } from '@maskin/storage'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
@@ -20,8 +21,22 @@ app.get('/health', (c) => c.json({ status: 'ok' }))
 app.use('*', authMiddleware)
 
 async function main() {
-	const db = createDatabase()
-	const storage = createStorageProvider()
+	const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
+	if (!databaseUrl) {
+		throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
+	}
+	const db = createDb(databaseUrl)
+
+	const storage = new S3StorageProvider({
+		endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:8333',
+		bucket: process.env.S3_BUCKET ?? 'agent-files',
+		accessKeyId: process.env.S3_ACCESS_KEY ?? 'admin',
+		secretAccessKey: process.env.S3_SECRET_KEY ?? 'admin',
+		region: process.env.S3_REGION ?? 'us-east-1',
+	})
+
+	await storage.ensureBucket()
+
 	const backend = await createRuntimeBackend()
 	const sessionManager = new SessionManager(db, storage, backend)
 
