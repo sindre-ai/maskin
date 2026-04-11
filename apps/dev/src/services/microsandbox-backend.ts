@@ -83,6 +83,8 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	}
 
 	getHostAddress(): string {
-		return 'host.docker.internal'
+		// Microsandbox VMs use hypervisor isolation — host.docker.internal does not exist.
+		// The correct host address depends on the microsandbox network config and needs testing.
+		throw new Error('MicrosandboxBackend.getHostAddress() is not yet implemented.')
 	}
 }
