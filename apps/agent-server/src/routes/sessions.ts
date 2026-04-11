@@ -1,8 +1,8 @@
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
+import { and, asc, eq, gt } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
-import { and, asc, eq, gt } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
@@ -29,7 +29,10 @@ app.post('/', async (c) => {
 	}>()
 
 	if (!body.workspace_id || !body.actor_id || !body.action_prompt || !body.created_by) {
-		return c.json({ error: 'Missing required fields: workspace_id, actor_id, action_prompt, created_by' }, 400)
+		return c.json(
+			{ error: 'Missing required fields: workspace_id, actor_id, action_prompt, created_by' },
+			400,
+		)
 	}
 
 	try {
@@ -167,28 +170,36 @@ app.get('/:id/logs/stream', async (c) => {
 		}
 
 		let closed = false
-		const handler = (event: SessionLogEvent) => {
+		const cleanup = () => {
+			sessionManager.off('log', handler)
+		}
+		const handler = async (event: SessionLogEvent) => {
 			if (event.sessionId !== sessionId) return
-			stream.writeSSE({
-				id: String(event.logId),
-				event: event.stream,
-				data: event.data,
-			})
+			try {
+				await stream.writeSSE({
+					id: String(event.logId),
+					event: event.stream,
+					data: event.data,
+				})
 
-			if (event.stream === 'system' && event.data.startsWith('Session completed')) {
+				if (event.stream === 'system' && event.data.startsWith('Session completed')) {
+					closed = true
+					await stream.writeSSE({ event: 'done', data: 'completed' })
+					cleanup()
+				}
+				if (event.stream === 'system' && event.data.startsWith('Session failed')) {
+					closed = true
+					await stream.writeSSE({ event: 'done', data: 'failed' })
+					cleanup()
+				}
+			} catch {
 				closed = true
-				stream.writeSSE({ event: 'done', data: 'completed' })
-			}
-			if (event.stream === 'system' && event.data.startsWith('Session failed')) {
-				closed = true
-				stream.writeSSE({ event: 'done', data: 'failed' })
+				cleanup()
 			}
 		}
 
 		sessionManager.on('log', handler)
-		stream.onAbort(() => {
-			sessionManager.off('log', handler)
-		})
+		stream.onAbort(cleanup)
 
 		while (!closed) {
 			await stream.sleep(30000)

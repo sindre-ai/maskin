@@ -8,10 +8,17 @@ import { logger as honoLogger } from 'hono/logger'
 import { logger } from './lib/logger'
 import { authMiddleware } from './middleware/auth'
 import sessionRoutes from './routes/sessions'
-import { SessionManager } from './services/session-manager'
 import { createRuntimeBackend } from './services/runtime-backend'
+import { SessionManager } from './services/session-manager'
 
-const app = new Hono()
+type Env = {
+	Variables: {
+		db: Database
+		sessionManager: SessionManager
+	}
+}
+
+const app = new Hono<Env>()
 
 app.use('*', honoLogger())
 app.use('*', cors())
