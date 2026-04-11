@@ -1,104 +1,60 @@
 import { vi } from 'vitest'
 
-// Mock external dependencies
-vi.mock('node:fs/promises', () => ({
-	mkdtemp: vi.fn().mockResolvedValue('/tmp/anko-session-test'),
-	mkdir: vi.fn().mockResolvedValue(undefined),
-	chmod: vi.fn().mockResolvedValue(undefined),
-	writeFile: vi.fn().mockResolvedValue(undefined),
-	rm: vi.fn().mockResolvedValue(undefined),
-}))
+const mockFetch = vi.fn()
+vi.stubGlobal('fetch', mockFetch)
 
-vi.mock('node:child_process', () => ({
-	exec: vi.fn((_cmd: string, cb: (err: Error | null) => void) => cb(null)),
-}))
-
-vi.mock('node:fs', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('node:fs')>()
-	return {
-		...actual,
-		createReadStream: vi.fn().mockReturnValue({ pipe: vi.fn() }),
-	}
-})
-
-const mockBackend = {
-	ensureImage: vi.fn().mockResolvedValue(undefined),
-	create: vi.fn().mockResolvedValue('container-id-123'),
-	start: vi.fn().mockResolvedValue(undefined),
-	stop: vi.fn().mockResolvedValue(undefined),
-	remove: vi.fn().mockResolvedValue(undefined),
-	exec: vi.fn().mockResolvedValue({ exitCode: 0, output: '' }),
-	copyFileIn: vi.fn().mockResolvedValue(undefined),
-	copyFileOut: vi.fn().mockResolvedValue(undefined),
-	inspect: vi.fn().mockResolvedValue({ running: false, exitCode: 0 }),
-	getHostAddress: vi.fn().mockReturnValue('host.docker.internal'),
-	logs: vi.fn().mockReturnValue({
-		[Symbol.asyncIterator]: async function* () {},
-	}),
-	onExit: undefined,
-}
-
-vi.mock('../../../../agent-server/src/lib/claude-oauth', () => ({
-	getValidOAuthToken: vi.fn().mockResolvedValue(null),
-}))
-
-vi.mock('../../../../agent-server/src/lib/crypto', () => ({
-	decrypt: vi.fn().mockReturnValue('decrypted'),
-}))
-
-vi.mock('../../../../agent-server/src/lib/integrations/registry', () => ({
-	getProvider: vi.fn().mockReturnValue(null),
-}))
-
-import type { RuntimeBackend } from '@maskin/agent-server/runtime'
-import type { StorageProvider } from '@maskin/storage'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
-function registerActiveSession(mgr: SessionManager, sessionId: string, tempDir: string) {
-	const internal = mgr as unknown as { activeSessions: Map<string, { tempDir: string }> }
-	internal.activeSessions.set(sessionId, { tempDir })
+function createManager() {
+	const ctx = createTestContext()
+	const manager = new SessionManager(ctx.db, 'http://agent-server:3001', 'test-secret')
+	return { manager, ...ctx }
 }
 
-function createMockStorageProvider() {
-	return {
-		put: vi.fn().mockResolvedValue(undefined),
-		get: vi.fn().mockResolvedValue(Buffer.from('snapshot data')),
-		list: vi.fn().mockResolvedValue([]),
-		delete: vi.fn().mockResolvedValue(undefined),
-		exists: vi.fn().mockResolvedValue(false),
-		ensureBucket: vi.fn().mockResolvedValue(undefined),
-	}
+function mockJsonResponse(status: number, body: unknown) {
+	mockFetch.mockResolvedValueOnce({
+		ok: status >= 200 && status < 300,
+		status,
+		statusText: status >= 200 && status < 300 ? 'OK' : 'Error',
+		json: vi.fn().mockResolvedValue(body),
+		body: null,
+	})
+}
+
+function mockSseResponse() {
+	mockFetch.mockResolvedValueOnce({
+		ok: true,
+		status: 200,
+		body: {
+			getReader: () => ({
+				read: vi
+					.fn()
+					.mockResolvedValueOnce({
+						done: false,
+						value: new TextEncoder().encode('event:done\ndata:\n\n'),
+					})
+					.mockResolvedValue({ done: true, value: undefined }),
+			}),
+		},
+	})
 }
 
 describe('SessionManager', () => {
-	let manager: SessionManager
-	let mockResults: Record<string, unknown>
-	let storageProvider: ReturnType<typeof createMockStorageProvider>
-
 	beforeEach(() => {
-		vi.clearAllMocks()
-		storageProvider = createMockStorageProvider()
-		const ctx = createTestContext()
-		mockResults = ctx.mockResults
-		manager = new SessionManager(
-			ctx.db,
-			storageProvider as StorageProvider,
-			mockBackend as unknown as RuntimeBackend,
-		)
-	})
-
-	afterEach(async () => {
-		await manager.stop()
+		mockFetch.mockReset()
 	})
 
 	describe('createSession()', () => {
-		it('creates a session in pending state', async () => {
+		it('creates a session by delegating to agent-server', async () => {
+			const { manager, mockResults } = createManager()
 			const session = buildSession({ status: 'pending' })
-			mockResults.insert = [session] // session insert
-			// The second insert is for the event — use insertQueue
-			mockResults.insertQueue = [[session], []]
+
+			// POST /sessions
+			mockJsonResponse(200, { id: session.id })
+			// DB read returns the session
+			mockResults.select = [session]
 
 			const result = await manager.createSession('ws-1', {
 				actorId: 'actor-1',
@@ -108,10 +64,46 @@ describe('SessionManager', () => {
 			})
 
 			expect(result.id).toBe(session.id)
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://agent-server:3001/sessions',
+				expect.objectContaining({
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-Agent-Server-Secret': 'test-secret',
+					},
+				}),
+			)
 		})
 
-		it('throws when session insert fails', async () => {
-			mockResults.insert = [] // empty = no row returned
+		it('subscribes to logs when autoStart is true', async () => {
+			const { manager, mockResults } = createManager()
+			const session = buildSession({ status: 'running' })
+
+			// POST /sessions
+			mockJsonResponse(200, { id: session.id })
+			// SSE subscription for logs
+			mockSseResponse()
+			// DB read
+			mockResults.select = [session]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Do the thing',
+				createdBy: 'creator-1',
+				autoStart: true,
+			})
+
+			expect(result.id).toBe(session.id)
+			// 2 fetch calls: POST + SSE subscribe
+			expect(mockFetch).toHaveBeenCalledTimes(2)
+
+			await manager.stop()
+		})
+
+		it('throws when agent-server returns error', async () => {
+			const { manager } = createManager()
+			mockJsonResponse(500, { error: 'Internal server error' })
 
 			await expect(
 				manager.createSession('ws-1', {
@@ -120,113 +112,120 @@ describe('SessionManager', () => {
 					createdBy: 'creator-1',
 					autoStart: false,
 				}),
-			).rejects.toThrow('Failed to create session')
+			).rejects.toThrow('Internal server error')
+		})
+
+		it('throws when session not found in database after creation', async () => {
+			const { manager, mockResults } = createManager()
+			mockJsonResponse(200, { id: 'new-session-id' })
+			mockResults.select = []
+
+			await expect(
+				manager.createSession('ws-1', {
+					actorId: 'actor-1',
+					actionPrompt: 'Do the thing',
+					createdBy: 'creator-1',
+					autoStart: false,
+				}),
+			).rejects.toThrow('Session created on agent-server but not found in database')
 		})
 	})
 
 	describe('stopSession()', () => {
-		it('stops the container', async () => {
-			const session = buildSession({
-				status: 'running',
-				containerId: 'container-abc',
-			})
-			mockResults.select = [session]
+		it('sends stop request to agent-server', async () => {
+			const { manager } = createManager()
+			mockJsonResponse(200, { ok: true })
 
-			await manager.stopSession(session.id)
+			await manager.stopSession('session-123')
 
-			expect(mockBackend.stop).toHaveBeenCalledWith('container-abc')
-		})
-
-		it('throws when session not found', async () => {
-			mockResults.select = []
-
-			await expect(manager.stopSession('nonexistent')).rejects.toThrow(
-				'not found or has no container',
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://agent-server:3001/sessions/session-123/stop',
+				expect.objectContaining({ method: 'POST' }),
 			)
 		})
 
-		it('throws when session has no container', async () => {
-			const session = buildSession({ containerId: null })
-			mockResults.select = [session]
+		it('throws when agent-server returns error', async () => {
+			const { manager } = createManager()
+			mockJsonResponse(404, { error: 'Session not found or has no container' })
 
-			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
+			await expect(manager.stopSession('nonexistent')).rejects.toThrow(
+				'Session not found or has no container',
+			)
 		})
 	})
 
 	describe('pauseSession()', () => {
-		it('snapshots and pauses a running session', async () => {
-			const session = buildSession({
-				status: 'running',
-				containerId: 'container-xyz',
-			})
-			mockResults.select = [session]
-			mockResults.insert = [] // for system log
-			registerActiveSession(manager, session.id, '/tmp/anko-session-test')
+		it('sends pause request to agent-server', async () => {
+			const { manager } = createManager()
+			mockJsonResponse(200, { ok: true })
 
-			await manager.pauseSession(session.id)
+			await manager.pauseSession('session-123')
 
-			expect(mockBackend.exec).toHaveBeenCalledWith('container-xyz', [
-				'tar',
-				'-czf',
-				'/tmp/snapshot.tar.gz',
-				'/agent/',
-			])
-			expect(mockBackend.copyFileOut).toHaveBeenCalledWith(
-				'container-xyz',
-				'/tmp/snapshot.tar.gz',
-				expect.stringContaining('snapshot.tar.gz'),
-			)
-			expect(mockBackend.stop).toHaveBeenCalledWith('container-xyz')
-			expect(mockBackend.remove).toHaveBeenCalledWith('container-xyz')
-			expect(storageProvider.put).toHaveBeenCalledWith(
-				`snapshots/${session.id}.tar.gz`,
-				expect.anything(),
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://agent-server:3001/sessions/session-123/pause',
+				expect.objectContaining({ method: 'POST' }),
 			)
 		})
 
-		it('throws when session not running', async () => {
-			const session = buildSession({ status: 'paused', containerId: 'c1' })
-			mockResults.select = [session]
+		it('throws when agent-server returns error', async () => {
+			const { manager } = createManager()
+			mockJsonResponse(400, { error: 'Session not in running state' })
 
-			await expect(manager.pauseSession(session.id)).rejects.toThrow('not in running state')
-		})
-
-		it('reverts status on failure', async () => {
-			const session = buildSession({
-				status: 'running',
-				containerId: 'container-fail',
-			})
-			mockResults.select = [session]
-			registerActiveSession(manager, session.id, '/tmp/anko-session-test')
-			mockBackend.exec.mockRejectedValueOnce(new Error('exec failed'))
-
-			await expect(manager.pauseSession(session.id)).rejects.toThrow('exec failed')
+			await expect(manager.pauseSession('session-123')).rejects.toThrow(
+				'Session not in running state',
+			)
 		})
 	})
 
 	describe('resumeSession()', () => {
-		it('throws when session not paused', async () => {
-			const session = buildSession({ status: 'running' })
-			mockResults.select = [session]
+		it('sends resume request to agent-server', async () => {
+			const { manager } = createManager()
+			mockJsonResponse(200, { ok: true })
+			mockSseResponse()
 
-			await expect(manager.resumeSession(session.id)).rejects.toThrow(
-				'not in paused state or no snapshot',
+			await manager.resumeSession('session-123')
+
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://agent-server:3001/sessions/session-123/resume',
+				expect.objectContaining({ method: 'POST' }),
 			)
+
+			await manager.stop()
 		})
 
-		it('throws when no snapshot path', async () => {
-			const session = buildSession({ status: 'paused', snapshotPath: null })
-			mockResults.select = [session]
+		it('throws when agent-server returns error', async () => {
+			const { manager } = createManager()
+			mockJsonResponse(400, { error: 'Session not in paused state or no snapshot' })
 
-			await expect(manager.resumeSession(session.id)).rejects.toThrow(
-				'not in paused state or no snapshot',
+			await expect(manager.resumeSession('session-123')).rejects.toThrow(
+				'Session not in paused state or no snapshot',
 			)
 		})
 	})
 
 	describe('start() and stop()', () => {
-		it('starts and stops watchdog without error', async () => {
+		it('starts and stops without error', async () => {
+			const { manager, mockResults } = createManager()
+			mockResults.select = []
+
 			await manager.start()
+			await manager.stop()
+		})
+
+		it('reconnects to active session log streams on start', async () => {
+			const { manager, mockResults } = createManager()
+			mockResults.select = [{ id: 'active-session-1' }]
+			mockSseResponse()
+
+			await manager.start()
+
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://agent-server:3001/sessions/active-session-1/logs/stream',
+				expect.objectContaining({
+					headers: { 'X-Agent-Server-Secret': 'test-secret' },
+				}),
+			)
+
 			await manager.stop()
 		})
 	})
