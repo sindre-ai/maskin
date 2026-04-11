@@ -164,6 +164,17 @@ export function createTestApp(
 	return { app, db, mockResults }
 }
 
+export function createMockNotifyBridge(overrides?: Record<string, unknown>) {
+	return {
+		on: vi.fn(),
+		off: vi.fn(),
+		emit: vi.fn(),
+		start: vi.fn().mockResolvedValue(undefined),
+		stop: vi.fn().mockResolvedValue(undefined),
+		...overrides,
+	} as unknown as PgNotifyBridge
+}
+
 export function createMockSessionManager(overrides?: Record<string, unknown>) {
 	return {
 		createSession: vi.fn(),
@@ -214,18 +225,19 @@ export function createSessionTestApp(
 	const app = new CreateOpenAPIHono<Env>()
 	const { db, mockResults } = createTestContext()
 	const sessionManager = createMockSessionManager()
+	const notifyBridge = createMockNotifyBridge()
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', actorId)
 		c.set('actorType', actorType)
-		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('notifyBridge', notifyBridge)
 		c.set('sessionManager', sessionManager)
 		await next()
 	})
 
 	app.route(basePath, routeModule)
-	return { app, db, mockResults, sessionManager }
+	return { app, db, mockResults, sessionManager, notifyBridge }
 }
 
 /**

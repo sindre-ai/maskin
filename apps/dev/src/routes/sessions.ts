@@ -1,6 +1,7 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
+import type { PgNotifyBridge, PgSessionLogEvent } from '@maskin/realtime'
 import {
 	createSessionSchema,
 	sessionLogQuerySchema,
@@ -17,7 +18,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import type { SessionLogEvent, SessionManager } from '../services/session-manager'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -25,6 +26,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		sessionManager: SessionManager
+		notifyBridge: PgNotifyBridge
 	}
 }
 
@@ -357,10 +359,10 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
 
-// GET /:id/logs/stream - SSE stream of live logs
+// GET /:id/logs/stream - SSE stream of live logs (via DB + PG NOTIFY)
 app.get('/:id/logs/stream', async (c) => {
 	const db = c.get('db')
-	const sessionManager = c.get('sessionManager')
+	const notifyBridge = c.get('notifyBridge')
 	const sessionId = c.req.param('id')
 	const workspaceId = c.req.header('x-workspace-id')
 	const lastLogId = c.req.header('Last-Event-ID')
@@ -424,30 +426,29 @@ app.get('/:id/logs/stream', async (c) => {
 			}
 		}
 
-		// Subscribe to live log stream
+		// Subscribe to live log stream via PG NOTIFY
 		let closed = false
-		const handler = (event: SessionLogEvent) => {
-			if (event.sessionId !== sessionId) return
+		const handler = (event: PgSessionLogEvent) => {
+			if (event.session_id !== sessionId) return
 			stream.writeSSE({
-				id: String(event.logId),
+				id: String(event.id),
 				event: event.stream,
-				data: event.data,
+				data: event.content,
 			})
 
-			// Close stream when session completes (system log signals completion)
-			if (event.stream === 'system' && event.data.startsWith('Session completed')) {
+			if (event.stream === 'system' && event.content.startsWith('Session completed')) {
 				closed = true
 				stream.writeSSE({ event: 'done', data: 'completed' })
 			}
-			if (event.stream === 'system' && event.data.startsWith('Session failed')) {
+			if (event.stream === 'system' && event.content.startsWith('Session failed')) {
 				closed = true
 				stream.writeSSE({ event: 'done', data: 'failed' })
 			}
 		}
 
-		sessionManager.on('log', handler)
+		notifyBridge.on('session_log', handler)
 		stream.onAbort(() => {
-			sessionManager.off('log', handler)
+			notifyBridge.off('session_log', handler)
 		})
 
 		// Keep connection alive, but stop if session reached terminal state
