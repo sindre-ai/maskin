@@ -65,7 +65,10 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		logger.info(`Microsandbox started: ${sandboxId}`)
 	}
 
-	private async watchExecHandle(sandboxId: string, handle: ExecHandle): Promise<{ exitCode: number }> {
+	private async watchExecHandle(
+		sandboxId: string,
+		handle: ExecHandle,
+	): Promise<{ exitCode: number }> {
 		try {
 			while (true) {
 				const event = await handle.recv()
