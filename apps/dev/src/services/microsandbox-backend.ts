@@ -187,7 +187,8 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		const data = await readFile(hostPath)
 		const encoded = data.toString('base64')
 
-		await sandbox.command.run('sh', ['-c', `echo '${encoded}' | base64 -d > ${guestPath}`])
+		const safeGuestPath = guestPath.replace(/'/g, "'\\''")
+		await sandbox.command.run('sh', ['-c', `echo '${encoded}' | base64 -d > '${safeGuestPath}'`])
 	}
 
 	getHostAddress(): string {
