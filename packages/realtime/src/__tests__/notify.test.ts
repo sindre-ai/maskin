@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PgEvent } from '../notify'
+import type { PgEvent, PgSessionLogEvent } from '../notify'
 
-let listenCallback: ((payload: string) => void) | null = null
+const listenCallbacks = new Map<string, (payload: string) => void>()
 
 const mockSql = {
-	listen: vi.fn(async (_channel: string, cb: (payload: string) => void) => {
-		listenCallback = cb
+	listen: vi.fn(async (channel: string, cb: (payload: string) => void) => {
+		listenCallbacks.set(channel, cb)
 	}),
 	end: vi.fn(async () => {}),
 }
@@ -31,9 +31,19 @@ function buildPgEvent(overrides: Partial<PgEvent> = {}): PgEvent {
 	}
 }
 
+function buildPgSessionLogEvent(overrides: Partial<PgSessionLogEvent> = {}): PgSessionLogEvent {
+	return {
+		id: 1,
+		session_id: 'session-test-001',
+		stream: 'stdout',
+		content: 'test log output',
+		...overrides,
+	}
+}
+
 describe('PgNotifyBridge', () => {
 	beforeEach(() => {
-		listenCallback = null
+		listenCallbacks.clear()
 		vi.clearAllMocks()
 	})
 
@@ -42,13 +52,14 @@ describe('PgNotifyBridge', () => {
 		expect(mockPostgres).toHaveBeenCalledWith('postgres://localhost/test', { max: 1 })
 	})
 
-	it('listens on the events channel when start is called', async () => {
+	it('listens on both events and session_logs channels when started', async () => {
 		const bridge = new PgNotifyBridge('postgres://localhost/test')
 		await bridge.start()
 		expect(mockSql.listen).toHaveBeenCalledWith('events', expect.any(Function))
+		expect(mockSql.listen).toHaveBeenCalledWith('session_logs', expect.any(Function))
 	})
 
-	it('emits an event when a valid JSON payload arrives', async () => {
+	it('emits an event when a valid JSON payload arrives on events channel', async () => {
 		const bridge = new PgNotifyBridge('postgres://localhost/test')
 		await bridge.start()
 
@@ -56,20 +67,45 @@ describe('PgNotifyBridge', () => {
 		bridge.on('event', handler)
 
 		const event = buildPgEvent()
-		listenCallback?.(JSON.stringify(event))
+		listenCallbacks.get('events')?.(JSON.stringify(event))
 
 		expect(handler).toHaveBeenCalledOnce()
 		expect(handler).toHaveBeenCalledWith(event)
 	})
 
-	it('silently ignores malformed JSON payloads', async () => {
+	it('emits a session_log event when a valid payload arrives on session_logs channel', async () => {
+		const bridge = new PgNotifyBridge('postgres://localhost/test')
+		await bridge.start()
+
+		const handler = vi.fn()
+		bridge.on('session_log', handler)
+
+		const log = buildPgSessionLogEvent()
+		listenCallbacks.get('session_logs')?.(JSON.stringify(log))
+
+		expect(handler).toHaveBeenCalledOnce()
+		expect(handler).toHaveBeenCalledWith(log)
+	})
+
+	it('silently ignores malformed JSON payloads on events channel', async () => {
 		const bridge = new PgNotifyBridge('postgres://localhost/test')
 		await bridge.start()
 
 		const handler = vi.fn()
 		bridge.on('event', handler)
 
-		expect(() => listenCallback?.('not-valid-json{{')).not.toThrow()
+		expect(() => listenCallbacks.get('events')?.('not-valid-json{{')).not.toThrow()
+		expect(handler).not.toHaveBeenCalled()
+	})
+
+	it('silently ignores malformed JSON payloads on session_logs channel', async () => {
+		const bridge = new PgNotifyBridge('postgres://localhost/test')
+		await bridge.start()
+
+		const handler = vi.fn()
+		bridge.on('session_log', handler)
+
+		expect(() => listenCallbacks.get('session_logs')?.('not-valid-json{{')).not.toThrow()
 		expect(handler).not.toHaveBeenCalled()
 	})
 
@@ -80,7 +116,7 @@ describe('PgNotifyBridge', () => {
 		const handler = vi.fn()
 		bridge.on('event', handler)
 
-		expect(() => listenCallback?.('')).not.toThrow()
+		expect(() => listenCallbacks.get('events')?.('')).not.toThrow()
 		expect(handler).not.toHaveBeenCalled()
 	})
 
@@ -93,12 +129,29 @@ describe('PgNotifyBridge', () => {
 
 		const event1 = buildPgEvent({ event_id: 'evt-1' })
 		const event2 = buildPgEvent({ event_id: 'evt-2' })
-		listenCallback?.(JSON.stringify(event1))
-		listenCallback?.(JSON.stringify(event2))
+		listenCallbacks.get('events')?.(JSON.stringify(event1))
+		listenCallbacks.get('events')?.(JSON.stringify(event2))
 
 		expect(handler).toHaveBeenCalledTimes(2)
 		expect(handler.mock.calls[0]?.[0].event_id).toBe('evt-1')
 		expect(handler.mock.calls[1]?.[0].event_id).toBe('evt-2')
+	})
+
+	it('emits multiple session_log events for multiple payloads', async () => {
+		const bridge = new PgNotifyBridge('postgres://localhost/test')
+		await bridge.start()
+
+		const handler = vi.fn()
+		bridge.on('session_log', handler)
+
+		const log1 = buildPgSessionLogEvent({ id: 1, content: 'line 1' })
+		const log2 = buildPgSessionLogEvent({ id: 2, content: 'line 2' })
+		listenCallbacks.get('session_logs')?.(JSON.stringify(log1))
+		listenCallbacks.get('session_logs')?.(JSON.stringify(log2))
+
+		expect(handler).toHaveBeenCalledTimes(2)
+		expect(handler.mock.calls[0]?.[0].content).toBe('line 1')
+		expect(handler.mock.calls[1]?.[0].content).toBe('line 2')
 	})
 
 	it('ends the postgres connection when stop is called', async () => {
@@ -111,7 +164,7 @@ describe('PgNotifyBridge', () => {
 		const bridge = new PgNotifyBridge('postgres://localhost/test')
 		await bridge.start()
 		await bridge.stop()
-		expect(mockSql.listen).toHaveBeenCalledOnce()
+		expect(mockSql.listen).toHaveBeenCalledTimes(2)
 		expect(mockSql.end).toHaveBeenCalledOnce()
 	})
 })

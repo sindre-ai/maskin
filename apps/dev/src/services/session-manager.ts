@@ -83,11 +83,7 @@ export class SessionManager extends EventEmitter {
 		const data = await res.json()
 
 		// Read back from shared DB for consistent types
-		const [session] = await this.db
-			.select()
-			.from(sessions)
-			.where(eq(sessions.id, data.id))
-			.limit(1)
+		const [session] = await this.db.select().from(sessions).where(eq(sessions.id, data.id)).limit(1)
 
 		if (!session) {
 			throw new Error('Session created on agent-server but not found in database')
@@ -187,7 +183,7 @@ export class SessionManager extends EventEmitter {
 								this.emit('log', {
 									sessionId,
 									logId: Number(currentId) || 0,
-									stream: currentEvent,
+									stream: currentEvent as SessionLogEvent['stream'],
 									data: currentData,
 								} satisfies SessionLogEvent)
 							}
