@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
-import { and, asc, eq, gt } from 'drizzle-orm'
+import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { logger } from '../lib/logger'
@@ -14,6 +14,34 @@ type Env = {
 }
 
 const app = new Hono<Env>()
+
+// GET / — list sessions
+app.get('/', async (c) => {
+	const db = c.get('db')
+	const status = c.req.query('status')
+	const limit = Math.min(Number(c.req.query('limit') ?? 50), 200)
+
+	const conditions = status ? [eq(sessions.status, status)] : []
+
+	const rows = await db
+		.select({
+			id: sessions.id,
+			workspaceId: sessions.workspaceId,
+			actorId: sessions.actorId,
+			status: sessions.status,
+			actionPrompt: sessions.actionPrompt,
+			triggerId: sessions.triggerId,
+			startedAt: sessions.startedAt,
+			completedAt: sessions.completedAt,
+			createdAt: sessions.createdAt,
+		})
+		.from(sessions)
+		.where(conditions.length > 0 ? and(...conditions) : undefined)
+		.orderBy(desc(sessions.createdAt))
+		.limit(limit)
+
+	return c.json(rows)
+})
 
 // POST / — create & start session
 app.post('/', async (c) => {
