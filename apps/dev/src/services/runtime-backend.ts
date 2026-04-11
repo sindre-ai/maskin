@@ -85,9 +85,7 @@ export async function createRuntimeBackend(): Promise<RuntimeBackend> {
 			return new DockerBackend()
 		}
 		case 'microsandbox':
-			throw new Error(
-				'MicrosandboxBackend is not yet implemented. It will be added in Phase 2.',
-			)
+			throw new Error('MicrosandboxBackend is not yet implemented. It will be added in Phase 2.')
 		default:
 			throw new Error(`Unknown RUNTIME_BACKEND: ${type}. Expected 'docker' or 'microsandbox'.`)
 	}
