@@ -651,40 +651,45 @@ export class SessionManager extends EventEmitter {
 	}
 
 	private watchContainerExit(sessionId: string, containerId: string) {
+		const startPolling = () => {
+			const poll = async () => {
+				try {
+					const status = await this.backend.inspect(containerId)
+					if (!status.running) {
+						await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
+						return
+					}
+				} catch (err) {
+					logger.warn('Container inspect failed, stopping exit watcher', {
+						sessionId,
+						containerId,
+						error: String(err),
+					})
+					return
+				}
+				setTimeout(poll, 2000)
+			}
+			setTimeout(poll, 2000)
+		}
+
 		if (this.backend.onExit) {
 			this.backend.onExit(containerId).then(
 				({ exitCode }) => {
 					this.handleCompletion(sessionId, containerId, exitCode)
 				},
 				(err) => {
-					logger.error('Event-driven exit detection failed', {
+					logger.error('Event-driven exit detection failed, falling back to polling', {
 						sessionId,
 						containerId,
 						error: String(err),
 					})
+					startPolling()
 				},
 			)
 			return
 		}
 
-		const poll = async () => {
-			try {
-				const status = await this.backend.inspect(containerId)
-				if (!status.running) {
-					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
-					return
-				}
-			} catch (err) {
-				logger.warn('Container inspect failed, stopping exit watcher', {
-					sessionId,
-					containerId,
-					error: String(err),
-				})
-				return
-			}
-			setTimeout(poll, 2000)
-		}
-		setTimeout(poll, 2000)
+		startPolling()
 	}
 
 	private async handleCompletion(
