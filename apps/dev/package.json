@@ -13,6 +13,7 @@
 		"start": "node dist/index.js",
 		"test": "vitest",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
+		"test:microsandbox": "vitest run --config vitest.microsandbox.config.ts",
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
