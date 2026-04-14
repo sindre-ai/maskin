@@ -12,6 +12,7 @@ COPY packages/mcp/package.json packages/mcp/package.json
 COPY packages/module-sdk/package.json packages/module-sdk/package.json
 COPY extensions/work/package.json extensions/work/package.json
 COPY apps/dev/package.json apps/dev/package.json
+COPY apps/agent-server/package.json apps/agent-server/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/e2e/package.json apps/e2e/package.json
 
@@ -20,10 +21,12 @@ RUN pnpm install --frozen-lockfile
 COPY packages/ packages/
 COPY extensions/ extensions/
 COPY apps/dev/ apps/dev/
+COPY apps/agent-server/ apps/agent-server/
 COPY apps/web/ apps/web/
 
 # Build sequentially to stay within 8GB server memory
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter='./packages/*' build
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/agent-server build
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/dev build
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/web build
 
