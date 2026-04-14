@@ -15,18 +15,25 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	failed: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
 	paused: { bg: 'bg-status-paused-bg', text: 'text-status-paused-text' },
 	discarded: { bg: 'bg-status-discarded-bg', text: 'text-status-discarded-text' },
+	draft: { bg: 'bg-status-draft-bg', text: 'text-status-draft-text' },
+	review: { bg: 'bg-status-review-bg', text: 'text-status-review-text' },
+	confirmed: { bg: 'bg-status-confirmed-bg', text: 'text-status-confirmed-text' },
+	superseded: { bg: 'bg-status-superseded-bg', text: 'text-status-superseded-text' },
+	deprecated: { bg: 'bg-status-deprecated-bg', text: 'text-status-deprecated-text' },
 }
 
 export const typeIcons: Record<string, string> = {
 	insight: '💡',
 	bet: '🎯',
 	task: '☐',
+	knowledge: '📖',
 }
 
 export const typeColors: Record<string, { bg: string; text: string }> = {
 	insight: { bg: 'bg-type-insight-bg', text: 'text-type-insight-text' },
 	bet: { bg: 'bg-type-bet-bg', text: 'text-type-bet-text' },
 	task: { bg: 'bg-type-task-bg', text: 'text-type-task-text' },
+	knowledge: { bg: 'bg-type-knowledge-bg', text: 'text-type-knowledge-text' },
 }
 
 /** Fallback for extension-defined types not in the hardcoded maps */
