@@ -1,11 +1,8 @@
 import { Hono } from 'hono'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import sessionRoutes from '../../routes/sessions'
-import {
-	createTestContext,
-	createMockSessionManager,
-} from '../setup'
 import { buildSession } from '../factories'
+import { createMockSessionManager, createTestContext } from '../setup'
 
 type Env = {
 	Variables: {
@@ -20,8 +17,8 @@ function createApp() {
 
 	const app = new Hono<Env>()
 	app.use('*', async (c, next) => {
-		c.set('db', db as any)
-		c.set('sessionManager', sessionManager as any)
+		c.set('db', db as never)
+		c.set('sessionManager', sessionManager as never)
 		return next()
 	})
 	app.route('/sessions', sessionRoutes)
@@ -41,7 +38,7 @@ describe('Agent Server E2E: Trigger-fired Sessions', () => {
 			status: 'pending',
 			triggerId,
 		})
-		;(sessionManager.createSession as any).mockResolvedValue(session)
+		vi.mocked(sessionManager.createSession).mockResolvedValue(session)
 
 		const res = await app.request('/sessions', {
 			method: 'POST',
@@ -74,7 +71,7 @@ describe('Agent Server E2E: Trigger-fired Sessions', () => {
 		const { app, sessionManager, mockResults } = createApp()
 		const triggerId = 'trigger-xyz-789'
 		const session = buildSession({ status: 'running', triggerId })
-		;(sessionManager.createSession as any).mockResolvedValue(session)
+		vi.mocked(sessionManager.createSession).mockResolvedValue(session)
 
 		// Create session via trigger
 		const createRes = await app.request('/sessions', {
@@ -110,7 +107,7 @@ describe('Agent Server E2E: Trigger-fired Sessions', () => {
 		)
 
 		let callCount = 0
-		;(sessionManager.createSession as any).mockImplementation(() => {
+		vi.mocked(sessionManager.createSession).mockImplementation(() => {
 			return Promise.resolve(sessions[callCount++])
 		})
 

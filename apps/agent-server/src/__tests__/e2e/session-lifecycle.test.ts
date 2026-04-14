@@ -1,12 +1,9 @@
 import { Hono } from 'hono'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import sessionRoutes from '../../routes/sessions'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { authMiddleware } from '../../middleware/auth'
-import {
-	createTestContext,
-	createMockSessionManager,
-} from '../setup'
+import sessionRoutes from '../../routes/sessions'
 import { buildSession, buildSessionLog } from '../factories'
+import { createMockSessionManager, createTestContext } from '../setup'
 
 type Env = {
 	Variables: {
@@ -21,8 +18,8 @@ function createApp() {
 
 	const app = new Hono<Env>()
 	app.use('*', async (c, next) => {
-		c.set('db', db as any)
-		c.set('sessionManager', sessionManager as any)
+		c.set('db', db as never)
+		c.set('sessionManager', sessionManager as never)
 		return next()
 	})
 	app.route('/sessions', sessionRoutes)
@@ -39,8 +36,8 @@ function createAuthApp() {
 	app.get('/health', (c) => c.json({ status: 'ok' }))
 	app.use('*', authMiddleware)
 	app.use('*', async (c, next) => {
-		c.set('db', db as any)
-		c.set('sessionManager', sessionManager as any)
+		c.set('db', db as never)
+		c.set('sessionManager', sessionManager as never)
 		return next()
 	})
 	app.route('/sessions', sessionRoutes)
@@ -97,7 +94,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 			vi.stubEnv('AGENT_SERVER_SECRET', 'test-secret')
 			const { app, sessionManager } = createAuthApp()
 			const session = buildSession({ status: 'pending' })
-			;(sessionManager.createSession as any).mockResolvedValue(session)
+			vi.mocked(sessionManager.createSession).mockResolvedValue(session)
 
 			const res = await app.request('/sessions', {
 				method: 'POST',
@@ -120,7 +117,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 		it('creates a session and returns 201', async () => {
 			const { app, sessionManager } = createApp()
 			const session = buildSession({ status: 'pending' })
-			;(sessionManager.createSession as any).mockResolvedValue(session)
+			vi.mocked(sessionManager.createSession).mockResolvedValue(session)
 
 			const res = await app.request('/sessions', {
 				method: 'POST',
@@ -164,7 +161,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 
 		it('returns 500 when session manager throws', async () => {
 			const { app, sessionManager } = createApp()
-			;(sessionManager.createSession as any).mockRejectedValue(
+			vi.mocked(sessionManager.createSession).mockRejectedValue(
 				new Error('Container creation failed'),
 			)
 
@@ -187,7 +184,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 		it('passes trigger_id when provided', async () => {
 			const { app, sessionManager } = createApp()
 			const session = buildSession({ status: 'pending', triggerId: 'trigger-1' })
-			;(sessionManager.createSession as any).mockResolvedValue(session)
+			vi.mocked(sessionManager.createSession).mockResolvedValue(session)
 
 			const res = await app.request('/sessions', {
 				method: 'POST',
@@ -227,7 +224,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 
 		it('returns 400 when session cannot be stopped', async () => {
 			const { app, sessionManager } = createApp()
-			;(sessionManager.stopSession as any).mockRejectedValue(
+			vi.mocked(sessionManager.stopSession).mockRejectedValue(
 				new Error('Session not found or has no container'),
 			)
 
@@ -259,7 +256,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 
 		it('returns 400 when session is not in running state', async () => {
 			const { app, sessionManager } = createApp()
-			;(sessionManager.pauseSession as any).mockRejectedValue(
+			vi.mocked(sessionManager.pauseSession).mockRejectedValue(
 				new Error('Session not in running state'),
 			)
 
@@ -291,7 +288,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 
 		it('returns 400 when session is not paused', async () => {
 			const { app, sessionManager } = createApp()
-			;(sessionManager.resumeSession as any).mockRejectedValue(
+			vi.mocked(sessionManager.resumeSession).mockRejectedValue(
 				new Error('Session not in paused state or no snapshot'),
 			)
 
@@ -356,7 +353,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 		it('creates a session then stops it', async () => {
 			const { app, sessionManager, mockResults } = createApp()
 			const session = buildSession({ status: 'pending' })
-			;(sessionManager.createSession as any).mockResolvedValue(session)
+			vi.mocked(sessionManager.createSession).mockResolvedValue(session)
 
 			// Step 1: Create session
 			const createRes = await app.request('/sessions', {
@@ -395,7 +392,7 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 		it('creates, pauses, and resumes a session', async () => {
 			const { app, sessionManager, mockResults } = createApp()
 			const session = buildSession({ status: 'pending' })
-			;(sessionManager.createSession as any).mockResolvedValue(session)
+			vi.mocked(sessionManager.createSession).mockResolvedValue(session)
 
 			// Step 1: Create
 			const createRes = await app.request('/sessions', {
@@ -412,7 +409,12 @@ describe('Agent Server E2E: Session Lifecycle', () => {
 			const created = await createRes.json()
 
 			// Step 2: Pause
-			const pausedSession = { ...session, status: 'paused', snapshotPath: 'snapshots/test.tar.gz', containerId: null }
+			const pausedSession = {
+				...session,
+				status: 'paused',
+				snapshotPath: 'snapshots/test.tar.gz',
+				containerId: null,
+			}
 			mockResults.select = [pausedSession]
 			const pauseRes = await app.request(`/sessions/${created.id}/pause`, {
 				method: 'POST',

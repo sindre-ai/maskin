@@ -1,11 +1,8 @@
 import { Hono } from 'hono'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import sessionRoutes from '../../routes/sessions'
-import {
-	createTestContext,
-	createMockSessionManager,
-} from '../setup'
 import { buildSession, buildSessionLog } from '../factories'
+import { createMockSessionManager, createTestContext } from '../setup'
 
 type Env = {
 	Variables: {
@@ -20,8 +17,8 @@ function createApp() {
 
 	const app = new Hono<Env>()
 	app.use('*', async (c, next) => {
-		c.set('db', db as any)
-		c.set('sessionManager', sessionManager as any)
+		c.set('db', db as never)
+		c.set('sessionManager', sessionManager as never)
 		return next()
 	})
 	app.route('/sessions', sessionRoutes)
@@ -66,7 +63,12 @@ describe('Agent Server E2E: Log Streaming', () => {
 			const logs = [
 				buildSessionLog({ id: 1, sessionId, stream: 'stdout', content: 'Starting agent...' }),
 				buildSessionLog({ id: 2, sessionId, stream: 'stdout', content: 'Processing task...' }),
-				buildSessionLog({ id: 3, sessionId, stream: 'system', content: 'Session completed with exit code 0' }),
+				buildSessionLog({
+					id: 3,
+					sessionId,
+					stream: 'system',
+					content: 'Session completed with exit code 0',
+				}),
 			]
 
 			// First select: session lookup, second select: all logs
@@ -83,18 +85,18 @@ describe('Agent Server E2E: Log Streaming', () => {
 			expect(events.length).toBeGreaterThanOrEqual(4)
 
 			// Verify log events are replayed
-			const stdoutEvents = events.filter(e => e.event === 'stdout')
+			const stdoutEvents = events.filter((e) => e.event === 'stdout')
 			expect(stdoutEvents.length).toBe(2)
 			expect(stdoutEvents[0].data).toBe('Starting agent...')
 			expect(stdoutEvents[1].data).toBe('Processing task...')
 
 			// Verify system log
-			const systemEvents = events.filter(e => e.event === 'system')
+			const systemEvents = events.filter((e) => e.event === 'system')
 			expect(systemEvents.length).toBe(1)
 			expect(systemEvents[0].data).toContain('Session completed')
 
 			// Verify done event
-			const doneEvents = events.filter(e => e.event === 'done')
+			const doneEvents = events.filter((e) => e.event === 'done')
 			expect(doneEvents.length).toBe(1)
 			expect(doneEvents[0].data).toBe('completed')
 		})
@@ -105,8 +107,18 @@ describe('Agent Server E2E: Log Streaming', () => {
 			const session = buildSession({ id: sessionId, status: 'failed' })
 			const logs = [
 				buildSessionLog({ id: 1, sessionId, stream: 'stdout', content: 'Starting...' }),
-				buildSessionLog({ id: 2, sessionId, stream: 'stderr', content: 'Error: something went wrong' }),
-				buildSessionLog({ id: 3, sessionId, stream: 'system', content: 'Session failed with exit code 1' }),
+				buildSessionLog({
+					id: 2,
+					sessionId,
+					stream: 'stderr',
+					content: 'Error: something went wrong',
+				}),
+				buildSessionLog({
+					id: 3,
+					sessionId,
+					stream: 'system',
+					content: 'Session failed with exit code 1',
+				}),
 			]
 
 			mockResults.selectQueue = [[session], logs]
@@ -117,11 +129,11 @@ describe('Agent Server E2E: Log Streaming', () => {
 			const text = await res.text()
 			const events = parseSSEEvents(text)
 
-			const stderrEvents = events.filter(e => e.event === 'stderr')
+			const stderrEvents = events.filter((e) => e.event === 'stderr')
 			expect(stderrEvents.length).toBe(1)
 			expect(stderrEvents[0].data).toContain('Error')
 
-			const doneEvents = events.filter(e => e.event === 'done')
+			const doneEvents = events.filter((e) => e.event === 'done')
 			expect(doneEvents.length).toBe(1)
 			expect(doneEvents[0].data).toBe('failed')
 		})
@@ -140,7 +152,7 @@ describe('Agent Server E2E: Log Streaming', () => {
 			const text = await res.text()
 			const events = parseSSEEvents(text)
 
-			const doneEvents = events.filter(e => e.event === 'done')
+			const doneEvents = events.filter((e) => e.event === 'done')
 			expect(doneEvents.length).toBe(1)
 			expect(doneEvents[0].data).toBe('timeout')
 		})
@@ -172,7 +184,7 @@ describe('Agent Server E2E: Log Streaming', () => {
 			const text = await res.text()
 			const events = parseSSEEvents(text)
 
-			const stdoutEvents = events.filter(e => e.event === 'stdout')
+			const stdoutEvents = events.filter((e) => e.event === 'stdout')
 			expect(stdoutEvents[0].id).toBe('42')
 			expect(stdoutEvents[1].id).toBe('43')
 		})

@@ -69,7 +69,8 @@ export class SessionManager extends EventEmitter {
 				'agent-base',
 			)
 			const defaultImage =
-				process.env.AGENT_BASE_IMAGE ?? (process.env.RUNTIME_BACKEND === 'microsandbox'
+				process.env.AGENT_BASE_IMAGE ??
+				(process.env.RUNTIME_BACKEND === 'microsandbox'
 					? 'magnusnoeddegaard/agent-base:latest'
 					: 'agent-base:latest')
 			await this.backend.ensureImage(defaultImage, buildContext)
@@ -624,7 +625,8 @@ export class SessionManager extends EventEmitter {
 
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
 		const defaultImage =
-			process.env.AGENT_BASE_IMAGE ?? (process.env.RUNTIME_BACKEND === 'microsandbox'
+			process.env.AGENT_BASE_IMAGE ??
+			(process.env.RUNTIME_BACKEND === 'microsandbox'
 				? 'magnusnoeddegaard/agent-base:latest'
 				: 'agent-base:latest')
 		const image = (sessionConfig.base_image as string) ?? defaultImage

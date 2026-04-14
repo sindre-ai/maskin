@@ -72,8 +72,8 @@ export class MicrosandboxBackend implements RuntimeBackend {
 
 		try {
 			const handle = await sandbox.shellStream('/entrypoint.sh')
-			let event: ExecEvent | null
-			while ((event = await handle.recv()) !== null) {
+			let event: ExecEvent | null = await handle.recv()
+			while (event !== null) {
 				if (event.eventType === 'stdout' && event.data) {
 					yield { stream: 'stdout', data: event.data.toString() }
 				} else if (event.eventType === 'stderr' && event.data) {
@@ -81,6 +81,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 				} else if (event.eventType === 'exited') {
 					this.resolveExit(sandboxId, event.code ?? 1)
 				}
+				event = await handle.recv()
 			}
 			if (!this.exitCodes.has(sandboxId)) {
 				this.resolveExit(sandboxId, 0)

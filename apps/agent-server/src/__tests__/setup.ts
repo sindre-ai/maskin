@@ -1,8 +1,9 @@
 import type { Database } from '@maskin/db'
 import type { StorageProvider } from '@maskin/storage'
 import { Hono } from 'hono'
-import type { SessionManager } from '../services/session-manager'
+import { vi } from 'vitest'
 import type { RuntimeBackend } from '../services/runtime-backend'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -64,9 +65,22 @@ export function createTestContext() {
 function createChain(returnValue?: unknown): Record<string, unknown> {
 	const chain: Record<string, unknown> = {}
 	const methods = [
-		'select', 'from', 'where', 'limit', 'offset', 'orderBy',
-		'insert', 'values', 'returning', 'update', 'set', 'delete',
-		'innerJoin', 'onConflictDoUpdate', 'onConflictDoNothing', 'groupBy',
+		'select',
+		'from',
+		'where',
+		'limit',
+		'offset',
+		'orderBy',
+		'insert',
+		'values',
+		'returning',
+		'update',
+		'set',
+		'delete',
+		'innerJoin',
+		'onConflictDoUpdate',
+		'onConflictDoNothing',
+		'groupBy',
 	]
 	for (const m of methods) {
 		chain[m] = () => chain
@@ -101,7 +115,12 @@ export function createMockRuntimeBackend(overrides?: Record<string, unknown>): R
 		stop: vi.fn().mockResolvedValue(undefined),
 		remove: vi.fn().mockResolvedValue(undefined),
 		logs: vi.fn().mockReturnValue((async function* () {})()),
-		inspect: vi.fn().mockResolvedValue({ running: true, exitCode: null, startedAt: new Date().toISOString(), finishedAt: null }),
+		inspect: vi.fn().mockResolvedValue({
+			running: true,
+			exitCode: null,
+			startedAt: new Date().toISOString(),
+			finishedAt: null,
+		}),
 		exec: vi.fn().mockResolvedValue({ exitCode: 0, output: '' }),
 		copyFileOut: vi.fn().mockResolvedValue(undefined),
 		copyFileIn: vi.fn().mockResolvedValue(undefined),
@@ -122,10 +141,7 @@ export function createMockStorageProvider(overrides?: Record<string, unknown>): 
 	} as unknown as StorageProvider
 }
 
-export function createAgentServerTestApp(
-	sessionManager: SessionManager,
-	db: Database,
-) {
+export function createAgentServerTestApp(sessionManager: SessionManager, db: Database) {
 	const app = new Hono<Env>()
 
 	app.use('*', async (c, next) => {
