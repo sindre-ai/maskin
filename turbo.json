@@ -30,7 +30,8 @@
 		"RUNTIME_BACKEND",
 		"AGENT_SERVER_URL",
 		"AGENT_SERVER_SECRET",
-		"AGENT_SERVER_PORT"
+		"AGENT_SERVER_PORT",
+		"AGENT_BASE_IMAGE"
 	],
 	"tasks": {
 		"build": {

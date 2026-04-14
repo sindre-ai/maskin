@@ -68,7 +68,11 @@ export class SessionManager extends EventEmitter {
 				'docker',
 				'agent-base',
 			)
-			await this.backend.ensureImage('agent-base:latest', buildContext)
+			const defaultImage =
+				process.env.AGENT_BASE_IMAGE ?? (process.env.RUNTIME_BACKEND === 'microsandbox'
+					? 'ghcr.io/sindre-ai/agent-base:latest'
+					: 'agent-base:latest')
+			await this.backend.ensureImage(defaultImage, buildContext)
 		} catch (err) {
 			logger.error(
 				'Failed to build agent-base image — sessions will fail until image is available',
@@ -619,7 +623,11 @@ export class SessionManager extends EventEmitter {
 		}
 
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
-		const image = (sessionConfig.base_image as string) ?? 'agent-base:latest'
+		const defaultImage =
+			process.env.AGENT_BASE_IMAGE ?? (process.env.RUNTIME_BACKEND === 'microsandbox'
+				? 'ghcr.io/sindre-ai/agent-base:latest'
+				: 'agent-base:latest')
+		const image = (sessionConfig.base_image as string) ?? defaultImage
 
 		await this.backend.ensureImage(image)
 
