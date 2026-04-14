@@ -44,7 +44,10 @@ export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
 	private watchdogInterval: NodeJS.Timeout | null = null
-	private activeSessions: Map<string, { tempDir: string }> = new Map()
+	private activeSessions: Map<
+		string,
+		{ tempDir: string; browserContainerId?: string; networkName?: string }
+	> = new Map()
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 
@@ -204,6 +207,7 @@ export class SessionManager extends EventEmitter {
 			})
 
 			await this.clearActiveSession(sessionId)
+			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
@@ -271,6 +275,7 @@ export class SessionManager extends EventEmitter {
 
 			await this.insertSystemLog(sessionId, 'Session paused and snapshot saved')
 
+			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 
 			logger.info(`Session paused: ${sessionId}`)
@@ -365,6 +370,7 @@ export class SessionManager extends EventEmitter {
 			})
 
 			await this.clearActiveSession(sessionId)
+			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
@@ -574,6 +580,7 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_EXPIRES_AT',
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
+			'BROWSER_CDP_URL',
 		])
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
@@ -604,6 +611,17 @@ export class SessionManager extends EventEmitter {
 			await this.containers.ensureImage(image, this.agentBaseBuildContext)
 		}
 
+		// Provision browser sidecar if Playwright MCP is configured
+		let networkMode: string | undefined
+		if (this.needsBrowserSidecar(envVars)) {
+			const prefix = session.id.slice(0, 8)
+			const result = await this.provisionBrowserSidecar(session.id, prefix)
+			if (result) {
+				envVars.BROWSER_CDP_URL = `ws://anko-browser-${prefix}:9222`
+				networkMode = result.networkName
+			}
+		}
+
 		const containerId = await this.containers.create({
 			image,
 			name,
@@ -611,6 +629,7 @@ export class SessionManager extends EventEmitter {
 			memoryMb: (sessionConfig.memory_mb as number) ?? 4096,
 			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
 			binds: [`${tempDir}:/agent:rw`],
+			networkMode,
 		})
 
 		await this.containers.start(containerId)
@@ -733,6 +752,7 @@ export class SessionManager extends EventEmitter {
 		await this.clearActiveSession(sessionId)
 
 		// Cleanup
+		await this.cleanupBrowserSidecar(sessionId)
 		await this.containers
 			.remove(containerId)
 			.catch((err) =>
@@ -810,6 +830,7 @@ export class SessionManager extends EventEmitter {
 			})
 
 			await this.clearActiveSession(session.id)
+			await this.cleanupBrowserSidecar(session.id)
 			await this.cleanupSession(session.id)
 
 			// Start next queued session if capacity is available
@@ -924,6 +945,119 @@ export class SessionManager extends EventEmitter {
 				stream: 'system',
 				data: content,
 			} satisfies SessionLogEvent)
+		}
+	}
+
+	/**
+	 * Check if the MCP config references ${BROWSER_CDP_URL}, indicating a browser sidecar is needed.
+	 */
+	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
+		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
+		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
+		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
+	}
+
+	/**
+	 * Provision a headless Chrome sidecar container on a per-session Docker network.
+	 * Returns the network name and browser container ID, or null if provisioning fails.
+	 * On failure, the agent session continues without browser capability.
+	 */
+	private async provisionBrowserSidecar(
+		sessionId: string,
+		prefix: string,
+	): Promise<{ networkName: string; browserContainerId: string } | null> {
+		const networkName = `anko-net-${prefix}`
+		const browserName = `anko-browser-${prefix}`
+		let browserContainerId: string | undefined
+
+		try {
+			await this.containers.pullImage('chromedp/headless-shell:latest')
+			await this.containers.createNetwork(networkName)
+
+			browserContainerId = await this.containers.create({
+				image: 'chromedp/headless-shell:latest',
+				name: browserName,
+				env: {},
+				memoryMb: 512,
+				cpuShares: 512,
+				binds: [],
+				networkMode: networkName,
+			})
+
+			await this.containers.start(browserContainerId)
+
+			// Brief wait for Chrome to initialize CDP listener
+			await new Promise((resolve) => setTimeout(resolve, 2000))
+
+			// Track sidecar resources for cleanup
+			const sessionData = this.activeSessions.get(sessionId)
+			if (sessionData) {
+				sessionData.browserContainerId = browserContainerId
+				sessionData.networkName = networkName
+			}
+
+			logger.info('Browser sidecar started', { sessionId, browserName, networkName })
+			await this.insertSystemLog(
+				sessionId,
+				'Browser sidecar started — Playwright MCP can connect via CDP',
+			)
+
+			return { networkName, browserContainerId }
+		} catch (err) {
+			logger.error('Browser sidecar failed — agent will run without browser', {
+				sessionId,
+				error: String(err),
+			})
+			await this.insertSystemLog(
+				sessionId,
+				`Browser sidecar failed to start: ${err instanceof Error ? err.message : String(err)}. Agent will continue without browser capability.`,
+			)
+
+			// Clean up partial resources
+			if (browserContainerId) {
+				await this.containers.stop(browserContainerId).catch(() => {})
+				await this.containers.remove(browserContainerId).catch(() => {})
+			}
+			await this.containers.removeNetwork(networkName).catch(() => {})
+
+			// Clear sidecar tracking
+			const sessionData = this.activeSessions.get(sessionId)
+			if (sessionData) {
+				sessionData.browserContainerId = undefined
+				sessionData.networkName = undefined
+			}
+
+			return null
+		}
+	}
+
+	/**
+	 * Clean up browser sidecar container and its Docker network.
+	 * Called before cleanupSession() in all exit paths.
+	 */
+	private async cleanupBrowserSidecar(sessionId: string): Promise<void> {
+		const sessionData = this.activeSessions.get(sessionId)
+		if (!sessionData) return
+
+		if (sessionData.browserContainerId) {
+			await this.containers
+				.stop(sessionData.browserContainerId)
+				.catch((err) =>
+					logger.warn('Failed to stop browser sidecar', { sessionId, error: String(err) }),
+				)
+			await this.containers
+				.remove(sessionData.browserContainerId)
+				.catch((err) =>
+					logger.warn('Failed to remove browser sidecar', { sessionId, error: String(err) }),
+				)
+		}
+
+		if (sessionData.networkName) {
+			await this.containers
+				.removeNetwork(sessionData.networkName)
+				.catch((err) =>
+					logger.warn('Failed to remove session network', { sessionId, error: String(err) }),
+				)
 		}
 	}
 

@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pre-install Claude Code CLI (avoids npm install on every session start)
 RUN npm install -g @anthropic-ai/claude-code
 
+# Pre-install Playwright MCP server (connects to external browser via CDP)
+RUN npm install -g @playwright/mcp
+
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent
 

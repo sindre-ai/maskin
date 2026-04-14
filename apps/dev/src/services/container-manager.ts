@@ -12,6 +12,7 @@ export interface ContainerCreateOptions {
 	cpuShares: number
 	binds: string[]
 	networkMode?: string
+	cmd?: string[]
 }
 
 export interface LogChunk {
@@ -90,6 +91,7 @@ export class ContainerManager {
 			Image: options.image,
 			name: options.name,
 			Env: env,
+			...(options.cmd && { Cmd: options.cmd }),
 			HostConfig: {
 				Memory: options.memoryMb * 1024 * 1024,
 				CpuShares: options.cpuShares,
@@ -213,5 +215,36 @@ export class ContainerManager {
 	async copyFrom(containerId: string, srcPath: string): Promise<NodeJS.ReadableStream> {
 		const container = this.docker.getContainer(containerId)
 		return container.getArchive({ path: srcPath })
+	}
+
+	async createNetwork(name: string): Promise<string> {
+		const network = await this.docker.createNetwork({ Name: name, Driver: 'bridge' })
+		logger.info(`Network created: ${name}`, { networkId: network.id })
+		return network.id
+	}
+
+	async removeNetwork(nameOrId: string): Promise<void> {
+		try {
+			await this.docker.getNetwork(nameOrId).remove()
+			logger.info(`Network removed: ${nameOrId}`)
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err)
+			if (message.includes('No such network') || message.includes('not found')) return
+			throw err
+		}
+	}
+
+	async pullImage(image: string): Promise<void> {
+		if (await this.imageExists(image)) return
+
+		logger.info(`Pulling image: ${image}`)
+		const stream = await this.docker.pull(image)
+		await new Promise<void>((resolve, reject) => {
+			this.docker.modem.followProgress(stream, (err: Error | null) => {
+				if (err) reject(err)
+				else resolve()
+			})
+		})
+		logger.info(`Image pulled: ${image}`)
 	}
 }
