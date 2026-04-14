@@ -70,7 +70,7 @@ export class SessionManager extends EventEmitter {
 			)
 			const defaultImage =
 				process.env.AGENT_BASE_IMAGE ?? (process.env.RUNTIME_BACKEND === 'microsandbox'
-					? 'ghcr.io/sindre-ai/agent-base:latest'
+					? 'magnusnoeddegaard/agent-base:latest'
 					: 'agent-base:latest')
 			await this.backend.ensureImage(defaultImage, buildContext)
 		} catch (err) {
@@ -625,7 +625,7 @@ export class SessionManager extends EventEmitter {
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
 		const defaultImage =
 			process.env.AGENT_BASE_IMAGE ?? (process.env.RUNTIME_BACKEND === 'microsandbox'
-				? 'ghcr.io/sindre-ai/agent-base:latest'
+				? 'magnusnoeddegaard/agent-base:latest'
 				: 'agent-base:latest')
 		const image = (sessionConfig.base_image as string) ?? defaultImage
 
