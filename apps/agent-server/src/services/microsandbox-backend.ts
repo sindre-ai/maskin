@@ -1,114 +1,68 @@
-import { type BaseSandbox, NodeSandbox } from 'microsandbox'
+import { type ExecEvent, Mount, NetworkPolicy, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
-import { type ClassifiedEnv, classifySecrets } from '../lib/secret-policies'
 import type {
 	ExecResult,
 	LogChunk,
 	RuntimeBackend,
 	SandboxCreateOptions,
-	SandboxStatus,
+	SandboxStatus as SandboxStatusType,
 } from './runtime-backend'
 
-function shellEscape(s: string): string {
-	return `'${s.replace(/'/g, "'\\''")}'`
-}
-
-const SAFE_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
-
-function validateEnvKey(key: string): void {
-	if (!SAFE_ENV_KEY.test(key)) {
-		throw new Error(`Invalid environment variable name: ${key}`)
-	}
-}
-
 export class MicrosandboxBackend implements RuntimeBackend {
-	private sandboxes = new Map<string, BaseSandbox>()
+	private sandboxes = new Map<string, Sandbox>()
 	private exitCodes = new Map<string, number>()
-	private exitPromises = new Map<string, Promise<{ exitCode: number }>>()
-	private exitResolvers = new Map<string, (result: { exitCode: number }) => void>()
 	private startTimes = new Map<string, string>()
 	private finishTimes = new Map<string, string>()
 	private createOptions = new Map<string, SandboxCreateOptions>()
-	private classifiedEnvs = new Map<string, ClassifiedEnv>()
 
 	async ensureImage(_image: string, _buildContext?: string): Promise<void> {
-		// Microsandbox pulls OCI images automatically on start.
+		// Microsandbox pulls OCI images automatically on create.
 	}
 
 	async create(options: SandboxCreateOptions): Promise<string> {
-		const classified = classifySecrets(options.env)
-		this.classifiedEnvs.set(options.name, classified)
-
-		const secretKeys = Object.keys(classified.secrets)
-		if (secretKeys.length > 0) {
-			logger.info(`Classified ${secretKeys.length} secret(s) for sandbox ${options.name}`, {
-				secretKeys,
-			})
-		}
-
-		const sandbox = await NodeSandbox.create({
-			name: options.name,
-			image: options.image,
-			memory: options.memoryMb,
-			cpus: Math.max(1, Math.round(options.cpuShares / 1024)),
-		})
-		this.sandboxes.set(options.name, sandbox)
+		// Store options — Sandbox.create() both creates and boots the VM,
+		// so actual creation is deferred to start().
 		this.createOptions.set(options.name, options)
-		logger.info(`Microsandbox created: ${options.name}`, { image: options.image })
+		logger.info(`Microsandbox config stored: ${options.name}`, { image: options.image })
 		return options.name
 	}
 
 	async start(sandboxId: string): Promise<void> {
-		const sandbox = this.sandboxes.get(sandboxId)
-		if (!sandbox) {
-			throw new Error(`Sandbox not found: ${sandboxId}`)
+		const options = this.createOptions.get(sandboxId)
+		if (!options) {
+			throw new Error(`No create options for sandbox: ${sandboxId}`)
 		}
 
-		const options = this.createOptions.get(sandboxId)
-		await sandbox.start(
-			options?.image,
-			options?.memoryMb,
-			options ? Math.max(1, Math.round(options.cpuShares / 1024)) : undefined,
-		)
+		const volumes: Record<string, ReturnType<typeof Mount.bind>> = {}
+		for (const bind of options.binds) {
+			const [source, dest, mode] = bind.split(':')
+			if (source && dest) {
+				volumes[dest] = Mount.bind(source, { readonly: mode === 'ro' })
+			}
+		}
+
+		const sandbox = await Sandbox.create({
+			name: options.name,
+			image: options.image,
+			memoryMib: options.memoryMb,
+			cpus: Math.max(1, Math.round(options.cpuShares / 1024)),
+			env: options.env,
+			volumes,
+			network: NetworkPolicy.allowAll(),
+			maxDurationSecs: options.maxDurationSecs,
+			replace: true,
+			quietLogs: true,
+		})
+
+		this.sandboxes.set(sandboxId, sandbox)
 		this.startTimes.set(sandboxId, new Date().toISOString())
-
-		this.exitPromises.set(
-			sandboxId,
-			new Promise((resolve) => {
-				this.exitResolvers.set(sandboxId, resolve)
-			}),
-		)
-
 		logger.info(`Microsandbox started: ${sandboxId}`)
 	}
 
-	private buildEnvExports(sandboxId: string): string {
-		const classified = this.classifiedEnvs.get(sandboxId)
-		if (!classified) return ''
-
-		const parts: string[] = []
-		for (const [key, value] of Object.entries(classified.env)) {
-			validateEnvKey(key)
-			parts.push(`export ${key}=${shellEscape(value)}`)
-		}
-		for (const [key, { value }] of Object.entries(classified.secrets)) {
-			// TODO: Use microsandbox Secret.env() when SDK supports network-level secret injection.
-			// For now, secrets are passed as env vars. Once Secret.env() is available, secrets
-			// will never enter the VM — real values will only be substituted at the network
-			// level for requests to allowed hosts.
-			validateEnvKey(key)
-			parts.push(`export ${key}=${shellEscape(value)}`)
-		}
-		return parts.join('; ')
-	}
-
 	private resolveExit(sandboxId: string, exitCode: number): void {
-		this.exitCodes.set(sandboxId, exitCode)
-		this.finishTimes.set(sandboxId, new Date().toISOString())
-		const resolver = this.exitResolvers.get(sandboxId)
-		if (resolver) {
-			resolver({ exitCode })
-			this.exitResolvers.delete(sandboxId)
+		if (!this.exitCodes.has(sandboxId)) {
+			this.exitCodes.set(sandboxId, exitCode)
+			this.finishTimes.set(sandboxId, new Date().toISOString())
 		}
 	}
 
@@ -117,18 +71,20 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (!sandbox) return
 
 		try {
-			const envExports = this.buildEnvExports(sandboxId)
-			const cmd = envExports ? `${envExports}; exec /entrypoint.sh` : 'exec /entrypoint.sh'
-			const result = await sandbox.command.run('sh', ['-c', cmd])
-			const stdout = await result.output()
-			const stderr = await result.error()
-			if (stdout) {
-				yield { stream: 'stdout', data: stdout }
+			const handle = await sandbox.shellStream('/entrypoint.sh')
+			let event: ExecEvent | null
+			while ((event = await handle.recv()) !== null) {
+				if (event.eventType === 'stdout' && event.data) {
+					yield { stream: 'stdout', data: event.data.toString() }
+				} else if (event.eventType === 'stderr' && event.data) {
+					yield { stream: 'stderr', data: event.data.toString() }
+				} else if (event.eventType === 'exited') {
+					this.resolveExit(sandboxId, event.code ?? 1)
+				}
 			}
-			if (stderr) {
-				yield { stream: 'stderr', data: stderr }
+			if (!this.exitCodes.has(sandboxId)) {
+				this.resolveExit(sandboxId, 0)
 			}
-			this.resolveExit(sandboxId, result.exitCode)
 		} catch (err) {
 			logger.error(`Log streaming error: ${sandboxId}`, { error: err })
 			this.resolveExit(sandboxId, 1)
@@ -141,11 +97,14 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			return { exitCode }
 		}
 
-		const promise = this.exitPromises.get(sandboxId)
-		if (!promise) {
-			throw new Error(`No exit promise for sandbox: ${sandboxId}`)
+		const sandbox = this.sandboxes.get(sandboxId)
+		if (!sandbox) {
+			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
-		return promise
+
+		const status = await sandbox.wait()
+		this.resolveExit(sandboxId, status.code)
+		return { exitCode: status.code }
 	}
 
 	async stop(sandboxId: string): Promise<void> {
@@ -153,7 +112,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (!sandbox) {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
-		await sandbox.stop()
+		await sandbox.kill()
 		this.resolveExit(sandboxId, 137)
 		logger.info(`Microsandbox stopped: ${sandboxId}`)
 	}
@@ -162,26 +121,26 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		const sandbox = this.sandboxes.get(sandboxId)
 		if (sandbox) {
 			try {
-				await sandbox.stop()
+				await sandbox.kill()
 			} catch {
 				// Already stopped
 			}
 		}
-		if (!this.exitCodes.has(sandboxId)) {
-			this.resolveExit(sandboxId, 137)
+		this.resolveExit(sandboxId, 137)
+		try {
+			await Sandbox.remove(sandboxId)
+		} catch {
+			// May already be removed
 		}
 		this.sandboxes.delete(sandboxId)
 		this.exitCodes.delete(sandboxId)
-		this.exitPromises.delete(sandboxId)
-		this.exitResolvers.delete(sandboxId)
 		this.startTimes.delete(sandboxId)
 		this.finishTimes.delete(sandboxId)
 		this.createOptions.delete(sandboxId)
-		this.classifiedEnvs.delete(sandboxId)
 		logger.info(`Microsandbox removed: ${sandboxId}`)
 	}
 
-	async inspect(sandboxId: string): Promise<SandboxStatus> {
+	async inspect(sandboxId: string): Promise<SandboxStatusType> {
 		const running = this.sandboxes.has(sandboxId) && !this.exitCodes.has(sandboxId)
 		const exitCode = this.exitCodes.get(sandboxId) ?? null
 		const startedAt = this.startTimes.get(sandboxId) ?? null
@@ -195,19 +154,14 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (!sandbox) {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
-
 		if (!cmd[0]) {
 			throw new Error('Command array must not be empty')
 		}
-		const envExports = this.buildEnvExports(sandboxId)
-		const escapedCmd = cmd.map(shellEscape).join(' ')
-		const fullCmd = envExports ? `${envExports}; ${escapedCmd}` : escapedCmd
-		const result = await sandbox.command.run('sh', ['-c', fullCmd])
-		const stdout = await result.output()
-		const stderr = await result.error()
+
+		const result = await sandbox.exec(cmd[0], cmd.slice(1))
 		return {
-			exitCode: result.exitCode,
-			output: stdout + stderr,
+			exitCode: result.code,
+			output: result.stdout() + result.stderr(),
 		}
 	}
 
@@ -216,15 +170,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (!sandbox) {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
-
-		const result = await sandbox.command.run('base64', [guestPath])
-		const encoded = await result.output()
-		if (result.exitCode !== 0) {
-			throw new Error(`Failed to read file ${guestPath}: exit code ${result.exitCode}`)
-		}
-
-		const { writeFile } = await import('node:fs/promises')
-		await writeFile(hostPath, Buffer.from(encoded.trim(), 'base64'))
+		await sandbox.fs().copyToHost(guestPath, hostPath)
 	}
 
 	async copyFileIn(sandboxId: string, hostPath: string, guestPath: string): Promise<void> {
@@ -232,13 +178,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (!sandbox) {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
-
-		const { readFile } = await import('node:fs/promises')
-		const data = await readFile(hostPath)
-		const encoded = data.toString('base64')
-
-		const safeGuestPath = guestPath.replace(/'/g, "'\\''")
-		await sandbox.command.run('sh', ['-c', `echo '${encoded}' | base64 -d > '${safeGuestPath}'`])
+		await sandbox.fs().copyFromHost(hostPath, guestPath)
 	}
 
 	getHostAddress(): string {

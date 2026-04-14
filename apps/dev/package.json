@@ -40,7 +40,7 @@
 		"zod": "^3.24.0"
 	},
 	"optionalDependencies": {
-		"microsandbox": "^0.1.0"
+		"microsandbox": "^0.3.12"
 	},
 	"devDependencies": {
 		"@types/bcryptjs": "^3.0.0",
