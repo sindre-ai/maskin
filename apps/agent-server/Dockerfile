@@ -1,6 +1,12 @@
-FROM node:20-slim
-RUN apt-get update && apt-get install -y --no-install-recommends libdbus-1-3 && rm -rf /var/lib/apt/lists/*
-RUN corepack enable
+FROM ubuntu:24.04
+
+# Install Node.js 20, system deps for microsandbox native addon
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates libdbus-1-3 && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    corepack enable && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
