@@ -260,20 +260,12 @@ serve({ fetch: app.fetch, port }, () => {
 	const apiUrl = `http://localhost:${port}`
 
 	const mcpSetup = bootstrap
-		? `    claude mcp add maskin \\
-      -e API_BASE_URL=${apiUrl} \\
-      -e API_KEY=${bootstrap.apiKey} \\
-      -e WORKSPACE_ID=${bootstrap.workspaceId} \\
-      -- npx tsx packages/mcp/src/server.ts`
-		: `    claude mcp add maskin \\
-      -e API_BASE_URL=${apiUrl} \\
-      -e API_KEY=<your_api_key> \\
-      -e WORKSPACE_ID=<your_workspace_id> \\
-      -- npx tsx packages/mcp/src/server.ts
+		? `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=${bootstrap.apiKey} -e WORKSPACE_ID=${bootstrap.workspaceId} -- npx tsx packages/mcp/src/server.ts`
+		: `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=<your_api_key> -e WORKSPACE_ID=<your_workspace_id> -- npx tsx packages/mcp/src/server.ts
     (find your key + workspace id in the UI under Settings)`
 
 	const accountLine = bootstrap
-		? ` 👤 Default account: ${bootstrap.actorName} <${bootstrap.actorEmail}>  ·  workspace: "${bootstrap.workspaceName}"
+		? ` 👤 Default account: ${bootstrap.actorName} · ${bootstrap.actorEmail}  ·  workspace: "${bootstrap.workspaceName}"
     Rename it any time from the UI (Settings → Profile / Workspace) or via MCP (update_actor / update_workspace).
 `
 		: ''
@@ -285,10 +277,10 @@ ${accountLine}
  Two ways to get started:
 
  ① From the browser
-    1. Open ${webUrl} and sign in (or create another account)
+    1. Open ${webUrl}/signup and create an account
     2. The UI walks you through the rest
 
- ② From Claude Code (or any MCP client) — one command, zero UI
+ ② From Claude Code (or any MCP client)
     1. Connect MCP:
 ${mcpSetup}
 

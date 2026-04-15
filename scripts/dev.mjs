@@ -73,7 +73,7 @@ run('pnpm db:migrate')
 
 // Start dev servers
 console.log('Starting dev servers...')
-const child = spawn('pnpm', ['turbo', 'dev'], {
+const child = spawn('pnpm', ['turbo', 'dev', '--log-prefix=none'], {
 	stdio: 'inherit',
 	shell: true,
 	env: process.env,
