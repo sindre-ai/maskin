@@ -2131,24 +2131,26 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				chosen === 'development'
 					? `
 
-The development pipeline is wired up end-to-end. Agents will pick up work automatically once a bet has a github link and a task is moved to "in_progress": Bet Planner → Senior Developer → Code Reviewer → CTO → Development Driver. The user's job is to steer bets and merge PRs; the agents handle everything in between.
+The development pipeline is wired up end-to-end: Bet Planner → Senior Developer → Code Reviewer → CTO → Development Driver. The user steers; the agents build.
 
-INSTRUCTIONS FOR GETTING THE MACHINE MOVING — do NOT print this section verbatim. After the excited opener + workspace URL, write one clear section titled "How to get the machine moving" and FRAME IT AS ASKS, not instructions. For each item, do as much of the work as possible yourself, then ask for confirmation — don't just list steps for the user to execute.
+INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print this block verbatim. Render EXACTLY this format (no extra prose, no per-step explanations):
 
-  Step 1 — **Connect GitHub.** Ask: "Want me to set up the GitHub integration? You'll need to authorize it once." If they say yes, use the connect_integration tool with provider "github". If they already connected it, skip.
+  How to get the machine moving
+    1. Connect GitHub
+    2. Sharpen the starter tasks
+    3. Kick off task 1 (Senior Developer picks it up)
+    4. Review + merge
 
-  Step 2 — **Put the repo on the bet.** Look up the seed bet (or the tailored one) via list_objects + filter type=bet, and set its \`github_link\` metadata to the repo URL. DO NOT ask about this; do it as part of step 1's confirmation and tell them you've done it.
+  Start now?
 
-  Step 3 — **Sharpen the starter tasks.** Use update_objects to rewrite the two seed tasks into proper tickets with: specific files or areas to touch, acceptance criteria, and any dependencies between them. Use the user's stated goal + project name to make them concrete. DO THIS AUTOMATICALLY — do not ask permission; just tell the user you've sharpened the tasks and show a short summary.
+Then STOP. Do not explain each step — one line each, nothing more. Wait for the user to say yes/go/start before taking any action.
 
-  Step 4 — **Run the first task.** Ask: "Ready to kick off task 1? I'll move it to in_progress — Senior Developer will pick it up, write the code, and open a PR. Once it's done, the pipeline runs itself all the way to a merged PR (you only need to check in at the review stage)." If yes, use update_objects to move task1 to "in_progress".
+When the user confirms (yes / go / start / do it / sure), execute the steps in order: (a) call connect_integration for provider "github" — ask only for the repo URL if needed; (b) set the seed bet's \`github_link\` metadata to that repo URL; (c) use update_objects to rewrite task1 + task2 into concrete tickets with specific files/areas, acceptance criteria, and dependencies, tailored to what the user told you earlier; (d) move task1 to "in_progress"; (e) briefly confirm each step as you go ("✅ GitHub connected", "✅ Repo attached to bet", etc.). After step (d), tell the user the pipeline is running and they'll be pinged when the PR needs review.
 
-  Step 5 — **Review + merge.** Explain: "When the PR lands, the Code Reviewer will run lint/type-check/tests, fix any failures, and merge. The CTO validates end-to-end. You'll only get a notification if something needs your input."
-
-End with a light invitation to go a different route if they want.`
+If the user says "not now" or steers elsewhere, follow their direction.`
 					: `
 
-INSTRUCTIONS FOR THE AGENT — do NOT print verbatim. After the excited opener + workspace URL, write one clear section titled "How to get the machine moving" with 2–3 concrete, tailored next-action ASKS based on what the user told you earlier about their project and goal. Frame them as things YOU will do for them on confirmation (not steps they should take). End with a light invitation to steer elsewhere.`
+INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print verbatim. Render a terse list of 2–3 one-line items (a few words each) tailored to what the user told you earlier. End with "Start now?" on its own line. Do not explain each item. Wait for the user to confirm before acting.`
 
 			return textResponse(
 				`✅ "${template.name}" template applied to workspace "${workspace.name}". ${seedSummary}
