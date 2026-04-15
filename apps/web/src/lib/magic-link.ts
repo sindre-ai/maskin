@@ -1,9 +1,12 @@
-import { setApiKey } from './auth'
+import { setApiKey, setStoredActor } from './auth'
 
 /**
- * Consumes an API key from the URL fragment (e.g. `#key=ank_...`) and stores
- * it in localStorage, then strips the fragment from the URL. Used so that MCP
- * `get_started` can return a one-click link that auto-authenticates the user.
+ * Consumes credentials from the URL fragment and stores them in localStorage,
+ * then strips the fragment. Used so MCP `get_started` can return a one-click
+ * link that auto-authenticates the user and populates their profile.
+ *
+ * Supported fragment params: `key` (required, must start with `ank_`),
+ * `actor_id`, `actor_name`, `actor_email`, `actor_type` (optional).
  *
  * Runs synchronously before the router mounts, so the `_authed` guard sees the
  * key on first navigation.
@@ -14,6 +17,15 @@ export function consumeMagicLink(): void {
 	const key = params.get('key')
 	if (!key || !key.startsWith('ank_')) return
 	setApiKey(key)
+	const actorId = params.get('actor_id')
+	if (actorId) {
+		setStoredActor({
+			id: actorId,
+			name: params.get('actor_name') ?? '',
+			type: params.get('actor_type') ?? 'human',
+			email: params.get('actor_email'),
+		})
+	}
 	const url = window.location.pathname + window.location.search
 	window.history.replaceState(null, '', url)
 }

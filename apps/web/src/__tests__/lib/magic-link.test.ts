@@ -39,4 +39,20 @@ describe('consumeMagicLink', () => {
 		expect(window.location.search).toBe('?foo=bar')
 		expect(window.location.hash).toBe('')
 	})
+
+	it('stores actor info when actor_id + actor_name + actor_email are present', () => {
+		window.history.replaceState(
+			null,
+			'',
+			'/ws-abc#key=ank_xyz&actor_id=a-1&actor_name=Magnus&actor_email=m%40example.com&actor_type=human',
+		)
+		consumeMagicLink()
+		const stored = localStorage.getItem('maskin-actor')
+		expect(stored).not.toBeNull()
+		const parsed = stored ? JSON.parse(stored) : null
+		expect(parsed.id).toBe('a-1')
+		expect(parsed.name).toBe('Magnus')
+		expect(parsed.email).toBe('m@example.com')
+		expect(parsed.type).toBe('human')
+	})
 })

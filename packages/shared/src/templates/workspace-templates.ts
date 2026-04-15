@@ -1,7 +1,14 @@
 import type { z } from 'zod'
 import type { workspaceSettingsSchema } from '../schemas/workspaces'
+import {
+	DEVELOPMENT_AGENTS,
+	DEVELOPMENT_TRIGGERS,
+	type SeedAgent,
+	type SeedTrigger,
+} from './development-agents'
 
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>
+export type { SeedAgent, SeedTrigger }
 
 export interface TemplateSeedNode {
 	$id: string
@@ -31,6 +38,10 @@ export interface WorkspaceTemplate {
 	settings: Partial<WorkspaceSettings>
 	seedNodes: TemplateSeedNode[]
 	seedEdges: TemplateSeedEdge[]
+	/** Agents to create alongside the workspace schema + seed objects. */
+	seedAgents?: SeedAgent[]
+	/** Event/cron triggers to create; targetActor$id references a SeedAgent. */
+	seedTriggers?: SeedTrigger[]
 }
 
 const developmentTemplate: WorkspaceTemplate = {
@@ -96,6 +107,8 @@ const developmentTemplate: WorkspaceTemplate = {
 		{ source: 'bet1', target: 'task2', type: 'breaks_into' },
 		{ source: 'insight1', target: 'bet1', type: 'informs' },
 	],
+	seedAgents: DEVELOPMENT_AGENTS,
+	seedTriggers: DEVELOPMENT_TRIGGERS,
 }
 
 const growthTemplate: WorkspaceTemplate = {

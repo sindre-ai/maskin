@@ -2023,28 +2023,145 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				seedSummary = `Settings applied, but seeding examples failed: ${String(err)}. You can re-run get_started or add objects manually.`
 			}
 
+			// Create seed agents (if any). Track $id → real UUID so triggers can resolve
+			// their target actor, and so {{self_id}} placeholders in system prompts can
+			// be substituted with the real actor id in a second PATCH.
+			const actorIdMap: Record<string, string> = {}
+			let agentsCreated = 0
+			if (template.seedAgents && template.seedAgents.length > 0) {
+				for (const agent of template.seedAgents) {
+					try {
+						const created = (await apiCall(
+							config,
+							'POST',
+							'/api/actors',
+							{
+								type: 'agent',
+								name: agent.name,
+								system_prompt: agent.systemPrompt,
+								tools: agent.tools,
+							},
+							{ workspaceId: workspace.id },
+						)) as { id: string }
+						actorIdMap[agent.$id] = created.id
+						// Second pass: substitute {{self_id}} in the system prompt.
+						if (agent.systemPrompt.includes('{{self_id}}')) {
+							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)
+							await apiCall(
+								config,
+								'PATCH',
+								`/api/actors/${created.id}`,
+								{ system_prompt: substituted },
+								{ workspaceId: workspace.id },
+							)
+						}
+						agentsCreated++
+					} catch (err) {
+						seedSummary += ` Failed to create agent "${agent.name}": ${String(err)}.`
+					}
+				}
+			}
+
+			// Create seed triggers, resolving targetActor$id to a real UUID.
+			let triggersCreated = 0
+			if (template.seedTriggers && template.seedTriggers.length > 0) {
+				for (const trigger of template.seedTriggers) {
+					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
+					try {
+						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)
+						await apiCall(
+							config,
+							'POST',
+							'/api/triggers',
+							{
+								name: trigger.name,
+								type: trigger.type,
+								config: trigger.config,
+								action_prompt: substitutedPrompt,
+								target_actor_id: targetActorId,
+								enabled: trigger.enabled,
+							},
+							{ workspaceId: workspace.id },
+						)
+						triggersCreated++
+					} catch (err) {
+						seedSummary += ` Failed to create trigger "${trigger.name}": ${String(err)}.`
+					}
+				}
+			}
+
+			if (agentsCreated > 0 || triggersCreated > 0) {
+				seedSummary += ` Created ${agentsCreated} agents and ${triggersCreated} triggers that drive the pipeline.`
+			}
+
 			const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
-			// Append the API key as a URL fragment so clicking the link auto-authenticates
-			// the user into the workspace. Fragments are not sent to the server, and the
-			// frontend consumes + strips the fragment on load (see consumeMagicLink).
-			const magicSuffix = config.apiKey ? `#key=${encodeURIComponent(config.apiKey)}` : ''
+			// Append the API key + actor info as URL fragment params so clicking the
+			// link auto-authenticates the user AND populates actor info in localStorage.
+			// Fragments are not sent to the server; the frontend consumes + strips the
+			// fragment on load (see consumeMagicLink).
+			const magicParams = new URLSearchParams()
+			if (config.apiKey) magicParams.set('key', config.apiKey)
+			try {
+				const members = (await apiCall(
+					config,
+					'GET',
+					`/api/workspaces/${workspace.id}/members`,
+					undefined,
+					{ workspaceId: workspace.id },
+				)) as Array<{
+					actorId: string
+					name: string | null
+					email: string | null
+					type: string
+				}>
+				const human = members.find((m) => m.type === 'human') ?? members[0]
+				if (human) {
+					magicParams.set('actor_id', human.actorId)
+					if (human.name) magicParams.set('actor_name', human.name)
+					if (human.email) magicParams.set('actor_email', human.email)
+					if (human.type) magicParams.set('actor_type', human.type)
+				}
+			} catch {
+				// Best-effort; the frontend still works with just the key.
+			}
+			const magicSuffix = magicParams.toString() ? `#${magicParams.toString()}` : ''
 			const workspaceUrl = `${frontendUrl}/${workspace.id}${magicSuffix}`
+
+			const devPipelineGuidance =
+				chosen === 'development'
+					? `
+
+The development pipeline is wired up end-to-end. Agents will pick up work automatically once a bet has a github link and a task is moved to "in_progress": Bet Planner → Senior Developer → Code Reviewer → CTO → Development Driver. The user's job is to steer bets and merge PRs; the agents handle everything in between.
+
+INSTRUCTIONS FOR GETTING THE MACHINE MOVING — do NOT print this section verbatim. After the excited opener + workspace URL, write one clear section titled "How to get the machine moving" and FRAME IT AS ASKS, not instructions. For each item, do as much of the work as possible yourself, then ask for confirmation — don't just list steps for the user to execute.
+
+  Step 1 — **Connect GitHub.** Ask: "Want me to set up the GitHub integration? You'll need to authorize it once." If they say yes, use the connect_integration tool with provider "github". If they already connected it, skip.
+
+  Step 2 — **Put the repo on the bet.** Look up the seed bet (or the tailored one) via list_objects + filter type=bet, and set its \`github_link\` metadata to the repo URL. DO NOT ask about this; do it as part of step 1's confirmation and tell them you've done it.
+
+  Step 3 — **Sharpen the starter tasks.** Use update_objects to rewrite the two seed tasks into proper tickets with: specific files or areas to touch, acceptance criteria, and any dependencies between them. Use the user's stated goal + project name to make them concrete. DO THIS AUTOMATICALLY — do not ask permission; just tell the user you've sharpened the tasks and show a short summary.
+
+  Step 4 — **Run the first task.** Ask: "Ready to kick off task 1? I'll move it to in_progress — Senior Developer will pick it up, write the code, and open a PR. Once it's done, the pipeline runs itself all the way to a merged PR (you only need to check in at the review stage)." If yes, use update_objects to move task1 to "in_progress".
+
+  Step 5 — **Review + merge.** Explain: "When the PR lands, the Code Reviewer will run lint/type-check/tests, fix any failures, and merge. The CTO validates end-to-end. You'll only get a notification if something needs your input."
+
+End with a light invitation to go a different route if they want.`
+					: `
+
+INSTRUCTIONS FOR THE AGENT — do NOT print verbatim. After the excited opener + workspace URL, write one clear section titled "How to get the machine moving" with 2–3 concrete, tailored next-action ASKS based on what the user told you earlier about their project and goal. Frame them as things YOU will do for them on confirmation (not steps they should take). End with a light invitation to steer elsewhere.`
 
 			return textResponse(
 				`✅ "${template.name}" template applied to workspace "${workspace.name}". ${seedSummary}
 
 🌐 Open the workspace in your browser: ${workspaceUrl}
 
-Template pitch (use this to describe what the user just got — rephrase in your own voice, don't quote verbatim):
+Template pitch (use to describe what the user just got — rephrase in your own voice, don't quote verbatim):
 ${template.pitch}
 
-INSTRUCTIONS FOR THE AGENT — do NOT print any of this section verbatim. Instead, write a short, excited message to the user with these parts, in this order:
-  1. An enthusiastic opener that tells the user what they just got, grounded in the template pitch above. Frame it as "you now have your own [AI team / execution machine / growth engine]" — make it feel like a capability unlock, not a config change. Keep it to 2–3 sentences.
-  2. The workspace URL above as a clickable link so they can open it now.
-  3. 2–3 concrete, tailored next-action suggestions framed as things YOU can do next for them, drawing on what they told you earlier about their project and goal. For ${template.name.toLowerCase()}: e.g. "Want me to break [their goal] into the first 3 tasks?", "Should I draft a bet for [specific thing they mentioned]?", "Ready to log an insight about [something they noticed]?". Make the suggestions specific to what they said — not generic.
-  4. End with a light invitation like "Just tell me which one — or steer me somewhere else."
-
-Under the hood, to act on any suggestion: use create_objects (for bets/tasks/insights${chosen === 'growth' ? '/contacts/companies' : ''}), list_objects (to show what's there), or update_objects (to edit seeds).`,
+INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, excited message with these parts in order:
+  1. An enthusiastic opener grounded in the template pitch above. Frame it as "you now have your own [AI team / execution machine / growth engine]" — make it feel like a capability unlock, not a config change. 2–3 sentences.
+  2. The workspace URL above as a clickable link.
+  3. A "How to get the machine moving" section — see the template-specific guidance below.${devPipelineGuidance}`,
 			)
 		},
 	)
