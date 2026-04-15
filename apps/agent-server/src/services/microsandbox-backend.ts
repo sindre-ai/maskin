@@ -93,6 +93,16 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			})
 		}
 
+		// Diagnostic: log every env var about to be passed to the sandbox so we can
+		// reproduce the exact shape. First 20 and last 20 chars only to avoid leaking secrets.
+		const envDump = Object.entries(sanitizedEnv).map(([k, v]) => ({
+			key: k,
+			len: v.length,
+			head: v.slice(0, 20),
+			tail: v.length > 40 ? v.slice(-20) : '',
+		}))
+		logger.info(`Sandbox env to be passed (${sandboxId})`, { env: envDump })
+
 		const sandbox = await Sandbox.create({
 			name: options.name,
 			image: options.image,
