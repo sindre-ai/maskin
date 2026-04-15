@@ -265,7 +265,7 @@ serve({ fetch: app.fetch, port }, () => {
     (find your key + workspace id in the UI under Settings)`
 
 	const accountLine = bootstrap
-		? ` 👤 Default account: ${bootstrap.actorName} · ${bootstrap.actorEmail}  ·  workspace: "${bootstrap.workspaceName}"
+		? ` 👤 ${bootstrap.created ? 'Default account' : 'Account'}: ${bootstrap.actorName} · ${bootstrap.actorEmail}  ·  workspace: "${bootstrap.workspaceName}"
     Rename it any time from the UI (Settings → Profile / Workspace) or via MCP (update_actor / update_workspace).
 `
 		: ''

@@ -23,19 +23,33 @@ describe('maybeBootstrapDev', () => {
 		expect(await maybeBootstrapDev(db)).toBeNull()
 	})
 
-	it('returns null when actors already exist', async () => {
+	it('returns existing credentials when actor + workspace already exist', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults } = createTestContext()
-		mockResults.select = [{ count: 3 }]
-		expect(await maybeBootstrapDev(db)).toBeNull()
+		mockResults.select = [
+			{
+				apiKey: 'ank_existingkey',
+				actorName: 'Alice',
+				actorEmail: 'alice@example.com',
+				workspaceId: 'ws-existing',
+				workspaceName: 'Team Space',
+			},
+		]
+
+		const result = await maybeBootstrapDev(db)
+		expect(result).not.toBeNull()
+		expect(result?.apiKey).toBe('ank_existingkey')
+		expect(result?.workspaceId).toBe('ws-existing')
+		expect(result?.workspaceName).toBe('Team Space')
+		expect(result?.created).toBe(false)
 	})
 
-	it('creates actor + workspace + membership when DB is empty', async () => {
+	it('creates actor + workspace + membership when DB has no credentials', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults } = createTestContext()
-		mockResults.selectQueue = [[{ count: 0 }]]
+		mockResults.selectQueue = [[]] // findExistingCredentials returns no rows
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
 			[{ id: 'ws-1', name: 'My Workspace' }],
@@ -48,5 +62,6 @@ describe('maybeBootstrapDev', () => {
 		expect(result?.actorEmail).toBe('dev@local')
 		expect(result?.workspaceName).toBe('My Workspace')
 		expect(result?.apiKey.startsWith('ank_')).toBe(true)
+		expect(result?.created).toBe(true)
 	})
 })
