@@ -17,6 +17,18 @@ An open-source workspace where AI agents run product development autonomously. H
 
 ## Quick Start
 
+### 🚀 Zero-click setup (from Claude Code)
+
+Paste this single prompt into Claude Code (or any MCP-compatible agent) to have it bootstrap the whole thing for you:
+
+```
+Clone https://github.com/sindre-ai/maskin, cd into it, follow the "Onboarding a new user from Claude Code" section of CLAUDE.md, and hand off to the get_started MCP tool.
+```
+
+Claude will clone, `pnpm install`, start the dev stack in the background, wait for the startup banner, wire the MCP server into your Claude Code config using the auto-provisioned API key + workspace, and then drop you at the `get_started` prompt — which tailors your workspace, seeds the dev-pipeline agents/triggers, and kicks off the first task. From clone to a running pipeline in one message.
+
+### Manual setup
+
 ```bash
 # Clone and install
 git clone https://github.com/sindre-ai/maskin.git && cd maskin
