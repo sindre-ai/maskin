@@ -18,8 +18,8 @@
 	"dependencies": {
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",
-		"@modelcontextprotocol/ext-apps": "^1.2.2",
-		"@modelcontextprotocol/sdk": "^1.27.1",
+		"@modelcontextprotocol/ext-apps": "^1.6.0",
+		"@modelcontextprotocol/sdk": "^1.29.0",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {
