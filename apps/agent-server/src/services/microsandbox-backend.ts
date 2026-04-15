@@ -55,23 +55,28 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		}
 
 		// libkrun has two constraints on env vars:
-		//  1. Values must be ASCII — non-ASCII chars panic with InvalidAscii.
+		//  1. Values must be printable ASCII — non-ASCII or control chars panic
+		//     the VMM (InvalidAscii / handshake failures).
 		//  2. Values over ~1500 chars cause a handshake failure at boot.
 		// Large values are written to /agent/.env-overflow.sh (sourced by
-		// agent-run.sh), non-ASCII is stripped from everything that stays in env.
+		// agent-run.sh); other values are stripped of non-printable chars.
 		const OVERFLOW_THRESHOLD = 1500
 		const sanitizedEnv: Record<string, string> = {}
 		const overflowEntries: Array<{ key: string; value: string }> = []
 		for (const [key, value] of Object.entries(options.env)) {
-			// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ASCII filter
-			const ascii = value.replace(/[^\x00-\x7F]/g, '')
-			if (ascii !== value) {
-				logger.warn(`Stripped non-ASCII chars from env var: ${key}`)
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitization
+			const clean = value.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '')
+			if (clean !== value) {
+				logger.warn(`Sanitized env var ${key}`, {
+					originalLen: value.length,
+					cleanLen: clean.length,
+					removed: value.length - clean.length,
+				})
 			}
-			if (ascii.length > OVERFLOW_THRESHOLD && agentHostPath) {
-				overflowEntries.push({ key, value: ascii })
+			if (clean.length > OVERFLOW_THRESHOLD && agentHostPath) {
+				overflowEntries.push({ key, value: clean })
 			} else {
-				sanitizedEnv[key] = ascii
+				sanitizedEnv[key] = clean
 			}
 		}
 
