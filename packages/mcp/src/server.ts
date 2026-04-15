@@ -2031,10 +2031,13 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 
 🌐 Open the workspace in your browser: ${workspaceUrl}
 
-INSTRUCTIONS FOR THE AGENT — do NOT print this verbatim. Instead, write a short friendly message to the user that includes:
-  1. A single-line confirmation of what was set up (workspace name + template).
+Template pitch (use this to describe what the user just got — rephrase in your own voice, don't quote verbatim):
+${template.pitch}
+
+INSTRUCTIONS FOR THE AGENT — do NOT print any of this section verbatim. Instead, write a short, excited message to the user with these parts, in this order:
+  1. An enthusiastic opener that tells the user what they just got, grounded in the template pitch above. Frame it as "you now have your own [AI team / execution machine / growth engine]" — make it feel like a capability unlock, not a config change. Keep it to 2–3 sentences.
   2. The workspace URL above as a clickable link so they can open it now.
-  3. 2–3 concrete, tailored next-action suggestions framed as things YOU can do next for them, based on what they told you earlier about their project and goal. For example, if they said they want to improve a website's UI, suggest: "Want me to break that goal into 3 first tasks?", "Should I draft a bet for the UI work?", "Ready to add your first insight — something you've noticed that should drive the work?". Pick suggestions that fit the ${template.name.toLowerCase()} template.
+  3. 2–3 concrete, tailored next-action suggestions framed as things YOU can do next for them, drawing on what they told you earlier about their project and goal. For ${template.name.toLowerCase()}: e.g. "Want me to break [their goal] into the first 3 tasks?", "Should I draft a bet for [specific thing they mentioned]?", "Ready to log an insight about [something they noticed]?". Make the suggestions specific to what they said — not generic.
   4. End with a light invitation like "Just tell me which one — or steer me somewhere else."
 
 Under the hood, to act on any suggestion: use create_objects (for bets/tasks/insights${chosen === 'growth' ? '/contacts/companies' : ''}), list_objects (to show what's there), or update_objects (to edit seeds).`,

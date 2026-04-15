@@ -22,6 +22,12 @@ export interface WorkspaceTemplate {
 	id: string
 	name: string
 	description: string
+	/**
+	 * Vivid, excited pitch handed to the agent as guidance for the post-apply
+	 * message to the user. Should answer: "what did I just get?" in a way that
+	 * makes the user feel they now own a capable new machine.
+	 */
+	pitch: string
 	settings: Partial<WorkspaceSettings>
 	seedNodes: TemplateSeedNode[]
 	seedEdges: TemplateSeedEdge[]
@@ -32,6 +38,8 @@ const developmentTemplate: WorkspaceTemplate = {
 	name: 'Development',
 	description:
 		'For product teams building and shipping software. Tracks bets (experiments to run), tasks (work to ship), and insights (things you learn).',
+	pitch:
+		"You now have your own AI development team — an execution machine. Drop in a bet (a goal you want to reach), optionally point it at a GitHub repo, and agents can pick up the tasks, write the code, and ship. You bring the direction; the machine does the building. Bets break into tasks, tasks become PRs, and insights feed back into the next bet. It's the setup a senior eng org takes months to build — you have it running in 3 minutes.",
 	settings: {
 		display_names: {
 			bet: 'Bet',
@@ -95,6 +103,8 @@ const growthTemplate: WorkspaceTemplate = {
 	name: 'Growth',
 	description:
 		'For founders and growth teams running a pipeline. Tracks bets (experiments), tasks (outreach and content), contacts and companies (CRM), and insights.',
+	pitch:
+		'You now have your own AI growth team — a machine that turns signals into bets into outreach. Drop in a goal (first 100 users, hit $10k MRR, launch on Product Hunt) and it plans the experiments, tracks the pipeline, writes the messages, and keeps score. Contacts and companies live in the same graph as bets and tasks, so nothing falls through the cracks. You bring the vision; the machine runs the playbook.',
 	settings: {
 		display_names: {
 			bet: 'Bet',
