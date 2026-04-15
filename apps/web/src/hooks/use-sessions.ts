@@ -79,3 +79,41 @@ export function useActorSessions(actorId: string, workspaceId: string) {
 		enabled: !!actorId && !!workspaceId,
 	})
 }
+
+export function useSessionLogs(sessionId: string | null, workspaceId: string, enabled = true) {
+	return useQuery({
+		queryKey: [...queryKeys.sessions.logs(sessionId ?? ''), 'all'],
+		queryFn: () => api.sessions.logs(sessionId as string, workspaceId, { limit: '500' }),
+		enabled: !!sessionId && enabled,
+	})
+}
+
+export function useStopSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.sessions.stop(id, workspaceId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
+export function usePauseSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.sessions.pause(id, workspaceId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
+export function useResumeSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.sessions.resume(id, workspaceId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}

@@ -1,4 +1,6 @@
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
 	Dialog,
 	DialogContent,
@@ -18,9 +20,21 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useIntegrations } from '@/hooks/use-integrations'
 import type { IntegrationResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { MASKIN_TOOL_CATALOG, groupToolsByCategory } from '@/lib/mcp-tool-catalog'
 import { useWorkspace } from '@/lib/workspace-context'
-import { FileJson, Globe, Pencil, Plus, Terminal, Trash2, Zap } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import {
+	ChevronRight,
+	Circle,
+	FileJson,
+	Globe,
+	Pencil,
+	Plus,
+	Terminal,
+	Trash2,
+	Zap,
+} from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
 
 interface McpServer {
 	type?: 'stdio' | 'http'
@@ -251,59 +265,136 @@ function ServerCard({
 	onDelete: () => void
 }) {
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [toolsOpen, setToolsOpen] = useState(false)
 	const http = isHttpServer(server)
 	const detailCount = http
 		? Object.keys(server.headers ?? {}).length
 		: Object.keys(server.env ?? {}).length
 
+	const isMaskin = name === 'maskin'
+	const toolGroups = useMemo(
+		() => (isMaskin ? groupToolsByCategory(MASKIN_TOOL_CATALOG) : null),
+		[isMaskin],
+	)
+
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
-			{http ? (
-				<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
-			) : (
-				<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
-			)}
-			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground">{name}</p>
-				<p className="text-xs text-muted-foreground truncate">
-					{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
-					{detailCount > 0 && (
-						<span className="ml-2 text-text-muted">
-							{detailCount} {http ? 'header' : 'env var'}
-							{detailCount > 1 ? 's' : ''}
-						</span>
+		<div className="rounded-md border border-border bg-bg-surface overflow-hidden">
+			<div className="flex items-center gap-3 px-3 py-2">
+				{/* Status dot */}
+				<Circle
+					className={cn(
+						'h-2 w-2 shrink-0 fill-current',
+						isMaskin ? 'text-success' : 'text-muted-foreground',
 					)}
-				</p>
-			</div>
-			{confirmDelete ? (
-				<div className="flex items-center gap-1">
-					<Button size="sm" variant="destructive" onClick={onDelete}>
-						Delete
-					</Button>
-					<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-						Cancel
-					</Button>
+				/>
+				{http ? (
+					<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
+				) : (
+					<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
+				)}
+				<div className="flex-1 min-w-0">
+					<div className="flex items-center gap-2">
+						<p className="text-sm font-medium text-foreground">{name}</p>
+						{isMaskin && (
+							<Badge variant="outline" className="text-[10px] px-1.5 py-0">
+								{MASKIN_TOOL_CATALOG.length} tools
+							</Badge>
+						)}
+					</div>
+					<p className="text-xs text-muted-foreground truncate">
+						{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
+						{detailCount > 0 && (
+							<span className="ml-2 text-text-muted">
+								{detailCount} {http ? 'header' : 'env var'}
+								{detailCount > 1 ? 's' : ''}
+							</span>
+						)}
+					</p>
 				</div>
-			) : (
-				<div className="flex items-center gap-1">
-					<Button
-						size="icon"
-						variant="ghost"
-						className="text-muted-foreground"
-						onClick={onEdit}
-						aria-label="Edit server"
-					>
-						<Pencil className="h-3.5 w-3.5" />
-					</Button>
-					<Button
-						size="icon"
-						variant="ghost"
-						className="text-muted-foreground hover:text-error"
-						onClick={() => setConfirmDelete(true)}
-						aria-label="Delete server"
-					>
-						<Trash2 className="h-3.5 w-3.5" />
-					</Button>
+				{confirmDelete ? (
+					<div className="flex items-center gap-1">
+						<Button size="sm" variant="destructive" onClick={onDelete}>
+							Delete
+						</Button>
+						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+							Cancel
+						</Button>
+					</div>
+				) : (
+					<div className="flex items-center gap-1">
+						{isMaskin && (
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground"
+								onClick={() => setToolsOpen((v) => !v)}
+								aria-label="Browse tools"
+							>
+								<ChevronRight
+									className={cn('h-3.5 w-3.5 transition-transform', toolsOpen && 'rotate-90')}
+								/>
+							</Button>
+						)}
+						<Button
+							size="icon"
+							variant="ghost"
+							className="text-muted-foreground"
+							onClick={onEdit}
+							aria-label="Edit server"
+						>
+							<Pencil className="h-3.5 w-3.5" />
+						</Button>
+						<Button
+							size="icon"
+							variant="ghost"
+							className="text-muted-foreground hover:text-error"
+							onClick={() => setConfirmDelete(true)}
+							aria-label="Delete server"
+						>
+							<Trash2 className="h-3.5 w-3.5" />
+						</Button>
+					</div>
+				)}
+			</div>
+
+			{/* Tool catalog for Maskin server */}
+			{isMaskin && toolsOpen && toolGroups && (
+				<div className="border-t border-border px-3 py-2 max-h-[300px] overflow-y-auto">
+					{[...toolGroups.entries()].map(([category, tools]) => (
+						<Collapsible key={category} defaultOpen={category === 'General'}>
+							<CollapsibleTrigger className="flex items-center gap-1.5 w-full text-left py-1 cursor-pointer hover:text-foreground transition-colors">
+								<ChevronRight className="h-3 w-3 text-muted-foreground [[data-state=open]>&]:rotate-90 transition-transform" />
+								<span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+									{category}
+								</span>
+								<span className="text-[10px] text-muted-foreground">({tools.length})</span>
+							</CollapsibleTrigger>
+							<CollapsibleContent>
+								<div className="ml-4 space-y-0.5 pb-1">
+									{tools.map((tool) => (
+										<div key={tool.name} className="flex items-start gap-2 py-0.5">
+											<code className="text-[10px] font-mono text-accent shrink-0 mt-0.5">
+												{tool.name}
+											</code>
+											<span className="text-[10px] text-muted-foreground">{tool.description}</span>
+											{tool.annotation && tool.annotation !== 'read' && (
+												<Badge
+													variant="outline"
+													className={cn(
+														'text-[9px] px-1 py-0 shrink-0',
+														tool.annotation === 'destructive' && 'text-error border-error/30',
+														tool.annotation === 'side-effect' && 'text-warning border-warning/30',
+													)}
+												>
+													{tool.annotation}
+												</Badge>
+											)}
+										</div>
+									))}
+								</div>
+							</CollapsibleContent>
+						</Collapsible>
+					))}
 				</div>
 			)}
 		</div>

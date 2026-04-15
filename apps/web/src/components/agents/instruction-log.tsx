@@ -1,11 +1,24 @@
+import { MarkdownContent } from '@/components/shared/markdown-content'
+import { Badge } from '@/components/ui/badge'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Spinner } from '@/components/ui/spinner'
 import { useCreateSession } from '@/hooks/use-sessions'
 import type { ActorResponse } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
+import { cn } from '@/lib/cn'
 import { API_BASE } from '@/lib/constants'
+import { type LogSegment, parseLogLines } from '@/lib/parse-session-logs'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { CheckCircle2, SendHorizontal, XCircle } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+	CheckCircle2,
+	ChevronRight,
+	Code,
+	Lightbulb,
+	SendHorizontal,
+	Terminal,
+	XCircle,
+} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type MessageStatus = 'sent' | 'streaming' | 'completed' | 'failed'
 
@@ -204,7 +217,7 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 			<div className="rounded-md border border-border bg-surface/50">
 				{/* Messages area */}
 				{messages.length > 0 && (
-					<div className="max-h-[400px] overflow-y-auto p-3 space-y-3">
+					<div className="max-h-[600px] overflow-y-auto p-3 space-y-3">
 						{messages.map((msg) => (
 							<MessageBubble key={msg.id} message={msg} />
 						))}
@@ -251,7 +264,7 @@ function MessageBubble({ message }: { message: Message }) {
 	// Agent message
 	return (
 		<div className="flex justify-start">
-			<div className="max-w-[80%] rounded-lg bg-secondary/50 px-3 py-2 text-sm">
+			<div className="max-w-[90%] w-full rounded-lg bg-secondary/50 px-3 py-2 text-sm">
 				{message.status === 'streaming' && message.logs.length === 0 && (
 					<span className="flex items-center gap-2 text-muted-foreground">
 						<Spinner />
@@ -259,11 +272,7 @@ function MessageBubble({ message }: { message: Message }) {
 					</span>
 				)}
 
-				{message.logs.length > 0 && (
-					<pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
-						{message.content}
-					</pre>
-				)}
+				{message.logs.length > 0 && <StructuredLogView logs={message.logs} />}
 
 				{message.status === 'streaming' && message.logs.length > 0 && (
 					<span className="flex items-center gap-1.5 mt-2 text-xs text-muted-foreground">
@@ -285,6 +294,150 @@ function MessageBubble({ message }: { message: Message }) {
 					</span>
 				)}
 			</div>
+		</div>
+	)
+}
+
+function StructuredLogView({ logs }: { logs: string[] }) {
+	const segments = useMemo(() => parseLogLines(logs), [logs])
+
+	if (segments.length === 0) {
+		return (
+			<pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">{logs.join('\n')}</pre>
+		)
+	}
+
+	return (
+		<div className="space-y-1.5">
+			{segments.map((segment, i) => (
+				<SegmentRenderer key={`${segment.type}-${i}`} segment={segment} />
+			))}
+		</div>
+	)
+}
+
+function SegmentRenderer({ segment }: { segment: LogSegment }) {
+	switch (segment.type) {
+		case 'tool_call':
+			return <ToolCallSegment segment={segment} />
+		case 'tool_result':
+			return <ToolResultSegment segment={segment} />
+		case 'thinking':
+			return <ThinkingSegment segment={segment} />
+		case 'error':
+			return <ErrorSegment segment={segment} />
+		case 'system':
+			return <SystemSegment segment={segment} />
+		case 'text':
+		default:
+			return <TextSegment segment={segment} />
+	}
+}
+
+function ToolCallSegment({ segment }: { segment: LogSegment }) {
+	const [open, setOpen] = useState(false)
+	const hasContent = !!segment.content
+
+	return (
+		<Collapsible open={open} onOpenChange={setOpen}>
+			<CollapsibleTrigger
+				className={cn(
+					'flex items-center gap-1.5 w-full text-left group',
+					hasContent && 'cursor-pointer',
+				)}
+			>
+				<Code size={12} className="text-accent shrink-0" />
+				<Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0">
+					{segment.toolName ?? 'tool'}
+				</Badge>
+				{hasContent && (
+					<ChevronRight
+						size={10}
+						className={cn('text-muted-foreground transition-transform', open && 'rotate-90')}
+					/>
+				)}
+			</CollapsibleTrigger>
+			{hasContent && (
+				<CollapsibleContent>
+					<pre className="mt-1 ml-5 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-muted-foreground border-l-2 border-accent/30 pl-2">
+						{segment.content}
+					</pre>
+				</CollapsibleContent>
+			)}
+		</Collapsible>
+	)
+}
+
+function ToolResultSegment({ segment }: { segment: LogSegment }) {
+	const [open, setOpen] = useState(false)
+	const isLong = segment.content.length > 200
+
+	if (!isLong) {
+		return (
+			<pre className="ml-5 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-muted-foreground bg-muted/50 rounded px-2 py-1">
+				{segment.content}
+			</pre>
+		)
+	}
+
+	return (
+		<Collapsible open={open} onOpenChange={setOpen}>
+			<CollapsibleTrigger className="ml-5 flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+				<Terminal size={10} />
+				<span>Result ({segment.content.split('\n').length} lines)</span>
+				<ChevronRight size={10} className={cn('transition-transform', open && 'rotate-90')} />
+			</CollapsibleTrigger>
+			<CollapsibleContent>
+				<pre className="mt-1 ml-5 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-muted-foreground bg-muted/50 rounded px-2 py-1 max-h-[300px] overflow-y-auto">
+					{segment.content}
+				</pre>
+			</CollapsibleContent>
+		</Collapsible>
+	)
+}
+
+function ThinkingSegment({ segment }: { segment: LogSegment }) {
+	const [open, setOpen] = useState(false)
+
+	return (
+		<Collapsible open={open} onOpenChange={setOpen}>
+			<CollapsibleTrigger className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+				<Lightbulb size={10} className="text-warning" />
+				<span className="italic">Thinking...</span>
+				<ChevronRight size={10} className={cn('transition-transform', open && 'rotate-90')} />
+			</CollapsibleTrigger>
+			<CollapsibleContent>
+				<div className="mt-1 ml-4 text-[11px] text-muted-foreground italic border-l-2 border-warning/30 pl-2">
+					<MarkdownContent content={segment.content} size="xs" />
+				</div>
+			</CollapsibleContent>
+		</Collapsible>
+	)
+}
+
+function ErrorSegment({ segment }: { segment: LogSegment }) {
+	return (
+		<div className="border-l-2 border-error pl-2">
+			<pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-error">
+				{segment.content}
+			</pre>
+		</div>
+	)
+}
+
+function SystemSegment({ segment }: { segment: LogSegment }) {
+	return <p className="text-[11px] text-muted-foreground italic">{segment.content}</p>
+}
+
+function TextSegment({ segment }: { segment: LogSegment }) {
+	// For short text, render inline. For longer content, use markdown.
+	if (segment.content.length < 100 && !segment.content.includes('\n')) {
+		return <p className="text-xs leading-relaxed">{segment.content}</p>
+	}
+
+	return (
+		<div className="text-xs">
+			<MarkdownContent content={segment.content} size="xs" />
 		</div>
 	)
 }

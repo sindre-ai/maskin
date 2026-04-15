@@ -111,6 +111,7 @@ function AgentsPage() {
 								agent={agent as ActorResponse}
 								status={agentStatuses.get(agent.id) ?? 'idle'}
 								latestSession={getLatestSession(agent.id, sessionsByAgent)}
+								sessionCount={sessionsByAgent.get(agent.id)?.length}
 							/>
 						))}
 					</div>

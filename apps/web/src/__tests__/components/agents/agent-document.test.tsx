@@ -31,6 +31,10 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useSessionLatestLog: () => ({ data: null }),
 	useSessionErrorLog: () => ({ data: null }),
 	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
+	useStopSession: () => ({ mutate: vi.fn(), isPending: false }),
+	usePauseSession: () => ({ mutate: vi.fn(), isPending: false }),
+	useResumeSession: () => ({ mutate: vi.fn(), isPending: false }),
+	useSessionLogs: () => ({ data: null, isLoading: false }),
 }))
 
 vi.mock('@/hooks/use-duration', () => ({

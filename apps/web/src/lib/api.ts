@@ -234,6 +234,12 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<SessionLogResponse[]>(`/sessions/${id}/logs${qs}`, { workspaceId })
 		},
+		stop: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/pause`, { method: 'POST', workspaceId }),
+		resume: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/resume`, { method: 'POST', workspaceId }),
 	},
 
 	events: {

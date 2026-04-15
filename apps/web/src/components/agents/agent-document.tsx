@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -18,12 +19,19 @@ import {
 	useActiveSessionsForActor,
 	useActorSessions,
 	useCreateSession,
-	useSessionErrorLog,
-	useSessionLatestLog,
+	usePauseSession,
+	useResumeSession,
+	useSessionLogs,
+	useStopSession,
 } from '@/hooks/use-sessions'
-import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import type { ActorResponse, EventResponse, SessionLogResponse, SessionResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { API_BASE } from '@/lib/constants'
 import { formatDurationBetween } from '@/lib/format-duration'
+import { type LogSegment, countToolCalls, parseLogLines } from '@/lib/parse-session-logs'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getApiKey } from '@/lib/auth'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useNavigate } from '@tanstack/react-router'
 import {
 	Check,
@@ -31,11 +39,14 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Clock,
+	Code,
 	MinusCircle,
+	Pause,
+	Square,
 	Trash2,
 	XCircle,
 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
@@ -199,7 +210,7 @@ export function AgentDocumentView({
 				<Section title="Currently Working On">
 					<div className="space-y-2">
 						{activeSessions.map((session) => (
-							<ActiveSessionCard key={session.id} session={session} workspaceId={workspaceId} />
+							<LiveSessionPanel key={session.id} session={session} workspaceId={workspaceId} />
 						))}
 					</div>
 				</Section>
@@ -345,28 +356,145 @@ function Section({
 	)
 }
 
-function ActiveSessionCard({
+function LiveSessionPanel({
 	session,
 	workspaceId,
 }: {
 	session: SessionResponse
 	workspaceId: string
 }) {
-	const { data: latestLog } = useSessionLatestLog(session.id, workspaceId)
 	const duration = useDuration(session.startedAt)
+	const stopSession = useStopSession(workspaceId)
+	const pauseSession = usePauseSession(workspaceId)
+	const [expanded, setExpanded] = useState(false)
+	const [liveLogs, setLiveLogs] = useState<string[]>([])
+	const logsEndRef = useRef<HTMLDivElement>(null)
+
+	// SSE streaming for live logs when expanded
+	useEffect(() => {
+		if (!expanded) return
+
+		const controller = new AbortController()
+		fetchEventSource(`${API_BASE}/sessions/${session.id}/logs/stream`, {
+			signal: controller.signal,
+			headers: {
+				Authorization: `Bearer ${getApiKey()}`,
+				'X-Workspace-Id': workspaceId,
+			},
+			onmessage(msg) {
+				if (!msg.data) return
+				if (msg.event === 'stdout' || msg.event === 'stderr') {
+					setLiveLogs((prev) => [...prev, msg.data])
+				}
+			},
+			onerror() {
+				controller.abort()
+			},
+			openWhenHidden: true,
+		})
+
+		return () => controller.abort()
+	}, [expanded, session.id, workspaceId])
+
+	// Auto-scroll when logs update
+	useEffect(() => {
+		if (expanded && liveLogs.length > 0) {
+			logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+		}
+	}, [expanded, liveLogs.length])
+
+	const segments = useMemo(() => parseLogLines(liveLogs), [liveLogs])
+	const toolCallCount = useMemo(() => countToolCalls(segments), [segments])
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2">
-			<Spinner />
-			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
-			{latestLog && (
-				<span className="text-xs text-muted-foreground truncate max-w-[200px]">
-					{latestLog.content}
-				</span>
+		<div className="rounded-md border border-accent/50 bg-accent/5 overflow-hidden">
+			{/* Status bar — always visible */}
+			<div className="flex items-center gap-2.5 px-3 py-2">
+				<span className="h-2 w-2 rounded-full bg-accent animate-pulse shrink-0" />
+				<Spinner className="shrink-0" />
+				<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
+				{toolCallCount > 0 && (
+					<span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+						<Code size={10} />
+						{toolCallCount}
+					</span>
+				)}
+				{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+				<Button
+					variant="ghost"
+					size="icon"
+					className="h-6 w-6 text-muted-foreground hover:text-warning shrink-0"
+					onClick={() => pauseSession.mutate(session.id)}
+					disabled={pauseSession.isPending}
+				>
+					<Pause size={12} />
+				</Button>
+				<Button
+					variant="ghost"
+					size="icon"
+					className="h-6 w-6 text-muted-foreground hover:text-error shrink-0"
+					onClick={() => stopSession.mutate(session.id)}
+					disabled={stopSession.isPending}
+				>
+					<Square size={12} />
+				</Button>
+				<button
+					type="button"
+					onClick={() => setExpanded((v) => !v)}
+					className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+				>
+					{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+				</button>
+			</div>
+
+			{/* Expanded live logs */}
+			{expanded && (
+				<div className="border-t border-accent/20 px-3 py-2 max-h-[400px] overflow-y-auto">
+					{liveLogs.length === 0 ? (
+						<span className="text-xs text-muted-foreground">Waiting for output...</span>
+					) : (
+						<div className="space-y-1.5">
+							{segments.map((seg, i) => (
+								<LiveSegment key={`${seg.type}-${i}`} segment={seg} />
+							))}
+						</div>
+					)}
+					<div ref={logsEndRef} />
+				</div>
 			)}
-			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
 		</div>
 	)
+}
+
+function LiveSegment({ segment }: { segment: LogSegment }) {
+	if (segment.type === 'tool_call') {
+		return (
+			<div className="flex items-center gap-1.5">
+				<Code size={10} className="text-accent shrink-0" />
+				<span className="text-[11px] font-mono text-accent">{segment.toolName ?? 'tool'}</span>
+				{segment.content && (
+					<span className="text-[10px] text-muted-foreground truncate">
+						{segment.content.split('\n')[0]}
+					</span>
+				)}
+			</div>
+		)
+	}
+	if (segment.type === 'tool_result') {
+		return (
+			<pre className="ml-4 text-[10px] font-mono text-muted-foreground truncate">
+				{segment.content.split('\n')[0]}
+			</pre>
+		)
+	}
+	if (segment.type === 'error') {
+		return <pre className="text-[10px] font-mono text-error">{segment.content}</pre>
+	}
+	if (segment.type === 'system') {
+		return <p className="text-[10px] text-muted-foreground italic">{segment.content}</p>
+	}
+	// text / thinking
+	return <p className="text-[11px] text-muted-foreground truncate">{segment.content}</p>
 }
 
 function SessionStatusIcon({ status }: { status: string }) {
@@ -398,66 +526,274 @@ function SessionRow({
 }) {
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
-	const [showError, setShowError] = useState(false)
+	const isPaused = session.status === 'paused' || session.status === 'snapshotting'
+	const [expanded, setExpanded] = useState(false)
 	const createSession = useCreateSession(workspaceId)
+	const resumeSession = useResumeSession(workspaceId)
 
 	const result = session.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
 	const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
-	const hasResultError = !!errorMessage || (exitCode !== undefined && exitCode !== 0)
-
-	const { data: stderrLog } = useSessionErrorLog(
-		session.id,
-		workspaceId,
-		showError && !hasResultError,
-	)
-
-	const errorDetail =
-		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
-	const displayError = errorDetail ?? stderrLog
 
 	return (
 		<div>
-			<div className="flex items-center gap-2.5 rounded-md px-3 py-1.5">
+			<button
+				type="button"
+				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 w-full text-left hover:bg-hover/50 transition-colors cursor-pointer"
+				onClick={() => setExpanded((v) => !v)}
+			>
 				<SessionStatusIcon status={session.status} />
-				<span className={`text-sm truncate flex-1 ${isFailed ? 'text-error' : ''}`}>
+				<span className={cn('text-sm truncate flex-1', isFailed && 'text-error')}>
 					{session.actionPrompt || 'Untitled session'}
 				</span>
 				{isFailed && (
-					<>
-						<button
-							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
-							onClick={() => setShowError((v) => !v)}
-						>
-							{showError ? 'Hide' : 'Error'}
-						</button>
-						<button
-							type="button"
-							className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer"
-							onClick={() =>
-								createSession.mutate({
-									actor_id: agentId,
-									action_prompt: session.actionPrompt,
-								})
-							}
-							disabled={createSession.isPending}
-						>
-							{createSession.isPending ? 'Retrying…' : 'Retry'}
-						</button>
-					</>
+					<span
+						className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0"
+						onClick={(e) => {
+							e.stopPropagation()
+							createSession.mutate({
+								actor_id: agentId,
+								action_prompt: session.actionPrompt,
+							})
+						}}
+						onKeyDown={() => {}}
+						role="button"
+						tabIndex={0}
+					>
+						{createSession.isPending ? 'Retrying…' : 'Retry'}
+					</span>
+				)}
+				{isPaused && (
+					<span
+						className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0"
+						onClick={(e) => {
+							e.stopPropagation()
+							resumeSession.mutate(session.id)
+						}}
+						onKeyDown={() => {}}
+						role="button"
+						tabIndex={0}
+					>
+						{resumeSession.isPending ? 'Resuming…' : 'Resume'}
+					</span>
 				)}
 				{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
 				<RelativeTime
 					date={session.completedAt ?? session.createdAt}
 					className="text-xs text-muted-foreground shrink-0"
 				/>
+				<ChevronRight
+					size={12}
+					className={cn(
+						'text-muted-foreground transition-transform shrink-0',
+						expanded && 'rotate-90',
+					)}
+				/>
+			</button>
+
+			{expanded && (
+				<SessionDetail
+					session={session}
+					workspaceId={workspaceId}
+					errorMessage={errorMessage}
+					exitCode={exitCode}
+				/>
+			)}
+		</div>
+	)
+}
+
+function SessionDetail({
+	session,
+	workspaceId,
+	errorMessage,
+	exitCode,
+}: {
+	session: SessionResponse
+	workspaceId: string
+	errorMessage?: string
+	exitCode?: number
+}) {
+	const { data: logs, isLoading } = useSessionLogs(session.id, workspaceId)
+
+	const segments = useMemo(() => {
+		if (!logs || logs.length === 0) return []
+		const stdoutLogs = logs
+			.filter((l: SessionLogResponse) => l.stream === 'stdout')
+			.map((l: SessionLogResponse) => l.content)
+		return parseLogLines(stdoutLogs)
+	}, [logs])
+
+	const toolCallCount = useMemo(() => countToolCalls(segments), [segments])
+	const errorCount = useMemo(() => {
+		if (!logs) return 0
+		return logs.filter((l: SessionLogResponse) => l.stream === 'stderr').length
+	}, [logs])
+
+	return (
+		<div className="mx-3 mb-2 mt-1 rounded-md border border-border bg-bg-surface p-3">
+			{/* Summary badges */}
+			<div className="flex items-center gap-2 mb-3">
+				<Badge variant="outline" className="text-[10px]">
+					{session.status}
+				</Badge>
+				{toolCallCount > 0 && (
+					<Badge variant="outline" className="text-[10px]">
+						<Code size={10} className="mr-0.5" />
+						{toolCallCount} tool call{toolCallCount > 1 ? 's' : ''}
+					</Badge>
+				)}
+				{errorCount > 0 && (
+					<Badge variant="outline" className="text-[10px] text-error">
+						{errorCount} error{errorCount > 1 ? 's' : ''}
+					</Badge>
+				)}
+				{session.startedAt && (
+					<span className="text-[10px] text-muted-foreground">
+						{formatDurationBetween(session.startedAt, session.completedAt)}
+					</span>
+				)}
 			</div>
-			{showError && displayError && (
-				<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
-					{displayError}
+
+			{/* Error detail */}
+			{(errorMessage || (exitCode !== undefined && exitCode !== 0)) && (
+				<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mb-3 whitespace-pre-wrap">
+					{errorMessage ?? `Process exited with code ${exitCode}`}
 				</pre>
 			)}
+
+			{/* Timeline */}
+			{isLoading ? (
+				<div className="flex items-center gap-2 text-xs text-muted-foreground">
+					<Spinner /> Loading logs...
+				</div>
+			) : segments.length === 0 ? (
+				<p className="text-xs text-muted-foreground">No logs recorded for this session.</p>
+			) : (
+				<SessionTimeline segments={segments} />
+			)}
+		</div>
+	)
+}
+
+function SessionTimeline({ segments }: { segments: LogSegment[] }) {
+	return (
+		<div className="relative border-l-2 border-border pl-3 space-y-2">
+			{segments.map((seg, i) => (
+				<TimelineNode key={`${seg.type}-${i}`} segment={seg} />
+			))}
+		</div>
+	)
+}
+
+function TimelineNode({ segment }: { segment: LogSegment }) {
+	const [open, setOpen] = useState(false)
+	const dotColor =
+		segment.type === 'tool_call' ? 'bg-accent' : segment.type === 'error' ? 'bg-error' : 'bg-border'
+
+	if (segment.type === 'tool_call') {
+		return (
+			<div className="relative">
+				<span className={cn('absolute -left-[17px] top-1 h-2 w-2 rounded-full', dotColor)} />
+				<Collapsible open={open} onOpenChange={setOpen}>
+					<CollapsibleTrigger className="flex items-center gap-1.5 cursor-pointer hover:text-foreground transition-colors">
+						<Code size={10} className="text-accent" />
+						<span className="text-[11px] font-mono font-medium">{segment.toolName}</span>
+						{segment.content && (
+							<ChevronRight
+								size={10}
+								className={cn('text-muted-foreground transition-transform', open && 'rotate-90')}
+							/>
+						)}
+					</CollapsibleTrigger>
+					{segment.content && (
+						<CollapsibleContent>
+							<pre className="mt-1 text-[10px] font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1 whitespace-pre-wrap max-h-[200px] overflow-y-auto">
+								{segment.content}
+							</pre>
+						</CollapsibleContent>
+					)}
+				</Collapsible>
+			</div>
+		)
+	}
+
+	if (segment.type === 'tool_result') {
+		const isLong = segment.content.length > 150
+		return (
+			<div className="relative">
+				<span className="absolute -left-[17px] top-1 h-2 w-2 rounded-full bg-border" />
+				{isLong ? (
+					<Collapsible open={open} onOpenChange={setOpen}>
+						<CollapsibleTrigger className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+							Result ({segment.content.split('\n').length} lines)
+							<ChevronRight
+								size={10}
+								className={cn('inline ml-0.5 transition-transform', open && 'rotate-90')}
+							/>
+						</CollapsibleTrigger>
+						<CollapsibleContent>
+							<pre className="mt-1 text-[10px] font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1 whitespace-pre-wrap max-h-[200px] overflow-y-auto">
+								{segment.content}
+							</pre>
+						</CollapsibleContent>
+					</Collapsible>
+				) : (
+					<pre className="text-[10px] font-mono text-muted-foreground whitespace-pre-wrap">
+						{segment.content}
+					</pre>
+				)}
+			</div>
+		)
+	}
+
+	if (segment.type === 'error') {
+		return (
+			<div className="relative">
+				<span className="absolute -left-[17px] top-1 h-2 w-2 rounded-full bg-error" />
+				<pre className="text-[10px] font-mono text-error whitespace-pre-wrap">
+					{segment.content}
+				</pre>
+			</div>
+		)
+	}
+
+	if (segment.type === 'thinking') {
+		return (
+			<div className="relative">
+				<span className="absolute -left-[17px] top-1 h-2 w-2 rounded-full bg-warning/50" />
+				<p className="text-[10px] text-muted-foreground italic truncate">{segment.content}</p>
+			</div>
+		)
+	}
+
+	// text / system
+	if (segment.content.length > 200) {
+		return (
+			<div className="relative">
+				<span className="absolute -left-[17px] top-1 h-2 w-2 rounded-full bg-border" />
+				<Collapsible open={open} onOpenChange={setOpen}>
+					<CollapsibleTrigger className="text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+						{segment.content.slice(0, 80)}...
+						<ChevronRight
+							size={10}
+							className={cn('inline ml-0.5 transition-transform', open && 'rotate-90')}
+						/>
+					</CollapsibleTrigger>
+					<CollapsibleContent>
+						<p className="mt-1 text-[11px] text-foreground whitespace-pre-wrap">
+							{segment.content}
+						</p>
+					</CollapsibleContent>
+				</Collapsible>
+			</div>
+		)
+	}
+
+	return (
+		<div className="relative">
+			<span className="absolute -left-[17px] top-1 h-2 w-2 rounded-full bg-border" />
+			<p className="text-[11px] text-foreground">{segment.content}</p>
 		</div>
 	)
 }

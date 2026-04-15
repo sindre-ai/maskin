@@ -1,26 +1,50 @@
+import { Badge } from '@/components/ui/badge'
 import { useDuration } from '@/hooks/use-duration'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
+import { Globe, Terminal } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Spinner } from '../ui/spinner'
 
 export type AgentStatus = 'working' | 'idle' | 'failed'
 
+function getMcpServerCount(tools: Record<string, unknown> | null): number {
+	if (!tools) return 0
+	const servers = tools.mcpServers as Record<string, unknown> | undefined
+	return servers ? Object.keys(servers).length : 0
+}
+
+function getModelLabel(llmProvider: string | null, llmConfig: unknown): string | null {
+	const config = llmConfig as Record<string, unknown> | null
+	const model = config?.model as string | undefined
+	if (model) {
+		// Shorten common model names
+		if (model.includes('claude')) return model.split('-').slice(0, 3).join('-')
+		if (model.includes('gpt')) return model.split('-').slice(0, 2).join('-')
+		return model.length > 20 ? `${model.slice(0, 20)}…` : model
+	}
+	return llmProvider
+}
+
 export function AgentCard({
 	agent,
 	status,
 	latestSession,
+	sessionCount,
 }: {
 	agent: ActorResponse
 	status: AgentStatus
 	latestSession?: SessionResponse
+	sessionCount?: number
 }) {
 	const { workspaceId } = useWorkspace()
 
 	const roleDescription = agent.systemPrompt?.split('\n')[0]?.trim()
+	const mcpCount = getMcpServerCount(agent.tools)
+	const modelLabel = getModelLabel(agent.llmProvider, agent.llmConfig)
 
 	return (
 		<Link
@@ -43,7 +67,33 @@ export function AgentCard({
 			</div>
 
 			{roleDescription && (
-				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{roleDescription}</p>
+				<p className="text-xs text-muted-foreground mb-2 ml-9 line-clamp-1">{roleDescription}</p>
+			)}
+
+			{/* Capability badges */}
+			{(mcpCount > 0 || modelLabel || (sessionCount !== undefined && sessionCount > 0)) && (
+				<div className="flex flex-wrap gap-1 ml-9 mb-2">
+					{mcpCount > 0 && (
+						<Badge variant="outline" className="text-[10px] px-1.5 py-0 gap-0.5">
+							{mcpCount > 1 ? (
+								<Globe className="h-2.5 w-2.5" />
+							) : (
+								<Terminal className="h-2.5 w-2.5" />
+							)}
+							{mcpCount} server{mcpCount > 1 ? 's' : ''}
+						</Badge>
+					)}
+					{modelLabel && (
+						<Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
+							{modelLabel}
+						</Badge>
+					)}
+					{sessionCount !== undefined && sessionCount > 0 && (
+						<Badge variant="outline" className="text-[10px] px-1.5 py-0">
+							{sessionCount} session{sessionCount > 1 ? 's' : ''}
+						</Badge>
+					)}
+				</div>
 			)}
 
 			<div className="ml-9">
