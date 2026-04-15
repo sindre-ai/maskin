@@ -127,6 +127,16 @@ describe('formatObject', () => {
 		expect(result).toContain('ID:      abc-123')
 	})
 
+	it('shows owner when present', () => {
+		const result = formatObject({
+			title: 'Test',
+			type: 'task',
+			status: 'todo',
+			ownerId: 'actor-123',
+		})
+		expect(result).toContain('Owner:   actor-123')
+	})
+
 	it('includes content preview', () => {
 		const result = formatObject({
 			title: 'Test',
@@ -241,6 +251,39 @@ describe('formatActor', () => {
 		expect(result).toContain('Role:  owner')
 		expect(result).toContain('Email: a@b.com')
 	})
+
+	it('shows agent-specific fields', () => {
+		const result = formatActor({
+			name: 'Bot',
+			type: 'agent',
+			system_prompt: 'You are a helpful assistant',
+			tools: { search: {}, create: {} },
+			llm_provider: 'claude-code',
+		})
+		expect(result).toContain('Prompt:')
+		expect(result).toContain('You are a helpful assistant')
+		expect(result).toContain('Tools:  search, create')
+		expect(result).toContain('LLM:   claude-code')
+	})
+
+	it('does not show agent fields for humans', () => {
+		const result = formatActor({
+			name: 'Alice',
+			type: 'human',
+			system_prompt: 'ignored',
+		})
+		expect(result).not.toContain('Prompt:')
+	})
+
+	it('shows API key warning when present', () => {
+		const result = formatActor({
+			name: 'Bot',
+			type: 'agent',
+			api_key: 'ank_test123',
+		})
+		expect(result).toContain('ank_test123')
+		expect(result).toContain('shown only once')
+	})
 })
 
 describe('formatActorList', () => {
@@ -274,6 +317,34 @@ describe('formatSession', () => {
 		expect(result).toContain('Fix the bug')
 	})
 
+	it('shows status icons for terminal states', () => {
+		expect(formatSession({ status: 'completed' })).toContain('completed ✓')
+		expect(formatSession({ status: 'failed' })).toContain('failed ✗')
+		expect(formatSession({ status: 'timeout' })).toContain('timeout ⏱')
+	})
+
+	it('shows container config when present', () => {
+		const result = formatSession({
+			status: 'running',
+			config: { timeout_seconds: 300, memory_mb: 1024, runtime: 'claude-code' },
+		})
+		expect(result).toContain('Config:')
+		expect(result).toContain('timeout: 300s')
+		expect(result).toContain('memory: 1024MB')
+		expect(result).toContain('runtime: claude-code')
+	})
+
+	it('shows elapsed time for terminal sessions', () => {
+		const start = new Date('2025-01-01T00:00:00Z')
+		const end = new Date('2025-01-01T00:04:32Z')
+		const result = formatSession({
+			status: 'completed',
+			created_at: start.toISOString(),
+			updated_at: end.toISOString(),
+		})
+		expect(result).toContain('Elapsed: 4m 32s')
+	})
+
 	it('includes logs when provided', () => {
 		const result = formatSession({ status: 'completed' }, [
 			{ message: 'Starting...', stream: 'stdout' },
@@ -303,7 +374,7 @@ describe('formatSessionList', () => {
 })
 
 describe('formatTrigger', () => {
-	it('formats cron trigger', () => {
+	it('formats cron trigger with human-readable schedule', () => {
 		const result = formatTrigger({
 			name: 'Daily check',
 			type: 'cron',
@@ -312,7 +383,23 @@ describe('formatTrigger', () => {
 		})
 		expect(result).toContain('Daily check')
 		expect(result).toContain('✓ enabled')
+		expect(result).toContain('daily at 09:00')
 		expect(result).toContain('0 9 * * *')
+	})
+
+	it('shows event trigger filters', () => {
+		const result = formatTrigger({
+			name: 'On bet create',
+			type: 'event',
+			config: {
+				entity_type: 'object',
+				action: 'created',
+				filter: { type: 'bet', status: 'signal' },
+			},
+			enabled: true,
+		})
+		expect(result).toContain('Fires on: object created')
+		expect(result).toContain('Filter: type = bet, status = signal')
 	})
 
 	it('formats disabled trigger', () => {
@@ -367,6 +454,23 @@ describe('formatNotification', () => {
 		expect(formatNotification({ type: 'good_news', title: 'G' })).toContain('🎉')
 		expect(formatNotification({ type: 'alert', title: 'A' })).toContain('🚨')
 	})
+
+	it('shows metadata actions and question', () => {
+		const result = formatNotification({
+			type: 'needs_input',
+			title: 'Approval needed',
+			metadata: {
+				actions: [{ label: 'Approve' }, { label: 'Reject' }],
+				question: 'Should we proceed?',
+				urgency_label: 'high',
+				input_type: 'confirmation',
+			},
+		})
+		expect(result).toContain('Actions: Approve, Reject')
+		expect(result).toContain('Question: "Should we proceed?"')
+		expect(result).toContain('Urgency: high')
+		expect(result).toContain('Input: confirmation')
+	})
 })
 
 describe('formatNotificationList', () => {
@@ -401,6 +505,23 @@ describe('formatWorkspace', () => {
 		expect(result).toContain('🏢 My WS')
 		expect(result).toContain('ws-1')
 		expect(result).toContain('bet, task')
+	})
+
+	it('shows custom fields and relationship types', () => {
+		const result = formatWorkspace({
+			name: 'WS',
+			id: 'ws-1',
+			settings: {
+				statuses: { bet: ['active'], task: ['todo'] },
+				field_definitions: {
+					bet: [{ name: 'priority' }],
+					task: [{ name: 'effort' }, { name: 'due' }],
+				},
+				relationship_types: ['informs', 'blocks'],
+			},
+		})
+		expect(result).toContain('Custom fields: 3 across 2 types')
+		expect(result).toContain('Relationship types: informs, blocks')
 	})
 })
 
@@ -457,7 +578,7 @@ describe('formatProviderList', () => {
 })
 
 describe('formatExtension', () => {
-	it('formats extension with types and statuses', () => {
+	it('formats extension with types and field names', () => {
 		const result = formatExtension({
 			id: 'work',
 			name: 'Work',
@@ -475,7 +596,7 @@ describe('formatExtension', () => {
 		expect(result).toContain('✓ enabled')
 		expect(result).toContain('Task (task)')
 		expect(result).toContain('todo → done')
-		expect(result).toContain('[1 field]')
+		expect(result).toContain('[fields: priority]')
 	})
 
 	it('shows extension ID', () => {
@@ -564,6 +685,16 @@ describe('formatConfirmation', () => {
 
 	it('formats without detail', () => {
 		expect(formatConfirmation('Done')).toBe('✅ Done')
+	})
+
+	it('formats with hint', () => {
+		expect(formatConfirmation('Created', '3 objects', 'Use get_objects to view.')).toBe(
+			'✅ Created: 3 objects\nUse get_objects to view.',
+		)
+	})
+
+	it('ignores undefined hint', () => {
+		expect(formatConfirmation('Created', '1 object', undefined)).toBe('✅ Created: 1 object')
 	})
 })
 

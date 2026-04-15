@@ -197,6 +197,8 @@ describe('tool handlers', () => {
 			)
 
 			expect(result.structuredContent).toEqual(mockResult)
+			expect(result.content[0].text).toContain('IDs: 1')
+			expect(result.content[0].text).toContain('get_objects')
 		})
 
 		it('uses workspace_id from args over default', async () => {
@@ -265,12 +267,15 @@ describe('tool handlers', () => {
 			mockFetchSuccess({})
 
 			const handler = getHandler('delete_object')
-			await handler({ id: 'obj-123' })
+			const result = (await handler({ id: 'obj-123' })) as {
+				content: Array<{ text: string }>
+			}
 
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/objects/obj-123',
 				expect.objectContaining({ method: 'DELETE' }),
 			)
+			expect(result.content[0].text).toContain('Associated relationships')
 		})
 	})
 
@@ -642,6 +647,15 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('list_objects')
 			await expect(handler({})).rejects.toThrow('API error 400')
+		})
+
+		it('404 errors include guidance hint', async () => {
+			mockFetchError(404, JSON.stringify({ error: { message: 'Not found' } }))
+
+			const handler = getHandler('delete_object')
+			await expect(handler({ id: '550e8400-e29b-41d4-a716-446655440000' })).rejects.toThrow(
+				'use the corresponding list tool',
+			)
 		})
 
 		it('throws with suggestion when available', async () => {

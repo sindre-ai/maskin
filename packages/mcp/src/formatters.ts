@@ -137,6 +137,8 @@ export function formatObject(obj: ObjectData): string {
 	lines.push(`  Type:    ${obj.type ?? 'unknown'}`)
 	lines.push(`  Status:  ${obj.status ?? 'unknown'}`)
 	if (obj.id) lines.push(`  ID:      ${obj.id}`)
+	const owner = obj.ownerId ?? obj.owner_id
+	if (owner) lines.push(`  Owner:   ${owner}`)
 	if (created) lines.push(`  Created: ${timeAgo(created)}`)
 	if (updated) lines.push(`  Updated: ${timeAgo(updated)}`)
 
@@ -276,6 +278,10 @@ interface ActorData {
 	type?: string
 	email?: string
 	role?: string
+	api_key?: string
+	system_prompt?: string
+	tools?: Record<string, unknown>
+	llm_provider?: string
 	createdAt?: string
 	created_at?: string
 }
@@ -290,6 +296,20 @@ export function formatActor(actor: ActorData): string {
 	if (actor.id) lines.push(`  ID:    ${actor.id}`)
 	const created = actor.createdAt ?? actor.created_at
 	if (created) lines.push(`  Joined: ${timeAgo(created)}`)
+
+	if (actor.type === 'agent') {
+		if (actor.system_prompt) lines.push(`  Prompt: ${truncate(actor.system_prompt, 100)}`)
+		if (actor.tools && Object.keys(actor.tools).length > 0) {
+			lines.push(`  Tools:  ${Object.keys(actor.tools).join(', ')}`)
+		}
+		if (actor.llm_provider) lines.push(`  LLM:   ${actor.llm_provider}`)
+	}
+
+	if (actor.api_key) {
+		lines.push('')
+		lines.push(`  ⚠ API key (save now — shown only once): ${actor.api_key}`)
+	}
+
 	return lines.join('\n')
 }
 
@@ -334,15 +354,39 @@ export function formatSession(session: SessionData, logs?: SessionLogEntry[]): s
 	const status = session.status ?? 'unknown'
 	const prompt = session.actionPrompt ?? session.action_prompt
 	const created = session.createdAt ?? session.created_at
+	const updated = session.updatedAt ?? session.updated_at
 
-	lines.push(`🤖 Session — ${status}`)
+	const statusIcon =
+		status === 'completed' ? ' ✓' : status === 'failed' ? ' ✗' : status === 'timeout' ? ' ⏱' : ''
+	lines.push(`🤖 Session — ${status}${statusIcon}`)
 	lines.push('')
-	if (session.id) lines.push(`  ID:     ${session.id}`)
-	lines.push(`  Status: ${status}`)
+	if (session.id) lines.push(`  ID:      ${session.id}`)
+	lines.push(`  Status:  ${status}`)
 	const actor = session.actorName ?? session.actor_name ?? session.actorId ?? session.actor_id
-	if (actor) lines.push(`  Actor:  ${actor}`)
-	if (prompt) lines.push(`  Prompt: ${truncate(prompt, 100)}`)
+	if (actor) lines.push(`  Actor:   ${actor}`)
+	if (prompt) lines.push(`  Prompt:  ${truncate(prompt, 100)}`)
 	if (created) lines.push(`  Started: ${timeAgo(created)}`)
+
+	// Elapsed time for terminal sessions
+	if (created && updated) {
+		const startMs = new Date(created).getTime()
+		const endMs = new Date(updated).getTime()
+		if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs > startMs) {
+			const sec = Math.floor((endMs - startMs) / 1000)
+			const elapsed = sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`
+			lines.push(`  Elapsed: ${elapsed}`)
+		}
+	}
+
+	// Container config
+	if (session.config) {
+		const cfg = session.config
+		const parts: string[] = []
+		if (cfg.runtime) parts.push(`runtime: ${cfg.runtime}`)
+		if (cfg.timeout_seconds) parts.push(`timeout: ${cfg.timeout_seconds}s`)
+		if (cfg.memory_mb) parts.push(`memory: ${cfg.memory_mb}MB`)
+		if (parts.length > 0) lines.push(`  Config:  ${parts.join(', ')}`)
+	}
 
 	if (logs && logs.length > 0) {
 		lines.push('')
@@ -409,11 +453,20 @@ export function formatTrigger(trigger: TriggerData): string {
 
 	if (trigger.config) {
 		if (trigger.type === 'cron' && trigger.config.expression) {
-			lines.push(`  Schedule: ${trigger.config.expression}`)
+			const raw = trigger.config.expression as string
+			const desc = describeCron(raw)
+			lines.push(`  Schedule: ${desc !== raw ? `${desc} (${raw})` : raw}`)
 		} else if (trigger.type === 'event') {
 			const entityType = trigger.config.entity_type ?? trigger.config.entityType ?? ''
 			const action = trigger.config.action ?? ''
 			lines.push(`  Fires on: ${entityType} ${action}`)
+			const filter = trigger.config.filter
+			if (filter && typeof filter === 'object' && Object.keys(filter as object).length > 0) {
+				const parts = Object.entries(filter as Record<string, unknown>).map(
+					([k, v]) => `${k} = ${v}`,
+				)
+				lines.push(`  Filter: ${parts.join(', ')}`)
+			}
 		}
 	}
 
@@ -493,6 +546,25 @@ export function formatNotification(notif: NotificationData): string {
 		lines.push('')
 		lines.push(`  ${truncate(notif.content, 300)}`)
 	}
+
+	if (notif.metadata && Object.keys(notif.metadata).length > 0) {
+		const meta = notif.metadata
+		const details: string[] = []
+		if (Array.isArray(meta.actions)) {
+			const labels = (meta.actions as Array<{ label?: string }>).map((a) => a.label).filter(Boolean)
+			details.push(
+				labels.length > 0 ? `Actions: ${labels.join(', ')}` : `Actions: ${meta.actions.length}`,
+			)
+		}
+		if (meta.question) details.push(`Question: "${truncate(meta.question as string, 80)}"`)
+		if (meta.urgency_label) details.push(`Urgency: ${meta.urgency_label}`)
+		if (meta.input_type) details.push(`Input: ${meta.input_type}`)
+		if (details.length > 0) {
+			lines.push('')
+			for (const d of details) lines.push(`  ${d}`)
+		}
+	}
+
 	return lines.join('\n')
 }
 
@@ -541,6 +613,20 @@ export function formatWorkspace(workspace: WorkspaceData): string {
 			if (types.length > 0) {
 				lines.push(`  Object types: ${types.join(', ')}`)
 			}
+		}
+		const fieldDefs = workspace.settings.field_definitions as Record<string, unknown[]> | undefined
+		if (fieldDefs) {
+			const fieldCount = Object.values(fieldDefs).reduce((sum, f) => sum + (f?.length ?? 0), 0)
+			if (fieldCount > 0) {
+				const typeCount = Object.keys(fieldDefs).length
+				lines.push(
+					`  Custom fields: ${fieldCount} across ${typeCount} type${typeCount === 1 ? '' : 's'}`,
+				)
+			}
+		}
+		const relTypes = workspace.settings.relationship_types as string[] | undefined
+		if (relTypes && relTypes.length > 0) {
+			lines.push(`  Relationship types: ${relTypes.join(', ')}`)
 		}
 	}
 
@@ -657,7 +743,14 @@ export function formatExtension(ext: ExtensionData): string {
 			const typeKey = t.type ? ` (${t.type})` : ''
 			const statuses = t.statuses?.join(' → ') ?? ''
 			const fieldCount = t.fields?.length ?? 0
-			const fieldTag = fieldCount > 0 ? `  [${fieldCount} field${fieldCount === 1 ? '' : 's'}]` : ''
+			let fieldTag = ''
+			if (fieldCount > 0) {
+				const fieldNames = (t.fields as Array<{ name?: string }>).map((f) => f.name).filter(Boolean)
+				fieldTag =
+					fieldNames.length > 0
+						? `  [fields: ${fieldNames.join(', ')}]`
+						: `  [${fieldCount} field${fieldCount === 1 ? '' : 's'}]`
+			}
 			lines.push(`  • ${displayName}${typeKey}: ${statuses}${fieldTag}`)
 		}
 	}
@@ -743,8 +836,9 @@ export function formatSchema(schema: SchemaData): string {
 
 // ─── Confirmations ───────────────────────────────────────
 
-export function formatConfirmation(action: string, detail?: string): string {
-	return detail ? `✅ ${action}: ${detail}` : `✅ ${action}`
+export function formatConfirmation(action: string, detail?: string, hint?: string): string {
+	const base = detail ? `✅ ${action}: ${detail}` : `✅ ${action}`
+	return hint ? `${base}\n${hint}` : base
 }
 
 // ─── Dashboard ───────────────────────────────────────────
