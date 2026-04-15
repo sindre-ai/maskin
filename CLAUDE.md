@@ -2,6 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Onboarding a new user from Claude Code
+
+If the user asks how to start this repo, start it, set it up, or similar — follow this flow exactly. The goal is to get them from clone → running workspace → MCP-connected → `get_started` in as few steps as possible. Do NOT guess commands or URLs; read the dev server's own banner output.
+
+1. **Install deps + start the stack.** Run `pnpm install`, then start the dev stack in the background with `pnpm dev:win` on Windows or `pnpm dev` on macOS/Linux. Use a background shell so the logs keep streaming.
+2. **Wait for the startup banner.** Poll the shell output (BashOutput / similar) until you see the `🚀 Maskin is running` banner printed by `apps/dev`. It appears after `PG NOTIFY bridge started` and the S3/container init lines. Don't tell the user anything is ready before you see this banner.
+3. **Extract the ready-made MCP command from the banner.** The banner prints a copy-pasteable `claude mcp add maskin -e API_BASE_URL=... -e API_KEY=ank_... -e WORKSPACE_ID=... -- pnpm --filter @maskin/mcp start` line with real credentials (the dev bootstrap auto-provisions a `dev@local` actor + `My Workspace` on a fresh DB, or looks up an existing actor if the DB already has one). Parse that exact line from the log output — do NOT reconstruct it by hand.
+4. **Run that exact `claude mcp add` command** for the user so the MCP server gets wired into Claude Code.
+5. **Tell the user to paste one of the starter prompts** into the same (or a new) Claude Code session:
+   - `Configure my Maskin workspace with the "development" template.`
+   - `Configure my Maskin workspace with the "growth" template.`
+   - `Configure my Maskin workspace with a custom template.`
+   The `get_started` MCP tool drives the rest of the setup from there (template pick, tailoring questions, workspace URL, pipeline kickoff).
+
+Don't skip the banner read in step 2. The API key and workspace id only exist after the dev server has booted and the auto-bootstrap has run — reading the banner is the authoritative way to get them.
+
 ## Sub-project CLAUDE.md
 - `apps/web/CLAUDE.md` — detailed frontend guidance: product philosophy, design system, component conventions, routing, state management, SSE patterns, and styling rules
 
