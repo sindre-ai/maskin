@@ -41,6 +41,20 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			}
 		}
 
+		// Diagnostic: log every env var's shape so we can find what libkrun rejects.
+		const envDiag: Array<{ key: string; len: number; nonAscii: number; control: number }> = []
+		for (const [key, value] of Object.entries(options.env)) {
+			let nonAscii = 0
+			let control = 0
+			for (let i = 0; i < value.length; i++) {
+				const code = value.charCodeAt(i)
+				if (code > 0x7f) nonAscii++
+				else if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) control++
+			}
+			envDiag.push({ key, len: value.length, nonAscii, control })
+		}
+		logger.info(`Sandbox env diagnostic for ${sandboxId}`, { vars: envDiag })
+
 		// libkrun requires ASCII-only env var values — strip non-ASCII chars
 		// (e.g. æøå in workspace names) to avoid InvalidAscii panic.
 		const sanitizedEnv: Record<string, string> = {}
