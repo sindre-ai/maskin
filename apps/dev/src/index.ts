@@ -272,7 +272,9 @@ serve({ fetch: app.fetch, port }, () => {
 
 	const banner = `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
  🚀 Maskin is running
+
 ${accountLine}
  Two ways to get started:
 
@@ -290,6 +292,7 @@ ${mcpSetup}
        Help me set up a Maskin workspace for my use case.
 
  Docs: README.md  ·  API: ${apiUrl}/api/health  ·  OpenAPI: ${apiUrl}/api/openapi.json
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `
 	process.stdout.write(banner)
