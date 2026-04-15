@@ -67,10 +67,7 @@ function toolResult(toolName: string, data: unknown, formatted: string) {
 	return {
 		_meta: { toolName },
 		structuredContent: data as Record<string, unknown>,
-		content: [
-			{ type: 'text' as const, text: formatted },
-			{ type: 'text' as const, text: JSON.stringify(data, null, 2) },
-		],
+		content: [{ type: 'text' as const, text: formatted }],
 	}
 }
 
