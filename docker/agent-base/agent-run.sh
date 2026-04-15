@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Source overflow env vars (microsandbox has a ~1500 char limit per env var,
+# so large values are written to a file by the runtime backend).
+if [ -f /agent/.env-overflow.sh ]; then
+  # shellcheck disable=SC1091
+  source /agent/.env-overflow.sh
+fi
+
 RUNTIME="${AGENT_RUNTIME:-claude-code}"
 
 # Install runtime if not already present

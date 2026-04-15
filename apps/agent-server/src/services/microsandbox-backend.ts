@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { type ExecEvent, Mount, NetworkPolicy, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
 import type {
@@ -34,37 +36,47 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		}
 
 		const volumes: Record<string, ReturnType<typeof Mount.bind>> = {}
+		let agentHostPath: string | undefined
 		for (const bind of options.binds) {
 			const [source, dest, mode] = bind.split(':')
 			if (source && dest) {
 				volumes[dest] = Mount.bind(source, { readonly: mode === 'ro' })
+				if (dest === '/agent') agentHostPath = source
 			}
 		}
 
-		// Diagnostic: log every env var's shape so we can find what libkrun rejects.
-		const envDiag: Array<{ key: string; len: number; nonAscii: number; control: number }> = []
-		for (const [key, value] of Object.entries(options.env)) {
-			let nonAscii = 0
-			let control = 0
-			for (let i = 0; i < value.length; i++) {
-				const code = value.charCodeAt(i)
-				if (code > 0x7f) nonAscii++
-				else if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) control++
-			}
-			envDiag.push({ key, len: value.length, nonAscii, control })
-		}
-		logger.info(`Sandbox env diagnostic for ${sandboxId}`, { vars: envDiag })
-
-		// libkrun requires ASCII-only env var values — strip non-ASCII chars
-		// (e.g. æøå in workspace names) to avoid InvalidAscii panic.
+		// libkrun has two constraints on env vars:
+		//  1. Values must be ASCII — non-ASCII chars panic with InvalidAscii.
+		//  2. Values over ~1500 chars cause a handshake failure at boot.
+		// Large values are written to /agent/.env-overflow.sh (sourced by
+		// agent-run.sh), non-ASCII is stripped from everything that stays in env.
+		const OVERFLOW_THRESHOLD = 1500
 		const sanitizedEnv: Record<string, string> = {}
+		const overflowEntries: Array<{ key: string; value: string }> = []
 		for (const [key, value] of Object.entries(options.env)) {
 			// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ASCII filter
 			const ascii = value.replace(/[^\x00-\x7F]/g, '')
 			if (ascii !== value) {
 				logger.warn(`Stripped non-ASCII chars from env var: ${key}`)
 			}
-			sanitizedEnv[key] = ascii
+			if (ascii.length > OVERFLOW_THRESHOLD && agentHostPath) {
+				overflowEntries.push({ key, value: ascii })
+			} else {
+				sanitizedEnv[key] = ascii
+			}
+		}
+
+		if (overflowEntries.length > 0 && agentHostPath) {
+			const lines = overflowEntries.map(({ key, value }) => {
+				const escaped = value.replace(/'/g, "'\\''")
+				return `export ${key}='${escaped}'`
+			})
+			writeFileSync(join(agentHostPath, '.env-overflow.sh'), `${lines.join('\n')}\n`, {
+				mode: 0o600,
+			})
+			logger.info(`Wrote ${overflowEntries.length} overflow env vars to /agent/.env-overflow.sh`, {
+				keys: overflowEntries.map((e) => e.key),
+			})
 		}
 
 		const sandbox = await Sandbox.create({
