@@ -2141,7 +2141,7 @@ INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print th
     3. Kick off task 1 (Senior Developer picks it up)
     4. Hand off to Code Reviewer + CTO for review and merge
 
-  Start now?
+  Should I start now?
 
 Then STOP. Do not explain each step — one line each, nothing more. Wait for the user to say yes/go/start before taking any action.
 
@@ -2150,7 +2150,7 @@ When the user confirms (yes / go / start / do it / sure), execute the steps in o
 If the user says "not now" or steers elsewhere, follow their direction.`
 					: `
 
-INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print verbatim. Render a terse list of 2–3 one-line items (a few words each) tailored to what the user told you earlier. End with "Start now?" on its own line. Do not explain each item. Wait for the user to confirm before acting.`
+INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print verbatim. Render a terse list of 2–3 one-line items (a few words each) tailored to what the user told you earlier. End with "Should I start now?" on its own line. Do not explain each item. Wait for the user to confirm before acting.`
 
 			return textResponse(
 				`✅ "${template.name}" template applied to workspace "${workspace.name}". ${seedSummary}
