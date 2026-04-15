@@ -37,35 +37,11 @@ pnpm dev:win      # Windows (cmd / PowerShell)
 
 ### ② Get started from Claude Code (no UI)
 
-For users who prefer to stay in the terminal — Maskin can be set up entirely through MCP.
+On a fresh database, `pnpm dev` automatically creates a default actor + workspace and prints a ready-to-run `claude mcp add` command in the startup banner — including the API key. Two steps from there:
 
-1. **Create an actor (gives you an API key):**
-   ```bash
-   curl -X POST http://localhost:3000/api/actors \
-     -H "Content-Type: application/json" \
-     -d '{"type":"agent","name":"Me"}'
-   ```
-   Save the `api_key` from the response.
+1. **Connect MCP** — copy the `claude mcp add maskin …` line from the dev banner and run it. (Disable this auto-bootstrap with `MASKIN_AUTO_BOOTSTRAP=false` if you want to create credentials yourself.)
 
-2. **Create an empty workspace:**
-   ```bash
-   curl -X POST http://localhost:3000/api/workspaces \
-     -H "Authorization: Bearer <API_KEY>" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"My Workspace"}'
-   ```
-   Save the `id`.
-
-3. **Wire MCP into Claude Code (or any MCP client):**
-   ```bash
-   claude mcp add maskin \
-     -e API_BASE_URL=http://localhost:3000 \
-     -e API_KEY=<API_KEY> \
-     -e WORKSPACE_ID=<WORKSPACE_ID> \
-     -- npx tsx packages/mcp/src/server.ts
-   ```
-
-4. **Bootstrap the workspace.** In Claude Code, paste one of:
+2. **Bootstrap the workspace.** In Claude Code, paste one of:
    ```
    Set me up with a Maskin development workspace — I'm building a product.
    ```
@@ -75,9 +51,9 @@ For users who prefer to stay in the terminal — Maskin can be set up entirely t
    ```
    Help me set up a Maskin workspace for my use case.
    ```
-   The first two apply pre-built templates (object types, statuses, custom fields, and seed objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on. Total time: under 3 minutes.
+   The first two apply pre-built templates (object types, statuses, custom fields, seed objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on. Total time: under 3 minutes.
 
-You can re-run `get_started` any time on a different workspace — pass a different `WORKSPACE_ID` (or `workspace_id` arg) to set up another one.
+Rename the default actor and workspace whenever you're ready — from the UI (Settings → Profile / Workspace) or via MCP (`update_actor`, `update_workspace`). Run `get_started` again any time on a different workspace by passing `workspace_id`.
 
 > Want demo data instead? Run `pnpm db:seed` for a pre-populated example workspace.
 
