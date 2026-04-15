@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { type ExecEvent, Mount, NetworkPolicy, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
@@ -42,6 +42,15 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			if (source && dest) {
 				volumes[dest] = Mount.bind(source, { readonly: mode === 'ro' })
 				if (dest === '/agent') agentHostPath = source
+			}
+		}
+
+		// agent-base image sets WORKDIR=/agent/workspace, but our bind mount
+		// replaces /agent entirely. Pre-create the subdirs the image expects
+		// so the VMM's workdir validation passes and the entrypoint finds its paths.
+		if (agentHostPath) {
+			for (const sub of ['workspace', 'skills', 'learnings', 'memory']) {
+				mkdirSync(join(agentHostPath, sub), { recursive: true })
 			}
 		}
 
