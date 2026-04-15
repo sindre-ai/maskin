@@ -2,8 +2,30 @@ import { type App, useApp } from '@modelcontextprotocol/ext-apps/react'
 import { type ReactNode, createContext, useCallback, useContext, useRef, useState } from 'react'
 
 interface ToolResult {
+	structuredContent?: Record<string, unknown>
 	content?: Array<{ type: string; text?: string; [key: string]: unknown }>
 	[key: string]: unknown
+}
+
+/**
+ * Extract data from a tool result, preferring structuredContent (MCP 2025-11-25 spec).
+ * Falls back to parsing JSON from text content blocks.
+ */
+export function parseToolData(result: ToolResult): unknown {
+	// Prefer structuredContent
+	if (result.structuredContent != null) return result.structuredContent
+	// Fall back to parsing JSON text — try last text block first (raw JSON), then earlier ones
+	const texts = (result.content ?? [])
+		.filter((c) => c.type === 'text' && c.text)
+		.map((c) => c.text as string)
+	for (let i = texts.length - 1; i >= 0; i--) {
+		try {
+			return JSON.parse(texts[i])
+		} catch {
+			// not JSON, try next
+		}
+	}
+	return null
 }
 
 interface ToolResultPayload {

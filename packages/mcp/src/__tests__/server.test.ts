@@ -8,7 +8,9 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 }))
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: class {
+		registerPrompt = vi.fn()
+	},
 }))
 
 vi.mock('node:fs', () => ({
@@ -144,7 +146,7 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
 				edges: [],
-			})) as { content: Array<{ text: string }> }
+			})) as { structuredContent: unknown; content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/graph',
@@ -157,7 +159,9 @@ describe('tool handlers', () => {
 				}),
 			)
 
-			const parsed = JSON.parse(result.content[0].text)
+			expect(result.structuredContent).toEqual(mockResult)
+			// JSON fallback in content[1]
+			const parsed = JSON.parse(result.content[1].text)
 			expect(parsed).toEqual(mockResult)
 		})
 
@@ -188,6 +192,7 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
+				structuredContent: Array<{ success: boolean }>
 				content: Array<{ text: string }>
 			}
 
@@ -201,7 +206,10 @@ describe('tool handlers', () => {
 				expect.anything(),
 			)
 
-			const parsed = JSON.parse(result.content[0].text)
+			expect(result.structuredContent).toHaveLength(2)
+			expect(result.structuredContent[0].success).toBe(true)
+			// JSON fallback in content[1]
+			const parsed = JSON.parse(result.content[1].text)
 			expect(parsed).toHaveLength(2)
 			expect(parsed[0].success).toBe(true)
 		})
@@ -265,7 +273,7 @@ describe('tool handlers', () => {
 				type: 'agent',
 				name: 'Bot',
 				workspace_id: 'ws-123',
-			})) as { content: Array<{ text: string }> }
+			})) as { structuredContent: Record<string, unknown>; content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledTimes(2)
 			expect(fetch).toHaveBeenLastCalledWith(
@@ -273,7 +281,10 @@ describe('tool handlers', () => {
 				expect.objectContaining({ method: 'POST' }),
 			)
 
-			const parsed = JSON.parse(result.content[0].text)
+			expect(result.structuredContent.workspace_id).toBe('ws-123')
+			expect(result.structuredContent.role).toBe('member')
+			// JSON fallback in content[1]
+			const parsed = JSON.parse(result.content[1].text)
 			expect(parsed.workspace_id).toBe('ws-123')
 			expect(parsed.role).toBe('member')
 		})
@@ -294,15 +305,24 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
+				structuredContent: Array<{
+					success: boolean
+					result?: Record<string, unknown>
+					error?: string
+				}>
 				content: Array<{ text: string }>
 			}
 
-			const parsed = JSON.parse(result.content[0].text)
+			expect(result.structuredContent).toHaveLength(2)
+			expect(result.structuredContent[0].success).toBe(true)
+			expect(result.structuredContent[0].result).toEqual({ id: 'id-1', title: 'OK' })
+			expect(result.structuredContent[1].success).toBe(false)
+			expect(result.structuredContent[1].error).toContain('API error 404')
+			// JSON fallback in content[1]
+			const parsed = JSON.parse(result.content[1].text)
 			expect(parsed).toHaveLength(2)
 			expect(parsed[0].success).toBe(true)
-			expect(parsed[0].result).toEqual({ id: 'id-1', title: 'OK' })
 			expect(parsed[1].success).toBe(false)
-			expect(parsed[1].error).toContain('API error 404')
 		})
 	})
 
@@ -362,9 +382,15 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000) // first poll → running
 			await vi.advanceTimersByTimeAsync(5000) // second poll → completed
 
-			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
+			const result = (await resultPromise) as {
+				structuredContent: { session: { status: string }; logs: unknown[] }
+				content: Array<{ text: string }>
+			}
 
+			expect(result.structuredContent.session.status).toBe('completed')
+			expect(result.structuredContent.logs).toEqual([{ message: 'Done' }])
+			// JSON fallback in content[1]
+			const parsed = JSON.parse(result.content[1].text)
 			expect(parsed.session.status).toBe('completed')
 			expect(parsed.logs).toEqual([{ message: 'Done' }])
 
@@ -407,13 +433,18 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000) // second poll
 			await vi.advanceTimersByTimeAsync(5000) // past deadline
 
-			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
+			const result = (await resultPromise) as {
+				structuredContent: { session: { status: string }; logs: unknown }
+				content: Array<{ text: string }>
+			}
 
 			// Session should still show 'running' since it never reached terminal
-			expect(parsed.session.status).toBe('running')
+			expect(result.structuredContent.session.status).toBe('running')
 			// Should have fetched logs even though it timed out
-			expect(parsed.logs).toBeDefined()
+			expect(result.structuredContent.logs).toBeDefined()
+			// JSON fallback in content[1]
+			const parsed = JSON.parse(result.content[1].text)
+			expect(parsed.session.status).toBe('running')
 		})
 
 		it('uses default poll_interval and timeout when not specified', async () => {
@@ -442,8 +473,13 @@ describe('tool handlers', () => {
 			// Default poll interval is 5s
 			await vi.advanceTimersByTimeAsync(5000)
 
-			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
+			const result = (await resultPromise) as {
+				structuredContent: { session: { status: string } }
+				content: Array<{ text: string }>
+			}
+			expect(result.structuredContent.session.status).toBe('completed')
+			// JSON fallback in content[1]
+			const parsed = JSON.parse(result.content[1].text)
 			expect(parsed.session.status).toBe('completed')
 		})
 	})

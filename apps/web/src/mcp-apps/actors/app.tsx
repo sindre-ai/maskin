@@ -3,7 +3,7 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
+import { parseToolData, useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { ActorResponse, ActorWithKey, SessionResponse } from '../shared/types'
 
@@ -14,12 +14,9 @@ function ActorsApp() {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
 
-	const text = toolResult.result.content?.find(
-		(c: { type: string; text?: string }) => c.type === 'text',
-	)?.text
-	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
-
-	const data = JSON.parse(text)
+	// biome-ignore lint/suspicious/noExplicitAny: MCP tool data is dynamic
+	const data = parseToolData(toolResult.result) as any
+	if (!data) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 
 	switch (toolResult.toolName) {
 		case 'list_actors':
@@ -45,10 +42,8 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 	useEffect(() => {
 		if (!agents.length) return
 		callToolRef.current('list_sessions', { limit: 100 }).then((result) => {
-			const text = result.content?.find(
-				(c: { type: string; text?: string }) => c.type === 'text',
-			)?.text
-			if (text) setSessions(JSON.parse(text))
+			const parsed = parseToolData(result)
+			if (parsed) setSessions(parsed as SessionResponse[])
 		})
 	}, [agents.length])
 

@@ -1,6 +1,6 @@
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
-import { useToolResult } from '../shared/mcp-app-provider'
+import { parseToolData, useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 
 interface GraphNode {
@@ -30,12 +30,10 @@ function GraphApp() {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
 
-	const text = toolResult.result.content?.find(
-		(c: { type: string; text?: string }) => c.type === 'text',
-	)?.text
-	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
+	const raw = parseToolData(toolResult.result)
+	if (!raw) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 
-	const data: GraphResult = JSON.parse(text)
+	const data = raw as GraphResult
 
 	return (
 		<div className="p-4 max-w-2xl">

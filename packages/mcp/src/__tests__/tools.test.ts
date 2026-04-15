@@ -50,6 +50,7 @@ const ALL_TOOL_NAMES = [
 	'create_extension',
 	'update_extension',
 	'delete_extension',
+	'workspace_dashboard',
 ]
 
 describe('tool definitions', () => {

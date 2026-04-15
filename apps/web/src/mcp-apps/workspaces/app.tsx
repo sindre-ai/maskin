@@ -2,8 +2,8 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
-import { useToolResult } from '../shared/mcp-app-provider'
-import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
+import { parseToolData, useToolResult } from '../shared/mcp-app-provider'
+import { isArray, isObject, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { MemberResponse, WorkspaceResponse } from '../shared/types'
 
@@ -42,13 +42,9 @@ function WorkspacesApp() {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
 
-	const text = toolResult.result.content?.find(
-		(c: { type: string; text?: string }) => c.type === 'text',
-	)?.text
-	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
-
-	const data = safeParseJson(text)
-	if (!data) return <MessageView message={text} />
+	// biome-ignore lint/suspicious/noExplicitAny: MCP tool data is dynamic
+	const data = parseToolData(toolResult.result) as any
+	if (!data) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 	const unwrapped = unwrapEnvelope(data)
 
 	switch (toolResult.toolName) {
@@ -56,31 +52,31 @@ function WorkspacesApp() {
 			return isArray(unwrapped) ? (
 				<WorkspaceListView workspaces={unwrapped as WorkspaceResponse[]} />
 			) : (
-				<MessageView message={text} />
+				<MessageView message={JSON.stringify(data)} />
 			)
 		case 'list_workspace_members':
 			return isArray(unwrapped) ? (
 				<MemberListView members={unwrapped as MemberResponse[]} />
 			) : (
-				<MessageView message={text} />
+				<MessageView message={JSON.stringify(data)} />
 			)
 		case 'add_workspace_member':
 			return isObject<MemberResponse>(data, 'actorId') ? (
 				<MemberAddedView member={data} />
 			) : (
-				<MessageView message={text} />
+				<MessageView message={JSON.stringify(data)} />
 			)
 		case 'get_workspace_schema':
 			return isObject<WorkspaceSchema>(data, 'types') ? (
 				<WorkspaceSchemaView schema={data} />
 			) : (
-				<MessageView message={text} />
+				<MessageView message={JSON.stringify(data)} />
 			)
 		case 'list_extensions':
 			return isArray(data) ? (
 				<ExtensionListView extensions={data as Extension[]} />
 			) : (
-				<MessageView message={text} />
+				<MessageView message={JSON.stringify(data)} />
 			)
 		case 'create_extension':
 		case 'update_extension':
@@ -90,7 +86,7 @@ function WorkspacesApp() {
 					action={toolResult.toolName === 'create_extension' ? 'created' : 'updated'}
 				/>
 			) : (
-				<MessageView message={text} />
+				<MessageView message={JSON.stringify(data)} />
 			)
 		case 'delete_extension':
 			return <MessageView message="Extension deleted successfully." />
@@ -99,13 +95,13 @@ function WorkspacesApp() {
 			return isObject<WorkspaceResponse>(data, 'id', 'name') ? (
 				<WorkspaceDetailView workspace={data} />
 			) : (
-				<MessageView message={text} />
+				<MessageView message={JSON.stringify(data)} />
 			)
 		default:
 			return isObject<WorkspaceResponse>(data, 'id', 'name') ? (
 				<WorkspaceDetailView workspace={data} />
 			) : (
-				<MessageView message={text} />
+				<MessageView message={JSON.stringify(data)} />
 			)
 	}
 }

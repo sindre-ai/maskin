@@ -3,7 +3,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useCallback, useState } from 'react'
-import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
+import { parseToolData, useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { ObjectResponse } from '../shared/types'
 
@@ -16,8 +16,8 @@ function ObjectsApp() {
 		(obj: ObjectResponse) => async (title: string) => {
 			setLocalObject({ ...obj, title })
 			const result = await callTool('update_object', { id: obj.id, title })
-			const text = result.content?.find((c) => c.type === 'text')?.text ?? null
-			if (text) setLocalObject(JSON.parse(text))
+			const parsed = parseToolData(result) as ObjectResponse | null
+			if (parsed) setLocalObject(parsed)
 		},
 		[callTool],
 	)
@@ -26,8 +26,8 @@ function ObjectsApp() {
 		(obj: ObjectResponse) => async (content: string) => {
 			setLocalObject({ ...obj, content })
 			const result = await callTool('update_object', { id: obj.id, content })
-			const text = result.content?.find((c) => c.type === 'text')?.text ?? null
-			if (text) setLocalObject(JSON.parse(text))
+			const parsed = parseToolData(result) as ObjectResponse | null
+			if (parsed) setLocalObject(parsed)
 		},
 		[callTool],
 	)
@@ -36,8 +36,8 @@ function ObjectsApp() {
 		(obj: ObjectResponse) => async (status: string) => {
 			setLocalObject({ ...obj, status })
 			const result = await callTool('update_object', { id: obj.id, status })
-			const text = result.content?.find((c) => c.type === 'text')?.text ?? null
-			if (text) setLocalObject(JSON.parse(text))
+			const parsed = parseToolData(result) as ObjectResponse | null
+			if (parsed) setLocalObject(parsed)
 		},
 		[callTool],
 	)
@@ -54,14 +54,11 @@ function ObjectsApp() {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
 
-	const text = toolResult.result.content?.find(
-		(c: { type: string; text?: string }) => c.type === 'text',
-	)?.text
-	if (!text) {
+	// biome-ignore lint/suspicious/noExplicitAny: MCP tool data is dynamic
+	const data = parseToolData(toolResult.result) as any
+	if (!data) {
 		return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 	}
-
-	const data = JSON.parse(text)
 
 	switch (toolResult.toolName) {
 		case 'list_objects':

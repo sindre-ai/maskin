@@ -644,4 +644,12 @@ export const tools = {
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
 		}),
 	},
+	// ─── Dashboard ──────────────────────────────────────────
+	workspace_dashboard: {
+		description:
+			'Get a comprehensive workspace overview in a single call: objects by type and status, recent activity, active sessions, and team summary. Use this as a quick way to see the state of the workspace without making multiple tool calls.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
 } as const

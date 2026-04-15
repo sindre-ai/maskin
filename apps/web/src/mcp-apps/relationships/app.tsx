@@ -1,5 +1,5 @@
 import { EmptyState } from '@/components/shared/empty-state'
-import { useToolResult } from '../shared/mcp-app-provider'
+import { parseToolData, useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { RelationshipResponse } from '../shared/types'
 
@@ -10,12 +10,9 @@ function RelationshipsApp() {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
 
-	const text = toolResult.result.content?.find(
-		(c: { type: string; text?: string }) => c.type === 'text',
-	)?.text
-	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
-
-	const data = JSON.parse(text)
+	// biome-ignore lint/suspicious/noExplicitAny: MCP tool data is dynamic
+	const data = parseToolData(toolResult.result) as any
+	if (!data) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 
 	switch (toolResult.toolName) {
 		case 'list_relationships':
