@@ -2023,10 +2023,21 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				seedSummary = `Settings applied, but seeding examples failed: ${String(err)}. You can re-run get_started or add objects manually.`
 			}
 
+			const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
+			const workspaceUrl = `${frontendUrl}/${workspace.id}`
+
 			return textResponse(
-				`✅ "${template.name}" template applied to workspace "${workspace.name}".\n\n${seedSummary}\n\nWhat's next:\n  1. list_objects — see what was created\n  2. get_workspace_schema — review the full workspace config\n  3. create_objects — add your own bets, tasks, insights${
-					chosen === 'growth' ? ', contacts, or companies' : ''
-				}\n  4. get_events — watch the live event stream\n\nHappy building! 🎉`,
+				`✅ "${template.name}" template applied to workspace "${workspace.name}". ${seedSummary}
+
+🌐 Open the workspace in your browser: ${workspaceUrl}
+
+INSTRUCTIONS FOR THE AGENT — do NOT print this verbatim. Instead, write a short friendly message to the user that includes:
+  1. A single-line confirmation of what was set up (workspace name + template).
+  2. The workspace URL above as a clickable link so they can open it now.
+  3. 2–3 concrete, tailored next-action suggestions framed as things YOU can do next for them, based on what they told you earlier about their project and goal. For example, if they said they want to improve a website's UI, suggest: "Want me to break that goal into 3 first tasks?", "Should I draft a bet for the UI work?", "Ready to add your first insight — something you've noticed that should drive the work?". Pick suggestions that fit the ${template.name.toLowerCase()} template.
+  4. End with a light invitation like "Just tell me which one — or steer me somewhere else."
+
+Under the hood, to act on any suggestion: use create_objects (for bets/tasks/insights${chosen === 'growth' ? '/contacts/companies' : ''}), list_objects (to show what's there), or update_objects (to edit seeds).`,
 			)
 		},
 	)
