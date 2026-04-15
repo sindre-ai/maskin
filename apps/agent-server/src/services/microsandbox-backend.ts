@@ -99,6 +99,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			maxDurationSecs: options.maxDurationSecs,
 			replace: true,
 			quietLogs: true,
+			pullPolicy: 'always',
 		})
 
 		this.sandboxes.set(sandboxId, sandbox)
