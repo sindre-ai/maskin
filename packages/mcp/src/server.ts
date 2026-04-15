@@ -2024,7 +2024,11 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			}
 
 			const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
-			const workspaceUrl = `${frontendUrl}/${workspace.id}`
+			// Append the API key as a URL fragment so clicking the link auto-authenticates
+			// the user into the workspace. Fragments are not sent to the server, and the
+			// frontend consumes + strips the fragment on load (see consumeMagicLink).
+			const magicSuffix = config.apiKey ? `#key=${encodeURIComponent(config.apiKey)}` : ''
+			const workspaceUrl = `${frontendUrl}/${workspace.id}${magicSuffix}`
 
 			return textResponse(
 				`✅ "${template.name}" template applied to workspace "${workspace.name}". ${seedSummary}
