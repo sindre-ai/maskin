@@ -18,6 +18,7 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { createMcpServer } from '../server'
 import { tools } from '../tools'
 
@@ -93,6 +94,42 @@ describe('createMcpServer', () => {
 		const registeredNames = vi.mocked(registerAppTool).mock.calls.map((call) => call[1])
 		for (const name of Object.keys(tools)) {
 			expect(registeredNames).toContain(name)
+		}
+	})
+
+	it('registers all expected MCP prompts', () => {
+		const server = createMcpServer(config)
+		const mockServer = server as unknown as { registerPrompt: ReturnType<typeof vi.fn> }
+		const promptNames = mockServer.registerPrompt.mock.calls.map(
+			(call: unknown[]) => call[0] as string,
+		)
+		expect(promptNames).toContain('workspace-overview')
+		expect(promptNames).toContain('daily-standup')
+		expect(promptNames).toContain('review-task-backlog')
+		expect(promptNames).toContain('weekly-digest')
+		expect(promptNames).toContain('relationship-map')
+		expect(mockServer.registerPrompt).toHaveBeenCalledTimes(5)
+	})
+
+	it('registers prompts with title, description, and message callback', () => {
+		const server = createMcpServer(config)
+		const mockServer = server as unknown as { registerPrompt: ReturnType<typeof vi.fn> }
+
+		for (const call of mockServer.registerPrompt.mock.calls) {
+			const [_name, metadata, callback] = call as [
+				string,
+				{ title: string; description: string },
+				() => { messages: Array<{ role: string; content: { type: string; text: string } }> },
+			]
+			// Each prompt has title and description
+			expect(metadata.title).toBeTruthy()
+			expect(metadata.description).toBeTruthy()
+			// Callback returns messages array
+			const result = callback()
+			expect(result.messages).toHaveLength(1)
+			expect(result.messages[0].role).toBe('user')
+			expect(result.messages[0].content.type).toBe('text')
+			expect(result.messages[0].content.text.length).toBeGreaterThan(0)
 		}
 	})
 })
@@ -206,12 +243,12 @@ describe('tool handlers', () => {
 				expect.anything(),
 			)
 
-			expect(result.structuredContent).toHaveLength(2)
-			expect(result.structuredContent[0].success).toBe(true)
+			expect(result.structuredContent.data).toHaveLength(2)
+			expect(result.structuredContent.data[0].success).toBe(true)
 			// JSON fallback in content[1]
 			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed).toHaveLength(2)
-			expect(parsed[0].success).toBe(true)
+			expect(parsed.data).toHaveLength(2)
+			expect(parsed.data[0].success).toBe(true)
 		})
 	})
 
@@ -305,24 +342,26 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
-				structuredContent: Array<{
-					success: boolean
-					result?: Record<string, unknown>
-					error?: string
-				}>
+				structuredContent: {
+					data: Array<{
+						success: boolean
+						result?: Record<string, unknown>
+						error?: string
+					}>
+				}
 				content: Array<{ text: string }>
 			}
 
-			expect(result.structuredContent).toHaveLength(2)
-			expect(result.structuredContent[0].success).toBe(true)
-			expect(result.structuredContent[0].result).toEqual({ id: 'id-1', title: 'OK' })
-			expect(result.structuredContent[1].success).toBe(false)
-			expect(result.structuredContent[1].error).toContain('API error 404')
+			expect(result.structuredContent.data).toHaveLength(2)
+			expect(result.structuredContent.data[0].success).toBe(true)
+			expect(result.structuredContent.data[0].result).toEqual({ id: 'id-1', title: 'OK' })
+			expect(result.structuredContent.data[1].success).toBe(false)
+			expect(result.structuredContent.data[1].error).toContain('API error 404')
 			// JSON fallback in content[1]
 			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed).toHaveLength(2)
-			expect(parsed[0].success).toBe(true)
-			expect(parsed[1].success).toBe(false)
+			expect(parsed.data).toHaveLength(2)
+			expect(parsed.data[0].success).toBe(true)
+			expect(parsed.data[1].success).toBe(false)
 		})
 	})
 
@@ -665,6 +704,100 @@ describe('tool handlers', () => {
 			const handler = noKeyHandlers.get('list_objects')
 			if (!handler) throw new Error('Handler list_objects not registered')
 			await expect(handler({})).rejects.toThrow('Not authenticated')
+		})
+	})
+
+	describe('workspace_dashboard handler', () => {
+		it('fetches workspace, objects, events, sessions, and members in parallel', async () => {
+			const workspace = { id: 'ws-default-123', name: 'Test WS' }
+			const objects = [
+				{ id: 'obj-1', type: 'task', status: 'todo', title: 'Task 1' },
+				{ id: 'obj-2', type: 'bet', status: 'active', title: 'Bet 1' },
+			]
+			const events = [{ id: 'evt-1', action: 'created', entityType: 'task' }]
+			const sessions = [{ id: 'sess-1', status: 'running', actorName: 'Bot' }]
+			const members = [{ actorId: 'a-1', name: 'Alice', type: 'human', role: 'owner' }]
+
+			vi.spyOn(globalThis, 'fetch')
+				// 1. GET /api/workspaces
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([workspace]),
+				} as Response)
+				// 2. GET /api/objects?limit=50
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve(objects),
+				} as Response)
+				// 3. GET /api/events/history?limit=20
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve(events),
+				} as Response)
+				// 4. GET /api/sessions?status=running
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve(sessions),
+				} as Response)
+				// 5. GET /api/workspaces/.../members
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve(members),
+				} as Response)
+
+			const handler = getHandler('workspace_dashboard')
+			const result = (await handler({})) as {
+				structuredContent: {
+					workspace: Record<string, unknown>
+					objects: unknown[]
+					events: unknown[]
+					sessions: unknown[]
+					members: unknown[]
+				}
+				content: Array<{ text: string }>
+			}
+
+			// 5 parallel fetches
+			expect(fetch).toHaveBeenCalledTimes(5)
+
+			// structuredContent contains all data
+			expect(result.structuredContent.workspace).toEqual(workspace)
+			expect(result.structuredContent.objects).toHaveLength(2)
+			expect(result.structuredContent.events).toHaveLength(1)
+			expect(result.structuredContent.sessions).toHaveLength(1)
+			expect(result.structuredContent.members).toHaveLength(1)
+
+			// Formatted text contains dashboard heading
+			expect(result.content[0].text).toContain('Workspace Dashboard')
+			expect(result.content[0].text).toContain('Test WS')
+
+			// JSON fallback in content[1]
+			const parsed = JSON.parse(result.content[1].text)
+			expect(parsed.workspace.name).toBe('Test WS')
+			expect(parsed.objects).toHaveLength(2)
+		})
+
+		it('gracefully handles API failures with empty arrays', async () => {
+			// All API calls fail
+			vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'))
+
+			const handler = getHandler('workspace_dashboard')
+			const result = (await handler({})) as {
+				structuredContent: {
+					workspace: Record<string, unknown>
+					objects: unknown[]
+					events: unknown[]
+					sessions: unknown[]
+					members: unknown[]
+				}
+				content: Array<{ text: string }>
+			}
+
+			// Failures are caught — returns empty data
+			expect(result.structuredContent.objects).toEqual([])
+			expect(result.structuredContent.events).toEqual([])
+			expect(result.structuredContent.sessions).toEqual([])
+			expect(result.structuredContent.members).toEqual([])
 		})
 	})
 

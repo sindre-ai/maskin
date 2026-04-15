@@ -376,7 +376,7 @@ export function createMcpServer(config: McpConfig) {
 						: `❌ ${r.id}: ${r.error}`,
 				)
 				.join('\n\n')
-			return toolResult('get_objects', results, formatted)
+			return toolResult('get_objects', { data: results }, formatted)
 		},
 	)
 
@@ -457,7 +457,7 @@ export function createMcpServer(config: McpConfig) {
 			const detail = [`${succeeded} succeeded`, failed && `${failed} failed`]
 				.filter(Boolean)
 				.join(', ')
-			return toolResult('update_objects', results, formatConfirmation('Updated', detail))
+			return toolResult('update_objects', { data: results }, formatConfirmation('Updated', detail))
 		},
 	)
 
@@ -496,7 +496,11 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as Record<string, unknown>[]
-			return toolResult('list_objects', result, formatObjectList(result, { offset: args.offset }))
+			return toolResult(
+				'list_objects',
+				{ data: result },
+				formatObjectList(result, { offset: args.offset }),
+			)
 		},
 	)
 
@@ -521,7 +525,7 @@ export function createMcpServer(config: McpConfig) {
 			})) as Record<string, unknown>[]
 			return toolResult(
 				'search_objects',
-				result,
+				{ data: result },
 				formatObjectList(result, { query: args.q, offset: args.offset }),
 			)
 		},
@@ -545,7 +549,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as Record<string, unknown>[]
-			return toolResult('list_relationships', result, formatRelationshipList(result))
+			return toolResult('list_relationships', { data: result }, formatRelationshipList(result))
 		},
 	)
 
@@ -619,7 +623,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', '/api/actors', undefined, {
 				skipWorkspace: true,
 			})) as Record<string, unknown>[]
-			return toolResult('list_actors', result, formatActorList(result))
+			return toolResult('list_actors', { data: result }, formatActorList(result))
 		},
 	)
 
@@ -728,7 +732,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 				skipWorkspace: true,
 			})) as Record<string, unknown>[]
-			return toolResult('list_workspaces', result, formatWorkspaceList(result))
+			return toolResult('list_workspaces', { data: result }, formatWorkspaceList(result))
 		},
 	)
 
@@ -839,7 +843,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as Record<string, unknown>[]
-			return toolResult('get_events', result, formatEventList(result))
+			return toolResult('get_events', { data: result }, formatEventList(result))
 		},
 	)
 
@@ -875,7 +879,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', '/api/triggers', undefined, {
 				workspaceId: args.workspace_id,
 			})) as Record<string, unknown>[]
-			return toolResult('list_triggers', result, formatTriggerList(result))
+			return toolResult('list_triggers', { data: result }, formatTriggerList(result))
 		},
 	)
 
@@ -973,7 +977,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/notifications?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as Record<string, unknown>[]
-			return toolResult('list_notifications', result, formatNotificationList(result))
+			return toolResult('list_notifications', { data: result }, formatNotificationList(result))
 		},
 	)
 
@@ -1070,7 +1074,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/sessions?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as Record<string, unknown>[]
-			return toolResult('list_sessions', result, formatSessionList(result))
+			return toolResult('list_sessions', { data: result }, formatSessionList(result))
 		},
 	)
 
@@ -1237,7 +1241,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
 			})) as Record<string, unknown>[]
-			return toolResult('list_integrations', result, formatIntegrationList(result))
+			return toolResult('list_integrations', { data: result }, formatIntegrationList(result))
 		},
 	)
 
@@ -1254,7 +1258,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
 				skipWorkspace: true,
 			})) as Record<string, unknown>[]
-			return toolResult('list_integration_providers', result, formatProviderList(result))
+			return toolResult('list_integration_providers', { data: result }, formatProviderList(result))
 		},
 	)
 
@@ -1404,7 +1408,7 @@ export function createMcpServer(config: McpConfig) {
 
 			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
 
-			return toolResult('list_extensions', result, formatExtensionList(result))
+			return toolResult('list_extensions', { data: result }, formatExtensionList(result))
 		},
 	)
 
