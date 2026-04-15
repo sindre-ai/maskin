@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
-import type { CustomExtensionEntry } from '@maskin/shared'
+import {
+	type CustomExtensionEntry,
+	WORKSPACE_TEMPLATES,
+	type WorkspaceTemplate,
+	type WorkspaceTemplateId,
+} from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -1819,171 +1824,168 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	// ─── Hello (Agent Welcome) ───────────────────────────────
+	// ─── Get Started (Onboarding) ────────────────────────────
 	registerAppTool(
 		server,
-		'hello',
+		'get_started',
 		{
-			description: tools.hello.description,
-			inputSchema: tools.hello.inputSchema.shape,
+			description: tools.get_started.description,
+			inputSchema: tools.get_started.inputSchema.shape,
 			_meta: {},
 		},
 		async (args) => {
-			let workspaceSection = ''
-			let teamSection = ''
+			const textResponse = (text: string) => ({
+				_meta: { toolName: 'get_started' },
+				content: [{ type: 'text' as const, text }],
+			})
 
-			// All API calls are best-effort — the tool works even without auth or workspace
+			// Resolve workspace
+			let workspace: { id: string; name: string; settings: Record<string, unknown> } | undefined
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 					skipWorkspace: true,
-				})) as Array<{
-					id: string
-					name: string
-					settings: Record<string, unknown>
-				}>
-
+				})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
 				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-				const workspace =
+				workspace =
 					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
 					workspaces[0]
-
-				if (workspace) {
-					const settings = workspace.settings ?? {}
-					const statuses = (settings.statuses ?? {}) as Record<string, string[]>
-					const fieldDefinitions = (settings.field_definitions ?? {}) as Record<
-						string,
-						Array<{
-							name: string
-							type: string
-							required: boolean
-							values?: string[]
-						}>
-					>
-					const displayNames = (settings.display_names ?? {}) as Record<string, string>
-					const relationshipTypes = (settings.relationship_types ?? []) as string[]
-					const maxSessions = (settings.max_concurrent_sessions ?? 5) as number
-
-					// Build workspace config section — derive types from settings keys
-					const configuredTypes = new Set([
-						...Object.keys(statuses),
-						...Object.keys(fieldDefinitions),
-						...Object.keys(displayNames),
-					])
-					const objectTypes =
-						configuredTypes.size > 0 ? [...configuredTypes] : ['insight', 'bet', 'task']
-
-					const typeLines: string[] = []
-					for (const t of objectTypes) {
-						const name = displayNames[t] ?? t.charAt(0).toUpperCase() + t.slice(1)
-						const typeStatuses = statuses[t] ?? []
-						const fields = fieldDefinitions[t] ?? []
-						let line = `  • ${name} (type: "${t}")`
-						if (typeStatuses.length > 0) {
-							line += `\n    Statuses: ${typeStatuses.join(' → ')}`
-						}
-						if (fields.length > 0) {
-							const fieldDesc = fields
-								.map((f) => {
-									let s = `${f.name} (${f.type}${f.required ? ', required' : ''})`
-									if (f.values && f.values.length > 0) {
-										s += ` [${f.values.join(', ')}]`
-									}
-									return s
-								})
-								.join(', ')
-							line += `\n    Custom fields: ${fieldDesc}`
-						}
-						typeLines.push(line)
-					}
-
-					workspaceSection = `
-📋 Your Workspace: "${workspace.name}"
-   ID: ${workspace.id}
-
-   Object Types:
-${typeLines.join('\n')}
-
-   Relationship Types: ${relationshipTypes.length > 0 ? relationshipTypes.join(', ') : 'informs, breaks_into, blocks, relates_to, duplicates (defaults)'}
-   Max Concurrent Sessions: ${maxSessions}
-${(() => {
-	const enabledModules = (settings.enabled_modules ?? []) as string[]
-	if (enabledModules.length === 0)
-		return '   Extensions: none enabled (use create_extension to get started)'
-	return `   Extensions: ${enabledModules.join(', ')}`
-})()}`
-
-					// Fetch team members
-					try {
-						const members = (await apiCall(
-							config,
-							'GET',
-							`/api/workspaces/${workspace.id}/members`,
-							undefined,
-							{ workspaceId: workspace.id },
-						)) as Array<{
-							actorId: string
-							name: string
-							type: string
-							role: string
-						}>
-
-						if (members.length > 0) {
-							const memberLines = members.map(
-								(m) => `  • ${m.name || 'Unnamed'} — ${m.type} (${m.role})`,
-							)
-							teamSection = `
-👥 Your Team (${members.length} member${members.length === 1 ? '' : 's'})
-${memberLines.join('\n')}`
-						}
-					} catch {
-						// Members fetch is best-effort
-					}
-				} else {
-					workspaceSection =
-						'\n📋 No workspace found. Create one with create_workspace to get started!'
-				}
 			} catch {
-				workspaceSection = `
-📋 Workspace
-   Not connected yet! To get your personalized workspace info:
-   1. Use create_actor to sign up and get an API key
-   2. Restart with API_KEY set, then call hello again
-   3. Or pass a workspace_id if you have one`
+				return textResponse(
+					"👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again\n\nOr pass a workspace_id directly if you have one.",
+				)
 			}
 
-			const text = `🚀 Welcome to Maskin!
-
-Hey there! Maskin is an AI-native product development platform where humans and agents collaborate side by side. Think of it as your mission control for turning insights into bets into shipped tasks — with full observability, real-time events, and automation built in.
-
-Everything here is an API, and you're talking to it right now through MCP. Let's get you oriented!
-${workspaceSection}
-${teamSection}
-
-🧰 Available Tools
-${Object.keys(tools)
-	.filter((t) => t !== 'hello')
-	.map((t) => `   • ${t}`)
-	.join('\n')}
-${(() => {
-	const extTools = getAllModules().flatMap((ext) =>
-		(ext.mcpTools ?? []).map((t) => `   • ${ext.id}_${t.name} — [${ext.name}] ${t.description}`),
-	)
-	return extTools.length > 0 ? `\n🧩 Extension Tools\n${extTools.join('\n')}` : ''
-})()}
-
-⚡ Quick Start
-  1. Call get_workspace_schema to see the full config for your workspace
-  2. Use list_objects to see what's already in the workspace
-  3. Use create_objects to add new insights, bets, or tasks
-  4. Use search_objects to find things by keyword
-  5. Check get_events to see what's been happening lately
-
-Happy building! 🎉`
-
-			return {
-				_meta: { toolName: 'hello' },
-				content: [{ type: 'text' as const, text }],
+			if (!workspace) {
+				return textResponse(
+					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again to apply a template.',
+				)
 			}
+
+			// Pick template
+			const pickTemplate = (): WorkspaceTemplateId | 'custom' | null => {
+				if (args.template) return args.template
+				const hint = (args.use_case ?? '').toLowerCase()
+				if (!hint) return null
+				if (/growth|launch|market|sales|outreach|pipeline|crm|lead/.test(hint)) return 'growth'
+				if (/dev|engineering|product|build|ship|feature|spec|sprint|backlog/.test(hint))
+					return 'development'
+				return null
+			}
+
+			const chosen = pickTemplate()
+
+			if (chosen === null) {
+				return textResponse(
+					`👋 Welcome to Maskin, let's set up "${workspace.name}".\n\nPick a starting template by calling get_started again with one of:\n\n  • template: "development" — for product teams shipping software (bets, tasks, insights with dev statuses)\n  • template: "growth" — for founders running a pipeline (adds contact + company with a light CRM)\n  • template: "custom" — I'll ask a few questions and tailor the workspace\n\nOr just tell me the use_case in your own words and I'll pick for you.`,
+				)
+			}
+
+			if (chosen === 'custom') {
+				if (!args.custom_settings) {
+					return textResponse(
+						`🧵 Custom workspace setup for "${workspace.name}"\n\nTell me a bit about how you work and I'll tailor the settings:\n\n  1. What kinds of things do you want to track? (e.g. bets, tasks, insights, contacts, campaigns, experiments…)\n  2. For each one, what are the statuses it moves through?\n  3. Are there any custom fields that matter? (e.g. deadline, priority, impact/effort, source)\n  4. Any common relationship types? (default: informs, breaks_into, blocks, relates_to)\n\nWhen you have answers, call get_started again with:\n  template: "custom"\n  custom_settings: { display_names, statuses, field_definitions, relationship_types, custom_extensions }\n  confirm: true\n\nReference shape: call get_workspace_schema to see the current settings object.`,
+					)
+				}
+				// custom settings provided — apply on confirm
+				if (!args.confirm) {
+					return textResponse(
+						`📋 Preview — custom settings for "${workspace.name}"\n\n${JSON.stringify(args.custom_settings, null, 2)}\n\nCall get_started again with the same args plus confirm: true to apply.`,
+					)
+				}
+				try {
+					await apiCall(
+						config,
+						'PATCH',
+						`/api/workspaces/${workspace.id}`,
+						{ settings: { ...args.custom_settings, onboarding_completed: true } },
+						{ workspaceId: workspace.id },
+					)
+					return textResponse(
+						`✅ Custom settings applied to "${workspace.name}".\n\nNext steps:\n  1. Call get_workspace_schema to verify\n  2. Use create_objects to add your first items\n  3. Call list_objects to see what's in the workspace`,
+					)
+				} catch (err) {
+					return textResponse(`❌ Failed to apply custom settings: ${String(err)}`)
+				}
+			}
+
+			// dev or growth template
+			const template: WorkspaceTemplate = WORKSPACE_TEMPLATES[chosen]
+
+			if (!args.confirm) {
+				const previewLines: string[] = []
+				const statuses = (template.settings.statuses ?? {}) as Record<string, string[]>
+				const fields = (template.settings.field_definitions ?? {}) as Record<
+					string,
+					Array<{ name: string; type: string; values?: string[] }>
+				>
+				const displayNames = (template.settings.display_names ?? {}) as Record<string, string>
+				for (const [type, typeStatuses] of Object.entries(statuses)) {
+					const name = displayNames[type] ?? type
+					const line = `  • ${name} (${type}): ${typeStatuses.join(' → ')}`
+					const typeFields = fields[type]
+					if (typeFields && typeFields.length > 0) {
+						const fieldDesc = typeFields
+							.map((f) =>
+								f.values && f.values.length > 0
+									? `${f.name} [${f.values.join('|')}]`
+									: `${f.name} (${f.type})`,
+							)
+							.join(', ')
+						previewLines.push(`${line}\n      Fields: ${fieldDesc}`)
+					} else {
+						previewLines.push(line)
+					}
+				}
+				const extLines = Object.entries(template.settings.custom_extensions ?? {}).map(
+					([id, ext]) => `  • ${ext.name} (${id}): types [${ext.types.join(', ')}]`,
+				)
+				const seedLines = template.seedNodes.map(
+					(n) => `  • ${displayNames[n.type] ?? n.type}: ${n.title}`,
+				)
+
+				return textResponse(
+					`📋 Preview — "${template.name}" template for workspace "${workspace.name}"\n\n${template.description}\n\nObject types & statuses:\n${previewLines.join('\n')}\n${
+						extLines.length > 0 ? `\nCustom extensions:\n${extLines.join('\n')}\n` : ''
+					}\nSeed examples (${template.seedNodes.length} objects + ${template.seedEdges.length} relationships):\n${seedLines.join('\n')}\n\nTo apply, call get_started again with:\n  template: "${template.id}"\n  confirm: true`,
+				)
+			}
+
+			// Apply: merge settings, then seed objects via /api/graph
+			try {
+				await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${workspace.id}`,
+					{ settings: template.settings },
+					{ workspaceId: workspace.id },
+				)
+			} catch (err) {
+				return textResponse(
+					`❌ Failed to apply template settings: ${String(err)}\n\nNothing was seeded. You can retry or run create_workspace-specific tools manually.`,
+				)
+			}
+
+			let seedSummary = ''
+			try {
+				const graphResult = (await apiCall(
+					config,
+					'POST',
+					'/api/graph',
+					{ nodes: template.seedNodes, edges: template.seedEdges },
+					{ workspaceId: workspace.id },
+				)) as { objects?: Array<{ id: string }>; relationships?: Array<{ id: string }> }
+				const createdObjects = graphResult.objects?.length ?? template.seedNodes.length
+				const createdEdges = graphResult.relationships?.length ?? template.seedEdges.length
+				seedSummary = `Seeded ${createdObjects} example objects and ${createdEdges} relationships.`
+			} catch (err) {
+				seedSummary = `Settings applied, but seeding examples failed: ${String(err)}. You can re-run get_started or add objects manually.`
+			}
+
+			return textResponse(
+				`✅ "${template.name}" template applied to workspace "${workspace.name}".\n\n${seedSummary}\n\nWhat's next:\n  1. list_objects — see what was created\n  2. get_workspace_schema — review the full workspace config\n  3. create_objects — add your own bets, tasks, insights${
+					chosen === 'growth' ? ', contacts, or companies' : ''
+				}\n  4. get_events — watch the live event stream\n\nHappy building! 🎉`,
+			)
 		},
 	)
 

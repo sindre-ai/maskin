@@ -9,12 +9,40 @@ const optionalWorkspaceId = z
 	)
 
 export const tools = {
-	// ─── Welcome ─────────────────────────────────────────────
-	hello: {
+	// ─── Get Started ─────────────────────────────────────────
+	get_started: {
 		description:
-			'👋 Welcome! Start here. Get a friendly overview of what Maskin is, what you can do, and how this workspace is set up — including object types, statuses, custom fields, team members, and available tools. Think of it as your agent landing page.',
+			"👋 Start here for new Maskin users. Picks a workspace template (development or growth) based on the user's use case, previews what it will set up, then applies it on confirm. Configures statuses, fields, and custom extensions, and seeds a few example objects so the workspace feels alive. Call with just a use_case to get a preview; call again with confirm: true to apply. For bespoke needs, use template: 'custom' and the tool will walk the user through a short questionnaire.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			use_case: z
+				.string()
+				.optional()
+				.describe(
+					"What the user wants Maskin for, in their own words. E.g. 'product development', 'growth/launch', or a freeform description.",
+				),
+			template: z
+				.enum(['development', 'growth', 'custom'])
+				.optional()
+				.describe(
+					"Pick a starting template. 'development' = product team shipping software. 'growth' = founder running a pipeline with CRM. 'custom' = walk through a questionnaire. Omit to let the tool decide from use_case.",
+				),
+			team_type: z
+				.string()
+				.optional()
+				.describe('Optional hint about the team, e.g. "solo founder", "2-person product team".'),
+			custom_settings: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					"When template is 'custom', pass the tailored workspace settings object here (display_names, statuses, field_definitions, custom_extensions, relationship_types).",
+				),
+			confirm: z
+				.boolean()
+				.optional()
+				.describe(
+					'Set true to actually apply the chosen template. Without this, the tool returns a preview and the exact next call to make.',
+				),
 		}),
 	},
 

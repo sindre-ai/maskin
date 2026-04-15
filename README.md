@@ -296,6 +296,24 @@ To connect Claude Code (or any MCP client) to the workspace:
 
 3. The agent can now create insights, propose bets, break down tasks, manage sessions, and query the event log -- all through tool calls.
 
+## Getting Started (one-liner prompts)
+
+After MCP Server Setup, paste any of these into Claude Code, Claude Cowork, Claude Desktop, or any MCP-connected agent. The agent will call the `get_started` tool, preview the template, and set up your workspace in under 3 minutes.
+
+```
+Set me up with a Maskin development workspace — I'm building a product.
+```
+
+```
+Set me up with a Maskin growth workspace — I'm launching a product and need a pipeline.
+```
+
+```
+Help me set up a Maskin workspace for my use case.
+```
+
+The first two apply pre-built templates (object types, statuses, custom fields, and a few example objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on.
+
 ## Docker
 
 ```bash
