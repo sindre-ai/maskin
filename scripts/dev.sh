@@ -21,4 +21,4 @@ echo "Running database migrations..."
 pnpm db:migrate
 
 echo "Starting dev servers..."
-exec dotenv -- turbo dev
+exec dotenv -- turbo dev --log-prefix=none

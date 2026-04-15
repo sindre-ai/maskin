@@ -13,6 +13,7 @@ import { S3StorageProvider } from '@maskin/storage'
 import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
+import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
@@ -241,7 +242,61 @@ if (fs.existsSync(staticDir)) {
 const port = Number(process.env.PORT) || 3000
 logger.info(`Starting server on port ${port}`)
 
-serve({ fetch: app.fetch, port })
+let bootstrap: DevBootstrapResult | null = null
+try {
+	bootstrap = await maybeBootstrapDev(db)
+	if (bootstrap) {
+		logger.info('Dev bootstrap created default actor + workspace', {
+			actorEmail: bootstrap.actorEmail,
+			workspaceName: bootstrap.workspaceName,
+		})
+	}
+} catch (err) {
+	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
+}
+
+serve({ fetch: app.fetch, port }, () => {
+	const webUrl = 'http://localhost:5173'
+	const apiUrl = `http://localhost:${port}`
+
+	const mcpSetup = bootstrap
+		? `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=${bootstrap.apiKey} -e WORKSPACE_ID=${bootstrap.workspaceId} -- pnpm --filter @maskin/mcp start`
+		: `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=<your_api_key> -e WORKSPACE_ID=<your_workspace_id> -- pnpm --filter @maskin/mcp start
+    (find your key + workspace id in the UI under Settings)`
+
+	const accountLine = bootstrap
+		? ` 👤 ${bootstrap.created ? 'Default account' : 'Account'}: ${bootstrap.actorName} · ${bootstrap.actorEmail}  ·  workspace: "${bootstrap.workspaceName}"
+    Rename it any time from the UI (Settings → Profile / Workspace) or via MCP (update_actor / update_workspace).
+`
+		: ''
+
+	const banner = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ 🚀 Maskin is running
+
+${accountLine}
+ Two ways to get started:
+
+ ① From the browser
+    1. Open ${webUrl}/signup and create an account
+    2. The UI walks you through the rest
+
+ ② From Claude Code (or any MCP client)
+    1. Connect MCP:
+${mcpSetup}
+
+    2. In Claude Code, paste one of:
+       Configure my Maskin workspace with the "development" template.
+       Configure my Maskin workspace with the "growth" template.
+       Configure my Maskin workspace with a custom template.
+
+ Docs: README.md  ·  API: ${apiUrl}/api/health  ·  OpenAPI: ${apiUrl}/api/openapi.json
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`
+	process.stdout.write(banner)
+})
 
 export default app
 export type AppType = typeof app

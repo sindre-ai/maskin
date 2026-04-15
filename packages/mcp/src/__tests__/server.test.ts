@@ -448,134 +448,141 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('hello handler', () => {
-		it('returns welcome with workspace and members', async () => {
-			const workspace = {
-				id: 'ws-1',
-				name: 'My Workspace',
-				settings: {
-					statuses: { insight: ['new', 'processing'], bet: ['active'] },
-					field_definitions: {},
-					display_names: {},
-					relationship_types: ['informs', 'blocks'],
-					max_concurrent_sessions: 3,
-				},
-			}
-			const members = [
-				{ actorId: 'a-1', name: 'Alice', type: 'human', role: 'owner' },
-				{ actorId: 'a-2', name: 'Bot', type: 'agent', role: 'member' },
-			]
+	describe('get_started handler', () => {
+		const workspace = { id: 'ws-1', name: 'My Workspace', settings: {} }
 
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([workspace]),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve(members),
-				} as Response)
+		it('asks the user to pick when no use_case or template is given', async () => {
+			mockFetchSuccess([workspace])
 
-			const handler = getHandler('hello')
+			const handler = getHandler('get_started')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
-			expect(text).toContain('Welcome to Maskin')
 			expect(text).toContain('My Workspace')
-			expect(text).toContain('ws-1')
-			expect(text).toContain('Alice')
-			expect(text).toContain('Bot')
-			expect(text).toContain('informs, blocks')
+			expect(text).toContain('development')
+			expect(text).toContain('growth')
+			expect(text).toContain('custom')
 		})
 
-		it('shows fallback when no workspaces exist', async () => {
-			mockFetchSuccess([])
+		it('maps use_case keywords to growth template', async () => {
+			mockFetchSuccess([workspace])
 
-			const handler = getHandler('hello')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
-			const text = result.content[0].text
-
-			expect(text).toContain('No workspace found')
-			expect(text).toContain('create_workspace')
-		})
-
-		it('degrades gracefully when API call fails', async () => {
-			vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'))
-
-			const handler = getHandler('hello')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
-			const text = result.content[0].text
-
-			expect(text).toContain('Welcome to Maskin')
-			expect(text).toContain('Not connected yet')
-			expect(text).toContain('create_actor')
-		})
-
-		it('selects workspace matching workspace_id arg', async () => {
-			const ws1 = { id: 'ws-1', name: 'First', settings: {} }
-			const ws2 = { id: 'ws-2', name: 'Second', settings: {} }
-
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([ws1, ws2]),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([]),
-				} as Response)
-
-			const handler = getHandler('hello')
-			const result = (await handler({ workspace_id: 'ws-2' })) as {
+			const handler = getHandler('get_started')
+			const result = (await handler({ use_case: 'planning our launch pipeline' })) as {
 				content: Array<{ text: string }>
 			}
 			const text = result.content[0].text
 
-			expect(text).toContain('Second')
-			expect(text).toContain('ws-2')
+			expect(text).toContain('Preview')
+			expect(text).toContain('Growth')
+			expect(text).toContain('contact')
 		})
 
-		it('includes all tool names dynamically', async () => {
-			mockFetchSuccess([])
+		it('previews development template and prompts for tailoring questions', async () => {
+			mockFetchSuccess([workspace])
 
-			const handler = getHandler('hello')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const handler = getHandler('get_started')
+			const result = (await handler({ template: 'development' })) as {
+				content: Array<{ text: string }>
+			}
 			const text = result.content[0].text
 
-			for (const toolName of Object.keys(tools)) {
-				if (toolName === 'hello') continue
-				expect(text).toContain(toolName)
-			}
+			expect(text).toContain('Preview')
+			expect(text).toContain('Development')
+			expect(text).toContain('confirm: true')
+			expect(text).toContain('ASK THE USER')
+			expect(text).toContain('workspace_name')
+			expect(text).toContain('seed_overrides')
 		})
 
-		it('shows custom object types from workspace settings', async () => {
-			const workspace = {
-				id: 'ws-1',
-				name: 'Custom',
-				settings: {
-					statuses: { meeting: ['scheduled', 'done'], insight: ['new'] },
-					field_definitions: {},
-					display_names: { meeting: 'Meeting' },
+		it('applies template with confirm: true — PATCH settings and POST graph', async () => {
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-1' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ objects: [{ id: 'o1' }], relationships: [{ id: 'r1' }] }),
+				} as Response)
+
+			const handler = getHandler('get_started')
+			const result = (await handler({
+				template: 'development',
+				confirm: true,
+			})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+
+			expect(text).toContain('Development')
+			expect(text).toContain('template applied')
+
+			const calls = fetchSpy.mock.calls
+			expect(calls[1][0]).toBe('http://localhost:3000/api/workspaces/ws-1')
+			expect((calls[1][1] as RequestInit).method).toBe('PATCH')
+			expect(calls[2][0]).toBe('http://localhost:3000/api/graph')
+			expect((calls[2][1] as RequestInit).method).toBe('POST')
+		})
+
+		it('renames workspace and applies seed_overrides on confirm', async () => {
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-1', name: 'Acme' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-1' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ objects: [{ id: 'o1' }], relationships: [] }),
+				} as Response)
+
+			const handler = getHandler('get_started')
+			await handler({
+				template: 'development',
+				confirm: true,
+				workspace_name: 'Acme',
+				seed_overrides: {
+					bet1: { title: 'Ship MVP by June' },
 				},
+			})
+
+			const calls = fetchSpy.mock.calls
+			// 1st: GET workspaces; 2nd: PATCH rename; 3rd: PATCH settings; 4th: POST graph
+			const renameBody = JSON.parse((calls[1][1] as RequestInit).body as string)
+			expect(renameBody).toEqual({ name: 'Acme' })
+			const graphBody = JSON.parse((calls[3][1] as RequestInit).body as string)
+			const bet1 = graphBody.nodes.find((n: { $id: string }) => n.$id === 'bet1')
+			expect(bet1.title).toBe('Ship MVP by June')
+		})
+
+		it('asks a questionnaire when template is custom and no custom_settings', async () => {
+			mockFetchSuccess([workspace])
+
+			const handler = getHandler('get_started')
+			const result = (await handler({ template: 'custom' })) as {
+				content: Array<{ text: string }>
 			}
+			const text = result.content[0].text
 
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([workspace]),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([]),
-				} as Response)
+			expect(text).toContain('Custom workspace')
+			expect(text).toContain('custom_settings')
+		})
 
-			const handler = getHandler('hello')
+		it('degrades gracefully when workspaces fetch fails', async () => {
+			vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'))
+
+			const handler = getHandler('get_started')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
-			expect(text).toContain('Meeting')
-			expect(text).toContain('meeting')
-			expect(text).toContain('scheduled')
+			expect(text).toContain("can't reach your workspace")
+			expect(text).toContain('create_actor')
 		})
 	})
 
