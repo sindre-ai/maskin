@@ -41,17 +41,17 @@ On a fresh database, `pnpm dev` automatically creates a default actor + workspac
 
 1. **Connect MCP** — copy the `claude mcp add maskin …` line from the dev banner and run it. (Disable this auto-bootstrap with `MASKIN_AUTO_BOOTSTRAP=false` if you want to create credentials yourself.)
 
-2. **Bootstrap the workspace.** In Claude Code, paste one of:
+2. **Configure the workspace.** In Claude Code, paste one of:
    ```
-   Set me up with a Maskin development workspace — I'm building a product.
-   ```
-   ```
-   Set me up with a Maskin growth workspace — I'm launching a product and need a pipeline.
+   Configure my Maskin workspace with the "development" template.
    ```
    ```
-   Help me set up a Maskin workspace for my use case.
+   Configure my Maskin workspace with the "growth" template.
    ```
-   The first two apply pre-built templates (object types, statuses, custom fields, seed objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on. Total time: under 3 minutes.
+   ```
+   Configure my Maskin workspace with a custom template.
+   ```
+   The first two apply pre-built templates (object types, statuses, custom fields, seed objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on. Claude will ask a couple of light tailoring questions (workspace name, what you're building, near-term goal) — answer any, all, or none. Total time: under 3 minutes.
 
 Rename the default actor and workspace whenever you're ready — from the UI (Settings → Profile / Workspace) or via MCP (`update_actor`, `update_workspace`). Run `get_started` again any time on a different workspace by passing `workspace_id`.
 

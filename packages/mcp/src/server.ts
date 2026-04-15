@@ -1940,17 +1940,47 @@ export function createMcpServer(config: McpConfig) {
 					([id, ext]) => `  • ${ext.name} (${id}): types [${ext.types.join(', ')}]`,
 				)
 				const seedLines = template.seedNodes.map(
-					(n) => `  • ${displayNames[n.type] ?? n.type}: ${n.title}`,
+					(n) => `  • [${n.$id}] ${displayNames[n.type] ?? n.type}: ${n.title}`,
 				)
 
 				return textResponse(
-					`📋 Preview — "${template.name}" template for workspace "${workspace.name}"\n\n${template.description}\n\nObject types & statuses:\n${previewLines.join('\n')}\n${
-						extLines.length > 0 ? `\nCustom extensions:\n${extLines.join('\n')}\n` : ''
-					}\nSeed examples (${template.seedNodes.length} objects + ${template.seedEdges.length} relationships):\n${seedLines.join('\n')}\n\nTo apply, call get_started again with:\n  template: "${template.id}"\n  confirm: true`,
+					`📋 Preview — "${template.name}" template for workspace "${workspace.name}"
+
+${template.description}
+
+Object types & statuses:
+${previewLines.join('\n')}
+${extLines.length > 0 ? `\nCustom extensions:\n${extLines.join('\n')}\n` : ''}
+Seed examples (${template.seedNodes.length} objects + ${template.seedEdges.length} relationships):
+${seedLines.join('\n')}
+
+Before applying, ASK THE USER these questions in one message so we can tailor the workspace. They can answer any, all, or none:
+  1. What should I name the workspace? (currently "${workspace.name}")
+  2. What are you building or working on?
+  3. Any near-term goal or milestone I should reflect in the starter examples?
+
+Then call get_started again with confirm: true, and (if the user told you anything) pass workspace_name and/or seed_overrides keyed by the [$id] shown above. If the user said "just apply it" or gave nothing, call with only { template: "${template.id}", confirm: true }.`,
 				)
 			}
 
-			// Apply: merge settings, then seed objects via /api/graph
+			// Apply: optional rename → merge settings → seed objects via /api/graph
+			if (args.workspace_name && args.workspace_name.trim() !== workspace.name) {
+				try {
+					await apiCall(
+						config,
+						'PATCH',
+						`/api/workspaces/${workspace.id}`,
+						{ name: args.workspace_name.trim() },
+						{ workspaceId: workspace.id },
+					)
+					workspace.name = args.workspace_name.trim()
+				} catch (err) {
+					return textResponse(
+						`❌ Failed to rename workspace: ${String(err)}\n\nNothing else was applied. Retry with a different name, or omit workspace_name.`,
+					)
+				}
+			}
+
 			try {
 				await apiCall(
 					config,
@@ -1965,16 +1995,28 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
+			const overrides = args.seed_overrides ?? {}
+			const tailoredNodes = template.seedNodes.map((n) => {
+				const o = overrides[n.$id]
+				if (!o) return n
+				return {
+					...n,
+					title: o.title ?? n.title,
+					content: o.content ?? n.content,
+					metadata: o.metadata ? { ...n.metadata, ...o.metadata } : n.metadata,
+				}
+			})
+
 			let seedSummary = ''
 			try {
 				const graphResult = (await apiCall(
 					config,
 					'POST',
 					'/api/graph',
-					{ nodes: template.seedNodes, edges: template.seedEdges },
+					{ nodes: tailoredNodes, edges: template.seedEdges },
 					{ workspaceId: workspace.id },
 				)) as { objects?: Array<{ id: string }>; relationships?: Array<{ id: string }> }
-				const createdObjects = graphResult.objects?.length ?? template.seedNodes.length
+				const createdObjects = graphResult.objects?.length ?? tailoredNodes.length
 				const createdEdges = graphResult.relationships?.length ?? template.seedEdges.length
 				seedSummary = `Seeded ${createdObjects} example objects and ${createdEdges} relationships.`
 			} catch (err) {

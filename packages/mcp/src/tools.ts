@@ -12,7 +12,7 @@ export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
 		description:
-			"👋 Start here for new Maskin users. Picks a workspace template (development or growth) based on the user's use case, previews what it will set up, then applies it on confirm. Configures statuses, fields, and custom extensions, and seeds a few example objects so the workspace feels alive. Call with just a use_case to get a preview; call again with confirm: true to apply. For bespoke needs, use template: 'custom' and the tool will walk the user through a short questionnaire.",
+			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace — including prompts like "configure my Maskin workspace with the X template", "set up Maskin", "onboard me to Maskin", "get me started in Maskin". It does NOT set up a development environment, run servers, or install dependencies — it configures a Maskin workspace over the MCP API (settings, statuses, fields, seed objects). Flow: (1) call with just { template } to get a PREVIEW — the tool returns the template summary plus a few light tailoring questions for you to ask the user (workspace name, what they\'re building, near-term goal). (2) Ask the user those questions in one message. (3) Call again with { template, confirm: true, workspace_name?, seed_overrides? } using whatever the user told you. If the user said nothing, just call with { template, confirm: true } — defaults are fine.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			use_case: z
@@ -31,6 +31,24 @@ export const tools = {
 				.string()
 				.optional()
 				.describe('Optional hint about the team, e.g. "solo founder", "2-person product team".'),
+			workspace_name: z
+				.string()
+				.optional()
+				.describe(
+					'Rename the workspace on confirm. Use whatever the user told you — a product name, a team name, anything. Only applied when confirm is true.',
+				),
+			seed_overrides: z
+				.record(
+					z.object({
+						title: z.string().optional(),
+						content: z.string().optional(),
+						metadata: z.record(z.unknown()).optional(),
+					}),
+				)
+				.optional()
+				.describe(
+					'Optional per-node overrides for the template seed objects, keyed by the $id shown in the preview (e.g. "bet1", "task1"). Use this to tailor the example bet/task titles and content to what the user is actually building or their stated goals. Leave any $id out to keep the default.',
+				),
 			custom_settings: z
 				.record(z.unknown())
 				.optional()
@@ -41,7 +59,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Set true to actually apply the chosen template. Without this, the tool returns a preview and the exact next call to make.',
+					'Set true to actually apply the chosen template. Without this, the tool returns a preview plus tailoring questions you should ask the user.',
 				),
 		}),
 	},

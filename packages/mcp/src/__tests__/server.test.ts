@@ -478,7 +478,7 @@ describe('tool handlers', () => {
 			expect(text).toContain('contact')
 		})
 
-		it('previews development template without applying', async () => {
+		it('previews development template and prompts for tailoring questions', async () => {
 			mockFetchSuccess([workspace])
 
 			const handler = getHandler('get_started')
@@ -490,6 +490,9 @@ describe('tool handlers', () => {
 			expect(text).toContain('Preview')
 			expect(text).toContain('Development')
 			expect(text).toContain('confirm: true')
+			expect(text).toContain('ASK THE USER')
+			expect(text).toContain('workspace_name')
+			expect(text).toContain('seed_overrides')
 		})
 
 		it('applies template with confirm: true — PATCH settings and POST graph', async () => {
@@ -520,6 +523,42 @@ describe('tool handlers', () => {
 			expect((calls[1][1] as RequestInit).method).toBe('PATCH')
 			expect(calls[2][0]).toBe('http://localhost:3000/api/graph')
 			expect((calls[2][1] as RequestInit).method).toBe('POST')
+		})
+
+		it('renames workspace and applies seed_overrides on confirm', async () => {
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-1', name: 'Acme' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-1' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ objects: [{ id: 'o1' }], relationships: [] }),
+				} as Response)
+
+			const handler = getHandler('get_started')
+			await handler({
+				template: 'development',
+				confirm: true,
+				workspace_name: 'Acme',
+				seed_overrides: {
+					bet1: { title: 'Ship MVP by June' },
+				},
+			})
+
+			const calls = fetchSpy.mock.calls
+			// 1st: GET workspaces; 2nd: PATCH rename; 3rd: PATCH settings; 4th: POST graph
+			const renameBody = JSON.parse((calls[1][1] as RequestInit).body as string)
+			expect(renameBody).toEqual({ name: 'Acme' })
+			const graphBody = JSON.parse((calls[3][1] as RequestInit).body as string)
+			const bet1 = graphBody.nodes.find((n: { $id: string }) => n.$id === 'bet1')
+			expect(bet1.title).toBe('Ship MVP by June')
 		})
 
 		it('asks a questionnaire when template is custom and no custom_settings', async () => {

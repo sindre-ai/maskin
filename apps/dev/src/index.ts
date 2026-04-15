@@ -287,9 +287,9 @@ ${accountLine}
 ${mcpSetup}
 
     2. In Claude Code, paste one of:
-       Set me up with a Maskin development workspace — I'm building a product.
-       Set me up with a Maskin growth workspace — I'm launching a product and need a pipeline.
-       Help me set up a Maskin workspace for my use case.
+       Configure my Maskin workspace with the "development" template.
+       Configure my Maskin workspace with the "growth" template.
+       Configure my Maskin workspace with a custom template.
 
  Docs: README.md  ·  API: ${apiUrl}/api/health  ·  OpenAPI: ${apiUrl}/api/openapi.json
 
