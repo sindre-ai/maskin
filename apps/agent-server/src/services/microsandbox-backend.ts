@@ -41,12 +41,24 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			}
 		}
 
+		// libkrun requires ASCII-only env var values — strip non-ASCII chars
+		// (e.g. æøå in workspace names) to avoid InvalidAscii panic.
+		const sanitizedEnv: Record<string, string> = {}
+		for (const [key, value] of Object.entries(options.env)) {
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ASCII filter
+			const ascii = value.replace(/[^\x00-\x7F]/g, '')
+			if (ascii !== value) {
+				logger.warn(`Stripped non-ASCII chars from env var: ${key}`)
+			}
+			sanitizedEnv[key] = ascii
+		}
+
 		const sandbox = await Sandbox.create({
 			name: options.name,
 			image: options.image,
 			memoryMib: options.memoryMb,
 			cpus: Math.max(1, Math.round(options.cpuShares / 1024)),
-			env: options.env,
+			env: sanitizedEnv,
 			volumes,
 			network: NetworkPolicy.allowAll(),
 			maxDurationSecs: options.maxDurationSecs,
