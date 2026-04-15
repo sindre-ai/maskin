@@ -260,8 +260,8 @@ serve({ fetch: app.fetch, port }, () => {
 	const apiUrl = `http://localhost:${port}`
 
 	const mcpSetup = bootstrap
-		? `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=${bootstrap.apiKey} -e WORKSPACE_ID=${bootstrap.workspaceId} -- npx tsx packages/mcp/src/server.ts`
-		: `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=<your_api_key> -e WORKSPACE_ID=<your_workspace_id> -- npx tsx packages/mcp/src/server.ts
+		? `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=${bootstrap.apiKey} -e WORKSPACE_ID=${bootstrap.workspaceId} -- pnpm --filter @maskin/mcp start`
+		: `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=<your_api_key> -e WORKSPACE_ID=<your_workspace_id> -- pnpm --filter @maskin/mcp start
     (find your key + workspace id in the UI under Settings)`
 
 	const accountLine = bootstrap
