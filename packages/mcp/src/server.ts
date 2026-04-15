@@ -2135,11 +2135,11 @@ The development pipeline is wired up end-to-end: Bet Planner → Senior Develope
 
 INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print this block verbatim. Render EXACTLY this format (no extra prose, no per-step explanations):
 
-  How to get the machine moving
+  How to get the machine moving — just say yes and I'll:
     1. Connect GitHub
     2. Sharpen the starter tasks
     3. Kick off task 1 (Senior Developer picks it up)
-    4. Review + merge
+    4. Hand off to Code Reviewer + CTO for review and merge
 
   Start now?
 
