@@ -2095,34 +2095,44 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			}
 
 			const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
-			// Append the API key + actor info as URL fragment params so clicking the
-			// link auto-authenticates the user AND populates actor info in localStorage.
-			// Fragments are not sent to the server; the frontend consumes + strips the
-			// fragment on load (see consumeMagicLink).
-			const magicParams = new URLSearchParams()
-			if (config.apiKey) magicParams.set('key', config.apiKey)
-			try {
-				const members = (await apiCall(
-					config,
-					'GET',
-					`/api/workspaces/${workspace.id}/members`,
-					undefined,
-					{ workspaceId: workspace.id },
-				)) as Array<{
-					actorId: string
-					name: string | null
-					email: string | null
-					type: string
-				}>
-				const human = members.find((m) => m.type === 'human') ?? members[0]
-				if (human) {
-					magicParams.set('actor_id', human.actorId)
-					if (human.name) magicParams.set('actor_name', human.name)
-					if (human.email) magicParams.set('actor_email', human.email)
-					if (human.type) magicParams.set('actor_type', human.type)
+			// Magic-link auto-auth is only safe on localhost: the URL carries the raw
+			// API key in its fragment, so it must not end up in shared browser history,
+			// agent transcripts, or forwarded links. For any non-local frontend, emit a
+			// plain URL and let the user sign in normally.
+			const isLocalFrontend = (() => {
+				try {
+					const host = new URL(frontendUrl).hostname
+					return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1'
+				} catch {
+					return false
 				}
-			} catch {
-				// Best-effort; the frontend still works with just the key.
+			})()
+			const magicParams = new URLSearchParams()
+			if (isLocalFrontend && config.apiKey) {
+				magicParams.set('key', config.apiKey)
+				try {
+					const members = (await apiCall(
+						config,
+						'GET',
+						`/api/workspaces/${workspace.id}/members`,
+						undefined,
+						{ workspaceId: workspace.id },
+					)) as Array<{
+						actorId: string
+						name: string | null
+						email: string | null
+						type: string
+					}>
+					const human = members.find((m) => m.type === 'human') ?? members[0]
+					if (human) {
+						magicParams.set('actor_id', human.actorId)
+						if (human.name) magicParams.set('actor_name', human.name)
+						if (human.email) magicParams.set('actor_email', human.email)
+						if (human.type) magicParams.set('actor_type', human.type)
+					}
+				} catch {
+					// Best-effort; the frontend still works with just the key.
+				}
 			}
 			const magicSuffix = magicParams.toString() ? `#${magicParams.toString()}` : ''
 			const workspaceUrl = `${frontendUrl}/${workspace.id}${magicSuffix}`
