@@ -1897,7 +1897,7 @@ export function createMcpServer(config: McpConfig) {
 						config,
 						'PATCH',
 						`/api/workspaces/${workspace.id}`,
-						{ settings: { ...args.custom_settings, onboarding_completed: true } },
+						{ settings: args.custom_settings },
 						{ workspaceId: workspace.id },
 					)
 					return textResponse(

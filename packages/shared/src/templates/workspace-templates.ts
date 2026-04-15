@@ -49,7 +49,6 @@ const developmentTemplate: WorkspaceTemplate = {
 		},
 		relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
 		enabled_modules: ['work'],
-		onboarding_completed: true,
 	},
 	seedNodes: [
 		{
@@ -154,7 +153,6 @@ const growthTemplate: WorkspaceTemplate = {
 		},
 		relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'works_at'],
 		enabled_modules: ['work'],
-		onboarding_completed: true,
 	},
 	seedNodes: [
 		{
