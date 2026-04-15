@@ -4,19 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Onboarding a new user from Claude Code
 
-If the user asks how to start this repo, start it, set it up, or similar — follow this flow exactly. The goal is to get them from clone → running workspace → MCP-connected → `get_started` in as few steps as possible. Do NOT guess commands or URLs; read the dev server's own banner output.
+If the user asks how to start this repo, start it, set it up, or similar — follow this flow exactly. The goal is to get them from clone → running workspace → MCP-connected → `get_started` in as few steps as possible, inside a SINGLE Claude Code session. Do NOT guess commands or URLs; read the dev server's own banner output.
 
 1. **Install deps + start the stack.** Run `pnpm install`, then start the dev stack in the background with `pnpm dev:win` on Windows or `pnpm dev` on macOS/Linux. Use a background shell so the logs keep streaming.
 2. **Wait for the startup banner.** Poll the shell output (BashOutput / similar) until you see the `🚀 Maskin is running` banner printed by `apps/dev`. It appears after `PG NOTIFY bridge started` and the S3/container init lines. Don't tell the user anything is ready before you see this banner.
 3. **Extract the ready-made MCP command from the banner.** The banner prints a copy-pasteable `claude mcp add maskin -e API_BASE_URL=... -e API_KEY=ank_... -e WORKSPACE_ID=... -- pnpm --filter @maskin/mcp start` line with real credentials (the dev bootstrap auto-provisions a `dev@local` actor + `My Workspace` on a fresh DB, or looks up an existing actor if the DB already has one). Parse that exact line from the log output — do NOT reconstruct it by hand.
 4. **Run that exact `claude mcp add` command** for the user so the MCP server gets wired into Claude Code.
-5. **Tell the user to paste one of the starter prompts** into the same (or a new) Claude Code session:
-   - `Configure my Maskin workspace with the "development" template.`
-   - `Configure my Maskin workspace with the "growth" template.`
-   - `Configure my Maskin workspace with a custom template.`
-   The `get_started` MCP tool drives the rest of the setup from there (template pick, tailoring questions, workspace URL, pipeline kickoff).
+5. **Reload plugins to pick up the new MCP server in this session** by running `/reload-plugins`. This is critical — it makes the Maskin MCP tools (including `get_started`) available immediately without closing and reopening Claude Code.
+6. **Ask the user which template they want.** Do NOT wait for them to paste a starter prompt. Ask directly, e.g.: "Which template should I set up? Options: (1) development — for building and shipping a product, (2) growth — for running a launch/outreach pipeline, (3) custom — a few questions and I'll tailor it. Just say 1, 2, 3, or 'dev' / 'growth' / 'custom'." Once they pick, call the `get_started` MCP tool with the corresponding `template` arg. `get_started` drives the rest (tailoring questions, preview, apply, pipeline kickoff).
 
-Don't skip the banner read in step 2. The API key and workspace id only exist after the dev server has booted and the auto-bootstrap has run — reading the banner is the authoritative way to get them.
+Don't skip steps 2 or 5. The API key and workspace id only exist after the dev server boots and the auto-bootstrap runs; and without `/reload-plugins` the MCP tools won't be callable in the current session.
 
 ## Sub-project CLAUDE.md
 - `apps/web/CLAUDE.md` — detailed frontend guidance: product philosophy, design system, component conventions, routing, state management, SSE patterns, and styling rules
