@@ -22,19 +22,64 @@ An open-source workspace where AI agents run product development autonomously. H
 git clone https://github.com/sindre-ai/maskin.git && cd maskin
 pnpm install
 
-# Start everything (Docker, migrations, backend + frontend)
-pnpm dev
-
-# On Windows (cmd/PowerShell), use:
-pnpm dev:win
-
-# Seed demo data (optional)
-pnpm db:seed
+# Start everything (Docker + migrations + backend + frontend)
+pnpm dev          # macOS / Linux
+pnpm dev:win      # Windows (cmd / PowerShell)
 ```
 
-`pnpm dev` automatically starts PostgreSQL + SeaweedFS via Docker, runs pending migrations, then launches all services.
+`pnpm dev` boots PostgreSQL + SeaweedFS via Docker, runs migrations, then starts the backend (`http://localhost:3000`) and frontend (`http://localhost:5173`). When the backend prints its startup banner, pick one of the two paths below.
 
-Backend starts at `http://localhost:3000` (`/api/health` to verify). Frontend starts at `http://localhost:5173`.
+### ① Get started from the browser
+
+1. Open `http://localhost:5173` and create an account.
+2. Create your first workspace from the UI.
+3. (Optional) Connect MCP from **Settings → MCP** later if you want agents to drive the workspace.
+
+### ② Get started from Claude Code (no UI)
+
+For users who prefer to stay in the terminal — Maskin can be set up entirely through MCP.
+
+1. **Create an actor (gives you an API key):**
+   ```bash
+   curl -X POST http://localhost:3000/api/actors \
+     -H "Content-Type: application/json" \
+     -d '{"type":"agent","name":"Me"}'
+   ```
+   Save the `api_key` from the response.
+
+2. **Create an empty workspace:**
+   ```bash
+   curl -X POST http://localhost:3000/api/workspaces \
+     -H "Authorization: Bearer <API_KEY>" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"My Workspace"}'
+   ```
+   Save the `id`.
+
+3. **Wire MCP into Claude Code (or any MCP client):**
+   ```bash
+   claude mcp add maskin \
+     -e API_BASE_URL=http://localhost:3000 \
+     -e API_KEY=<API_KEY> \
+     -e WORKSPACE_ID=<WORKSPACE_ID> \
+     -- npx tsx packages/mcp/src/server.ts
+   ```
+
+4. **Bootstrap the workspace.** In Claude Code, paste one of:
+   ```
+   Set me up with a Maskin development workspace — I'm building a product.
+   ```
+   ```
+   Set me up with a Maskin growth workspace — I'm launching a product and need a pipeline.
+   ```
+   ```
+   Help me set up a Maskin workspace for my use case.
+   ```
+   The first two apply pre-built templates (object types, statuses, custom fields, and seed objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on. Total time: under 3 minutes.
+
+You can re-run `get_started` any time on a different workspace — pass a different `WORKSPACE_ID` (or `workspace_id` arg) to set up another one.
+
+> Want demo data instead? Run `pnpm db:seed` for a pre-populated example workspace.
 
 ## Architecture
 
@@ -265,54 +310,11 @@ External agents connect via the Model Context Protocol (39 tools available), sup
 - **Works with any MCP-compatible client** -- Claude Code, Claude Desktop, OpenAI agents, custom implementations
 - **Authenticated via API key** -- same auth as any other actor
 
-## MCP Server Setup
+## MCP Reference
 
-To connect Claude Code (or any MCP client) to the workspace:
+Maskin exposes 39 MCP tools over both stdio and HTTP. See **Quick Start → Get started from Claude Code** above for the one-command setup. Other clients (Claude Desktop, OpenAI agents, custom implementations) use the same env vars (`API_BASE_URL`, `API_KEY`, `WORKSPACE_ID`) — point them at `npx tsx packages/mcp/src/server.ts` for stdio, or `POST http://localhost:3000/mcp` for HTTP.
 
-1. Create an actor to get an API key:
-   ```bash
-   curl -X POST http://localhost:3000/api/actors \
-     -H "Content-Type: application/json" \
-     -d '{"type": "agent", "name": "Claude Code"}'
-   ```
-   Save the `api_key` from the response.
-
-2. Add to your MCP client config (e.g., `.claude/claude_desktop_config.json`):
-   ```json
-   {
-     "mcpServers": {
-       "maskin": {
-         "command": "npx",
-         "args": ["tsx", "packages/mcp/src/server.ts"],
-         "env": {
-           "API_BASE_URL": "http://localhost:3000",
-           "API_KEY": "your-api-key",
-           "WORKSPACE_ID": "your-workspace-id"
-         }
-       }
-     }
-   }
-   ```
-
-3. The agent can now create insights, propose bets, break down tasks, manage sessions, and query the event log -- all through tool calls.
-
-## Getting Started (one-liner prompts)
-
-After MCP Server Setup, paste any of these into Claude Code, Claude Cowork, Claude Desktop, or any MCP-connected agent. The agent will call the `get_started` tool, preview the template, and set up your workspace in under 3 minutes.
-
-```
-Set me up with a Maskin development workspace — I'm building a product.
-```
-
-```
-Set me up with a Maskin growth workspace — I'm launching a product and need a pipeline.
-```
-
-```
-Help me set up a Maskin workspace for my use case.
-```
-
-The first two apply pre-built templates (object types, statuses, custom fields, and a few example objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on.
+The first tool a new agent should call is `get_started` — it previews and applies a workspace template, or walks the user through a custom setup.
 
 ## Docker
 

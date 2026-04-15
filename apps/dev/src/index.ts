@@ -241,7 +241,50 @@ if (fs.existsSync(staticDir)) {
 const port = Number(process.env.PORT) || 3000
 logger.info(`Starting server on port ${port}`)
 
-serve({ fetch: app.fetch, port })
+serve({ fetch: app.fetch, port }, () => {
+	const webUrl = 'http://localhost:5173'
+	const apiUrl = `http://localhost:${port}`
+	const banner = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚀 Maskin is running
+
+ Two ways to get started:
+
+ ① From the browser
+    1. Open ${webUrl} and create an account
+    2. The UI walks you through workspace setup
+    3. Optional: connect MCP later from Settings
+
+ ② From Claude Code (or any MCP client) — zero UI
+    1. Create an account from the CLI:
+       curl -X POST ${apiUrl}/api/actors \\
+         -H "Content-Type: application/json" \\
+         -d '{"type":"agent","name":"Me"}'
+       (save the api_key from the response)
+
+    2. Create an empty workspace:
+       curl -X POST ${apiUrl}/api/workspaces \\
+         -H "Authorization: Bearer <API_KEY>" \\
+         -H "Content-Type: application/json" \\
+         -d '{"name":"My Workspace"}'
+       (save the workspace id)
+
+    3. Wire up MCP (one command):
+       claude mcp add maskin \\
+         -e API_BASE_URL=${apiUrl} \\
+         -e API_KEY=<API_KEY> \\
+         -e WORKSPACE_ID=<WORKSPACE_ID> \\
+         -- npx tsx packages/mcp/src/server.ts
+
+    4. In Claude Code, paste:
+       Set me up with a Maskin development workspace
+       (or "growth", or "Help me set up a Maskin workspace for my use case")
+
+ Docs: README.md  ·  API: ${apiUrl}/api/health  ·  OpenAPI: ${apiUrl}/api/openapi.json
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`
+	process.stdout.write(banner)
+})
 
 export default app
 export type AppType = typeof app
