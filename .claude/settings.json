@@ -21,6 +21,21 @@
 						"type": "command",
 						"command": "bash -c 'FILE=\"$TOOL_INPUT_FILE_PATH$TOOL_INPUT_file_path\"; if echo \"$FILE\" | grep -q \"apps/web/src/components/\"; then echo \"COMPONENT FILE GUARD: Before modifying a component, verify: (1) You checked the component reuse hierarchy in .claude/rules/frontend.md (2) You are using cn() for class merging (3) You are using semantic color tokens, not raw values (4) You are using Radix UI primitives, not raw HTML form elements. If creating a NEW component file, justify why no existing component works.\"; fi'",
 						"statusMessage": "Checking component file rules..."
+					},
+					{
+						"type": "command",
+						"command": "bash -c 'FILE=\"$TOOL_INPUT_FILE_PATH$TOOL_INPUT_file_path\"; if echo \"$FILE\" | grep -q \"apps/dev/src/routes/\"; then echo \"INPUT VALIDATION GUARD: Before modifying a route handler, verify: (1) All HTTP query/path parameters are validated — use Number.isFinite() for numeric params, check for NaN and negative values (2) String params used in queries are format-checked (e.g., UUID regex) (3) Env var keys are validated against [A-Za-z_][A-Za-z0-9_]* if interpolating into shell commands (4) See .claude/rules/input-validation.md for the full checklist\"; fi'",
+						"statusMessage": "Checking backend route input validation rules..."
+					},
+					{
+						"type": "command",
+						"command": "bash -c 'FILE=\"$TOOL_INPUT_FILE_PATH$TOOL_INPUT_file_path\"; if echo \"$FILE\" | grep -q \"packages/db/\"; then echo \"MIGRATION FILE GUARD: Before modifying a migration or DB file, verify: (1) If using pg_notify(), ensure payload is under 8KB — truncate large fields like content or description (2) See migration 0006_notify_drop_data.sql for the established truncation pattern (3) Check .claude/rules/known-pitfalls.md for recurring issues including PG NOTIFY silent failures\"; fi'",
+						"statusMessage": "Checking migration file rules..."
+					},
+					{
+						"type": "command",
+						"command": "bash -c 'FILE=\"$TOOL_INPUT_FILE_PATH$TOOL_INPUT_file_path\"; if echo \"$FILE\" | grep -q \"apps/dev/src/services/\"; then echo \"SERVICE FILE GUARD: Before modifying a backend service, verify: (1) Validate any env vars or secrets before interpolating into shell/exec commands (e.g., session-manager.ts uses Docker exec) (2) Use spawn(cmd, args) without shell:true instead of string interpolation for shell commands (3) Validate env var keys match [A-Za-z_][A-Za-z0-9_]* before interpolation (4) Check .claude/rules/input-validation.md for shell injection prevention\"; fi'",
+						"statusMessage": "Checking backend service input validation rules..."
 					}
 				]
 			}
