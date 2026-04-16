@@ -67,10 +67,7 @@ function toolResult(toolName: string, data: unknown, formatted: string) {
 	return {
 		_meta: { toolName },
 		structuredContent: data as Record<string, unknown>,
-		content: [
-			{ type: 'text' as const, text: formatted },
-			{ type: 'text' as const, text: JSON.stringify(data, null, 2) },
-		],
+		content: [{ type: 'text' as const, text: formatted }],
 	}
 }
 
@@ -168,6 +165,9 @@ async function apiCall(
 		} catch {
 			message = errorText
 		}
+		if (response.status === 404) {
+			message += ' Check the ID is correct or use the corresponding list tool to browse.'
+		}
 		throw new Error(`API error ${response.status}: ${message}`)
 	}
 
@@ -182,7 +182,8 @@ async function getWorkspace(
 		skipWorkspace: true,
 	})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
 	const workspace = workspaces.find((w) => w.id === workspaceId)
-	if (!workspace) throw new Error('Workspace not found')
+	if (!workspace)
+		throw new Error('Workspace not found. Call list_workspaces to see available workspaces.')
 	return workspace
 }
 
@@ -329,7 +330,7 @@ export function createMcpServer(config: McpConfig) {
 			const { workspace_id, ...body } = args
 			const result = (await apiCall(config, 'POST', '/api/graph', body, {
 				workspaceId: workspace_id,
-			})) as { nodes?: unknown[]; edges?: unknown[] }
+			})) as { nodes?: Array<{ id?: string }>; edges?: unknown[] }
 			const nodeCount = result.nodes?.length ?? 0
 			const edgeCount = result.edges?.length ?? 0
 			const detail = [
@@ -338,10 +339,15 @@ export function createMcpServer(config: McpConfig) {
 			]
 				.filter(Boolean)
 				.join(', ')
+			const ids = (result.nodes ?? []).map((n) => n.id).filter(Boolean)
+			const hints = [
+				ids.length > 0 ? `IDs: ${ids.join(', ')}` : '',
+				'Use get_objects to view details or update_objects to modify.',
+			].filter(Boolean)
 			return toolResult(
 				'create_objects',
 				result,
-				formatConfirmation('Created', detail || 'objects'),
+				formatConfirmation('Created', detail || 'objects', hints.join('\n')),
 			)
 		},
 	)
@@ -453,11 +459,19 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			const succeeded = results.filter((r) => r.success).length
-			const failed = results.length - succeeded
-			const detail = [`${succeeded} succeeded`, failed && `${failed} failed`]
+			const failures = results.filter((r) => !r.success)
+			const detail = [`${succeeded} succeeded`, failures.length && `${failures.length} failed`]
 				.filter(Boolean)
 				.join(', ')
-			return toolResult('update_objects', { data: results }, formatConfirmation('Updated', detail))
+			const failureHint =
+				failures.length > 0
+					? failures.map((f) => `  ❌ ${f.type} ${f.id}: ${f.error}`).join('\n')
+					: undefined
+			return toolResult(
+				'update_objects',
+				{ data: results },
+				formatConfirmation('Updated', detail, failureHint),
+			)
 		},
 	)
 
@@ -474,7 +488,15 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'DELETE', `/api/objects/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
-			return toolResult('delete_object', result, formatConfirmation('Deleted object', args.id))
+			return toolResult(
+				'delete_object',
+				result,
+				formatConfirmation(
+					'Deleted object',
+					args.id,
+					'Associated relationships were also removed.',
+				),
+			)
 		},
 	)
 
@@ -672,13 +694,17 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/actors/${args.id}/api-keys`, undefined, {
+			const result = (await apiCall(config, 'POST', `/api/actors/${args.id}/api-keys`, undefined, {
 				skipWorkspace: true,
-			})
+			})) as { api_key?: string }
+			const hints = [
+				result.api_key ? `New key: ${result.api_key}` : '',
+				'⚠ Old key is now invalid. Save the new key — it is shown once.',
+			].filter(Boolean)
 			return toolResult(
 				'regenerate_api_key',
 				result,
-				formatConfirmation('Regenerated API key', `actor ${args.id}`),
+				formatConfirmation('Regenerated API key', `actor ${args.id}`, hints.join('\n')),
 			)
 		},
 	)
@@ -758,7 +784,7 @@ export function createMcpServer(config: McpConfig) {
 				(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
 				workspaces[0]
 			if (!workspace) {
-				throw new Error('No workspace found')
+				throw new Error('No workspace found. Call list_workspaces to see available workspaces.')
 			}
 
 			const settings = workspace.settings ?? {}
@@ -1052,7 +1078,8 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', '/api/sessions', body, {
 				workspaceId: workspace_id,
 			})) as Record<string, unknown>
-			return toolResult('create_session', result, formatSession(result))
+			const hint = '\nUse get_session to check status or get_session with include_logs for output.'
+			return toolResult('create_session', result, formatSession(result) + hint)
 		},
 	)
 
@@ -1128,7 +1155,11 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
 				workspaceId: args.workspace_id,
 			})
-			return toolResult('stop_session', result, formatConfirmation('Stopped session', args.id))
+			return toolResult(
+				'stop_session',
+				result,
+				formatConfirmation('Stopped session', args.id, 'Container has been terminated.'),
+			)
 		},
 	)
 
@@ -1145,7 +1176,15 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
 				workspaceId: args.workspace_id,
 			})
-			return toolResult('pause_session', result, formatConfirmation('Paused session', args.id))
+			return toolResult(
+				'pause_session',
+				result,
+				formatConfirmation(
+					'Paused session',
+					args.id,
+					'Use resume_session to continue from snapshot.',
+				),
+			)
 		},
 	)
 

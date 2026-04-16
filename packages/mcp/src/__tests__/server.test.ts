@@ -197,9 +197,8 @@ describe('tool handlers', () => {
 			)
 
 			expect(result.structuredContent).toEqual(mockResult)
-			// JSON fallback in content[1]
-			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed).toEqual(mockResult)
+			expect(result.content[0].text).toContain('IDs: 1')
+			expect(result.content[0].text).toContain('get_objects')
 		})
 
 		it('uses workspace_id from args over default', async () => {
@@ -245,10 +244,6 @@ describe('tool handlers', () => {
 
 			expect(result.structuredContent.data).toHaveLength(2)
 			expect(result.structuredContent.data[0].success).toBe(true)
-			// JSON fallback in content[1]
-			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed.data).toHaveLength(2)
-			expect(parsed.data[0].success).toBe(true)
 		})
 	})
 
@@ -272,12 +267,15 @@ describe('tool handlers', () => {
 			mockFetchSuccess({})
 
 			const handler = getHandler('delete_object')
-			await handler({ id: 'obj-123' })
+			const result = (await handler({ id: 'obj-123' })) as {
+				content: Array<{ text: string }>
+			}
 
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/objects/obj-123',
 				expect.objectContaining({ method: 'DELETE' }),
 			)
+			expect(result.content[0].text).toContain('Associated relationships')
 		})
 	})
 
@@ -320,10 +318,6 @@ describe('tool handlers', () => {
 
 			expect(result.structuredContent.workspace_id).toBe('ws-123')
 			expect(result.structuredContent.role).toBe('member')
-			// JSON fallback in content[1]
-			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed.workspace_id).toBe('ws-123')
-			expect(parsed.role).toBe('member')
 		})
 	})
 
@@ -357,11 +351,6 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.data[0].result).toEqual({ id: 'id-1', title: 'OK' })
 			expect(result.structuredContent.data[1].success).toBe(false)
 			expect(result.structuredContent.data[1].error).toContain('API error 404')
-			// JSON fallback in content[1]
-			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed.data).toHaveLength(2)
-			expect(parsed.data[0].success).toBe(true)
-			expect(parsed.data[1].success).toBe(false)
 		})
 	})
 
@@ -428,10 +417,6 @@ describe('tool handlers', () => {
 
 			expect(result.structuredContent.session.status).toBe('completed')
 			expect(result.structuredContent.logs).toEqual([{ message: 'Done' }])
-			// JSON fallback in content[1]
-			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed.session.status).toBe('completed')
-			expect(parsed.logs).toEqual([{ message: 'Done' }])
 
 			// Verify call sequence: create → poll → poll → logs
 			expect(fetchSpy).toHaveBeenCalledTimes(4)
@@ -481,9 +466,6 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.session.status).toBe('running')
 			// Should have fetched logs even though it timed out
 			expect(result.structuredContent.logs).toBeDefined()
-			// JSON fallback in content[1]
-			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed.session.status).toBe('running')
 		})
 
 		it('uses default poll_interval and timeout when not specified', async () => {
@@ -517,9 +499,6 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 			expect(result.structuredContent.session.status).toBe('completed')
-			// JSON fallback in content[1]
-			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed.session.status).toBe('completed')
 		})
 	})
 
@@ -670,6 +649,15 @@ describe('tool handlers', () => {
 			await expect(handler({})).rejects.toThrow('API error 400')
 		})
 
+		it('404 errors include guidance hint', async () => {
+			mockFetchError(404, JSON.stringify({ error: { message: 'Not found' } }))
+
+			const handler = getHandler('delete_object')
+			await expect(handler({ id: '550e8400-e29b-41d4-a716-446655440000' })).rejects.toThrow(
+				'use the corresponding list tool',
+			)
+		})
+
 		it('throws with suggestion when available', async () => {
 			mockFetchError(
 				401,
@@ -770,11 +758,6 @@ describe('tool handlers', () => {
 			// Formatted text contains dashboard heading
 			expect(result.content[0].text).toContain('Workspace Dashboard')
 			expect(result.content[0].text).toContain('Test WS')
-
-			// JSON fallback in content[1]
-			const parsed = JSON.parse(result.content[1].text)
-			expect(parsed.workspace.name).toBe('Test WS')
-			expect(parsed.objects).toHaveLength(2)
 		})
 
 		it('gracefully handles API failures with empty arrays', async () => {

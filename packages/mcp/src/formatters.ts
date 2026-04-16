@@ -38,6 +38,65 @@ function pad(str: string, len: number): string {
 	return str.length >= len ? str : str + ' '.repeat(len - str.length)
 }
 
+const CRON_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+export function describeCron(expression: string): string {
+	const parts = expression.trim().split(/\s+/)
+	if (parts.length !== 5) return expression
+
+	const [minute, hour, dayOfMonth, month, dayOfWeek] = parts as [
+		string,
+		string,
+		string,
+		string,
+		string,
+	]
+
+	// Every N minutes: */N * * * *
+	if (
+		minute.startsWith('*/') &&
+		hour === '*' &&
+		dayOfMonth === '*' &&
+		month === '*' &&
+		dayOfWeek === '*'
+	) {
+		const n = minute.slice(2)
+		return `every ${n} min`
+	}
+
+	// Fixed minute + hour patterns
+	if (/^\d+$/.test(minute) && /^\d+$/.test(hour)) {
+		const h = hour.padStart(2, '0')
+		const m = minute.padStart(2, '0')
+		const time = `${h}:${m}`
+
+		// Daily: 0 H * * *
+		if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
+			return `daily at ${time}`
+		}
+
+		// Weekdays: 0 H * * 1-5
+		if (dayOfMonth === '*' && month === '*' && dayOfWeek === '1-5') {
+			return `weekdays at ${time}`
+		}
+
+		// Weekly on a specific day: 0 H * * N
+		if (dayOfMonth === '*' && month === '*' && /^\d$/.test(dayOfWeek)) {
+			const dayIdx = Number.parseInt(dayOfWeek, 10) % 7
+			return `weekly on ${CRON_DAY_NAMES[dayIdx]} at ${time}`
+		}
+
+		// Monthly: 0 H D * *
+		if (/^\d+$/.test(dayOfMonth) && month === '*' && dayOfWeek === '*') {
+			const d = Number.parseInt(dayOfMonth, 10)
+			const suffix = d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th'
+			return `monthly on the ${d}${suffix} at ${time}`
+		}
+	}
+
+	return expression
+}
+
 // ─── Objects ─────────────────────────────────────────────
 
 interface ObjectData {
@@ -78,6 +137,8 @@ export function formatObject(obj: ObjectData): string {
 	lines.push(`  Type:    ${obj.type ?? 'unknown'}`)
 	lines.push(`  Status:  ${obj.status ?? 'unknown'}`)
 	if (obj.id) lines.push(`  ID:      ${obj.id}`)
+	const owner = obj.ownerId ?? obj.owner_id
+	if (owner) lines.push(`  Owner:   ${owner}`)
 	if (created) lines.push(`  Created: ${timeAgo(created)}`)
 	if (updated) lines.push(`  Updated: ${timeAgo(updated)}`)
 
@@ -129,7 +190,9 @@ export function formatObjectList(
 	opts?: { query?: string; offset?: number; total?: number },
 ): string {
 	if (!objects.length) {
-		return opts?.query ? `📋 No objects found matching "${opts.query}".` : '📋 No objects found.'
+		return opts?.query
+			? `📋 No objects matching "${opts.query}". Try broader terms or use list_objects to browse.`
+			: '📋 No objects found. Use create_objects to add insights, bets, or tasks.'
 	}
 
 	const lines: string[] = []
@@ -143,11 +206,12 @@ export function formatObjectList(
 
 	for (const obj of objects) {
 		const created = obj.createdAt ?? obj.created_at
+		const idPrefix = obj.id ? `${obj.id.slice(0, 8)} | ` : ''
 		const type = pad(obj.type ?? '', typeWidth)
 		const status = pad(obj.status ?? '', statusWidth)
 		const title = truncate(obj.title, 40)
 		const ago = timeAgo(created)
-		lines.push(`  ${type} | ${status} | ${title}${ago ? ` | ${ago}` : ''}`)
+		lines.push(`  ${idPrefix}${type} | ${status} | ${title}${ago ? ` | ${ago}` : ''}`)
 	}
 
 	if (opts?.offset != null && opts.total != null) {
@@ -214,6 +278,10 @@ interface ActorData {
 	type?: string
 	email?: string
 	role?: string
+	api_key?: string
+	system_prompt?: string
+	tools?: Record<string, unknown>
+	llm_provider?: string
 	createdAt?: string
 	created_at?: string
 }
@@ -228,15 +296,30 @@ export function formatActor(actor: ActorData): string {
 	if (actor.id) lines.push(`  ID:    ${actor.id}`)
 	const created = actor.createdAt ?? actor.created_at
 	if (created) lines.push(`  Joined: ${timeAgo(created)}`)
+
+	if (actor.type === 'agent') {
+		if (actor.system_prompt) lines.push(`  Prompt: ${truncate(actor.system_prompt, 100)}`)
+		if (actor.tools && Object.keys(actor.tools).length > 0) {
+			lines.push(`  Tools:  ${Object.keys(actor.tools).join(', ')}`)
+		}
+		if (actor.llm_provider) lines.push(`  LLM:   ${actor.llm_provider}`)
+	}
+
+	if (actor.api_key) {
+		lines.push('')
+		lines.push(`  ⚠ API key (save now — shown only once): ${actor.api_key}`)
+	}
+
 	return lines.join('\n')
 }
 
 export function formatActorList(actors: ActorData[]): string {
-	if (!actors.length) return '👥 No team members found.'
+	if (!actors.length) return '👥 No team members found. Use create_actor to add humans or agents.'
 	const lines: string[] = [`👥 Team (${actors.length} member${actors.length === 1 ? '' : 's'})`, '']
 	for (const actor of actors) {
 		const role = actor.role ? ` (${actor.role})` : ''
-		lines.push(`  • ${actor.name || 'Unnamed'} — ${actor.type ?? 'unknown'}${role}`)
+		const id = actor.id ? `  id: ${actor.id}` : ''
+		lines.push(`  • ${actor.name || 'Unnamed'} — ${actor.type ?? 'unknown'}${role}${id}`)
 	}
 	return lines.join('\n')
 }
@@ -271,15 +354,39 @@ export function formatSession(session: SessionData, logs?: SessionLogEntry[]): s
 	const status = session.status ?? 'unknown'
 	const prompt = session.actionPrompt ?? session.action_prompt
 	const created = session.createdAt ?? session.created_at
+	const updated = session.updatedAt ?? session.updated_at
 
-	lines.push(`🤖 Session — ${status}`)
+	const statusIcon =
+		status === 'completed' ? ' ✓' : status === 'failed' ? ' ✗' : status === 'timeout' ? ' ⏱' : ''
+	lines.push(`🤖 Session — ${status}${statusIcon}`)
 	lines.push('')
-	if (session.id) lines.push(`  ID:     ${session.id}`)
-	lines.push(`  Status: ${status}`)
+	if (session.id) lines.push(`  ID:      ${session.id}`)
+	lines.push(`  Status:  ${status}`)
 	const actor = session.actorName ?? session.actor_name ?? session.actorId ?? session.actor_id
-	if (actor) lines.push(`  Actor:  ${actor}`)
-	if (prompt) lines.push(`  Prompt: ${truncate(prompt, 100)}`)
+	if (actor) lines.push(`  Actor:   ${actor}`)
+	if (prompt) lines.push(`  Prompt:  ${truncate(prompt, 100)}`)
 	if (created) lines.push(`  Started: ${timeAgo(created)}`)
+
+	// Elapsed time for terminal sessions
+	if (created && updated) {
+		const startMs = new Date(created).getTime()
+		const endMs = new Date(updated).getTime()
+		if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs > startMs) {
+			const sec = Math.floor((endMs - startMs) / 1000)
+			const elapsed = sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`
+			lines.push(`  Elapsed: ${elapsed}`)
+		}
+	}
+
+	// Container config
+	if (session.config) {
+		const cfg = session.config
+		const parts: string[] = []
+		if (cfg.runtime) parts.push(`runtime: ${cfg.runtime}`)
+		if (cfg.timeout_seconds) parts.push(`timeout: ${cfg.timeout_seconds}s`)
+		if (cfg.memory_mb) parts.push(`memory: ${cfg.memory_mb}MB`)
+		if (parts.length > 0) lines.push(`  Config:  ${parts.join(', ')}`)
+	}
 
 	if (logs && logs.length > 0) {
 		lines.push('')
@@ -298,20 +405,22 @@ export function formatSession(session: SessionData, logs?: SessionLogEntry[]): s
 }
 
 export function formatSessionList(sessions: SessionData[]): string {
-	if (!sessions.length) return '🤖 No sessions found.'
+	if (!sessions.length)
+		return '🤖 No sessions found. Use create_session or run_agent to start an agent.'
 	const lines: string[] = [`🤖 Sessions (${sessions.length})`, '']
 
 	const statusWidth = Math.max(...sessions.map((s) => (s.status ?? '').length), 6)
 
 	for (const session of sessions) {
+		const idPrefix = session.id ? `${session.id.slice(0, 8)} | ` : ''
 		const status = pad(session.status ?? '', statusWidth)
 		const actor =
 			session.actorName ?? session.actor_name ?? session.actorId ?? session.actor_id ?? ''
-		const prompt = truncate(session.actionPrompt ?? session.action_prompt, 50)
+		const prompt = truncate(session.actionPrompt ?? session.action_prompt, 80)
 		const created = session.createdAt ?? session.created_at
 		const ago = timeAgo(created)
 		lines.push(
-			`  ${status} | ${actor ? `${truncate(actor, 20)} | ` : ''}${prompt}${ago ? ` | ${ago}` : ''}`,
+			`  ${idPrefix}${status} | ${actor ? `${truncate(actor, 20)} | ` : ''}${prompt}${ago ? ` | ${ago}` : ''}`,
 		)
 	}
 
@@ -344,11 +453,20 @@ export function formatTrigger(trigger: TriggerData): string {
 
 	if (trigger.config) {
 		if (trigger.type === 'cron' && trigger.config.expression) {
-			lines.push(`  Schedule: ${trigger.config.expression}`)
+			const raw = trigger.config.expression as string
+			const desc = describeCron(raw)
+			lines.push(`  Schedule: ${desc !== raw ? `${desc} (${raw})` : raw}`)
 		} else if (trigger.type === 'event') {
 			const entityType = trigger.config.entity_type ?? trigger.config.entityType ?? ''
 			const action = trigger.config.action ?? ''
 			lines.push(`  Fires on: ${entityType} ${action}`)
+			const filter = trigger.config.filter
+			if (filter && typeof filter === 'object' && Object.keys(filter as object).length > 0) {
+				const parts = Object.entries(filter as Record<string, unknown>).map(
+					([k, v]) => `${k} = ${v}`,
+				)
+				lines.push(`  Filter: ${parts.join(', ')}`)
+			}
 		}
 	}
 
@@ -361,18 +479,37 @@ export function formatTrigger(trigger: TriggerData): string {
 }
 
 export function formatTriggerList(triggers: TriggerData[]): string {
-	if (!triggers.length) return '⚙️ No triggers configured.'
+	if (!triggers.length)
+		return '⚙️ No triggers configured. Use create_trigger to set up cron or event automation.'
 	const lines: string[] = [`⚙️ Triggers (${triggers.length})`, '']
 
 	for (const trigger of triggers) {
 		const enabled = trigger.enabled !== false ? '✓' : '✗'
 		const type = trigger.type ?? ''
-		const schedule =
-			type === 'cron' && trigger.config?.expression ? ` [${trigger.config.expression}]` : ''
-		lines.push(`  ${enabled} ${trigger.name || 'Unnamed'}${schedule} — ${type}`)
+		let typeDetail = type
+		if (type === 'cron' && trigger.config?.expression) {
+			typeDetail = `cron (${describeCron(trigger.config.expression as string)})`
+		} else if (type === 'event' && trigger.config) {
+			const entityType = (trigger.config.entity_type ?? trigger.config.entityType ?? '') as string
+			const action = (trigger.config.action ?? '') as string
+			typeDetail = `event${entityType || action ? ` (${[entityType, action].filter(Boolean).join(' ')})` : ''}`
+		}
+		const disabledTag = trigger.enabled === false ? ' — disabled' : ''
+		lines.push(`  ${enabled} ${trigger.name || 'Unnamed'} — ${typeDetail}${disabledTag}`)
+
+		const details: string[] = []
+		if (trigger.id) details.push(`ID: ${trigger.id}`)
+		const actor = trigger.targetActorId ?? trigger.target_actor_id
+		if (actor) details.push(`Target: ${actor}`)
+		if (details.length) lines.push(`    ${details.join('  ')}`)
+
+		const prompt = trigger.actionPrompt ?? trigger.action_prompt
+		if (prompt) lines.push(`    Prompt: "${truncate(prompt, 60)}"`)
+
+		lines.push('')
 	}
 
-	return lines.join('\n')
+	return lines.join('\n').trimEnd()
 }
 
 // ─── Notifications ───────────────────────────────────────
@@ -409,11 +546,31 @@ export function formatNotification(notif: NotificationData): string {
 		lines.push('')
 		lines.push(`  ${truncate(notif.content, 300)}`)
 	}
+
+	if (notif.metadata && Object.keys(notif.metadata).length > 0) {
+		const meta = notif.metadata
+		const details: string[] = []
+		if (Array.isArray(meta.actions)) {
+			const labels = (meta.actions as Array<{ label?: string }>).map((a) => a.label).filter(Boolean)
+			details.push(
+				labels.length > 0 ? `Actions: ${labels.join(', ')}` : `Actions: ${meta.actions.length}`,
+			)
+		}
+		if (meta.question) details.push(`Question: "${truncate(meta.question as string, 80)}"`)
+		if (meta.urgency_label) details.push(`Urgency: ${meta.urgency_label}`)
+		if (meta.input_type) details.push(`Input: ${meta.input_type}`)
+		if (details.length > 0) {
+			lines.push('')
+			for (const d of details) lines.push(`  ${d}`)
+		}
+	}
+
 	return lines.join('\n')
 }
 
 export function formatNotificationList(notifications: NotificationData[]): string {
-	if (!notifications.length) return '📢 No notifications.'
+	if (!notifications.length)
+		return '📢 No notifications. Agents can send notifications with create_notification.'
 	const lines: string[] = [`📢 Notifications (${notifications.length})`, '']
 
 	for (const notif of notifications) {
@@ -422,6 +579,10 @@ export function formatNotificationList(notifications: NotificationData[]): strin
 		const created = notif.createdAt ?? notif.created_at
 		const ago = timeAgo(created)
 		lines.push(`  ${icon} [${status}] ${notif.title || 'Untitled'}${ago ? ` — ${ago}` : ''}`)
+		const details: string[] = []
+		if (notif.id) details.push(`ID: ${notif.id}`)
+		if (notif.content) details.push(`"${truncate(notif.content, 60)}"`)
+		if (details.length) lines.push(`    ${details.join('  ')}`)
 	}
 
 	return lines.join('\n')
@@ -453,6 +614,20 @@ export function formatWorkspace(workspace: WorkspaceData): string {
 				lines.push(`  Object types: ${types.join(', ')}`)
 			}
 		}
+		const fieldDefs = workspace.settings.field_definitions as Record<string, unknown[]> | undefined
+		if (fieldDefs) {
+			const fieldCount = Object.values(fieldDefs).reduce((sum, f) => sum + (f?.length ?? 0), 0)
+			if (fieldCount > 0) {
+				const typeCount = Object.keys(fieldDefs).length
+				lines.push(
+					`  Custom fields: ${fieldCount} across ${typeCount} type${typeCount === 1 ? '' : 's'}`,
+				)
+			}
+		}
+		const relTypes = workspace.settings.relationship_types as string[] | undefined
+		if (relTypes && relTypes.length > 0) {
+			lines.push(`  Relationship types: ${relTypes.join(', ')}`)
+		}
 	}
 
 	return lines.join('\n')
@@ -479,13 +654,17 @@ interface RelationshipData {
 }
 
 export function formatRelationshipList(relationships: RelationshipData[]): string {
-	if (!relationships.length) return '🔗 No relationships found.'
+	if (!relationships.length)
+		return '🔗 No relationships found. Use create_objects with edges to link objects.'
 	const lines: string[] = [`🔗 Relationships (${relationships.length})`, '']
 	for (const rel of relationships) {
-		const source = (rel.sourceId ?? rel.source_id ?? '').slice(0, 8)
-		const target = (rel.targetId ?? rel.target_id ?? '').slice(0, 8)
-		lines.push(`  ${source}… → ${rel.type} → ${target}…`)
+		const source = rel.sourceId ?? rel.source_id ?? ''
+		const target = rel.targetId ?? rel.target_id ?? ''
+		const relId = rel.id ? `[${rel.id}] ` : ''
+		lines.push(`  ${relId}${source} → ${rel.type} → ${target}`)
 	}
+	lines.push('')
+	lines.push('Tip: Use get_objects with these IDs to see object details.')
 	return lines.join('\n')
 }
 
@@ -534,43 +713,73 @@ export function formatProviderList(providers: ProviderData[]): string {
 
 // ─── Extensions ──────────────────────────────────────────
 
+interface ExtensionTypeData {
+	type?: string
+	display_name?: string
+	statuses?: string[]
+	fields?: unknown[]
+	relationship_types?: string[]
+}
+
 interface ExtensionData {
 	id?: string
 	name?: string
 	enabled?: boolean
-	types?: Array<{ type?: string; display_name?: string; statuses?: string[] }>
-	objectTypes?: Array<{ type?: string; display_name?: string; statuses?: string[] }>
-	object_types?: Array<{ type?: string; display_name?: string; statuses?: string[] }>
+	types?: ExtensionTypeData[]
+	objectTypes?: ExtensionTypeData[]
+	object_types?: ExtensionTypeData[]
 }
 
 export function formatExtension(ext: ExtensionData): string {
 	const enabled = ext.enabled !== false ? '✓ enabled' : '✗ disabled'
 	const lines: string[] = []
 	lines.push(`🧩 ${ext.name || ext.id || 'Unnamed extension'} (${enabled})`)
+	if (ext.id) lines.push(`  ID: ${ext.id}`)
 	const types = ext.types ?? ext.objectTypes ?? ext.object_types ?? []
 	if (types.length > 0) {
 		lines.push('')
 		for (const t of types) {
-			const name = t.display_name ?? t.type ?? 'unknown'
-			const statuses = t.statuses?.join(', ') ?? ''
-			lines.push(`  • ${name}${statuses ? `: ${statuses}` : ''}`)
+			const displayName = t.display_name ?? t.type ?? 'unknown'
+			const typeKey = t.type ? ` (${t.type})` : ''
+			const statuses = t.statuses?.join(' → ') ?? ''
+			const fieldCount = t.fields?.length ?? 0
+			let fieldTag = ''
+			if (fieldCount > 0) {
+				const fieldNames = (t.fields as Array<{ name?: string }>).map((f) => f.name).filter(Boolean)
+				fieldTag =
+					fieldNames.length > 0
+						? `  [fields: ${fieldNames.join(', ')}]`
+						: `  [${fieldCount} field${fieldCount === 1 ? '' : 's'}]`
+			}
+			lines.push(`  • ${displayName}${typeKey}: ${statuses}${fieldTag}`)
 		}
 	}
 	return lines.join('\n')
 }
 
 export function formatExtensionList(extensions: ExtensionData[]): string {
-	if (!extensions.length) return '🧩 No extensions found.'
+	if (!extensions.length) return '🧩 No extensions found. Use create_extension to add object types.'
 	const lines: string[] = [`🧩 Extensions (${extensions.length})`, '']
 	for (const ext of extensions) {
 		const enabled = ext.enabled !== false ? '✓' : '✗'
+		const disabledTag = ext.enabled === false ? ' — disabled' : ''
+		const extName = ext.name || ext.id || 'Unnamed'
+		const extId = ext.id && ext.id !== ext.name ? ` (${ext.id})` : ''
+		lines.push(`  ${enabled} ${extName}${extId}${disabledTag}`)
+
 		const types = ext.types ?? ext.objectTypes ?? ext.object_types ?? []
-		const typeCount = types.length
-		lines.push(
-			`  ${enabled} ${ext.name || ext.id || 'Unnamed'}${typeCount ? ` — ${typeCount} type${typeCount === 1 ? '' : 's'}` : ''}`,
-		)
+		for (const t of types) {
+			const displayName = t.display_name ?? t.type ?? 'unknown'
+			const typeKey = t.type ? ` (${t.type})` : ''
+			const statuses = t.statuses?.join(' → ') ?? ''
+			const fieldCount = t.fields?.length ?? 0
+			const fieldTag = fieldCount > 0 ? `  [${fieldCount} field${fieldCount === 1 ? '' : 's'}]` : ''
+			lines.push(`    • ${displayName}${typeKey}: ${statuses}${fieldTag}`)
+		}
+
+		lines.push('')
 	}
-	return lines.join('\n')
+	return lines.join('\n').trimEnd()
 }
 
 // ─── Schema ──────────────────────────────────────────────
@@ -581,27 +790,38 @@ interface SchemaData {
 		{
 			display_name?: string
 			statuses?: string[]
-			fields?: Array<{ name?: string; type?: string; required?: boolean }>
+			fields?: Array<{ name?: string; type?: string; required?: boolean; values?: string[] }>
 		}
 	>
 	relationship_types?: string[]
 }
 
 export function formatSchema(schema: SchemaData): string {
-	const lines: string[] = ['📐 Workspace Schema', '']
-
 	const types = schema.types ?? {}
+	const typeCount = Object.keys(types).length
+	const relCount = schema.relationship_types?.length ?? 0
+	const summary = [
+		typeCount > 0 ? `${typeCount} type${typeCount === 1 ? '' : 's'}` : null,
+		relCount > 0 ? `${relCount} relationship type${relCount === 1 ? '' : 's'}` : null,
+	]
+		.filter(Boolean)
+		.join(', ')
+
+	const lines: string[] = [`📐 Workspace Schema${summary ? ` — ${summary}` : ''}`, '']
+
 	for (const [typeName, typeDef] of Object.entries(types)) {
 		const displayName = typeDef.display_name ?? typeName
 		lines.push(`  ${displayName} (${typeName}):`)
 		if (typeDef.statuses?.length) {
-			lines.push(`    Statuses: ${typeDef.statuses.join(', ')}`)
+			lines.push(`    Statuses: ${typeDef.statuses.join(' → ')}`)
 		}
 		if (typeDef.fields?.length) {
 			lines.push('    Fields:')
 			for (const field of typeDef.fields) {
 				const req = field.required ? ' (required)' : ''
-				lines.push(`      • ${field.name}: ${field.type}${req}`)
+				const vals =
+					field.type === 'enum' && field.values?.length ? ` [${field.values.join(', ')}]` : ''
+				lines.push(`      • ${field.name}: ${field.type}${req}${vals}`)
 			}
 		}
 		lines.push('')
@@ -616,8 +836,9 @@ export function formatSchema(schema: SchemaData): string {
 
 // ─── Confirmations ───────────────────────────────────────
 
-export function formatConfirmation(action: string, detail?: string): string {
-	return detail ? `✅ ${action}: ${detail}` : `✅ ${action}`
+export function formatConfirmation(action: string, detail?: string, hint?: string): string {
+	const base = detail ? `✅ ${action}: ${detail}` : `✅ ${action}`
+	return hint ? `${base}\n${hint}` : base
 }
 
 // ─── Dashboard ───────────────────────────────────────────
@@ -647,14 +868,15 @@ export function formatDashboard(data: DashboardData): string {
 		}
 
 		lines.push('')
-		lines.push('📈 Objects by Type')
+		lines.push(`📈 Objects by Type (${objects.length} total)`)
 		for (const [type, statuses] of Object.entries(byType)) {
 			const parts = Object.entries(statuses).map(([s, c]) => `${c} ${s}`)
-			lines.push(`  ${type}: ${parts.join(', ')}`)
+			const typeTotal = Object.values(statuses).reduce((a, b) => a + b, 0)
+			lines.push(`  ${type}: ${parts.join(', ')} (${typeTotal} total)`)
 		}
 	} else {
 		lines.push('')
-		lines.push('📈 No objects yet')
+		lines.push('📈 No objects yet. Use create_objects to get started.')
 	}
 
 	// Recent activity
@@ -678,10 +900,11 @@ export function formatDashboard(data: DashboardData): string {
 		lines.push('')
 		lines.push('🤖 Active Sessions')
 		for (const session of sessions) {
+			const idPrefix = session.id ? `${session.id.slice(0, 8)} | ` : ''
 			const actor =
 				session.actorName ?? session.actor_name ?? session.actorId ?? session.actor_id ?? ''
 			const prompt = truncate(session.actionPrompt ?? session.action_prompt, 50)
-			lines.push(`  • ${actor} — ${prompt} — ${session.status}`)
+			lines.push(`  • ${idPrefix}${actor} — ${prompt} — ${session.status}`)
 		}
 	}
 
