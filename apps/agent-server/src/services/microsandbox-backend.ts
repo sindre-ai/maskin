@@ -112,42 +112,12 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			env: sanitizedEnv,
 			volumes,
 			network: NetworkPolicy.allowAll(),
-			maxDurationSecs: options.maxDurationSecs,
 			replace: true as const,
 			quietLogs: true,
 			pullPolicy: 'always' as const,
-		}
-
-		// DEBUG: dump full config so we can reproduce the exact call outside agent-server
-		writeFileSync(
-			'/tmp/msb-debug-config.json',
-			JSON.stringify(
-				{
-					...sandboxConfig,
-					network: { policy: 'allow-all' },
-					volumes: Object.fromEntries(
-						Object.entries(volumes).map(([k, v]) => [k, v]),
-					),
-				},
-				null,
-				2,
-			),
-		)
-		logger.info(`Wrote debug config to /tmp/msb-debug-config.json`)
-
-		// DEBUG: test with exact same config but different name
-		logger.info('Attempting sandbox with FULL config test...')
-		try {
-			const testSb = await Sandbox.create({
-				...sandboxConfig,
-				name: `test-full-${Date.now()}`,
-			})
-			logger.info('Full config sandbox BOOTED')
-			await testSb.kill()
-		} catch (testErr) {
-			logger.error('Full config sandbox FAILED', {
-				error: String(testErr),
-			})
+			...(options.maxDurationSecs !== undefined && {
+				maxDurationSecs: options.maxDurationSecs,
+			}),
 		}
 
 		const sandbox = await Sandbox.create(sandboxConfig)
