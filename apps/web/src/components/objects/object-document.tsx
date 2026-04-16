@@ -163,7 +163,12 @@ export function ObjectDocumentView({
 			)}
 
 			{/* Activity */}
-			<ObjectActivity workspaceId={workspaceId} objectId={object.id} events={events} />
+			<ObjectActivity
+				workspaceId={workspaceId}
+				objectId={object.id}
+				events={events}
+				activeSessionId={object.activeSessionId}
+			/>
 		</div>
 	)
 }
