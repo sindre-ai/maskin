@@ -213,6 +213,11 @@ app.openapi(listObjectsRoute, async (c) => {
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) conditions.push(eq(objects.status, query.status))
 	if (query.owner) conditions.push(eq(objects.owner, query.owner))
+	if (query.ids) {
+		const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
+		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
+	}
 
 	const orderBy = resolveOrderBy(query)
 	if (!orderBy)

@@ -220,6 +220,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						order: prev.order ?? 'desc',
 						q: prev.q,
 						groupBy: prev.groupBy,
+						ids: prev.ids,
 					}),
 				})
 			},

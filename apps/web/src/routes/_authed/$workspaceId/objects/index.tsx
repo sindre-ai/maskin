@@ -6,6 +6,8 @@ import type { ColumnInfo } from '@/components/objects/data-table/data-table-cont
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import { RouteError } from '@/components/shared/route-error'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
@@ -17,6 +19,7 @@ import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
+import { Filter, X } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
@@ -33,6 +36,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 				: 'desc',
 		q: typeof search.q === 'string' ? search.q : undefined,
 		groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
+		ids: typeof search.ids === 'string' ? search.ids : undefined,
 	}),
 })
 
@@ -50,6 +54,7 @@ function ObjectsPage() {
 		order,
 		q,
 		groupBy,
+		ids: idsFilter,
 	} = searchParams
 
 	const [importOpen, setImportOpen] = useState(false)
@@ -84,10 +89,11 @@ function ObjectsPage() {
 		if (typeFilter) f.type = typeFilter
 		if (statusFilter) f.status = statusFilter
 		if (ownerFilter) f.owner = ownerFilter
+		if (idsFilter) f.ids = idsFilter
 		f.sort = sort
 		f.order = order
 		return f
-	}, [typeFilter, statusFilter, ownerFilter, sort, order])
+	}, [typeFilter, statusFilter, ownerFilter, idsFilter, sort, order])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -221,9 +227,37 @@ function ObjectsPage() {
 		setColumnVisibility((prev) => ({ ...prev, [columnId]: visible }))
 	}, [])
 
+	const idsCount = idsFilter ? idsFilter.split(',').length : 0
+
+	const clearIdsFilter = useCallback(() => {
+		updateSearch({ ids: undefined })
+	}, [updateSearch])
+
 	return (
 		<div className="flex flex-col flex-1 min-h-0">
 			<PageHeader title="Objects" />
+
+			{idsFilter && (
+				<div className="flex items-center gap-2 mx-6 mb-3 px-3 py-2 rounded-md bg-muted/50 border text-sm">
+					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
+					<span className="text-muted-foreground">
+						Showing{' '}
+						<Badge variant="secondary" className="mx-0.5">
+							{idsCount}
+						</Badge>{' '}
+						{idsCount === 1 ? 'object' : 'objects'} from notification
+					</span>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="ml-auto h-6 px-2 text-muted-foreground hover:text-foreground"
+						onClick={clearIdsFilter}
+					>
+						<X className="h-3 w-3 mr-1" />
+						Clear filter
+					</Button>
+				</div>
+			)}
 
 			<DataTableToolbar
 				columns={columnInfo}

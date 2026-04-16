@@ -6,7 +6,7 @@ import {
 	useUpdateNotification,
 } from '@/hooks/use-notifications'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
-import { resolveNavigationPath } from '@/lib/navigation'
+import { resolveNavigationTarget } from '@/lib/navigation'
 import { useNavigate } from '@tanstack/react-router'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
@@ -42,8 +42,8 @@ export function ObjectActionBanner({ objectId, workspaceId }: ObjectActionBanner
 			{
 				onSuccess: () => {
 					if (nav) {
-						const path = resolveNavigationPath(workspaceId, nav, notification)
-						if (path) navigate({ to: path })
+						const target = resolveNavigationTarget(workspaceId, nav, notification)
+						if (target) navigate({ to: target.path, search: target.search })
 						else toast.warning('Could not navigate to the requested page.')
 					}
 				},
