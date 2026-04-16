@@ -4,7 +4,7 @@ import type { ActorResponse } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 import { API_BASE } from '@/lib/constants'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { CheckCircle2, RotateCw, SendHorizontal, XCircle } from 'lucide-react'
+import { CheckCircle2, Eye, RotateCw, SendHorizontal, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 type MessageStatus = 'sent' | 'streaming' | 'completed' | 'failed'
@@ -29,9 +29,10 @@ function findLastMessageIndex(messages: Message[], sessionId: string): number {
 interface InstructionLogProps {
 	agent: ActorResponse
 	workspaceId: string
+	onViewSession?: (sessionId: string) => void
 }
 
-export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
+export function InstructionLog({ agent, workspaceId, onViewSession }: InstructionLogProps) {
 	const [messages, setMessages] = useState<Message[]>([])
 	const [input, setInput] = useState('')
 	const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null)
@@ -229,6 +230,7 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 								key={msg.id}
 								message={msg}
 								onRetry={handleRetry}
+								onViewSession={onViewSession}
 								isStreaming={isStreaming}
 							/>
 						))}
@@ -264,10 +266,12 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 function MessageBubble({
 	message,
 	onRetry,
+	onViewSession,
 	isStreaming,
 }: {
 	message: Message
 	onRetry: (actionPrompt: string) => void
+	onViewSession?: (sessionId: string) => void
 	isStreaming: boolean
 }) {
 	if (message.role === 'user') {
@@ -304,10 +308,22 @@ function MessageBubble({
 				)}
 
 				{message.status === 'completed' && (
-					<span className="flex items-center gap-1.5 mt-2 text-xs text-success">
-						<CheckCircle2 size={12} />
-						Done
-					</span>
+					<div className="flex items-center gap-2 mt-2">
+						<span className="flex items-center gap-1.5 text-xs text-success">
+							<CheckCircle2 size={12} />
+							Done
+						</span>
+						{message.sessionId && onViewSession && (
+							<button
+								type="button"
+								className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+								onClick={() => onViewSession(message.sessionId as string)}
+							>
+								<Eye size={12} />
+								Details
+							</button>
+						)}
+					</div>
 				)}
 
 				{message.status === 'failed' && (
@@ -316,6 +332,16 @@ function MessageBubble({
 							<XCircle size={12} />
 							{message.logs.length === 0 ? message.content : 'Failed'}
 						</span>
+						{message.sessionId && onViewSession && (
+							<button
+								type="button"
+								className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+								onClick={() => onViewSession(message.sessionId as string)}
+							>
+								<Eye size={12} />
+								Details
+							</button>
+						)}
 						{message.actionPrompt && (
 							<button
 								type="button"
