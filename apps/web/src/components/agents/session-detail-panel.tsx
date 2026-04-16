@@ -1,9 +1,11 @@
 import { useSessionLogs } from '@/hooks/use-sessions'
+import { type AffectedObject, useSessionAffectedObjects } from '@/hooks/use-events'
 import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
-import { CheckCircle2, Clock, MinusCircle, Terminal, XCircle } from 'lucide-react'
+import { CheckCircle2, Clock, FileText, MinusCircle, Terminal, XCircle } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { RelativeTime } from '../shared/relative-time'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet'
 import { Spinner } from '../ui/spinner'
@@ -44,6 +46,54 @@ function SessionStatusBadge({ status }: { status: string }) {
 	)
 }
 
+function formatAction(actions: string[]): string {
+	return actions
+		.map((a) => {
+			if (a === 'status_changed') return 'status changed'
+			return a
+		})
+		.join(', ')
+}
+
+function AffectedObjectsList({
+	objects,
+	workspaceId,
+}: { objects: AffectedObject[]; workspaceId: string }) {
+	if (objects.length === 0) {
+		return (
+			<p className="text-sm text-muted-foreground py-2 text-center">No objects affected</p>
+		)
+	}
+
+	return (
+		<div className="space-y-1">
+			{objects.map((obj) => (
+				<Link
+					key={obj.entityId}
+					to="/$workspaceId/objects/$objectId"
+					params={{ workspaceId, objectId: obj.entityId }}
+					className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors group"
+				>
+					<FileText
+						size={14}
+						className="mt-0.5 shrink-0 text-muted-foreground group-hover:text-foreground"
+					/>
+					<div className="min-w-0 flex-1">
+						<p className="text-sm truncate group-hover:text-foreground">
+							{obj.title || obj.entityId}
+						</p>
+						<p className="text-[11px] text-muted-foreground">
+							<span className="capitalize">{obj.entityType}</span>
+							{' \u2014 '}
+							{formatAction(obj.actions)}
+						</p>
+					</div>
+				</Link>
+			))}
+		</div>
+	)
+}
+
 type LogFilter = 'all' | 'stdout' | 'stderr' | 'system'
 
 export function SessionDetailPanel({
@@ -56,6 +106,12 @@ export function SessionDetailPanel({
 		session?.id ?? null,
 		workspaceId,
 		open,
+	)
+	const { affectedObjects, isLoading: objectsLoading } = useSessionAffectedObjects(
+		session?.startedAt ?? null,
+		session?.completedAt ?? null,
+		workspaceId,
+		open && !!session,
 	)
 	const [logFilter, setLogFilter] = useState<LogFilter>('all')
 
@@ -120,6 +176,27 @@ export function SessionDetailPanel({
 										{errorMessage ?? `Process exited with code ${exitCode}`}
 									</p>
 								</div>
+							)}
+						</div>
+
+						{/* Objects affected */}
+						<div className="mt-6">
+							<h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mb-2">
+								<FileText size={13} />
+								Objects affected
+								{affectedObjects.length > 0 && (
+									<span className="opacity-60">({affectedObjects.length})</span>
+								)}
+							</h4>
+							{objectsLoading ? (
+								<div className="flex items-center justify-center py-4">
+									<Spinner />
+								</div>
+							) : (
+								<AffectedObjectsList
+									objects={affectedObjects}
+									workspaceId={workspaceId}
+								/>
 							)}
 						</div>
 
