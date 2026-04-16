@@ -103,7 +103,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		}))
 		logger.info(`Sandbox env to be passed (${sandboxId})`, { env: envDump })
 
-		const sandbox = await Sandbox.create({
+		const sandboxConfig = {
 			name: options.name,
 			image: options.image,
 			memoryMib: options.memoryMb,
@@ -112,10 +112,29 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			volumes,
 			network: NetworkPolicy.allowAll(),
 			maxDurationSecs: options.maxDurationSecs,
-			replace: true,
+			replace: true as const,
 			quietLogs: true,
-			pullPolicy: 'always',
-		})
+			pullPolicy: 'always' as const,
+		}
+
+		// DEBUG: dump full config so we can reproduce the exact call outside agent-server
+		writeFileSync(
+			'/tmp/msb-debug-config.json',
+			JSON.stringify(
+				{
+					...sandboxConfig,
+					network: { policy: 'allow-all' },
+					volumes: Object.fromEntries(
+						Object.entries(volumes).map(([k, v]) => [k, v]),
+					),
+				},
+				null,
+				2,
+			),
+		)
+		logger.info(`Wrote debug config to /tmp/msb-debug-config.json`)
+
+		const sandbox = await Sandbox.create(sandboxConfig)
 
 		this.sandboxes.set(sandboxId, sandbox)
 		this.startTimes.set(sandboxId, new Date().toISOString())
