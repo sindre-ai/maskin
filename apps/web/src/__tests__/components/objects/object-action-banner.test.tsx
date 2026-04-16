@@ -30,19 +30,17 @@ describe('ObjectActionBanner', () => {
 
 	it('returns null when no notifications', () => {
 		mockNotifications.mockReturnValue(undefined)
-		const { container } = render(
-			<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />,
-			{ wrapper },
-		)
+		const { container } = render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />, {
+			wrapper,
+		})
 		expect(container.firstChild).toBeNull()
 	})
 
 	it('returns null when notifications array is empty', () => {
 		mockNotifications.mockReturnValue([])
-		const { container } = render(
-			<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />,
-			{ wrapper },
-		)
+		const { container } = render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />, {
+			wrapper,
+		})
 		expect(container.firstChild).toBeNull()
 	})
 
