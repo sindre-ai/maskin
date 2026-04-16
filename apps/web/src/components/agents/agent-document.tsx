@@ -25,12 +25,12 @@ import {
 	useStopSession,
 } from '@/hooks/use-sessions'
 import type { ActorResponse, EventResponse, SessionLogResponse, SessionResponse } from '@/lib/api'
+import { getApiKey } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { API_BASE } from '@/lib/constants'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { type LogSegment, countToolCalls, parseLogLines } from '@/lib/parse-session-logs'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getApiKey } from '@/lib/auth'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useNavigate } from '@tanstack/react-router'
 import {

@@ -8,9 +8,11 @@ import {
 	registerAppResource,
 	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
+import { z } from 'zod'
 import {
 	formatActor,
 	formatActorList,
@@ -104,6 +106,36 @@ const SIDE_EFFECT: ToolAnnotations = {
 	destructiveHint: false,
 	idempotentHint: false,
 	openWorldHint: true,
+}
+
+// ─── Elicitation helper ──────────────────────────────────
+// Asks the user a confirmation question before destructive operations.
+// Falls back gracefully if the client doesn't support elicitation.
+async function confirmDestructive(rawServer: Server, message: string): Promise<boolean> {
+	try {
+		const result = await rawServer.elicitInput({
+			message,
+			requestedSchema: {
+				type: 'object' as const,
+				properties: {
+					confirm: {
+						type: 'boolean',
+						title: 'Confirm',
+						description: 'Check to confirm this action',
+						default: false,
+					},
+				},
+				required: ['confirm'],
+			},
+		})
+		if (result.action === 'accept' && result.content?.confirm === true) {
+			return true
+		}
+		return false
+	} catch {
+		// Client doesn't support elicitation — proceed without confirmation
+		return true
+	}
 }
 
 async function apiCall(
@@ -305,6 +337,9 @@ export function createMcpServer(config: McpConfig) {
 		version: '0.1.0',
 	})
 
+	// Access the underlying Server for elicitation (McpServer exposes it as .server)
+	const rawServer = server.server as Server
+
 	// ─── Register UI resources ─────────────────────────────────
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
 		registerAppResource(server, `${name}-ui`, uri, { mimeType: RESOURCE_MIME_TYPE }, async () => {
@@ -471,6 +506,25 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			// Fetch object details for confirmation message
+			let label = args.id
+			try {
+				const obj = (await apiCall(config, 'GET', `/api/objects/${args.id}`, undefined, {
+					workspaceId: args.workspace_id,
+				})) as { title?: string; type?: string }
+				if (obj.title) label = `"${obj.title}" (${obj.type ?? 'object'})`
+			} catch {
+				// Best-effort lookup
+			}
+
+			const confirmed = await confirmDestructive(
+				rawServer,
+				`Delete ${label}? This cannot be undone.`,
+			)
+			if (!confirmed) {
+				return toolResult('delete_object', { cancelled: true }, '🚫 Deletion cancelled.')
+			}
+
 			const result = await apiCall(config, 'DELETE', `/api/objects/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
@@ -563,6 +617,14 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.relationships, csp: CSP } },
 		},
 		async (args) => {
+			const confirmed = await confirmDestructive(
+				rawServer,
+				`Delete relationship ${args.id}? This cannot be undone.`,
+			)
+			if (!confirmed) {
+				return toolResult('delete_relationship', { cancelled: true }, '🚫 Deletion cancelled.')
+			}
+
 			const result = await apiCall(config, 'DELETE', `/api/relationships/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
@@ -672,6 +734,18 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
+			const confirmed = await confirmDestructive(
+				rawServer,
+				`Regenerate API key for actor ${args.id}? The current key will stop working immediately.`,
+			)
+			if (!confirmed) {
+				return toolResult(
+					'regenerate_api_key',
+					{ cancelled: true },
+					'🚫 API key regeneration cancelled.',
+				)
+			}
+
 			const result = await apiCall(config, 'POST', `/api/actors/${args.id}/api-keys`, undefined, {
 				skipWorkspace: true,
 			})
@@ -911,6 +985,14 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
 		async (args) => {
+			const confirmed = await confirmDestructive(
+				rawServer,
+				`Delete trigger ${args.id}? Automated sessions will stop firing.`,
+			)
+			if (!confirmed) {
+				return toolResult('delete_trigger', { cancelled: true }, '🚫 Deletion cancelled.')
+			}
+
 			const result = await apiCall(config, 'DELETE', `/api/triggers/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
@@ -1026,6 +1108,11 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const confirmed = await confirmDestructive(rawServer, `Delete notification ${args.id}?`)
+			if (!confirmed) {
+				return toolResult('delete_notification', { cancelled: true }, '🚫 Deletion cancelled.')
+			}
+
 			const result = await apiCall(config, 'DELETE', `/api/notifications/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
@@ -1125,6 +1212,14 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const confirmed = await confirmDestructive(
+				rawServer,
+				`Stop session ${args.id}? The running agent will be terminated.`,
+			)
+			if (!confirmed) {
+				return toolResult('stop_session', { cancelled: true }, '🚫 Stop cancelled.')
+			}
+
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
 				workspaceId: args.workspace_id,
 			})
@@ -1199,8 +1294,20 @@ export function createMcpServer(config: McpConfig) {
 			const deadline = Date.now() + timeoutMs
 			const terminalStatuses = ['completed', 'failed', 'timeout']
 
+			// Log session start
+			try {
+				await server.server.sendLoggingMessage({
+					level: 'info',
+					logger: 'maskin',
+					data: `Session ${sessionId} started — polling for completion...`,
+				})
+			} catch {
+				// Logging is best-effort
+			}
+
 			// 2. Poll until terminal
 			let current = session
+			let pollCount = 0
 			while (Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, pollMs))
 				current = (await apiCall(
@@ -1210,6 +1317,22 @@ export function createMcpServer(config: McpConfig) {
 					undefined,
 					wsOpts,
 				)) as typeof session
+				pollCount++
+
+				// Send progress updates every 3 polls
+				if (pollCount % 3 === 0) {
+					const elapsed = Math.round((Date.now() - (deadline - timeoutMs)) / 1000)
+					try {
+						await server.server.sendLoggingMessage({
+							level: 'info',
+							logger: 'maskin',
+							data: `Session ${sessionId} — status: ${current.status} (${elapsed}s elapsed)`,
+						})
+					} catch {
+						// Logging is best-effort
+					}
+				}
+
 				if (terminalStatuses.includes(current.status)) break
 			}
 
@@ -1296,6 +1419,14 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const confirmed = await confirmDestructive(
+				rawServer,
+				`Disconnect integration ${args.id}? OAuth tokens will be revoked.`,
+			)
+			if (!confirmed) {
+				return toolResult('disconnect_integration', { cancelled: true }, '🚫 Disconnect cancelled.')
+			}
+
 			const result = await apiCall(config, 'DELETE', `/api/integrations/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
@@ -1740,6 +1871,14 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
+			const confirmed = await confirmDestructive(
+				rawServer,
+				`Delete extension "${args.id}"? Associated object types and data may become inaccessible.`,
+			)
+			if (!confirmed) {
+				return toolResult('delete_extension', { cancelled: true }, '🚫 Deletion cancelled.')
+			}
+
 			// Check if the extension is a registered module
 			const allModules = getAllModules()
 			const mod = allModules.find((m) => m.id === args.id)
@@ -2097,35 +2236,56 @@ Happy building! 🎉`
 		'daily-standup',
 		{
 			title: 'Daily Standup',
-			description: 'See recent activity, active work, and pending notifications',
+			description:
+				'See recent activity, active work, and pending notifications. Optionally focus on a specific agent.',
+			argsSchema: {
+				agent_name: z.string().optional().describe('Focus the standup on a specific agent by name'),
+			},
 		},
-		() => ({
-			messages: [
-				{
-					role: 'user',
-					content: {
-						type: 'text',
-						text: "Give me a daily standup summary for my Maskin workspace.\nCall these tools in order:\n1. get_events (limit 20) — show what happened recently\n2. list_objects with status=in_progress or status=active (limit 20) — show active work\n3. list_notifications with status=pending — show unresolved notifications\nSummarize the findings as a concise standup report with sections: What happened, What's active, What needs attention.",
+		({ agent_name }) => {
+			const agentFilter = agent_name
+				? `\nFocus specifically on agent "${agent_name}" — filter sessions and events by this agent.`
+				: ''
+			return {
+				messages: [
+					{
+						role: 'user',
+						content: {
+							type: 'text',
+							text: `Give me a daily standup summary for my Maskin workspace.${agentFilter}\nCall these tools in order:\n1. get_events (limit 20) — show what happened recently\n2. list_objects with status=in_progress or status=active (limit 20) — show active work\n3. list_notifications with status=pending — show unresolved notifications${agent_name ? `\n4. list_sessions — show recent sessions for "${agent_name}"` : ''}\nSummarize the findings as a concise standup report with sections: What happened, What's active, What needs attention.`,
+						},
 					},
-				},
-			],
-		}),
+				],
+			}
+		},
 	)
 
 	server.registerPrompt(
 		'review-task-backlog',
-		{ title: 'Review Task Backlog', description: 'Review open tasks grouped by status' },
-		() => ({
-			messages: [
-				{
-					role: 'user',
-					content: {
-						type: 'text',
-						text: 'Review the task backlog in my Maskin workspace.\nCall these tools:\n1. get_workspace_schema — see which statuses exist for tasks\n2. list_objects type=task — get all tasks\nGroup the tasks by status and summarize: how many in each status, which are stale, and what should be prioritized.',
+		{
+			title: 'Review Task Backlog',
+			description: 'Review open tasks grouped by status. Optionally filter by object type.',
+			argsSchema: {
+				type: z
+					.string()
+					.optional()
+					.describe('Object type to review (e.g. "task", "bet", "insight")'),
+			},
+		},
+		({ type }) => {
+			const objectType = type ?? 'task'
+			return {
+				messages: [
+					{
+						role: 'user',
+						content: {
+							type: 'text',
+							text: `Review the ${objectType} backlog in my Maskin workspace.\nCall these tools:\n1. get_workspace_schema${type ? ` type=${type}` : ''} — see which statuses exist for ${objectType}s\n2. list_objects type=${objectType} — get all ${objectType}s\nGroup by status and summarize: how many in each status, which are stale, and what should be prioritized.`,
+						},
 					},
-				},
-			],
-		}),
+				],
+			}
+		},
 	)
 
 	server.registerPrompt(
@@ -2157,6 +2317,94 @@ Happy building! 🎉`
 					content: {
 						type: 'text',
 						text: 'Map out the relationships between objects in my Maskin workspace.\nCall these tools:\n1. list_objects (limit 30) — get the objects\n2. list_relationships — get all relationships\nDescribe the graph: which objects are connected, what relationship types exist, and identify any clusters or orphaned objects.',
+					},
+				},
+			],
+		}),
+	)
+
+	// ─── New Dynamic Prompts ─────────────────────────────────
+	server.registerPrompt(
+		'agent-review',
+		{
+			title: 'Review Agent',
+			description:
+				'Review a specific agent — recent sessions, success rate, failure patterns, and recommendations',
+			argsSchema: {
+				agent_name: z.string().describe('Name of the agent to review'),
+			},
+		},
+		({ agent_name }) => ({
+			messages: [
+				{
+					role: 'user',
+					content: {
+						type: 'text',
+						text: `Review the agent "${agent_name}" in my Maskin workspace.\nCall these tools in order:\n1. list_actors — find the agent by name\n2. list_sessions with the agent's actor_id — get recent sessions\n3. get_session (with include_logs=true) for the most recent failed session, if any\nSummarize: success rate, common tasks, failures, and recommendations for improvement.`,
+					},
+				},
+			],
+		}),
+	)
+
+	server.registerPrompt(
+		'session-debrief',
+		{
+			title: 'Session Debrief',
+			description:
+				'Analyze what happened in a specific agent session — tools used, results, errors',
+			argsSchema: {
+				session_id: z.string().describe('Session ID to analyze'),
+			},
+		},
+		({ session_id }) => ({
+			messages: [
+				{
+					role: 'user',
+					content: {
+						type: 'text',
+						text: `Debrief session ${session_id} in my Maskin workspace.\nCall get_session with id="${session_id}" and include_logs=true.\nAnalyze: what was the goal (action_prompt), what tools were used, what succeeded, what failed, how long it took, and what could be improved.`,
+					},
+				},
+			],
+		}),
+	)
+
+	server.registerPrompt(
+		'setup-automation',
+		{
+			title: 'Setup Automation',
+			description: 'Guided creation of an automated trigger for an agent',
+			argsSchema: {
+				agent_name: z.string().describe('Name of the agent to automate'),
+			},
+		},
+		({ agent_name }) => ({
+			messages: [
+				{
+					role: 'user',
+					content: {
+						type: 'text',
+						text: `Help me set up automation for the agent "${agent_name}" in my Maskin workspace.\nCall these tools:\n1. list_actors — find the agent by name and get its actor_id\n2. list_triggers — see existing automations\n3. get_workspace_schema — understand available event types and object types\nThen suggest a trigger configuration. Ask me:\n- Should it be cron-based (scheduled) or event-based (reactive)?\n- What prompt/instruction should the agent receive?\n- Any specific event filters (entity_type, action)?\nOnce I confirm, create the trigger with create_trigger.`,
+					},
+				},
+			],
+		}),
+	)
+
+	server.registerPrompt(
+		'integration-status',
+		{
+			title: 'Integration Status',
+			description: 'Check connected integrations, their health, and available providers',
+		},
+		() => ({
+			messages: [
+				{
+					role: 'user',
+					content: {
+						type: 'text',
+						text: 'Check the integration status of my Maskin workspace.\nCall these tools:\n1. list_integrations — see connected integrations\n2. list_integration_providers — see available providers\nSummarize: which integrations are connected, which providers are available but not connected, and any recommendations.',
 					},
 				},
 			],

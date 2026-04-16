@@ -108,7 +108,11 @@ describe('createMcpServer', () => {
 		expect(promptNames).toContain('review-task-backlog')
 		expect(promptNames).toContain('weekly-digest')
 		expect(promptNames).toContain('relationship-map')
-		expect(mockServer.registerPrompt).toHaveBeenCalledTimes(5)
+		expect(promptNames).toContain('agent-review')
+		expect(promptNames).toContain('session-debrief')
+		expect(promptNames).toContain('setup-automation')
+		expect(promptNames).toContain('integration-status')
+		expect(mockServer.registerPrompt).toHaveBeenCalledTimes(9)
 	})
 
 	it('registers prompts with title, description, and message callback', () => {
@@ -119,13 +123,15 @@ describe('createMcpServer', () => {
 			const [_name, metadata, callback] = call as [
 				string,
 				{ title: string; description: string },
-				() => { messages: Array<{ role: string; content: { type: string; text: string } }> },
+				(args: Record<string, string>) => {
+					messages: Array<{ role: string; content: { type: string; text: string } }>
+				},
 			]
 			// Each prompt has title and description
 			expect(metadata.title).toBeTruthy()
 			expect(metadata.description).toBeTruthy()
-			// Callback returns messages array
-			const result = callback()
+			// Callback returns messages array (pass empty args for prompts with argsSchema)
+			const result = callback({})
 			expect(result.messages).toHaveLength(1)
 			expect(result.messages[0].role).toBe('user')
 			expect(result.messages[0].content.type).toBe('text')

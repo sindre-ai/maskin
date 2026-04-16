@@ -1,16 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer } = vi.hoisted(() => {
-	const mockConnect = vi.fn().mockResolvedValue(undefined)
-	const mockHandleRequest = vi.fn().mockResolvedValue(undefined)
-	const MockTransport = vi.fn().mockImplementation(() => ({
-		handleRequest: mockHandleRequest,
-	}))
-	const mockCreateMcpServer = vi.fn().mockReturnValue({
-		connect: mockConnect,
+const { mockConnect, mockHandleRequest, mockClose, MockTransport, mockCreateMcpServer } =
+	vi.hoisted(() => {
+		const mockConnect = vi.fn().mockResolvedValue(undefined)
+		const mockHandleRequest = vi.fn().mockResolvedValue(undefined)
+		const mockClose = vi.fn().mockResolvedValue(undefined)
+		const MockTransport = vi.fn().mockImplementation(() => ({
+			handleRequest: mockHandleRequest,
+			close: mockClose,
+			sessionId: 'test-session-id',
+		}))
+		const mockCreateMcpServer = vi.fn().mockReturnValue({
+			connect: mockConnect,
+		})
+		return { mockConnect, mockHandleRequest, mockClose, MockTransport, mockCreateMcpServer }
 	})
-	return { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer }
-})
 
 vi.mock('@maskin/mcp', () => ({
 	createMcpServer: mockCreateMcpServer,
@@ -61,22 +65,49 @@ describe('MCP Routes', () => {
 	})
 
 	describe('GET /mcp', () => {
-		it('returns 405 Method Not Allowed', async () => {
+		it('returns 404 when no session ID provided', async () => {
 			const app = await createApp()
-			const res = await app.request(new Request('http://localhost/mcp', { method: 'GET' }))
+			const res = await app.request(
+				new Request('http://localhost/mcp', { method: 'GET' }),
+				undefined,
+				env,
+			)
 
-			expect(res.status).toBe(405)
-			expect(await res.text()).toBe('Method Not Allowed')
+			expect(res.status).toBe(404)
+			expect(await res.text()).toBe(
+				'Session not found. Send a POST request first to initialize.',
+			)
+		})
+
+		it('returns 404 for unknown session ID', async () => {
+			const app = await createApp()
+			const res = await app.request(
+				new Request('http://localhost/mcp', {
+					method: 'GET',
+					headers: { 'mcp-session-id': 'nonexistent-session' },
+				}),
+				undefined,
+				env,
+			)
+
+			expect(res.status).toBe(404)
 		})
 	})
 
 	describe('DELETE /mcp', () => {
-		it('returns 405 Method Not Allowed', async () => {
+		it('returns 404 when session not found', async () => {
 			const app = await createApp()
-			const res = await app.request(new Request('http://localhost/mcp', { method: 'DELETE' }))
+			const res = await app.request(
+				new Request('http://localhost/mcp', {
+					method: 'DELETE',
+					headers: { 'mcp-session-id': 'nonexistent' },
+				}),
+				undefined,
+				env,
+			)
 
-			expect(res.status).toBe(405)
-			expect(await res.text()).toBe('Method Not Allowed')
+			expect(res.status).toBe(404)
+			expect(await res.text()).toBe('Session not found')
 		})
 	})
 
@@ -98,7 +129,7 @@ describe('MCP Routes', () => {
 			)
 
 			expect(MockTransport).toHaveBeenCalledWith({
-				sessionIdGenerator: undefined,
+				sessionIdGenerator: expect.any(Function),
 				enableJsonResponse: true,
 			})
 
@@ -229,6 +260,39 @@ describe('MCP Routes', () => {
 			expect(mockConnect).toHaveBeenCalledTimes(1)
 			expect(mockHandleRequest).toHaveBeenCalledWith(mockNodeReq, mockNodeRes, body)
 			expect(res.headers.get('x-hono-already-sent')).toBe('1')
+		})
+
+		it('reuses existing session when mcp-session-id header is provided', async () => {
+			const app = await createApp()
+
+			// First request creates a session
+			const initBody = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+			await app.request(
+				jsonPostRequest('/mcp', initBody, { Authorization: 'Bearer key' }),
+				undefined,
+				env,
+			)
+
+			expect(mockCreateMcpServer).toHaveBeenCalledTimes(1)
+			expect(mockConnect).toHaveBeenCalledTimes(1)
+
+			// Second request reuses the session
+			const listBody = { jsonrpc: '2.0', method: 'tools/list', id: 2 }
+			const { env: env2, mockNodeReq: req2, mockNodeRes: res2 } = createEnv()
+			await app.request(
+				jsonPostRequest('/mcp', listBody, {
+					Authorization: 'Bearer key',
+					'mcp-session-id': 'test-session-id',
+				}),
+				undefined,
+				env2,
+			)
+
+			// Should NOT create a new server or transport
+			expect(mockCreateMcpServer).toHaveBeenCalledTimes(1)
+			expect(mockConnect).toHaveBeenCalledTimes(1)
+			// Should still call handleRequest on the existing transport
+			expect(mockHandleRequest).toHaveBeenCalledWith(req2, res2, listBody)
 		})
 	})
 })
