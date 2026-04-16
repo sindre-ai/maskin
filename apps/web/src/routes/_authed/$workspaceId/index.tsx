@@ -1,8 +1,10 @@
+import { WhatsHappening } from '@/components/overview/whats-happening'
 import { PulseCard } from '@/components/pulse/pulse-card'
 import { PulseFilters } from '@/components/pulse/pulse-filters'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
 import {
 	useNotifications,
@@ -91,45 +93,60 @@ function PulseDashboard() {
 	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length
 
 	return (
-		<div>
-			<p className="text-sm text-muted-foreground pb-6">
-				{pendingCount > 0
-					? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
-					: ''}
-			</p>
+		<Tabs defaultValue="overview">
+			<TabsList>
+				<TabsTrigger value="overview">Overview</TabsTrigger>
+				<TabsTrigger value="notifications">
+					Notifications{pendingCount > 0 && ` (${pendingCount})`}
+				</TabsTrigger>
+			</TabsList>
 
-			{isLoading ? (
-				<div className="space-y-4">
-					<CardSkeleton />
-					<CardSkeleton />
-					<CardSkeleton />
-				</div>
-			) : activeNotifications.length === 0 ? (
-				<EmptyState
-					title="No notifications yet"
-					description="Agents will notify you here when they need your input or have recommendations."
-				/>
-			) : (
-				<>
-					<PulseFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
-					<div className="space-y-4">
-						{filtered.map((notification) => (
-							<PulseCard
-								key={notification.id}
-								notification={notification}
-								actorsById={actorsById}
-								onAction={handleAction}
-								onDismiss={handleDismiss}
-							/>
-						))}
-					</div>
-					{filtered.length === 0 && (
-						<p className="text-sm text-muted-foreground text-center py-8">
-							No {activeFilter.replace('_', ' ')} notifications
-						</p>
+			<TabsContent value="overview">
+				<WhatsHappening />
+			</TabsContent>
+
+			<TabsContent value="notifications">
+				<div>
+					<p className="text-sm text-muted-foreground pb-6">
+						{pendingCount > 0
+							? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
+							: ''}
+					</p>
+
+					{isLoading ? (
+						<div className="space-y-4">
+							<CardSkeleton />
+							<CardSkeleton />
+							<CardSkeleton />
+						</div>
+					) : activeNotifications.length === 0 ? (
+						<EmptyState
+							title="No notifications yet"
+							description="Agents will notify you here when they need your input or have recommendations."
+						/>
+					) : (
+						<>
+							<PulseFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
+							<div className="space-y-4">
+								{filtered.map((notification) => (
+									<PulseCard
+										key={notification.id}
+										notification={notification}
+										actorsById={actorsById}
+										onAction={handleAction}
+										onDismiss={handleDismiss}
+									/>
+								))}
+							</div>
+							{filtered.length === 0 && (
+								<p className="text-sm text-muted-foreground text-center py-8">
+									No {activeFilter.replace('_', ' ')} notifications
+								</p>
+							)}
+						</>
 					)}
-				</>
-			)}
-		</div>
+				</div>
+			</TabsContent>
+		</Tabs>
 	)
 }
