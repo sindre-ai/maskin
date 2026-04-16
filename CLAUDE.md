@@ -23,6 +23,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/testing.md` — testing conventions for all test types (unit, integration, E2E, frontend)
 - `.claude/rules/pre-commit.md` — pre-commit checklist (lint, type-check, tests)
 - `.claude/rules/pr-merge.md` — PR merge checklist (up to date with main, lint, type-check, tests)
+- `.claude/rules/structural-verification.md` — file placement and build config guidelines (workflows, build files, monorepo structure)
 
 ## Architecture
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
