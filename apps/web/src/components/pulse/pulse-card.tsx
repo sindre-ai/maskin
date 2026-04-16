@@ -119,14 +119,11 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const [replyOpen, setReplyOpen] = useState(false)
 	const [replyText, setReplyText] = useState('')
 
-	// Build object link for primary objectId
-	const primaryObjectPath = notification.objectId
-		? `/${workspaceId}/objects/${notification.objectId}`
-		: null
+	const primaryObjectId = notification.objectId
 
 	// Extract secondary object links from metadata
 	const metadataLinks = extractMetadataObjectLinks(metadata as Record<string, unknown>).filter(
-		(link) => link.objectId !== notification.objectId,
+		(link) => link.objectId !== primaryObjectId,
 	)
 
 	const handleReplySubmit = () => {
@@ -155,8 +152,12 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 					)}
 				</div>
 				<CardTitle className="text-base">
-					{primaryObjectPath ? (
-						<Link to={primaryObjectPath} className="hover:underline text-foreground">
+					{primaryObjectId ? (
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId: primaryObjectId }}
+							className="text-foreground hover:underline"
+						>
 							{notification.title}
 						</Link>
 					) : (
@@ -183,7 +184,8 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 						{metadataLinks.map((link) => (
 							<Link
 								key={link.objectId}
-								to={`/${workspaceId}/objects/${link.objectId}`}
+								to="/$workspaceId/objects/$objectId"
+								params={{ workspaceId, objectId: link.objectId }}
 								className="inline-flex items-center gap-1 text-xs text-primary hover:underline min-h-[28px] px-2 py-1 rounded-md bg-muted/50"
 							>
 								<ExternalLink className="h-3 w-3" />
@@ -286,11 +288,12 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 						<span>Session</span>
 					</>
 				)}
-				{primaryObjectPath && (
+				{primaryObjectId && (
 					<>
 						<span>&middot;</span>
 						<Link
-							to={primaryObjectPath}
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId: primaryObjectId }}
 							className="inline-flex items-center gap-1 text-primary hover:underline"
 						>
 							<ExternalLink className="h-3 w-3" />
