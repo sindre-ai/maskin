@@ -3,7 +3,6 @@ import { type AffectedObject, useSessionAffectedObjects } from '@/hooks/use-even
 import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
-import { useWorkspace } from '@/lib/workspace-context'
 import { CheckCircle2, Clock, FileText, MinusCircle, Terminal, XCircle } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
@@ -85,7 +84,7 @@ function AffectedObjectsList({
 						</p>
 						<p className="text-[11px] text-muted-foreground">
 							<span className="capitalize">{obj.entityType}</span>
-							{' — '}
+							{' \u2014 '}
 							{formatAction(obj.actions)}
 						</p>
 					</div>
