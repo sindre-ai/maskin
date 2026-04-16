@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ExecEvent, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
@@ -30,14 +31,6 @@ function spawnSandboxCreate(config: {
 	maxDurationSecs?: number
 }): void {
 	const script = `
-// Close all inherited file descriptors from the parent process.
-// The agent-server has open postgres/HTTP/S3 sockets that, if inherited,
-// can interfere with msb's Unix socket handshake.
-const fs = require('fs');
-for (let fd = 3; fd < 1024; fd++) {
-  try { fs.closeSync(fd); } catch {}
-}
-
 const { Sandbox, Mount, NetworkPolicy } = require('microsandbox');
 const config = JSON.parse(process.argv[1]);
 const volumes = {};
@@ -66,12 +59,25 @@ Sandbox.createDetached(opts).then(() => {
   process.exit(1);
 });
 `
-	execFileSync(
-		process.execPath,
-		['-e', script, JSON.stringify(config)],
-		{ timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] },
-	)
-	// If we get here, the child exited successfully
+	// Write script to a temp file so it can be exec'd with a clean FD table.
+	// Bash closes inherited FDs (3-255) before exec-ing node.
+	const scriptPath = join(tmpdir(), `msb-spawn-${Date.now()}.js`)
+	writeFileSync(scriptPath, script)
+	try {
+		execFileSync(
+			'/bin/bash',
+			[
+				'-c',
+				// Close inherited FDs (postgres, HTTP server, S3) before running node
+				`for fd in $(seq 3 255); do eval "exec $fd>&-" 2>/dev/null; done; exec ${process.execPath} ${scriptPath} '${JSON.stringify(config).replace(/'/g, "'\\''")}'`,
+			],
+			{ timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] },
+		)
+	} finally {
+		try {
+			unlinkSync(scriptPath)
+		} catch {}
+	}
 }
 
 export class MicrosandboxBackend implements RuntimeBackend {
