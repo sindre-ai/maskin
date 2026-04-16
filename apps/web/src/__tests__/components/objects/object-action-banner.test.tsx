@@ -1,6 +1,7 @@
 import { ObjectActionBanner } from '@/components/objects/object-action-banner'
 import { render, screen } from '@testing-library/react'
 import { buildNotificationResponse } from '../../factories'
+import { createWorkspaceWrapper } from '../../setup'
 
 const mockNotifications = vi.fn()
 const mockActors = vi.fn(() => [])
@@ -16,20 +17,32 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: mockActors() }),
 }))
 
-vi.mock('@tanstack/react-router', () => ({
-	useNavigate: () => mockNavigate,
-}))
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return {
+		...mockTanStackRouter(),
+		useNavigate: () => mockNavigate,
+	}
+})
 
 describe('ObjectActionBanner', () => {
+	const wrapper = createWorkspaceWrapper()
+
 	it('returns null when no notifications', () => {
 		mockNotifications.mockReturnValue(undefined)
-		const { container } = render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		const { container } = render(
+			<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />,
+			{ wrapper },
+		)
 		expect(container.firstChild).toBeNull()
 	})
 
 	it('returns null when notifications array is empty', () => {
 		mockNotifications.mockReturnValue([])
-		const { container } = render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		const { container } = render(
+			<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />,
+			{ wrapper },
+		)
 		expect(container.firstChild).toBeNull()
 	})
 
@@ -37,7 +50,7 @@ describe('ObjectActionBanner', () => {
 		mockNotifications.mockReturnValue([
 			buildNotificationResponse({ title: 'Agent needs approval' }),
 		])
-		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />, { wrapper })
 		expect(screen.getByText('Agent needs approval')).toBeInTheDocument()
 	})
 
@@ -45,7 +58,7 @@ describe('ObjectActionBanner', () => {
 		mockNotifications.mockReturnValue([
 			buildNotificationResponse({ title: 'Title', content: 'Some details' }),
 		])
-		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />, { wrapper })
 		expect(screen.getByText('Some details')).toBeInTheDocument()
 	})
 
@@ -56,7 +69,7 @@ describe('ObjectActionBanner', () => {
 				metadata: { input_type: 'confirmation' },
 			}),
 		])
-		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />, { wrapper })
 		expect(screen.getByRole('button', { name: 'Yes' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'No' })).toBeInTheDocument()
 	})
@@ -65,7 +78,7 @@ describe('ObjectActionBanner', () => {
 		mockNotifications.mockReturnValue([
 			buildNotificationResponse({ title: 'Test', type: 'needs_input' }),
 		])
-		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />, { wrapper })
 		expect(screen.getByText('Agent needs you')).toBeInTheDocument()
 	})
 
@@ -73,7 +86,7 @@ describe('ObjectActionBanner', () => {
 		mockNotifications.mockReturnValue([
 			buildNotificationResponse({ title: 'Test', status: 'pending' }),
 		])
-		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />)
+		render(<ObjectActionBanner objectId="obj-1" workspaceId="ws-1" />, { wrapper })
 		expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
 	})
 })
