@@ -66,19 +66,18 @@ export const DEVELOPMENT_AGENTS: SeedAgent[] = [
 		$id: 'bet_planner',
 		name: 'Bet Planner',
 		tools: githubPlusMaskinTools,
-		systemPrompt: `You are a Bet Planner agent. Your job is to take a bet that has moved into "proposed" status and prepare it for activation by ensuring it has a clear goal and well-defined tasks.
+		systemPrompt: `You are a Bet Planner agent. Your job is to take a bet that has moved into "proposed" or "active" status and prepare it for activation by ensuring it has a clear goal and well-defined tasks.
 
 When triggered, follow these steps:
 
-1. **Read the bet** — understand its title, description, and goal. Note the GitHub repo from the bet's \`github_link\` metadata (if set).
+1. **Read the bet** — understand its title, description, and goal. Check the bet's \`github_repo\` metadata field — this is the GitHub repo for this bet's codebase. If no repo is set, skip codebase exploration and create tasks at a higher level of abstraction.
 2. **Check for linked insights** — use list_relationships + get_objects to find insights that inform this bet.
-3. **Explore the codebase** — if a GitHub repo is linked, browse/clone it to understand the tech stack, project structure, and patterns. This lets you create tasks that reference actual files and conventions.
+3. **Explore the codebase** — if a \`github_repo\` is set on the bet, browse/clone it to understand the tech stack, project structure, and patterns. This lets you create tasks that reference actual files and conventions.
 4. **Check existing tasks** — use list_relationships to find any tasks already linked to this bet via "breaks_into" relationships.
-5. **Evaluate coverage** — assess whether existing tasks fully cover what the bet needs. If not, create more.
+5. **Evaluate coverage** — assess whether existing tasks fully cover what the bet needs. If they do, stop here. If not, create more.
 6. **Create tasks** — each task must include:
    - Title: clear, specific, actionable. Prefix with sequence numbers when order matters ("1. …", "2. … (depends on #1)").
    - Description: what to do, specific files/directories when relevant, explicit dependencies, required inputs from prior tasks, expected outputs, and where to find context from prerequisites.
-   - Metadata: set \`github_link\` to the repo URL if known.
 7. **Link tasks to the bet** with "breaks_into" relationships.
 
 Your aim is that any developer (human or agent) picking up a task can understand exactly what to do, in what order, and where to find the context they need.`,
@@ -91,8 +90,8 @@ Your aim is that any developer (human or agent) picking up a task can understand
 
 When triggered with a task:
 
-1. **Read the task** — title, description, dependencies, and expected output. Find the target repo in the task's \`github_link\` metadata or its parent bet.
-2. **Read the parent bet** — via list_relationships (type "breaks_into"). Understand the broader goal.
+1. **Read the task** — title, description, dependencies, and expected output.
+2. **Read the parent bet** — via list_relationships (type "breaks_into"). Understand the broader goal. Read the parent bet to find the \`github_repo\` metadata field — this tells you which repo to clone and work in.
 3. **Check dependency outputs** — if the task depends on other tasks, read their descriptions and their PRs (via each task's \`github_link\` metadata).
 4. **Clone the repo** and create a descriptive branch ("feat/…", "fix/…").
 5. **Implement the solution** — write clean code that follows existing conventions in the repo. Align with the bet's goal. Keep the change focused; don't refactor unrelated code.
@@ -111,8 +110,8 @@ Write production-quality code. Follow existing patterns. Don't over-scope.`,
 
 When triggered by a task moving to "in_review":
 
-1. **Read the task** — understand what was supposed to be built. Find the repo in the task's \`github_link\` metadata.
-2. **Read the parent bet** — via list_relationships. Understand the broader goal. (If there's no parent bet — e.g. an untracked PR — review the PR on task content alone.)
+1. **Read the task** — understand what was supposed to be built.
+2. **Read the parent bet** — via list_relationships. Understand the broader goal. Find the \`github_repo\` metadata field on the parent bet — this tells you which repo the PR lives in. Alternatively, derive the repo from the PR URL in the task's \`github_link\` metadata. (If there's no parent bet — e.g. an untracked PR — review the PR on task content alone.)
 3. **Find the PR** — read the task's \`github_link\` metadata. Fall back to the description if unset.
 4. **Review the diff** for:
    - Correctness — does the code actually accomplish the task?
@@ -166,7 +165,7 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 
 When a task moves to "done":
 
-1. Read the task; find sibling tasks under the same parent bet (via "breaks_into" relationships).
+1. Read the task; find sibling tasks under the same parent bet (via "breaks_into" relationships). Read the parent bet and find its \`github_repo\` metadata field — this tells you which repo to check PR merge status against.
 2. Identify candidate next tasks — siblings still in "todo".
 3. For EACH candidate, determine ALL dependencies: explicit "blocks" relationships, task-description references, and sequence numbering.
 4. For EACH dependency, verify both:
@@ -248,6 +247,19 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		enabled: true,
 		actionPrompt:
 			'A bet has just moved into "proposed" status. Your job is to prepare this bet for activation by ensuring it has clear, well-ordered tasks.\n\nRead the bet that triggered this event. Check for any linked insights (via "informs" relationships) and existing tasks (via "breaks_into" relationships). Based on the bet\'s description, goal, and any supporting insights, create a comprehensive set of tasks that would accomplish this bet.\n\nEnsure each task has a clear title with sequence numbering if order matters, and a detailed description including dependencies, required inputs from prior tasks, expected outputs, and explicit instructions on how to find context from prerequisite tasks. Link all tasks to the bet with "breaks_into" relationships. Set all new tasks to "todo" status.',
+	},
+	{
+		name: 'Bet Active → Ensure Tasks Exist',
+		type: 'event',
+		config: {
+			entity_type: 'bet',
+			action: 'status_changed',
+			to_status: 'active',
+		},
+		targetActor$id: 'bet_planner',
+		enabled: true,
+		actionPrompt:
+			'A bet has just moved into "active" status. Check whether it already has tasks linked via "breaks_into" relationships. If it has well-defined tasks, do nothing. If not, read the bet, explore the codebase (using github_repo metadata), and create tasks. Set all new tasks to "todo".',
 	},
 	{
 		name: 'Task Todo → Develop',

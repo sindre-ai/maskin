@@ -65,6 +65,7 @@ const developmentTemplate: WorkspaceTemplate = {
 			insight: ['new', 'processing', 'clustered', 'discarded'],
 		},
 		field_definitions: {
+			bet: [{ name: 'github_repo', type: 'text', required: false }],
 			task: [{ name: 'github_link', type: 'text', required: false }],
 			insight: [{ name: 'tags', type: 'text', required: false }],
 		},
@@ -148,6 +149,7 @@ const growthTemplate: WorkspaceTemplate = {
 		},
 		field_definitions: {
 			bet: [
+				{ name: 'github_repo', type: 'text', required: false },
 				{
 					name: 'impact',
 					type: 'enum',
@@ -368,6 +370,7 @@ const outboundSalesTemplate: WorkspaceTemplate = {
 			deal: ['prospecting', 'discovery', 'proposal', 'negotiation', 'closed_won', 'closed_lost'],
 		},
 		field_definitions: {
+			bet: [{ name: 'github_repo', type: 'text', required: false }],
 			company: [
 				{ name: 'industry', type: 'text', required: false },
 				{
