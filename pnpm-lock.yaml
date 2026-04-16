@@ -31,10 +31,10 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: ^1.19.13
-        version: 1.19.13(hono@4.12.12)
+        version: 1.19.13(hono@4.12.14)
       '@hono/zod-openapi':
         specifier: ^0.18.0
-        version: 0.18.4(hono@4.12.12)(zod@3.25.76)
+        version: 0.18.4(hono@4.12.14)(zod@3.25.76)
       '@maskin/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -78,8 +78,8 @@ importers:
         specifier: ^0.38.0
         version: 0.38.4(@types/react@19.2.14)(kysely@0.28.14)(postgres@3.4.8)(react@19.2.4)
       hono:
-        specifier: ^4.12.12
-        version: 4.12.12
+        specifier: ^4.12.14
+        version: 4.12.14
       postgres:
         specifier: ^3.4.0
         version: 3.4.8
@@ -306,8 +306,8 @@ importers:
         specifier: ^0.38.0
         version: 0.38.4(@types/react@19.2.14)(kysely@0.28.14)(postgres@3.4.8)(react@19.2.4)
       hono:
-        specifier: ^4.12.12
-        version: 4.12.12
+        specifier: ^4.12.14
+        version: 4.12.14
     devDependencies:
       '@types/bcryptjs':
         specifier: ^3.0.0
@@ -370,7 +370,7 @@ importers:
     dependencies:
       '@hono/zod-openapi':
         specifier: ^0.18.0
-        version: 0.18.4(hono@4.12.12)(zod@3.25.76)
+        version: 0.18.4(hono@4.12.14)(zod@3.25.76)
       '@maskin/db':
         specifier: workspace:*
         version: link:../db
@@ -381,8 +381,8 @@ importers:
         specifier: workspace:*
         version: link:../storage
       hono:
-        specifier: ^4.12.12
-        version: 4.12.12
+        specifier: ^4.12.14
+        version: 4.12.14
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -397,8 +397,8 @@ importers:
   packages/realtime:
     dependencies:
       hono:
-        specifier: ^4.12.12
-        version: 4.12.12
+        specifier: ^4.12.14
+        version: 4.12.14
       postgres:
         specifier: ^3.4.0
         version: 3.4.8
@@ -3600,8 +3600,8 @@ packages:
   hast-util-whitespace@3.0.0:
     resolution: {integrity: sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==}
 
-  hono@4.12.12:
-    resolution: {integrity: sha512-p1JfQMKaceuCbpJKAPKVqyqviZdS0eUxH9v82oWo1kb9xjQ5wA6iP3FNVAPDFlz5/p7d45lO+BpSk1tuSZMF4Q==}
+  hono@4.12.14:
+    resolution: {integrity: sha512-am5zfg3yu6sqn5yjKBNqhnTX7Cv+m00ox+7jbaKkrLMRJ4rAdldd1xPd/JzbBWspqaQv6RSTrgFN95EsfhC+7w==}
     engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@4.0.0:
@@ -5914,20 +5914,20 @@ snapshots:
       protobufjs: 7.5.4
       yargs: 17.7.2
 
-  '@hono/node-server@1.19.13(hono@4.12.12)':
+  '@hono/node-server@1.19.13(hono@4.12.14)':
     dependencies:
-      hono: 4.12.12
+      hono: 4.12.14
 
-  '@hono/zod-openapi@0.18.4(hono@4.12.12)(zod@3.25.76)':
+  '@hono/zod-openapi@0.18.4(hono@4.12.14)(zod@3.25.76)':
     dependencies:
       '@asteasolutions/zod-to-openapi': 7.3.4(zod@3.25.76)
-      '@hono/zod-validator': 0.4.3(hono@4.12.12)(zod@3.25.76)
-      hono: 4.12.12
+      '@hono/zod-validator': 0.4.3(hono@4.12.14)(zod@3.25.76)
+      hono: 4.12.14
       zod: 3.25.76
 
-  '@hono/zod-validator@0.4.3(hono@4.12.12)(zod@3.25.76)':
+  '@hono/zod-validator@0.4.3(hono@4.12.14)(zod@3.25.76)':
     dependencies:
-      hono: 4.12.12
+      hono: 4.12.14
       zod: 3.25.76
 
   '@isaacs/cliui@8.0.2':
@@ -5974,7 +5974,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.27.1(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.13(hono@4.12.12)
+      '@hono/node-server': 1.19.13(hono@4.12.14)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -5984,7 +5984,7 @@ snapshots:
       eventsource-parser: 3.0.6
       express: 5.2.1
       express-rate-limit: 8.3.1(express@5.2.1)
-      hono: 4.12.12
+      hono: 4.12.14
       jose: 6.2.2
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -8175,7 +8175,7 @@ snapshots:
     dependencies:
       '@types/hast': 3.0.4
 
-  hono@4.12.12: {}
+  hono@4.12.14: {}
 
   html-encoding-sniffer@4.0.0:
     dependencies:

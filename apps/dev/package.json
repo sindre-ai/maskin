@@ -32,7 +32,7 @@
 		"csv-parse": "^6.2.1",
 		"dockerode": "^4.0.0",
 		"drizzle-orm": "^0.38.0",
-		"hono": "^4.12.12",
+		"hono": "^4.12.14",
 		"postgres": "^3.4.0",
 		"tar-stream": "^3.1.0",
 		"zod": "^3.24.0"
