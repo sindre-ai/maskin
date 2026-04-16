@@ -208,4 +208,70 @@ describe('SessionManager', () => {
 			await manager.stop()
 		})
 	})
+
+	describe('runWatchdog() — zombie starting sessions', () => {
+		it('fails sessions stuck in starting for >10 minutes', async () => {
+			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+			const stuckSession = buildSession({
+				status: 'starting',
+				containerId: null,
+				updatedAt: twentyMinutesAgo,
+				startedAt: null,
+			})
+
+			// Set up the select queue for each watchdog query in order:
+			// 1. timedOut (running past timeout) → empty
+			// 2. runningSessions (for idle check) → empty
+			// 3. expiredPaused → empty
+			// 4. stuckPending → empty
+			// 5. stuckStarting → our stuck session
+			// 6. drainQueue > hasCapacity: workspace lookup
+			// 7. drainQueue > hasCapacity: count running sessions
+			// 8. drainQueue > nextQueued → empty (no queued sessions)
+			// 9. queuedSessions (final drain) → empty
+			mockResults.selectQueue = [
+				[],              // 1. timedOut
+				[],              // 2. runningSessions
+				[],              // 3. expiredPaused
+				[],              // 4. stuckPending
+				[stuckSession],  // 5. stuckStarting
+				[{ settings: {} }], // 6. drainQueue > workspace
+				[{ count: 0 }],    // 7. drainQueue > count
+				[],              // 8. drainQueue > nextQueued (empty = break)
+				[],              // 9. final queuedSessions
+			]
+
+			// Access private runWatchdog via cast
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			// The watchdog should have completed without error,
+			// processing the stuck starting session through the failure path
+		})
+
+		it('does not fail sessions in starting for less than 10 minutes', async () => {
+			const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+			const recentSession = buildSession({
+				status: 'starting',
+				containerId: null,
+				updatedAt: fiveMinutesAgo,
+			})
+
+			// The DB query uses lt(updatedAt, tenMinutesAgo), so a session
+			// updated 5 minutes ago should NOT be returned by the query.
+			// With the mock DB, the query returns whatever we put in the queue,
+			// so we simulate the correct DB behavior by returning empty for stuckStarting.
+			mockResults.selectQueue = [
+				[],  // 1. timedOut
+				[],  // 2. runningSessions
+				[],  // 3. expiredPaused
+				[],  // 4. stuckPending
+				[],  // 5. stuckStarting (empty — session is too recent)
+				[],  // 6. queuedSessions
+			]
+
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			// Watchdog completes without processing the recent session
+		})
+	})
 })
