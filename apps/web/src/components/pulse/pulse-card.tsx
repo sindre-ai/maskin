@@ -5,6 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { useWorkspace } from '@/lib/workspace-context'
+import { Link } from '@tanstack/react-router'
+import { ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { NotificationInput } from './notification-input'
 
@@ -13,6 +16,28 @@ const typeLabels: Record<string, string> = {
 	recommendation: 'Pattern detected',
 	good_news: 'Good news',
 	alert: 'Alert',
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Metadata keys ending in _id that contain valid UUIDs, excluding known non-object fields. */
+const NON_OBJECT_ID_KEYS = new Set(['source_actor_id', 'target_actor_id', 'session_id'])
+
+function extractMetadataObjectLinks(
+	metadata: Record<string, unknown>,
+): { label: string; objectId: string }[] {
+	const links: { label: string; objectId: string }[] = []
+	for (const [key, value] of Object.entries(metadata)) {
+		if (NON_OBJECT_ID_KEYS.has(key)) continue
+		if (typeof value === 'string' && key.endsWith('_id') && UUID_RE.test(value)) {
+			const label = key
+				.replace(/_id$/, '')
+				.replace(/_/g, ' ')
+				.replace(/^\w/, (c) => c.toUpperCase())
+			links.push({ label, objectId: value })
+		}
+	}
+	return links
 }
 
 export interface NotificationAction {
@@ -75,6 +100,7 @@ interface PulseCardProps {
 }
 
 export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
+	const { workspaceId } = useWorkspace()
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags
@@ -92,6 +118,16 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 
 	const [replyOpen, setReplyOpen] = useState(false)
 	const [replyText, setReplyText] = useState('')
+
+	// Build object link for primary objectId
+	const primaryObjectPath = notification.objectId
+		? `/${workspaceId}/objects/${notification.objectId}`
+		: null
+
+	// Extract secondary object links from metadata
+	const metadataLinks = extractMetadataObjectLinks(metadata as Record<string, unknown>).filter(
+		(link) => link.objectId !== notification.objectId,
+	)
 
 	const handleReplySubmit = () => {
 		if (!replyText.trim()) return
@@ -118,7 +154,18 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 						</Badge>
 					)}
 				</div>
-				<CardTitle className="text-base">{notification.title}</CardTitle>
+				<CardTitle className="text-base">
+					{primaryObjectPath ? (
+						<Link
+							to={primaryObjectPath}
+							className="hover:underline text-foreground"
+						>
+							{notification.title}
+						</Link>
+					) : (
+						notification.title
+					)}
+				</CardTitle>
 				{notification.content && (
 					<div className="text-sm text-muted-foreground">
 						<MarkdownContent content={notification.content} />
@@ -130,6 +177,22 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{metaText && (
 					<div className="text-xs text-muted-foreground">
 						<MarkdownContent content={metaText} size="xs" />
+					</div>
+				)}
+
+				{/* Linked objects from metadata */}
+				{metadataLinks.length > 0 && (
+					<div className="flex flex-wrap gap-2">
+						{metadataLinks.map((link) => (
+							<Link
+								key={link.objectId}
+								to={`/${workspaceId}/objects/${link.objectId}`}
+								className="inline-flex items-center gap-1 text-xs text-primary hover:underline min-h-[28px] px-2 py-1 rounded-md bg-muted/50"
+							>
+								<ExternalLink className="h-3 w-3" />
+								{link.label}
+							</Link>
+						))}
 					</div>
 				)}
 
@@ -224,6 +287,18 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 					<>
 						<span>&middot;</span>
 						<span>Session</span>
+					</>
+				)}
+				{primaryObjectPath && (
+					<>
+						<span>&middot;</span>
+						<Link
+							to={primaryObjectPath}
+							className="inline-flex items-center gap-1 text-primary hover:underline"
+						>
+							<ExternalLink className="h-3 w-3" />
+							Linked object
+						</Link>
 					</>
 				)}
 			</CardFooter>
