@@ -770,6 +770,7 @@ export class SessionManager extends EventEmitter {
 
 	private async runWatchdog(): Promise<void> {
 		const now = new Date()
+		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
 
 		// 1. Find sessions past timeout — push learnings before cleanup
 		const timedOut = await this.db
@@ -840,7 +841,6 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// 2. Auto-pause idle sessions (no log output for >10 minutes)
-		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
 		const runningSessions = await this.db
 			.select()
 			.from(sessions)
@@ -918,7 +918,46 @@ export class SessionManager extends EventEmitter {
 				)
 		}
 
-		// 6. Drain queued sessions for workspaces that have capacity
+		// 6. Fail sessions stuck in 'starting' for >10 minutes (zombie session cleanup)
+		const stuckStarting = await this.db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.status, 'starting'), lt(sessions.updatedAt, tenMinutesAgo)))
+
+		for (const session of stuckStarting) {
+			logger.warn(`Failing zombie session stuck in starting: ${session.id}`, {
+				workspaceId: session.workspaceId,
+			})
+
+			await this.db
+				.update(sessions)
+				.set({
+					status: 'failed',
+					result: { error: 'Session stuck in starting state' },
+					completedAt: new Date(),
+					updatedAt: new Date(),
+				})
+				.where(eq(sessions.id, session.id))
+
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_failed',
+				entityType: 'session',
+				entityId: session.id,
+				data: { error: 'Session stuck in starting state' },
+			})
+
+			await this.clearActiveSession(session.id)
+			await this.cleanupSession(session.id)
+
+			// Free capacity for the workspace so queued sessions can start
+			await this.drainQueue(session.workspaceId).catch((err) =>
+				logger.error('Failed to drain queue after zombie cleanup', { error: String(err) }),
+			)
+		}
+
+		// 7. Drain queued sessions for workspaces that have capacity
 		const queuedSessions = await this.db
 			.select({ workspaceId: sessions.workspaceId })
 			.from(sessions)
