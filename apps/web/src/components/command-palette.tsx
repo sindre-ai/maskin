@@ -24,6 +24,10 @@ export function CommandPalette() {
 				e.preventDefault()
 				setOpen((o) => !o)
 			}
+			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault()
+				setOpen(true)
+			}
 			if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
 				navigateTo(`/${workspaceId}/objects/${crypto.randomUUID()}`)
@@ -107,6 +111,12 @@ export function CommandPalette() {
 							</Command.Group>
 						)}
 					</Command.List>
+					<div className="flex items-center gap-3 border-t border-border px-4 py-2 text-xs text-muted-foreground">
+						<span><kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘F</kbd> Search</span>
+						<span><kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd> Toggle</span>
+						<span><kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘N</kbd> New object</span>
+						<span><kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Esc</kbd> Close</span>
+					</div>
 				</Command>
 			</div>
 		</div>
