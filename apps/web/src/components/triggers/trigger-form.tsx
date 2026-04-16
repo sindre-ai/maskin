@@ -16,7 +16,7 @@ import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
 import type { SafeJsonValue } from '@maskin/shared'
-import { Check, X } from 'lucide-react'
+import { Bell, Check, Clock, Info, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 // --- Types ---
@@ -140,6 +140,105 @@ function parseCronExpression(expr: string): {
 	if (dayOfMonth !== '*') return { frequency: 'monthly', minute, hour, dayOfWeek: '1', dayOfMonth }
 	if (hour !== '*') return { frequency: 'daily', minute, hour, dayOfWeek: '1', dayOfMonth: '1' }
 	return { frequency: 'hourly', minute, hour: '9', dayOfWeek: '1', dayOfMonth: '1' }
+}
+
+// --- Trigger type descriptions ---
+
+const TRIGGER_TYPE_INFO: Record<
+	'event' | 'cron' | 'reminder',
+	{ icon: typeof Zap; label: string; description: string }
+> = {
+	event: {
+		icon: Zap,
+		label: 'Event',
+		description:
+			'Fires when something happens — e.g., an object is created, updated, or changes status.',
+	},
+	cron: {
+		icon: Clock,
+		label: 'Schedule',
+		description: 'Fires on a recurring schedule — e.g., every day at 9 AM or every Monday.',
+	},
+	reminder: {
+		icon: Bell,
+		label: 'Reminder',
+		description: 'Fires once at a specific date and time.',
+	},
+}
+
+function buildTriggerSummary({
+	type,
+	name,
+	entityType,
+	action,
+	fromStatus,
+	toStatus,
+	agentName,
+	frequency,
+	hour,
+	minute,
+	dayOfWeek,
+	dayOfMonth,
+	scheduledDate,
+	scheduledTime,
+}: {
+	type: 'cron' | 'event' | 'reminder'
+	name: string
+	entityType?: string
+	action?: string
+	fromStatus?: string
+	toStatus?: string
+	agentName?: string
+	frequency?: string
+	hour?: string
+	minute?: string
+	dayOfWeek?: string
+	dayOfMonth?: string
+	scheduledDate?: string
+	scheduledTime?: string
+}): string {
+	const agent = agentName ? `"${agentName}"` : 'the assigned agent'
+
+	if (type === 'event') {
+		let when = `a ${entityType ?? 'object'} is ${action ?? 'modified'}`
+		if (action === 'status_changed') {
+			const from = fromStatus && fromStatus !== '__any__' ? fromStatus : 'any status'
+			const to = toStatus && toStatus !== '__any__' ? toStatus : 'any status'
+			when = `a ${entityType ?? 'object'} changes from ${from} to ${to}`
+		}
+		return `When ${when}, ${agent} will be prompted to act.`
+	}
+
+	if (type === 'cron') {
+		const dayNames: Record<string, string> = {
+			'0': 'Sunday',
+			'1': 'Monday',
+			'2': 'Tuesday',
+			'3': 'Wednesday',
+			'4': 'Thursday',
+			'5': 'Friday',
+			'6': 'Saturday',
+		}
+		const h = Number(hour ?? 9)
+		const m = Number(minute ?? 0)
+		const timeStr = `${h === 0 ? 12 : h > 12 ? h - 12 : h}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+		let schedule = 'on a schedule'
+		if (frequency === 'hourly') schedule = `every hour at minute ${m}`
+		else if (frequency === 'daily') schedule = `every day at ${timeStr}`
+		else if (frequency === 'weekly')
+			schedule = `every ${dayNames[dayOfWeek ?? '1'] ?? 'Monday'} at ${timeStr}`
+		else if (frequency === 'monthly')
+			schedule = `on day ${dayOfMonth ?? '1'} of each month at ${timeStr}`
+		return `Runs ${schedule} — ${agent} will be prompted to act.`
+	}
+
+	if (type === 'reminder' && scheduledDate) {
+		return `On ${scheduledDate} at ${scheduledTime ?? '09:00'}, ${agent} will be prompted to act.`
+	}
+
+	return name
+		? `"${name}" will prompt ${agent} when triggered.`
+		: 'Configure the trigger details above.'
 }
 
 // --- Main form ---
@@ -456,115 +555,143 @@ export function TriggerForm({
 				}}
 			/>
 
-			<div className="flex gap-2">
-				{(['event', 'cron', 'reminder'] as const).map((t) => (
-					<Button
-						key={t}
-						variant={type === t ? 'default' : 'secondary'}
-						size="sm"
-						onClick={() => setType(t)}
-					>
-						{t}
-					</Button>
-				))}
+			<div className="space-y-2">
+				<p className="text-xs font-medium text-muted-foreground">Trigger type</p>
+				<div className="flex gap-2">
+					{(['event', 'cron', 'reminder'] as const).map((t) => {
+						const info = TRIGGER_TYPE_INFO[t]
+						const Icon = info.icon
+						return (
+							<Button
+								key={t}
+								variant={type === t ? 'default' : 'secondary'}
+								size="sm"
+								onClick={() => setType(t)}
+							>
+								<Icon size={14} className="mr-1.5" />
+								{info.label}
+							</Button>
+						)
+					})}
+				</div>
+				<p className="text-xs text-muted-foreground">{TRIGGER_TYPE_INFO[type].description}</p>
 			</div>
 
 			{type === 'cron' ? (
-				<CronScheduleBuilder
-					frequency={frequency}
-					minute={minute}
-					hour={hour}
-					dayOfWeek={dayOfWeek}
-					dayOfMonth={dayOfMonth}
-					onFrequencyChange={setFrequency}
-					onMinuteChange={setMinute}
-					onHourChange={setHour}
-					onDayOfWeekChange={setDayOfWeek}
-					onDayOfMonthChange={setDayOfMonth}
-				/>
+				<div className="space-y-2">
+					<p className="text-xs font-medium text-muted-foreground">Schedule</p>
+					<CronScheduleBuilder
+						frequency={frequency}
+						minute={minute}
+						hour={hour}
+						dayOfWeek={dayOfWeek}
+						dayOfMonth={dayOfMonth}
+						onFrequencyChange={setFrequency}
+						onMinuteChange={setMinute}
+						onHourChange={setHour}
+						onDayOfWeekChange={setDayOfWeek}
+						onDayOfMonthChange={setDayOfMonth}
+					/>
+				</div>
 			) : type === 'reminder' ? (
-				<div className="flex gap-2">
-					<Input
-						type="date"
-						value={scheduledDate}
-						onChange={(e) => setScheduledDate(e.target.value)}
-						className="flex-1"
-					/>
-					<Input
-						type="time"
-						value={scheduledTime}
-						onChange={(e) => setScheduledTime(e.target.value)}
-						className="w-[130px]"
-					/>
+				<div className="space-y-2">
+					<p className="text-xs font-medium text-muted-foreground">When to fire</p>
+					<div className="flex gap-2">
+						<Input
+							type="date"
+							value={scheduledDate}
+							onChange={(e) => setScheduledDate(e.target.value)}
+							placeholder="Select a date"
+							className="flex-1"
+						/>
+						<Input
+							type="time"
+							value={scheduledTime}
+							onChange={(e) => setScheduledTime(e.target.value)}
+							className="w-[130px]"
+						/>
+					</div>
+					{!scheduledDate && (
+						<p className="text-xs text-muted-foreground">
+							Pick a date and time for this one-time trigger.
+						</p>
+					)}
 				</div>
 			) : (
 				<>
-					<div className="flex gap-2">
-						<Select value={entityType} onValueChange={handleEntityTypeChange}>
-							<SelectTrigger className="flex-1">
-								<SelectValue placeholder="Entity type" />
-							</SelectTrigger>
-							<SelectContent className="max-h-[300px]">
-								{eventGroups.map((group) => (
-									<SelectGroup key={group.label}>
-										<SelectLabel>{group.label}</SelectLabel>
-										{group.events.map((e) => (
-											<SelectItem key={e.entityType} value={e.entityType}>
-												{e.label}
-											</SelectItem>
-										))}
-									</SelectGroup>
-								))}
-							</SelectContent>
-						</Select>
-						<Select value={action} onValueChange={setAction}>
-							<SelectTrigger className="flex-1">
-								<SelectValue placeholder="Action" />
-							</SelectTrigger>
-							<SelectContent>
-								{availableActions.map((a) => (
-									<SelectItem key={a} value={a}>
-										{a}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					</div>
-
-					{action === 'status_changed' && statuses.length > 0 && (
+					<div className="space-y-2">
+						<p className="text-xs font-medium text-muted-foreground">When this happens</p>
 						<div className="flex gap-2">
-							<Select value={fromStatus} onValueChange={setFromStatus}>
+							<Select value={entityType} onValueChange={handleEntityTypeChange}>
 								<SelectTrigger className="flex-1">
-									<SelectValue placeholder="From status (any)" />
+									<SelectValue placeholder="Select an entity type" />
 								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="__any__">Any status</SelectItem>
-									{statuses.map((s) => (
-										<SelectItem key={s} value={s}>
-											{s}
-										</SelectItem>
+								<SelectContent className="max-h-[300px]">
+									{eventGroups.map((group) => (
+										<SelectGroup key={group.label}>
+											<SelectLabel>{group.label}</SelectLabel>
+											{group.events.map((e) => (
+												<SelectItem key={e.entityType} value={e.entityType}>
+													{e.label}
+												</SelectItem>
+											))}
+										</SelectGroup>
 									))}
 								</SelectContent>
 							</Select>
-							<span className="flex items-center text-xs text-muted-foreground">→</span>
-							<Select value={toStatus} onValueChange={setToStatus}>
+							<Select value={action} onValueChange={setAction}>
 								<SelectTrigger className="flex-1">
-									<SelectValue placeholder="To status (any)" />
+									<SelectValue placeholder="Select an action" />
 								</SelectTrigger>
 								<SelectContent>
-									<SelectItem value="__any__">Any status</SelectItem>
-									{statuses.map((s) => (
-										<SelectItem key={s} value={s}>
-											{s}
+									{availableActions.map((a) => (
+										<SelectItem key={a} value={a}>
+											{a}
 										</SelectItem>
 									))}
 								</SelectContent>
 							</Select>
 						</div>
+					</div>
+
+					{action === 'status_changed' && statuses.length > 0 && (
+						<div className="space-y-2">
+							<p className="text-xs font-medium text-muted-foreground">Status transition</p>
+							<div className="flex gap-2">
+								<Select value={fromStatus} onValueChange={setFromStatus}>
+									<SelectTrigger className="flex-1">
+										<SelectValue placeholder="From status (any)" />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="__any__">Any status</SelectItem>
+										{statuses.map((s) => (
+											<SelectItem key={s} value={s}>
+												{s}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+								<span className="flex items-center text-xs text-muted-foreground">→</span>
+								<Select value={toStatus} onValueChange={setToStatus}>
+									<SelectTrigger className="flex-1">
+										<SelectValue placeholder="To status (any)" />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="__any__">Any status</SelectItem>
+										{statuses.map((s) => (
+											<SelectItem key={s} value={s}>
+												{s}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+						</div>
 					)}
 
 					{isInternal && (
 						<div className="space-y-2">
+							<p className="text-xs font-medium text-muted-foreground">Additional conditions</p>
 							{conditions.map((condition, index) => (
 								<ConditionEditor
 									key={condition.id}
@@ -589,26 +716,59 @@ export function TriggerForm({
 				</>
 			)}
 
-			<Textarea
-				value={prompt}
-				onChange={(e) => setPrompt(e.target.value)}
-				placeholder="Action prompt for the agent..."
-				className="min-h-[60px]"
-			/>
+			<div className="space-y-2">
+				<p className="text-xs font-medium text-muted-foreground">Do this</p>
+				<Textarea
+					value={prompt}
+					onChange={(e) => setPrompt(e.target.value)}
+					placeholder="Describe what the agent should do when this trigger fires..."
+					className="min-h-[60px]"
+				/>
+			</div>
 
 			{agents.length > 0 && (
-				<Select value={targetActorId} onValueChange={setTargetActorId}>
-					<SelectTrigger>
-						<SelectValue placeholder="Select agent..." />
-					</SelectTrigger>
-					<SelectContent>
-						{agents.map((a) => (
-							<SelectItem key={a.id} value={a.id}>
-								{a.name}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				<div className="space-y-2">
+					<p className="text-xs font-medium text-muted-foreground">Using this agent</p>
+					<Select value={targetActorId} onValueChange={setTargetActorId}>
+						<SelectTrigger>
+							<SelectValue placeholder="Select an agent..." />
+						</SelectTrigger>
+						<SelectContent>
+							{agents.map((a) => (
+								<SelectItem key={a.id} value={a.id}>
+									{a.name}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</div>
+			)}
+
+			{/* Trigger summary */}
+			{(name.trim() || prompt.trim()) && (
+				<div className="rounded-md border border-border bg-bg-surface px-3 py-2">
+					<div className="flex items-start gap-2">
+						<Info size={14} className="mt-0.5 shrink-0 text-muted-foreground" />
+						<p className="text-xs text-muted-foreground">
+							{buildTriggerSummary({
+								type,
+								name,
+								entityType,
+								action,
+								fromStatus,
+								toStatus,
+								agentName: agents.find((a) => a.id === targetActorId)?.name,
+								frequency,
+								hour,
+								minute,
+								dayOfWeek,
+								dayOfMonth,
+								scheduledDate,
+								scheduledTime,
+							})}
+						</p>
+					</div>
+				</div>
 			)}
 
 			{/* Enabled toggle */}
