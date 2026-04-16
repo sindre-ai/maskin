@@ -1,6 +1,7 @@
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { type ExecEvent, Mount, NetworkPolicy, Sandbox } from 'microsandbox'
+import { type ExecEvent, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
 import type {
 	ExecResult,
@@ -9,6 +10,61 @@ import type {
 	SandboxCreateOptions,
 	SandboxStatus as SandboxStatusType,
 } from './runtime-backend'
+
+/**
+ * Spawn sandbox creation in a child process.
+ *
+ * Sandbox.create() fails with a handshake timeout when called from
+ * within the agent-server's long-running process, but works in standalone
+ * scripts. As a workaround, we use Sandbox.createDetached() in a
+ * short-lived child process, then reconnect from the parent via
+ * Sandbox.get().connect().
+ */
+function spawnSandboxCreate(config: {
+	name: string
+	image: string
+	memoryMib: number
+	cpus: number
+	env: Record<string, string>
+	volumePaths: Array<{ guest: string; host: string; readonly: boolean }>
+	maxDurationSecs?: number
+}): void {
+	const script = `
+const { Sandbox, Mount, NetworkPolicy } = require('microsandbox');
+const config = JSON.parse(process.argv[1]);
+const volumes = {};
+for (const v of config.volumePaths) {
+  volumes[v.guest] = Mount.bind(v.host, { readonly: v.readonly });
+}
+const opts = {
+  name: config.name,
+  image: config.image,
+  memoryMib: config.memoryMib,
+  cpus: config.cpus,
+  env: config.env,
+  volumes,
+  network: NetworkPolicy.allowAll(),
+  replace: true,
+  quietLogs: true,
+  pullPolicy: 'always',
+};
+if (config.maxDurationSecs !== undefined) {
+  opts.maxDurationSecs = config.maxDurationSecs;
+}
+Sandbox.createDetached(opts).then(() => {
+  process.exit(0);
+}).catch((err) => {
+  process.stderr.write(err.message);
+  process.exit(1);
+});
+`
+	execFileSync(
+		process.execPath,
+		['-e', script, JSON.stringify(config)],
+		{ timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] },
+	)
+	// If we get here, the child exited successfully
+}
 
 export class MicrosandboxBackend implements RuntimeBackend {
 	private sandboxes = new Map<string, Sandbox>()
@@ -35,37 +91,31 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			throw new Error(`No create options for sandbox: ${sandboxId}`)
 		}
 
-		const volumes: Record<string, ReturnType<typeof Mount.bind>> = {}
+		const volumePaths: Array<{ guest: string; host: string; readonly: boolean }> = []
 		let agentHostPath: string | undefined
 		for (const bind of options.binds) {
 			const [source, dest, mode] = bind.split(':')
 			if (source && dest) {
-				volumes[dest] = Mount.bind(source, { readonly: mode === 'ro' })
+				volumePaths.push({ guest: dest, host: source, readonly: mode === 'ro' })
 				if (dest === '/agent') agentHostPath = source
 			}
 		}
 
 		// agent-base image sets WORKDIR=/agent/workspace, but our bind mount
-		// replaces /agent entirely. Pre-create the subdirs the image expects
-		// so the VMM's workdir validation passes and the entrypoint finds its paths.
+		// replaces /agent entirely. Pre-create the subdirs the image expects.
 		if (agentHostPath) {
 			for (const sub of ['workspace', 'skills', 'learnings', 'memory']) {
 				mkdirSync(join(agentHostPath, sub), { recursive: true })
 			}
 		}
 
-		// libkrun has two constraints on env vars:
-		//  1. Values must be printable ASCII — non-ASCII or control chars panic
-		//     the VMM (InvalidAscii / handshake failures).
+		// libkrun constraints on env vars:
+		//  1. Values must be printable ASCII only.
 		//  2. Values over ~1500 chars cause a handshake failure at boot.
-		// Large values are written to /agent/.env-overflow.sh (sourced by
-		// agent-run.sh); other values are stripped of non-printable chars.
 		const OVERFLOW_THRESHOLD = 1500
 		const sanitizedEnv: Record<string, string> = {}
 		const overflowEntries: Array<{ key: string; value: string }> = []
 		for (const [key, value] of Object.entries(options.env)) {
-			// Strip everything except printable ASCII (space through tilde).
-			// libkrun chokes on control chars including newlines/tabs in env values.
 			const clean = value.replace(/[^\x20-\x7E]/g, '')
 			if (clean !== value) {
 				logger.warn(`Sanitized env var ${key}`, {
@@ -94,33 +144,32 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			})
 		}
 
-		// Diagnostic: log every env var about to be passed to the sandbox so we can
-		// reproduce the exact shape. First 20 and last 20 chars only to avoid leaking secrets.
-		const envDump = Object.entries(sanitizedEnv).map(([k, v]) => ({
-			key: k,
-			len: v.length,
-			head: v.slice(0, 20),
-			tail: v.length > 40 ? v.slice(-20) : '',
-		}))
-		logger.info(`Sandbox env to be passed (${sandboxId})`, { env: envDump })
-
-		const sandboxConfig = {
-			name: options.name,
-			image: options.image,
-			memoryMib: options.memoryMb,
-			cpus: Math.max(1, Math.round(options.cpuShares / 1024)),
-			env: sanitizedEnv,
-			volumes,
-			network: NetworkPolicy.allowAll(),
-			replace: true as const,
-			quietLogs: true,
-			pullPolicy: 'always' as const,
-			...(options.maxDurationSecs !== undefined && {
-				maxDurationSecs: options.maxDurationSecs,
-			}),
+		// Spawn sandbox creation in a child process. Sandbox.create() fails
+		// with a handshake timeout when called from the agent-server process
+		// but works in standalone scripts — likely a NAPI/libuv interaction.
+		try {
+			spawnSandboxCreate({
+				name: options.name,
+				image: options.image,
+				memoryMib: options.memoryMb,
+				cpus: Math.max(1, Math.round(options.cpuShares / 1024)),
+				env: sanitizedEnv,
+				volumePaths,
+				...(options.maxDurationSecs !== undefined && {
+					maxDurationSecs: options.maxDurationSecs,
+				}),
+			})
+		} catch (err) {
+			const stderr =
+				err instanceof Error && 'stderr' in err
+					? String((err as { stderr: unknown }).stderr)
+					: String(err)
+			throw new Error(`Sandbox creation failed: ${stderr}`)
 		}
 
-		const sandbox = await Sandbox.create(sandboxConfig)
+		// Reconnect to the detached sandbox from the parent process
+		const handle = await Sandbox.get(options.name)
+		const sandbox = await handle.connect()
 
 		this.sandboxes.set(sandboxId, sandbox)
 		this.startTimes.set(sandboxId, new Date().toISOString())
