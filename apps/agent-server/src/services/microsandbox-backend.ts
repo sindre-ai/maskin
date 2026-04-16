@@ -134,24 +134,17 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		)
 		logger.info(`Wrote debug config to /tmp/msb-debug-config.json`)
 
-		// DEBUG: test with volumes to isolate the issue
-		logger.info('Attempting sandbox with volumes test...')
+		// DEBUG: test with exact same config but different name
+		logger.info('Attempting sandbox with FULL config test...')
 		try {
 			const testSb = await Sandbox.create({
-				name: `test-vol-${Date.now()}`,
-				image: sandboxConfig.image,
-				memoryMib: 512,
-				cpus: 1,
-				env: { TEST: 'hello' },
-				volumes,
-				network: NetworkPolicy.allowAll(),
-				replace: true,
-				pullPolicy: 'always' as const,
+				...sandboxConfig,
+				name: `test-full-${Date.now()}`,
 			})
-			logger.info('Sandbox with volumes BOOTED')
+			logger.info('Full config sandbox BOOTED')
 			await testSb.kill()
 		} catch (testErr) {
-			logger.error('Sandbox with volumes FAILED', {
+			logger.error('Full config sandbox FAILED', {
 				error: String(testErr),
 			})
 		}
