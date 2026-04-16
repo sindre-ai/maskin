@@ -3,6 +3,12 @@ import { Link } from '@tanstack/react-router'
 import { RelativeTime } from '../shared/relative-time'
 import { StatusBadge } from '../shared/status-badge'
 
+const STATUS_HINTS: Record<string, string> = {
+	proposed: 'Move to Active to start task decomposition',
+	signal: 'Promote to Proposed to evaluate this bet',
+	paused: 'Resume by moving to Active',
+}
+
 export function BetCard({
 	bet,
 	workspaceId,
@@ -14,6 +20,8 @@ export function BetCard({
 	insightCount: number
 	taskCount: number
 }) {
+	const hint = STATUS_HINTS[bet.status]
+
 	return (
 		<Link
 			to="/$workspaceId/objects/$objectId"
@@ -26,6 +34,7 @@ export function BetCard({
 				</h3>
 				<StatusBadge status={bet.status} />
 			</div>
+			{hint && <p className="mt-1.5 text-[11px] text-muted-foreground/70 italic">{hint}</p>}
 			<div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
 				<span>
 					{insightCount} insight{insightCount !== 1 ? 's' : ''}
