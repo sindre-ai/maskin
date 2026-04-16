@@ -1,5 +1,6 @@
 import type { EventResponse } from '@/lib/api'
 import { useMemo } from 'react'
+import { StreamingIndicator } from '../shared/streaming-indicator'
 import { ActivityComment } from './activity-comment'
 import { ActivityItem } from './activity-item'
 import { CommentInput } from './comment-input'
@@ -8,9 +9,10 @@ interface ObjectActivityProps {
 	workspaceId: string
 	objectId: string
 	events?: EventResponse[]
+	activeSessionId?: string | null
 }
 
-export function ObjectActivity({ workspaceId, objectId, events }: ObjectActivityProps) {
+export function ObjectActivity({ workspaceId, objectId, events, activeSessionId }: ObjectActivityProps) {
 	// Group events: separate comments from system events, group replies under parents
 	const { topLevel, repliesByParent } = useMemo(() => {
 		if (!events) return { topLevel: [], repliesByParent: new Map<number, EventResponse[]>() }
@@ -47,8 +49,14 @@ export function ObjectActivity({ workspaceId, objectId, events }: ObjectActivity
 
 			<CommentInput workspaceId={workspaceId} objectId={objectId} />
 
+			{activeSessionId && (
+				<div className="mt-3">
+					<StreamingIndicator sessionId={activeSessionId} workspaceId={workspaceId} />
+				</div>
+			)}
+
 			<div className="mt-4 space-y-0.5">
-				{topLevel.length === 0 && (
+				{topLevel.length === 0 && !activeSessionId && (
 					<p className="text-sm text-muted-foreground py-4 text-center">No activity yet</p>
 				)}
 				{topLevel.map((event) =>
