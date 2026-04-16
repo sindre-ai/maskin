@@ -32,7 +32,7 @@ function spawnSandboxCreate(config: {
 }): void {
 	const script = `
 const { Sandbox, Mount, NetworkPolicy } = require('microsandbox');
-const config = JSON.parse(process.argv[1]);
+const config = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
 const volumes = {};
 for (const v of config.volumePaths) {
   volumes[v.guest] = Mount.bind(v.host, { readonly: v.readonly });
@@ -59,23 +59,28 @@ Sandbox.createDetached(opts).then(() => {
   process.exit(1);
 });
 `
-	// Write script to a temp file so it can be exec'd with a clean FD table.
-	// Bash closes inherited FDs (3-255) before exec-ing node.
-	const scriptPath = join(tmpdir(), `msb-spawn-${Date.now()}.js`)
+	// Write script and config to temp files. Bash closes inherited FDs
+	// (postgres, HTTP, S3 sockets) before exec-ing node with a clean FD table.
+	const ts = Date.now()
+	const scriptPath = join(tmpdir(), `msb-spawn-${ts}.js`)
+	const configPath = join(tmpdir(), `msb-config-${ts}.json`)
 	writeFileSync(scriptPath, script)
+	writeFileSync(configPath, JSON.stringify(config))
 	try {
 		execFileSync(
 			'/bin/bash',
 			[
 				'-c',
-				// Close inherited FDs (postgres, HTTP server, S3) before running node
-				`for fd in $(seq 3 255); do eval "exec $fd>&-" 2>/dev/null; done; exec ${process.execPath} ${scriptPath} '${JSON.stringify(config).replace(/'/g, "'\\''")}'`,
+				`for fd in $(seq 3 255); do eval "exec \$fd>&-" 2>/dev/null; done; exec ${process.execPath} ${scriptPath} ${configPath}`,
 			],
 			{ timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] },
 		)
 	} finally {
 		try {
 			unlinkSync(scriptPath)
+		} catch {}
+		try {
+			unlinkSync(configPath)
 		} catch {}
 	}
 }
