@@ -5,6 +5,7 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { Link } from '@tanstack/react-router'
 import type { ColumnDef, Table } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 
@@ -106,9 +107,14 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			header: sortableHeader('Title', 'title'),
 			cell: ({ row }) => (
 				<div className="flex items-center gap-2">
-					<span className="font-medium truncate max-w-[300px]">
+					<Link
+						to="/$workspaceId/objects/$objectId"
+						params={{ workspaceId, objectId: row.original.id }}
+						className="font-medium truncate max-w-[300px] text-foreground hover:underline"
+						onClick={(e) => e.stopPropagation()}
+					>
 						{row.getValue('title') || 'Untitled'}
-					</span>
+					</Link>
 					{row.original.activeSessionId && (
 						<AgentWorkingBadge sessionId={row.original.activeSessionId} workspaceId={workspaceId} />
 					)}
