@@ -6,7 +6,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
-import { resolveNavigationPath } from '@/lib/navigation'
+import { resolveNavigationTarget } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ArrowUpRight, ExternalLink } from 'lucide-react'
@@ -137,8 +137,8 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 		if ('response' in action) {
 			onAction(notification, action.response, action.navigate)
 		} else if (action.navigate) {
-			const path = resolveNavigationPath(workspaceId, action.navigate, notification)
-			if (path) navigate({ to: path })
+			const target = resolveNavigationTarget(workspaceId, action.navigate, notification)
+			if (target) navigate({ to: target.path, search: target.search })
 		}
 	}
 

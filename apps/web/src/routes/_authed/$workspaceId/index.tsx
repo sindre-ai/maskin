@@ -10,7 +10,7 @@ import {
 	useUpdateNotification,
 } from '@/hooks/use-notifications'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
-import { resolveNavigationPath } from '@/lib/navigation'
+import { resolveNavigationTarget } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
@@ -65,8 +65,8 @@ function PulseDashboard() {
 			{
 				onSuccess: () => {
 					if (nav) {
-						const path = resolveNavigationPath(workspaceId, nav, notification)
-						if (path) navigate({ to: path })
+						const target = resolveNavigationTarget(workspaceId, nav, notification)
+						if (target) navigate({ to: target.path, search: target.search })
 						else toast.warning('Could not navigate to the requested page.')
 					}
 				},
