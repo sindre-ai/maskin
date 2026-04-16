@@ -64,8 +64,9 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		const sanitizedEnv: Record<string, string> = {}
 		const overflowEntries: Array<{ key: string; value: string }> = []
 		for (const [key, value] of Object.entries(options.env)) {
-			// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitization
-			const clean = value.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '')
+			// Strip everything except printable ASCII (space through tilde).
+			// libkrun chokes on control chars including newlines/tabs in env values.
+			const clean = value.replace(/[^\x20-\x7E]/g, '')
 			if (clean !== value) {
 				logger.warn(`Sanitized env var ${key}`, {
 					originalLen: value.length,
