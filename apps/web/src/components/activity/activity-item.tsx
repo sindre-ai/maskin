@@ -9,9 +9,21 @@ import { Badge } from '../ui/badge'
 import { formatEventDescription, isErrorEvent } from './format-event'
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
+const SESSION_ACTIONS = new Set([
+	'session_created',
+	'session_running',
+	'session_completed',
+	'session_failed',
+	'session_timeout',
+	'session_paused',
+])
 
 function isObjectEntity(entityType: string): boolean {
 	return OBJECT_ENTITY_TYPES.has(entityType)
+}
+
+function isSessionEvent(event: EventResponse): boolean {
+	return SESSION_ACTIONS.has(event.action)
 }
 
 function getEventIcon(event: EventResponse) {
@@ -58,12 +70,17 @@ export function ActivityItemView({
 
 	const Icon = getEventIcon(event)
 
-	return (
+	const isSession = isSessionEvent(event)
+	const isClickable = isSession && workspaceId && event.actorId
+
+	const content = (
 		<div
 			className={cn(
 				'flex items-start gap-2 animate-slide-in',
 				compact ? 'py-1' : 'py-2',
 				isAgent && 'opacity-75',
+				isClickable &&
+					'hover:bg-secondary/50 rounded-md px-1 -mx-1 transition-colors cursor-pointer',
 			)}
 		>
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
@@ -99,6 +116,20 @@ export function ActivityItemView({
 			</div>
 		</div>
 	)
+
+	if (isClickable) {
+		return (
+			<Link
+				to="/$workspaceId/agents/$agentId"
+				params={{ workspaceId, agentId: event.actorId }}
+				className="block no-underline text-inherit"
+			>
+				{content}
+			</Link>
+		)
+	}
+
+	return content
 }
 
 export function ActivityItem({
