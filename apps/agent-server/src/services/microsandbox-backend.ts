@@ -30,6 +30,14 @@ function spawnSandboxCreate(config: {
 	maxDurationSecs?: number
 }): void {
 	const script = `
+// Close all inherited file descriptors from the parent process.
+// The agent-server has open postgres/HTTP/S3 sockets that, if inherited,
+// can interfere with msb's Unix socket handshake.
+const fs = require('fs');
+for (let fd = 3; fd < 1024; fd++) {
+  try { fs.closeSync(fd); } catch {}
+}
+
 const { Sandbox, Mount, NetworkPolicy } = require('microsandbox');
 const config = JSON.parse(process.argv[1]);
 const volumes = {};
