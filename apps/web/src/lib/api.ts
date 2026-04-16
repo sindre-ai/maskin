@@ -594,6 +594,11 @@ export interface CreateCommentInput {
 }
 
 // Imports
+export interface CsvOptions {
+	delimiter?: ',' | ';' | '\t' | '|'
+	encoding?: 'utf-8' | 'latin-1'
+}
+
 export interface ImportResponse {
 	id: string
 	workspaceId: string
@@ -651,4 +656,5 @@ export interface RelationshipMappingInput {
 export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
+	csvOptions?: CsvOptions
 }
