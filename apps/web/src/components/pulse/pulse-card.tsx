@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { NotificationInput } from './notification-input'
 
@@ -118,7 +119,22 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 						</Badge>
 					)}
 				</div>
-				<CardTitle className="text-base">{notification.title}</CardTitle>
+				<CardTitle className="text-base">
+					{notification.objectId ? (
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{
+								workspaceId: notification.workspaceId,
+								objectId: notification.objectId,
+							}}
+							className="text-foreground hover:underline"
+						>
+							{notification.title}
+						</Link>
+					) : (
+						notification.title
+					)}
+				</CardTitle>
 				{notification.content && (
 					<div className="text-sm text-muted-foreground">
 						<MarkdownContent content={notification.content} />
