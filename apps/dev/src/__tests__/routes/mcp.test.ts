@@ -74,9 +74,7 @@ describe('MCP Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
-			expect(await res.text()).toBe(
-				'Session not found. Send a POST request first to initialize.',
-			)
+			expect(await res.text()).toBe('Session not found. Send a POST request first to initialize.')
 		})
 
 		it('returns 404 for unknown session ID', async () => {
@@ -91,6 +89,33 @@ describe('MCP Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('opens SSE stream for existing session', async () => {
+			const app = await createApp()
+
+			// Create a session first
+			const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+			await app.request(
+				jsonPostRequest('/mcp', body, { Authorization: 'Bearer key' }),
+				undefined,
+				env,
+			)
+
+			// GET with session ID should delegate to transport
+			const { env: sseEnv, mockNodeReq: sseReq, mockNodeRes: sseRes } = createEnv()
+			const res = await app.request(
+				new Request('http://localhost/mcp', {
+					method: 'GET',
+					headers: { 'mcp-session-id': 'test-session-id' },
+				}),
+				undefined,
+				sseEnv,
+			)
+
+			expect(res.headers.get('x-hono-already-sent')).toBe('1')
+			// handleRequest called without body for SSE
+			expect(mockHandleRequest).toHaveBeenCalledWith(sseReq, sseRes)
 		})
 	})
 
@@ -108,6 +133,45 @@ describe('MCP Routes', () => {
 
 			expect(res.status).toBe(404)
 			expect(await res.text()).toBe('Session not found')
+		})
+
+		it('terminates an existing session and cleans up', async () => {
+			const app = await createApp()
+
+			// Create a session first
+			const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+			await app.request(
+				jsonPostRequest('/mcp', body, { Authorization: 'Bearer key' }),
+				undefined,
+				env,
+			)
+
+			// Delete the session
+			const { env: deleteEnv } = createEnv()
+			const res = await app.request(
+				new Request('http://localhost/mcp', {
+					method: 'DELETE',
+					headers: { 'mcp-session-id': 'test-session-id' },
+				}),
+				undefined,
+				deleteEnv,
+			)
+
+			expect(res.status).toBe(200)
+			expect(await res.text()).toBe('Session terminated')
+			expect(mockClose).toHaveBeenCalledTimes(1)
+
+			// Subsequent request with same session ID should create a new session
+			const { env: env3 } = createEnv()
+			await app.request(
+				jsonPostRequest('/mcp', body, {
+					Authorization: 'Bearer key',
+					'mcp-session-id': 'test-session-id',
+				}),
+				undefined,
+				env3,
+			)
+			expect(mockCreateMcpServer).toHaveBeenCalledTimes(2)
 		})
 	})
 

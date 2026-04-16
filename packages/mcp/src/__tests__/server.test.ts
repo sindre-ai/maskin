@@ -7,9 +7,18 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 	RESOURCE_MIME_TYPE: 'text/html',
 }))
 
+const { mockElicitInput, mockSendLoggingMessage } = vi.hoisted(() => ({
+	mockElicitInput: vi.fn(),
+	mockSendLoggingMessage: vi.fn(),
+}))
+
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
 	McpServer: class {
 		registerPrompt = vi.fn()
+		server = {
+			elicitInput: mockElicitInput,
+			sendLoggingMessage: mockSendLoggingMessage,
+		}
 	},
 }))
 
@@ -145,6 +154,8 @@ describe('tool handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
+		// Default: elicitation confirms (user accepts)
+		mockElicitInput.mockResolvedValue({ action: 'accept', content: { confirm: true } })
 		handlers = new Map()
 
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
@@ -274,7 +285,46 @@ describe('tool handlers', () => {
 	})
 
 	describe('delete_object handler', () => {
-		it('DELETEs /api/objects/:id', async () => {
+		it('DELETEs /api/objects/:id when elicitation is confirmed', async () => {
+			mockElicitInput.mockResolvedValue({ action: 'accept', content: { confirm: true } })
+			mockFetchSuccess({})
+
+			const handler = getHandler('delete_object')
+			await handler({ id: 'obj-123' })
+
+			expect(mockElicitInput).toHaveBeenCalledWith(
+				expect.objectContaining({
+					message: expect.stringContaining('obj-123'),
+				}),
+			)
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/objects/obj-123',
+				expect.objectContaining({ method: 'DELETE' }),
+			)
+		})
+
+		it('cancels deletion when elicitation is declined', async () => {
+			mockElicitInput.mockResolvedValue({ action: 'accept', content: { confirm: false } })
+			// First fetch is the pre-fetch for object title
+			vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+				ok: true,
+				json: () => Promise.resolve({ id: 'obj-123', title: 'My Task', type: 'task' }),
+			} as Response)
+
+			const handler = getHandler('delete_object')
+			const result = (await handler({ id: 'obj-123' })) as {
+				structuredContent: { cancelled: boolean }
+				content: Array<{ text: string }>
+			}
+
+			expect(result.structuredContent.cancelled).toBe(true)
+			expect(result.content[0].text).toContain('Deletion cancelled')
+			// Should NOT call DELETE
+			expect(fetch).toHaveBeenCalledTimes(1) // only the pre-fetch GET
+		})
+
+		it('proceeds with deletion when client does not support elicitation', async () => {
+			mockElicitInput.mockRejectedValue(new Error('Method not supported'))
 			mockFetchSuccess({})
 
 			const handler = getHandler('delete_object')
@@ -283,6 +333,30 @@ describe('tool handlers', () => {
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/objects/obj-123',
 				expect.objectContaining({ method: 'DELETE' }),
+			)
+		})
+
+		it('includes object title in elicitation message when available', async () => {
+			mockElicitInput.mockResolvedValue({ action: 'accept', content: { confirm: true } })
+			vi.spyOn(globalThis, 'fetch')
+				// Pre-fetch returns object with title
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'obj-123', title: 'Important Bet', type: 'bet' }),
+				} as Response)
+				// DELETE succeeds
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({}),
+				} as Response)
+
+			const handler = getHandler('delete_object')
+			await handler({ id: 'obj-123' })
+
+			expect(mockElicitInput).toHaveBeenCalledWith(
+				expect.objectContaining({
+					message: expect.stringContaining('"Important Bet" (bet)'),
+				}),
 			)
 		})
 	})

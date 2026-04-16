@@ -18,6 +18,7 @@ const sessions = new Map<
 >()
 
 const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes idle timeout
+const MAX_SESSIONS = 100 // Cap to prevent unbounded memory growth
 
 function cleanupStaleSessions() {
 	const now = Date.now()
@@ -62,17 +63,30 @@ app.post('/', async (c) => {
 		})
 	}
 
+	// Evict oldest session if at capacity
+	if (sessions.size >= MAX_SESSIONS) {
+		let oldestId: string | undefined
+		let oldestTime = Number.POSITIVE_INFINITY
+		for (const [id, s] of sessions) {
+			if (s.lastActivity < oldestTime) {
+				oldestTime = s.lastActivity
+				oldestId = id
+			}
+		}
+		if (oldestId) {
+			const stale = sessions.get(oldestId)
+			if (stale) void stale.transport.close()
+			sessions.delete(oldestId)
+		}
+	}
+
 	// Create new session
+	const url = new URL(c.req.url, 'http://localhost')
 	const mcpConfig = {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey:
-			c.req.header('Authorization')?.replace('Bearer ', '') ??
-			new URL(c.req.url, 'http://localhost').searchParams.get('key') ??
-			'',
-		defaultWorkspaceId:
-			c.req.header('X-Workspace-Id') ??
-			new URL(c.req.url, 'http://localhost').searchParams.get('workspace') ??
-			'',
+			c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? '',
+		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
@@ -126,10 +140,11 @@ app.get('/', async (c) => {
 // DELETE to terminate a session
 app.delete('/', async (c) => {
 	const sessionId = c.req.header('mcp-session-id')
-	const deleteSession = sessionId ? sessions.get(sessionId) : undefined
-	if (deleteSession) {
-		void deleteSession.transport.close()
-		sessions.delete(sessionId as string)
+	if (!sessionId) return c.text('Session not found', 404)
+	const session = sessions.get(sessionId)
+	if (session) {
+		void session.transport.close()
+		sessions.delete(sessionId)
 		console.log(`[MCP] DELETE /mcp — session terminated: ${sessionId}`)
 		return c.text('Session terminated', 200)
 	}

@@ -522,7 +522,7 @@ export function createMcpServer(config: McpConfig) {
 				`Delete ${label}? This cannot be undone.`,
 			)
 			if (!confirmed) {
-				return toolResult('delete_object', { cancelled: true }, '🚫 Deletion cancelled.')
+				return toolResult('delete_object', { cancelled: true }, 'Deletion cancelled.')
 			}
 
 			const result = await apiCall(config, 'DELETE', `/api/objects/${args.id}`, undefined, {
@@ -622,7 +622,7 @@ export function createMcpServer(config: McpConfig) {
 				`Delete relationship ${args.id}? This cannot be undone.`,
 			)
 			if (!confirmed) {
-				return toolResult('delete_relationship', { cancelled: true }, '🚫 Deletion cancelled.')
+				return toolResult('delete_relationship', { cancelled: true }, 'Deletion cancelled.')
 			}
 
 			const result = await apiCall(config, 'DELETE', `/api/relationships/${args.id}`, undefined, {
@@ -742,7 +742,7 @@ export function createMcpServer(config: McpConfig) {
 				return toolResult(
 					'regenerate_api_key',
 					{ cancelled: true },
-					'🚫 API key regeneration cancelled.',
+					'API key regeneration cancelled.',
 				)
 			}
 
@@ -990,7 +990,7 @@ export function createMcpServer(config: McpConfig) {
 				`Delete trigger ${args.id}? Automated sessions will stop firing.`,
 			)
 			if (!confirmed) {
-				return toolResult('delete_trigger', { cancelled: true }, '🚫 Deletion cancelled.')
+				return toolResult('delete_trigger', { cancelled: true }, 'Deletion cancelled.')
 			}
 
 			const result = await apiCall(config, 'DELETE', `/api/triggers/${args.id}`, undefined, {
@@ -1110,7 +1110,7 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const confirmed = await confirmDestructive(rawServer, `Delete notification ${args.id}?`)
 			if (!confirmed) {
-				return toolResult('delete_notification', { cancelled: true }, '🚫 Deletion cancelled.')
+				return toolResult('delete_notification', { cancelled: true }, 'Deletion cancelled.')
 			}
 
 			const result = await apiCall(config, 'DELETE', `/api/notifications/${args.id}`, undefined, {
@@ -1217,7 +1217,7 @@ export function createMcpServer(config: McpConfig) {
 				`Stop session ${args.id}? The running agent will be terminated.`,
 			)
 			if (!confirmed) {
-				return toolResult('stop_session', { cancelled: true }, '🚫 Stop cancelled.')
+				return toolResult('stop_session', { cancelled: true }, 'Stop cancelled.')
 			}
 
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
@@ -1424,7 +1424,7 @@ export function createMcpServer(config: McpConfig) {
 				`Disconnect integration ${args.id}? OAuth tokens will be revoked.`,
 			)
 			if (!confirmed) {
-				return toolResult('disconnect_integration', { cancelled: true }, '🚫 Disconnect cancelled.')
+				return toolResult('disconnect_integration', { cancelled: true }, 'Disconnect cancelled.')
 			}
 
 			const result = await apiCall(config, 'DELETE', `/api/integrations/${args.id}`, undefined, {
@@ -1876,7 +1876,7 @@ export function createMcpServer(config: McpConfig) {
 				`Delete extension "${args.id}"? Associated object types and data may become inaccessible.`,
 			)
 			if (!confirmed) {
-				return toolResult('delete_extension', { cancelled: true }, '🚫 Deletion cancelled.')
+				return toolResult('delete_extension', { cancelled: true }, 'Deletion cancelled.')
 			}
 
 			// Check if the extension is a registered module
