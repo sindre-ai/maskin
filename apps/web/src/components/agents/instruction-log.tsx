@@ -4,7 +4,7 @@ import type { ActorResponse } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 import { API_BASE } from '@/lib/constants'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { CheckCircle2, SendHorizontal, XCircle } from 'lucide-react'
+import { CheckCircle2, RotateCw, SendHorizontal, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 type MessageStatus = 'sent' | 'streaming' | 'completed' | 'failed'
@@ -15,6 +15,7 @@ interface Message {
 	content: string
 	status: MessageStatus
 	sessionId?: string
+	actionPrompt?: string
 	logs: string[]
 }
 
@@ -134,12 +135,57 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 		return () => controller.abort()
 	}, [streamingSessionId, workspaceId])
 
+	const startSession = useCallback(
+		async (prompt: string) => {
+			const agentMsgId = crypto.randomUUID()
+
+			try {
+				const session = await createSession.mutateAsync({
+					actor_id: agent.id,
+					action_prompt: prompt,
+				})
+
+				if (!mountedRef.current) return
+
+				// Add agent message with streaming status
+				setMessages((prev) => [
+					...prev,
+					{
+						id: agentMsgId,
+						role: 'agent',
+						content: '',
+						status: 'streaming',
+						sessionId: session.id,
+						actionPrompt: prompt,
+						logs: [],
+					},
+				])
+				setStreamingSessionId(session.id)
+			} catch {
+				if (!mountedRef.current) return
+
+				// Add failed agent message
+				setMessages((prev) => [
+					...prev,
+					{
+						id: agentMsgId,
+						role: 'agent',
+						content: 'Failed to start session',
+						status: 'failed',
+						actionPrompt: prompt,
+						logs: [],
+					},
+				])
+			}
+		},
+		[agent.id, createSession],
+	)
+
 	const handleSend = useCallback(async () => {
 		const prompt = input.trim()
 		if (!prompt || isStreaming) return
 
 		const userMsgId = crypto.randomUUID()
-		const agentMsgId = crypto.randomUUID()
 
 		// Add user message
 		setMessages((prev) => [
@@ -148,43 +194,16 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 		])
 		setInput('')
 
-		try {
-			const session = await createSession.mutateAsync({
-				actor_id: agent.id,
-				action_prompt: prompt,
-			})
+		await startSession(prompt)
+	}, [input, isStreaming, startSession])
 
-			if (!mountedRef.current) return
-
-			// Add agent message with streaming status
-			setMessages((prev) => [
-				...prev,
-				{
-					id: agentMsgId,
-					role: 'agent',
-					content: '',
-					status: 'streaming',
-					sessionId: session.id,
-					logs: [],
-				},
-			])
-			setStreamingSessionId(session.id)
-		} catch {
-			if (!mountedRef.current) return
-
-			// Add failed agent message
-			setMessages((prev) => [
-				...prev,
-				{
-					id: agentMsgId,
-					role: 'agent',
-					content: 'Failed to start session',
-					status: 'failed',
-					logs: [],
-				},
-			])
-		}
-	}, [input, isStreaming, agent.id, createSession])
+	const handleRetry = useCallback(
+		(actionPrompt: string) => {
+			if (isStreaming) return
+			startSession(actionPrompt)
+		},
+		[isStreaming, startSession],
+	)
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -206,7 +225,12 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 				{messages.length > 0 && (
 					<div className="max-h-[400px] overflow-y-auto p-3 space-y-3">
 						{messages.map((msg) => (
-							<MessageBubble key={msg.id} message={msg} />
+							<MessageBubble
+								key={msg.id}
+								message={msg}
+								onRetry={handleRetry}
+								isStreaming={isStreaming}
+							/>
 						))}
 						<div ref={messagesEndRef} />
 					</div>
@@ -237,7 +261,15 @@ export function InstructionLog({ agent, workspaceId }: InstructionLogProps) {
 	)
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+	message,
+	onRetry,
+	isStreaming,
+}: {
+	message: Message
+	onRetry: (actionPrompt: string) => void
+	isStreaming: boolean
+}) {
 	if (message.role === 'user') {
 		return (
 			<div className="flex justify-end">
@@ -279,10 +311,23 @@ function MessageBubble({ message }: { message: Message }) {
 				)}
 
 				{message.status === 'failed' && (
-					<span className="flex items-center gap-1.5 mt-2 text-xs text-error">
-						<XCircle size={12} />
-						{message.logs.length === 0 ? message.content : 'Failed'}
-					</span>
+					<div className="flex items-center gap-2 mt-2">
+						<span className="flex items-center gap-1.5 text-xs text-error">
+							<XCircle size={12} />
+							{message.logs.length === 0 ? message.content : 'Failed'}
+						</span>
+						{message.actionPrompt && (
+							<button
+								type="button"
+								className="flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer disabled:opacity-50"
+								onClick={() => onRetry(message.actionPrompt as string)}
+								disabled={isStreaming}
+							>
+								<RotateCw size={12} />
+								Retry
+							</button>
+						)}
+					</div>
 				)}
 			</div>
 		</div>
