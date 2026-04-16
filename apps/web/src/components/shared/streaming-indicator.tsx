@@ -37,7 +37,9 @@ export function StreamingIndicator({ sessionId, workspaceId }: StreamingIndicato
 					<span className="text-sm text-muted-foreground truncate">{latestLog.content}</span>
 				</>
 			)}
-			{duration && <span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>}
+			{duration && (
+				<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
+			)}
 		</div>
 	)
 }

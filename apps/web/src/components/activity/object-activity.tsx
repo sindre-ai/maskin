@@ -12,7 +12,12 @@ interface ObjectActivityProps {
 	activeSessionId?: string | null
 }
 
-export function ObjectActivity({ workspaceId, objectId, events, activeSessionId }: ObjectActivityProps) {
+export function ObjectActivity({
+	workspaceId,
+	objectId,
+	events,
+	activeSessionId,
+}: ObjectActivityProps) {
 	// Group events: separate comments from system events, group replies under parents
 	const { topLevel, repliesByParent } = useMemo(() => {
 		if (!events) return { topLevel: [], repliesByParent: new Map<number, EventResponse[]>() }
