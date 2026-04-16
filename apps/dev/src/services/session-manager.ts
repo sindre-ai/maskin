@@ -959,10 +959,9 @@ export class SessionManager extends EventEmitter {
 
 		// 7. Drain queued sessions for workspaces that have capacity
 		const queuedSessions = await this.db
-			.select({ workspaceId: sessions.workspaceId })
+			.selectDistinct({ workspaceId: sessions.workspaceId })
 			.from(sessions)
 			.where(or(eq(sessions.status, 'queued'), eq(sessions.status, 'pending')))
-			.groupBy(sessions.workspaceId)
 
 		for (const { workspaceId } of queuedSessions) {
 			await this.drainQueue(workspaceId).catch((err) =>

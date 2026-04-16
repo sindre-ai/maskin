@@ -230,15 +230,15 @@ describe('SessionManager', () => {
 			// 8. drainQueue > nextQueued → empty (no queued sessions)
 			// 9. queuedSessions (final drain) → empty
 			mockResults.selectQueue = [
-				[],              // 1. timedOut
-				[],              // 2. runningSessions
-				[],              // 3. expiredPaused
-				[],              // 4. stuckPending
-				[stuckSession],  // 5. stuckStarting
+				[], // 1. timedOut
+				[], // 2. runningSessions
+				[], // 3. expiredPaused
+				[], // 4. stuckPending
+				[stuckSession], // 5. stuckStarting
 				[{ settings: {} }], // 6. drainQueue > workspace
-				[{ count: 0 }],    // 7. drainQueue > count
-				[],              // 8. drainQueue > nextQueued (empty = break)
-				[],              // 9. final queuedSessions
+				[{ count: 0 }], // 7. drainQueue > count
+				[], // 8. drainQueue > nextQueued (empty = break)
+				[], // 9. final queuedSessions
 			]
 
 			// Access private runWatchdog via cast
@@ -261,12 +261,12 @@ describe('SessionManager', () => {
 			// With the mock DB, the query returns whatever we put in the queue,
 			// so we simulate the correct DB behavior by returning empty for stuckStarting.
 			mockResults.selectQueue = [
-				[],  // 1. timedOut
-				[],  // 2. runningSessions
-				[],  // 3. expiredPaused
-				[],  // 4. stuckPending
-				[],  // 5. stuckStarting (empty — session is too recent)
-				[],  // 6. queuedSessions
+				[], // 1. timedOut
+				[], // 2. runningSessions
+				[], // 3. expiredPaused
+				[], // 4. stuckPending
+				[], // 5. stuckStarting (empty — session is too recent)
+				[], // 6. queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
