@@ -156,10 +156,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				</div>
 				<CardTitle className="text-base">
 					{primaryObjectPath ? (
-						<Link
-							to={primaryObjectPath}
-							className="hover:underline text-foreground"
-						>
+						<Link to={primaryObjectPath} className="hover:underline text-foreground">
 							{notification.title}
 						</Link>
 					) : (
