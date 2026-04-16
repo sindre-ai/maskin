@@ -120,7 +120,7 @@ function WorkingActivity({ session }: { session: SessionResponse }) {
 	const duration = useDuration(session.startedAt)
 
 	return (
-		<p className="text-xs text-accent truncate">
+		<p className="text-xs text-muted-foreground truncate">
 			{session.actionPrompt}
 			{duration && ` · ${duration}`}
 		</p>
