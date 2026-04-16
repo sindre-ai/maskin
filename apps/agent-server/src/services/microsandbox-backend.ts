@@ -134,6 +134,27 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		)
 		logger.info(`Wrote debug config to /tmp/msb-debug-config.json`)
 
+		// DEBUG: test with minimal config first to isolate the issue
+		logger.info('Attempting minimal sandbox creation test...')
+		try {
+			const testSb = await Sandbox.create({
+				name: `test-minimal-${Date.now()}`,
+				image: sandboxConfig.image,
+				memoryMib: 512,
+				cpus: 1,
+				env: { TEST: 'hello' },
+				network: NetworkPolicy.allowAll(),
+				replace: true,
+				pullPolicy: 'always' as const,
+			})
+			logger.info('Minimal sandbox BOOTED — issue is config-specific')
+			await testSb.kill()
+		} catch (testErr) {
+			logger.error('Minimal sandbox FAILED — issue is process-level', {
+				error: String(testErr),
+			})
+		}
+
 		const sandbox = await Sandbox.create(sandboxConfig)
 
 		this.sandboxes.set(sandboxId, sandbox)
