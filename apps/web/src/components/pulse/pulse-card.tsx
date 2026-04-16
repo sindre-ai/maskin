@@ -4,10 +4,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { resolveNavigationPath } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link } from '@tanstack/react-router'
-import { ExternalLink } from 'lucide-react'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { ArrowUpRight, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { NotificationInput } from './notification-input'
 
@@ -42,8 +44,8 @@ function extractMetadataObjectLinks(
 
 export interface NotificationAction {
 	label: string
-	response: unknown
-	variant?: 'default' | 'outline' | 'ghost'
+	response?: unknown
+	variant?: 'default' | 'outline' | 'ghost' | 'destructive'
 	navigate?: { to: string; id?: string }
 }
 
@@ -54,7 +56,11 @@ export function resolveActions(
 	const defined = metadata.actions as NotificationAction[] | undefined
 	if (defined && Array.isArray(defined) && defined.length > 0) {
 		const valid = defined.filter(
-			(a) => a && typeof a === 'object' && typeof a.label === 'string' && 'response' in a,
+			(a) =>
+				a &&
+				typeof a === 'object' &&
+				typeof a.label === 'string' &&
+				('response' in a || 'navigate' in a),
 		)
 		if (valid.length > 0) return valid
 	}
@@ -101,6 +107,7 @@ interface PulseCardProps {
 
 export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
 	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags
@@ -125,6 +132,15 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const metadataLinks = extractMetadataObjectLinks(metadata as Record<string, unknown>).filter(
 		(link) => link.objectId !== primaryObjectId,
 	)
+
+	const handleActionClick = (action: NotificationAction) => {
+		if ('response' in action) {
+			onAction(notification, action.response, action.navigate)
+		} else if (action.navigate) {
+			const path = resolveNavigationPath(workspaceId, action.navigate, notification)
+			if (path) navigate({ to: path })
+		}
+	}
 
 	const handleReplySubmit = () => {
 		if (!replyText.trim()) return
@@ -223,18 +239,25 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 
 				{/* Action buttons */}
 				{!isResolved && (
-					<div className="flex gap-2">
+					<div className="flex items-center gap-2">
 						{actions.map((action, i) => (
 							<Button
 								key={action.label}
 								size="sm"
 								variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
-								onClick={() => onAction(notification, action.response, action.navigate)}
+								onClick={() => handleActionClick(action)}
 							>
 								{action.label}
+								{action.navigate && <ArrowUpRight className="ml-1 h-3 w-3" />}
 							</Button>
 						))}
-						<Button size="sm" variant="ghost" onClick={() => onDismiss(notification.id)}>
+						{actions.length > 0 && <Separator orientation="vertical" className="h-4" />}
+						<Button
+							size="sm"
+							variant="ghost"
+							className="text-muted-foreground"
+							onClick={() => onDismiss(notification.id)}
+						>
 							Dismiss
 						</Button>
 					</div>
