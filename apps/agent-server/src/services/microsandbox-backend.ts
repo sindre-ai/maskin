@@ -30,8 +30,11 @@ function spawnSandboxCreate(config: {
 	volumePaths: Array<{ guest: string; host: string; readonly: boolean }>
 	maxDurationSecs?: number
 }): void {
+	// Resolve the absolute path to microsandbox from the parent process
+	// so the child can require it regardless of cwd.
+	const msbPath = require.resolve('microsandbox')
 	const script = `
-const { Sandbox, Mount, NetworkPolicy } = require('microsandbox');
+const { Sandbox, Mount, NetworkPolicy } = require(${JSON.stringify(msbPath)});
 const config = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
 const volumes = {};
 for (const v of config.volumePaths) {
@@ -73,7 +76,11 @@ Sandbox.createDetached(opts).then(() => {
 				'-c',
 				`for fd in $(seq 3 255); do eval "exec \$fd>&-" 2>/dev/null; done; exec ${process.execPath} ${scriptPath} ${configPath}`,
 			],
-			{ timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] },
+			{
+				timeout: 120_000,
+				stdio: ['ignore', 'pipe', 'pipe'],
+				cwd: process.cwd(),
+			},
 		)
 	} finally {
 		try {
