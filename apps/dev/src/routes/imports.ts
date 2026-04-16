@@ -15,7 +15,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceMember } from '../lib/workspace-auth'
-import { executeImport, generateMapping, parseFile } from '../services/import-processor'
+import { detectCsvOptions, executeImport, generateMapping, parseFile } from '../services/import-processor'
 
 type Env = {
 	Variables: {
@@ -141,10 +141,13 @@ app.openapi(createImportRoute, async (c) => {
 	// Read file contents
 	const buffer = Buffer.from(await file.arrayBuffer())
 
+	// Auto-detect CSV options
+	const csvOptions = fileType === 'csv' ? detectCsvOptions(buffer) : undefined
+
 	// Parse file
 	let parsed: ReturnType<typeof parseFile>
 	try {
-		parsed = parseFile(buffer, fileType)
+		parsed = parseFile(buffer, fileType, csvOptions)
 	} catch (err) {
 		return c.json(
 			createApiError(
@@ -162,10 +165,10 @@ app.openapi(createImportRoute, async (c) => {
 	// Store raw file in S3
 	await storage.put(storageKey, buffer)
 
-	// Generate auto-mapping
+	// Generate auto-mapping (includes detected csvOptions)
 	const settings = workspace.settings as WorkspaceSettings
 	const sampleRows = parsed.rows.slice(0, 10)
-	const mapping = generateMapping(parsed.columns, sampleRows, settings)
+	const mapping = generateMapping(parsed.columns, sampleRows, settings, csvOptions)
 
 	// Build preview
 	const preview = {
@@ -261,6 +264,7 @@ const updateMappingRoute = createRoute({
 
 app.openapi(updateMappingRoute, async (c) => {
 	const db = c.get('db')
+	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id } = c.req.valid('param')
 	const { mapping } = c.req.valid('json')
@@ -278,9 +282,61 @@ app.openapi(updateMappingRoute, async (c) => {
 		)
 	}
 
+	// Check if CSV options changed — if so, re-parse the file from storage
+	const existingMapping = importRecord.mapping as Record<string, unknown> | null
+	const newCsvOptions = mapping.csvOptions
+	const existingCsvOptions = existingMapping?.csvOptions
+	const csvOptionsChanged =
+		importRecord.fileType === 'csv' &&
+		newCsvOptions &&
+		JSON.stringify(newCsvOptions) !== JSON.stringify(existingCsvOptions)
+
+	let finalMapping = mapping
+	let updatedPreview = undefined
+	let updatedTotalRows = undefined
+
+	if (csvOptionsChanged) {
+		try {
+			const fileBuffer = await storage.get(importRecord.fileStorageKey)
+			const parsed = parseFile(fileBuffer, importRecord.fileType, newCsvOptions)
+
+			// Fetch workspace settings for re-mapping
+			const [workspace] = await db
+				.select()
+				.from(workspaces)
+				.where(eq(workspaces.id, workspaceId))
+				.limit(1)
+			const settings = (workspace?.settings ?? {}) as WorkspaceSettings
+
+			// Regenerate mapping with new CSV options
+			const sampleRows = parsed.rows.slice(0, 10)
+			finalMapping = generateMapping(parsed.columns, sampleRows, settings, newCsvOptions)
+
+			updatedPreview = {
+				columns: parsed.columns,
+				sampleRows: parsed.rows.slice(0, 5),
+				totalRows: parsed.rows.length,
+			}
+			updatedTotalRows = parsed.rows.length
+		} catch (err) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Failed to re-parse file with new settings: ${err instanceof Error ? err.message : String(err)}`,
+				),
+				400,
+			)
+		}
+	}
+
 	const [updated] = await db
 		.update(imports)
-		.set({ mapping, updatedAt: new Date() })
+		.set({
+			mapping: finalMapping,
+			...(updatedPreview ? { preview: updatedPreview } : {}),
+			...(updatedTotalRows !== undefined ? { totalRows: updatedTotalRows } : {}),
+			updatedAt: new Date(),
+		})
 		.where(eq(imports.id, id))
 		.returning()
 
@@ -306,7 +362,7 @@ function runImportInBackground(opts: {
 	const { importId, fileStorageKey, fileType, mapping, workspaceId, actorId, db, storage } = opts
 	const run = async () => {
 		const fileBuffer = await storage.get(fileStorageKey)
-		const parsed = parseFile(fileBuffer, fileType)
+		const parsed = parseFile(fileBuffer, fileType, mapping.csvOptions)
 
 		const [workspace] = await db
 			.select()

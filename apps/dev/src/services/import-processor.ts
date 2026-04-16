@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, imports, objects, relationships } from '@maskin/db/schema'
-import type { ImportMapping, TypeMapping } from '@maskin/shared'
+import type { CsvOptions, ImportMapping, TypeMapping } from '@maskin/shared'
 import { parse } from 'csv-parse/sync'
 import { eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
@@ -38,9 +38,9 @@ export interface ImportResult {
 
 // ── Parsing ──────────────────────────────────────────────────────────────
 
-export function parseFile(buffer: Buffer, fileType: string): ParsedFile {
+export function parseFile(buffer: Buffer, fileType: string, csvOptions?: CsvOptions): ParsedFile {
 	if (fileType === 'csv') {
-		return parseCsv(buffer)
+		return parseCsv(buffer, csvOptions)
 	}
 	if (fileType === 'json') {
 		return parseJson(buffer)
@@ -49,38 +49,123 @@ export function parseFile(buffer: Buffer, fileType: string): ParsedFile {
 }
 
 /**
+ * Decode a buffer to string, handling different encodings.
+ * Falls back to Latin-1 if UTF-8 decoding produces replacement characters.
+ */
+function decodeBuffer(buffer: Buffer, encoding?: string): string {
+	if (encoding === 'latin-1') {
+		return new TextDecoder('latin1').decode(buffer)
+	}
+
+	// Default: try UTF-8
+	const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
+
+	// If no encoding was specified and UTF-8 produced replacement chars, try Latin-1
+	if (!encoding && text.includes('\uFFFD')) {
+		return new TextDecoder('latin1').decode(buffer)
+	}
+
+	return text
+}
+
+/**
+ * Auto-detect the most likely delimiter by counting candidate characters
+ * across the first few non-empty lines. Respects quoted fields.
+ */
+function detectDelimiter(text: string): ',' | ';' | '\t' | '|' {
+	const candidates = [',', ';', '\t', '|'] as const
+	const lines = text
+		.split(/\r?\n/)
+		.filter((line) => line.trim().length > 0)
+		.slice(0, 10)
+
+	if (lines.length === 0) return ','
+
+	let bestDelimiter: ',' | ';' | '\t' | '|' = ','
+	let bestScore = -1
+
+	for (const delim of candidates) {
+		const counts = lines.map((line) => {
+			let count = 0
+			let inQuotes = false
+			for (const ch of line) {
+				if (ch === '"') inQuotes = !inQuotes
+				else if (ch === delim && !inQuotes) count++
+			}
+			return count
+		})
+
+		// Must have at least 1 delimiter on every sampled line
+		const minCount = Math.min(...counts)
+		if (minCount === 0) continue
+
+		// Score: consistent counts (low variance) and more fields = better
+		const avg = counts.reduce((a, b) => a + b, 0) / counts.length
+		const variance = counts.reduce((sum, c) => sum + (c - avg) ** 2, 0) / counts.length
+		const score = avg * lines.length - variance
+
+		if (score > bestScore) {
+			bestScore = score
+			bestDelimiter = delim
+		}
+	}
+
+	return bestDelimiter
+}
+
+/**
+ * Auto-detect CSV options (delimiter and encoding) from a raw file buffer.
+ */
+export function detectCsvOptions(buffer: Buffer): CsvOptions {
+	const utf8Text = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
+	const hasReplacementChars = utf8Text.includes('\uFFFD')
+	const encoding = hasReplacementChars ? ('latin-1' as const) : ('utf-8' as const)
+
+	const text = hasReplacementChars ? new TextDecoder('latin1').decode(buffer) : utf8Text
+	const cleanText = text.replace(/^\uFEFF/, '')
+	const delimiter = detectDelimiter(cleanText)
+
+	return { delimiter, encoding }
+}
+
+/**
  * Detect the 1-based line number of the actual header row in a CSV.
  * Some exports (e.g. LinkedIn Connections) prepend notes/metadata rows before
  * the real column headers. We find the header by looking for the first line
- * that contains at least 2 comma-separated values — preamble rows are typically
+ * that contains at least 2 delimiter-separated values — preamble rows are typically
  * single-value lines or key/value pairs.
  */
-function detectHeaderLine(text: string): number {
+function detectHeaderLine(text: string, delimiter: string): number {
 	const lines = text.split(/\r?\n/)
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i]?.trim()
 		if (!line) continue
-		// A row with at least one comma that yields ≥2 non-empty fields is likely the header
-		const fields = line
-			.split(',')
-			.map((f) => f.trim())
-			.filter(Boolean)
-		if (fields.length >= 2) {
+		// Count delimiter occurrences outside quotes
+		let count = 0
+		let inQuotes = false
+		for (const ch of line) {
+			if (ch === '"') inQuotes = !inQuotes
+			else if (ch === delimiter && !inQuotes) count++
+		}
+		// A row with ≥1 delimiter yields ≥2 fields — likely the header
+		if (count >= 1) {
 			return i + 1 // csv-parse from_line is 1-based
 		}
 	}
 	return 1 // fallback: first line
 }
 
-function parseCsv(buffer: Buffer): ParsedFile {
-	const text = buffer.toString('utf-8').replace(/^\uFEFF/, '') // strip BOM
-	const headerLine = detectHeaderLine(text)
+function parseCsv(buffer: Buffer, options?: CsvOptions): ParsedFile {
+	const text = decodeBuffer(buffer, options?.encoding).replace(/^\uFEFF/, '') // strip BOM
+	const delimiter = options?.delimiter || detectDelimiter(text)
+	const headerLine = detectHeaderLine(text, delimiter)
 
 	const records = parse(text, {
 		columns: true,
 		skip_empty_lines: true,
 		trim: true,
 		bom: true,
+		delimiter,
 		from_line: headerLine,
 	}) as Record<string, string>[]
 
@@ -155,6 +240,7 @@ export function generateMapping(
 	columns: string[],
 	sampleRows: Record<string, string>[],
 	settings: WorkspaceSettings,
+	csvOptions?: CsvOptions,
 ): ImportMapping {
 	const mappedColumns: TypeMapping['columns'] = []
 	const usedTargets = new Set<string>()
@@ -278,6 +364,7 @@ export function generateMapping(
 			},
 		],
 		relationships: [],
+		...(csvOptions ? { csvOptions } : {}),
 	}
 }
 
