@@ -1,10 +1,26 @@
 import type { Database } from '@maskin/db'
-import { events, objects, triggers } from '@maskin/db/schema'
+import { events, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { Cron } from 'croner'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
+
+interface TriggerFailureState {
+	count: number
+	lastFailedAt: Date
+	backoffUntil: Date
+}
+
+/** Maximum backoff duration: 30 minutes */
+const MAX_BACKOFF_MS = 30 * 60_000
+/** Base backoff duration: 1 minute */
+const BASE_BACKOFF_MS = 60_000
+
+export function calculateBackoffUntil(failureCount: number, now: Date): Date {
+	const delayMs = Math.min(2 ** failureCount * BASE_BACKOFF_MS, MAX_BACKOFF_MS)
+	return new Date(now.getTime() + delayMs)
+}
 
 export class TriggerRunner {
 	private db: Database
@@ -13,6 +29,8 @@ export class TriggerRunner {
 	private cronJobs: Map<string, Cron> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
 	private eventHandler: ((event: PgEvent) => void) | null = null
+	private sessionEventHandler: ((event: PgEvent) => void) | null = null
+	private triggerFailures: Map<string, TriggerFailureState> = new Map()
 
 	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
 		this.db = db
@@ -29,6 +47,21 @@ export class TriggerRunner {
 		}
 		this.bridge.on('event', this.eventHandler)
 
+		// Listen for session completion/failure events for backoff tracking
+		this.sessionEventHandler = (event: PgEvent) => {
+			if (
+				event.entity_type === 'session' &&
+				(event.action === 'session_completed' ||
+					event.action === 'session_failed' ||
+					event.action === 'session_timeout')
+			) {
+				this.handleSessionOutcome(event).catch((err) =>
+					logger.error('Session outcome handling failed', { error: String(err) }),
+				)
+			}
+		}
+		this.bridge.on('event', this.sessionEventHandler)
+
 		// Load and start cron triggers
 		await this.loadCronTriggers()
 
@@ -43,6 +76,10 @@ export class TriggerRunner {
 			this.bridge.off('event', this.eventHandler)
 			this.eventHandler = null
 		}
+		if (this.sessionEventHandler) {
+			this.bridge.off('event', this.sessionEventHandler)
+			this.sessionEventHandler = null
+		}
 		for (const [_, job] of this.cronJobs) {
 			job.stop()
 		}
@@ -51,6 +88,47 @@ export class TriggerRunner {
 			clearTimeout(timeout)
 		}
 		this.reminderTimeouts.clear()
+	}
+
+	private recordTriggerFailure(triggerId: string): void {
+		const now = new Date()
+		const existing = this.triggerFailures.get(triggerId)
+		const count = (existing?.count ?? 0) + 1
+		const backoffUntil = calculateBackoffUntil(count, now)
+		this.triggerFailures.set(triggerId, {
+			count,
+			lastFailedAt: now,
+			backoffUntil,
+		})
+		logger.warn(
+			`Trigger '${triggerId}' failure #${count}, in backoff until ${backoffUntil.toISOString()}`,
+		)
+	}
+
+	private resetTriggerBackoff(triggerId: string): void {
+		if (this.triggerFailures.has(triggerId)) {
+			logger.info(`Trigger '${triggerId}' backoff reset after successful session`)
+			this.triggerFailures.delete(triggerId)
+		}
+	}
+
+	private async handleSessionOutcome(event: PgEvent): Promise<void> {
+		const sessionId = event.entity_id
+		// Look up the session to find which trigger spawned it
+		const [session] = await this.db
+			.select({ triggerId: sessions.triggerId })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+
+		if (!session?.triggerId) return
+
+		if (event.action === 'session_completed') {
+			this.resetTriggerBackoff(session.triggerId)
+		} else {
+			// session_failed or session_timeout
+			this.recordTriggerFailure(session.triggerId)
+		}
 	}
 
 	private async fetchEventData(eventId: string): Promise<Record<string, unknown> | null> {
@@ -129,6 +207,15 @@ export class TriggerRunner {
 				if (!current || !evaluateConditions(config.conditions, current)) continue
 			}
 
+			// Check backoff before firing
+			const backoffState = this.triggerFailures.get(trigger.id)
+			if (backoffState && backoffState.backoffUntil > new Date()) {
+				logger.info(
+					`Trigger '${trigger.name}' in backoff until ${backoffState.backoffUntil.toISOString()}, skipping`,
+				)
+				continue
+			}
+
 			// Run the agent
 			logger.info(
 				`Trigger '${trigger.name}' fired for event ${event.action} on ${event.entity_type}`,
@@ -188,6 +275,7 @@ export class TriggerRunner {
 				clearTimeout(timeout)
 				this.reminderTimeouts.delete(triggerId)
 			}
+			this.triggerFailures.delete(triggerId)
 			logger.info(`Trigger '${triggerId}' removed (deleted)`)
 			return
 		}
@@ -200,6 +288,9 @@ export class TriggerRunner {
 			.limit(1)
 
 		if (!trigger) return
+
+		// Clear backoff state when a trigger is updated/re-enabled
+		this.resetTriggerBackoff(triggerId)
 
 		// Stop any existing schedule first
 		this.cronJobs.get(triggerId)?.stop()
@@ -243,6 +334,14 @@ export class TriggerRunner {
 
 		try {
 			const job = new Cron(expression, { timezone: 'UTC' }, async () => {
+				const cronBackoff = this.triggerFailures.get(trigger.id)
+				if (cronBackoff && cronBackoff.backoffUntil > new Date()) {
+					logger.info(
+						`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
+					)
+					return
+				}
+
 				logger.info(`Cron trigger '${trigger.name}' firing`)
 
 				await this.db.insert(events).values({
