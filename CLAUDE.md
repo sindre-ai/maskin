@@ -23,7 +23,9 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/testing.md` — testing conventions for all test types (unit, integration, E2E, frontend)
 - `.claude/rules/pre-commit.md` — pre-commit checklist (lint, type-check, tests)
 - `.claude/rules/pr-merge.md` — PR merge checklist (up to date with main, lint, type-check, tests)
-- `.claude/rules/structural-verification.md` — file placement and build config guidelines (workflows, build files, monorepo structure)
+- `.claude/rules/input-validation.md` — input validation requirements at system boundaries (HTTP params, env vars, DB triggers)
+- `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
+- `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
 
 ## Architecture
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
@@ -75,6 +77,8 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Frontend data fetching: TanStack Query hooks in `apps/web/src/hooks/`, API client in `apps/web/src/lib/api.ts`
 - Frontend SSE: real-time cache invalidation via `apps/web/src/lib/sse-invalidation.ts`
 - UI components: Radix UI primitives + custom components in `apps/web/src/components/ui/`
+- All external inputs validated at system boundaries — see `.claude/rules/input-validation.md` for specifics
+- PG NOTIFY payloads must stay under 8KB — truncate large fields in DB triggers
 
 ## Data Model
 - Unified `objects` table with `type` field: 'insight' | 'bet' | 'task'
