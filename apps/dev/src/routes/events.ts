@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, actors, notifications, objects } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
-import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, lt } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -111,6 +111,8 @@ app.openapi(eventHistoryRoute, (async (c) => {
 	if (query.entity_id) conditions.push(eq(events.entityId, query.entity_id))
 	if (query.action) conditions.push(eq(events.action, query.action))
 	if (query.since) conditions.push(gt(events.id, query.since))
+	if (query.after) conditions.push(gte(events.createdAt, new Date(query.after)))
+	if (query.before) conditions.push(lt(events.createdAt, new Date(query.before)))
 
 	const results = await db
 		.select()
