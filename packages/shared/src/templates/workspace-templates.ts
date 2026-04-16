@@ -7,6 +7,7 @@ import {
 	type SeedTrigger,
 } from './development-agents'
 import { GROWTH_AGENTS, GROWTH_TRIGGERS } from './growth-agents'
+import { OUTBOUND_SALES_AGENTS, OUTBOUND_SALES_TRIGGERS } from './outbound-sales-agents'
 
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>
 export type { SeedAgent, SeedTrigger }
@@ -342,9 +343,126 @@ const growthTemplate: WorkspaceTemplate = {
 	seedTriggers: GROWTH_TRIGGERS,
 }
 
+const outboundSalesTemplate: WorkspaceTemplate = {
+	id: 'outbound-sales',
+	name: 'Outbound Sales',
+	description:
+		'For sales teams managing lead prospecting, outreach cadences, and pipeline management. Ships with a CRM (companies + contacts), a deal pipeline, and four specialist agents: Lead Researcher, Outreach Drafter, Pipeline Analyst, and Deal Coach.',
+	pitch:
+		'You now have your own AI sales team — a pipeline machine. Add a company, move it to qualifying, and the Lead Researcher digs in: industry intel, tech stack, key contacts. Move a contact to engaged and the Outreach Drafter writes personalised messages for your review. When a deal reaches negotiation the Deal Coach prepares talking points, objection handling, and competitive positioning. Every morning the Pipeline Analyst reviews every deal, flags anything stale, and tells you exactly where to focus. Companies, contacts, and deals live in one graph — nothing slips through the cracks. You bring the relationships; the machine runs the playbook.',
+	settings: {
+		display_names: {
+			bet: 'Bet',
+			task: 'Task',
+			insight: 'Insight',
+			company: 'Company',
+			contact: 'Contact',
+			deal: 'Deal',
+		},
+		statuses: {
+			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+			task: ['todo', 'in_progress', 'done', 'blocked'],
+			insight: ['new', 'processing', 'clustered', 'discarded'],
+			company: ['prospect', 'qualifying', 'qualified', 'customer', 'churned'],
+			contact: ['identified', 'engaged', 'responsive', 'champion', 'inactive'],
+			deal: ['prospecting', 'discovery', 'proposal', 'negotiation', 'closed_won', 'closed_lost'],
+		},
+		field_definitions: {
+			company: [
+				{ name: 'industry', type: 'text', required: false },
+				{
+					name: 'size',
+					type: 'enum',
+					required: false,
+					values: ['startup', 'smb', 'mid-market', 'enterprise'],
+				},
+				{ name: 'website', type: 'text', required: false },
+				{ name: 'notes', type: 'text', required: false },
+			],
+			contact: [
+				{ name: 'email', type: 'text', required: false },
+				{ name: 'title', type: 'text', required: false },
+				{ name: 'linkedin', type: 'text', required: false },
+			],
+			deal: [
+				{ name: 'value', type: 'text', required: false },
+				{ name: 'close_date', type: 'date', required: false },
+				{ name: 'stage_entered_at', type: 'date', required: false },
+				{ name: 'loss_reason', type: 'text', required: false },
+			],
+		},
+		custom_extensions: {
+			crm: {
+				name: 'CRM',
+				types: ['company', 'contact'],
+				relationship_types: ['belongs_to'],
+				enabled: true,
+			},
+			pipeline: {
+				name: 'Pipeline',
+				types: ['deal'],
+				relationship_types: ['relates_to'],
+				enabled: true,
+			},
+		},
+		relationship_types: [
+			'informs',
+			'breaks_into',
+			'blocks',
+			'relates_to',
+			'duplicates',
+			'belongs_to',
+		],
+		enabled_modules: ['work'],
+	},
+	seedNodes: [
+		{
+			$id: 'company1',
+			type: 'company',
+			title: 'Acme Corp',
+			content:
+				'Replace this with a real target company. Move to "qualifying" and the Lead Researcher will enrich it with industry intel, tech stack, and key contacts.',
+			status: 'prospect',
+			metadata: {
+				industry: 'SaaS',
+				size: 'mid-market',
+				website: 'https://acme-corp.example.com',
+				notes: 'Example prospect — replace with real company details.',
+			},
+		},
+		{
+			$id: 'deal1',
+			type: 'deal',
+			title: 'Acme Corp - Platform License',
+			content:
+				'Example deal tracking the Acme Corp opportunity. Update the value and close date as the deal progresses.',
+			status: 'prospecting',
+			metadata: {
+				value: '$50,000',
+				stage_entered_at: '2026-04-16',
+			},
+		},
+		{
+			$id: 'insight1',
+			type: 'insight',
+			title: 'Example insight: mid-market SaaS companies convert 2x faster',
+			content:
+				'Replace this with a real observation from your sales process. Insights feed into pipeline strategy and help identify patterns.',
+			status: 'new',
+		},
+	],
+	seedEdges: [
+		{ source: 'deal1', target: 'company1', type: 'relates_to' },
+		{ source: 'insight1', target: 'deal1', type: 'informs' },
+	],
+	seedAgents: OUTBOUND_SALES_AGENTS,
+	seedTriggers: OUTBOUND_SALES_TRIGGERS,
+}
+
 export const WORKSPACE_TEMPLATES = {
 	development: developmentTemplate,
 	growth: growthTemplate,
+	'outbound-sales': outboundSalesTemplate,
 } as const satisfies Record<string, WorkspaceTemplate>
 
 export type WorkspaceTemplateId = keyof typeof WORKSPACE_TEMPLATES
