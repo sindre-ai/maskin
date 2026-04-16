@@ -105,6 +105,7 @@ export function WhatsHappening() {
 			<InProgressSection
 				bets={activeBets}
 				tasks={inProgressTasks}
+				allTasks={tasks ?? []}
 				sessions={activeSessions}
 				workingAgents={workingAgents}
 				sessionsByAgent={sessionsByAgent}
@@ -140,6 +141,7 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
 function InProgressSection({
 	bets,
 	tasks,
+	allTasks,
 	sessions,
 	workingAgents,
 	sessionsByAgent,
@@ -148,6 +150,7 @@ function InProgressSection({
 }: {
 	bets: ObjectResponse[]
 	tasks: ObjectResponse[]
+	allTasks: ObjectResponse[]
 	sessions: SessionResponse[]
 	workingAgents: ActorListItem[]
 	sessionsByAgent: Map<string, Array<{ actorId: string; status: string; createdAt: string | null }>>
@@ -197,6 +200,7 @@ function InProgressSection({
 								insightCount={insightCount}
 								taskCount={betTasks.length}
 								workspaceId={workspaceId}
+								allTasks={allTasks}
 								activeSessions={sessions}
 							/>
 						)
@@ -227,6 +231,7 @@ function BetWithProgress({
 	insightCount,
 	taskCount,
 	workspaceId,
+	allTasks,
 	activeSessions,
 }: {
 	bet: ObjectResponse
@@ -234,10 +239,16 @@ function BetWithProgress({
 	insightCount: number
 	taskCount: number
 	workspaceId: string
+	allTasks: ObjectResponse[]
 	activeSessions: SessionResponse[]
 }) {
-	const activeSessionsForBet = activeSessions.filter(
-		(s) => taskIds.size > 0 && ACTIVE_SESSION_STATUSES.has(s.status),
+	const activeSessionIds = useMemo(() => new Set(activeSessions.map((s) => s.id)), [activeSessions])
+	const activeSessionCount = useMemo(
+		() =>
+			allTasks.filter(
+				(t) => taskIds.has(t.id) && t.activeSessionId && activeSessionIds.has(t.activeSessionId),
+			).length,
+		[allTasks, taskIds, activeSessionIds],
 	)
 
 	return (
@@ -248,9 +259,9 @@ function BetWithProgress({
 				insightCount={insightCount}
 				taskCount={taskCount}
 			/>
-			{activeSessionsForBet.length > 0 && (
+			{activeSessionCount > 0 && (
 				<p className="text-xs text-accent pl-4">
-					{activeSessionsForBet.length} active session{activeSessionsForBet.length !== 1 ? 's' : ''}
+					{activeSessionCount} active session{activeSessionCount !== 1 ? 's' : ''}
 				</p>
 			)}
 		</div>
