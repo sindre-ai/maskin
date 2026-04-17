@@ -274,6 +274,24 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
+		it('returns 403 when trying to delete a system actor', async () => {
+			const systemActor = buildActor({ type: 'agent', isSystem: true })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${systemActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.message).toContain('System agents cannot be deleted')
+		})
+
 		it('returns 403 when trying to delete a human actor', async () => {
 			const humanActor = buildActor({ type: 'human' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')

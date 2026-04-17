@@ -435,6 +435,10 @@ app.openapi(deleteActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	if (existing.isSystem) {
+		return c.json(createApiError('FORBIDDEN', 'System agents cannot be deleted'), 403)
+	}
+
 	if (existing.type !== 'agent') {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
 	}
