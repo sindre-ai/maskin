@@ -419,5 +419,48 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('returns the full updated actor row with identity and memory fields preserved', async () => {
+			const systemActor = buildActor({
+				type: 'agent',
+				name: 'Sindre',
+				email: 'sindre@maskin',
+				isSystem: true,
+				systemPrompt: 'edited prompt',
+				llmProvider: 'openai',
+				llmConfig: { model: 'gpt-4' },
+				tools: { mcpServers: {} },
+				memory: { notes: 'user preference: concise replies' },
+			})
+			// Drizzle returns the post-update row; memory and identity must be preserved.
+			const resetActor = {
+				...systemActor,
+				systemPrompt: SINDRE_DEFAULT.systemPrompt,
+				llmProvider: SINDRE_DEFAULT.llmProvider,
+				llmConfig: SINDRE_DEFAULT.llmConfig,
+				tools: SINDRE_DEFAULT.tools,
+			}
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+			]
+			mockResults.update = [resetActor]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${systemActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.id).toBe(systemActor.id)
+			expect(body.type).toBe('agent')
+			expect(body.name).toBe('Sindre')
+			expect(body.email).toBe('sindre@maskin')
+			expect(body.memory).toEqual({ notes: 'user preference: concise replies' })
+		})
 	})
 })
