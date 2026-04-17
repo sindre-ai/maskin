@@ -289,9 +289,18 @@ importers:
 
   extensions/notetaker:
     dependencies:
+      '@maskin/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@maskin/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@maskin/module-sdk':
         specifier: workspace:*
         version: link:../../packages/module-sdk
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/react@19.2.14)(kysely@0.28.14)(postgres@3.4.8)(react@19.2.4)
     devDependencies:
       typescript:
         specifier: ^5.7.0

@@ -12,6 +12,9 @@ const customExtensionEntrySchema = z.object({
 	types: z.array(z.string()),
 	relationship_types: z.array(z.string()).optional(),
 	enabled: z.boolean().default(true),
+	// Arbitrary extension-owned config. Strict validation happens inside the
+	// extension with its own schema; here we just carry it through.
+	config: z.record(z.unknown()).optional(),
 })
 
 export type CustomExtensionEntry = z.infer<typeof customExtensionEntrySchema>

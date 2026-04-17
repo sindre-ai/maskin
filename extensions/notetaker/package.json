@@ -23,7 +23,10 @@
 		}
 	},
 	"dependencies": {
-		"@maskin/module-sdk": "workspace:*"
+		"@maskin/auth": "workspace:*",
+		"@maskin/db": "workspace:*",
+		"@maskin/module-sdk": "workspace:*",
+		"drizzle-orm": "^0.38.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0"
