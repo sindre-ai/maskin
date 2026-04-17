@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
 import {
 	createSessionSchema,
+	sessionInputSchema,
 	sessionLogQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
@@ -310,6 +311,72 @@ app.openapi(resumeSessionRoute, (async (c) => {
 
 	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof resumeSessionRoute, Env>)
+
+// POST /:id/input - Send a user turn to an interactive session
+const inputSessionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/input',
+	tags: ['Sessions'],
+	summary: 'Send a user input turn to an interactive session',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: {
+			content: { 'application/json': { schema: sessionInputSchema } },
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.object({ ok: z.literal(true) }) } },
+			description: 'Input accepted',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not interactive or not running',
+		},
+	},
+})
+
+app.openapi(inputSessionRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (!session.interactive) {
+		return c.json(createApiError('CONFLICT', 'Session is not interactive'), 409)
+	}
+	if (session.status !== 'running') {
+		return c.json(
+			createApiError('CONFLICT', `Session is not running (status: ${session.status})`),
+			409,
+		)
+	}
+
+	try {
+		await sessionManager.writeInput(id, {
+			type: 'user',
+			message: { role: 'user', content: body.content },
+		})
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		return c.json(createApiError('BAD_REQUEST', message), 400)
+	}
+
+	return c.json({ ok: true as const })
+}) as RouteHandler<typeof inputSessionRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

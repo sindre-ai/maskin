@@ -81,3 +81,13 @@ export const sessionLogQuerySchema = z.object({
 export const sessionParamsSchema = z.object({
 	id: z.string().uuid(),
 })
+
+export const sessionInputAttachmentSchema = z.object({
+	kind: z.string().min(1),
+	id: z.string().min(1),
+})
+
+export const sessionInputSchema = z.object({
+	content: z.string().min(1),
+	attachments: z.array(sessionInputAttachmentSchema).optional(),
+})

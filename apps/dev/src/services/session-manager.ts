@@ -24,7 +24,7 @@ import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager } from './agent-storage'
-import { ContainerManager, type LogChunk } from './container-manager'
+import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 
 export interface CreateSessionParams {
 	actorId: string
@@ -225,6 +225,15 @@ export class SessionManager extends EventEmitter {
 			await this.cleanupSession(sessionId)
 			throw err
 		}
+	}
+
+	/**
+	 * Deliver a user turn to an interactive session's stdin. Caller must have
+	 * already validated the session is interactive and in `running` state; this
+	 * method only performs the stdin write and propagates any underlying error.
+	 */
+	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+		await this.containers.write(sessionId, payload)
 	}
 
 	async stopSession(sessionId: string): Promise<void> {
