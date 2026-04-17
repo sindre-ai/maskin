@@ -1,7 +1,7 @@
 {
-  "type": "user",
-  "message": {
-    "role": "user",
-    "content": "Hello Sindre — what's in this workspace?"
-  }
+	"type": "user",
+	"message": {
+		"role": "user",
+		"content": "Hello Sindre — what's in this workspace?"
+	}
 }
