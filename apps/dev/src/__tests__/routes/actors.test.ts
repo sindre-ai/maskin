@@ -275,22 +275,31 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		it('returns 403 when trying to delete a system actor', async () => {
+		it('returns 403 when trying to delete a system actor and leaves the actor intact', async () => {
 			const systemActor = buildActor({ type: 'agent', isSystem: true })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			// DELETE: requester member, target actor, target member.
+			// Follow-up GET: same actor row — proves the record was not removed.
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[systemActor],
 				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+				[systemActor],
 			]
 
-			const res = await app.request(
+			const deleteRes = await app.request(
 				jsonDelete(`/api/actors/${systemActor.id}`, { 'x-workspace-id': wsId }),
 			)
 
-			expect(res.status).toBe(403)
-			const body = await res.json()
-			expect(body.error.message).toContain('System agents cannot be deleted')
+			expect(deleteRes.status).toBe(403)
+			const deleteBody = await deleteRes.json()
+			expect(deleteBody.error.message).toContain('System agents cannot be deleted')
+
+			const getRes = await app.request(jsonGet(`/api/actors/${systemActor.id}`))
+
+			expect(getRes.status).toBe(200)
+			const getBody = await getRes.json()
+			expect(getBody.id).toBe(systemActor.id)
 		})
 
 		it('returns 403 when trying to delete a human actor', async () => {
