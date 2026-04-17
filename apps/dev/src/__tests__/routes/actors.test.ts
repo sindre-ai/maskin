@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { SINDRE_DEFAULT } from '@maskin/shared'
 import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -308,6 +309,115 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(403)
 			const body = await res.json()
 			expect(body.error.message).toContain('Only agent actors can be deleted')
+		})
+	})
+
+	describe('POST /api/actors/:id/reset', () => {
+		const wsId = randomUUID()
+
+		it('returns 200 and restores systemPrompt, llmProvider, llmConfig, tools for a system actor', async () => {
+			const systemActor = buildActor({
+				type: 'agent',
+				isSystem: true,
+				systemPrompt: 'edited prompt',
+				llmProvider: 'openai',
+				llmConfig: { model: 'gpt-4' },
+				tools: { mcpServers: {} },
+			})
+			const resetActor = {
+				...systemActor,
+				systemPrompt: SINDRE_DEFAULT.systemPrompt,
+				llmProvider: SINDRE_DEFAULT.llmProvider,
+				llmConfig: SINDRE_DEFAULT.llmConfig,
+				tools: SINDRE_DEFAULT.tools,
+			}
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+			]
+			mockResults.update = [resetActor]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${systemActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.systemPrompt).toBe(SINDRE_DEFAULT.systemPrompt)
+			expect(body.llmProvider).toBe(SINDRE_DEFAULT.llmProvider)
+			expect(body.llmConfig).toEqual(SINDRE_DEFAULT.llmConfig)
+			expect(body.tools).toEqual(SINDRE_DEFAULT.tools)
+		})
+
+		it('returns 403 when the actor is not a system actor', async () => {
+			const regularActor = buildActor({ type: 'agent', isSystem: false })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[regularActor],
+				[buildWorkspaceMember({ actorId: regularActor.id, workspaceId: wsId })],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${regularActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.message).toContain('Only system actors can be reset')
+		})
+
+		it('returns 404 when actor does not exist', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[], // actor not found
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${randomUUID()}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when requesting actor is not a workspace member', async () => {
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
+			// isWorkspaceMember returns empty — requester not a member
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${randomUUID()}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the target actor is not in the workspace', async () => {
+			const systemActor = buildActor({ type: 'agent', isSystem: true })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[], // target not a workspace member
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${systemActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
 		})
 	})
 })
