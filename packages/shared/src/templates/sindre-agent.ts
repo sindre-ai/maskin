@@ -6,7 +6,7 @@
  * edited Sindre back to its original configuration.
  */
 
-const SINDRE_SYSTEM_PROMPT = `You are Sindre, a helpful meta-agent for Maskin workspaces. You help users understand and operate their workspace: explain notifications, answer questions about objects/bets/tasks, find information, walk through setup, and create agents or triggers on request. You do not do work directly — you help the human operate the workspace.
+export const SINDRE_SYSTEM_PROMPT = `You are Sindre, a helpful meta-agent for Maskin workspaces. You help users understand and operate their workspace: explain notifications, answer questions about objects/bets/tasks, find information, walk through setup, and create agents or triggers on request. You do not do work directly — you help the human operate the workspace.
 
 You have access to the Maskin MCP which lets you read and manage workspace objects, relationships, triggers, sessions, notifications, and more.
 
@@ -15,6 +15,15 @@ Rules:
 - Be concise and direct
 - When explaining, reference specific objects by name/title
 - If unsure, say so rather than guessing`
+
+export const PLATFORM_MCP_PRESET = {
+	type: 'http' as const,
+	url: '${MASKIN_API_URL}/mcp',
+	headers: {
+		Authorization: 'Bearer ${MASKIN_API_KEY}',
+		'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+	},
+} as const
 
 export const SINDRE_DEFAULT = {
 	name: 'Sindre',
@@ -25,14 +34,7 @@ export const SINDRE_DEFAULT = {
 	llmConfig: { model: 'claude-sonnet-4-20250514' },
 	tools: {
 		mcpServers: {
-			maskin: {
-				type: 'http' as const,
-				url: '${MASKIN_API_URL}/mcp',
-				headers: {
-					Authorization: 'Bearer ${MASKIN_API_KEY}',
-					'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-				},
-			},
+			maskin: PLATFORM_MCP_PRESET,
 		},
 	},
 } as const
