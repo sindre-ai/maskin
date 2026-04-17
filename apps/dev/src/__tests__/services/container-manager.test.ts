@@ -72,6 +72,50 @@ describe('ContainerManager', () => {
 			})
 		})
 
+		it('attaches stdin and sets INTERACTIVE=1 when interactive is true', async () => {
+			mockDocker.createContainer.mockResolvedValue({ id: 'interactive-container' })
+
+			await manager.create({
+				image: 'test-image',
+				name: 'interactive',
+				env: { FOO: 'bar' },
+				memoryMb: 256,
+				cpuShares: 512,
+				binds: [],
+				interactive: true,
+			})
+
+			expect(mockDocker.createContainer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					Env: expect.arrayContaining(['FOO=bar', 'INTERACTIVE=1']),
+					AttachStdin: true,
+					OpenStdin: true,
+					StdinOnce: false,
+					Tty: false,
+				}),
+			)
+		})
+
+		it('does not set stdin flags or INTERACTIVE when interactive is false/unset', async () => {
+			mockDocker.createContainer.mockResolvedValue({ id: 'regular-container' })
+
+			await manager.create({
+				image: 'test-image',
+				name: 'regular',
+				env: { FOO: 'bar' },
+				memoryMb: 256,
+				cpuShares: 512,
+				binds: [],
+			})
+
+			const call = mockDocker.createContainer.mock.calls[0][0]
+			expect(call).not.toHaveProperty('AttachStdin')
+			expect(call).not.toHaveProperty('OpenStdin')
+			expect(call).not.toHaveProperty('StdinOnce')
+			expect(call).not.toHaveProperty('Tty')
+			expect(call.Env).not.toContain('INTERACTIVE=1')
+		})
+
 		it('uses custom network mode', async () => {
 			mockDocker.createContainer.mockResolvedValue({ id: 'c1' })
 

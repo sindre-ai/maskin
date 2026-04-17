@@ -13,6 +13,12 @@ export interface ContainerCreateOptions {
 	binds: string[]
 	networkMode?: string
 	cmd?: string[]
+	/**
+	 * When true, the container is created with stdin attached so callers can stream
+	 * stream-json user turns in. Also injects `INTERACTIVE=1` into the container env
+	 * so the in-container entrypoint switches to interactive mode.
+	 */
+	interactive?: boolean
 }
 
 export interface LogChunk {
@@ -85,13 +91,20 @@ export class ContainerManager {
 	}
 
 	async create(options: ContainerCreateOptions): Promise<string> {
-		const env = Object.entries(options.env).map(([k, v]) => `${k}=${v}`)
+		const envMap = options.interactive ? { ...options.env, INTERACTIVE: '1' } : options.env
+		const env = Object.entries(envMap).map(([k, v]) => `${k}=${v}`)
 
 		const container = await this.docker.createContainer({
 			Image: options.image,
 			name: options.name,
 			Env: env,
 			...(options.cmd && { Cmd: options.cmd }),
+			...(options.interactive && {
+				AttachStdin: true,
+				OpenStdin: true,
+				StdinOnce: false,
+				Tty: false,
+			}),
 			HostConfig: {
 				Memory: options.memoryMb * 1024 * 1024,
 				CpuShares: options.cpuShares,
@@ -101,7 +114,10 @@ export class ContainerManager {
 			},
 		})
 
-		logger.info(`Container created: ${container.id}`, { name: options.name })
+		logger.info(`Container created: ${container.id}`, {
+			name: options.name,
+			interactive: options.interactive ?? false,
+		})
 		return container.id
 	}
 
