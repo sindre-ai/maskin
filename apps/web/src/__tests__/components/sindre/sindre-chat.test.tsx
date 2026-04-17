@@ -82,4 +82,93 @@ describe('SindreChat', () => {
 		expect(textarea).toBeDisabled()
 		expect(screen.getByText(/Connecting to Sindre/i)).toBeInTheDocument()
 	})
+
+	it('submits on Enter and leaves the textarea clean', async () => {
+		mockSend.mockClear()
+		setHookResult({ status: 'ready' })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'hi there' } })
+		fireEvent.keyDown(textarea, { key: 'Enter' })
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hi there'))
+		await waitFor(() => expect(textarea.value).toBe(''))
+	})
+
+	it('does not submit on Shift+Enter', () => {
+		mockSend.mockClear()
+		setHookResult({ status: 'ready' })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'first line' } })
+		const event = fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
+
+		expect(event).toBe(true) // default not prevented → newline inserted by the browser
+		expect(mockSend).not.toHaveBeenCalled()
+	})
+
+	it('does not submit on Enter during IME composition', () => {
+		mockSend.mockClear()
+		setHookResult({ status: 'ready' })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'こん' } })
+		fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true })
+
+		expect(mockSend).not.toHaveBeenCalled()
+	})
+
+	it('does not submit when the content is empty or only whitespace', () => {
+		mockSend.mockClear()
+		setHookResult({ status: 'ready' })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		const sendButton = screen.getByRole('button', { name: /send message/i })
+		expect(sendButton).toBeDisabled()
+
+		fireEvent.change(textarea, { target: { value: '   \n  ' } })
+		expect(sendButton).toBeDisabled()
+		fireEvent.keyDown(textarea, { key: 'Enter' })
+		expect(mockSend).not.toHaveBeenCalled()
+	})
+
+	it('shows the streaming spinner until the first assistant event lands', async () => {
+		mockSend.mockClear()
+		setHookResult({ status: 'ready', events: [] })
+		const { rerender } = render(
+			<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'hello' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hello'))
+
+		// Mid-turn: spinner showing, send button disabled, Enter is ignored.
+		const spinnerButton = screen.getByRole('button', { name: /send message/i })
+		expect(spinnerButton).toBeDisabled()
+		expect(spinnerButton.querySelector('svg.animate-spin')).not.toBeNull()
+
+		fireEvent.change(textarea, { target: { value: 'queued follow-up' } })
+		fireEvent.keyDown(textarea, { key: 'Enter' })
+		expect(mockSend).toHaveBeenCalledTimes(1)
+
+		// First assistant event arrives → spinner clears, button enables again.
+		setHookResult({
+			status: 'ready',
+			events: [{ kind: 'text', text: 'Hi!' }],
+		})
+		rerender(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		await waitFor(() => {
+			const btn = screen.getByRole('button', { name: /send message/i })
+			expect(btn.querySelector('svg.animate-spin')).toBeNull()
+			expect(btn).not.toBeDisabled()
+		})
+	})
 })
