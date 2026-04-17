@@ -58,7 +58,7 @@ function deriveAffectedObjects(events: EventResponse[]): AffectedObject[] {
 				entityId: event.entityId,
 				entityType: event.entityType,
 				title: event.data
-					? ((event.data as Record<string, unknown>).title as string | null) ?? null
+					? (((event.data as Record<string, unknown>).title as string | null) ?? null)
 					: null,
 				actions: [event.action],
 			})
