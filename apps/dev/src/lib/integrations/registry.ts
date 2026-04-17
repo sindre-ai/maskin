@@ -4,11 +4,13 @@ import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
+import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
+import { config as microsoftOutlookConfig } from './providers/microsoft-outlook/config'
 import {
 	config as slackConfig,
 	parseTokenResponse as slackParseTokenResponse,
@@ -39,6 +41,14 @@ providers.set('slack', {
 	resolveExternalId: slackResolveExternalId,
 	customNormalizer: slackEventNormalizer,
 	webhookPreHandler: slackWebhookPreHandler,
+})
+
+providers.set('google-calendar', {
+	config: googleCalendarConfig,
+})
+
+providers.set('microsoft-outlook', {
+	config: microsoftOutlookConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────
