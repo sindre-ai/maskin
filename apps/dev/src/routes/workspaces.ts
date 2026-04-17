@@ -2,12 +2,22 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
+	type IAgentStorage,
+	type ISessionManager,
+	type ModuleEnv,
+	getEnabledModuleIds,
+	getModule,
+} from '@maskin/module-sdk'
+import type { PgNotifyBridge } from '@maskin/realtime'
+import {
 	createWorkspaceSchema,
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 
@@ -16,6 +26,10 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		notifyBridge: PgNotifyBridge
+		sessionManager: ISessionManager
+		agentStorage: IAgentStorage
+		storageProvider: StorageProvider
 	}
 }
 
@@ -158,19 +172,27 @@ const updateWorkspaceRoute = createRoute({
 
 app.openapi(updateWorkspaceRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
+
+	let oldEnabledModules: string[] | null = null
+	let newEnabledModules: string[] | null = null
+
 	if (body.settings) {
 		// Merge settings with existing
 		const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
 		if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-		updateData.settings = {
+		const mergedSettings = {
 			...(existing.settings as object),
 			...body.settings,
 		}
+		updateData.settings = mergedSettings
+		oldEnabledModules = getEnabledModuleIds(existing.settings as Record<string, unknown> | null)
+		newEnabledModules = getEnabledModuleIds(mergedSettings as Record<string, unknown>)
 	}
 
 	const [updated] = await db
@@ -181,6 +203,52 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	// After settings write succeeds, diff enabled_modules and invoke lifecycle hooks.
+	// Hook failures are logged but don't roll back the settings change — the hooks are
+	// idempotent so a future re-save or a manual retry will reconcile state.
+	if (oldEnabledModules && newEnabledModules) {
+		const before = oldEnabledModules
+		const after = newEnabledModules
+		const added = after.filter((m) => !before.includes(m))
+		const removed = before.filter((m) => !after.includes(m))
+		if (added.length > 0 || removed.length > 0) {
+			const env: ModuleEnv = {
+				db,
+				notifyBridge: c.get('notifyBridge'),
+				sessionManager: c.get('sessionManager'),
+				agentStorage: c.get('agentStorage'),
+				storageProvider: c.get('storageProvider'),
+			}
+			const ctx = { workspaceId: id, actorId }
+			for (const moduleId of added) {
+				const module = getModule(moduleId)
+				if (module?.onEnable) {
+					try {
+						await module.onEnable(env, ctx)
+					} catch (err) {
+						logger.error(`onEnable hook failed for module '${moduleId}'`, {
+							error: err instanceof Error ? err.message : String(err),
+							workspaceId: id,
+						})
+					}
+				}
+			}
+			for (const moduleId of removed) {
+				const module = getModule(moduleId)
+				if (module?.onDisable) {
+					try {
+						await module.onDisable(env, ctx)
+					} catch (err) {
+						logger.error(`onDisable hook failed for module '${moduleId}'`, {
+							error: err instanceof Error ? err.message : String(err),
+							workspaceId: id,
+						})
+					}
+				}
+			}
+		}
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
