@@ -135,6 +135,15 @@ run_agent() {
       if [ -n "$MCP_CONFIG_FILE" ]; then
         mcp_args="--mcp-config $MCP_CONFIG_FILE"
       fi
+      if [ "$INTERACTIVE" = "1" ]; then
+        exec claude -p \
+          --input-format stream-json \
+          --output-format stream-json \
+          --verbose \
+          --dangerously-skip-permissions \
+          $mcp_args \
+          2>&1
+      fi
       exec claude -p "$ACTION_PROMPT" \
         --print \
         --verbose \
