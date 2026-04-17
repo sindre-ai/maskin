@@ -32,6 +32,7 @@ export function buildActor(overrides?: Record<string, unknown>) {
 		memory: null,
 		llmProvider: null,
 		llmConfig: null,
+		isSystem: false,
 		createdBy: null,
 		createdAt: new Date(),
 		updatedAt: new Date(),
