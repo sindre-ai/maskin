@@ -114,6 +114,8 @@ export const api = {
 			request<ActorResponse>(`/actors/${id}`, { method: 'PATCH', body: data }),
 		regenerateApiKey: (id: string) =>
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
+		reset: (id: string, workspaceId: string) =>
+			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
 	},
