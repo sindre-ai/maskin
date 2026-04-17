@@ -236,6 +236,12 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<SessionLogResponse[]>(`/sessions/${id}/logs${qs}`, { workspaceId })
 		},
+		input: (id: string, body: SessionInputBody, workspaceId: string) =>
+			request<{ ok: true }>(`/sessions/${id}/input`, {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 	},
 
 	events: {
@@ -567,6 +573,16 @@ export interface SessionResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+}
+
+export interface SessionInputAttachment {
+	kind: string
+	id: string
+}
+
+export interface SessionInputBody {
+	content: string
+	attachments?: SessionInputAttachment[]
 }
 
 export interface SessionLogResponse {
