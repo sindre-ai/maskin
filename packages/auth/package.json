@@ -23,8 +23,8 @@
 		"@maskin/db": "workspace:*",
 		"@maskin/shared": "workspace:*",
 		"bcryptjs": "^3.0.3",
-		"drizzle-orm": "^0.38.0",
-		"hono": "^4.12.12"
+		"drizzle-orm": "^0.45.2",
+		"hono": "^4.12.14"
 	},
 	"devDependencies": {
 		"@types/bcryptjs": "^3.0.0",
