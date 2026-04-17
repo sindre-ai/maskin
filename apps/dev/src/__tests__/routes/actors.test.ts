@@ -96,6 +96,30 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('exposes is_system field on the response', async () => {
+			const systemActor = buildActor({ isSystem: true, type: 'agent', name: 'Sindre' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [systemActor]
+
+			const res = await app.request(jsonGet(`/api/actors/${systemActor.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.isSystem).toBe(true)
+		})
+
+		it('exposes isSystem=false for non-system actors', async () => {
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [actor]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.isSystem).toBe(false)
+		})
 	})
 
 	describe('PATCH /api/actors/:id', () => {

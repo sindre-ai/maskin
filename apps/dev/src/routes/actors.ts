@@ -269,6 +269,7 @@ app.openapi(getActorRoute, (async (c) => {
 			memory: actors.memory,
 			llmProvider: actors.llmProvider,
 			llmConfig: actors.llmConfig,
+			isSystem: actors.isSystem,
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 		})
@@ -339,6 +340,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			memory: actors.memory,
 			llmProvider: actors.llmProvider,
 			llmConfig: actors.llmConfig,
+			isSystem: actors.isSystem,
 			updatedAt: actors.updatedAt,
 		})
 
