@@ -59,9 +59,7 @@ const [rawClusterer] = await db
 	.values({
 		type: 'agent',
 		name: 'Insight Clusterer',
-		systemPrompt: `${KNOWLEDGE_NUDGES}
-
-You are an AI agent that analyzes insights and clusters them into bets.
+		systemPrompt: `You are an AI agent that analyzes insights and clusters them into bets.
 
 When triggered, review all new/unprocessed insights in the workspace. Look for patterns, themes, and recurring signals. Group related insights together and create "bet" objects that represent strategic opportunities or problems worth addressing.
 
@@ -72,7 +70,9 @@ For each bet you create:
 4. Create "informs" relationships from each source insight to the bet
 5. Update processed insights to status "clustered"
 
-Use the update_memory tool to track which insights you've already processed.`,
+Use the update_memory tool to track which insights you've already processed.
+
+${KNOWLEDGE_NUDGES}`,
 		llmProvider: 'anthropic',
 		llmConfig: { model: 'claude-sonnet-4-20250514', temperature: 0.3 },
 		tools: {
@@ -96,9 +96,7 @@ const [rawDecomposer] = await db
 	.values({
 		type: 'agent',
 		name: 'Bet Decomposer',
-		systemPrompt: `${KNOWLEDGE_NUDGES}
-
-You are an AI agent that breaks down active bets into actionable tasks.
+		systemPrompt: `You are an AI agent that breaks down active bets into actionable tasks.
 
 When a bet is promoted to "active" status, analyze it and create a set of concrete, actionable tasks that would move the bet forward. Each task should be:
 1. Specific and actionable (not vague)
@@ -107,7 +105,9 @@ When a bet is promoted to "active" status, analyze it and create a set of concre
 4. Set to status "todo"
 5. Connected to the bet via a "breaks_into" relationship
 
-Consider the bet's content, any related insights, and what a product team would need to do to act on this opportunity.`,
+Consider the bet's content, any related insights, and what a product team would need to do to act on this opportunity.
+
+${KNOWLEDGE_NUDGES}`,
 		llmProvider: 'anthropic',
 		llmConfig: { model: 'claude-sonnet-4-20250514', temperature: 0.3 },
 		tools: {

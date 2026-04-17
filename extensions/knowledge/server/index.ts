@@ -1,5 +1,12 @@
 import type { ModuleDefinition } from '@maskin/module-sdk'
-import { MODULE_ID, MODULE_NAME } from '../shared.js'
+import {
+	KNOWLEDGE_DEFAULT_SETTINGS,
+	KNOWLEDGE_FIELDS,
+	KNOWLEDGE_RELATIONSHIP_TYPES,
+	KNOWLEDGE_STATUSES,
+	MODULE_ID,
+	MODULE_NAME,
+} from '../shared.js'
 
 const knowledgeExtension: ModuleDefinition = {
 	id: MODULE_ID,
@@ -10,41 +17,12 @@ const knowledgeExtension: ModuleDefinition = {
 			type: 'knowledge',
 			label: 'Article',
 			icon: 'book-open',
-			defaultStatuses: ['draft', 'validated', 'deprecated'],
-			defaultFields: [
-				{ name: 'summary', type: 'text', required: true },
-				{
-					name: 'confidence',
-					type: 'enum',
-					values: ['low', 'medium', 'high'],
-				},
-				{ name: 'tags', type: 'text' },
-				{ name: 'last_validated_at', type: 'date' },
-			],
-			defaultRelationshipTypes: ['supersedes', 'contradicts', 'about'],
+			defaultStatuses: [...KNOWLEDGE_STATUSES],
+			defaultFields: KNOWLEDGE_FIELDS,
+			defaultRelationshipTypes: KNOWLEDGE_RELATIONSHIP_TYPES,
 		},
 	],
-	defaultSettings: {
-		display_names: {
-			knowledge: 'Article',
-		},
-		statuses: {
-			knowledge: ['draft', 'validated', 'deprecated'],
-		},
-		field_definitions: {
-			knowledge: [
-				{ name: 'summary', type: 'text', required: true },
-				{
-					name: 'confidence',
-					type: 'enum',
-					values: ['low', 'medium', 'high'],
-				},
-				{ name: 'tags', type: 'text' },
-				{ name: 'last_validated_at', type: 'date' },
-			],
-		},
-		relationship_types: ['supersedes', 'contradicts', 'about'],
-	},
+	defaultSettings: KNOWLEDGE_DEFAULT_SETTINGS,
 }
 
 export default knowledgeExtension
