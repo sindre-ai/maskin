@@ -54,6 +54,7 @@ export const sessionConfigSchema = z.object({
 	cpu_shares: z.coerce.number().int().min(256).max(4096).default(1024),
 	mcps: z.array(mcpServerSchema).default([]),
 	env_vars: z.record(z.string()).default({}),
+	interactive: z.boolean().default(false),
 })
 
 export const createSessionSchema = z.object({

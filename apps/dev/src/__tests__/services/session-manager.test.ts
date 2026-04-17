@@ -26,6 +26,10 @@ const mockContainerManager = {
 	logs: vi.fn().mockReturnValue({
 		[Symbol.asyncIterator]: async function* () {},
 	}),
+	attachStdin: vi.fn().mockResolvedValue(undefined),
+	detachStdin: vi.fn(),
+	write: vi.fn().mockResolvedValue(undefined),
+	getStdinStream: vi.fn(),
 }
 
 vi.mock('../../services/container-manager', () => ({
@@ -108,6 +112,37 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('createSession() — interactive', () => {
+		it('persists interactive=true when config.interactive is true', async () => {
+			const session = buildSession({ status: 'pending', interactive: true })
+			mockResults.insertQueue = [[session], []]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: '',
+				config: { interactive: true },
+				createdBy: 'creator-1',
+				autoStart: false,
+			})
+
+			expect(result.interactive).toBe(true)
+		})
+
+		it('defaults interactive to false when config.interactive is missing', async () => {
+			const session = buildSession({ status: 'pending', interactive: false })
+			mockResults.insertQueue = [[session], []]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Do the thing',
+				createdBy: 'creator-1',
+				autoStart: false,
+			})
+
+			expect(result.interactive).toBe(false)
+		})
+	})
+
 	describe('stopSession()', () => {
 		it('stops the container', async () => {
 			const session = buildSession({
@@ -119,6 +154,19 @@ describe('SessionManager', () => {
 			await manager.stopSession(session.id)
 
 			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-abc')
+		})
+
+		it('detaches stdin before stopping the container', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+				interactive: true,
+			})
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			expect(mockContainerManager.detachStdin).toHaveBeenCalledWith(session.id)
 		})
 
 		it('throws when session not found', async () => {

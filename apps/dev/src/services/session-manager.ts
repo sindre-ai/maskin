@@ -29,6 +29,15 @@ import { ContainerManager, type LogChunk } from './container-manager'
 export interface CreateSessionParams {
 	actorId: string
 	actionPrompt: string
+	/**
+	 * Free-form session config. Recognized keys include:
+	 *   - `interactive?: boolean` — when true, start the container with stdin
+	 *     attached so subsequent user turns can be delivered via
+	 *     `ContainerManager.write()`. The value is also persisted to
+	 *     `sessions.interactive` so downstream routes (e.g. the input route)
+	 *     can gate on it without re-parsing config.
+	 *   - everything else is passed through as-is to the container env/runtime.
+	 */
 	config?: Record<string, unknown>
 	triggerId?: string
 	createdBy: string
@@ -85,6 +94,9 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
+		const config = params.config ?? {}
+		const interactive = config.interactive === true
+
 		const [session] = await this.db
 			.insert(sessions)
 			.values({
@@ -93,7 +105,8 @@ export class SessionManager extends EventEmitter {
 				triggerId: params.triggerId,
 				status: 'pending',
 				actionPrompt: params.actionPrompt,
-				config: params.config ?? {},
+				config,
+				interactive,
 				createdBy: params.createdBy,
 			})
 			.returning()
@@ -206,6 +219,7 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
 			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
@@ -224,6 +238,7 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
+		this.containers.detachStdin(sessionId)
 		await this.containers.stop(session.containerId)
 		// handleCompletion will be called by the exit watcher
 	}
@@ -260,6 +275,7 @@ export class SessionManager extends EventEmitter {
 			await this.storage.put(snapshotKey, tarStream as import('node:stream').Readable)
 
 			// Stop and remove container
+			this.containers.detachStdin(sessionId)
 			await this.containers.stop(session.containerId)
 			await this.containers.remove(session.containerId)
 
@@ -369,6 +385,7 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
 			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
@@ -630,9 +647,15 @@ export class SessionManager extends EventEmitter {
 			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
 			binds: [`${tempDir}:/agent:rw`],
 			networkMode,
+			interactive: session.interactive,
 		})
 
 		await this.containers.start(containerId)
+
+		if (session.interactive) {
+			await this.containers.attachStdin(session.id, containerId)
+		}
+
 		return containerId
 	}
 
@@ -752,6 +775,7 @@ export class SessionManager extends EventEmitter {
 		await this.clearActiveSession(sessionId)
 
 		// Cleanup
+		this.containers.detachStdin(sessionId)
 		await this.cleanupBrowserSidecar(sessionId)
 		await this.containers
 			.remove(containerId)
@@ -795,6 +819,7 @@ export class SessionManager extends EventEmitter {
 			}
 
 			if (session.containerId) {
+				this.containers.detachStdin(session.id)
 				await this.containers.stop(session.containerId).catch((err) =>
 					logger.warn('Failed to stop timed-out container', {
 						sessionId: session.id,

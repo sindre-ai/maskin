@@ -210,6 +210,7 @@ export function buildSession(overrides?: Record<string, unknown>) {
 		containerId: `container-${n}`,
 		actionPrompt: `Do something ${n}`,
 		config: {},
+		interactive: false,
 		result: null,
 		snapshotPath: null,
 		startedAt: new Date(),
