@@ -181,7 +181,9 @@ export class ContainerManager {
 	}
 
 	private trackStreamLifecycle(sessionId: string, handle: StdinHandle): void {
-		const on = (handle.stream as unknown as { on?: (event: string, cb: (err?: unknown) => void) => void }).on
+		const on = (
+			handle.stream as unknown as { on?: (event: string, cb: (err?: unknown) => void) => void }
+		).on
 		if (typeof on !== 'function') return
 		const markClosed = (reason: string, err?: unknown) => {
 			if (handle.closed) return
@@ -247,10 +249,9 @@ export class ContainerManager {
 		handle: StdinHandle,
 		reason: string,
 	): Promise<void> {
-		logger.warn(
-			`Reconnecting stdin stream: session=${sessionId} container=${handle.containerId}`,
-			{ reason },
-		)
+		logger.warn(`Reconnecting stdin stream: session=${sessionId} container=${handle.containerId}`, {
+			reason,
+		})
 		const newStream = await this.openStdinStream(handle.containerId)
 		handle.stream = newStream
 		handle.closed = false

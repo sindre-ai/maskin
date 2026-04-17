@@ -403,9 +403,7 @@ describe('ContainerManager', () => {
 		it('reconnects when the attached stream has already ended before write', async () => {
 			const endedStream = makeStream()
 			const recoveredStream = makeStream()
-			mockContainer.attach
-				.mockResolvedValueOnce(endedStream)
-				.mockResolvedValueOnce(recoveredStream)
+			mockContainer.attach.mockResolvedValueOnce(endedStream).mockResolvedValueOnce(recoveredStream)
 
 			await manager.attachStdin('s', 'c-1')
 			// Simulate unexpected end event on the original stream.
@@ -445,9 +443,7 @@ describe('ContainerManager', () => {
 					cb(new Error('retry write failed')),
 				),
 			})
-			mockContainer.attach
-				.mockResolvedValueOnce(firstStream)
-				.mockResolvedValueOnce(secondStream)
+			mockContainer.attach.mockResolvedValueOnce(firstStream).mockResolvedValueOnce(secondStream)
 
 			await manager.attachStdin('s', 'c-1')
 			await expect(manager.write('s', payload)).rejects.toThrow('retry write failed')
