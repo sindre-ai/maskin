@@ -143,6 +143,111 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('startSession() — interactive launch flow', () => {
+		it('sets INTERACTIVE=1 and omits ACTION_PROMPT for interactive sessions', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				actionPrompt: '',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Sindre.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: null,
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			// Select queue in startSession → hasCapacity → launchContainer order.
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+				interactive?: boolean
+			}
+			expect(createArgs.env.INTERACTIVE).toBe('1')
+			expect(createArgs.env.ACTION_PROMPT).toBeUndefined()
+			expect(createArgs.interactive).toBe(true)
+			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+		})
+
+		it('sets ACTION_PROMPT and omits INTERACTIVE for non-interactive sessions', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: null,
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+				interactive?: boolean
+			}
+			expect(createArgs.env.ACTION_PROMPT).toBe('Do the thing')
+			expect(createArgs.env.INTERACTIVE).toBeUndefined()
+			expect(createArgs.interactive).toBe(false)
+			expect(mockContainerManager.attachStdin).not.toHaveBeenCalled()
+		})
+
+		it('ignores user-provided INTERACTIVE env var in session config', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				config: { env_vars: { INTERACTIVE: '1' } },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: null,
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.INTERACTIVE).toBeUndefined()
+		})
+	})
+
 	describe('stopSession()', () => {
 		it('stops the container', async () => {
 			const session = buildSession({

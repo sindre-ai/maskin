@@ -481,9 +481,19 @@ export class SessionManager extends EventEmitter {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
-			ACTION_PROMPT: session.actionPrompt,
 			MASKIN_API_URL: 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
+		}
+
+		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
+		// arrives via POST /api/sessions/:id/input over the attached stdin stream.
+		// Non-interactive sessions pass the action prompt positionally so `claude -p`
+		// runs it and exits; interactive sets INTERACTIVE=1 so agent-run.sh takes
+		// the stdin-driven stream-json branch instead.
+		if (session.interactive) {
+			envVars.INTERACTIVE = '1'
+		} else {
+			envVars.ACTION_PROMPT = session.actionPrompt
 		}
 
 		// Inject LLM API key: agent-level first, then workspace-level fallback
@@ -582,6 +592,7 @@ export class SessionManager extends EventEmitter {
 			'AGENT_RUNTIME',
 			'SYSTEM_PROMPT',
 			'ACTION_PROMPT',
+			'INTERACTIVE',
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
 			'ANTHROPIC_API_KEY',
