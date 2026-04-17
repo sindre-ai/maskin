@@ -4,6 +4,20 @@
 
 ---
 
+## Implementation status (as of 2026-04-17)
+
+V1 has shipped on branch `claude/code-review-9dgQg`. Three deviations from the original spec below, recorded here so the spec doesn't diverge from what exists:
+
+1. **Registered as code, not via runtime `create_extension`.** The extension lives at `extensions/knowledge/{server,web,shared}.ts` and is registered in `apps/dev/src/extensions.ts` + `apps/web/src/lib/extensions.ts` alongside the `work` extension. §183's two options collapsed into one: code-level from day 1. See commit `533d163`.
+2. **Opt-in per workspace.** Knowledge is NOT in the default `enabled_modules` (still `['work']`). Workspaces opt in by adding `'knowledge'` to `settings.enabled_modules`. This keeps the feature off for workspaces that don't want it.
+3. **Read-path nudge is injected at session launch, not stamped into actor rows.** Because knowledge is opt-in, the "search knowledge before answering" line can't live in every seeded agent's `systemPrompt` — it would prompt agents in knowledge-disabled workspaces to call a type that doesn't exist. Instead `apps/dev/src/services/agent-prompt.ts` appends `KNOWLEDGE_NUDGES` to `SYSTEM_PROMPT` at container launch, but only when the workspace has `knowledge` in `enabled_modules`. This supersedes the §142 "no session-manager change" rationale.
+
+Deferred per §152 and still deferred: curator/lint agent, pgvector, graph viz page, draft approval flow, dedicated `capture_knowledge` MCP helpers.
+
+Not yet executed: the 7-step runtime Verification checklist below. Those are smoke tests that need `pnpm dev` + a browser.
+
+---
+
 ## Why
 
 Today, when a user corrects an agent or realizes a data-model truth mid-session, that correction dies with the session. It doesn't:
@@ -119,7 +133,10 @@ create_objects({
     },
   }],
   relationships: [
-    { type: "informs", source_type: "session", source_id: "<session-id>", target_type: "object", target_id: "<new-article-id>" },
+    // Maskin relationships are object-to-object. When an agent creates a knowledge
+    // article while working on a specific bet/task/insight, the provenance edge
+    // goes from that triggering object to the new article.
+    { type: "informs", source_id: "<triggering-object-id>", target_id: "<new-article-id>" },
   ],
 })
 ```
@@ -130,16 +147,18 @@ Humans writing knowledge use the **existing** object detail page (`apps/web/src/
 
 The agent retrieves knowledge the way Karpathy's pattern intends: it **reads the wiki**, rather than having it pre-loaded.
 
-**Mechanism:** one line in each agent's default system prompt:
+**Mechanism:** two paragraphs (`KNOWLEDGE_NUDGES` in `packages/shared/src/prompts.ts`) that the session manager appends to `SYSTEM_PROMPT` at container launch, **only in workspaces that have the knowledge module enabled**:
 
-> "Before answering domain questions or making assumptions about data, schemas, or tooling, call `search_objects({type:'knowledge', q:'<terms>'})`. If relevant titles come back, call `get_objects({id})` to read the full article."
+> "Before answering domain questions or making assumptions about data, schemas, or tooling, call `search_objects({type:'knowledge', q:'<terms>'})`. If relevant titles come back, call `get_objects({id})` to read the full article.
+>
+> When the user corrects a factual assumption, establishes a data-model or tooling truth, or validates a non-obvious convention worth keeping past this session, call `create_objects({type:'knowledge', ...})`. If you were triggered by a specific object (bet, task, or insight), add an informs relationship from that object to the new knowledge article."
 
-That's it. No CLAUDE.md injection, no workspace context hook, no `agent-run.sh` edit. Reasons:
+Reasons:
 
 - **Karpathy's own point:** the agent should *read* the wiki on demand, not have it shoved in at boot. The whole value of the pattern is that the agent treats knowledge like a folder it grep/cats.
 - **Staleness:** a pre-stuffed index goes stale the moment another user edits an article mid-session. On-demand search is always fresh.
 - **Token economy:** in a workspace with 200 articles, maybe 3 matter for a given task. Pre-injecting 200 titles wastes 197 of them.
-- **Simpler system:** no session-manager change, no env-var plumbing, no container-side file generation.
+- **Opt-in hygiene:** injecting at session launch (rather than baking the nudge into every seeded agent) means knowledge-disabled workspaces don't end up with agents calling a type that doesn't exist. The extra code is one helper (`apps/dev/src/services/agent-prompt.ts`).
 
 If scale becomes a problem (thousands of articles, ILIKE stops discriminating), add pgvector as a focused Phase 2 — `search_objects` grows a semantic mode; the MCP surface stays unchanged.
 
@@ -161,26 +180,28 @@ Each of these is cheap to add later once v1 has earned it:
 
 ## V1 implementation — days, not weeks
 
-1. Call `create_extension` with the payload above against the development workspace.
-2. Add one line ("search knowledge before answering domain questions…") to the default actor system prompt template (this might be a single row update in the `actors` table, or a config in the onboarding template — one-line change either way).
-3. Add a "Knowledge" object-type tab in the web app's object list. If the `work` extension already demonstrates the pattern (it does, in `extensions/work/web/index.ts`), this is also essentially a declaration.
+1. Register `knowledge` as a code-level extension at `extensions/knowledge/{server,web,shared}.ts` (mirrors the `work` extension), and import it in `apps/dev/src/extensions.ts` + `apps/web/src/lib/extensions.ts`. The extension declares the object type, fields, statuses, and relationship types above.
+2. Enable the module per-workspace by adding `'knowledge'` to `settings.enabled_modules`. Runtime `create_extension` remains available as an alternative enablement path but is not used for the v1 ship.
+3. Add `KNOWLEDGE_NUDGES` to `packages/shared/src/prompts.ts` and wire `apps/dev/src/services/agent-prompt.ts` to append it to `SYSTEM_PROMPT` at container launch whenever the workspace has `knowledge` enabled.
+4. Add a "Knowledge" object-type tab in the web app's object list via `extensions/knowledge/web/index.ts` (`objectTypeTabs: [{ label: 'Knowledge', value: 'knowledge' }]`).
 
-That's it. No backend deploy, no migration, no container image rebuild.
+No schema migration, no new routes, no new MCP tools, no container image rebuild.
 
 ## Verification
 
 1. `pnpm dev` up, MCP connected.
-2. `create_extension` call (above) — confirm via `list_extensions` that `knowledge` now appears enabled in the workspace.
+2. Enable the module on the development workspace (`PATCH /api/workspaces/:id` adding `'knowledge'` to `settings.enabled_modules`). Confirm via `get_workspace_schema` that `knowledge` is a valid object type in that workspace.
 3. `create_objects({type:'knowledge', ...})` with the customer-tables article → confirm row exists via `GET /api/objects?type=knowledge`.
 4. Web app → object list → "Knowledge" tab shows the article; open it → markdown renders, linked-objects panel shows any `informs`/`about`/`supersedes` edges.
-5. Open a new session in the same workspace with the updated system prompt. Ask "which customer table should I use?" — verify the agent calls `search_objects({type:'knowledge', ...})`, then `get_objects`, then answers correctly citing the article id.
+5. Open a new session in that same workspace. Ask "which customer table should I use?" — verify the agent calls `search_objects({type:'knowledge', ...})`, then `get_objects`, then answers correctly citing the article id.
 6. Second browser tab (different user) edits the article → confirm realtime update via SSE in the first tab and in any live session.
 7. A session calls `create_objects` with a `supersedes` edge pointing at an older article → old article auto-greys in the list via `linked-objects` / status update.
+8. Open a new session in a workspace **without** `knowledge` enabled → verify the system prompt does NOT contain `KNOWLEDGE_NUDGES` (opt-in hygiene).
 
-## Open questions
+## Resolved questions
 
-- Does the default-actor system-prompt template live in one place, or is it per-actor? (Need to grep for where `SYSTEM_PROMPT` is seeded so the "search knowledge first" nudge lands consistently for new agents.)
-- Do we want the extension to also ship for all *future* workspaces automatically (register as code in `extensions/knowledge/` following the `extensions/work/` pattern), or is runtime-per-workspace enough for v1? Recommendation: do the runtime call now to unblock; fold it into a code-level extension in a follow-up PR once the shape is settled.
+- *"Does the default-actor system-prompt template live in one place, or is it per-actor?"* — per-actor (`actors.system_prompt`, stamped at actor creation by the templates in `packages/shared/src/templates/*`). Rather than spraying the nudge across every template, the session manager appends it at container launch — keeps existing actors up-to-date automatically and respects opt-in.
+- *"Runtime `create_extension` now, code-level follow-up?"* — collapsed to code-level from day 1. Runtime `create_extension` still works for ad-hoc custom extensions, but `knowledge` is a first-class module.
 
 ## Sources
 
