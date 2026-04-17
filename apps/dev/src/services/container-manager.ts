@@ -35,6 +35,12 @@ export interface ContainerStatus {
 
 export class ContainerManager {
 	private docker: Docker
+	/**
+	 * Stdin stream handles for interactive sessions, keyed by sessionId. A handle
+	 * is inserted by `attachStdin()` after the container starts and removed when
+	 * the session's container is stopped or removed.
+	 */
+	private stdinStreams = new Map<string, NodeJS.WritableStream>()
 
 	constructor() {
 		this.docker = new Docker()
@@ -125,6 +131,49 @@ export class ContainerManager {
 		const container = this.docker.getContainer(containerId)
 		await container.start()
 		logger.info(`Container started: ${containerId}`)
+	}
+
+	/**
+	 * Attach to a running container's stdin and persist the returned duplex stream
+	 * keyed by `sessionId` for the life of the session. Callers use
+	 * `getStdinStream(sessionId)` to write stream-json user turns on subsequent
+	 * input. Must be called after `start()` on a container created with
+	 * `interactive: true`.
+	 */
+	async attachStdin(sessionId: string, containerId: string): Promise<void> {
+		const container = this.docker.getContainer(containerId)
+		const stream = (await container.attach({
+			stream: true,
+			stdin: true,
+			hijack: true,
+		})) as NodeJS.ReadWriteStream
+		this.stdinStreams.set(sessionId, stream)
+		logger.info(`Stdin attached: session=${sessionId} container=${containerId}`)
+	}
+
+	/**
+	 * Returns the persisted stdin stream for a session, or undefined if none is
+	 * attached.
+	 */
+	getStdinStream(sessionId: string): NodeJS.WritableStream | undefined {
+		return this.stdinStreams.get(sessionId)
+	}
+
+	/**
+	 * End and forget the stdin stream for a session. Safe to call when no stream
+	 * is attached.
+	 */
+	detachStdin(sessionId: string): void {
+		const stream = this.stdinStreams.get(sessionId)
+		if (!stream) return
+		this.stdinStreams.delete(sessionId)
+		try {
+			stream.end()
+		} catch (err: unknown) {
+			logger.warn(`Failed to end stdin stream for session ${sessionId}`, {
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
 	}
 
 	async stop(containerId: string, timeoutSeconds = 10): Promise<void> {

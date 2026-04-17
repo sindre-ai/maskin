@@ -10,6 +10,7 @@ const mockContainer = {
 	logs: vi.fn(),
 	putArchive: vi.fn(),
 	getArchive: vi.fn(),
+	attach: vi.fn(),
 }
 
 const mockDocker = {
@@ -278,6 +279,57 @@ describe('ContainerManager', () => {
 
 			expect(chunks).toHaveLength(1)
 			expect(chunks[0].data).toBe('complete')
+		})
+	})
+
+	describe('attachStdin() / getStdinStream() / detachStdin()', () => {
+		it('attaches stdin and stores the stream keyed by sessionId', async () => {
+			const stream = { write: vi.fn(), end: vi.fn() }
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('session-1', 'container-xyz')
+
+			expect(mockDocker.getContainer).toHaveBeenCalledWith('container-xyz')
+			expect(mockContainer.attach).toHaveBeenCalledWith({
+				stream: true,
+				stdin: true,
+				hijack: true,
+			})
+			expect(manager.getStdinStream('session-1')).toBe(stream)
+		})
+
+		it('getStdinStream returns undefined when no stream is attached', () => {
+			expect(manager.getStdinStream('unknown')).toBeUndefined()
+		})
+
+		it('detachStdin ends the stream and removes it from the map', async () => {
+			const stream = { write: vi.fn(), end: vi.fn() }
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('session-2', 'container-xyz')
+			manager.detachStdin('session-2')
+
+			expect(stream.end).toHaveBeenCalled()
+			expect(manager.getStdinStream('session-2')).toBeUndefined()
+		})
+
+		it('detachStdin is a no-op when no stream is attached', () => {
+			expect(() => manager.detachStdin('unknown')).not.toThrow()
+		})
+
+		it('detachStdin swallows errors from stream.end()', async () => {
+			const stream = {
+				write: vi.fn(),
+				end: vi.fn(() => {
+					throw new Error('already closed')
+				}),
+			}
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('session-3', 'container-xyz')
+
+			expect(() => manager.detachStdin('session-3')).not.toThrow()
+			expect(manager.getStdinStream('session-3')).toBeUndefined()
 		})
 	})
 
