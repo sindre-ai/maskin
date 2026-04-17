@@ -10,6 +10,7 @@ COPY packages/realtime/package.json packages/realtime/package.json
 COPY packages/storage/package.json packages/storage/package.json
 COPY packages/mcp/package.json packages/mcp/package.json
 COPY packages/module-sdk/package.json packages/module-sdk/package.json
+COPY extensions/knowledge/package.json extensions/knowledge/package.json
 COPY extensions/work/package.json extensions/work/package.json
 COPY apps/dev/package.json apps/dev/package.json
 COPY apps/web/package.json apps/web/package.json
