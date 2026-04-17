@@ -550,9 +550,22 @@ export interface SaveSkillInput {
 	frontmatter?: Record<string, unknown>
 }
 
+export interface SessionConfigInput {
+	/** Start the container with stdin attached so subsequent user turns can be delivered via the input route. */
+	interactive?: boolean
+	base_image?: string
+	runtime?: 'claude-code' | 'codex' | 'custom'
+	timeout_seconds?: number
+	memory_mb?: number
+	cpu_shares?: number
+	env_vars?: Record<string, string>
+	mcps?: Array<Record<string, unknown>>
+}
+
 export interface CreateSessionInput {
 	actor_id: string
 	action_prompt: string
+	config?: SessionConfigInput
 	auto_start?: boolean
 }
 
