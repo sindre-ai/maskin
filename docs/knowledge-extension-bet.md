@@ -6,15 +6,16 @@
 
 ## Implementation status (as of 2026-04-17)
 
-V1 has shipped on branch `claude/code-review-9dgQg`. Three deviations from the original spec below, recorded here so the spec doesn't diverge from what exists:
+V1 has shipped on branch `claude/code-review-9dgQg`. Four deviations from the original spec below, recorded here so the spec doesn't diverge from what exists:
 
 1. **Registered as code, not via runtime `create_extension`.** The extension lives at `extensions/knowledge/{server,web,shared}.ts` and is registered in `apps/dev/src/extensions.ts` + `apps/web/src/lib/extensions.ts` alongside the `work` extension. §183's two options collapsed into one: code-level from day 1. See commit `533d163`.
-2. **Opt-in per workspace.** Knowledge is NOT in the default `enabled_modules` (still `['work']`). Workspaces opt in by adding `'knowledge'` to `settings.enabled_modules`. This keeps the feature off for workspaces that don't want it.
+2. **Opt-in per workspace.** Knowledge is NOT in the default `enabled_modules` (still `['work']`). Workspaces opt in by calling `create_extension({id:'knowledge'})` (or PATCHing `settings.enabled_modules` directly). This keeps the feature off for workspaces that don't want it.
 3. **Read-path nudge is injected at session launch, not stamped into actor rows.** Because knowledge is opt-in, the "search knowledge before answering" line can't live in every seeded agent's `systemPrompt` — it would prompt agents in knowledge-disabled workspaces to call a type that doesn't exist. Instead `apps/dev/src/services/agent-prompt.ts` appends `KNOWLEDGE_NUDGES` to `SYSTEM_PROMPT` at container launch, but only when the workspace has `knowledge` in `enabled_modules`. This supersedes the §142 "no session-manager change" rationale.
+4. **Curator agent shipped with the extension.** Originally §152 deferred the "Curator / lint agent" until articles accumulated. We un-deferred it to break the chicken-and-egg: without a Curator doing post-session Ingest and weekly Lint, the wiki stays empty. The Curator, its session-completed trigger, and its weekly cron trigger live in `extensions/knowledge/server/agents.ts` and are seeded automatically when the module is enabled via `create_extension`. This required a new `seedAgents` / `seedTriggers` field on `ModuleDefinition` in `packages/module-sdk` — the first time the module surface has owned its own seed agents (previously only workspace templates did).
 
-Deferred per §152 and still deferred: curator/lint agent, pgvector, graph viz page, draft approval flow, dedicated `capture_knowledge` MCP helpers.
+Still deferred per §152: pgvector / hybrid search, consolidation tier automation, graph viz page, draft approval flow, dedicated `capture_knowledge` MCP helpers.
 
-Not yet executed: the 7-step runtime Verification checklist below. Those are smoke tests that need `pnpm dev` + a browser.
+Not yet executed: the 8-step runtime Verification checklist below. Those are smoke tests that need `pnpm dev` + a browser.
 
 ---
 
@@ -168,35 +169,44 @@ If scale becomes a problem (thousands of articles, ILIKE stops discriminating), 
 
 **Per-actor vs workspace split:** An individual agent's *private* learnings still live in the existing per-actor `agent_files` (`fileType='learning' / 'memory'`) as today. Only things promoted to the shared wiki become `type='knowledge'` objects. Clean separation between "what this agent remembers" and "what this workspace knows".
 
-## Explicitly deferred — NOT in v1
+## Shipped in v1 (un-deferred from original §152)
+
+- **Curator agent + session-completed trigger + weekly lint cron.** Lives in `extensions/knowledge/server/agents.ts`. Seeded automatically when the module is enabled via `create_extension` (using the new `seedAgents` / `seedTriggers` fields on `ModuleDefinition`). Handles the three operations from Karpathy's pattern: Ingest (post-session), Query's write-back (on-demand during sessions via `KNOWLEDGE_NUDGES`), and Lint (weekly cron). The original §152 rationale ("build it once articles exist") was reversed because without a Curator the wiki stays empty — chicken-and-egg.
+
+## Still deferred — NOT in v1
 
 Each of these is cheap to add later once v1 has earned it:
 
-- **Curator / lint agent** (post-session trigger or weekly cron that proposes drafts, detects contradictions, flags stale articles). Build it once articles actually exist and we see how they drift. Until then you're building a janitor for an empty room.
 - **Semantic search** (pgvector). Not needed below a few hundred articles per workspace.
 - **Graph visualization page.** The `linked-objects` list on the detail page surfaces structure well enough for v1.
 - **Notification-based draft approval flow.** Drafts are just `status='draft'` — visible in the list, editable, promotable by any member. No extra workflow needed.
 - **Dedicated `capture_knowledge` / `search_knowledge` MCP helpers.** Only add if agents misuse the generic `create_objects` / `search_objects`.
+- **Consolidation tier automation** (v2 memory hierarchy: working → episodic → semantic → procedural promotion). Per-actor `agent_files` and workspace-scoped `knowledge` articles already separate private vs shared; automatic promotion between tiers can wait.
+- **Sensitivity filtering** on ingest. The Curator's prompt tells it to skip material containing credentials, but there is no automatic redaction yet.
 
 ## V1 implementation — days, not weeks
 
 1. Register `knowledge` as a code-level extension at `extensions/knowledge/{server,web,shared}.ts` (mirrors the `work` extension), and import it in `apps/dev/src/extensions.ts` + `apps/web/src/lib/extensions.ts`. The extension declares the object type, fields, statuses, and relationship types above.
-2. Enable the module per-workspace by adding `'knowledge'` to `settings.enabled_modules`. Runtime `create_extension` remains available as an alternative enablement path but is not used for the v1 ship.
-3. Add `KNOWLEDGE_NUDGES` to `packages/shared/src/prompts.ts` and wire `apps/dev/src/services/agent-prompt.ts` to append it to `SYSTEM_PROMPT` at container launch whenever the workspace has `knowledge` enabled.
-4. Add a "Knowledge" object-type tab in the web app's object list via `extensions/knowledge/web/index.ts` (`objectTypeTabs: [{ label: 'Knowledge', value: 'knowledge' }]`).
+2. Define the Knowledge Curator agent + two triggers (session-completed Ingest, weekly Lint cron) in `extensions/knowledge/server/agents.ts` and attach them via the new `seedAgents` / `seedTriggers` fields on `ModuleDefinition`.
+3. Enable the module per-workspace via `create_extension({id:'knowledge'})`. The MCP handler adds `'knowledge'` to `settings.enabled_modules` *and* seeds the module's agents + triggers in one step, using the shared `seedAgentsAndTriggers` helper in `packages/mcp/src/server.ts`.
+4. Add `KNOWLEDGE_NUDGES` to `packages/shared/src/prompts.ts` (search-before-create and prefer-update-over-duplicate) and wire `apps/dev/src/services/agent-prompt.ts` to append it to `SYSTEM_PROMPT` at container launch whenever the workspace has `knowledge` enabled.
+5. Add a "Knowledge" object-type tab in the web app's object list via `extensions/knowledge/web/index.ts` (`objectTypeTabs: [{ label: 'Knowledge', value: 'knowledge' }]`).
 
 No schema migration, no new routes, no new MCP tools, no container image rebuild.
 
 ## Verification
 
 1. `pnpm dev` up, MCP connected.
-2. Enable the module on the development workspace (`PATCH /api/workspaces/:id` adding `'knowledge'` to `settings.enabled_modules`). Confirm via `get_workspace_schema` that `knowledge` is a valid object type in that workspace.
+2. `create_extension({id:'knowledge'})` against the development workspace. Confirm via `get_workspace_schema` that `knowledge` is a valid object type, AND confirm `list_actors` shows a "Knowledge Curator" agent, AND confirm `list_triggers` shows both "Session Completed → Curate Knowledge" and "Weekly Knowledge Lint" wired to that actor.
 3. `create_objects({type:'knowledge', ...})` with the customer-tables article → confirm row exists via `GET /api/objects?type=knowledge`.
 4. Web app → object list → "Knowledge" tab shows the article; open it → markdown renders, linked-objects panel shows any `informs`/`about`/`supersedes` edges.
 5. Open a new session in that same workspace. Ask "which customer table should I use?" — verify the agent calls `search_objects({type:'knowledge', ...})`, then `get_objects`, then answers correctly citing the article id.
-6. Second browser tab (different user) edits the article → confirm realtime update via SSE in the first tab and in any live session.
-7. A session calls `create_objects` with a `supersedes` edge pointing at an older article → old article auto-greys in the list via `linked-objects` / status update.
-8. Open a new session in a workspace **without** `knowledge` enabled → verify the system prompt does NOT contain `KNOWLEDGE_NUDGES` (opt-in hygiene).
+6. **Curator Ingest flow.** Run a session that writes a meaningful insight (e.g. "actually, we use `dim_customers` not `customers_raw`"). When the session completes, confirm the Curator trigger fires a new session and that session either creates a new `type='knowledge'` article or updates an existing near-match.
+7. **Curator self-recursion guard.** Verify the Curator's own sessions do not retrigger itself — look for the `actor_id equals {{self_id}}` early-exit path in the Curator's session logs.
+8. **Update-over-duplicate.** Create two sessions that would each propose the same knowledge. After both complete, confirm there is ONE article (updated twice) and not two near-duplicates.
+9. Second browser tab (different user) edits the article → confirm realtime update via SSE in the first tab and in any live session.
+10. A session calls `create_objects` with a `supersedes` edge pointing at an older article → old article auto-greys in the list via `linked-objects` / status update.
+11. Open a new session in a workspace **without** `knowledge` enabled → verify the system prompt does NOT contain `KNOWLEDGE_NUDGES` (opt-in hygiene).
 
 ## Resolved questions
 

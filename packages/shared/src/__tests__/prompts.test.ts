@@ -11,6 +11,11 @@ describe('KNOWLEDGE_NUDGES', () => {
 		expect(KNOWLEDGE_NUDGES).toContain("type:'knowledge'")
 	})
 
+	it('instructs agents to prefer update over duplicate creation', () => {
+		expect(KNOWLEDGE_NUDGES).toContain('update_objects')
+		expect(KNOWLEDGE_NUDGES.toLowerCase()).toMatch(/near-match|near match/)
+	})
+
 	it('is NOT baked into template agent prompts — injected at session start only', () => {
 		const allTemplates = [...DEVELOPMENT_AGENTS, ...GROWTH_AGENTS, ...OUTBOUND_SALES_AGENTS]
 		expect(allTemplates.length).toBeGreaterThan(0)

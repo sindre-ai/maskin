@@ -7,6 +7,7 @@ import {
 	MODULE_ID,
 	MODULE_NAME,
 } from '../shared.js'
+import { KNOWLEDGE_AGENTS, KNOWLEDGE_TRIGGERS } from './agents.js'
 
 const knowledgeExtension: ModuleDefinition = {
 	id: MODULE_ID,
@@ -23,6 +24,8 @@ const knowledgeExtension: ModuleDefinition = {
 		},
 	],
 	defaultSettings: KNOWLEDGE_DEFAULT_SETTINGS,
+	seedAgents: KNOWLEDGE_AGENTS,
+	seedTriggers: KNOWLEDGE_TRIGGERS,
 }
 
 export default knowledgeExtension

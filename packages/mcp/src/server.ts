@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	type SeedAgent,
+	type SeedTrigger,
 	WORKSPACE_TEMPLATES,
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
@@ -189,6 +191,87 @@ function buildEnableModuleSettings(
 	}
 
 	return updatedSettings
+}
+
+/**
+ * Seed agents + triggers into a workspace. Used both by `get_started` (template
+ * seeding) and by `create_extension` when enabling a module that contributes its
+ * own agents/triggers.
+ *
+ * Returns a short human-readable summary fragment describing what was created
+ * and what failed. Callers concatenate it into their own response text.
+ */
+async function seedAgentsAndTriggers(
+	config: McpConfig,
+	workspaceId: string,
+	seedAgents: SeedAgent[] | undefined,
+	seedTriggers: SeedTrigger[] | undefined,
+): Promise<{ agentsCreated: number; triggersCreated: number; summary: string }> {
+	const actorIdMap: Record<string, string> = {}
+	let agentsCreated = 0
+	let triggersCreated = 0
+	let summary = ''
+
+	if (seedAgents && seedAgents.length > 0) {
+		for (const agent of seedAgents) {
+			try {
+				const created = (await apiCall(
+					config,
+					'POST',
+					'/api/actors',
+					{
+						type: 'agent',
+						name: agent.name,
+						system_prompt: agent.systemPrompt,
+						tools: agent.tools,
+					},
+					{ workspaceId },
+				)) as { id: string }
+				actorIdMap[agent.$id] = created.id
+				if (agent.systemPrompt.includes('{{self_id}}')) {
+					const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)
+					await apiCall(
+						config,
+						'PATCH',
+						`/api/actors/${created.id}`,
+						{ system_prompt: substituted },
+						{ workspaceId },
+					)
+				}
+				agentsCreated++
+			} catch (err) {
+				summary += ` Failed to create agent "${agent.name}": ${String(err)}.`
+			}
+		}
+	}
+
+	if (seedTriggers && seedTriggers.length > 0) {
+		for (const trigger of seedTriggers) {
+			const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
+			try {
+				const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)
+				await apiCall(
+					config,
+					'POST',
+					'/api/triggers',
+					{
+						name: trigger.name,
+						type: trigger.type,
+						config: trigger.config,
+						action_prompt: substitutedPrompt,
+						target_actor_id: targetActorId,
+						enabled: trigger.enabled,
+					},
+					{ workspaceId },
+				)
+				triggersCreated++
+			} catch (err) {
+				summary += ` Failed to create trigger "${trigger.name}": ${String(err)}.`
+			}
+		}
+	}
+
+	return { agentsCreated, triggersCreated, summary }
 }
 
 /** Compute the set of relationship types still referenced by remaining extensions. */
@@ -1423,9 +1506,25 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: args.workspace_id },
 				)
 
+				const { agentsCreated, triggersCreated, summary } = await seedAgentsAndTriggers(
+					config,
+					args.workspace_id,
+					mod.seedAgents,
+					mod.seedTriggers,
+				)
+
+				const seedSuffix =
+					agentsCreated > 0 || triggersCreated > 0
+						? `\n\nSeeded ${agentsCreated} module agent(s) and ${triggersCreated} trigger(s).${summary}`
+						: summary
+							? `\n\n${summary.trim()}`
+							: ''
+
 				return {
 					_meta: { toolName: 'create_extension' },
-					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+					content: [
+						{ type: 'text' as const, text: `${JSON.stringify(result, null, 2)}${seedSuffix}` },
+					],
 				}
 			}
 
@@ -2023,73 +2122,14 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				seedSummary = `Settings applied, but seeding examples failed: ${String(err)}. You can re-run get_started or add objects manually.`
 			}
 
-			// Create seed agents (if any). Track $id → real UUID so triggers can resolve
-			// their target actor, and so {{self_id}} placeholders in system prompts can
-			// be substituted with the real actor id in a second PATCH.
-			const actorIdMap: Record<string, string> = {}
-			let agentsCreated = 0
-			if (template.seedAgents && template.seedAgents.length > 0) {
-				for (const agent of template.seedAgents) {
-					try {
-						const created = (await apiCall(
-							config,
-							'POST',
-							'/api/actors',
-							{
-								type: 'agent',
-								name: agent.name,
-								system_prompt: agent.systemPrompt,
-								tools: agent.tools,
-							},
-							{ workspaceId: workspace.id },
-						)) as { id: string }
-						actorIdMap[agent.$id] = created.id
-						// Second pass: substitute {{self_id}} in the system prompt.
-						if (agent.systemPrompt.includes('{{self_id}}')) {
-							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)
-							await apiCall(
-								config,
-								'PATCH',
-								`/api/actors/${created.id}`,
-								{ system_prompt: substituted },
-								{ workspaceId: workspace.id },
-							)
-						}
-						agentsCreated++
-					} catch (err) {
-						seedSummary += ` Failed to create agent "${agent.name}": ${String(err)}.`
-					}
-				}
-			}
-
-			// Create seed triggers, resolving targetActor$id to a real UUID.
-			let triggersCreated = 0
-			if (template.seedTriggers && template.seedTriggers.length > 0) {
-				for (const trigger of template.seedTriggers) {
-					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
-					try {
-						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)
-						await apiCall(
-							config,
-							'POST',
-							'/api/triggers',
-							{
-								name: trigger.name,
-								type: trigger.type,
-								config: trigger.config,
-								action_prompt: substitutedPrompt,
-								target_actor_id: targetActorId,
-								enabled: trigger.enabled,
-							},
-							{ workspaceId: workspace.id },
-						)
-						triggersCreated++
-					} catch (err) {
-						seedSummary += ` Failed to create trigger "${trigger.name}": ${String(err)}.`
-					}
-				}
-			}
-
+			const { agentsCreated, triggersCreated, summary: seedAgentSummary } =
+				await seedAgentsAndTriggers(
+					config,
+					workspace.id,
+					template.seedAgents,
+					template.seedTriggers,
+				)
+			seedSummary += seedAgentSummary
 			if (agentsCreated > 0 || triggersCreated > 0) {
 				seedSummary += ` Created ${agentsCreated} agents and ${triggersCreated} triggers that drive the pipeline.`
 			}

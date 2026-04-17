@@ -1,8 +1,11 @@
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import type { SeedAgent, SeedTrigger } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import type { z } from 'zod'
+
+export type { SeedAgent, SeedTrigger }
 
 /** Field definition for custom metadata fields on objects */
 export interface FieldDefinition {
@@ -68,6 +71,22 @@ export interface ModuleDefinition {
 	mcpTools?: McpToolDefinition[]
 	/** Default workspace settings this module contributes when first enabled */
 	defaultSettings?: ModuleDefaultSettings
+	/**
+	 * Agents seeded into a workspace when this module is enabled.
+	 *
+	 * `$id` is a template-local identifier used by `seedTriggers` to reference
+	 * the agent before it has a real UUID; `{{self_id}}` in `systemPrompt` is
+	 * substituted with the created actor id.
+	 */
+	seedAgents?: SeedAgent[]
+	/**
+	 * Triggers seeded into a workspace when this module is enabled.
+	 *
+	 * `targetActor$id` must match a `SeedAgent.$id` from this module's
+	 * `seedAgents` (or a real actor UUID for triggers that fan out to an
+	 * already-created actor).
+	 */
+	seedTriggers?: SeedTrigger[]
 }
 
 /** Default settings a module contributes to workspace settings when enabled */

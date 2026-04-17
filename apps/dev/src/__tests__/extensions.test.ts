@@ -30,4 +30,33 @@ describe('knowledge extension server definition', () => {
 	it('uses a module id distinct from the work extension', () => {
 		expect(knowledgeExtension.id).not.toBe(workExtension.id)
 	})
+
+	it('ships a Knowledge Curator seed agent', () => {
+		const curator = knowledgeExtension.seedAgents?.find((a) => a.$id === 'knowledge_curator')
+		expect(curator).toBeDefined()
+		expect(curator?.name).toBe('Knowledge Curator')
+		expect(curator?.systemPrompt).toContain('{{self_id}}')
+		expect(curator?.systemPrompt).toContain('session_completed')
+	})
+
+	it('ships a session-completed trigger and a weekly lint cron targeting the curator', () => {
+		const triggers = knowledgeExtension.seedTriggers ?? []
+		const ingest = triggers.find((t) => t.type === 'event')
+		const lint = triggers.find((t) => t.type === 'cron')
+		expect(ingest).toBeDefined()
+		expect(ingest?.config).toMatchObject({
+			entity_type: 'session',
+			action: 'session_completed',
+		})
+		expect(ingest?.targetActor$id).toBe('knowledge_curator')
+		expect(lint).toBeDefined()
+		expect((lint?.config as { expression?: string }).expression).toBeTruthy()
+		expect(lint?.targetActor$id).toBe('knowledge_curator')
+	})
+
+	it('the session-completed trigger prompt guards against self-recursion', () => {
+		const ingest = knowledgeExtension.seedTriggers?.find((t) => t.type === 'event')
+		expect(ingest?.actionPrompt).toMatch(/actor_id/i)
+		expect(ingest?.actionPrompt).toMatch(/\{\{self_id\}\}/)
+	})
 })
