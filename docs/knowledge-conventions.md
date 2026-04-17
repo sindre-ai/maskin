@@ -64,6 +64,15 @@ The `KNOWLEDGE_NUDGES` prompt enforces this for agents. Humans should follow the
 - **Edit in place** when the facts have drifted slightly and the core subject is unchanged. Example: table name was renamed; article still about "canonical customer table".
 - **Supersede** when the subject itself has changed. Example: you had an article about the old "Warehouse v1" data model; you've now moved to "Warehouse v2" with different tables and different semantics. The two should coexist with a `supersedes` edge so the history stays readable.
 
+## Orphan articles and data gaps
+
+The Knowledge Curator's weekly lint pass flags two additional failure modes:
+
+- **Orphans** — articles with zero inbound relationships (no `informs`, `about`, `supersedes`, or `contradicts` edges pointing at them), and not `deprecated`. Usually a sign the article was written without being tied back to its source bet/task/insight, or that the topic has drifted into irrelevance. Response: link it back to a current object, merge into a related article, or set `deprecated`.
+- **Data gaps** — concepts mentioned across 3+ articles (in content or tags) with no article of their own. E.g. articles keep referring to "the ingest pipeline" but no article defines what that is. Response: either write the missing article or add a short explanation to the most relevant existing article.
+
+Both are reported in a single weekly notification — see `extensions/knowledge/server/agents.ts`.
+
 ## Sensitive content
 
 Do not paste credentials, tokens, or PII into knowledge articles. The current extension has no automatic redaction — the content field is visible to every workspace member. If a session log contained credentials, the Curator is instructed to skip that material rather than capture it.

@@ -39,6 +39,16 @@ describe('knowledge extension server definition', () => {
 		expect(curator?.systemPrompt).toContain('session_completed')
 	})
 
+	it("curator's Lint flow covers stale, contradictions, supersessions, orphans, and data gaps", () => {
+		const curator = knowledgeExtension.seedAgents?.find((a) => a.$id === 'knowledge_curator')
+		const prompt = curator?.systemPrompt.toLowerCase() ?? ''
+		expect(prompt).toContain('stale')
+		expect(prompt).toContain('contradiction')
+		expect(prompt).toContain('supersession')
+		expect(prompt).toContain('orphan')
+		expect(prompt).toContain('data gap')
+	})
+
 	it('ships a session-completed trigger and a weekly lint cron targeting the curator', () => {
 		const triggers = knowledgeExtension.seedTriggers ?? []
 		const ingest = triggers.find((t) => t.type === 'event')

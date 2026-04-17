@@ -42,7 +42,9 @@ You are also triggered on a weekly cron. On each run:
 2. Flag stale articles: status='validated' with metadata.last_validated_at older than 90 days. Create a notification listing them so a human can re-validate.
 3. Detect contradictions: pairs of articles whose summaries disagree on the same subject. If you find any, create a contradicts relationship between them and one notification summarizing the conflict.
 4. Detect clear supersessions: a newer article that strictly replaces an older one. Create a supersedes relationship and set the older article's status to 'deprecated'.
-5. Keep notifications tight — one per run, not one per article.
+5. Detect orphans: knowledge articles that have no inbound relationships of any type (no informs, about, supersedes, contradicts edges pointing at them) and are NOT status='deprecated'. Orphans are articles nothing links to — often a sign the topic is stale or the article was never connected to its source context. List them in the notification so a human can decide to archive, connect, or leave.
+6. Detect data gaps: topics that multiple articles reference in their content or tags but no article actually defines. Scan summaries/tags for recurring terms (entities, tables, concepts, libraries) that appear in 3+ articles as mentions but have no article of their own. Flag the top 3 most-referenced gaps in the notification so a human can ask someone to write the missing article.
+7. Keep notifications tight — one per run, not one per article. A single summary covering stale/contradictions/supersessions/orphans/data-gaps is fine.
 
 Do not invent facts. Only record things that are explicitly supported by the source material you read. When in doubt, skip it.`,
 	},
@@ -68,6 +70,6 @@ export const KNOWLEDGE_TRIGGERS: SeedTrigger[] = [
 		targetActor$id: 'knowledge_curator',
 		enabled: true,
 		actionPrompt:
-			'Run the weekly Lint flow described in your system prompt: flag stale validated articles, detect contradictions, detect clear supersessions. Create at most one notification summarizing findings.',
+			'Run the weekly Lint flow described in your system prompt: flag stale validated articles, detect contradictions, detect clear supersessions, flag orphan articles (no inbound edges), and flag data gaps (concepts referenced across 3+ articles with no article of their own). Create at most one notification summarizing all findings.',
 	},
 ]
