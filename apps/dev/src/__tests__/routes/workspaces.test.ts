@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { buildCreateWorkspaceBody, buildWorkspace } from '../factories'
+import { buildActor, buildCreateWorkspaceBody, buildWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -7,10 +7,16 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and returns 201', async () => {
+		it('creates a workspace and seeds Sindre, returning 201', async () => {
 			const ws = buildWorkspace()
+			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insert = [ws]
+			mockResults.insertQueue = [
+				[ws], // workspaces insert
+				[{}], // owner workspaceMembers insert
+				[sindre], // Sindre actor insert
+				[{}], // Sindre workspaceMembers insert
+			]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
@@ -22,7 +28,7 @@ describe('Workspaces Routes', () => {
 			expect(body.name).toBe(ws.name)
 		})
 
-		it('returns 500 when insert returns empty', async () => {
+		it('returns 500 when workspace insert returns empty', async () => {
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insert = [] // empty — insert failed
 
@@ -34,6 +40,22 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body.error.code).toBe('INTERNAL_ERROR')
 			expect(body.error.message).toContain('Failed to create workspace')
+		})
+
+		it('rolls back and returns 500 when Sindre actor insert returns empty', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = [
+				[ws], // workspaces insert succeeds
+				[{}], // owner workspaceMembers insert succeeds
+				[], // Sindre actor insert fails — triggers rollback
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(500)
 		})
 	})
 
