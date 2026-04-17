@@ -46,14 +46,24 @@ export interface StreamJsonUserMessage {
 	}
 }
 
+/**
+ * Tracks a session's stdin stream alongside the container id it was attached
+ * to, so `write()` can re-attach after an unexpected error/end.
+ */
+interface StdinHandle {
+	stream: NodeJS.ReadWriteStream
+	containerId: string
+	closed: boolean
+}
+
 export class ContainerManager {
 	private docker: Docker
 	/**
-	 * Stdin stream handles for interactive sessions, keyed by sessionId. A handle
-	 * is inserted by `attachStdin()` after the container starts and removed when
+	 * Stdin handles for interactive sessions, keyed by sessionId. A handle is
+	 * inserted by `attachStdin()` after the container starts and removed when
 	 * the session's container is stopped or removed.
 	 */
-	private stdinStreams = new Map<string, NodeJS.WritableStream>()
+	private stdinStreams = new Map<string, StdinHandle>()
 
 	constructor() {
 		this.docker = new Docker()
@@ -154,14 +164,37 @@ export class ContainerManager {
 	 * `interactive: true`.
 	 */
 	async attachStdin(sessionId: string, containerId: string): Promise<void> {
+		const stream = await this.openStdinStream(containerId)
+		const handle: StdinHandle = { stream, containerId, closed: false }
+		this.trackStreamLifecycle(sessionId, handle)
+		this.stdinStreams.set(sessionId, handle)
+		logger.info(`Stdin attached: session=${sessionId} container=${containerId}`)
+	}
+
+	private async openStdinStream(containerId: string): Promise<NodeJS.ReadWriteStream> {
 		const container = this.docker.getContainer(containerId)
-		const stream = (await container.attach({
+		return (await container.attach({
 			stream: true,
 			stdin: true,
 			hijack: true,
 		})) as NodeJS.ReadWriteStream
-		this.stdinStreams.set(sessionId, stream)
-		logger.info(`Stdin attached: session=${sessionId} container=${containerId}`)
+	}
+
+	private trackStreamLifecycle(sessionId: string, handle: StdinHandle): void {
+		const on = (handle.stream as unknown as { on?: (event: string, cb: (err?: unknown) => void) => void }).on
+		if (typeof on !== 'function') return
+		const markClosed = (reason: string, err?: unknown) => {
+			if (handle.closed) return
+			handle.closed = true
+			if (err) {
+				logger.warn(`Stdin stream ${reason}: session=${sessionId}`, {
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+		on.call(handle.stream, 'error', (err) => markClosed('error', err))
+		on.call(handle.stream, 'end', () => markClosed('end'))
+		on.call(handle.stream, 'close', () => markClosed('close'))
 	}
 
 	/**
@@ -169,22 +202,39 @@ export class ContainerManager {
 	 * attached.
 	 */
 	getStdinStream(sessionId: string): NodeJS.WritableStream | undefined {
-		return this.stdinStreams.get(sessionId)
+		return this.stdinStreams.get(sessionId)?.stream
 	}
 
 	/**
 	 * Serialize `payload` as one newline-delimited JSON line and write it to the
-	 * stdin stream handle attached for this session. Throws if no stream is
-	 * attached (i.e. `attachStdin()` was not called, or `detachStdin()` already
-	 * ran).
+	 * stdin stream handle attached for this session. If the stream has errored
+	 * or ended unexpectedly, re-attach to the container and retry the write
+	 * once before propagating the error. Throws if no stream was ever attached
+	 * (i.e. `attachStdin()` was not called) or was explicitly detached.
 	 */
 	async write(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
-		const stream = this.stdinStreams.get(sessionId)
-		if (!stream) {
+		const handle = this.stdinStreams.get(sessionId)
+		if (!handle) {
 			throw new Error(`No stdin stream attached for session ${sessionId}`)
 		}
 		const line = `${JSON.stringify(payload)}\n`
-		await new Promise<void>((resolve, reject) => {
+
+		if (handle.closed) {
+			await this.reconnectStdin(sessionId, handle, 'stream already closed before write')
+		}
+
+		try {
+			await this.writeLine(handle.stream, line)
+			return
+		} catch (err: unknown) {
+			const reason = err instanceof Error ? err.message : String(err)
+			await this.reconnectStdin(sessionId, handle, reason)
+			await this.writeLine(handle.stream, line)
+		}
+	}
+
+	private writeLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
+		return new Promise<void>((resolve, reject) => {
 			stream.write(line, (err) => {
 				if (err) reject(err)
 				else resolve()
@@ -192,16 +242,31 @@ export class ContainerManager {
 		})
 	}
 
+	private async reconnectStdin(
+		sessionId: string,
+		handle: StdinHandle,
+		reason: string,
+	): Promise<void> {
+		logger.warn(
+			`Reconnecting stdin stream: session=${sessionId} container=${handle.containerId}`,
+			{ reason },
+		)
+		const newStream = await this.openStdinStream(handle.containerId)
+		handle.stream = newStream
+		handle.closed = false
+		this.trackStreamLifecycle(sessionId, handle)
+	}
+
 	/**
 	 * End and forget the stdin stream for a session. Safe to call when no stream
 	 * is attached.
 	 */
 	detachStdin(sessionId: string): void {
-		const stream = this.stdinStreams.get(sessionId)
-		if (!stream) return
+		const handle = this.stdinStreams.get(sessionId)
+		if (!handle) return
 		this.stdinStreams.delete(sessionId)
 		try {
-			stream.end()
+			handle.stream.end()
 		} catch (err: unknown) {
 			logger.warn(`Failed to end stdin stream for session ${sessionId}`, {
 				error: err instanceof Error ? err.message : String(err),
