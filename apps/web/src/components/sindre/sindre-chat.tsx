@@ -1,11 +1,11 @@
+import { SindreTranscript } from '@/components/sindre/sindre-transcript'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useSindreSession } from '@/hooks/use-sindre-session'
 import { cn } from '@/lib/cn'
-import type { SindreEvent } from '@/lib/sindre-stream'
 import { Send } from 'lucide-react'
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useState } from 'react'
 
 export type SindreChatSurface = 'sheet' | 'pulse-bar'
 
@@ -44,112 +44,16 @@ export function SindreChat({ workspaceId, sindreActorId, surface, className }: S
 			data-surface={surface}
 		>
 			{showTranscript && (
-				<Transcript events={events} starting={starting} error={error} className="min-h-0 flex-1" />
+				<SindreTranscript
+					events={events}
+					starting={starting}
+					error={error}
+					className="min-h-0 flex-1"
+				/>
 			)}
 			<Composer onSend={send} disabled={!sessionReady || !sindreActorId} surface={surface} />
 		</div>
 	)
-}
-
-interface TranscriptProps {
-	events: SindreEvent[]
-	starting: boolean
-	error: Error | null
-	className?: string
-}
-
-/**
- * Minimal scaffold renderer for the Sindre transcript. Each event kind is
- * rendered as its own row so later iterations can swap the row component for
- * a richer block (markdown for text, collapsible blocks for tool_use, collapsed
- * thinking with an expander) without touching the container or the session
- * wiring above.
- */
-function Transcript({ events, starting, error, className }: TranscriptProps) {
-	const scrollerRef = useRef<HTMLDivElement | null>(null)
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom on every new event
-	useEffect(() => {
-		const el = scrollerRef.current
-		if (!el) return
-		el.scrollTop = el.scrollHeight
-	}, [events])
-
-	const isEmpty = events.length === 0 && !error
-
-	return (
-		<div
-			ref={scrollerRef}
-			className={cn(
-				'overflow-y-auto rounded-md border border-border bg-bg-surface p-3 text-sm',
-				className,
-			)}
-		>
-			{isEmpty ? (
-				<EmptyTranscript starting={starting} />
-			) : (
-				<div className="flex flex-col gap-3">
-					{events.map((event, index) => (
-						<TranscriptRow key={`${event.kind}-${index}`} event={event} />
-					))}
-					{error && <TranscriptError error={error} />}
-				</div>
-			)}
-		</div>
-	)
-}
-
-function EmptyTranscript({ starting }: { starting: boolean }) {
-	if (starting) {
-		return (
-			<div className="flex h-full items-center justify-center gap-2 text-text-muted">
-				<Spinner />
-				<span>Connecting to Sindre…</span>
-			</div>
-		)
-	}
-	return (
-		<div className="flex h-full items-center justify-center text-center text-text-muted">
-			Ask Sindre about your workspace — notifications, objects, bets, or how to get started.
-		</div>
-	)
-}
-
-function TranscriptError({ error }: { error: Error }) {
-	return (
-		<div className="rounded-md border border-error/40 bg-error/10 px-3 py-2 text-error text-xs">
-			{error.message}
-		</div>
-	)
-}
-
-function TranscriptRow({ event }: { event: SindreEvent }) {
-	switch (event.kind) {
-		case 'text':
-			return <div className="whitespace-pre-wrap text-text">{event.text}</div>
-		case 'thinking':
-			return <div className="whitespace-pre-wrap text-text-muted italic text-xs">{event.text}</div>
-		case 'tool_use':
-			return (
-				<div className="rounded-md border border-border bg-bg px-2 py-1.5 font-mono text-text-secondary text-xs">
-					<span className="text-text">{event.name}</span>
-					<span className="text-text-muted">()</span>
-				</div>
-			)
-		case 'result':
-			if (event.isError) {
-				return (
-					<div className="text-error text-xs">{event.text ?? `Run failed (${event.subtype})`}</div>
-				)
-			}
-			return null
-		case 'error':
-			return <div className="text-error text-xs">{event.message}</div>
-		case 'system':
-			return null
-		case 'debug':
-			return null
-	}
 }
 
 interface ComposerProps {
