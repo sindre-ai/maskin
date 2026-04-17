@@ -1,10 +1,10 @@
-import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import type { SessionInputAttachment } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 import { API_BASE } from '@/lib/constants'
 import { type SindreEvent, parseSindreLine } from '@/lib/sindre-stream'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const STORAGE_PREFIX = 'maskin-sindre-session'
 
@@ -38,13 +38,7 @@ export function clearStoredSindreSessionId(workspaceId: string): void {
 	} catch {}
 }
 
-export type SindreSessionStatus =
-	| 'idle'
-	| 'starting'
-	| 'connecting'
-	| 'ready'
-	| 'closed'
-	| 'error'
+export type SindreSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | 'closed' | 'error'
 
 export interface UseSindreSessionOptions {
 	workspaceId: string
@@ -181,8 +175,7 @@ export function useSindreSession({
 		async (content: string, attachments?: SessionInputAttachment[]) => {
 			if (!sessionId) throw new Error('Sindre session is not ready yet')
 			if (!workspaceId) throw new Error('No workspace selected')
-			const body =
-				attachments && attachments.length > 0 ? { content, attachments } : { content }
+			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
 			await api.sessions.input(sessionId, body, workspaceId)
 		},
 		[sessionId, workspaceId],

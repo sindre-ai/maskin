@@ -222,9 +222,7 @@ describe('useSindreSession — SSE log stream', () => {
 
 		act(() => lastFesInit?.onmessage({ event: 'stderr', data: 'something failed' }))
 
-		expect(result.current.events).toEqual([
-			{ kind: 'debug', raw: '[stderr] something failed' },
-		])
+		expect(result.current.events).toEqual([{ kind: 'debug', raw: '[stderr] something failed' }])
 	})
 
 	it('marks the stream as closed when the server sends a done event', async () => {
@@ -311,10 +309,9 @@ describe('useSindreSession — send', () => {
 
 	it('throws when called before a session is bootstrapped', async () => {
 		localStorage.clear()
-		const { result } = renderHook(
-			() => useSindreSession({ workspaceId, sindreActorId: null }),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId: null }), {
+			wrapper: TestWrapper,
+		})
 		await expect(result.current.send('hi')).rejects.toThrow(/not ready/i)
 	})
 })
