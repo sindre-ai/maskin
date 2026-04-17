@@ -6,6 +6,7 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { PageHeaderProvider } from '@/lib/page-header-context'
+import { SindreProvider } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
@@ -67,18 +68,20 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<PageHeaderProvider>
-				<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-					<AppSidebar />
-					<SidebarInset className="min-w-0">
-						<Header />
-						<div className="flex flex-col flex-1 overflow-auto p-8">
-							<Outlet />
-						</div>
-					</SidebarInset>
-				</SidebarProvider>
-			</PageHeaderProvider>
-			<CommandPalette />
+			<SindreProvider workspaceId={workspaceId}>
+				<PageHeaderProvider>
+					<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+						<AppSidebar />
+						<SidebarInset className="min-w-0">
+							<Header />
+							<div className="flex flex-col flex-1 overflow-auto p-8">
+								<Outlet />
+							</div>
+						</SidebarInset>
+					</SidebarProvider>
+				</PageHeaderProvider>
+				<CommandPalette />
+			</SindreProvider>
 		</WorkspaceContext.Provider>
 	)
 }
