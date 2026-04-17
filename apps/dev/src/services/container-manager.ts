@@ -33,6 +33,19 @@ export interface ContainerStatus {
 	finishedAt: string | null
 }
 
+/**
+ * Stream-JSON user message payload accepted on the Claude Code CLI stdin when
+ * running in interactive stream-json mode. Shape is pinned by the fixture at
+ * `apps/dev/src/__tests__/fixtures/claude-stdin-user-message.json`.
+ */
+export interface StreamJsonUserMessage {
+	type: 'user'
+	message: {
+		role: 'user'
+		content: string
+	}
+}
+
 export class ContainerManager {
 	private docker: Docker
 	/**
@@ -157,6 +170,26 @@ export class ContainerManager {
 	 */
 	getStdinStream(sessionId: string): NodeJS.WritableStream | undefined {
 		return this.stdinStreams.get(sessionId)
+	}
+
+	/**
+	 * Serialize `payload` as one newline-delimited JSON line and write it to the
+	 * stdin stream handle attached for this session. Throws if no stream is
+	 * attached (i.e. `attachStdin()` was not called, or `detachStdin()` already
+	 * ran).
+	 */
+	async write(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+		const stream = this.stdinStreams.get(sessionId)
+		if (!stream) {
+			throw new Error(`No stdin stream attached for session ${sessionId}`)
+		}
+		const line = `${JSON.stringify(payload)}\n`
+		await new Promise<void>((resolve, reject) => {
+			stream.write(line, (err) => {
+				if (err) reject(err)
+				else resolve()
+			})
+		})
 	}
 
 	/**
