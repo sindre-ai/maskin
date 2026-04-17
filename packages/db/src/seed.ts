@@ -1,4 +1,3 @@
-import { KNOWLEDGE_NUDGES } from '@maskin/shared'
 import { createDb } from './connection'
 import {
 	actors,
@@ -70,9 +69,7 @@ For each bet you create:
 4. Create "informs" relationships from each source insight to the bet
 5. Update processed insights to status "clustered"
 
-Use the update_memory tool to track which insights you've already processed.
-
-${KNOWLEDGE_NUDGES}`,
+Use the update_memory tool to track which insights you've already processed.`,
 		llmProvider: 'anthropic',
 		llmConfig: { model: 'claude-sonnet-4-20250514', temperature: 0.3 },
 		tools: {
@@ -105,9 +102,7 @@ When a bet is promoted to "active" status, analyze it and create a set of concre
 4. Set to status "todo"
 5. Connected to the bet via a "breaks_into" relationship
 
-Consider the bet's content, any related insights, and what a product team would need to do to act on this opportunity.
-
-${KNOWLEDGE_NUDGES}`,
+Consider the bet's content, any related insights, and what a product team would need to do to act on this opportunity.`,
 		llmProvider: 'anthropic',
 		llmConfig: { model: 'claude-sonnet-4-20250514', temperature: 0.3 },
 		tools: {

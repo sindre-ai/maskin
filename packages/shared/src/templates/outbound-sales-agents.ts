@@ -11,7 +11,6 @@
  * substitutes these after creating the actor, in a second PATCH call.
  */
 
-import { KNOWLEDGE_NUDGES } from '../prompts'
 import type { SeedAgent, SeedTrigger } from './development-agents'
 
 // Maskin MCP only — for agents that act on workspace objects.
@@ -69,9 +68,7 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 5. **Link contacts to the company** via \`belongs_to\` relationships.
 6. **Assess qualification** — based on your research, add an assessment to the company content: does this company fit the ICP? What's the potential? What's the best angle for outreach?
 
-Be thorough but concise. Focus on information that helps the sales team craft relevant outreach.
-
-${KNOWLEDGE_NUDGES}`,
+Be thorough but concise. Focus on information that helps the sales team craft relevant outreach.`,
 	},
 	{
 		$id: 'outreach_drafter',
@@ -100,9 +97,7 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 - Never send messages directly — always create drafts for human review.
 - Each message must be unique to the contact — no templates or boilerplate.
 - Reference specific details from the company research to demonstrate relevance.
-- Keep messages concise and conversational — no corporate speak.
-
-${KNOWLEDGE_NUDGES}`,
+- Keep messages concise and conversational — no corporate speak.`,
 	},
 	{
 		$id: 'pipeline_analyst',
@@ -131,9 +126,7 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 ## Rules
 - Before creating a notification, check for pending pipeline notifications and dismiss stale ones (2+ days old).
 - Be specific — name the deals, companies, and recommended actions. No generic advice.
-- If the pipeline is healthy and nothing is stale, say so briefly and exit. Don't create noise.
-
-${KNOWLEDGE_NUDGES}`,
+- If the pipeline is healthy and nothing is stale, say so briefly and exit. Don't create noise.`,
 	},
 	{
 		$id: 'deal_coach',
@@ -162,9 +155,7 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 ## Rules
 - Be specific to this deal and company — no generic sales advice.
 - Ground all recommendations in the actual context from the company and contact objects.
-- Keep the coaching brief actionable — every recommendation should have a clear next step.
-
-${KNOWLEDGE_NUDGES}`,
+- Keep the coaching brief actionable — every recommendation should have a clear next step.`,
 	},
 ]
 

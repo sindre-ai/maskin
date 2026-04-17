@@ -24,6 +24,7 @@ import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager } from './agent-storage'
+import { buildAgentSystemPrompt } from './agent-prompt'
 import { ContainerManager, type LogChunk } from './container-manager'
 
 export interface CreateSessionParams {
@@ -460,16 +461,6 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
-		const envVars: Record<string, string> = {
-			SESSION_ID: session.id,
-			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
-			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
-			ACTION_PROMPT: session.actionPrompt,
-			MASKIN_API_URL: 'http://host.docker.internal:3000',
-			MASKIN_WORKSPACE_ID: session.workspaceId,
-		}
-
-		// Inject LLM API key: agent-level first, then workspace-level fallback
 		const [ws] = await this.db
 			.select()
 			.from(workspaces)
@@ -477,6 +468,18 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
+
+		const envVars: Record<string, string> = {
+			SESSION_ID: session.id,
+			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
+			SYSTEM_PROMPT: buildAgentSystemPrompt(
+				agent.systemPrompt,
+				wsSettings as Record<string, unknown>,
+			),
+			ACTION_PROMPT: session.actionPrompt,
+			MASKIN_API_URL: 'http://host.docker.internal:3000',
+			MASKIN_WORKSPACE_ID: session.workspaceId,
+		}
 
 		if (llmConfig.api_key) {
 			if (agent.llmProvider === 'anthropic') {

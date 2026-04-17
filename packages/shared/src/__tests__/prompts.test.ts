@@ -11,14 +11,14 @@ describe('KNOWLEDGE_NUDGES', () => {
 		expect(KNOWLEDGE_NUDGES).toContain("type:'knowledge'")
 	})
 
-	it('is included in every seeded template agent prompt', () => {
+	it('is NOT baked into template agent prompts — injected at session start only', () => {
 		const allTemplates = [...DEVELOPMENT_AGENTS, ...GROWTH_AGENTS, ...OUTBOUND_SALES_AGENTS]
 		expect(allTemplates.length).toBeGreaterThan(0)
 		for (const agent of allTemplates) {
 			expect(
 				agent.systemPrompt.includes(KNOWLEDGE_NUDGES),
-				`${agent.name} is missing KNOWLEDGE_NUDGES`,
-			).toBe(true)
+				`${agent.name} should not carry KNOWLEDGE_NUDGES — the session manager appends it conditionally`,
+			).toBe(false)
 		}
 	})
 })

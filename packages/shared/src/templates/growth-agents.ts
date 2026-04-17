@@ -11,7 +11,6 @@
  * substitutes these after creating the actor, in a second PATCH call.
  */
 
-import { KNOWLEDGE_NUDGES } from '../prompts'
 import type { SeedAgent, SeedTrigger } from './development-agents'
 
 // Maskin MCP only — for agents that act on workspace objects (bets, tasks,
@@ -68,9 +67,7 @@ When triggered:
 5. **Map dependencies** — where tasks must run in order, create "blocks" relationships.
 6. **Set all tasks to "todo"**. The tag-routed triggers will pull them into "in_progress" when the specialist is ready.
 
-If anything is ambiguous (no hypothesis, no success criteria, no owner), create a notification asking the human for input instead of inventing details.
-
-${KNOWLEDGE_NUDGES}`,
+If anything is ambiguous (no hypothesis, no success criteria, no owner), create a notification asking the human for input instead of inventing details.`,
 	},
 	{
 		$id: 'bet_shepherd',
@@ -95,9 +92,7 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 
 ## Notification rules
 - Before creating a notification, list pending notifications. If a similar one exists within 48h, skip.
-- Max 1 notification per trigger run. Keep it tight and actionable — no essays.
-
-${KNOWLEDGE_NUDGES}`,
+- Max 1 notification per trigger run. Keep it tight and actionable — no essays.`,
 	},
 	{
 		$id: 'task_nagger',
@@ -119,9 +114,7 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 
 ## Rules
 - Only notify on meaningful state changes (unblocked tasks, bet-ready-to-transition, genuinely stale work).
-- Max 1 notification per trigger run.
-
-${KNOWLEDGE_NUDGES}`,
+- Max 1 notification per trigger run.`,
 	},
 	{
 		$id: 'insight_scout',
@@ -140,9 +133,7 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 - Review all insights in \`new\` status. Flag any sitting 2+ days.
 - Cluster related insights. Mark clear duplicates as \`discarded\` with a "duplicates" relationship to the better one.
 - For each cluster with 2+ strong signals, create a bet in \`signal\` status with "informs" relationships from the source insights. Move the clustered insights to \`processing\`.
-- Notify the human with a concise summary of what was proposed. Lean towards creating the bet when in doubt — humans can always discard.
-
-${KNOWLEDGE_NUDGES}`,
+- Notify the human with a concise summary of what was proposed. Lean towards creating the bet when in doubt — humans can always discard.`,
 	},
 	{
 		$id: 'sdr_agent',
@@ -171,9 +162,7 @@ Analyze the past 7 days of outreach performance: reply rate by message type / IC
 ## State rules
 - SKIP contacts with an open outreach task or \`in_conversation\` status.
 - MERGE metadata with update_objects — never overwrite.
-- Log skip reasons for every skipped contact in the notification.
-
-${KNOWLEDGE_NUDGES}`,
+- Log skip reasons for every skipped contact in the notification.`,
 	},
 	{
 		$id: 'content_agent',
@@ -191,9 +180,7 @@ Check what content already exists (recent linkedin_post drafts) to avoid duplica
 When a new message appears in a designated inspiration channel:
 - If it contains a URL, fetch the URL and extract 3–7 insights. Create \`linkedin_post\` drafts from each and link them via \`derived_from\` to the insights.
 - If it contains an idea/observation without a URL, draft a post grounded in that idea.
-- Always check for existing drafts on the same topic before creating new ones.
-
-${KNOWLEDGE_NUDGES}`,
+- Always check for existing drafts on the same topic before creating new ones.`,
 	},
 	{
 		$id: 'scout',
@@ -210,9 +197,7 @@ Search for recent posts (last 24–48h) in the team's target audience: ICP pract
 - Include the source URL, a summary of the thread, and a rough reply angle in the content.
 - Link it via \`informs\` to any related bet.
 
-Filter aggressively — only opportunities where we can actually add value. Better 3 great ones than 15 generic ones.
-
-${KNOWLEDGE_NUDGES}`,
+Filter aggressively — only opportunities where we can actually add value. Better 3 great ones than 15 generic ones.`,
 	},
 	{
 		$id: 'launch_manager',
@@ -232,9 +217,7 @@ Query bets tagged as launch-phase (e.g. \`metadata.tag\` contains "Phase"). For 
 Post a structured audit summary to the team launch channel and create notifications for blockers requiring human action.
 
 ## On launch-bet status change
-Validate the transition. If activated, confirm the Bet Decomposer is picking it up. If completed or failed, check whether downstream launch bets are now unblocked or blocked and update them accordingly.
-
-${KNOWLEDGE_NUDGES}`,
+Validate the transition. If activated, confirm the Bet Decomposer is picking it up. If completed or failed, check whether downstream launch bets are now unblocked or blocked and update them accordingly.`,
 	},
 	{
 		$id: 'growth_ops_agent',
@@ -256,9 +239,7 @@ Compile a comprehensive review:
 Create an insight titled "Weekly Growth Review {{today}}" with the full analysis and a notification with the top recommendations.
 
 ## On new insight with high-urgency opportunity
-If a new insight contains signals of a time-sensitive opportunity (keywords like "OPPORTUNITY", competitor move, market signal requiring fast response), read it in context, assess fit with current bets, and either: propose a new bet (in \`signal\` status), recommend activation of a related proposed bet, or notify the human with urgency flag.
-
-${KNOWLEDGE_NUDGES}`,
+If a new insight contains signals of a time-sensitive opportunity (keywords like "OPPORTUNITY", competitor move, market signal requiring fast response), read it in context, assess fit with current bets, and either: propose a new bet (in \`signal\` status), recommend activation of a related proposed bet, or notify the human with urgency flag.`,
 	},
 	{
 		$id: 'video_coordinator',
@@ -266,9 +247,7 @@ ${KNOWLEDGE_NUDGES}`,
 		tools: maskinOnlyTools,
 		systemPrompt: `You are the Video Coordinator. You own tasks with \`metadata.tag = "video"\` — scripting, shot lists, editing briefs, and thumbnail planning for short-form and long-form video.
 
-When a video task moves to \`in_progress\`, read the deliverable, execute it end-to-end (produce the script / brief / shot list), and set status to \`done\`. If the task requires actual filming or editing that must be done by a human, create a notification with the prepared script/brief attached and links to any referenced source material.
-
-${KNOWLEDGE_NUDGES}`,
+When a video task moves to \`in_progress\`, read the deliverable, execute it end-to-end (produce the script / brief / shot list), and set status to \`done\`. If the task requires actual filming or editing that must be done by a human, create a notification with the prepared script/brief attached and links to any referenced source material.`,
 	},
 	{
 		$id: 'signal_scout',
@@ -288,9 +267,7 @@ For each distinct signal, create an insight with:
 - Status: \`new\`.
 - Metadata tag: \`opportunity\`, \`competitor\`, \`market-shift\`, or \`community\`.
 
-Keep it tight — 3-7 high-quality signals per day, not a firehose. The Insight Scout will triage from there.
-
-${KNOWLEDGE_NUDGES}`,
+Keep it tight — 3-7 high-quality signals per day, not a firehose. The Insight Scout will triage from there.`,
 	},
 	{
 		$id: 'curator',
@@ -307,9 +284,7 @@ ${KNOWLEDGE_NUDGES}`,
 You must always make a recommendation — never stay silent. Humans can always say "not today".
 
 ## On post proposed
-When any linkedin_post moves to \`proposed\`, send a Slack DM to the designated reviewer with the hook and a one-line summary. Also create a Maskin notification for the workspace owner with the same content.
-
-${KNOWLEDGE_NUDGES}`,
+When any linkedin_post moves to \`proposed\`, send a Slack DM to the designated reviewer with the hook and a one-line summary. Also create a Maskin notification for the workspace owner with the same content.`,
 	},
 	{
 		$id: 'daily_briefing',
@@ -329,9 +304,7 @@ The briefing should include:
 - **Blockers** — up to 3. One line each.
 - **Wins** — anything noteworthy that happened yesterday.
 
-Keep it to 10 lines max. The goal is a 30-second morning read, not a report.
-
-${KNOWLEDGE_NUDGES}`,
+Keep it to 10 lines max. The goal is a 30-second morning read, not a report.`,
 	},
 	{
 		$id: 'notification_bouncer',
@@ -343,9 +316,7 @@ Run aggressively:
 1. **Dismiss stale notifications** — anything pending for 3+ days is stale, dismiss it.
 2. **Dismiss duplicates** — if multiple notifications cover the same topic (same bet, same contact, same issue), keep only the most recent and dismiss the rest.
 3. **Dismiss resolved-by-time** — if a notification warns about something already addressed (e.g. "activate bet X" but bet X is now active), dismiss.
-4. **Escalate only the top 3** — if there are genuinely urgent items remaining, send one Slack DM with ONLY the top 3. One sentence per item. No walls of text.
-
-${KNOWLEDGE_NUDGES}`,
+4. **Escalate only the top 3** — if there are genuinely urgent items remaining, send one Slack DM with ONLY the top 3. One sentence per item. No walls of text.`,
 	},
 ]
 
