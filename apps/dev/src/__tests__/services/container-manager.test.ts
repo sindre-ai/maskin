@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { vi } from 'vitest'
 
 // Mock dockerode
@@ -466,6 +469,49 @@ describe('ContainerManager', () => {
 
 			await manager.attachStdin('s', 'c-1')
 			await expect(manager.write('s', payload)).rejects.toThrow('container gone')
+		})
+	})
+
+	describe('write() matches t13 stream-json fixture format', () => {
+		const fixturePath = join(
+			dirname(fileURLToPath(import.meta.url)),
+			'..',
+			'fixtures',
+			'claude-stdin-user-message.json',
+		)
+		const fixtureText = readFileSync(fixturePath, 'utf-8')
+		const fixture = JSON.parse(fixtureText) as {
+			type: 'user'
+			message: { role: 'user'; content: string }
+		}
+
+		it('serializes the fixture payload as one newline-terminated JSON line', async () => {
+			const stream = makeStream()
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('fixture-session', 'c-fixture')
+			await manager.write('fixture-session', fixture)
+
+			expect(stream.write).toHaveBeenCalledTimes(1)
+			const writtenLine = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+
+			// Exactly one trailing newline, no embedded newlines in the JSON body.
+			expect(writtenLine.endsWith('\n')).toBe(true)
+			expect(writtenLine.slice(0, -1)).not.toContain('\n')
+
+			// Compact (not pretty-printed) — must match `JSON.stringify` exactly so the
+			// Claude CLI sees a single stream-json line per turn.
+			expect(writtenLine).toBe(`${JSON.stringify(fixture)}\n`)
+
+			// Shape round-trips to the original fixture object (type, role, content).
+			expect(JSON.parse(writtenLine.trimEnd())).toEqual(fixture)
+		})
+
+		it('fixture has the stream-json user-message shape the CLI expects', () => {
+			expect(fixture.type).toBe('user')
+			expect(fixture.message.role).toBe('user')
+			expect(typeof fixture.message.content).toBe('string')
+			expect(fixture.message.content.length).toBeGreaterThan(0)
 		})
 	})
 
