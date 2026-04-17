@@ -14,6 +14,7 @@
 		"test": "vitest"
 	},
 	"dependencies": {
+		"@maskin/ext-notetaker": "workspace:*",
 		"@maskin/ext-work": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",
