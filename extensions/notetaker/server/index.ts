@@ -1,9 +1,16 @@
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, triggers, workspaceMembers, workspaces } from '@maskin/db/schema'
-import type { ModuleDefinition, ModuleEnv, ModuleLifecycleContext } from '@maskin/module-sdk'
+import type {
+	McpToolDefinition,
+	ModuleDefinition,
+	ModuleEnv,
+	ModuleLifecycleContext,
+} from '@maskin/module-sdk'
 import { and, eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { MEETING_RELATIONSHIP_TYPES, MEETING_STATUSES, MODULE_ID, MODULE_NAME } from '../shared.js'
+import { createNotetakerRoutes } from './routes.js'
 
 // ── Deterministic names — used for idempotent lookup/creation ────────────────
 const SUMMARIZER_AGENT_NAME = 'Meeting Summarizer'
@@ -310,6 +317,94 @@ async function onDisable(env: ModuleEnv, ctx: ModuleLifecycleContext): Promise<v
 	await writeConfig(db, workspaceId, settings, remaining as NotetakerConfig)
 }
 
+// ── MCP tools ──────────────────────────────────────────────────────────────
+//
+// Tool handlers receive an `apiCall` helper that normally namespaces paths to
+// `/api/m/notetaker/...`. The MCP server's module-tool wiring passes absolute
+// `/api/...` paths through unchanged so these tools can wrap the core objects
+// API directly.
+
+const createMeetingInputSchema = z.object({
+	meetingUrl: z.string().min(1),
+	startTime: z.string().min(1),
+	endTime: z.string().optional(),
+	language: z.string().optional(),
+	skjaldJoin: z.boolean().optional(),
+	calendarProvider: z.enum(['google-calendar', 'microsoft-outlook', 'manual']).optional(),
+	calendarEventId: z.string().optional(),
+	title: z.string().optional(),
+	botName: z.string().optional(),
+})
+
+const attachTranscriptInputSchema = z.object({
+	meetingId: z.string().uuid(),
+	transcriptUrl: z.string().min(1),
+	audioUrl: z.string().optional(),
+})
+
+const updateMeetingInputSchema = z.object({
+	meetingId: z.string().uuid(),
+	patch: z.record(z.unknown()).optional(),
+	status: z.enum(MEETING_STATUSES).optional(),
+})
+
+function jsonText(value: unknown) {
+	return {
+		content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
+	}
+}
+
+const mcpTools: McpToolDefinition[] = [
+	{
+		name: 'create_meeting',
+		description:
+			'Create a notetaker meeting object. Thin wrapper around POST /api/objects that sets type=meeting and packs the provided fields into metadata.',
+		inputSchema: createMeetingInputSchema,
+		handler: async (rawArgs, apiCall) => {
+			const args = createMeetingInputSchema.parse(rawArgs)
+			const { title, ...metadata } = args
+			const result = (await apiCall('POST', '/api/objects', {
+				type: 'meeting',
+				status: 'scheduled',
+				title: title ?? 'Meeting',
+				metadata,
+			})) as { id: string }
+			return jsonText({ meetingId: result.id })
+		},
+	},
+	{
+		name: 'attach_transcript',
+		description:
+			'Attach a transcript (and optional audio) to a meeting and transition its status to done. Fires the transcript.attached trigger.',
+		inputSchema: attachTranscriptInputSchema,
+		handler: async (rawArgs, apiCall) => {
+			const args = attachTranscriptInputSchema.parse(rawArgs)
+			const result = await apiCall('PATCH', `/api/objects/${args.meetingId}`, {
+				status: 'done',
+				metadata: {
+					transcriptUrl: args.transcriptUrl,
+					...(args.audioUrl ? { audioUrl: args.audioUrl } : {}),
+				},
+			})
+			return jsonText(result)
+		},
+	},
+	{
+		name: 'update_meeting',
+		description:
+			'Generic metadata/status patch for a meeting object. Kept separate from attach_transcript so the transcriptUrl transition remains unambiguous.',
+		inputSchema: updateMeetingInputSchema,
+		handler: async (rawArgs, apiCall) => {
+			const args = updateMeetingInputSchema.parse(rawArgs)
+			const body: Record<string, unknown> = {}
+			if (args.patch) body.metadata = args.patch
+			if (args.status) body.status = args.status
+			const result = await apiCall('PATCH', `/api/objects/${args.meetingId}`, body)
+			return jsonText(result)
+		},
+	},
+]
+
 const notetakerExtension: ModuleDefinition = {
 	id: MODULE_ID,
 	name: MODULE_NAME,
@@ -331,6 +426,8 @@ const notetakerExtension: ModuleDefinition = {
 			meeting: [...MEETING_STATUSES],
 		},
 	},
+	routes: createNotetakerRoutes,
+	mcpTools,
 	onEnable,
 	onDisable,
 }
