@@ -44,6 +44,9 @@ importers:
       '@maskin/ext-knowledge':
         specifier: workspace:*
         version: link:../../extensions/knowledge
+      '@maskin/ext-notetaker':
+        specifier: workspace:*
+        version: link:../../extensions/notetaker
       '@maskin/ext-work':
         specifier: workspace:*
         version: link:../../extensions/work
@@ -132,6 +135,9 @@ importers:
       '@maskin/ext-knowledge':
         specifier: workspace:*
         version: link:../../extensions/knowledge
+      '@maskin/ext-notetaker':
+        specifier: workspace:*
+        version: link:../../extensions/notetaker
       '@maskin/ext-work':
         specifier: workspace:*
         version: link:../../extensions/work
@@ -288,6 +294,16 @@ importers:
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2)
 
   extensions/knowledge:
+    dependencies:
+      '@maskin/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  extensions/notetaker:
     dependencies:
       '@maskin/module-sdk':
         specifier: workspace:*

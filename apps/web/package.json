@@ -15,6 +15,7 @@
 	},
 	"dependencies": {
 		"@maskin/ext-knowledge": "workspace:*",
+		"@maskin/ext-notetaker": "workspace:*",
 		"@maskin/ext-work": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",

@@ -52,6 +52,7 @@ export const actorResponseSchema = z.object({
 	memory: jsonbField,
 	llmProvider: z.string().nullable(),
 	llmConfig: jsonbField,
+	isSystem: z.boolean(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })

@@ -19,6 +19,7 @@
 		"@maskin/auth": "workspace:*",
 		"@maskin/db": "workspace:*",
 		"@maskin/ext-knowledge": "workspace:*",
+		"@maskin/ext-notetaker": "workspace:*",
 		"@maskin/ext-work": "workspace:*",
 		"@maskin/mcp": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
