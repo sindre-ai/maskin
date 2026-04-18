@@ -2,7 +2,9 @@ import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
+import { SindreSheet } from '@/components/sindre/sindre-sheet'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { useActors } from '@/hooks/use-actors'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { PageHeaderProvider } from '@/lib/page-header-context'
@@ -39,6 +41,7 @@ export const Route = createFileRoute('/_authed/$workspaceId')({
 function WorkspaceLayout() {
 	const { workspaceId } = Route.useParams()
 	const { data: workspaces } = useWorkspaces()
+	const { data: actors } = useActors(workspaceId, { enabled: !!workspaceId })
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
@@ -46,6 +49,14 @@ function WorkspaceLayout() {
 	const workspace = useMemo(
 		() => workspaces?.find((w) => w.id === workspaceId),
 		[workspaces, workspaceId],
+	)
+
+	// Resolve the per-workspace Sindre meta-agent by name (matches SINDRE_DEFAULT
+	// in packages/shared/src/templates/sindre-agent.ts). Null until actors load
+	// or when the workspace is missing Sindre (e.g. pre-backfill).
+	const sindreActorId = useMemo(
+		() => actors?.find((a) => a.type === 'agent' && a.name === 'Sindre')?.id ?? null,
+		[actors],
 	)
 
 	const [open, setOpenState] = useState(getInitialOpen)
@@ -81,6 +92,7 @@ function WorkspaceLayout() {
 					</SidebarProvider>
 				</PageHeaderProvider>
 				<CommandPalette />
+				<SindreSheet workspaceId={workspaceId} sindreActorId={sindreActorId} />
 			</SindreProvider>
 		</WorkspaceContext.Provider>
 	)
