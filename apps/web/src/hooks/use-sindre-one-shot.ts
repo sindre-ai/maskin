@@ -3,6 +3,7 @@ import { getApiKey } from '@/lib/auth'
 import { API_BASE } from '@/lib/constants'
 import {
 	type SindreSelectionAgent,
+	type SindreSelectionNotification,
 	type SindreSelectionObject,
 	buildOneShotActionPrompt,
 } from '@/lib/sindre-selection'
@@ -17,6 +18,7 @@ export interface SendOneShotArgs {
 	agent: SindreSelectionAgent
 	content: string
 	objects?: SindreSelectionObject[]
+	notifications?: SindreSelectionNotification[]
 }
 
 export interface UseSindreOneShotResult {
@@ -50,7 +52,7 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 	}, [])
 
 	const send = useCallback(async (args: SendOneShotArgs) => {
-		const { workspaceId, agent, content, objects = [] } = args
+		const { workspaceId, agent, content, objects = [], notifications = [] } = args
 		if (!workspaceId) throw new Error('No workspace selected')
 		if (!agent?.id) throw new Error('No agent selected')
 
@@ -65,7 +67,7 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 		try {
 			session = await api.sessions.create(workspaceId, {
 				actor_id: agent.id,
-				action_prompt: buildOneShotActionPrompt(content, objects),
+				action_prompt: buildOneShotActionPrompt(content, objects, notifications),
 				auto_start: true,
 			})
 		} catch (err) {

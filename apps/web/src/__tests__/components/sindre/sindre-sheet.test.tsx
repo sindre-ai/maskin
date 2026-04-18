@@ -182,4 +182,25 @@ describe('SindreSheet', () => {
 		expect(screen.getByText('Code Reviewer')).toBeInTheDocument()
 		expect(screen.getByText('Bet Alpha')).toBeInTheDocument()
 	})
+
+	it('seeds selection from a notification attachment and renders a chip (verification #9)', async () => {
+		render(
+			<Harness>
+				<Opener
+					attachments={[{ kind: 'notification', id: 'notif-1', title: 'Build failed on main' }]}
+				/>
+				<SindreSheet workspaceId="ws-1" sindreActorId="actor-sindre" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-with-context').click()
+		})
+
+		// Composer opens with the notification chip visible — no agent picked,
+		// so the placeholder stays the default Sindre one.
+		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
+		expect(screen.getByText('Build failed on main')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Remove Build failed on main/ })).toBeInTheDocument()
+	})
 })

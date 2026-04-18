@@ -259,6 +259,7 @@ describe('SindreChat', () => {
 						{ id: 'obj-1', title: 'PR #42', type: 'task' },
 						{ id: 'obj-2', title: null, type: null },
 					],
+					notifications: [],
 				}}
 			/>,
 		)
@@ -276,6 +277,7 @@ describe('SindreChat', () => {
 				{ id: 'obj-1', title: 'PR #42', type: 'task' },
 				{ id: 'obj-2', title: null, type: null },
 			],
+			notifications: [],
 		})
 		expect(mockSend).not.toHaveBeenCalled()
 		await waitFor(() => expect(textarea.value).toBe(''))
@@ -293,6 +295,7 @@ describe('SindreChat', () => {
 						{ id: 'obj-1', title: 'Bet Alpha' },
 						{ id: 'obj-2', title: 'Task Beta' },
 					],
+					notifications: [],
 				}}
 			/>,
 		)
@@ -309,6 +312,84 @@ describe('SindreChat', () => {
 		expect(mockOneShotSend).not.toHaveBeenCalled()
 	})
 
+	it('injects notification context into the Sindre send and forwards notifications as attachments', async () => {
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: null,
+					objects: [],
+					notifications: [{ id: 'notif-1', title: 'Build failed' }],
+				}}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'what happened?' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+		expect(mockSend).toHaveBeenCalledWith(
+			['what happened?', '', '---', 'Context notifications:', '- Build failed — id: notif-1'].join(
+				'\n',
+			),
+			[{ kind: 'notification', id: 'notif-1' }],
+		)
+	})
+
+	it('forwards notifications to the one-shot send when an agent is selected', async () => {
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+					objects: [],
+					notifications: [{ id: 'notif-1', title: 'PR merged' }],
+				}}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Code Reviewer') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'take a look' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockOneShotSend).toHaveBeenCalledTimes(1))
+		expect(mockOneShotSend).toHaveBeenCalledWith({
+			workspaceId: 'ws-1',
+			agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+			content: 'take a look',
+			objects: [],
+			notifications: [{ id: 'notif-1', title: 'PR merged' }],
+		})
+	})
+
+	it('renders a chip per notification and dispatches remove_notification on click', async () => {
+		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+		const user = userEvent.setup()
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: null,
+					objects: [],
+					notifications: [{ id: 'notif-1', title: 'Build failed' }],
+				}}
+				onDispatchSelection={dispatch}
+			/>,
+		)
+
+		expect(screen.getByText('Build failed')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: /Remove Build failed/ }))
+		expect(dispatch).toHaveBeenCalledWith({ type: 'remove_notification', id: 'notif-1' })
+	})
+
 	it('stays enabled for a one-shot send even when Sindre is not ready yet', () => {
 		setHookResult({ status: 'idle' })
 		render(
@@ -319,6 +400,7 @@ describe('SindreChat', () => {
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
+					notifications: [],
 				}}
 			/>,
 		)
@@ -337,6 +419,7 @@ describe('SindreChat', () => {
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
+					notifications: [],
 				}}
 			/>,
 		)
@@ -355,6 +438,7 @@ describe('SindreChat', () => {
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
+					notifications: [],
 				}}
 			/>,
 		)
@@ -431,7 +515,7 @@ describe('SindreChat', () => {
 	it('dispatches add_agent and strips the triggering `/` when an agent is picked', async () => {
 		const user = userEvent.setup()
 		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
-		const selection: SindreSelection = { agent: null, objects: [] }
+		const selection: SindreSelection = { agent: null, objects: [], notifications: [] }
 
 		render(
 			<SindreChat
@@ -469,7 +553,7 @@ describe('SindreChat', () => {
 				workspaceId="ws-1"
 				sindreActorId="actor-sindre"
 				surface="sheet"
-				selection={{ agent: null, objects: [] }}
+				selection={{ agent: null, objects: [], notifications: [] }}
 				onDispatchSelection={dispatch}
 			/>,
 			{ wrapper: WithQueryClient },
@@ -503,6 +587,7 @@ describe('SindreChat', () => {
 		expect(override).toHaveBeenCalledWith('intercept me', {
 			agent: null,
 			objects: [],
+			notifications: [],
 		})
 		expect(mockSend).not.toHaveBeenCalled()
 		expect(mockOneShotSend).not.toHaveBeenCalled()
@@ -567,6 +652,7 @@ describe('SindreChat', () => {
 				selection={{
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
+					notifications: [],
 				}}
 			/>,
 		)

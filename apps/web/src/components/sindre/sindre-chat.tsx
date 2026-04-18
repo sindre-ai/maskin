@@ -16,7 +16,9 @@ import {
 	EMPTY_SINDRE_SELECTION,
 	type SindreSelection,
 	type SindreSelectionAction,
+	type SindreSelectionNotification,
 	type SindreSelectionObject,
+	buildOneShotActionPrompt,
 } from '@/lib/sindre-selection'
 import type { SindreEvent } from '@/lib/sindre-stream'
 import { Bot, Box, Send } from 'lucide-react'
@@ -97,6 +99,7 @@ export function SindreChat({
 	const activeSelection = selection ?? EMPTY_SINDRE_SELECTION
 	const selectedAgent = activeSelection.agent
 	const selectedObjects = activeSelection.objects
+	const selectedNotifications = activeSelection.notifications
 
 	const sindre = useSindreSession({ workspaceId, sindreActorId })
 	const oneShot = useSindreOneShot()
@@ -148,13 +151,25 @@ export function SindreChat({
 						agent: selectedAgent,
 						content,
 						objects: selectedObjects,
+						notifications: selectedNotifications,
 					})
 				} else {
-					const attachments = objectsToAttachments(selectedObjects)
+					const attachments = selectionToAttachments(selectedObjects, selectedNotifications)
+					// The backend's interactive-session input endpoint currently
+					// forwards only `content` to the container's stdin (attachments
+					// are accepted by the schema for future first-class handling but
+					// discarded at runtime). Inject a notification context block into
+					// the user turn so Sindre actually sees which notification the
+					// user clicked "Talk to Sindre" on. Objects remain attachment-
+					// only for now so their one-shot behavior stays consistent.
+					const enriched =
+						selectedNotifications.length > 0
+							? buildOneShotActionPrompt(content, [], selectedNotifications)
+							: content
 					if (attachments) {
-						await sindre.send(content, attachments)
+						await sindre.send(enriched, attachments)
 					} else {
-						await sindre.send(content)
+						await sindre.send(enriched)
 					}
 				}
 			} catch (err) {
@@ -170,6 +185,7 @@ export function SindreChat({
 			sindre,
 			selectedAgent,
 			selectedObjects,
+			selectedNotifications,
 			workspaceId,
 		],
 	)
@@ -196,6 +212,13 @@ export function SindreChat({
 	const handleRemoveObject = useCallback(
 		(id: string) => {
 			onDispatchSelection?.({ type: 'remove_object', id })
+		},
+		[onDispatchSelection],
+	)
+
+	const handleRemoveNotification = useCallback(
+		(id: string) => {
+			onDispatchSelection?.({ type: 'remove_notification', id })
 		},
 		[onDispatchSelection],
 	)
@@ -233,6 +256,7 @@ export function SindreChat({
 				selection={activeSelection}
 				onRemoveAgent={handleRemoveAgent}
 				onRemoveObject={handleRemoveObject}
+				onRemoveNotification={handleRemoveNotification}
 			/>
 		</div>
 	)
@@ -299,11 +323,16 @@ function useMergedTranscript(
 	return merged
 }
 
-function objectsToAttachments(
+function selectionToAttachments(
 	objects: SindreSelectionObject[],
+	notifications: SindreSelectionNotification[],
 ): SessionInputAttachment[] | undefined {
-	if (objects.length === 0) return undefined
-	return objects.map((o) => ({ kind: 'object', id: o.id }))
+	if (objects.length === 0 && notifications.length === 0) return undefined
+	const attachments: SessionInputAttachment[] = [
+		...objects.map((o) => ({ kind: 'object', id: o.id })),
+		...notifications.map((n) => ({ kind: 'notification', id: n.id })),
+	]
+	return attachments
 }
 
 function computePlaceholder(

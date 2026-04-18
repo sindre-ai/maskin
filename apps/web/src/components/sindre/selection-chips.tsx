@@ -1,12 +1,13 @@
 import { cn } from '@/lib/cn'
 import type { SindreSelection } from '@/lib/sindre-selection'
-import { Bot, Box, X } from 'lucide-react'
+import { Bell, Bot, Box, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 export interface SelectionChipsProps {
 	selection: SindreSelection
 	onRemoveAgent: () => void
 	onRemoveObject: (id: string) => void
+	onRemoveNotification: (id: string) => void
 	className?: string
 }
 
@@ -21,11 +22,13 @@ export function SelectionChips({
 	selection,
 	onRemoveAgent,
 	onRemoveObject,
+	onRemoveNotification,
 	className,
 }: SelectionChipsProps) {
 	const hasAgent = selection.agent !== null
 	const hasObjects = selection.objects.length > 0
-	if (!hasAgent && !hasObjects) return null
+	const hasNotifications = selection.notifications.length > 0
+	if (!hasAgent && !hasObjects && !hasNotifications) return null
 
 	const agentLabel = selection.agent?.name?.trim() || selection.agent?.id || 'Unnamed agent'
 
@@ -50,6 +53,18 @@ export function SelectionChips({
 						icon={<Box size={12} aria-hidden />}
 						label={label}
 						onRemove={() => onRemoveObject(object.id)}
+						removeLabel={`Remove ${label}`}
+					/>
+				)
+			})}
+			{selection.notifications.map((notification) => {
+				const label = notification.title?.trim() || notification.id
+				return (
+					<Chip
+						key={notification.id}
+						icon={<Bell size={12} aria-hidden />}
+						label={label}
+						onRemove={() => onRemoveNotification(notification.id)}
 						removeLabel={`Remove ${label}`}
 					/>
 				)

@@ -3,6 +3,9 @@
  * select — when set, the next send is routed to that agent as a one-shot
  * session instead of the persistent Sindre session. `objects` are multi-select
  * and attached as context to whichever target receives the send.
+ * `notifications` are multi-select and seeded by the Pulse "Talk to Sindre"
+ * action so the notification being discussed shows up as a chip and is
+ * forwarded as first-class context on the next send.
  *
  * Task 35 layers a pure reducer + chips UI on top of this type; task 36's
  * slash picker dispatches into the same reducer so both entry points converge
@@ -20,47 +23,69 @@ export interface SindreSelectionObject {
 	type?: string | null
 }
 
+export interface SindreSelectionNotification {
+	id: string
+	title?: string | null
+}
+
 export interface SindreSelection {
 	agent: SindreSelectionAgent | null
 	objects: SindreSelectionObject[]
+	notifications: SindreSelectionNotification[]
 }
 
 export const EMPTY_SINDRE_SELECTION: SindreSelection = {
 	agent: null,
 	objects: [],
+	notifications: [],
 }
 
 /**
  * Builds the action_prompt body for a one-shot session: the raw user message
- * followed by a compact context block when objects are attached. Kept as a
- * pure function so the send-wiring can be unit-tested without a live
- * container.
+ * followed by a compact context block when objects and/or notifications are
+ * attached. Kept as a pure function so the send-wiring can be unit-tested
+ * without a live container. Also used by the persistent Sindre send path to
+ * inject notification context directly into the user turn, since the backend
+ * currently forwards only `content` to the interactive container's stdin.
  */
 export function buildOneShotActionPrompt(
 	content: string,
 	objects: SindreSelectionObject[],
+	notifications: SindreSelectionNotification[] = [],
 ): string {
-	if (objects.length === 0) return content
-	const block = objects
-		.map((o) => {
+	if (objects.length === 0 && notifications.length === 0) return content
+	const lines: string[] = [content, '', '---']
+	if (objects.length > 0) {
+		lines.push('Context objects:')
+		for (const o of objects) {
 			const label = o.title?.trim() || o.id
 			const typeTag = o.type ? ` (${o.type})` : ''
-			return `- ${label}${typeTag} — id: ${o.id}`
-		})
-		.join('\n')
-	return `${content}\n\n---\nContext objects:\n${block}`
+			lines.push(`- ${label}${typeTag} — id: ${o.id}`)
+		}
+	}
+	if (notifications.length > 0) {
+		if (objects.length > 0) lines.push('')
+		lines.push('Context notifications:')
+		for (const n of notifications) {
+			const label = n.title?.trim() || n.id
+			lines.push(`- ${label} — id: ${n.id}`)
+		}
+	}
+	return lines.join('\n')
 }
 
 /**
  * Reducer actions for the Sindre composer selection. Agent is single-select,
- * so `add_agent` replaces whatever was there. Objects are multi-select,
- * deduped by `id`.
+ * so `add_agent` replaces whatever was there. Objects and notifications are
+ * multi-select, deduped by `id`.
  */
 export type SindreSelectionAction =
 	| { type: 'add_agent'; agent: SindreSelectionAgent }
 	| { type: 'remove_agent' }
 	| { type: 'add_object'; object: SindreSelectionObject }
 	| { type: 'remove_object'; id: string }
+	| { type: 'add_notification'; notification: SindreSelectionNotification }
+	| { type: 'remove_notification'; id: string }
 	| { type: 'clear_all' }
 
 /**
@@ -70,7 +95,8 @@ export type SindreSelectionAction =
  * Invariants:
  * - Single-agent rule — `add_agent` replaces the current agent; there is at
  *   most one agent in the selection.
- * - Objects are deduplicated by `id` — re-adding an existing id is a no-op.
+ * - Objects and notifications are deduplicated by `id` — re-adding an
+ *   existing id is a no-op.
  * - No-op branches return the previous state reference so callers wrapping in
  *   `useReducer` can rely on referential equality for memoization and effect
  *   dependency arrays.
@@ -104,8 +130,19 @@ export function sindreSelectionReducer(
 			if (next.length === state.objects.length) return state
 			return { ...state, objects: next }
 		}
+		case 'add_notification': {
+			if (state.notifications.some((n) => n.id === action.notification.id)) return state
+			return { ...state, notifications: [...state.notifications, action.notification] }
+		}
+		case 'remove_notification': {
+			const next = state.notifications.filter((n) => n.id !== action.id)
+			if (next.length === state.notifications.length) return state
+			return { ...state, notifications: next }
+		}
 		case 'clear_all': {
-			if (state.agent === null && state.objects.length === 0) return state
+			if (state.agent === null && state.objects.length === 0 && state.notifications.length === 0) {
+				return state
+			}
 			return EMPTY_SINDRE_SELECTION
 		}
 	}

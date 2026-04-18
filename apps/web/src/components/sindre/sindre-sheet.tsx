@@ -10,6 +10,7 @@ import { type SindreAttachment, useSindre } from '@/lib/sindre-context'
 import {
 	EMPTY_SINDRE_SELECTION,
 	type SindreSelectionAgent,
+	type SindreSelectionNotification,
 	type SindreSelectionObject,
 	sindreSelectionReducer,
 } from '@/lib/sindre-selection'
@@ -89,7 +90,12 @@ function attachmentToAction(attachment: SindreAttachment) {
 		}
 		return { type: 'add_object' as const, object }
 	}
-	// `notification` attachments are not yet mapped onto selection; callers can
-	// extend the reducer to cover them when that surface lands.
+	if (attachment.kind === 'notification') {
+		const notification: SindreSelectionNotification = {
+			id: attachment.id,
+			title: attachment.title ?? null,
+		}
+		return { type: 'add_notification' as const, notification }
+	}
 	return null
 }

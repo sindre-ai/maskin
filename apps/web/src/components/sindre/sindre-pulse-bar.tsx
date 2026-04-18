@@ -66,5 +66,12 @@ function selectionToAttachments(selection: SindreSelection): SindreAttachment[] 
 			type: object.type ?? undefined,
 		})
 	}
+	for (const notification of selection.notifications) {
+		attachments.push({
+			kind: 'notification',
+			id: notification.id,
+			title: notification.title ?? null,
+		})
+	}
 	return attachments
 }

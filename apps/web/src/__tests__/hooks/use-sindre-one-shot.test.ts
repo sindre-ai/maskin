@@ -94,6 +94,27 @@ describe('useSindreOneShot — send', () => {
 		expect(result.current.status).toBe('streaming')
 	})
 
+	it('includes attached notifications in the action_prompt context block', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-notif'))
+
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
+
+		await act(async () => {
+			await result.current.send({
+				workspaceId: 'ws-1',
+				agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+				content: 'what is this?',
+				notifications: [{ id: 'notif-1', title: 'Build failed' }],
+			})
+		})
+
+		expect(api.sessions.create).toHaveBeenCalledWith('ws-1', {
+			actor_id: 'actor-reviewer',
+			action_prompt: 'what is this?\n\n---\nContext notifications:\n- Build failed — id: notif-1',
+			auto_start: true,
+		})
+	})
+
 	it('skips the context block when there are no attached objects', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-bare'))
 
