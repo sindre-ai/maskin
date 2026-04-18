@@ -2,7 +2,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Spinner } from '@/components/ui/spinner'
 import { type ActorListItem, type ObjectResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { queryKeys } from '@/lib/query-keys'
 import type { SindreSelectionAgent, SindreSelectionObject } from '@/lib/sindre-selection'
+import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
 import { Bot, Box, Check } from 'lucide-react'
 import {
@@ -39,6 +41,7 @@ export type SlashPickerResult =
 export interface SlashSearchContext {
 	workspaceId: string
 	signal: AbortSignal
+	queryClient: QueryClient
 }
 
 export interface SlashKindDef<TItem = unknown> {
@@ -65,8 +68,13 @@ const agentKind: SlashKindDef<ActorListItem> = {
 	placeholder: 'Search agents…',
 	emptyCopy: 'No agents found.',
 	multi: false,
-	search: async (query, { workspaceId, signal }) => {
-		const actors = await api.actors.list(workspaceId)
+	// Shares the useActors query cache so opening the picker is free when the
+	// workspace actors list is already loaded elsewhere (sidebar, agents page).
+	search: async (query, { workspaceId, signal, queryClient }) => {
+		const actors = await queryClient.ensureQueryData({
+			queryKey: queryKeys.actors.all(workspaceId),
+			queryFn: () => api.actors.list(workspaceId),
+		})
 		if (signal.aborted) return []
 		const agents = actors.filter((a) => a.type === 'agent')
 		const needle = query.trim().toLowerCase()
@@ -214,6 +222,7 @@ function SlashPickerBody({
 	onPick,
 	onRequestClose,
 }: SlashPickerBodyProps) {
+	const queryClient = useQueryClient()
 	const activeKind = useMemo(
 		() => kinds.find((k) => k.id === activeKindId) ?? null,
 		[kinds, activeKindId],
@@ -238,7 +247,7 @@ function SlashPickerBody({
 		setError(null)
 		const timer = setTimeout(() => {
 			activeKind
-				.search(query, { workspaceId, signal: controller.signal })
+				.search(query, { workspaceId, signal: controller.signal, queryClient })
 				.then((results) => {
 					if (controller.signal.aborted) return
 					setItems(results)
@@ -256,7 +265,7 @@ function SlashPickerBody({
 			controller.abort()
 			clearTimeout(timer)
 		}
-	}, [activeKind, query, workspaceId])
+	}, [activeKind, query, workspaceId, queryClient])
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLDivElement>) => {

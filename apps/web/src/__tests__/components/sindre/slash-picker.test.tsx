@@ -1,8 +1,12 @@
 import { SLASH_KINDS, SlashPicker, type SlashPickerResult } from '@/components/sindre/slash-picker'
+import { queryKeys } from '@/lib/query-keys'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildObjectResponse } from '../../factories'
+import { createTestQueryClient } from '../../setup'
 
 global.ResizeObserver = vi.fn().mockImplementation(() => ({
 	observe: vi.fn(),
@@ -40,12 +44,19 @@ beforeEach(() => {
 	vi.mocked(api.objects.search).mockResolvedValue(listObjects())
 })
 
-function renderPicker(overrides: Partial<React.ComponentProps<typeof SlashPicker>> = {}): {
+function renderPicker(
+	overrides: Partial<React.ComponentProps<typeof SlashPicker>> = {},
+	queryClient: QueryClient = createTestQueryClient(),
+): {
 	onSelect: ReturnType<typeof vi.fn>
 	onOpenChange: ReturnType<typeof vi.fn>
+	queryClient: QueryClient
 } {
 	const onSelect = vi.fn<(r: SlashPickerResult) => void>()
 	const onOpenChange = vi.fn()
+	const wrapper = ({ children }: { children: ReactNode }) => (
+		<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+	)
 	render(
 		<SlashPicker
 			workspaceId="ws-1"
@@ -54,8 +65,9 @@ function renderPicker(overrides: Partial<React.ComponentProps<typeof SlashPicker
 			onSelect={onSelect}
 			{...overrides}
 		/>,
+		{ wrapper },
 	)
-	return { onSelect, onOpenChange }
+	return { onSelect, onOpenChange, queryClient }
 }
 
 describe('SLASH_KINDS registry', () => {
@@ -186,5 +198,20 @@ describe('<SlashPicker>', () => {
 		renderPicker({ initialKindId: 'agent' })
 
 		expect(await screen.findByText('No agents found.')).toBeInTheDocument()
+	})
+
+	it('reuses the useActors query cache instead of refetching on open', async () => {
+		const cached = [
+			buildActorListItem({ id: 'cached-1', name: 'Cached Agent', type: 'agent', email: null }),
+		]
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		})
+		queryClient.setQueryData(queryKeys.actors.all('ws-1'), cached)
+
+		renderPicker({ initialKindId: 'agent' }, queryClient)
+
+		expect(await screen.findByText('Cached Agent')).toBeInTheDocument()
+		expect(api.actors.list).not.toHaveBeenCalled()
 	})
 })
