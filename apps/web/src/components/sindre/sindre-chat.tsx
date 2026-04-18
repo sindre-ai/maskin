@@ -1,3 +1,4 @@
+import { SelectionChips } from '@/components/sindre/selection-chips'
 import { SindreTranscript } from '@/components/sindre/sindre-transcript'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -9,6 +10,7 @@ import { cn } from '@/lib/cn'
 import {
 	EMPTY_SINDRE_SELECTION,
 	type SindreSelection,
+	type SindreSelectionAction,
 	type SindreSelectionObject,
 } from '@/lib/sindre-selection'
 import type { SindreEvent } from '@/lib/sindre-stream'
@@ -36,14 +38,21 @@ export interface SindreChatProps {
 	 * talking to Sindre.
 	 */
 	selection?: SindreSelection
+	/**
+	 * Dispatches a reducer action against the caller's selection state.
+	 * Supplied alongside `selection` when the caller wants the chips' remove
+	 * X buttons to update state (see `sindreSelectionReducer`). When omitted
+	 * the chips still render but their remove buttons are inert.
+	 */
+	onDispatchSelection?: (action: SindreSelectionAction) => void
 	className?: string
 }
 
 /**
- * Shared chat surface for Sindre. Composes `<Transcript />` above `<Composer />`
- * and hides the transcript in `pulse-bar` mode so the same component can render
- * as an input-only bar at the top of the Pulse page and as a full-height sheet
- * on the right-side overlay.
+ * Shared chat surface for Sindre. Composes `<Transcript />`, `<Composer />`,
+ * and the `<SelectionChips />` row, hiding the transcript in `pulse-bar` mode
+ * so the same component can render as an input-only bar at the top of the
+ * Pulse page and as a full-height sheet on the right-side overlay.
  *
  * Send routing (task 31):
  * - `selection.agent` set → POST a one-shot session via `useSindreOneShot`,
@@ -57,6 +66,7 @@ export function SindreChat({
 	sindreActorId,
 	surface,
 	selection,
+	onDispatchSelection,
 	className,
 }: SindreChatProps) {
 	const activeSelection = selection ?? EMPTY_SINDRE_SELECTION
@@ -123,6 +133,17 @@ export function SindreChat({
 		[events.length, oneShot, sindre, selectedAgent, selectedObjects, workspaceId],
 	)
 
+	const handleRemoveAgent = useCallback(() => {
+		onDispatchSelection?.({ type: 'remove_agent' })
+	}, [onDispatchSelection])
+
+	const handleRemoveObject = useCallback(
+		(id: string) => {
+			onDispatchSelection?.({ type: 'remove_object', id })
+		},
+		[onDispatchSelection],
+	)
+
 	const placeholder = computePlaceholder(surface, selectedAgent?.name)
 
 	return (
@@ -148,6 +169,11 @@ export function SindreChat({
 				pending={pendingTurn}
 				surface={surface}
 				placeholder={placeholder}
+			/>
+			<SelectionChips
+				selection={activeSelection}
+				onRemoveAgent={handleRemoveAgent}
+				onRemoveObject={handleRemoveObject}
 			/>
 		</div>
 	)
