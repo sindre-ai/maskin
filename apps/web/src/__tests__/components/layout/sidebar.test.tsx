@@ -1,5 +1,5 @@
 import { AppSidebar } from '@/components/layout/sidebar'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hooks/use-enabled-modules', () => ({
@@ -16,6 +16,11 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
+const setSindreOpen = vi.fn()
+vi.mock('@/lib/sindre-context', () => ({
+	useSindre: () => ({ setOpen: setSindreOpen }),
+}))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return {
@@ -24,6 +29,7 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
+const setOpenMobile = vi.fn()
 vi.mock('@/components/ui/sidebar', () => ({
 	Sidebar: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -31,11 +37,23 @@ vi.mock('@/components/ui/sidebar', () => ({
 	SidebarHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-	SidebarMenuButton: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+	SidebarMenuButton: ({
+		children,
+		onClick,
+		tooltip,
+	}: {
+		children: React.ReactNode
+		onClick?: () => void
+		tooltip?: string
+	}) => (
+		<button type="button" onClick={onClick} data-tooltip={tooltip}>
+			{children}
+		</button>
+	),
 	SidebarMenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarRail: () => <div />,
 	SidebarTrigger: () => <button type="button">Toggle</button>,
-	useSidebar: () => ({ setOpenMobile: vi.fn() }),
+	useSidebar: () => ({ setOpenMobile }),
 }))
 
 vi.mock('@/components/agents/agent-pulse', () => ({
@@ -73,5 +91,20 @@ describe('AppSidebar', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('AgentPulse')).toBeInTheDocument()
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
+	})
+
+	it('renders a Sindre launcher that opens the sheet without navigating', () => {
+		vi.mocked(useEnabledModules).mockReturnValue(['work'])
+		setSindreOpen.mockClear()
+		setOpenMobile.mockClear()
+		render(<AppSidebar />)
+
+		const launcher = screen.getByText('Sindre').closest('button')
+		expect(launcher).not.toBeNull()
+		expect(launcher).toHaveAttribute('data-tooltip', 'Sindre')
+
+		fireEvent.click(launcher as HTMLButtonElement)
+		expect(setSindreOpen).toHaveBeenCalledWith(true)
+		expect(setOpenMobile).toHaveBeenCalledWith(false)
 	})
 })
