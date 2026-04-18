@@ -1,10 +1,13 @@
 import { SindreChat } from '@/components/sindre/sindre-chat'
+import type { UseSindreOneShotResult } from '@/hooks/use-sindre-one-shot'
 import type { UseSindreSessionResult } from '@/hooks/use-sindre-session'
 import type { SindreEvent } from '@/lib/sindre-stream'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockSend = vi.fn(async () => {})
+const mockOneShotSend = vi.fn(async () => {})
+const mockOneShotClear = vi.fn()
 
 let mockHookResult: UseSindreSessionResult = {
 	sessionId: null,
@@ -15,8 +18,21 @@ let mockHookResult: UseSindreSessionResult = {
 	reset: vi.fn(),
 }
 
+let mockOneShotResult: UseSindreOneShotResult = {
+	sessionId: null,
+	status: 'idle',
+	events: [],
+	error: null,
+	send: mockOneShotSend,
+	clear: mockOneShotClear,
+}
+
 vi.mock('@/hooks/use-sindre-session', () => ({
 	useSindreSession: () => mockHookResult,
+}))
+
+vi.mock('@/hooks/use-sindre-one-shot', () => ({
+	useSindreOneShot: () => mockOneShotResult,
 }))
 
 function setHookResult(overrides: Partial<UseSindreSessionResult>) {
@@ -30,6 +46,26 @@ function setHookResult(overrides: Partial<UseSindreSessionResult>) {
 		...overrides,
 	}
 }
+
+function setOneShotResult(overrides: Partial<UseSindreOneShotResult>) {
+	mockOneShotResult = {
+		sessionId: null,
+		status: 'idle',
+		events: [],
+		error: null,
+		send: mockOneShotSend,
+		clear: mockOneShotClear,
+		...overrides,
+	}
+}
+
+beforeEach(() => {
+	mockSend.mockClear()
+	mockOneShotSend.mockClear()
+	mockOneShotClear.mockClear()
+	setHookResult({ status: 'ready' })
+	setOneShotResult({ status: 'idle' })
+})
 
 describe('SindreChat', () => {
 	it('renders transcript and composer in sheet mode', () => {
@@ -170,5 +206,145 @@ describe('SindreChat', () => {
 			expect(btn.querySelector('svg.animate-spin')).toBeNull()
 			expect(btn).not.toBeDisabled()
 		})
+	})
+
+	it('routes the send to one-shot when a selection.agent is set', async () => {
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+					objects: [
+						{ id: 'obj-1', title: 'PR #42', type: 'task' },
+						{ id: 'obj-2', title: null, type: null },
+					],
+				}}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Code Reviewer') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'please review' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockOneShotSend).toHaveBeenCalledTimes(1))
+		expect(mockOneShotSend).toHaveBeenCalledWith({
+			workspaceId: 'ws-1',
+			agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+			content: 'please review',
+			objects: [
+				{ id: 'obj-1', title: 'PR #42', type: 'task' },
+				{ id: 'obj-2', title: null, type: null },
+			],
+		})
+		expect(mockSend).not.toHaveBeenCalled()
+		await waitFor(() => expect(textarea.value).toBe(''))
+	})
+
+	it('attaches selected objects to the Sindre send when no agent is picked', async () => {
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: null,
+					objects: [
+						{ id: 'obj-1', title: 'Bet Alpha' },
+						{ id: 'obj-2', title: 'Task Beta' },
+					],
+				}}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'summarize these' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+		expect(mockSend).toHaveBeenCalledWith('summarize these', [
+			{ kind: 'object', id: 'obj-1' },
+			{ kind: 'object', id: 'obj-2' },
+		])
+		expect(mockOneShotSend).not.toHaveBeenCalled()
+	})
+
+	it('stays enabled for a one-shot send even when Sindre is not ready yet', () => {
+		setHookResult({ status: 'idle' })
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId={null}
+				surface="sheet"
+				selection={{
+					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+					objects: [],
+				}}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Code Reviewer') as HTMLTextAreaElement
+		expect(textarea).not.toBeDisabled()
+	})
+
+	it('disables the composer while a one-shot session is starting', () => {
+		setOneShotResult({ status: 'starting' })
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+					objects: [],
+				}}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Code Reviewer') as HTMLTextAreaElement
+		expect(textarea).toBeDisabled()
+	})
+
+	it('surfaces one-shot errors in the transcript when the agent branch is active', () => {
+		setOneShotResult({ status: 'error', error: new Error('boom') })
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+					objects: [],
+				}}
+			/>,
+		)
+
+		expect(screen.getByText('boom')).toBeInTheDocument()
+	})
+
+	it('merges one-shot events after Sindre events in the transcript', () => {
+		setHookResult({
+			status: 'ready',
+			events: [{ kind: 'text', text: 'Hi from Sindre' }],
+		})
+		setOneShotResult({
+			status: 'streaming',
+			events: [{ kind: 'text', text: 'Hi from Code Reviewer' }],
+		})
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
+					objects: [],
+				}}
+			/>,
+		)
+
+		expect(screen.getByText('Hi from Sindre')).toBeInTheDocument()
+		expect(screen.getByText('Hi from Code Reviewer')).toBeInTheDocument()
 	})
 })
