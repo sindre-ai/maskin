@@ -30,9 +30,8 @@ export function SelectionChips({
 	const agentLabel = selection.agent?.name?.trim() || selection.agent?.id || 'Unnamed agent'
 
 	return (
-		<div
-			className={cn('flex flex-wrap items-center gap-1', className)}
-			role="list"
+		<ul
+			className={cn('flex list-none flex-wrap items-center gap-1 p-0', className)}
 			aria-label="Selected context"
 		>
 			{selection.agent !== null && (
@@ -55,7 +54,7 @@ export function SelectionChips({
 					/>
 				)
 			})}
-		</div>
+		</ul>
 	)
 }
 
@@ -68,10 +67,7 @@ interface ChipProps {
 
 function Chip({ icon, label, onRemove, removeLabel }: ChipProps) {
 	return (
-		<span
-			role="listitem"
-			className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-bg-surface px-2 py-0.5 text-xs text-foreground"
-		>
+		<li className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-bg-surface px-2 py-0.5 text-xs text-foreground">
 			<span className="text-muted-foreground">{icon}</span>
 			<span className="max-w-[12rem] truncate">{label}</span>
 			<button
@@ -82,6 +78,6 @@ function Chip({ icon, label, onRemove, removeLabel }: ChipProps) {
 			>
 				<X size={10} aria-hidden />
 			</button>
-		</span>
+		</li>
 	)
 }
