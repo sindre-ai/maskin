@@ -7,9 +7,10 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { resolveNavigationTarget } from '@/lib/navigation'
+import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ArrowUpRight, ExternalLink } from 'lucide-react'
+import { ArrowUpRight, Bot, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { NotificationInput } from './notification-input'
 
@@ -108,6 +109,7 @@ interface PulseCardProps {
 export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
+	const { openWithContext } = useSindre()
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags
@@ -147,6 +149,10 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 		onAction(notification, { type: 'text_reply', message: replyText })
 		setReplyText('')
 		setReplyOpen(false)
+	}
+
+	const handleTalkToSindre = () => {
+		openWithContext([{ kind: 'notification', id: notification.id, title: notification.title }])
 	}
 
 	return (
@@ -251,7 +257,11 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 								{action.navigate && <ArrowUpRight className="ml-1 h-3 w-3" />}
 							</Button>
 						))}
-						{actions.length > 0 && <Separator orientation="vertical" className="h-4" />}
+						<Button size="sm" variant="outline" onClick={handleTalkToSindre}>
+							<Bot className="mr-1 h-3 w-3" />
+							Talk to Sindre
+						</Button>
+						<Separator orientation="vertical" className="h-4" />
 						<Button
 							size="sm"
 							variant="ghost"
