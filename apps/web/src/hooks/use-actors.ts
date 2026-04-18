@@ -63,3 +63,18 @@ export function useDeleteActor(workspaceId: string) {
 		},
 	})
 }
+
+export function useResetActor(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.actors.reset(id, workspaceId),
+		onSuccess: (_result, id) => {
+			toast.success('Agent reset to default')
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+		},
+		onError: () => {
+			toast.error('Failed to reset agent')
+		},
+	})
+}

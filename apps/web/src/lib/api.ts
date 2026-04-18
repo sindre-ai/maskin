@@ -375,6 +375,7 @@ export interface ActorResponse extends ActorListItem {
 	memory: Record<string, unknown> | null
 	llmProvider: string | null
 	llmConfig: Record<string, unknown> | null
+	isSystem: boolean
 	createdAt: string | null
 	updatedAt: string | null
 }

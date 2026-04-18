@@ -1,10 +1,52 @@
-import { AgentDocumentView } from '@/components/agents/agent-document'
+import { AgentDocument, AgentDocumentView } from '@/components/agents/agent-document'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorResponse, buildEventResponse, buildSessionResponse } from '../../factories'
+import { createWorkspaceWrapper } from '../../setup'
+
+const deleteMutate = vi.fn()
+const resetMutate = vi.fn()
+const navigateMock = vi.fn()
+
+vi.mock('@/hooks/use-actors', () => ({
+	useDeleteActor: () => ({ mutate: deleteMutate, isPending: false }),
+	useResetActor: () => ({ mutate: resetMutate, isPending: false }),
+	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/hooks/use-events', () => ({
+	useEvents: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-sessions', () => ({
+	useActiveSessionsForActor: () => ({ data: [] }),
+	useActorSessions: () => ({ data: [] }),
+	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
+	useSession: () => ({ data: null }),
+	useSessionLatestLog: () => ({ data: null }),
+	useSessionErrorLog: () => ({ data: null }),
+	useSessionLogs: () => ({ data: [], isLoading: false }),
+	useStopSession: () => ({ mutate: vi.fn(), isPending: false }),
+	usePauseSession: () => ({ mutate: vi.fn(), isPending: false }),
+	useResumeSession: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+	useNavigate: () => navigateMock,
+}))
+
+vi.mock('@/components/layout/page-header', () => ({
+	PageHeader: ({ actions }: { actions?: React.ReactNode }) => (
+		<div data-testid="page-header">{actions}</div>
+	),
+}))
 
 vi.mock('@/components/agents/instruction-log', () => ({
 	InstructionLog: () => null,
+}))
+
+vi.mock('@/components/agents/session-detail-panel', () => ({
+	SessionDetailPanel: () => null,
 }))
 
 vi.mock('@/components/agents/mcp-servers', () => ({
@@ -25,12 +67,6 @@ vi.mock('@/components/shared/type-badge', () => ({
 
 vi.mock('@/components/shared/relative-time', () => ({
 	RelativeTime: () => <span>some time ago</span>,
-}))
-
-vi.mock('@/hooks/use-sessions', () => ({
-	useSessionLatestLog: () => ({ data: null }),
-	useSessionErrorLog: () => ({ data: null }),
-	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-duration', () => ({
@@ -228,5 +264,58 @@ describe('AgentDocumentView', () => {
 
 			expect(screen.getByText('Invalid JSON')).toBeInTheDocument()
 		})
+	})
+})
+
+describe('AgentDocument — header actions', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		localStorage.clear()
+	})
+
+	it('shows a delete button and not a reset button for a regular agent', () => {
+		const agent = buildActorResponse({ name: 'Scout', type: 'agent', isSystem: false })
+		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		const header = screen.getByTestId('page-header')
+		expect(header.querySelector('svg')).toBeInTheDocument()
+		expect(screen.queryByText('Reset to default')).not.toBeInTheDocument()
+	})
+
+	it('shows a Reset button and hides the delete button when agent.isSystem is true', () => {
+		const agent = buildActorResponse({ name: 'Sindre', type: 'agent', isSystem: true })
+		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.getByText('Reset to default')).toBeInTheDocument()
+		// Delete confirm flow should not be available for system agents
+		expect(screen.queryByText('Delete this agent?')).not.toBeInTheDocument()
+	})
+
+	it('prompts for confirmation and calls reset mutation when confirmed', async () => {
+		const user = userEvent.setup()
+		const agent = buildActorResponse({ id: 'actor-sindre', type: 'agent', isSystem: true })
+		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await user.click(screen.getByText('Reset to default'))
+		expect(screen.getByText('Reset this agent to defaults?')).toBeInTheDocument()
+
+		await user.click(screen.getByText('Confirm'))
+		expect(resetMutate).toHaveBeenCalledWith(
+			'actor-sindre',
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		)
+		expect(deleteMutate).not.toHaveBeenCalled()
+	})
+
+	it('cancels the reset confirmation without calling the mutation', async () => {
+		const user = userEvent.setup()
+		const agent = buildActorResponse({ type: 'agent', isSystem: true })
+		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await user.click(screen.getByText('Reset to default'))
+		await user.click(screen.getByText('Cancel'))
+
+		expect(screen.getByText('Reset to default')).toBeInTheDocument()
+		expect(resetMutate).not.toHaveBeenCalled()
 	})
 })
