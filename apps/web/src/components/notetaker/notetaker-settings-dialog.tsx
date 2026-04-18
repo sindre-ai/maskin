@@ -74,14 +74,18 @@ export function NotetakerSettingsDialog({ open, onOpenChange }: NotetakerSetting
 		String({ ...DEFAULT_CONFIG, ...storedConfig }.syncIntervalMinutes),
 	)
 
-	// Reset form to current stored values when the dialog re-opens.
+	// Reset form to current stored values when the dialog toggles open. We intentionally
+	// depend only on `open`: `storedConfig` is a new `{}` reference on every render when
+	// the notetaker config hasn't been populated yet (e.g. if onEnable failed to write
+	// it), which would otherwise re-run setForm each render and cause an infinite loop.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the dialog toggles open
 	useEffect(() => {
 		if (open) {
 			const next = { ...DEFAULT_CONFIG, ...storedConfig }
 			setForm(next)
 			setIntervalText(String(next.syncIntervalMinutes))
 		}
-	}, [open, storedConfig])
+	}, [open])
 
 	const connectedProviders = new Set(
 		(integrations ?? []).filter((i) => i.status === 'active').map((i) => i.provider),
