@@ -1,5 +1,10 @@
 import { SelectionChips } from '@/components/sindre/selection-chips'
 import { SindreTranscript } from '@/components/sindre/sindre-transcript'
+import {
+	type SlashKindId,
+	SlashPicker,
+	type SlashPickerResult,
+} from '@/components/sindre/slash-picker'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
@@ -14,13 +19,13 @@ import {
 	type SindreSelectionObject,
 } from '@/lib/sindre-selection'
 import type { SindreEvent } from '@/lib/sindre-stream'
-import { Send } from 'lucide-react'
+import { Bot, Box, Send } from 'lucide-react'
 import {
+	type ChangeEvent,
 	type FormEvent,
 	type KeyboardEvent,
 	useCallback,
 	useEffect,
-	useMemo,
 	useRef,
 	useState,
 } from 'react'
@@ -164,11 +169,14 @@ export function SindreChat({
 				/>
 			)}
 			<Composer
+				workspaceId={workspaceId}
 				onSend={handleSend}
 				disabled={disabled}
 				pending={pendingTurn}
 				surface={surface}
 				placeholder={placeholder}
+				selection={activeSelection}
+				onDispatchSelection={onDispatchSelection}
 			/>
 			<SelectionChips
 				selection={activeSelection}
@@ -258,11 +266,14 @@ function computePlaceholder(
 }
 
 interface ComposerProps {
+	workspaceId: string
 	onSend: (content: string) => Promise<void>
 	disabled: boolean
 	pending: boolean
 	surface: SindreChatSurface
 	placeholder: string
+	selection: SindreSelection
+	onDispatchSelection?: (action: SindreSelectionAction) => void
 }
 
 /**
@@ -271,10 +282,32 @@ interface ComposerProps {
  * scrolls beyond that. The send button shows a Spinner (and stays disabled)
  * while a turn is pending — i.e. after a send, until the first assistant
  * event lands.
+ *
+ * Task 36 adds three entry points into the shared `<SlashPicker>`:
+ *  - `/` typed at the start of the textarea (or immediately after whitespace)
+ *    opens the picker at the top-level kind menu.
+ *  - The **Agent** button opens the picker pre-filtered to the agent kind.
+ *  - The **Objects** button opens the picker pre-filtered to the object kind.
+ * All three share a single picker instance and an invisible `PopoverAnchor`
+ * pinned to the composer so the popover always lands in the same place. When
+ * a pick is committed we delete only the `/` that triggered the picker (if
+ * still present) so the rest of the user's in-progress message is preserved.
  */
-function Composer({ onSend, disabled, pending, surface, placeholder }: ComposerProps) {
+function Composer({
+	workspaceId,
+	onSend,
+	disabled,
+	pending,
+	surface,
+	placeholder,
+	selection,
+	onDispatchSelection,
+}: ComposerProps) {
 	const [value, setValue] = useState('')
 	const [sending, setSending] = useState(false)
+	const [pickerOpen, setPickerOpen] = useState(false)
+	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
+	const slashPosRef = useRef<number | null>(null)
 	const canSend = value.trim().length > 0 && !disabled && !sending && !pending
 	const showSpinner = sending || pending
 
@@ -305,33 +338,127 @@ function Composer({ onSend, disabled, pending, surface, placeholder }: ComposerP
 		[handleSubmit],
 	)
 
+	const handleChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
+		const next = e.target.value
+		setValue(next)
+		// Open the picker when the user just typed a `/` at a qualifying
+		// position: either at the very start of the input or immediately
+		// after whitespace. Anything else (middle of a URL, inside a word,
+		// etc.) is left alone so `/` remains a regular character.
+		const pos = e.target.selectionStart
+		if (typeof pos !== 'number' || pos <= 0) return
+		if (next[pos - 1] !== '/') return
+		const prev = pos >= 2 ? next[pos - 2] : ''
+		if (prev !== '' && !/\s/.test(prev)) return
+		slashPosRef.current = pos - 1
+		setPickerKind(null)
+		setPickerOpen(true)
+	}, [])
+
+	const openPickerForKind = useCallback((kind: SlashKindId) => {
+		slashPosRef.current = null
+		setPickerKind(kind)
+		setPickerOpen(true)
+	}, [])
+
+	const consumeSlashTrigger = useCallback(() => {
+		const pos = slashPosRef.current
+		if (pos === null) return
+		slashPosRef.current = null
+		setValue((prev) => {
+			if (prev[pos] !== '/') return prev
+			return prev.slice(0, pos) + prev.slice(pos + 1)
+		})
+	}, [])
+
+	const handlePickerSelect = useCallback(
+		(result: SlashPickerResult) => {
+			if (result.kind === 'agent') {
+				onDispatchSelection?.({ type: 'add_agent', agent: result.ref })
+			} else {
+				onDispatchSelection?.({ type: 'add_object', object: result.ref })
+			}
+			// The `/` that triggered the picker (if any) is dropped as soon as
+			// the user commits a pick — keeping the rest of the in-progress
+			// message intact.
+			consumeSlashTrigger()
+		},
+		[onDispatchSelection, consumeSlashTrigger],
+	)
+
+	const handlePickerOpenChange = useCallback((next: boolean) => {
+		setPickerOpen(next)
+		if (!next) {
+			setPickerKind(null)
+			slashPosRef.current = null
+		}
+	}, [])
+
 	return (
-		<form
-			onSubmit={handleSubmit}
+		<div
 			className={cn(
-				'flex items-end gap-2 rounded-md border border-border bg-bg-surface p-2',
+				'relative flex flex-col gap-1 rounded-md border border-border bg-bg-surface p-2',
 				surface === 'pulse-bar' && 'shadow-sm',
 			)}
 		>
-			<Textarea
-				autoResize
-				value={value}
-				onChange={(e) => setValue(e.target.value)}
-				onKeyDown={handleKeyDown}
-				placeholder={placeholder}
-				className="max-h-40 min-h-[36px] flex-1 resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
-				disabled={disabled}
-				rows={1}
+			<SlashPicker
+				workspaceId={workspaceId}
+				open={pickerOpen}
+				onOpenChange={handlePickerOpenChange}
+				onSelect={handlePickerSelect}
+				selected={selection}
+				initialKindId={pickerKind}
+				anchor={
+					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
+				}
 			/>
-			<Button
-				type="submit"
-				size="icon"
-				variant="ghost"
-				disabled={!canSend}
-				aria-label="Send message"
-			>
-				{showSpinner ? <Spinner /> : <Send size={16} />}
-			</Button>
-		</form>
+			<form onSubmit={handleSubmit} className="flex items-end gap-2">
+				<Textarea
+					autoResize
+					value={value}
+					onChange={handleChange}
+					onKeyDown={handleKeyDown}
+					placeholder={placeholder}
+					className="max-h-40 min-h-[36px] flex-1 resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+					disabled={disabled}
+					rows={1}
+				/>
+				<Button
+					type="submit"
+					size="icon"
+					variant="ghost"
+					disabled={!canSend}
+					aria-label="Send message"
+				>
+					{showSpinner ? <Spinner /> : <Send size={16} />}
+				</Button>
+			</form>
+			<div className="flex items-center gap-1">
+				<Button
+					type="button"
+					size="sm"
+					variant="ghost"
+					className="h-7 gap-1 px-2 text-xs text-text-secondary"
+					onClick={() => openPickerForKind('agent')}
+					disabled={disabled}
+					aria-label="Pick an agent"
+				>
+					<Bot size={14} aria-hidden />
+					Agent
+				</Button>
+				<Button
+					type="button"
+					size="sm"
+					variant="ghost"
+					className="h-7 gap-1 px-2 text-xs text-text-secondary"
+					onClick={() => openPickerForKind('object')}
+					disabled={disabled}
+					aria-label="Attach objects"
+				>
+					<Box size={14} aria-hidden />
+					Objects
+				</Button>
+			</div>
+		</div>
 	)
 }

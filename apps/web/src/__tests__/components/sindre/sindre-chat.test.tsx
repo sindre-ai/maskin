@@ -1,9 +1,15 @@
 import { SindreChat } from '@/components/sindre/sindre-chat'
 import type { UseSindreOneShotResult } from '@/hooks/use-sindre-one-shot'
 import type { UseSindreSessionResult } from '@/hooks/use-sindre-session'
+import type { SindreSelection, SindreSelectionAction } from '@/lib/sindre-selection'
 import type { SindreEvent } from '@/lib/sindre-stream'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildActorListItem, buildObjectResponse } from '../../factories'
+import { createTestQueryClient } from '../../setup'
 
 const mockSend = vi.fn(async () => {})
 const mockOneShotSend = vi.fn(async () => {})
@@ -35,6 +41,24 @@ vi.mock('@/hooks/use-sindre-one-shot', () => ({
 	useSindreOneShot: () => mockOneShotResult,
 }))
 
+vi.mock('@/lib/api', () => ({
+	api: {
+		actors: { list: vi.fn() },
+		objects: { list: vi.fn(), search: vi.fn() },
+	},
+}))
+
+import { api } from '@/lib/api'
+
+// cmdk + Radix Popover rely on these browser APIs when the picker content is
+// mounted in jsdom. Existing picker tests polyfill them the same way.
+global.ResizeObserver = vi.fn().mockImplementation(() => ({
+	observe: vi.fn(),
+	unobserve: vi.fn(),
+	disconnect: vi.fn(),
+}))
+Element.prototype.scrollIntoView = vi.fn()
+
 function setHookResult(overrides: Partial<UseSindreSessionResult>) {
 	mockHookResult = {
 		sessionId: null,
@@ -63,9 +87,24 @@ beforeEach(() => {
 	mockSend.mockClear()
 	mockOneShotSend.mockClear()
 	mockOneShotClear.mockClear()
+	vi.mocked(api.actors.list).mockResolvedValue([
+		buildActorListItem({ id: 'actor-a', name: 'Reviewer', type: 'agent', email: null }),
+		buildActorListItem({ id: 'actor-b', name: 'Planner', type: 'agent', email: null }),
+	])
+	vi.mocked(api.objects.list).mockResolvedValue([
+		buildObjectResponse({ id: 'obj-1', title: 'Bet Alpha', type: 'bet' }),
+	])
+	vi.mocked(api.objects.search).mockResolvedValue([
+		buildObjectResponse({ id: 'obj-1', title: 'Bet Alpha', type: 'bet' }),
+	])
 	setHookResult({ status: 'ready' })
 	setOneShotResult({ status: 'idle' })
 })
+
+function WithQueryClient({ children }: { children: ReactNode }) {
+	const client = createTestQueryClient()
+	return <QueryClientProvider client={client}>{children}</QueryClientProvider>
+}
 
 describe('SindreChat', () => {
 	it('renders transcript and composer in sheet mode', () => {
@@ -321,6 +360,128 @@ describe('SindreChat', () => {
 		)
 
 		expect(screen.getByText('boom')).toBeInTheDocument()
+	})
+
+	// ---- Task 36: composer picker entry points --------------------------------
+
+	it('renders the Agent and Objects picker buttons next to the composer', () => {
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+		expect(screen.getByRole('button', { name: /pick an agent/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /attach objects/i })).toBeInTheDocument()
+	})
+
+	it('opens the picker pre-filtered to agents when the Agent button is clicked', async () => {
+		const user = userEvent.setup()
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+			wrapper: WithQueryClient,
+		})
+
+		await user.click(screen.getByRole('button', { name: /pick an agent/i }))
+
+		expect(await screen.findByPlaceholderText('Search agents…')).toBeInTheDocument()
+		// The top-level kind menu is skipped when a kind is preselected.
+		expect(screen.queryByPlaceholderText('Choose a kind…')).not.toBeInTheDocument()
+	})
+
+	it('opens the picker pre-filtered to objects when the Objects button is clicked', async () => {
+		const user = userEvent.setup()
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+			wrapper: WithQueryClient,
+		})
+
+		await user.click(screen.getByRole('button', { name: /attach objects/i }))
+
+		expect(await screen.findByPlaceholderText('Search objects…')).toBeInTheDocument()
+	})
+
+	it('opens the picker at the top-level kind menu when `/` is typed at the start', async () => {
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+			wrapper: WithQueryClient,
+		})
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: '/' } })
+
+		expect(await screen.findByPlaceholderText('Choose a kind…')).toBeInTheDocument()
+	})
+
+	it('opens the picker when `/` is typed immediately after whitespace', async () => {
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+			wrapper: WithQueryClient,
+		})
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'hello /' } })
+
+		expect(await screen.findByPlaceholderText('Choose a kind…')).toBeInTheDocument()
+	})
+
+	it('does not open the picker when `/` is typed in the middle of a word', () => {
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
+			wrapper: WithQueryClient,
+		})
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'path/to' } })
+
+		expect(screen.queryByPlaceholderText('Choose a kind…')).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Search agents…')).not.toBeInTheDocument()
+	})
+
+	it('dispatches add_agent and strips the triggering `/` when an agent is picked', async () => {
+		const user = userEvent.setup()
+		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+		const selection: SindreSelection = { agent: null, objects: [] }
+
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={selection}
+				onDispatchSelection={dispatch}
+			/>,
+			{ wrapper: WithQueryClient },
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'hi /' } })
+
+		// Drill into the Agent kind, then pick Reviewer. Scope to cmdk's
+		// options to avoid matching the composer's own `Agent` button.
+		await user.click(await screen.findByRole('option', { name: /^Agent/ }))
+		await user.click(await screen.findByRole('option', { name: /Reviewer/ }))
+
+		expect(dispatch).toHaveBeenCalledWith({
+			type: 'add_agent',
+			agent: { id: 'actor-a', name: 'Reviewer' },
+		})
+		// The `/` that triggered the picker is spliced out; the rest remains.
+		await waitFor(() => expect(textarea.value).toBe('hi '))
+	})
+
+	it('dispatches add_object when the Objects button path picks an object', async () => {
+		const user = userEvent.setup()
+		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{ agent: null, objects: [] }}
+				onDispatchSelection={dispatch}
+			/>,
+			{ wrapper: WithQueryClient },
+		)
+
+		await user.click(screen.getByRole('button', { name: /attach objects/i }))
+		await user.click(await screen.findByRole('option', { name: /Bet Alpha/ }))
+
+		expect(dispatch).toHaveBeenCalledWith({
+			type: 'add_object',
+			object: { id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
+		})
 	})
 
 	it('merges one-shot events after Sindre events in the transcript', () => {

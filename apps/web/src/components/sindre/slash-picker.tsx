@@ -1,4 +1,4 @@
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { type ActorListItem, type ObjectResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -142,6 +142,13 @@ export interface SlashPickerProps {
 	kinds?: ReadonlyArray<SlashKindDef<any>>
 	/** Optional trigger — rendered as `<PopoverTrigger asChild>{children}</PopoverTrigger>`. */
 	children?: ReactNode
+	/**
+	 * Optional external anchor — rendered as `<PopoverAnchor asChild>{anchor}</PopoverAnchor>`.
+	 * Use when the picker is opened via slash-in-textarea or explicit buttons
+	 * that are not the same element, and the popover should position against
+	 * a fixed reference (e.g. an invisible span pinned to the composer).
+	 */
+	anchor?: ReactNode
 }
 
 export function SlashPicker({
@@ -153,6 +160,7 @@ export function SlashPicker({
 	initialKindId = null,
 	kinds = SLASH_KINDS,
 	children,
+	anchor,
 }: SlashPickerProps) {
 	const [activeKindId, setActiveKindId] = useState<SlashKindId | null>(initialKindId)
 
@@ -171,6 +179,7 @@ export function SlashPicker({
 	return (
 		<Popover open={open} onOpenChange={handleOpenChange}>
 			{children ? <PopoverTrigger asChild>{children}</PopoverTrigger> : null}
+			{anchor ? <PopoverAnchor asChild>{anchor}</PopoverAnchor> : null}
 			<PopoverContent
 				className="w-80 p-0"
 				align="start"
