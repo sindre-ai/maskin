@@ -22,10 +22,18 @@ export type SindreAttachment =
 export interface SindreContextValue {
 	open: boolean
 	setOpen: (value: boolean | ((prev: boolean) => boolean)) => void
-	openWithContext: (attachments: SindreAttachment[]) => void
+	/**
+	 * Opens the sheet and stages context. Optional `message` is forwarded to the
+	 * sheet's composer which auto-sends it on open (used by the Pulse input bar
+	 * so the conversation continues in the sheet).
+	 */
+	openWithContext: (attachments: SindreAttachment[], message?: string) => void
 	/** Attachments staged by the most recent `openWithContext` call. */
 	pendingAttachments: SindreAttachment[]
 	clearPendingAttachments: () => void
+	/** Message staged by the most recent `openWithContext` call. */
+	pendingMessage: string | null
+	clearPendingMessage: () => void
 	/**
 	 * Per-workspace Sindre session id. Persisted in localStorage so that the
 	 * transcript survives page refresh. `null` until the first message has
@@ -69,6 +77,7 @@ interface SindreProviderProps {
 export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 	const [open, setOpenState] = useState(false)
 	const [pendingAttachments, setPendingAttachments] = useState<SindreAttachment[]>([])
+	const [pendingMessage, setPendingMessage] = useState<string | null>(null)
 	const [sessionId, setSessionIdState] = useState<string | null>(() =>
 		readStoredSessionId(workspaceId),
 	)
@@ -79,6 +88,7 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 	useEffect(() => {
 		setSessionIdState(readStoredSessionId(workspaceId))
 		setPendingAttachments([])
+		setPendingMessage(null)
 		setOpenState(false)
 	}, [workspaceId])
 
@@ -86,13 +96,18 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 		setOpenState((prev) => (typeof value === 'function' ? value(prev) : value))
 	}, [])
 
-	const openWithContext = useCallback((attachments: SindreAttachment[]) => {
+	const openWithContext = useCallback((attachments: SindreAttachment[], message?: string) => {
 		setPendingAttachments(attachments)
+		setPendingMessage(typeof message === 'string' && message.length > 0 ? message : null)
 		setOpenState(true)
 	}, [])
 
 	const clearPendingAttachments = useCallback(() => {
 		setPendingAttachments([])
+	}, [])
+
+	const clearPendingMessage = useCallback(() => {
+		setPendingMessage(null)
 	}, [])
 
 	const setSessionId = useCallback(
@@ -110,6 +125,8 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 			openWithContext,
 			pendingAttachments,
 			clearPendingAttachments,
+			pendingMessage,
+			clearPendingMessage,
 			sessionId,
 			setSessionId,
 		}),
@@ -119,6 +136,8 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 			openWithContext,
 			pendingAttachments,
 			clearPendingAttachments,
+			pendingMessage,
+			clearPendingMessage,
 			sessionId,
 			setSessionId,
 		],

@@ -3,7 +3,7 @@ import type { UseSindreOneShotResult } from '@/hooks/use-sindre-one-shot'
 import type { UseSindreSessionResult } from '@/hooks/use-sindre-session'
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTestQueryClient } from '../../setup'
@@ -100,6 +100,21 @@ function Opener({ attachments }: { attachments?: OpenerAttachments }) {
 	)
 }
 
+function OpenerWithMessage({
+	attachments,
+	message,
+}: {
+	attachments?: OpenerAttachments
+	message: string
+}) {
+	const { openWithContext } = useSindre()
+	return (
+		<button type="button" onClick={() => openWithContext(attachments ?? [], message)}>
+			open-with-message
+		</button>
+	)
+}
+
 describe('SindreSheet', () => {
 	it('renders nothing visible while closed', () => {
 		render(
@@ -123,6 +138,25 @@ describe('SindreSheet', () => {
 		})
 
 		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
+	})
+
+	it('auto-sends a pendingMessage forwarded via openWithContext and clears it', async () => {
+		render(
+			<Harness>
+				<Opener attachments={[]} />
+				<OpenerWithMessage message="hey sindre" attachments={[]} />
+				<SindreSheet workspaceId="ws-1" sindreActorId="actor-sindre" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-with-message').click()
+		})
+
+		// Sheet opens and SindreChat consumes the pending message via its
+		// internal send path (to the persistent Sindre session in this case).
+		await screen.findByPlaceholderText('Message Sindre')
+		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hey sindre'))
 	})
 
 	it('seeds selection from pendingAttachments and clears them on open', async () => {

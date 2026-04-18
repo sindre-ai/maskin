@@ -484,6 +484,72 @@ describe('SindreChat', () => {
 		})
 	})
 
+	it('onSubmitOverride replaces the internal send path', async () => {
+		const override = vi.fn(async () => {})
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="pulse-bar"
+				onSubmitOverride={override}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Ask Sindre anything…') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'intercept me' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(override).toHaveBeenCalledTimes(1))
+		expect(override).toHaveBeenCalledWith('intercept me', {
+			agent: null,
+			objects: [],
+		})
+		expect(mockSend).not.toHaveBeenCalled()
+		expect(mockOneShotSend).not.toHaveBeenCalled()
+		await waitFor(() => expect(textarea.value).toBe(''))
+	})
+
+	it('autoSendMessage auto-fires a send exactly once and fires the consumed callback', async () => {
+		const onConsumed = vi.fn()
+		const { rerender } = render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				autoSendMessage={null}
+				onAutoSendConsumed={onConsumed}
+			/>,
+		)
+
+		expect(mockSend).not.toHaveBeenCalled()
+
+		rerender(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				autoSendMessage="from bar"
+				onAutoSendConsumed={onConsumed}
+			/>,
+		)
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('from bar'))
+		expect(onConsumed).toHaveBeenCalledTimes(1)
+
+		// Same message re-arrives (e.g. before consumer has cleared it) — must
+		// not double-send.
+		rerender(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				autoSendMessage="from bar"
+				onAutoSendConsumed={onConsumed}
+			/>,
+		)
+		expect(mockSend).toHaveBeenCalledTimes(1)
+	})
+
 	it('merges one-shot events after Sindre events in the transcript', () => {
 		setHookResult({
 			status: 'ready',

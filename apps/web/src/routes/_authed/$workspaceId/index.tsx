@@ -4,6 +4,7 @@ import { PulseFilters } from '@/components/pulse/pulse-filters'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { SindrePulseBar } from '@/components/sindre/sindre-pulse-bar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
 import {
@@ -41,6 +42,13 @@ function PulseDashboard() {
 		}
 		return map
 	}, [actors])
+
+	// Resolve the per-workspace Sindre meta-agent so the Pulse input bar can
+	// forward to the same session the workspace-layout sheet is bound to.
+	const sindreActorId = useMemo(
+		() => actors?.find((a) => a.type === 'agent' && a.name === 'Sindre')?.id ?? null,
+		[actors],
+	)
 
 	const activeNotifications = notifications ?? []
 
@@ -94,6 +102,7 @@ function PulseDashboard() {
 
 	return (
 		<Tabs defaultValue="overview">
+			<SindrePulseBar workspaceId={workspaceId} sindreActorId={sindreActorId} className="mb-6" />
 			<TabsList>
 				<TabsTrigger value="overview">Overview</TabsTrigger>
 				<TabsTrigger value="notifications">

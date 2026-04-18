@@ -54,6 +54,10 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/sindre/sindre-pulse-bar', () => ({
+	SindrePulseBar: () => <div data-testid="sindre-pulse-bar" />,
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/index'
 
 const PulseDashboard = (Route as unknown as { component: React.FC }).component

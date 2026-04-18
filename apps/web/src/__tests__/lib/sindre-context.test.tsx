@@ -31,6 +31,7 @@ describe('useSindre', () => {
 		const { result } = renderHook(() => useSindre(), { wrapper: makeWrapper(WORKSPACE_A) })
 		expect(result.current.open).toBe(false)
 		expect(result.current.pendingAttachments).toEqual([])
+		expect(result.current.pendingMessage).toBeNull()
 		expect(result.current.sessionId).toBeNull()
 	})
 
@@ -73,6 +74,59 @@ describe('useSindre', () => {
 
 		expect(result.current.open).toBe(true)
 		expect(result.current.pendingAttachments).toEqual([])
+	})
+
+	it('openWithContext stages a pending message when the optional arg is passed', () => {
+		const { result } = renderHook(() => useSindre(), { wrapper: makeWrapper(WORKSPACE_A) })
+
+		act(() => {
+			result.current.openWithContext(
+				[{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' }],
+				'hello sindre',
+			)
+		})
+
+		expect(result.current.open).toBe(true)
+		expect(result.current.pendingMessage).toBe('hello sindre')
+		expect(result.current.pendingAttachments).toEqual([
+			{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
+		])
+	})
+
+	it('openWithContext leaves pendingMessage null when no message is passed', () => {
+		const { result } = renderHook(() => useSindre(), { wrapper: makeWrapper(WORKSPACE_A) })
+
+		act(() => {
+			result.current.openWithContext([{ kind: 'object', id: 'obj-1' }])
+		})
+
+		expect(result.current.pendingMessage).toBeNull()
+	})
+
+	it('openWithContext normalizes an empty string to null', () => {
+		const { result } = renderHook(() => useSindre(), { wrapper: makeWrapper(WORKSPACE_A) })
+
+		act(() => {
+			result.current.openWithContext([], '')
+		})
+
+		expect(result.current.pendingMessage).toBeNull()
+	})
+
+	it('clearPendingMessage drops the staged message without closing the sheet', () => {
+		const { result } = renderHook(() => useSindre(), { wrapper: makeWrapper(WORKSPACE_A) })
+
+		act(() => {
+			result.current.openWithContext([], 'queued')
+		})
+		expect(result.current.pendingMessage).toBe('queued')
+
+		act(() => {
+			result.current.clearPendingMessage()
+		})
+
+		expect(result.current.open).toBe(true)
+		expect(result.current.pendingMessage).toBeNull()
 	})
 
 	it('persists sessionId in localStorage scoped by workspace', () => {
@@ -156,6 +210,7 @@ describe('useSindre', () => {
 			openWithContext: result.current.openWithContext,
 			setSessionId: result.current.setSessionId,
 			clearPendingAttachments: result.current.clearPendingAttachments,
+			clearPendingMessage: result.current.clearPendingMessage,
 		}
 
 		act(() => result.current.setOpen(true))
@@ -164,6 +219,7 @@ describe('useSindre', () => {
 		expect(result.current.setOpen).toBe(first.setOpen)
 		expect(result.current.openWithContext).toBe(first.openWithContext)
 		expect(result.current.clearPendingAttachments).toBe(first.clearPendingAttachments)
+		expect(result.current.clearPendingMessage).toBe(first.clearPendingMessage)
 		// setSessionId closes over workspaceId but that didn't change — it should be stable too.
 		expect(result.current.setSessionId).toBe(first.setSessionId)
 	})

@@ -29,7 +29,14 @@ interface SindreSheetProps {
  * and are cleared once consumed.
  */
 export function SindreSheet({ workspaceId, sindreActorId }: SindreSheetProps) {
-	const { open, setOpen, pendingAttachments, clearPendingAttachments } = useSindre()
+	const {
+		open,
+		setOpen,
+		pendingAttachments,
+		clearPendingAttachments,
+		pendingMessage,
+		clearPendingMessage,
+	} = useSindre()
 	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
 
 	useEffect(() => {
@@ -57,6 +64,8 @@ export function SindreSheet({ workspaceId, sindreActorId }: SindreSheetProps) {
 						surface="sheet"
 						selection={selection}
 						onDispatchSelection={dispatch}
+						autoSendMessage={pendingMessage}
+						onAutoSendConsumed={clearPendingMessage}
 					/>
 				</div>
 			</SheetContent>

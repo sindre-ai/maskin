@@ -50,6 +50,23 @@ export interface SindreChatProps {
 	 * the chips still render but their remove buttons are inert.
 	 */
 	onDispatchSelection?: (action: SindreSelectionAction) => void
+	/**
+	 * When provided, replaces the internal send path so the caller can
+	 * intercept submit — e.g. the Pulse input bar opens the sheet and
+	 * forwards the message + selection there instead of sending directly.
+	 * Receives the composer content and the active selection snapshot.
+	 */
+	onSubmitOverride?: (content: string, selection: SindreSelection) => void | Promise<void>
+	/**
+	 * When this transitions from `null` to a non-empty string, the composer
+	 * auto-submits that content via the normal send path exactly once. Used
+	 * by the sheet to pick up a message forwarded by the Pulse input bar so
+	 * the conversation "continues there". Callers must clear this (via
+	 * `onAutoSendConsumed`) once they observe the consumption.
+	 */
+	autoSendMessage?: string | null
+	/** Fired after `autoSendMessage` has been dispatched. */
+	onAutoSendConsumed?: () => void
 	className?: string
 }
 
@@ -72,6 +89,9 @@ export function SindreChat({
 	surface,
 	selection,
 	onDispatchSelection,
+	onSubmitOverride,
+	autoSendMessage,
+	onAutoSendConsumed,
 	className,
 }: SindreChatProps) {
 	const activeSelection = selection ?? EMPTY_SINDRE_SELECTION
@@ -112,6 +132,13 @@ export function SindreChat({
 
 	const handleSend = useCallback(
 		async (content: string) => {
+			if (onSubmitOverride) {
+				// Intercept path: caller takes ownership of what happens next
+				// (e.g. the Pulse bar forwards to the sheet). Skip pendingTurn
+				// tracking — no session turn is in flight from this surface.
+				await onSubmitOverride(content, activeSelection)
+				return
+			}
 			pendingBaselineRef.current = events.length
 			setPendingTurn(true)
 			try {
@@ -135,8 +162,32 @@ export function SindreChat({
 				throw err
 			}
 		},
-		[events.length, oneShot, sindre, selectedAgent, selectedObjects, workspaceId],
+		[
+			activeSelection,
+			events.length,
+			oneShot,
+			onSubmitOverride,
+			sindre,
+			selectedAgent,
+			selectedObjects,
+			workspaceId,
+		],
 	)
+
+	// Auto-send a message forwarded from another surface (e.g. the Pulse input
+	// bar opening the sheet). Guard with a ref so the same message is only
+	// consumed once even if the effect re-runs before the caller clears the
+	// prop.
+	const autoSendConsumedRef = useRef<string | null>(null)
+	useEffect(() => {
+		if (!autoSendMessage || autoSendMessage.length === 0) return
+		if (autoSendConsumedRef.current === autoSendMessage) return
+		autoSendConsumedRef.current = autoSendMessage
+		void handleSend(autoSendMessage).catch(() => {
+			// Errors are surfaced through the session/one-shot hook state.
+		})
+		onAutoSendConsumed?.()
+	}, [autoSendMessage, handleSend, onAutoSendConsumed])
 
 	const handleRemoveAgent = useCallback(() => {
 		onDispatchSelection?.({ type: 'remove_agent' })
