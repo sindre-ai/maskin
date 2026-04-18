@@ -289,9 +289,27 @@ importers:
 
   extensions/notetaker:
     dependencies:
+      '@hono/zod-openapi':
+        specifier: ^0.18.0
+        version: 0.18.4(hono@4.12.12)(zod@3.25.76)
+      '@maskin/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@maskin/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@maskin/module-sdk':
         specifier: workspace:*
         version: link:../../packages/module-sdk
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/react@19.2.14)(kysely@0.28.14)(postgres@3.4.8)(react@19.2.4)
+      hono:
+        specifier: ^4.12.12
+        version: 4.12.12
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       typescript:
         specifier: ^5.7.0

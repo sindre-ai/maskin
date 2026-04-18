@@ -1,5 +1,409 @@
-import type { ModuleDefinition } from '@maskin/module-sdk'
+import { generateApiKey } from '@maskin/auth'
+import type { Database } from '@maskin/db'
+import { actors, triggers, workspaceMembers, workspaces } from '@maskin/db/schema'
+import type {
+	McpToolDefinition,
+	ModuleDefinition,
+	ModuleEnv,
+	ModuleLifecycleContext,
+} from '@maskin/module-sdk'
+import { and, eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { MEETING_RELATIONSHIP_TYPES, MEETING_STATUSES, MODULE_ID, MODULE_NAME } from '../shared.js'
+import { createNotetakerRoutes } from './routes.js'
+
+// ── Deterministic names — used for idempotent lookup/creation ────────────────
+const SUMMARIZER_AGENT_NAME = 'Meeting Summarizer'
+const DISPATCHER_AGENT_NAME = 'Skjald Dispatcher'
+const TRIGGER_MEETING_CREATED = 'meeting.created'
+const TRIGGER_TRANSCRIPT_ATTACHED = 'transcript.attached'
+const TRIGGER_CALENDAR_SYNC = 'calendar.sync'
+
+const SUMMARIZER_SYSTEM_PROMPT = [
+	'You are the Meeting Summarizer for the Maskin notetaker extension.',
+	'When a meeting object transitions to having a transcript (metadata.transcriptUrl set),',
+	'fetch the transcript from the provided S3 URL, write a concise summary,',
+	'and extract action items and open questions.',
+	'Create an `insight` object for the summary linked to the meeting via `about`,',
+	'and a `task` object for each action item linked to the meeting via `produced`.',
+	'Do NOT create `decision` objects.',
+].join(' ')
+
+const DISPATCHER_SYSTEM_PROMPT = [
+	'You are the Skjald Dispatcher for the Maskin notetaker extension.',
+	'When a meeting object fires this trigger and has `skjaldJoin=true`,',
+	'call the Skjald MCP tool `skjald_join_meeting` with the meeting URL,',
+	'bot name, language, and meeting id so Skjald can join and record the meeting.',
+].join(' ')
+
+const SUMMARIZER_PROMPT = [
+	'A meeting transcript was just attached. Summarize the transcript at metadata.transcriptUrl,',
+	'extract action items and open questions, and create linked `insight` and `task` objects.',
+].join(' ')
+
+const DISPATCHER_PROMPT = [
+	'A meeting is ready to be joined. Call the Skjald `skjald_join_meeting` MCP tool with',
+	'the meetingUrl, botName, language, and meeting id from the triggering event.',
+].join(' ')
+
+interface NotetakerConfig {
+	autoJoin: boolean
+	defaultLanguage: string
+	botName: string
+	syncIntervalMinutes: number
+	summarizerActorId?: string
+	dispatcherActorId?: string
+	meetingCreatedTriggerId?: string
+	transcriptReadyTriggerId?: string
+	calendarSyncTriggerId?: string
+}
+
+const DEFAULT_CONFIG: NotetakerConfig = {
+	autoJoin: true,
+	defaultLanguage: 'en',
+	botName: 'Maskin Notetaker',
+	syncIntervalMinutes: 10,
+}
+
+function cronExpressionFor(minutes: number): string {
+	const m = Number.isFinite(minutes) && minutes > 0 ? Math.min(minutes, 60) : 10
+	return `*/${m} * * * *`
+}
+
+async function readConfig(
+	db: Database,
+	workspaceId: string,
+): Promise<{
+	settings: Record<string, unknown>
+	config: NotetakerConfig
+}> {
+	const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+	const settings = (row?.settings as Record<string, unknown>) ?? {}
+	const customExtensions =
+		(settings.custom_extensions as Record<string, { config?: Partial<NotetakerConfig> }>) ?? {}
+	const stored = customExtensions[MODULE_ID]?.config ?? {}
+	return {
+		settings,
+		config: { ...DEFAULT_CONFIG, ...stored },
+	}
+}
+
+async function writeConfig(
+	db: Database,
+	workspaceId: string,
+	settings: Record<string, unknown>,
+	config: NotetakerConfig,
+): Promise<void> {
+	const customExtensions =
+		(settings.custom_extensions as Record<string, Record<string, unknown>>) ?? {}
+	const existingEntry = customExtensions[MODULE_ID] ?? {
+		name: MODULE_NAME,
+		types: ['meeting'],
+		relationship_types: [...MEETING_RELATIONSHIP_TYPES],
+		enabled: true,
+	}
+	const nextSettings = {
+		...settings,
+		custom_extensions: {
+			...customExtensions,
+			[MODULE_ID]: {
+				...existingEntry,
+				config,
+			},
+		},
+	}
+	await db
+		.update(workspaces)
+		.set({ settings: nextSettings, updatedAt: new Date() })
+		.where(eq(workspaces.id, workspaceId))
+}
+
+async function ensureAgent(
+	db: Database,
+	workspaceId: string,
+	creatorActorId: string,
+	name: string,
+	systemPrompt: string,
+	existingId: string | undefined,
+): Promise<string> {
+	if (existingId) {
+		const [existing] = await db.select().from(actors).where(eq(actors.id, existingId)).limit(1)
+		if (existing) return existing.id
+	}
+	const { key } = generateApiKey()
+	const [created] = await db
+		.insert(actors)
+		.values({
+			type: 'agent',
+			name,
+			apiKey: key,
+			systemPrompt,
+			createdBy: creatorActorId,
+		})
+		.returning({ id: actors.id })
+	if (!created) throw new Error(`Failed to create agent '${name}'`)
+	await db
+		.insert(workspaceMembers)
+		.values({ workspaceId, actorId: created.id, role: 'member' })
+		.onConflictDoNothing()
+	return created.id
+}
+
+async function ensureTrigger(
+	db: Database,
+	workspaceId: string,
+	creatorActorId: string,
+	spec: {
+		name: string
+		type: 'cron' | 'event'
+		config: Record<string, unknown>
+		actionPrompt: string
+		targetActorId: string
+	},
+	existingId: string | undefined,
+): Promise<string> {
+	if (existingId) {
+		const [existing] = await db
+			.select()
+			.from(triggers)
+			.where(and(eq(triggers.id, existingId), eq(triggers.workspaceId, workspaceId)))
+			.limit(1)
+		if (existing) {
+			// Keep the trigger in sync with current target/prompt/config — idempotent re-apply.
+			await db
+				.update(triggers)
+				.set({
+					name: spec.name,
+					type: spec.type,
+					config: spec.config,
+					actionPrompt: spec.actionPrompt,
+					targetActorId: spec.targetActorId,
+					enabled: true,
+					updatedAt: new Date(),
+				})
+				.where(eq(triggers.id, existing.id))
+			return existing.id
+		}
+	}
+	const [created] = await db
+		.insert(triggers)
+		.values({
+			workspaceId,
+			name: spec.name,
+			type: spec.type,
+			config: spec.config,
+			actionPrompt: spec.actionPrompt,
+			targetActorId: spec.targetActorId,
+			enabled: true,
+			createdBy: creatorActorId,
+		})
+		.returning({ id: triggers.id })
+	if (!created) throw new Error(`Failed to create trigger '${spec.name}'`)
+	return created.id
+}
+
+async function deleteTriggerIfExists(db: Database, id: string | undefined): Promise<void> {
+	if (!id) return
+	await db.delete(triggers).where(eq(triggers.id, id))
+}
+
+async function deleteAgentIfExists(db: Database, id: string | undefined): Promise<void> {
+	if (!id) return
+	await db.delete(workspaceMembers).where(eq(workspaceMembers.actorId, id))
+	await db.delete(actors).where(and(eq(actors.id, id), eq(actors.type, 'agent')))
+}
+
+async function onEnable(env: ModuleEnv, ctx: ModuleLifecycleContext): Promise<void> {
+	const { db } = env
+	const { workspaceId, actorId } = ctx
+
+	const { settings, config } = await readConfig(db, workspaceId)
+
+	const summarizerActorId = await ensureAgent(
+		db,
+		workspaceId,
+		actorId,
+		SUMMARIZER_AGENT_NAME,
+		SUMMARIZER_SYSTEM_PROMPT,
+		config.summarizerActorId,
+	)
+	const dispatcherActorId = await ensureAgent(
+		db,
+		workspaceId,
+		actorId,
+		DISPATCHER_AGENT_NAME,
+		DISPATCHER_SYSTEM_PROMPT,
+		config.dispatcherActorId,
+	)
+
+	const meetingCreatedTriggerId = await ensureTrigger(
+		db,
+		workspaceId,
+		actorId,
+		{
+			name: TRIGGER_MEETING_CREATED,
+			type: 'event',
+			config: {
+				entity_type: 'meeting',
+				action: 'created',
+				conditions: [{ field: 'skjaldJoin', operator: 'equals', value: true }],
+			},
+			actionPrompt: DISPATCHER_PROMPT,
+			targetActorId: dispatcherActorId,
+		},
+		config.meetingCreatedTriggerId,
+	)
+	const transcriptReadyTriggerId = await ensureTrigger(
+		db,
+		workspaceId,
+		actorId,
+		{
+			name: TRIGGER_TRANSCRIPT_ATTACHED,
+			type: 'event',
+			config: {
+				entity_type: 'meeting',
+				action: 'updated',
+				conditions: [{ field: 'transcriptUrl', operator: 'is_set' }],
+			},
+			actionPrompt: SUMMARIZER_PROMPT,
+			targetActorId: summarizerActorId,
+		},
+		config.transcriptReadyTriggerId,
+	)
+	const calendarSyncTriggerId = await ensureTrigger(
+		db,
+		workspaceId,
+		actorId,
+		{
+			name: TRIGGER_CALENDAR_SYNC,
+			type: 'cron',
+			config: { expression: cronExpressionFor(config.syncIntervalMinutes) },
+			actionPrompt: 'Sync calendar events into meeting objects.',
+			targetActorId: dispatcherActorId,
+		},
+		config.calendarSyncTriggerId,
+	)
+
+	await writeConfig(db, workspaceId, settings, {
+		...config,
+		summarizerActorId,
+		dispatcherActorId,
+		meetingCreatedTriggerId,
+		transcriptReadyTriggerId,
+		calendarSyncTriggerId,
+	})
+}
+
+async function onDisable(env: ModuleEnv, ctx: ModuleLifecycleContext): Promise<void> {
+	const { db } = env
+	const { workspaceId } = ctx
+
+	const { settings, config } = await readConfig(db, workspaceId)
+
+	await deleteTriggerIfExists(db, config.meetingCreatedTriggerId)
+	await deleteTriggerIfExists(db, config.transcriptReadyTriggerId)
+	await deleteTriggerIfExists(db, config.calendarSyncTriggerId)
+	await deleteAgentIfExists(db, config.summarizerActorId)
+	await deleteAgentIfExists(db, config.dispatcherActorId)
+
+	const {
+		summarizerActorId: _a,
+		dispatcherActorId: _b,
+		meetingCreatedTriggerId: _c,
+		transcriptReadyTriggerId: _d,
+		calendarSyncTriggerId: _e,
+		...remaining
+	} = config
+	await writeConfig(db, workspaceId, settings, remaining as NotetakerConfig)
+}
+
+// ── MCP tools ──────────────────────────────────────────────────────────────
+//
+// Tool handlers receive an `apiCall` helper that normally namespaces paths to
+// `/api/m/notetaker/...`. The MCP server's module-tool wiring passes absolute
+// `/api/...` paths through unchanged so these tools can wrap the core objects
+// API directly.
+
+const createMeetingInputSchema = z.object({
+	meetingUrl: z.string().min(1),
+	startTime: z.string().min(1),
+	endTime: z.string().optional(),
+	language: z.string().optional(),
+	skjaldJoin: z.boolean().optional(),
+	calendarProvider: z.enum(['google-calendar', 'microsoft-outlook', 'manual']).optional(),
+	calendarEventId: z.string().optional(),
+	title: z.string().optional(),
+	botName: z.string().optional(),
+})
+
+const attachTranscriptInputSchema = z.object({
+	meetingId: z.string().uuid(),
+	transcriptUrl: z.string().min(1),
+	audioUrl: z.string().optional(),
+})
+
+const updateMeetingInputSchema = z.object({
+	meetingId: z.string().uuid(),
+	patch: z.record(z.unknown()).optional(),
+	status: z.enum(MEETING_STATUSES).optional(),
+})
+
+function jsonText(value: unknown) {
+	return {
+		content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
+	}
+}
+
+const mcpTools: McpToolDefinition[] = [
+	{
+		name: 'create_meeting',
+		description:
+			'Create a notetaker meeting object. Thin wrapper around POST /api/objects that sets type=meeting and packs the provided fields into metadata.',
+		inputSchema: createMeetingInputSchema,
+		handler: async (rawArgs, apiCall) => {
+			const args = createMeetingInputSchema.parse(rawArgs)
+			const { title, ...metadata } = args
+			const result = (await apiCall('POST', '/api/objects', {
+				type: 'meeting',
+				status: 'scheduled',
+				title: title ?? 'Meeting',
+				metadata,
+			})) as { id: string }
+			return jsonText({ meetingId: result.id })
+		},
+	},
+	{
+		name: 'attach_transcript',
+		description:
+			'Attach a transcript (and optional audio) to a meeting and transition its status to done. Fires the transcript.attached trigger.',
+		inputSchema: attachTranscriptInputSchema,
+		handler: async (rawArgs, apiCall) => {
+			const args = attachTranscriptInputSchema.parse(rawArgs)
+			const result = await apiCall('PATCH', `/api/objects/${args.meetingId}`, {
+				status: 'done',
+				metadata: {
+					transcriptUrl: args.transcriptUrl,
+					...(args.audioUrl ? { audioUrl: args.audioUrl } : {}),
+				},
+			})
+			return jsonText(result)
+		},
+	},
+	{
+		name: 'update_meeting',
+		description:
+			'Generic metadata/status patch for a meeting object. Kept separate from attach_transcript so the transcriptUrl transition remains unambiguous.',
+		inputSchema: updateMeetingInputSchema,
+		handler: async (rawArgs, apiCall) => {
+			const args = updateMeetingInputSchema.parse(rawArgs)
+			const body: Record<string, unknown> = {}
+			if (args.patch) body.metadata = args.patch
+			if (args.status) body.status = args.status
+			const result = await apiCall('PATCH', `/api/objects/${args.meetingId}`, body)
+			return jsonText(result)
+		},
+	},
+]
 
 const notetakerExtension: ModuleDefinition = {
 	id: MODULE_ID,
@@ -22,6 +426,10 @@ const notetakerExtension: ModuleDefinition = {
 			meeting: [...MEETING_STATUSES],
 		},
 	},
+	routes: createNotetakerRoutes,
+	mcpTools,
+	onEnable,
+	onDisable,
 }
 
 export default notetakerExtension

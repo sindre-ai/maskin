@@ -2191,9 +2191,12 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
 						_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 					},
 					async (args) => {
-						const result = await tool.handler(args, (method, path, body, options) =>
-							apiCall(config, method, `/api/m/${ext.id}${path}`, body, options),
-						)
+						const result = await tool.handler(args, (method, path, body, options) => {
+							// Paths starting with /api/ call the top-level API unchanged.
+							// Anything else is namespaced under the extension's own /api/m/{id} mount.
+							const resolvedPath = path.startsWith('/api/') ? path : `/api/m/${ext.id}${path}`
+							return apiCall(config, method, resolvedPath, body, options)
+						})
 						return {
 							_meta: { toolName: `${ext.id}_${tool.name}` },
 							content: result.content,

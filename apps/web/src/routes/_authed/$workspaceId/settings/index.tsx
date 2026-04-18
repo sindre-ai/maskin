@@ -1,3 +1,4 @@
+import { NotetakerSettingsDialog } from '@/components/notetaker/notetaker-settings-dialog'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,6 +10,7 @@ import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
+import { MODULE_ID as NOTETAKER_MODULE_ID } from '@maskin/ext-notetaker/shared'
 import { getAllWebModules, getWebModule } from '@maskin/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { Monitor, Moon, Sun, Trash2 } from 'lucide-react'
@@ -70,6 +72,7 @@ function ExtensionsSection() {
 	const allModules = getAllWebModules()
 	const customExtensions = useCustomExtensions()
 	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+	const [notetakerDialogOpen, setNotetakerDialogOpen] = useState(false)
 
 	const handleToggle = (moduleId: string, enabled: boolean) => {
 		const next = enabled
@@ -158,6 +161,7 @@ function ExtensionsSection() {
 			<div className="space-y-3">
 				{allModules.map((mod) => {
 					const isEnabled = enabledModules.includes(mod.id)
+					const isNotetaker = mod.id === NOTETAKER_MODULE_ID
 					return (
 						<div
 							key={mod.id}
@@ -171,10 +175,17 @@ function ExtensionsSection() {
 									</span>
 								)}
 							</div>
-							<Switch
-								checked={isEnabled}
-								onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
-							/>
+							<div className="flex items-center gap-3">
+								{isNotetaker && isEnabled && (
+									<Button variant="ghost" size="sm" onClick={() => setNotetakerDialogOpen(true)}>
+										Configure
+									</Button>
+								)}
+								<Switch
+									checked={isEnabled}
+									onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
+								/>
+							</div>
 						</div>
 					)
 				})}
@@ -226,6 +237,7 @@ function ExtensionsSection() {
 					</div>
 				))}
 			</div>
+			<NotetakerSettingsDialog open={notetakerDialogOpen} onOpenChange={setNotetakerDialogOpen} />
 		</div>
 	)
 }

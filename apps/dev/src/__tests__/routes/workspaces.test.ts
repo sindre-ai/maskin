@@ -1,9 +1,21 @@
 import { randomUUID } from 'node:crypto'
+import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
+import { type ModuleDefinition, clearModules, registerModule } from '@maskin/module-sdk'
 import { buildCreateWorkspaceBody, buildWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createTestApp, createTestContext } from '../setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
+
+function makeModule(id: string, overrides: Partial<ModuleDefinition> = {}): ModuleDefinition {
+	return {
+		id,
+		name: id,
+		version: '0.0.0',
+		objectTypes: [],
+		...overrides,
+	}
+}
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
@@ -76,6 +88,180 @@ describe('Workspaces Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('PATCH /api/workspaces/:id — enabled_modules lifecycle hooks', () => {
+		afterEach(() => {
+			clearModules()
+		})
+
+		function setupAppWithEnv() {
+			const app = new CreateOpenAPIHono()
+			const { db, mockResults } = createTestContext()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', 'test-actor-id')
+				c.set('actorType', 'human')
+				c.set('notifyBridge', {})
+				c.set('sessionManager', {})
+				c.set('agentStorage', {})
+				c.set('storageProvider', {})
+				await next()
+			})
+			app.route('/api/workspaces', workspacesRoutes)
+			return { app, mockResults }
+		}
+
+		it('invokes onEnable for newly added modules', async () => {
+			const onEnable = vi.fn().mockResolvedValue(undefined)
+			const onDisable = vi.fn().mockResolvedValue(undefined)
+			registerModule(makeModule('notetaker', { onEnable, onDisable }))
+
+			const existing = buildWorkspace({
+				settings: { enabled_modules: ['work'] },
+			})
+			const updated = {
+				...existing,
+				settings: { enabled_modules: ['work', 'notetaker'] },
+			}
+			const { app, mockResults } = setupAppWithEnv()
+			mockResults.select = [existing]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${existing.id}`, {
+					settings: { enabled_modules: ['work', 'notetaker'] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(onEnable).toHaveBeenCalledTimes(1)
+			expect(onEnable).toHaveBeenCalledWith(
+				expect.objectContaining({ db: expect.anything() }),
+				expect.objectContaining({ workspaceId: existing.id, actorId: 'test-actor-id' }),
+			)
+			expect(onDisable).not.toHaveBeenCalled()
+		})
+
+		it('invokes onDisable for removed modules', async () => {
+			const onEnable = vi.fn().mockResolvedValue(undefined)
+			const onDisable = vi.fn().mockResolvedValue(undefined)
+			registerModule(makeModule('notetaker', { onEnable, onDisable }))
+
+			const existing = buildWorkspace({
+				settings: { enabled_modules: ['work', 'notetaker'] },
+			})
+			const updated = {
+				...existing,
+				settings: { enabled_modules: ['work'] },
+			}
+			const { app, mockResults } = setupAppWithEnv()
+			mockResults.select = [existing]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${existing.id}`, {
+					settings: { enabled_modules: ['work'] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(onDisable).toHaveBeenCalledTimes(1)
+			expect(onDisable).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ workspaceId: existing.id, actorId: 'test-actor-id' }),
+			)
+			expect(onEnable).not.toHaveBeenCalled()
+		})
+
+		it('is a no-op when enabled_modules is unchanged', async () => {
+			const onEnable = vi.fn().mockResolvedValue(undefined)
+			const onDisable = vi.fn().mockResolvedValue(undefined)
+			registerModule(makeModule('notetaker', { onEnable, onDisable }))
+
+			const existing = buildWorkspace({
+				settings: { enabled_modules: ['work', 'notetaker'] },
+			})
+			const { app, mockResults } = setupAppWithEnv()
+			mockResults.select = [existing]
+			mockResults.update = [existing]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${existing.id}`, {
+					settings: { enabled_modules: ['work', 'notetaker'] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(onEnable).not.toHaveBeenCalled()
+			expect(onDisable).not.toHaveBeenCalled()
+		})
+
+		it('does not invoke hooks when settings update does not touch enabled_modules', async () => {
+			const onEnable = vi.fn().mockResolvedValue(undefined)
+			const onDisable = vi.fn().mockResolvedValue(undefined)
+			registerModule(makeModule('notetaker', { onEnable, onDisable }))
+
+			const existing = buildWorkspace({
+				settings: { enabled_modules: ['work', 'notetaker'] },
+			})
+			const { app, mockResults } = setupAppWithEnv()
+			mockResults.select = [existing]
+			mockResults.update = [existing]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${existing.id}`, {
+					settings: { display_names: { insight: 'Signal' } },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(onEnable).not.toHaveBeenCalled()
+			expect(onDisable).not.toHaveBeenCalled()
+		})
+
+		it('does not fail the PATCH when onEnable throws', async () => {
+			const onEnable = vi.fn().mockRejectedValue(new Error('boom'))
+			registerModule(makeModule('notetaker', { onEnable }))
+
+			const existing = buildWorkspace({
+				settings: { enabled_modules: ['work'] },
+			})
+			const updated = {
+				...existing,
+				settings: { enabled_modules: ['work', 'notetaker'] },
+			}
+			const { app, mockResults } = setupAppWithEnv()
+			mockResults.select = [existing]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${existing.id}`, {
+					settings: { enabled_modules: ['work', 'notetaker'] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(onEnable).toHaveBeenCalledTimes(1)
+		})
+
+		it('skips modules that have no hooks', async () => {
+			registerModule(makeModule('hookless')) // no onEnable/onDisable
+
+			const existing = buildWorkspace({ settings: { enabled_modules: ['work'] } })
+			const updated = { ...existing, settings: { enabled_modules: ['work', 'hookless'] } }
+			const { app, mockResults } = setupAppWithEnv()
+			mockResults.select = [existing]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${existing.id}`, {
+					settings: { enabled_modules: ['work', 'hookless'] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
 		})
 	})
 

@@ -52,6 +52,14 @@ export interface McpToolResult {
 	content: Array<{ type: 'text'; text: string }>
 }
 
+/** Context passed to module lifecycle hooks */
+export interface ModuleLifecycleContext {
+	/** Workspace whose enabled_modules changed */
+	workspaceId: string
+	/** Actor that triggered the change */
+	actorId: string
+}
+
 /** Server-side module definition */
 export interface ModuleDefinition {
 	/** Unique module identifier, e.g. 'work', 'notetaker' */
@@ -68,6 +76,18 @@ export interface ModuleDefinition {
 	mcpTools?: McpToolDefinition[]
 	/** Default workspace settings this module contributes when first enabled */
 	defaultSettings?: ModuleDefaultSettings
+	/**
+	 * Called when a module id is newly added to workspace.settings.enabled_modules.
+	 * Must be idempotent — re-enabling must be a no-op. Typical usage: create
+	 * deterministically-named agents and triggers the module depends on.
+	 */
+	onEnable?: (env: ModuleEnv, ctx: ModuleLifecycleContext) => Promise<void>
+	/**
+	 * Called when a module id is removed from workspace.settings.enabled_modules.
+	 * Must be idempotent. Typical usage: tear down the agents and triggers created
+	 * by onEnable.
+	 */
+	onDisable?: (env: ModuleEnv, ctx: ModuleLifecycleContext) => Promise<void>
 }
 
 /** Default settings a module contributes to workspace settings when enabled */

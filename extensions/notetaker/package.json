@@ -23,7 +23,13 @@
 		}
 	},
 	"dependencies": {
-		"@maskin/module-sdk": "workspace:*"
+		"@hono/zod-openapi": "^0.18.0",
+		"@maskin/auth": "workspace:*",
+		"@maskin/db": "workspace:*",
+		"@maskin/module-sdk": "workspace:*",
+		"drizzle-orm": "^0.38.0",
+		"hono": "^4.12.12",
+		"zod": "^3.24.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0"
