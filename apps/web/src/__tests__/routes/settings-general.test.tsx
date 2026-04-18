@@ -25,6 +25,11 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: mockMutate, isPending: false }),
 }))
 
+vi.mock('@/hooks/use-integrations', () => ({
+	useConnectIntegration: () => ({ mutate: vi.fn(), isPending: false }),
+	useIntegrations: () => ({ data: [], isLoading: false }),
+}))
+
 vi.mock('@/lib/theme', () => ({
 	useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
 }))
@@ -43,7 +48,7 @@ vi.mock('@maskin/module-sdk', () => ({
 }))
 
 vi.mock('sonner', () => ({
-	toast: { error: vi.fn() },
+	toast: { error: vi.fn(), success: vi.fn() },
 }))
 
 vi.mock('@/components/shared/route-error', () => ({
