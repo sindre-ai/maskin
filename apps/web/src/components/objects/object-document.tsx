@@ -14,7 +14,7 @@ import type { ActorResponse, EventResponse, ObjectResponse, RelationshipResponse
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, Trash2 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
@@ -22,7 +22,9 @@ import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { StatusBadge } from '../shared/status-badge'
+import { TableOfContents } from '../shared/table-of-contents'
 import { TypeBadge } from '../shared/type-badge'
+import { KnowledgeStatusBanner } from './knowledge-status-banner'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectActionBanner } from './object-action-banner'
@@ -60,6 +62,8 @@ export function ObjectDocumentView({
 	showSaved = false,
 }: ObjectDocumentViewProps) {
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
+	const contentRef = useRef<HTMLDivElement>(null)
+	const isKnowledge = object.type === 'knowledge'
 
 	const handleTitleBlur = useCallback(() => {
 		if (titleDraft !== object.title) {
@@ -81,10 +85,18 @@ export function ObjectDocumentView({
 		[onUpdateStatus],
 	)
 
-	return (
-		<div className="max-w-3xl mx-auto">
+	const documentBody = (
+		<>
 			{/* Action banner for pending decisions */}
 			<ObjectActionBanner objectId={object.id} workspaceId={workspaceId} />
+
+			{/* Knowledge-article draft/deprecated notice */}
+			<KnowledgeStatusBanner
+				objectId={object.id}
+				workspaceId={workspaceId}
+				status={object.status}
+				type={object.type}
+			/>
 
 			{/* Title */}
 			<div className="flex items-start gap-2 mb-2">
@@ -146,8 +158,13 @@ export function ObjectDocumentView({
 			</div>
 
 			{/* Content */}
-			<div className="mb-8">
-				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+			<div className="mb-8" ref={contentRef}>
+				<MarkdownContent
+					content={object.content ?? ''}
+					onChange={handleContentChange}
+					editable
+					workspaceId={workspaceId}
+				/>
 			</div>
 
 			{/* Linked objects */}
@@ -169,8 +186,21 @@ export function ObjectDocumentView({
 				events={events}
 				activeSessionId={object.activeSessionId}
 			/>
-		</div>
+		</>
 	)
+
+	if (isKnowledge) {
+		return (
+			<div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_14rem] gap-8">
+				<div className="min-w-0">{documentBody}</div>
+				<aside className="hidden lg:block pt-24">
+					<TableOfContents targetRef={contentRef} content={object.content ?? ''} />
+				</aside>
+			</div>
+		)
+	}
+
+	return <div className="max-w-3xl mx-auto">{documentBody}</div>
 }
 
 export function ObjectDocument({ object }: { object: ObjectResponse }) {

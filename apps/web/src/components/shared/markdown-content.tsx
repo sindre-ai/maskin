@@ -1,9 +1,63 @@
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/cn'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import rehypeSlug from 'rehype-slug'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
+import { visit } from 'unist-util-visit'
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const WIKILINK_RE = /\[\[([^\]]+)]]/g
+
+/**
+ * Transforms [[<uuid>]], [[<uuid>|label]], and [[Article title]] patterns in
+ * markdown text into link nodes. UUID targets navigate to the object's detail
+ * page; free-text targets open the knowledge-scoped search so the reader can
+ * find the intended article.
+ *
+ * Requires a workspaceId so the emitted paths are absolute within the workspace.
+ */
+function createRemarkWikiLinks(workspaceId: string) {
+	return () => (tree: unknown) => {
+		visit(tree as Parameters<typeof visit>[0], 'text', (node, index, parent) => {
+			if (!parent || typeof index !== 'number') return
+			const value = (node as { value: string }).value
+			if (!value.includes('[[')) return
+
+			const children: unknown[] = []
+			let lastIdx = 0
+			let match: RegExpExecArray | null
+			WIKILINK_RE.lastIndex = 0
+			// biome-ignore lint/suspicious/noAssignInExpressions: standard RegExp.exec pattern
+			while ((match = WIKILINK_RE.exec(value)) !== null) {
+				if (match.index > lastIdx) {
+					children.push({ type: 'text', value: value.slice(lastIdx, match.index) })
+				}
+				const raw = match[1]
+				const pipeIdx = raw.indexOf('|')
+				const target = pipeIdx >= 0 ? raw.slice(0, pipeIdx).trim() : raw.trim()
+				const label = pipeIdx >= 0 ? raw.slice(pipeIdx + 1).trim() : target
+				const url = UUID_RE.test(target)
+					? `/${workspaceId}/wiki/${target}`
+					: `/${workspaceId}/objects?type=knowledge&search=${encodeURIComponent(target)}`
+				children.push({
+					type: 'link',
+					url,
+					title: null,
+					children: [{ type: 'text', value: label }],
+				})
+				lastIdx = match.index + match[0].length
+			}
+			if (lastIdx === 0) return
+			if (lastIdx < value.length) {
+				children.push({ type: 'text', value: value.slice(lastIdx) })
+			}
+			;(parent as { children: unknown[] }).children.splice(index, 1, ...children)
+			return index + children.length
+		})
+	}
+}
 
 export function MarkdownContent({
 	content,
@@ -11,13 +65,27 @@ export function MarkdownContent({
 	editable = false,
 	className,
 	size = 'sm',
+	workspaceId,
 }: {
 	content: string
 	onChange?: (value: string) => void
 	editable?: boolean
 	className?: string
 	size?: 'sm' | 'xs'
+	/**
+	 * When provided, enables `[[Article]]` / `[[<uuid>]]` wikilink rendering.
+	 * Omit (or leave undefined) for contexts where wikilinks should pass through
+	 * as literal text.
+	 */
+	workspaceId?: string
 }) {
+	const remarkPlugins = useMemo(
+		() =>
+			workspaceId
+				? [remarkGfm, createRemarkWikiLinks(workspaceId), remarkBreaks]
+				: [remarkGfm, remarkBreaks],
+		[workspaceId],
+	)
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
 	const containerRef = useRef<HTMLDivElement>(null)
@@ -99,7 +167,9 @@ export function MarkdownContent({
 					size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
 				)}
 			>
-				<ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
+				<ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={[rehypeSlug]}>
+					{content}
+				</ReactMarkdown>
 			</div>
 		</div>
 	)
