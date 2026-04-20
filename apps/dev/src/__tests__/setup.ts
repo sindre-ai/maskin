@@ -113,6 +113,7 @@ function createChain(returnValue?: unknown): Record<string, unknown> {
 		'limit',
 		'offset',
 		'orderBy',
+		'groupBy',
 		'insert',
 		'values',
 		'returning',

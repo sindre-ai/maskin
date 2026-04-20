@@ -1,7 +1,11 @@
 import { AgentDocumentView } from '@/components/agents/agent-document'
-import { render, screen } from '@testing-library/react'
+import { render as baseRender, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { buildActorResponse, buildEventResponse, buildSessionResponse } from '../../factories'
+import { TestWrapper } from '../../setup'
+
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: TestWrapper })
 
 vi.mock('@/components/agents/instruction-log', () => ({
 	InstructionLog: () => null,
@@ -28,9 +32,23 @@ vi.mock('@/components/shared/relative-time', () => ({
 }))
 
 vi.mock('@/hooks/use-sessions', () => ({
+	useSession: () => ({ data: null }),
 	useSessionLatestLog: () => ({ data: null }),
 	useSessionErrorLog: () => ({ data: null }),
+	useSessionLogs: () => ({ data: [], isLoading: false }),
+	useActiveSessionsForActor: () => ({ data: [] }),
+	useActorSessions: () => ({ data: [] }),
 	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useUpdateActor: () => ({ mutate: vi.fn() }),
+	useDeleteActor: () => ({ mutate: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-events', () => ({
+	useEvents: () => ({ data: [] }),
+	useSessionAffectedObjects: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-duration', () => ({
