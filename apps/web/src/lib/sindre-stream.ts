@@ -20,6 +20,7 @@
  */
 
 export type SindreEvent =
+	| { kind: 'user'; text: string }
 	| { kind: 'text'; text: string; sessionId?: string; messageId?: string }
 	| {
 			kind: 'tool_use'

@@ -184,6 +184,7 @@ describe('useSindreOneShot — send', () => {
 		act(() => lastFesInit?.onmessage({ event: 'stdout', data: assistantLine }))
 
 		expect(result.current.events).toEqual([
+			{ kind: 'user', text: 'hi' },
 			{ kind: 'text', text: 'Looks good', sessionId: 'sess-y', messageId: 'msg_1' },
 		])
 	})

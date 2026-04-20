@@ -62,6 +62,7 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 
 		setStatus('starting')
 		setError(null)
+		setEvents((prev) => prev.concat({ kind: 'user', text: content }))
 
 		let session: { id: string }
 		try {

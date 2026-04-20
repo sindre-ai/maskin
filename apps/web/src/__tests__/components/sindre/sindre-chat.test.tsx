@@ -145,7 +145,9 @@ describe('SindreChat', () => {
 		expect(sendButton).not.toBeDisabled()
 		fireEvent.click(sendButton)
 
-		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hello sindre'))
+		await waitFor(() =>
+			expect(mockSend).toHaveBeenCalledWith('hello sindre', undefined, 'hello sindre'),
+		)
 		await waitFor(() => expect(textarea.value).toBe(''))
 	})
 
@@ -167,7 +169,9 @@ describe('SindreChat', () => {
 		fireEvent.change(textarea, { target: { value: 'hi there' } })
 		fireEvent.keyDown(textarea, { key: 'Enter' })
 
-		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hi there'))
+		await waitFor(() =>
+			expect(mockSend).toHaveBeenCalledWith('hi there', undefined, 'hi there'),
+		)
 		await waitFor(() => expect(textarea.value).toBe(''))
 	})
 
@@ -222,7 +226,7 @@ describe('SindreChat', () => {
 		fireEvent.change(textarea, { target: { value: 'hello' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
-		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hello'))
+		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hello', undefined, 'hello'))
 
 		// Mid-turn: spinner showing, send button disabled, Enter is ignored.
 		const spinnerButton = screen.getByRole('button', { name: /send message/i })
@@ -305,10 +309,14 @@ describe('SindreChat', () => {
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
 		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
-		expect(mockSend).toHaveBeenCalledWith('summarize these', [
-			{ kind: 'object', id: 'obj-1' },
-			{ kind: 'object', id: 'obj-2' },
-		])
+		expect(mockSend).toHaveBeenCalledWith(
+			'summarize these',
+			[
+				{ kind: 'object', id: 'obj-1' },
+				{ kind: 'object', id: 'obj-2' },
+			],
+			'summarize these',
+		)
 		expect(mockOneShotSend).not.toHaveBeenCalled()
 	})
 
@@ -336,6 +344,7 @@ describe('SindreChat', () => {
 				'\n',
 			),
 			[{ kind: 'notification', id: 'notif-1' }],
+			'what happened?',
 		)
 	})
 
@@ -618,7 +627,9 @@ describe('SindreChat', () => {
 			/>,
 		)
 
-		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('from bar'))
+		await waitFor(() =>
+			expect(mockSend).toHaveBeenCalledWith('from bar', undefined, 'from bar'),
+		)
 		expect(onConsumed).toHaveBeenCalledTimes(1)
 
 		// Same message re-arrives (e.g. before consumer has cleared it) — must

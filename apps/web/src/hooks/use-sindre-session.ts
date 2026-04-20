@@ -51,7 +51,11 @@ export interface UseSindreSessionResult {
 	status: SindreSessionStatus
 	events: SindreEvent[]
 	error: Error | null
-	send: (content: string, attachments?: SessionInputAttachment[]) => Promise<void>
+	send: (
+		content: string,
+		attachments?: SessionInputAttachment[],
+		displayText?: string,
+	) => Promise<void>
 	reset: () => void
 }
 
@@ -172,9 +176,10 @@ export function useSindreSession({
 	}, [enabled, workspaceId, sessionId])
 
 	const send = useCallback(
-		async (content: string, attachments?: SessionInputAttachment[]) => {
+		async (content: string, attachments?: SessionInputAttachment[], displayText?: string) => {
 			if (!sessionId) throw new Error('Sindre session is not ready yet')
 			if (!workspaceId) throw new Error('No workspace selected')
+			setEvents((prev) => prev.concat({ kind: 'user', text: displayText ?? content }))
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
 			await api.sessions.input(sessionId, body, workspaceId)
 		},

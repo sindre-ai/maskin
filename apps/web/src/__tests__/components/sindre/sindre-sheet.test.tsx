@@ -156,7 +156,9 @@ describe('SindreSheet', () => {
 		// Sheet opens and SindreChat consumes the pending message via its
 		// internal send path (to the persistent Sindre session in this case).
 		await screen.findByPlaceholderText('Message Sindre')
-		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hey sindre'))
+		await waitFor(() =>
+			expect(mockSend).toHaveBeenCalledWith('hey sindre', undefined, 'hey sindre'),
+		)
 	})
 
 	it('seeds selection from pendingAttachments and clears them on open', async () => {

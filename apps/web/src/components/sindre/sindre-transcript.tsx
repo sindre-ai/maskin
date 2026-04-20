@@ -78,6 +78,8 @@ function TranscriptError({ error }: { error: Error }) {
 
 function TranscriptRow({ event }: { event: SindreEvent }) {
 	switch (event.kind) {
+		case 'user':
+			return <UserMessageBlock text={event.text} />
 		case 'text':
 			return <AssistantTextBlock text={event.text} />
 		case 'thinking':
@@ -97,6 +99,16 @@ function TranscriptRow({ event }: { event: SindreEvent }) {
 		case 'debug':
 			return null
 	}
+}
+
+function UserMessageBlock({ text }: { text: string }) {
+	return (
+		<div className="flex justify-end">
+			<div className="max-w-[85%] whitespace-pre-wrap rounded-md bg-accent px-3 py-2 text-accent-foreground text-sm">
+				{text}
+			</div>
+		</div>
+	)
 }
 
 function AssistantTextBlock({ text }: { text: string }) {

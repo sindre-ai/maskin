@@ -167,9 +167,9 @@ export function SindreChat({
 							? buildOneShotActionPrompt(content, [], selectedNotifications)
 							: content
 					if (attachments) {
-						await sindre.send(enriched, attachments)
+						await sindre.send(enriched, attachments, content)
 					} else {
-						await sindre.send(enriched)
+						await sindre.send(enriched, undefined, content)
 					}
 				}
 			} catch (err) {
