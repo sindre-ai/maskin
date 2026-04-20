@@ -1,26 +1,33 @@
 import { execSync, spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
-// Load .env into process.env
-try {
-	const env = readFileSync('.env', 'utf-8')
-	for (const line of env.split('\n')) {
-		const trimmed = line.trim()
-		if (!trimmed || trimmed.startsWith('#')) continue
-		const idx = trimmed.indexOf('=')
-		if (idx === -1) continue
-		const key = trimmed.slice(0, idx)
-		const value = trimmed.slice(idx + 1)
-		if (!(key in process.env)) {
-			process.env[key] = value
+function loadEnv() {
+	try {
+		const env = readFileSync('.env', 'utf-8')
+		for (const line of env.split('\n')) {
+			const trimmed = line.trim()
+			if (!trimmed || trimmed.startsWith('#')) continue
+			const idx = trimmed.indexOf('=')
+			if (idx === -1) continue
+			const key = trimmed.slice(0, idx)
+			const value = trimmed.slice(idx + 1)
+			if (!(key in process.env)) {
+				process.env[key] = value
+			}
 		}
-	}
-} catch {}
+	} catch {}
+}
+
+loadEnv()
 
 function run(cmd) {
 	console.log(`> ${cmd}`)
 	execSync(cmd, { stdio: 'inherit', env: process.env })
 }
+
+// Ensure integration encryption key exists in .env before servers start.
+run('node scripts/ensure-encryption-key.mjs')
+loadEnv()
 
 // Start docker services
 run('docker-compose up -d postgres seaweedfs')

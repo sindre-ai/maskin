@@ -2136,6 +2136,31 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			}
 			const magicSuffix = magicParams.toString() ? `#${magicParams.toString()}` : ''
 			const workspaceUrl = `${frontendUrl}/${workspace.id}${magicSuffix}`
+			const keysUrl = `${frontendUrl}/${workspace.id}/settings/keys${magicSuffix}`
+
+			// Check whether the user has already imported Claude subscription credentials.
+			// Agent sessions can't run without them, so onboarding should ask the user to
+			// add them before the pipeline kicks off. Best-effort — ignore failures.
+			let claudeOauthConnected = false
+			try {
+				const oauthStatus = (await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
+					workspaceId: workspace.id,
+				})) as { connected?: boolean; valid?: boolean }
+				claudeOauthConnected = Boolean(oauthStatus.connected && oauthStatus.valid)
+			} catch {
+				// Best-effort; fall through to prompt the user.
+			}
+
+			const claudeCredsBlock = claudeOauthConnected
+				? ''
+				: `
+
+INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this BEFORE "How to get the machine moving". The agents in this workspace run Claude sessions, which need the user's Claude subscription credentials (you can't import them via MCP — the user has to paste them). Render EXACTLY this format:
+
+  🔑 Connect your Claude subscription
+     Open ${keysUrl} → "Import credentials" and paste the output of the terminal command shown there. Agents can't run until this is done.
+
+Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to the "How to get the machine moving" steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
 
 			const devPipelineGuidance =
 				chosen === 'development'
@@ -2173,7 +2198,7 @@ ${template.pitch}
 INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, excited message with these parts in order:
   1. An enthusiastic opener grounded in the template pitch above. Frame it as "you now have your own [AI team / execution machine / growth engine]" — make it feel like a capability unlock, not a config change. 2–3 sentences.
   2. The workspace URL above as a clickable link.
-  3. A "How to get the machine moving" section — see the template-specific guidance below.${devPipelineGuidance}`,
+  3. ${claudeOauthConnected ? 'A "How to get the machine moving" section — see the template-specific guidance below.' : 'A "Connect your Claude subscription" section (see guidance below) BEFORE the "How to get the machine moving" section.'}${claudeCredsBlock}${devPipelineGuidance}`,
 			)
 		},
 	)
