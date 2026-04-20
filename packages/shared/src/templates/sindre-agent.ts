@@ -102,7 +102,7 @@ export const SINDRE_DEFAULT = {
 	isSystem: true,
 	systemPrompt: SINDRE_SYSTEM_PROMPT,
 	llmProvider: 'anthropic',
-	llmConfig: { model: 'claude-sonnet-4-20250514' },
+	llmConfig: { model: 'claude-opus-4-7' },
 	tools: {
 		mcpServers: {
 			maskin: PLATFORM_MCP_PRESET,
