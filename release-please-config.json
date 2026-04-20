@@ -7,7 +7,8 @@
 			"changelog-path": "CHANGELOG.md",
 			"release-type": "node",
 			"bump-minor-pre-major": true,
-			"bump-patch-for-minor-pre-major": true
+			"bump-patch-for-minor-pre-major": true,
+			"bootstrap-sha": "47b42be842ff292413b46dced21fd4e5f2ca3176"
 		}
 	}
 }
