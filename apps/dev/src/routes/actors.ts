@@ -139,24 +139,51 @@ app.openapi(createActorRoute, async (c) => {
 
 	if (shouldCreateWorkspace) {
 		const defaultSettings = workspaceSettingsSchema.parse({})
-		const [workspace] = await db
-			.insert(workspaces)
-			.values({
-				name: `${body.name}'s Workspace`,
-				settings: defaultSettings,
-				createdBy: actor.id,
-			})
-			.returning()
+		const created = await db.transaction(async (tx) => {
+			const [workspace] = await tx
+				.insert(workspaces)
+				.values({
+					name: `${body.name}'s Workspace`,
+					settings: defaultSettings,
+					createdBy: actor.id,
+				})
+				.returning()
 
-		if (workspace) {
-			await db.insert(workspaceMembers).values({
+			if (!workspace) return null
+
+			await tx.insert(workspaceMembers).values({
 				workspaceId: workspace.id,
 				actorId: actor.id,
 				role: 'owner',
 			})
 
-			workspaceId = workspace.id
-		}
+			// Seed Sindre — the built-in meta-agent shipped with every workspace.
+			const [sindre] = await tx
+				.insert(actors)
+				.values({
+					type: SINDRE_DEFAULT.type,
+					name: SINDRE_DEFAULT.name,
+					isSystem: SINDRE_DEFAULT.isSystem,
+					systemPrompt: SINDRE_DEFAULT.systemPrompt,
+					llmProvider: SINDRE_DEFAULT.llmProvider,
+					llmConfig: SINDRE_DEFAULT.llmConfig,
+					tools: SINDRE_DEFAULT.tools,
+					createdBy: actor.id,
+				})
+				.returning()
+
+			if (!sindre) throw new Error('Failed to seed Sindre actor')
+
+			await tx.insert(workspaceMembers).values({
+				workspaceId: workspace.id,
+				actorId: sindre.id,
+				role: 'member',
+			})
+
+			return workspace
+		})
+
+		if (created) workspaceId = created.id
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field
