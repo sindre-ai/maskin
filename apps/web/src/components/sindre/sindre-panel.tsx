@@ -1,0 +1,137 @@
+import { SindreChat } from '@/components/sindre/sindre-chat'
+import { SindreSidebarProvider } from '@/components/sindre/sindre-sidebar-provider'
+import { Button } from '@/components/ui/button'
+import { Sidebar, SidebarContent, SidebarHeader } from '@/components/ui/sidebar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { type SindreAttachment, useSindre } from '@/lib/sindre-context'
+import {
+	EMPTY_SINDRE_SELECTION,
+	type SindreSelectionAgent,
+	type SindreSelectionNotification,
+	type SindreSelectionObject,
+	sindreSelectionReducer,
+} from '@/lib/sindre-selection'
+import { Pin, PinOff, X } from 'lucide-react'
+import { useEffect, useReducer } from 'react'
+
+interface SindrePanelProps {
+	workspaceId: string
+	sindreActorId: string | null
+}
+
+/**
+ * Right-side Sindre surface. Wraps `<SindreChat surface="sheet" />` in a
+ * shadcn `<Sidebar>` inside a local provider that never reserves horizontal
+ * space in the main page layout (so the panel floats as an overlay by
+ * default). When the user clicks the pin button, the route layout applies a
+ * matching right margin to the main content so the panel pushes content
+ * aside like a traditional sidebar.
+ */
+export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
+	const {
+		open,
+		setOpen,
+		pendingAttachments,
+		clearPendingAttachments,
+		pendingMessage,
+		clearPendingMessage,
+		pinned,
+		setPinned,
+	} = useSindre()
+	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
+
+	useEffect(() => {
+		if (pendingAttachments.length === 0) return
+		for (const attachment of pendingAttachments) {
+			const action = attachmentToAction(attachment)
+			if (action) dispatch(action)
+		}
+		clearPendingAttachments()
+	}, [pendingAttachments, clearPendingAttachments])
+
+	return (
+		<SindreSidebarProvider
+			open={open}
+			onOpenChange={setOpen}
+			style={{ '--sidebar-width': '28rem' } as React.CSSProperties}
+		>
+			<Sidebar side="right" collapsible="offcanvas" className="pointer-events-auto">
+				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
+					<h2 className="font-semibold text-base">Sindre</h2>
+					<div className="flex items-center gap-1">
+						<PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7"
+							onClick={() => setOpen(false)}
+							aria-label="Close Sindre"
+						>
+							<X size={15} />
+						</Button>
+					</div>
+				</SidebarHeader>
+				<SidebarContent className="min-h-0 flex-1 p-3">
+					<SindreChat
+						workspaceId={workspaceId}
+						sindreActorId={sindreActorId}
+						surface="sheet"
+						selection={selection}
+						onDispatchSelection={dispatch}
+						autoSendMessage={pendingMessage}
+						onAutoSendConsumed={clearPendingMessage}
+					/>
+				</SidebarContent>
+			</Sidebar>
+		</SindreSidebarProvider>
+	)
+}
+
+function PinToggle({ pinned, onToggle }: { pinned: boolean; onToggle: () => void }) {
+	const label = pinned ? 'Unpin sidebar' : 'Pin sidebar'
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					className="h-7 w-7"
+					onClick={onToggle}
+					aria-label={label}
+					aria-pressed={pinned}
+				>
+					{pinned ? <PinOff size={15} /> : <Pin size={15} />}
+				</Button>
+			</TooltipTrigger>
+			<TooltipContent>{label}</TooltipContent>
+		</Tooltip>
+	)
+}
+
+function attachmentToAction(attachment: SindreAttachment) {
+	if (attachment.kind === 'agent') {
+		const agent: SindreSelectionAgent = {
+			id: attachment.id,
+			name: attachment.name ?? null,
+		}
+		return { type: 'add_agent' as const, agent }
+	}
+	if (attachment.kind === 'object') {
+		const object: SindreSelectionObject = {
+			id: attachment.id,
+			title: attachment.title ?? null,
+			type: attachment.type ?? null,
+		}
+		return { type: 'add_object' as const, object }
+	}
+	if (attachment.kind === 'notification') {
+		const notification: SindreSelectionNotification = {
+			id: attachment.id,
+			title: attachment.title ?? null,
+		}
+		return { type: 'add_notification' as const, notification }
+	}
+	return null
+}

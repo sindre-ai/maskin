@@ -41,11 +41,19 @@ export interface SindreContextValue {
 	 */
 	sessionId: string | null
 	setSessionId: (id: string | null) => void
+	/**
+	 * When true the panel docks as a traditional sidebar that pushes page
+	 * content aside; when false it floats as an overlay sheet on top of
+	 * content. Cross-workspace UI preference, persisted in localStorage.
+	 */
+	pinned: boolean
+	setPinned: (value: boolean) => void
 }
 
 const SindreContext = createContext<SindreContextValue | null>(null)
 
 const SESSION_ID_STORAGE_PREFIX = 'maskin-sindre-session-id:'
+const PINNED_STORAGE_KEY = 'maskin-sindre-pinned'
 
 function storageKey(workspaceId: string): string {
 	return `${SESSION_ID_STORAGE_PREFIX}${workspaceId}`
@@ -69,6 +77,20 @@ function writeStoredSessionId(workspaceId: string, id: string | null): void {
 	} catch {}
 }
 
+function readStoredPinned(): boolean {
+	try {
+		return localStorage.getItem(PINNED_STORAGE_KEY) === 'true'
+	} catch {
+		return false
+	}
+}
+
+function writeStoredPinned(value: boolean): void {
+	try {
+		localStorage.setItem(PINNED_STORAGE_KEY, value ? 'true' : 'false')
+	} catch {}
+}
+
 interface SindreProviderProps {
 	workspaceId: string
 	children: ReactNode
@@ -81,6 +103,7 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 	const [sessionId, setSessionIdState] = useState<string | null>(() =>
 		readStoredSessionId(workspaceId),
 	)
+	const [pinned, setPinnedState] = useState<boolean>(() => readStoredPinned())
 
 	// Swap to the target workspace's stored session id when the workspace
 	// changes. Reset transient UI state so attachments and open state don't
@@ -118,6 +141,11 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 		[workspaceId],
 	)
 
+	const setPinned = useCallback((value: boolean) => {
+		setPinnedState(value)
+		writeStoredPinned(value)
+	}, [])
+
 	const value = useMemo<SindreContextValue>(
 		() => ({
 			open,
@@ -129,6 +157,8 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 			clearPendingMessage,
 			sessionId,
 			setSessionId,
+			pinned,
+			setPinned,
 		}),
 		[
 			open,
@@ -140,6 +170,8 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 			clearPendingMessage,
 			sessionId,
 			setSessionId,
+			pinned,
+			setPinned,
 		],
 	)
 

@@ -1,9 +1,10 @@
-import { SindreSheet } from '@/components/sindre/sindre-sheet'
+import { SindrePanel } from '@/components/sindre/sindre-panel'
 import type { UseSindreOneShotResult } from '@/hooks/use-sindre-one-shot'
 import type { UseSindreSessionResult } from '@/hooks/use-sindre-session'
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTestQueryClient } from '../../setup'
@@ -52,6 +53,18 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
 }))
 Element.prototype.scrollIntoView = vi.fn()
 
+// jsdom doesn't provide matchMedia; the shadcn Sidebar primitive calls it via
+// useIsMobile(). Default to desktop (non-matching) so the Sidebar renders as
+// a fixed panel instead of a mobile Sheet wrapper.
+Object.defineProperty(window, 'matchMedia', {
+	writable: true,
+	value: vi.fn().mockReturnValue({
+		matches: false,
+		addEventListener: vi.fn(),
+		removeEventListener: vi.fn(),
+	}),
+})
+
 beforeEach(() => {
 	mockSend.mockClear()
 	mockOneShotSend.mockClear()
@@ -91,7 +104,7 @@ function Opener({ attachments }: { attachments?: OpenerAttachments }) {
 	return (
 		<>
 			<button type="button" onClick={() => setOpen(true)}>
-				open-sheet
+				open-panel
 			</button>
 			<button type="button" onClick={() => openWithContext(attachments ?? [])}>
 				open-with-context
@@ -115,26 +128,35 @@ function OpenerWithMessage({
 	)
 }
 
-describe('SindreSheet', () => {
-	it('renders nothing visible while closed', () => {
+function PinState() {
+	const { pinned } = useSindre()
+	return <span data-testid="pin-state">{pinned ? 'pinned' : 'unpinned'}</span>
+}
+
+describe('SindrePanel', () => {
+	it('starts collapsed so it acts like an overlay sheet by default', () => {
 		render(
 			<Harness>
-				<SindreSheet workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
-		expect(screen.queryByPlaceholderText('Message Sindre')).not.toBeInTheDocument()
+		const panel = document.querySelector('[data-slot="sidebar-container"], [data-state]')
+		// The Sidebar primitive exposes data-state="collapsed" on its outer
+		// group wrapper when closed (offcanvas translates the panel off-screen).
+		const stated = document.querySelector('[data-state="collapsed"]')
+		expect(stated ?? panel).not.toBeNull()
 	})
 
-	it('mounts SindreChat inside the sheet when opened', async () => {
+	it('mounts SindreChat inside the panel when opened', async () => {
 		render(
 			<Harness>
 				<Opener />
-				<SindreSheet workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
 		act(() => {
-			screen.getByText('open-sheet').click()
+			screen.getByText('open-panel').click()
 		})
 
 		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
@@ -145,7 +167,7 @@ describe('SindreSheet', () => {
 			<Harness>
 				<Opener attachments={[]} />
 				<OpenerWithMessage message="hey sindre" attachments={[]} />
-				<SindreSheet workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -153,8 +175,6 @@ describe('SindreSheet', () => {
 			screen.getByText('open-with-message').click()
 		})
 
-		// Sheet opens and SindreChat consumes the pending message via its
-		// internal send path (to the persistent Sindre session in this case).
 		await screen.findByPlaceholderText('Message Sindre')
 		await waitFor(() =>
 			expect(mockSend).toHaveBeenCalledWith('hey sindre', undefined, 'hey sindre'),
@@ -170,7 +190,7 @@ describe('SindreSheet', () => {
 						{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
 					]}
 				/>
-				<SindreSheet workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -178,8 +198,6 @@ describe('SindreSheet', () => {
 			screen.getByText('open-with-context').click()
 		})
 
-		// Composer placeholder swaps to the selected agent's name and chips
-		// render for both seeded attachments.
 		expect(await screen.findByPlaceholderText('Message Code Reviewer')).toBeInTheDocument()
 		expect(screen.getByText('Code Reviewer')).toBeInTheDocument()
 		expect(screen.getByText('Bet Alpha')).toBeInTheDocument()
@@ -191,7 +209,7 @@ describe('SindreSheet', () => {
 				<Opener
 					attachments={[{ kind: 'notification', id: 'notif-1', title: 'Build failed on main' }]}
 				/>
-				<SindreSheet workspaceId="ws-1" sindreActorId="actor-sindre" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -199,10 +217,53 @@ describe('SindreSheet', () => {
 			screen.getByText('open-with-context').click()
 		})
 
-		// Composer opens with the notification chip visible — no agent picked,
-		// so the placeholder stays the default Sindre one.
 		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
 		expect(screen.getByText('Build failed on main')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Remove Build failed on main/ })).toBeInTheDocument()
+	})
+
+	it('toggles pinned state via the pin button and persists the preference', async () => {
+		const user = userEvent.setup()
+		render(
+			<Harness>
+				<Opener />
+				<PinState />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-panel').click()
+		})
+
+		expect(screen.getByTestId('pin-state')).toHaveTextContent('unpinned')
+		const pinBtn = await screen.findByRole('button', { name: 'Pin sidebar' })
+		await user.click(pinBtn)
+
+		expect(screen.getByTestId('pin-state')).toHaveTextContent('pinned')
+		expect(localStorage.getItem('maskin-sindre-pinned')).toBe('true')
+		// After toggling, the button's label flips to the unpin affordance.
+		expect(screen.getByRole('button', { name: 'Unpin sidebar' })).toBeInTheDocument()
+	})
+
+	it('closes the panel via the close button', async () => {
+		const user = userEvent.setup()
+		render(
+			<Harness>
+				<Opener />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-panel').click()
+		})
+
+		const closeBtn = await screen.findByRole('button', { name: 'Close Sindre' })
+		await user.click(closeBtn)
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-state="collapsed"]')).not.toBeNull()
+		})
 	})
 })

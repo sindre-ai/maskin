@@ -88,7 +88,7 @@ test.describe('Sindre chat surfaces', () => {
 		await page.goto(`/${account.workspaceId}`)
 		await openSheetFromSidebar(page)
 
-		const sheet = page.locator('[role="dialog"] [data-surface="sheet"]')
+		const sheet = page.locator('[data-surface="sheet"]')
 		await expect(sheet).toBeVisible()
 
 		// Picker buttons unlock once the sheet's Sindre session reaches
@@ -211,7 +211,7 @@ test.describe('Sindre chat surfaces', () => {
 		await expect(page.getByRole('heading', { name: 'Sindre' })).toBeVisible()
 
 		const chips = page
-			.locator('[role="dialog"] [data-surface="sheet"]')
+			.locator('[data-surface="sheet"]')
 			.getByRole('list', { name: 'Selected context' })
 		await expect(chips.getByText('Backups failing in prod')).toBeVisible()
 	})

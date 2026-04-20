@@ -2,16 +2,18 @@ import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
-import { SindreSheet } from '@/components/sindre/sindre-sheet'
+import { SindrePanel } from '@/components/sindre/sindre-panel'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { PageHeaderProvider } from '@/lib/page-header-context'
-import { SindreProvider } from '@/lib/sindre-context'
+import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
-import { useCallback, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useMemo, useState } from 'react'
+
+const SINDRE_PANEL_WIDTH = '28rem'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
 
@@ -81,19 +83,40 @@ function WorkspaceLayout() {
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<SindreProvider workspaceId={workspaceId}>
 				<PageHeaderProvider>
-					<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-						<AppSidebar />
-						<SidebarInset className="min-w-0">
-							<Header />
-							<div className="flex flex-col flex-1 overflow-auto p-8">
-								<Outlet />
-							</div>
-						</SidebarInset>
-					</SidebarProvider>
+					<SindrePinShell>
+						<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+							<AppSidebar />
+							<SidebarInset className="min-w-0">
+								<Header />
+								<div className="flex flex-col flex-1 overflow-auto p-8">
+									<Outlet />
+								</div>
+							</SidebarInset>
+						</SidebarProvider>
+					</SindrePinShell>
 				</PageHeaderProvider>
 				<CommandPalette />
-				<SindreSheet workspaceId={workspaceId} sindreActorId={sindreActorId} />
+				<SindrePanel workspaceId={workspaceId} sindreActorId={sindreActorId} />
 			</SindreProvider>
 		</WorkspaceContext.Provider>
+	)
+}
+
+/**
+ * Wraps the main layout so that when Sindre is pinned AND open, the layout
+ * gets a right margin equal to the Sindre panel width — the panel is always
+ * fixed-positioned, so this margin is what makes it "push content aside"
+ * instead of floating over it.
+ */
+function SindrePinShell({ children }: { children: ReactNode }) {
+	const { pinned, open } = useSindre()
+	const pushed = pinned && open
+	return (
+		<div
+			className="transition-[margin] duration-200 ease-linear"
+			style={{ marginRight: pushed ? SINDRE_PANEL_WIDTH : 0 }}
+		>
+			{children}
+		</div>
 	)
 }
