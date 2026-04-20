@@ -246,6 +246,60 @@ describe('SindrePanel', () => {
 		expect(screen.getByRole('button', { name: 'Unpin sidebar' })).toBeInTheDocument()
 	})
 
+	it('closes on outside click when unpinned', async () => {
+		render(
+			<Harness>
+				<Opener />
+				<button type="button" data-testid="outside">
+					outside
+				</button>
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-panel').click()
+		})
+
+		// Panel is open (open state flipped) and unpinned by default.
+		await screen.findByPlaceholderText('Message Sindre')
+
+		act(() => {
+			screen.getByTestId('outside').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+		})
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-state="collapsed"]')).not.toBeNull()
+		})
+	})
+
+	it('stays open on outside click when pinned', async () => {
+		const user = userEvent.setup()
+		render(
+			<Harness>
+				<Opener />
+				<button type="button" data-testid="outside">
+					outside
+				</button>
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-panel').click()
+		})
+
+		await screen.findByPlaceholderText('Message Sindre')
+		await user.click(screen.getByRole('button', { name: 'Pin sidebar' }))
+
+		act(() => {
+			screen.getByTestId('outside').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+		})
+
+		// Panel stays expanded — no collapsed state element appears.
+		expect(document.querySelector('[data-state="expanded"]')).not.toBeNull()
+	})
+
 	it('closes the panel via the close button', async () => {
 		const user = userEvent.setup()
 		render(

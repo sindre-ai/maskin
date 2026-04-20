@@ -12,7 +12,7 @@ import {
 	sindreSelectionReducer,
 } from '@/lib/sindre-selection'
 import { Pin, PinOff, X } from 'lucide-react'
-import { useEffect, useReducer } from 'react'
+import { useEffect, useReducer, useRef } from 'react'
 
 interface SindrePanelProps {
 	workspaceId: string
@@ -39,6 +39,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		setPinned,
 	} = useSindre()
 	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
+	const panelRef = useRef<HTMLDivElement | null>(null)
 
 	useEffect(() => {
 		if (pendingAttachments.length === 0) return
@@ -49,13 +50,39 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		clearPendingAttachments()
 	}, [pendingAttachments, clearPendingAttachments])
 
+	// In overlay mode (unpinned), close on outside click — matches the prior
+	// Sheet behaviour. When pinned, Sindre is docked and should survive clicks
+	// in the reflowed main content. The picker popovers and tooltips render in
+	// portals rooted at document.body; treat anything inside [data-radix-popper-content-wrapper]
+	// or other Radix portal containers as "inside" so opening a picker doesn't
+	// close the panel.
+	useEffect(() => {
+		if (!open || pinned) return
+		function handleMouseDown(event: MouseEvent) {
+			const target = event.target
+			if (!(target instanceof Node)) return
+			if (panelRef.current?.contains(target)) return
+			if (target instanceof Element && target.closest('[data-radix-popper-content-wrapper]')) {
+				return
+			}
+			setOpen(false)
+		}
+		document.addEventListener('mousedown', handleMouseDown)
+		return () => document.removeEventListener('mousedown', handleMouseDown)
+	}, [open, pinned, setOpen])
+
 	return (
 		<SindreSidebarProvider
 			open={open}
 			onOpenChange={setOpen}
 			style={{ '--sidebar-width': '28rem' } as React.CSSProperties}
 		>
-			<Sidebar side="right" collapsible="offcanvas" className="pointer-events-auto">
+			<Sidebar
+				ref={panelRef}
+				side="right"
+				collapsible="offcanvas"
+				className="pointer-events-auto"
+			>
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
 					<h2 className="font-semibold text-base">Sindre</h2>
 					<div className="flex items-center gap-1">
