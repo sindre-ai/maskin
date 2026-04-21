@@ -42,6 +42,16 @@ function ObjectsApp() {
 		[callTool],
 	)
 
+	const handleUpdateOwner = useCallback(
+		(obj: ObjectResponse) => async (owner: string | null) => {
+			setLocalObject({ ...obj, owner })
+			const result = await callTool('update_object', { id: obj.id, owner })
+			const text = result.content?.find((c) => c.type === 'text')?.text ?? null
+			if (text) setLocalObject(JSON.parse(text))
+		},
+		[callTool],
+	)
+
 	const handleDelete = useCallback(
 		(obj: ObjectResponse) => async () => {
 			await callTool('delete_object', { id: obj.id })
@@ -79,6 +89,7 @@ function ObjectsApp() {
 						onUpdateTitle={handleUpdateTitle(obj)}
 						onUpdateContent={handleUpdateContent(obj)}
 						onUpdateStatus={handleUpdateStatus(obj)}
+						onUpdateOwner={handleUpdateOwner(obj)}
 						onDelete={handleDelete(obj)}
 					/>
 				</div>
@@ -97,6 +108,7 @@ function ObjectsApp() {
 						onUpdateTitle={handleUpdateTitle(defaultObj)}
 						onUpdateContent={handleUpdateContent(defaultObj)}
 						onUpdateStatus={handleUpdateStatus(defaultObj)}
+						onUpdateOwner={handleUpdateOwner(defaultObj)}
 						onDelete={handleDelete(defaultObj)}
 					/>
 				</div>
