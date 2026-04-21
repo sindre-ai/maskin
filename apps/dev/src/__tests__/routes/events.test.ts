@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { buildEvent, buildObject } from '../factories'
+import { buildEvent } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: eventsRoutes } = await import('../../routes/events')
 
@@ -113,7 +113,10 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'Hello world' },
 			})
-			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
 			// First select: object lookup, then transaction insert returns comment
 			mockResults.selectQueue = [[{ workspaceId: wsId }]]
 			mockResults.insert = [commentEvent]
@@ -130,10 +133,11 @@ describe('Events Routes', () => {
 			expect(res.status).toBe(201)
 			const body = await res.json()
 			expect(body.action).toBe('commented')
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('returns 404 when target object not found', async () => {
-			const { app } = createTestApp(eventsRoutes, '/api/events')
+			const { app } = createSessionTestApp(eventsRoutes, '/api/events')
 
 			const res = await app.request(
 				jsonRequest(
@@ -149,7 +153,7 @@ describe('Events Routes', () => {
 
 		it('returns 404 when object belongs to different workspace', async () => {
 			const differentWsId = randomUUID()
-			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
 			// Object found but belongs to different workspace
 			mockResults.select = [{ workspaceId: differentWsId }]
 
@@ -165,9 +169,10 @@ describe('Events Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		it('creates notifications for @mentioned agent actors', async () => {
+		it('creates notifications and spawns a session for @mentioned agent actors', async () => {
 			const objectId = randomUUID()
 			const agentId = randomUUID()
+			const notificationId = randomUUID()
 			const commentEvent = buildEvent({
 				workspaceId: wsId,
 				action: 'commented',
@@ -176,7 +181,7 @@ describe('Events Routes', () => {
 				data: { content: 'Hey @agent', mentions: [agentId] },
 			})
 			const notification = {
-				id: randomUUID(),
+				id: notificationId,
 				workspaceId: wsId,
 				type: 'needs_input',
 				title: '@mentioned by comment',
@@ -186,7 +191,11 @@ describe('Events Routes', () => {
 				objectId,
 				status: 'pending',
 			}
-			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 			// Object lookup, then inside transaction: insert comment, select mentioned actors, insert notifications, insert notification events
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
@@ -204,6 +213,21 @@ describe('Events Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(sessionManager.createSession).toHaveBeenCalledWith(
+				wsId,
+				expect.objectContaining({
+					actorId: agentId,
+					actionPrompt: expect.stringContaining('Hey @agent'),
+					createdBy: 'test-actor-id',
+					config: expect.objectContaining({
+						mention: expect.objectContaining({
+							object_id: objectId,
+							notification_id: notificationId,
+						}),
+					}),
+				}),
+			)
 		})
 
 		it('creates no notifications when mentions array is empty', async () => {
@@ -215,7 +239,10 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'No mentions here', mentions: [] },
 			})
-			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
 			mockResults.selectQueue = [[{ workspaceId: wsId }]]
 			mockResults.insert = [commentEvent]
 
@@ -231,9 +258,10 @@ describe('Events Routes', () => {
 			expect(res.status).toBe(201)
 			const body = await res.json()
 			expect(body.action).toBe('commented')
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
-		it('creates batch notifications for multiple agent mentions', async () => {
+		it('creates batch notifications and spawns a session per mentioned agent', async () => {
 			const objectId = randomUUID()
 			const agent1Id = randomUUID()
 			const agent2Id = randomUUID()
@@ -266,7 +294,11 @@ describe('Events Routes', () => {
 				objectId,
 				status: 'pending',
 			}
-			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[
@@ -286,9 +318,15 @@ describe('Events Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			const calledActorIds = (
+				sessionManager.createSession as ReturnType<typeof vi.fn>
+			).mock.calls.map((call) => call[1].actorId)
+			expect(calledActorIds).toContain(agent1Id)
+			expect(calledActorIds).toContain(agent2Id)
 		})
 
-		it('skips notifications when mentions only contain human actors', async () => {
+		it('skips notifications and sessions when mentions only contain human actors', async () => {
 			const objectId = randomUUID()
 			const humanId = randomUUID()
 			const commentEvent = buildEvent({
@@ -298,7 +336,10 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'Hey @human', mentions: [humanId] },
 			})
-			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[{ id: humanId, type: 'human', name: 'Alice' }],
@@ -315,6 +356,54 @@ describe('Events Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('still returns 201 when agent session creation fails asynchronously', async () => {
+			const objectId = randomUUID()
+			const agentId = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Hey @agent', mentions: [agentId] },
+			})
+			const notification = {
+				id: randomUUID(),
+				workspaceId: wsId,
+				type: 'needs_input',
+				title: '@mentioned by comment',
+				content: 'Hey @agent',
+				sourceActorId: 'test-actor-id',
+				targetActorId: agentId,
+				objectId,
+				status: 'pending',
+			}
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('container build failed'),
+			)
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }],
+				[{ id: agentId, type: 'agent', name: 'Bot' }],
+			]
+			mockResults.insert = [commentEvent, notification]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'Hey @agent', mentions: [agentId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 		})
 	})
 })
