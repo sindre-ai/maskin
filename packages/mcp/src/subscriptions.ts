@@ -106,6 +106,24 @@ export function parseSSEChunk(buffer: string): { frames: ParsedSSEFrame[]; resid
 
 type DeliverFn = (sub: Subscription, event: MaskinEvent) => Promise<void>
 type WarnFn = (workspaceId: string, level: 'warning' | 'error', message: string) => Promise<void>
+type TerminalFn = (workspaceId: string) => void
+
+class SSEStatusError extends Error {
+	constructor(
+		public readonly status: number,
+		message?: string,
+	) {
+		super(message ?? `SSE connect failed: ${status}`)
+		this.name = 'SSEStatusError'
+	}
+}
+
+// Treat all 4xx as terminal EXCEPT 408 (Request Timeout) and 429 (Too Many
+// Requests), which are transient. 5xx is always transient.
+function isTerminalStatus(status: number): boolean {
+	if (status === 408 || status === 429) return false
+	return status >= 400 && status < 500
+}
 
 class WorkspaceStream {
 	private readonly subs = new Map<string, Subscription>()
@@ -123,6 +141,7 @@ class WorkspaceStream {
 		private readonly config: McpConfig,
 		private readonly deliver: DeliverFn,
 		private readonly warn: WarnFn,
+		private readonly onTerminal: TerminalFn,
 	) {}
 
 	addSubscription(sub: Subscription, filter: EventFilter) {
@@ -165,6 +184,7 @@ class WorkspaceStream {
 	}
 
 	private async run() {
+		let terminated = false
 		try {
 			while (!this.stopped && this.subs.size > 0) {
 				try {
@@ -174,17 +194,20 @@ class WorkspaceStream {
 				} catch (err) {
 					if (this.stopped) break
 					if (isAbortError(err)) break
-					if (isAuthError(err)) {
+					if (err instanceof SSEStatusError && isTerminalStatus(err.status)) {
+						const authLike = err.status === 401 || err.status === 403
 						console.error(
-							`[maskin-mcp] SSE auth error (workspace ${this.workspaceId}):`,
-							(err as Error).message,
+							`[maskin-mcp] SSE terminal status ${err.status} (workspace ${this.workspaceId})`,
 						)
 						await this.warn(
 							this.workspaceId,
 							'error',
-							'Event subscription ended: authorization failed.',
+							authLike
+								? 'Event subscription ended: authorization failed.'
+								: `Event subscription ended: server returned ${err.status}.`,
 						)
 						for (const id of [...this.subs.keys()]) this.removeSubscription(id)
+						terminated = true
 						break
 					}
 					console.error(
@@ -197,6 +220,7 @@ class WorkspaceStream {
 			}
 		} finally {
 			this.runPromise = null
+			if (terminated) this.onTerminal(this.workspaceId)
 		}
 	}
 
@@ -232,7 +256,7 @@ class WorkspaceStream {
 		})
 
 		if (!response.ok) {
-			throw new Error(`SSE connect failed: ${response.status}`)
+			throw new SSEStatusError(response.status)
 		}
 
 		this.reconnectAttempts = 0
@@ -315,11 +339,6 @@ function isAbortError(err: unknown): boolean {
 	return err instanceof Error && (err.name === 'AbortError' || err.message.includes('abort'))
 }
 
-function isAuthError(err: unknown): boolean {
-	if (!(err instanceof Error)) return false
-	return /\b40[13]\b/.test(err.message)
-}
-
 export function createSubscriptionRegistry(
 	config: McpConfig,
 	mcpServer: McpServer,
@@ -354,6 +373,13 @@ export function createSubscriptionRegistry(
 		}
 	}
 
+	const onTerminal: TerminalFn = (workspaceId) => {
+		if (!streams.delete(workspaceId)) return
+		for (const [subId, wsId] of subToWorkspace) {
+			if (wsId === workspaceId) subToWorkspace.delete(subId)
+		}
+	}
+
 	return {
 		add(workspaceId, filter) {
 			const sub: Subscription = {
@@ -366,7 +392,7 @@ export function createSubscriptionRegistry(
 			}
 			let stream = streams.get(workspaceId)
 			if (!stream) {
-				stream = new WorkspaceStream(workspaceId, config, deliver, warn)
+				stream = new WorkspaceStream(workspaceId, config, deliver, warn, onTerminal)
 				streams.set(workspaceId, stream)
 			}
 			stream.addSubscription(sub, filter)

@@ -466,4 +466,77 @@ describe('reconnection', () => {
 		errorSpy.mockRestore()
 		await registry.shutdownAll()
 	})
+
+	it('tears down subscriptions on a 404 (wrong endpoint)', async () => {
+		const mock = makeMockServer()
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('not found', { status: 404 }))
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+		const registry = createSubscriptionRegistry(config, mock as never)
+		registry.add('ws-1', {})
+
+		await new Promise((r) => setTimeout(r, 50))
+
+		expect(registry.list()).toHaveLength(0)
+		const errorCall = mock._send.mock.calls.find((c) => c[0].level === 'error')
+		expect(errorCall?.[0].data.message).toContain('404')
+
+		errorSpy.mockRestore()
+		await registry.shutdownAll()
+	})
+
+	it('does NOT tear down on a 429 (rate limit) — retries with backoff', async () => {
+		const mock = makeMockServer()
+		const hanging = makeHangingSSEResponse().response
+		// First response: 429. Second response: hangs (successful reconnect).
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+			.mockResolvedValue(hanging)
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+		const registry = createSubscriptionRegistry(config, mock as never)
+		registry.add('ws-1', {})
+
+		// First connect fails with 429, waits 1s backoff, reconnects successfully.
+		await new Promise((r) => setTimeout(r, 1200))
+
+		expect(registry.list()).toHaveLength(1)
+		// No error-level logging notification — 429 is transient, not terminal.
+		const errorCall = mock._send.mock.calls.find((c) => c[0].level === 'error')
+		expect(errorCall).toBeUndefined()
+
+		errorSpy.mockRestore()
+		await registry.shutdownAll()
+	}, 3000)
+
+	it('cleans up registry state after terminal teardown — fresh add opens a new stream', async () => {
+		const mock = makeMockServer()
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			// First add: terminal 401.
+			.mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))
+			// Second add: hangs.
+			.mockResolvedValue(makeHangingSSEResponse().response)
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+		const registry = createSubscriptionRegistry(config, mock as never)
+		const stale = registry.add('ws-1', {})
+
+		await new Promise((r) => setTimeout(r, 50))
+
+		expect(registry.list()).toHaveLength(0)
+		// The stale subscription id should be fully forgotten (no stream to remove from).
+		expect(registry.remove(stale.id)).toBe(false)
+
+		// A new add on the same workspace should open a fresh fetch.
+		const callsBefore = fetchSpy.mock.calls.length
+		registry.add('ws-1', {})
+		await Promise.resolve()
+		await Promise.resolve()
+		expect(fetchSpy.mock.calls.length).toBeGreaterThan(callsBefore)
+		expect(registry.list()).toHaveLength(1)
+
+		errorSpy.mockRestore()
+		await registry.shutdownAll()
+	})
 })

@@ -233,7 +233,8 @@ function loadHtml(config: McpConfig, filename: string): string {
 	const fullPath = resolve(basePath, filename)
 	try {
 		const html = readFileSync(fullPath, 'utf-8')
-		console.log(`[MCP] Loaded HTML resource: ${filename} (${html.length} bytes) from ${fullPath}`)
+		// stderr only — stdout is reserved for JSON-RPC on the stdio transport
+		console.error(`[MCP] Loaded HTML resource: ${filename} (${html.length} bytes) from ${fullPath}`)
 		return html
 	} catch (err) {
 		console.error(`[MCP] Failed to load HTML resource: ${fullPath}`, err)
@@ -259,7 +260,8 @@ export function createMcpServer(config: McpConfig): {
 	// ─── Register UI resources ─────────────────────────────────
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
 		registerAppResource(server, `${name}-ui`, uri, { mimeType: RESOURCE_MIME_TYPE }, async () => {
-			console.log(`[MCP] Resource read requested: ${uri} (${name}.html)`)
+			// stderr only — stdout is reserved for JSON-RPC on the stdio transport
+			console.error(`[MCP] Resource read requested: ${uri} (${name}.html)`)
 			return {
 				contents: [{ uri, mimeType: RESOURCE_MIME_TYPE, text: loadHtml(config, `${name}.html`) }],
 			}
