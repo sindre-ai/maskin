@@ -358,6 +358,10 @@ function OwnerSelect({
 							<ActorAvatar name={current.name} type={current.type} size="sm" />
 							{current.name}
 						</span>
+					) : currentOwnerId ? (
+						<span className="italic text-muted-foreground">
+							Unknown ({currentOwnerId.slice(0, 8)})
+						</span>
 					) : (
 						<span className="text-muted-foreground">Unassigned</span>
 					)}
