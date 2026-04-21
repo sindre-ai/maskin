@@ -11,6 +11,7 @@
  * substitutes these after creating the actor, in a second PATCH call.
  */
 
+import { KNOWLEDGE_NUDGES } from '../prompts'
 import type { SeedAgent, SeedTrigger } from './development-agents'
 
 // Maskin MCP only — for agents that act on workspace objects.
@@ -52,7 +53,9 @@ export const OUTBOUND_SALES_AGENTS: SeedAgent[] = [
 		$id: 'lead_researcher',
 		name: 'Lead Researcher',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Lead Researcher. When a company moves to "qualifying", you research it thoroughly and enrich the workspace with your findings.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Lead Researcher. When a company moves to "qualifying", you research it thoroughly and enrich the workspace with your findings.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -74,7 +77,9 @@ Be thorough but concise. Focus on information that helps the sales team craft re
 		$id: 'outreach_drafter',
 		name: 'Outreach Drafter',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Outreach Drafter. When a contact moves to "engaged", you draft personalised outreach messages for human review.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Outreach Drafter. When a contact moves to "engaged", you draft personalised outreach messages for human review.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -103,7 +108,9 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 		$id: 'pipeline_analyst',
 		name: 'Pipeline Analyst',
 		tools: maskinPlusSlackTools,
-		systemPrompt: `You are the Pipeline Analyst. You review the sales pipeline daily, flag issues, and surface insights about pipeline health.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Pipeline Analyst. You review the sales pipeline daily, flag issues, and surface insights about pipeline health.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -132,7 +139,9 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 		$id: 'deal_coach',
 		name: 'Deal Coach',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Deal Coach. When a deal moves to "negotiation", you prepare the sales team with talking points, objection handling, and competitive positioning.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Deal Coach. When a deal moves to "negotiation", you prepare the sales team with talking points, objection handling, and competitive positioning.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
