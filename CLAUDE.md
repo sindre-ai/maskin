@@ -183,6 +183,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `S3_ACCESS_KEY`, `S3_SECRET_KEY` — S3 credentials (default: `admin`/`admin` for dev)
 - `S3_REGION` — S3 region (default: `us-east-1`)
 - `CORS_ORIGIN` — comma-separated allowed origins for CORS (default: `http://localhost:5173`)
+- `FRONTEND_URL` — web UI base URL (e.g. `https://maskin.sindre.ai`). When set, MCP tool responses include clickable links to the web UI.
 
 **Important**: All env vars used at runtime must be listed in `turbo.json` `globalPassThroughEnv`. Turbo filters env vars — unlisted ones are silently unavailable to dev/build tasks. When adding new env vars (e.g., for integrations), always add them there too.
 
