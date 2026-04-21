@@ -311,6 +311,50 @@ export const tools = {
 			limit: z.number().int().min(1).max(100).default(50),
 		}),
 	},
+	subscribe_events: {
+		description:
+			'Subscribe to live workspace events. The MCP server opens a long-lived SSE connection to the backend for the workspace and pushes matching events to this client as logging notifications (logger="maskin/events"). Use this to react to activity in real time (object created/updated/deleted, status changes, trigger fires, session completions, etc.). For historical queries or backfill, use get_events instead. Filters are combined with AND across fields, OR within a field; omit all filters to receive every event in the workspace. Returns { subscription_id, workspace_id }. Remember to call unsubscribe_events when done.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			filter: z
+				.object({
+					entity_type: z
+						.array(z.string())
+						.optional()
+						.describe(
+							'Only deliver events whose entity_type is in this list (e.g. ["task", "bet"])',
+						),
+					entity_id: z
+						.array(z.string().uuid())
+						.optional()
+						.describe('Only deliver events touching these specific object IDs'),
+					action: z
+						.array(z.string())
+						.optional()
+						.describe(
+							'Only deliver events with these actions (e.g. ["created", "status_changed"])',
+						),
+					actor_id: z
+						.array(z.string().uuid())
+						.optional()
+						.describe('Only deliver events produced by these actors'),
+				})
+				.optional()
+				.describe('Optional filters. Omit to receive every event in the workspace.'),
+		}),
+	},
+	unsubscribe_events: {
+		description:
+			'Stop receiving live events for a given subscription_id returned by subscribe_events. Returns { ok: true } if the subscription existed, { ok: false } otherwise.',
+		inputSchema: z.object({
+			subscription_id: z.string().uuid(),
+		}),
+	},
+	list_event_subscriptions: {
+		description:
+			'List all active event subscriptions for this MCP session with their filters and per-subscription delivery counters. Useful for debugging why events are (or are not) arriving.',
+		inputSchema: z.object({}),
+	},
 	create_trigger: {
 		description:
 			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor.",

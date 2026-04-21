@@ -15,6 +15,11 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import {
+	type EventFilter,
+	type SubscriptionRegistry,
+	createSubscriptionRegistry,
+} from './subscriptions.js'
 import { tools } from './tools.js'
 
 interface McpConfig {
@@ -236,11 +241,20 @@ function loadHtml(config: McpConfig, filename: string): string {
 	}
 }
 
-export function createMcpServer(config: McpConfig) {
-	const server = new McpServer({
-		name: 'maskin',
-		version: '0.1.0',
-	})
+export function createMcpServer(config: McpConfig): {
+	server: McpServer
+	registry: SubscriptionRegistry
+} {
+	const server = new McpServer(
+		{
+			name: 'maskin',
+			version: '0.1.0',
+		},
+		{
+			capabilities: { logging: {} },
+		},
+	)
+	const subscriptionRegistry = createSubscriptionRegistry(config, server)
 
 	// ─── Register UI resources ─────────────────────────────────
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
@@ -770,6 +784,97 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: { toolName: 'get_events' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'subscribe_events',
+		{
+			description: tools.subscribe_events.description,
+			inputSchema: tools.subscribe_events.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			if (!config.apiKey) {
+				throw new Error(
+					'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
+				)
+			}
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!workspaceId) {
+				throw new Error(
+					'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
+				)
+			}
+			const filter = (args.filter ?? {}) as EventFilter
+			const sub = subscriptionRegistry.add(workspaceId, filter)
+			return {
+				_meta: { toolName: 'subscribe_events' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{
+								subscription_id: sub.id,
+								workspace_id: sub.workspaceId,
+								filter: sub.filter,
+								created_at: sub.createdAt,
+								notice:
+									'Live events will be delivered via MCP logging notifications with logger="maskin/events". Call unsubscribe_events to stop.',
+							},
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'unsubscribe_events',
+		{
+			description: tools.unsubscribe_events.description,
+			inputSchema: tools.unsubscribe_events.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const ok = subscriptionRegistry.remove(args.subscription_id)
+			return {
+				_meta: { toolName: 'unsubscribe_events' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ ok, subscription_id: args.subscription_id }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_event_subscriptions',
+		{
+			description: tools.list_event_subscriptions.description,
+			inputSchema: tools.list_event_subscriptions.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async () => {
+			const subs = subscriptionRegistry.list().map((s) => ({
+				subscription_id: s.id,
+				workspace_id: s.workspaceId,
+				filter: s.filter,
+				created_at: s.createdAt,
+				events_delivered: s.eventsDelivered,
+				events_dropped: s.eventsDropped,
+			}))
+			return {
+				_meta: { toolName: 'list_event_subscriptions' },
+				content: [{ type: 'text' as const, text: JSON.stringify(subs, null, 2) }],
 			}
 		},
 	)
@@ -2231,7 +2336,7 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
 		}
 	}
 
-	return server
+	return { server, registry: subscriptionRegistry }
 }
 
 // CLI entry point
@@ -2242,8 +2347,24 @@ async function main() {
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 	}
 
-	const server = createMcpServer(config)
+	const { server, registry } = createMcpServer(config)
 	const transport = new StdioServerTransport()
+	const shutdown = async () => {
+		try {
+			await registry.shutdownAll()
+		} catch (err) {
+			console.error('[maskin-mcp] Error during shutdown:', err)
+		}
+	}
+	transport.onclose = () => {
+		void shutdown()
+	}
+	const handleSignal = (signal: NodeJS.Signals) => {
+		console.error(`[maskin-mcp] Received ${signal}, shutting down`)
+		void shutdown().then(() => process.exit(0))
+	}
+	process.on('SIGINT', handleSignal)
+	process.on('SIGTERM', handleSignal)
 	await server.connect(transport)
 	console.error('MCP server started (stdio transport)')
 }
