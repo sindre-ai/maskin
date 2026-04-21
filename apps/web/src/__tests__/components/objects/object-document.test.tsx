@@ -38,6 +38,7 @@ const baseProps = {
 	onUpdateTitle: vi.fn(),
 	onUpdateContent: vi.fn(),
 	onUpdateStatus: vi.fn(),
+	onUpdateOwner: vi.fn(),
 	onDelete: vi.fn(),
 }
 
