@@ -5,9 +5,7 @@ const notetakerWebExtension: ModuleWebDefinition = {
 	id: MODULE_ID,
 	name: MODULE_NAME,
 	navItems: [],
-	objectTypeTabs: [
-		{ label: 'Meetings', value: 'meeting' },
-	],
+	objectTypeTabs: [{ label: 'Meetings', value: 'meeting' }],
 	defaultSettings: {
 		display_names: {
 			meeting: 'Meeting',

@@ -54,6 +54,21 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/overview/whats-happening', () => ({
+	WhatsHappening: () => <div data-testid="whats-happening" />,
+}))
+
+// Render all tab panels eagerly so existing assertions can query content
+// inside the non-default "notifications" tab without tab switching.
+vi.mock('@/components/ui/tabs', () => ({
+	Tabs: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+	TabsList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+	TabsTrigger: ({ children }: { children: React.ReactNode }) => (
+		<button type="button">{children}</button>
+	),
+	TabsContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/index'
 
 const PulseDashboard = (Route as unknown as { component: React.FC }).component

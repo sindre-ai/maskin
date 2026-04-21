@@ -3,12 +3,31 @@ import { DataTable } from '@/components/objects/data-table/data-table'
 import type { RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ButtonHTMLAttributes, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { buildObjectResponse } from '../../factories'
 
 const mockNavigate = vi.fn()
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => mockNavigate,
+	Link: ({ children, ...props }: { children: ReactNode } & Record<string, unknown>) => {
+		const { to, params, onClick, ...rest } = props
+		return (
+			<button
+				type="button"
+				{...(rest as ButtonHTMLAttributes<HTMLButtonElement>)}
+				onClick={(e) => {
+					if (typeof onClick === 'function') {
+						;(onClick as (ev: ReactMouseEvent<HTMLButtonElement>) => void)(e)
+					}
+					e.preventDefault()
+					mockNavigate({ to, params })
+				}}
+			>
+				{children}
+			</button>
+		)
+	},
 }))
 
 vi.mock('@/components/shared/agent-working-badge', () => ({
