@@ -10,30 +10,15 @@ export function useRelationships(workspaceId: string, params?: Record<string, st
 	})
 }
 
-export function useObjectRelationships(workspaceId: string, objectId: string) {
-	return useQuery({
-		queryKey: queryKeys.relationships.byObject(objectId),
-		queryFn: async () => {
-			const [asSource, asTarget] = await Promise.all([
-				api.relationships.list(workspaceId, { source_id: objectId }),
-				api.relationships.list(workspaceId, { target_id: objectId }),
-			])
-			return { asSource, asTarget }
-		},
-		enabled: !!objectId,
-	})
-}
-
 export function useCreateRelationship(workspaceId: string, objectId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateRelationshipInput) => api.relationships.create(workspaceId, data),
 		onSuccess: (created) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
-			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.byObject(objectId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(objectId) })
 			const otherId = created.sourceId === objectId ? created.targetId : created.sourceId
-			if (otherId) queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(otherId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(otherId) })
 		},
 	})
 }
@@ -45,7 +30,6 @@ export function useDeleteRelationship(workspaceId: string, objectId: string) {
 		onSuccess: () => {
 			toast.success('Relationship removed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
-			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.byObject(objectId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(objectId) })
 		},
 	})
