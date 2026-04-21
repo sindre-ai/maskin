@@ -14,12 +14,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'task':
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(event.entity_id) })
 			if (event.entity_type === 'bet') {
 				queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 			}
 			break
 		case 'relationship':
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: ['objects', 'graph'] })
 			break
 		case 'trigger':
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })

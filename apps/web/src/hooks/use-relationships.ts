@@ -28,9 +28,12 @@ export function useCreateRelationship(workspaceId: string, objectId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateRelationshipInput) => api.relationships.create(workspaceId, data),
-		onSuccess: () => {
+		onSuccess: (created) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.byObject(objectId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(objectId) })
+			const otherId = created.sourceId === objectId ? created.targetId : created.sourceId
+			if (otherId) queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(otherId) })
 		},
 	})
 }
@@ -43,6 +46,7 @@ export function useDeleteRelationship(workspaceId: string, objectId: string) {
 			toast.success('Relationship removed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.byObject(objectId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(objectId) })
 		},
 	})
 }

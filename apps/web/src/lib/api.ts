@@ -89,6 +89,8 @@ export const api = {
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
 		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
+		graph: (id: string, workspaceId: string) =>
+			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
 		create: (workspaceId: string, data: CreateObjectInput) =>
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
@@ -437,6 +439,12 @@ export interface RelationshipResponse {
 	type: string
 	createdBy: string
 	createdAt: string | null
+}
+
+export interface ObjectGraphResponse {
+	object: ObjectResponse
+	relationships: RelationshipResponse[]
+	connected_objects: ObjectResponse[]
 }
 
 export interface CreateRelationshipInput {

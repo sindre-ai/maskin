@@ -90,6 +90,31 @@ describe('LinkedObjectsView', () => {
 		expect(screen.getByText('+ link')).toBeInTheDocument()
 	})
 
+	it('resolves linked objects from connectedObjects when missing from allObjects', () => {
+		// The picker (allObjects) is paginated and may not contain the linked object;
+		// connectedObjects (from the graph endpoint) is the authoritative source.
+		const linkedTask = buildObjectResponse({ id: 'task-99', title: 'Far Task', type: 'task' })
+		const rel = buildRelationshipResponse({
+			id: 'rel-far',
+			sourceId: 'task-99',
+			targetId: 'obj-1',
+			type: 'breaks_into',
+		})
+
+		render(
+			<LinkedObjectsView
+				{...baseProps}
+				asSource={[]}
+				asTarget={[rel]}
+				allObjects={[]}
+				connectedObjects={[linkedTask]}
+			/>,
+		)
+
+		expect(screen.getByText('Far Task')).toBeInTheDocument()
+		expect(screen.getByText('Related (1)')).toBeInTheDocument()
+	})
+
 	it('calls onDeleteRelationship when remove button clicked', async () => {
 		const user = userEvent.setup()
 		const onDelete = vi.fn()
