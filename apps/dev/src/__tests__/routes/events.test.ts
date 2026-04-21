@@ -113,10 +113,7 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'Hello world' },
 			})
-			const { app, mockResults, sessionManager } = createSessionTestApp(
-				eventsRoutes,
-				'/api/events',
-			)
+			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
 			// First select: object lookup, then transaction insert returns comment
 			mockResults.selectQueue = [[{ workspaceId: wsId }]]
 			mockResults.insert = [commentEvent]
@@ -191,10 +188,7 @@ describe('Events Routes', () => {
 				objectId,
 				status: 'pending',
 			}
-			const { app, mockResults, sessionManager } = createSessionTestApp(
-				eventsRoutes,
-				'/api/events',
-			)
+			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 			// Object lookup, then inside transaction: insert comment, select mentioned actors, insert notifications, insert notification events
 			mockResults.selectQueue = [
@@ -239,10 +233,7 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'No mentions here', mentions: [] },
 			})
-			const { app, mockResults, sessionManager } = createSessionTestApp(
-				eventsRoutes,
-				'/api/events',
-			)
+			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
 			mockResults.selectQueue = [[{ workspaceId: wsId }]]
 			mockResults.insert = [commentEvent]
 
@@ -294,10 +285,7 @@ describe('Events Routes', () => {
 				objectId,
 				status: 'pending',
 			}
-			const { app, mockResults, sessionManager } = createSessionTestApp(
-				eventsRoutes,
-				'/api/events',
-			)
+			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
@@ -336,10 +324,7 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'Hey @human', mentions: [humanId] },
 			})
-			const { app, mockResults, sessionManager } = createSessionTestApp(
-				eventsRoutes,
-				'/api/events',
-			)
+			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[{ id: humanId, type: 'human', name: 'Alice' }],
@@ -380,10 +365,7 @@ describe('Events Routes', () => {
 				objectId,
 				status: 'pending',
 			}
-			const { app, mockResults, sessionManager } = createSessionTestApp(
-				eventsRoutes,
-				'/api/events',
-			)
+			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
 				new Error('container build failed'),
 			)
