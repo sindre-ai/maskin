@@ -353,6 +353,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@maskin/shared':
+        specifier: workspace:*
+        version: link:../shared
       drizzle-orm:
         specifier: ^0.38.0
         version: 0.38.4(@types/react@19.2.14)(kysely@0.28.14)(postgres@3.4.8)(react@19.2.4)
