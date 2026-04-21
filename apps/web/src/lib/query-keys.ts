@@ -6,6 +6,7 @@ export const queryKeys = {
 		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'listInfinite', filters] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
+		graph: (id: string) => ['objects', 'graph', id] as const,
 	},
 	bets: {
 		all: (workspaceId: string) => ['bets', workspaceId] as const,
@@ -21,7 +22,6 @@ export const queryKeys = {
 	},
 	relationships: {
 		all: (workspaceId: string) => ['relationships', workspaceId] as const,
-		byObject: (objectId: string) => ['relationships', 'object', objectId] as const,
 	},
 	triggers: {
 		all: (workspaceId: string) => ['triggers', workspaceId] as const,

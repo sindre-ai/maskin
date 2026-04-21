@@ -24,6 +24,14 @@ export function useObject(id: string) {
 	})
 }
 
+export function useObjectGraph(workspaceId: string, id: string) {
+	return useQuery({
+		queryKey: queryKeys.objects.graph(id),
+		queryFn: () => api.objects.graph(id, workspaceId),
+		enabled: !!id && !!workspaceId,
+	})
+}
+
 export function useCreateObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

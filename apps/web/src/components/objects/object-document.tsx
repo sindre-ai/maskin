@@ -8,8 +8,7 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
-import { useObjectRelationships } from '@/hooks/use-relationships'
+import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type {
 	ActorResponse,
@@ -44,6 +43,7 @@ interface ObjectDocumentViewProps {
 		asSource: RelationshipResponse[]
 		asTarget: RelationshipResponse[]
 	}
+	connectedObjects?: ObjectResponse[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
@@ -61,6 +61,7 @@ export function ObjectDocumentView({
 	creator,
 	members,
 	relationships,
+	connectedObjects,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
@@ -176,6 +177,7 @@ export function ObjectDocumentView({
 						objectType={object.type}
 						asSource={relationships.asSource}
 						asTarget={relationships.asTarget}
+						connectedObjects={connectedObjects}
 					/>
 				</div>
 			)}
@@ -198,7 +200,17 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const deleteObject = useDeleteObject(workspaceId)
 	const { data: creator } = useActor(object.createdBy)
 	const { data: members } = useWorkspaceMembers(workspaceId)
-	const { data: relationships } = useObjectRelationships(workspaceId, object.id)
+	const { data: graph } = useObjectGraph(workspaceId, object.id)
+	const relationships = useMemo(() => {
+		if (!graph) return undefined
+		const asSource: RelationshipResponse[] = []
+		const asTarget: RelationshipResponse[] = []
+		for (const rel of graph.relationships) {
+			if (rel.sourceId === object.id) asSource.push(rel)
+			if (rel.targetId === object.id) asTarget.push(rel)
+		}
+		return { asSource, asTarget }
+	}, [graph, object.id])
 	const { data: events } = useEntityEvents(workspaceId, object.id)
 
 	const settings = workspace.settings as Record<string, unknown>
@@ -295,6 +307,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				creator={creator}
 				members={members}
 				relationships={relationships}
+				connectedObjects={graph?.connected_objects}
 				events={events}
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
