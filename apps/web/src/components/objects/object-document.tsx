@@ -32,6 +32,7 @@ interface ObjectDocumentViewProps {
 	workspaceId: string
 	statuses: string[]
 	creator?: ActorResponse
+	owner?: ActorResponse
 	relationships?: {
 		asSource: RelationshipResponse[]
 		asTarget: RelationshipResponse[]
@@ -50,6 +51,7 @@ export function ObjectDocumentView({
 	workspaceId,
 	statuses,
 	creator,
+	owner,
 	relationships,
 	events,
 	onUpdateTitle,
@@ -137,6 +139,17 @@ export function ObjectDocumentView({
 						{creator.name}
 					</span>
 				)}
+				<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+					<span>Owner:</span>
+					{object.owner && owner ? (
+						<>
+							<ActorAvatar name={owner.name} type={owner.type} size="sm" />
+							{owner.name}
+						</>
+					) : (
+						<span>Unassigned</span>
+					)}
+				</span>
 				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
 
@@ -179,6 +192,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const { data: creator } = useActor(object.createdBy)
+	const { data: owner } = useActor(object.owner ?? '')
 	const { data: relationships } = useObjectRelationships(workspaceId, object.id)
 	const { data: events } = useEntityEvents(workspaceId, object.id)
 
@@ -267,6 +281,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				workspaceId={workspaceId}
 				statuses={statuses}
 				creator={creator}
+				owner={owner}
 				relationships={relationships}
 				events={events}
 				onUpdateTitle={handleUpdateTitle}

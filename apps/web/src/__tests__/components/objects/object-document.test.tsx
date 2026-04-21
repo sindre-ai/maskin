@@ -61,6 +61,21 @@ describe('ObjectDocumentView', () => {
 		expect(screen.getByText('Alice')).toBeInTheDocument()
 	})
 
+	it('shows owner name when object has owner and owner is resolved', () => {
+		const owner = buildActorResponse({ id: 'actor-owner', name: 'Bob' })
+		const object = buildObjectResponse({ owner: owner.id })
+		render(<ObjectDocumentView {...baseProps} object={object} owner={owner} />)
+		expect(screen.getByText('Owner:')).toBeInTheDocument()
+		expect(screen.getByText('Bob')).toBeInTheDocument()
+	})
+
+	it('shows "Unassigned" when object has no owner', () => {
+		const object = buildObjectResponse({ owner: null })
+		render(<ObjectDocumentView {...baseProps} object={object} />)
+		expect(screen.getByText('Owner:')).toBeInTheDocument()
+		expect(screen.getByText('Unassigned')).toBeInTheDocument()
+	})
+
 	it('calls onUpdateTitle on blur when title changed', async () => {
 		const user = userEvent.setup()
 		const onUpdateTitle = vi.fn()
