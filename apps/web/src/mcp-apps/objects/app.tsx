@@ -15,9 +15,9 @@ function ObjectsApp() {
 	const handleUpdateTitle = useCallback(
 		(obj: ObjectResponse) => async (title: string) => {
 			setLocalObject({ ...obj, title })
-			const result = await callTool('update_object', { id: obj.id, title })
-			const text = result.content?.find((c) => c.type === 'text')?.text ?? null
-			if (text) setLocalObject(JSON.parse(text))
+			const result = await callTool('update_objects', { updates: [{ id: obj.id, title }] })
+			const updated = extractFirstUpdatedObject(result)
+			if (updated) setLocalObject(updated)
 		},
 		[callTool],
 	)
@@ -25,9 +25,9 @@ function ObjectsApp() {
 	const handleUpdateContent = useCallback(
 		(obj: ObjectResponse) => async (content: string) => {
 			setLocalObject({ ...obj, content })
-			const result = await callTool('update_object', { id: obj.id, content })
-			const text = result.content?.find((c) => c.type === 'text')?.text ?? null
-			if (text) setLocalObject(JSON.parse(text))
+			const result = await callTool('update_objects', { updates: [{ id: obj.id, content }] })
+			const updated = extractFirstUpdatedObject(result)
+			if (updated) setLocalObject(updated)
 		},
 		[callTool],
 	)
@@ -35,9 +35,9 @@ function ObjectsApp() {
 	const handleUpdateStatus = useCallback(
 		(obj: ObjectResponse) => async (status: string) => {
 			setLocalObject({ ...obj, status })
-			const result = await callTool('update_object', { id: obj.id, status })
-			const text = result.content?.find((c) => c.type === 'text')?.text ?? null
-			if (text) setLocalObject(JSON.parse(text))
+			const result = await callTool('update_objects', { updates: [{ id: obj.id, status }] })
+			const updated = extractFirstUpdatedObject(result)
+			if (updated) setLocalObject(updated)
 		},
 		[callTool],
 	)
@@ -45,9 +45,9 @@ function ObjectsApp() {
 	const handleUpdateOwner = useCallback(
 		(obj: ObjectResponse) => async (owner: string | null) => {
 			setLocalObject({ ...obj, owner })
-			const result = await callTool('update_object', { id: obj.id, owner })
-			const text = result.content?.find((c) => c.type === 'text')?.text ?? null
-			if (text) setLocalObject(JSON.parse(text))
+			const result = await callTool('update_objects', { updates: [{ id: obj.id, owner }] })
+			const updated = extractFirstUpdatedObject(result)
+			if (updated) setLocalObject(updated)
 		},
 		[callTool],
 	)
@@ -75,26 +75,14 @@ function ObjectsApp() {
 
 	switch (toolResult.toolName) {
 		case 'list_objects':
+		case 'search_objects':
 			return <ObjectListView objects={data.data ?? data} />
-		case 'get_object':
-		case 'create_object':
-		case 'update_object': {
-			const obj = localObject ?? data
-			return (
-				<div className="p-4">
-					<ObjectDocumentView
-						object={obj}
-						workspaceId={obj.workspaceId ?? ''}
-						statuses={[]}
-						onUpdateTitle={handleUpdateTitle(obj)}
-						onUpdateContent={handleUpdateContent(obj)}
-						onUpdateStatus={handleUpdateStatus(obj)}
-						onUpdateOwner={handleUpdateOwner(obj)}
-						onDelete={handleDelete(obj)}
-					/>
-				</div>
-			)
-		}
+		case 'get_objects':
+			return <ObjectListView objects={extractGetObjectsList(data)} />
+		case 'update_objects':
+			return <ObjectListView objects={extractUpdateObjectsList(data)} />
+		case 'create_objects':
+			return <ObjectListView objects={extractCreateObjectsList(data)} />
 		case 'delete_object':
 			return <DeletedView />
 		default: {
@@ -115,6 +103,53 @@ function ObjectsApp() {
 			)
 		}
 	}
+}
+
+interface UpdateObjectsResultItem {
+	type?: string
+	id?: string
+	success?: boolean
+	result?: ObjectResponse
+}
+
+function extractFirstUpdatedObject(toolResult: {
+	content?: Array<{ type: string; text?: string }>
+}): ObjectResponse | null {
+	const text = toolResult.content?.find((c) => c.type === 'text')?.text
+	if (!text) return null
+	try {
+		const parsed = JSON.parse(text) as UpdateObjectsResultItem[]
+		const first = parsed?.find((r) => r.type === 'object' && r.success && r.result)
+		return first?.result ?? null
+	} catch {
+		return null
+	}
+}
+
+function extractGetObjectsList(
+	data: Array<{ success?: boolean; result?: { object?: ObjectResponse } }>,
+): ObjectResponse[] {
+	if (!Array.isArray(data)) return []
+	const out: ObjectResponse[] = []
+	for (const r of data) {
+		const obj = r?.success ? r.result?.object : undefined
+		if (obj) out.push(obj)
+	}
+	return out
+}
+
+function extractUpdateObjectsList(data: UpdateObjectsResultItem[]): ObjectResponse[] {
+	if (!Array.isArray(data)) return []
+	return data
+		.filter((r) => r?.type === 'object' && r.success && r.result)
+		.map((r) => r.result as ObjectResponse)
+}
+
+function extractCreateObjectsList(
+	data: { nodes?: ObjectResponse[] } | ObjectResponse[],
+): ObjectResponse[] {
+	if (Array.isArray(data)) return data
+	return data?.nodes ?? []
 }
 
 function ObjectListView({ objects }: { objects: ObjectResponse[] }) {
