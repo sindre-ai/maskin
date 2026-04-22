@@ -299,6 +299,22 @@ export const api = {
 				workspaceId,
 			}),
 	},
+
+	anthropicApiKey: {
+		save: (workspaceId: string, apiKey: string) =>
+			request<AnthropicApiKeySaveResponse>('/anthropic-api-key', {
+				method: 'POST',
+				body: { api_key: apiKey },
+				workspaceId,
+			}),
+		status: (workspaceId: string) =>
+			request<AnthropicApiKeyStatusResponse>('/anthropic-api-key/status', { workspaceId }),
+		remove: (workspaceId: string) =>
+			request<{ success: boolean }>('/anthropic-api-key', {
+				method: 'DELETE',
+				workspaceId,
+			}),
+	},
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -320,6 +336,18 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
+}
+
+export interface AnthropicApiKeyStatusResponse {
+	set: boolean
+	last4?: string
+	created_at?: number
+}
+
+export interface AnthropicApiKeySaveResponse {
+	success: boolean
+	last4: string
+	created_at: number
 }
 
 // Types derived from backend response schemas

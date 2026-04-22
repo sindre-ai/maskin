@@ -49,6 +49,13 @@ export const workspaceSettingsSchema = z.object({
 			scopes: z.array(z.string()).optional(),
 		})
 		.optional(),
+	anthropic_api_key: z
+		.object({
+			encryptedKey: z.string(),
+			last4: z.string(),
+			createdAt: z.number(),
+		})
+		.optional(),
 })
 
 export const createWorkspaceSchema = z.object({

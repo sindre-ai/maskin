@@ -62,4 +62,7 @@ export const queryKeys = {
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
 	},
+	anthropicApiKey: {
+		status: (workspaceId: string) => ['anthropic-api-key', workspaceId, 'status'] as const,
+	},
 } as const

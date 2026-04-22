@@ -18,6 +18,7 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
+import { getAnthropicApiKey } from '../lib/anthropic-api-key'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
@@ -478,6 +479,21 @@ export class SessionManager extends EventEmitter {
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
+		// Resolve workspace-level Anthropic key: prefer the encrypted slot, fall
+		// back to legacy plaintext in llm_keys.anthropic.
+		let wsAnthropicKey: string | null = null
+		try {
+			wsAnthropicKey = await getAnthropicApiKey(this.db, session.workspaceId)
+		} catch (err) {
+			logger.warn('Failed to decrypt workspace Anthropic API key', {
+				sessionId: session.id,
+				error: String(err),
+			})
+		}
+		if (!wsAnthropicKey && wsLlmKeys.anthropic) {
+			wsAnthropicKey = wsLlmKeys.anthropic
+		}
+
 		if (llmConfig.api_key) {
 			if (agent.llmProvider === 'anthropic') {
 				envVars.ANTHROPIC_API_KEY = llmConfig.api_key as string
@@ -500,16 +516,16 @@ export class SessionManager extends EventEmitter {
 					if (oauthResult.tokens.subscriptionType) {
 						envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
 					}
-				} else if (wsLlmKeys.anthropic) {
-					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
+				} else if (wsAnthropicKey) {
+					envVars.ANTHROPIC_API_KEY = wsAnthropicKey
 				}
 			} catch (err) {
 				logger.warn('Failed to use Claude OAuth tokens, falling back to API key', {
 					sessionId: session.id,
 					error: String(err),
 				})
-				if (wsLlmKeys.anthropic) {
-					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
+				if (wsAnthropicKey) {
+					envVars.ANTHROPIC_API_KEY = wsAnthropicKey
 				}
 			}
 			if (wsLlmKeys.openai) {
