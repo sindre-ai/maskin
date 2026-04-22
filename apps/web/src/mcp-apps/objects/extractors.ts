@@ -23,12 +23,10 @@ export function extractFirstUpdatedObject(toolResult: {
 }
 
 /** Flatten the `get_objects` response (array of `{ success, result: { object } }`) into a list of objects. */
-export function extractGetObjectsList(
-	data: Array<{ success?: boolean; result?: { object?: ObjectResponse } }>,
-): ObjectResponse[] {
+export function extractGetObjectsList(data: unknown): ObjectResponse[] {
 	if (!Array.isArray(data)) return []
 	const out: ObjectResponse[] = []
-	for (const r of data) {
+	for (const r of data as Array<{ success?: boolean; result?: { object?: ObjectResponse } }>) {
 		const obj = r?.success ? r.result?.object : undefined
 		if (obj) out.push(obj)
 	}
@@ -36,17 +34,19 @@ export function extractGetObjectsList(
 }
 
 /** Flatten the `update_objects` response into a list of successfully updated objects (relationship items ignored). */
-export function extractUpdateObjectsList(data: UpdateObjectsResultItem[]): ObjectResponse[] {
+export function extractUpdateObjectsList(data: unknown): ObjectResponse[] {
 	if (!Array.isArray(data)) return []
-	return data
+	return (data as UpdateObjectsResultItem[])
 		.filter((r) => r?.type === 'object' && r.success && r.result)
 		.map((r) => r.result as ObjectResponse)
 }
 
 /** Extract the list of created nodes from a `create_objects` response. Tolerates bare arrays for safety. */
-export function extractCreateObjectsList(
-	data: { nodes?: ObjectResponse[] } | ObjectResponse[] | null | undefined,
-): ObjectResponse[] {
-	if (Array.isArray(data)) return data
-	return data?.nodes ?? []
+export function extractCreateObjectsList(data: unknown): ObjectResponse[] {
+	if (Array.isArray(data)) return data as ObjectResponse[]
+	if (data && typeof data === 'object' && 'nodes' in data) {
+		const nodes = (data as { nodes?: ObjectResponse[] }).nodes
+		return Array.isArray(nodes) ? nodes : []
+	}
+	return []
 }

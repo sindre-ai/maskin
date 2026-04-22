@@ -83,7 +83,8 @@ function ObjectsApp() {
 
 	const renderDocumentOrList = (objects: ObjectResponse[]) => {
 		if (objects.length === 1) {
-			const obj = localObject ?? objects[0]
+			const base = objects[0]
+			const obj = localObject?.id === base.id ? localObject : base
 			return <ObjectDocument obj={obj} handlers={editHandlers(obj)} />
 		}
 		return <ObjectListView objects={objects} />
@@ -104,17 +105,11 @@ function ObjectsApp() {
 			return <ObjectListView objects={isArray(unwrapped) ? (unwrapped as ObjectResponse[]) : []} />
 		}
 		case 'get_objects':
-			return renderDocumentOrList(
-				extractGetObjectsList(data as Parameters<typeof extractGetObjectsList>[0]),
-			)
+			return renderDocumentOrList(extractGetObjectsList(data))
 		case 'update_objects':
-			return renderDocumentOrList(
-				extractUpdateObjectsList(data as Parameters<typeof extractUpdateObjectsList>[0]),
-			)
+			return renderDocumentOrList(extractUpdateObjectsList(data))
 		case 'create_objects':
-			return renderDocumentOrList(
-				extractCreateObjectsList(data as Parameters<typeof extractCreateObjectsList>[0]),
-			)
+			return renderDocumentOrList(extractCreateObjectsList(data))
 		case 'delete_object':
 			return <DeletedView />
 		default:
