@@ -34,6 +34,50 @@ describe('Notifications Routes', () => {
 
 			expect(res.status).toBe(500)
 		})
+
+		it('accepts native-array metadata.actions', async () => {
+			const notification = buildNotification({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			mockResults.insertQueue = [[notification], []]
+
+			const body = buildCreateNotificationBody({
+				metadata: {
+					actions: [
+						{ label: 'Merged, continue', response: 'merged_continue' },
+						{ label: 'Not ready yet', response: 'not_ready' },
+					],
+				},
+			})
+
+			const res = await app.request(jsonRequest('POST', '/api/notifications', body, headers))
+			expect(res.status).toBe(201)
+		})
+
+		it('accepts JSON-stringified metadata.actions (agent compatibility shim)', async () => {
+			const notification = buildNotification({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			mockResults.insertQueue = [[notification], []]
+
+			const body = buildCreateNotificationBody({
+				metadata: {
+					actions: JSON.stringify([{ label: 'Approve', response: 'approved' }]),
+				},
+			})
+
+			const res = await app.request(jsonRequest('POST', '/api/notifications', body, headers))
+			expect(res.status).toBe(201)
+		})
+
+		it('rejects malformed metadata.actions strings with 400', async () => {
+			const { app } = createTestApp(notificationsRoutes, '/api/notifications')
+
+			const body = buildCreateNotificationBody({
+				metadata: { actions: 'not valid json' },
+			})
+
+			const res = await app.request(jsonRequest('POST', '/api/notifications', body, headers))
+			expect(res.status).toBe(400)
+		})
 	})
 
 	describe('GET /api/notifications', () => {

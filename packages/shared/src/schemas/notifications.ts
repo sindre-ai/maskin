@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { safeJsonValue, safeMetadataSchema } from './primitives'
+import { safeJsonValue } from './primitives'
 
 export const notificationTypeSchema = z.enum([
 	'needs_input',
@@ -10,11 +10,70 @@ export const notificationTypeSchema = z.enum([
 
 export const notificationStatusSchema = z.enum(['pending', 'seen', 'resolved', 'dismissed'])
 
+// Shape of a single action button in metadata.actions
+export const notificationActionSchema = z.object({
+	label: z.string().min(1).describe('Button text shown to the human'),
+	response: z
+		.unknown()
+		.optional()
+		.describe('Value routed back to the agent when clicked (e.g. "merged_continue")'),
+	variant: z.enum(['default', 'outline', 'ghost', 'destructive']).optional(),
+	navigate: z
+		.object({
+			to: z.string(),
+			id: z.string().optional(),
+		})
+		.optional(),
+})
+
+// Shape of a single option in metadata.options (for structured input pickers)
+export const notificationOptionSchema = z.object({
+	label: z.string().min(1),
+	value: z.string().min(1),
+	description: z.string().optional(),
+})
+
+// Accept either a native array OR a JSON-stringified array, and coerce to array.
+// Agents sometimes stringify; we transparently parse instead of rejecting.
+//
+// Uses preprocess (parse string → value, then validate once) rather than a union
+// of [array, string]. A union would fall through to the string branch when a
+// native array's items fail validation, producing confusing "expected string"
+// errors. Preprocess lets the single downstream `z.array(item)` own all errors.
+function arrayOrJsonString<T extends z.ZodTypeAny>(item: T) {
+	return z.preprocess((val) => {
+		if (typeof val !== 'string') return val
+		try {
+			return JSON.parse(val)
+		} catch {
+			return val
+		}
+	}, z.array(item))
+}
+
+// Notification metadata is richer than generic metadata: it may contain nested
+// objects (actions, options) to drive the UI. Known keys are typed; other keys
+// pass through as free-form JSON-serializable values.
+export const notificationMetadataSchema = z
+	.object({
+		actions: arrayOrJsonString(notificationActionSchema).optional(),
+		options: arrayOrJsonString(notificationOptionSchema).optional(),
+		input_type: z.enum(['confirmation', 'single_choice', 'multiple_choice', 'text']).optional(),
+		question: z.string().optional(),
+		placeholder: z.string().optional(),
+		multiline: z.boolean().optional(),
+		suggestion: z.string().optional(),
+		urgency_label: z.string().optional(),
+		meta_text: z.string().optional(),
+		tags: z.array(z.string()).optional(),
+	})
+	.catchall(z.union([safeJsonValue, z.record(z.string(), z.unknown()), z.array(z.unknown())]))
+
 export const createNotificationSchema = z.object({
 	type: notificationTypeSchema,
 	title: z.string().min(1),
 	content: z.string().optional(),
-	metadata: safeMetadataSchema.optional(),
+	metadata: notificationMetadataSchema.optional(),
 	source_actor_id: z.string().uuid(),
 	target_actor_id: z.string().uuid().optional(),
 	object_id: z.string().uuid().optional(),
@@ -23,7 +82,7 @@ export const createNotificationSchema = z.object({
 
 export const updateNotificationSchema = z.object({
 	status: notificationStatusSchema.optional(),
-	metadata: safeMetadataSchema.optional(),
+	metadata: notificationMetadataSchema.optional(),
 })
 
 export const respondNotificationSchema = z.object({
