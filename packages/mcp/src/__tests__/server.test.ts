@@ -637,6 +637,36 @@ describe('tool handlers', () => {
 			if (!handler) throw new Error('Handler list_objects not registered')
 			await expect(handler({})).rejects.toThrow('Not authenticated')
 		})
+
+		it('hosted-MCP setup hint mentions the Authorization header, not env vars', async () => {
+			const httpHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				httpHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, apiKey: '', transport: 'http' })
+
+			const handler = httpHandlers.get('list_objects')
+			if (!handler) throw new Error('Handler list_objects not registered')
+			await expect(handler({})).rejects.toThrow(/Authorization: Bearer/)
+		})
+
+		it('hosted-MCP missing-workspace hint mentions the X-Workspace-Id header', async () => {
+			const httpHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				httpHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '', transport: 'http' })
+
+			const handler = httpHandlers.get('list_objects')
+			if (!handler) throw new Error('Handler list_objects not registered')
+			await expect(handler({})).rejects.toThrow(/X-Workspace-Id/)
+		})
 	})
 
 	describe('create_notification handler', () => {
@@ -725,6 +755,212 @@ describe('tool handlers', () => {
 			})
 
 			expect(fetch).toHaveBeenCalledTimes(1)
+		})
+	})
+
+	describe('set_llm_api_key handler', () => {
+		// PATCHes the workspace with a single-provider delta. The server deep-
+		// merges llm_keys, so the MCP tool is a straight pass-through — no
+		// read-modify-write. One fetch call per invocation.
+		it('PATCHes only the target provider and returns masked last4', async () => {
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
+
+			const handler = getHandler('set_llm_api_key')
+			const result = (await handler({
+				provider: 'anthropic',
+				api_key: 'sk-ant-new-key-WXYZ',
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const [patchCall] = vi.mocked(fetch).mock.calls
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
+			expect(patchCall[1]?.method).toBe('PATCH')
+			const body = JSON.parse(patchCall[1]?.body as string)
+			expect(body.settings.llm_keys).toEqual({ anthropic: 'sk-ant-new-key-WXYZ' })
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({ success: true, provider: 'anthropic', last4: 'WXYZ' })
+			expect(result.content[0].text).not.toContain('sk-ant-new-key-WXYZ')
+		})
+
+		it('uses workspace_id from args over default', async () => {
+			mockFetchSuccess({ id: 'ws-custom', name: 'Other', settings: {} })
+
+			const handler = getHandler('set_llm_api_key')
+			await handler({ workspace_id: 'ws-custom', provider: 'openai', api_key: 'sk-foo' })
+
+			const [patchCall] = vi.mocked(fetch).mock.calls
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-custom')
+		})
+
+		it('back-to-back sets for both providers each send only their own delta', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
+				} as Response)
+
+			const handler = getHandler('set_llm_api_key')
+			await handler({ provider: 'anthropic', api_key: 'sk-ant-ABCD' })
+			await handler({ provider: 'openai', api_key: 'sk-openai-EFGH' })
+
+			const [firstCall, secondCall] = vi.mocked(fetch).mock.calls
+			expect(JSON.parse(firstCall[1]?.body as string).settings.llm_keys).toEqual({
+				anthropic: 'sk-ant-ABCD',
+			})
+			expect(JSON.parse(secondCall[1]?.body as string).settings.llm_keys).toEqual({
+				openai: 'sk-openai-EFGH',
+			})
+		})
+	})
+
+	describe('get_llm_api_keys handler', () => {
+		it('reads settings.llm_keys and returns masked status per provider', async () => {
+			mockFetchSuccess([
+				{
+					id: 'ws-default-123',
+					name: 'My Workspace',
+					settings: {
+						llm_keys: { anthropic: 'sk-ant-abcdEFGH', openai: 'sk-opq-MNOP' },
+					},
+				},
+			])
+
+			const handler = getHandler('get_llm_api_keys')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({
+				anthropic: { set: true, last4: 'EFGH' },
+				openai: { set: true, last4: 'MNOP' },
+			})
+			expect(result.content[0].text).not.toContain('sk-ant-abcdEFGH')
+		})
+
+		it('returns { set: false } for missing providers', async () => {
+			mockFetchSuccess([{ id: 'ws-default-123', name: 'My Workspace', settings: { llm_keys: {} } }])
+
+			const handler = getHandler('get_llm_api_keys')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({
+				anthropic: { set: false },
+				openai: { set: false },
+			})
+		})
+	})
+
+	describe('delete_llm_api_key handler', () => {
+		it('PATCHes the target provider to null so the server strips it', async () => {
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
+
+			const handler = getHandler('delete_llm_api_key')
+			const result = (await handler({ provider: 'anthropic' })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const [patchCall] = vi.mocked(fetch).mock.calls
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
+			expect(patchCall[1]?.method).toBe('PATCH')
+			const body = JSON.parse(patchCall[1]?.body as string)
+			expect(body.settings.llm_keys).toEqual({ anthropic: null })
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({ success: true, provider: 'anthropic' })
+		})
+
+		it('delete on an unset provider still sends one PATCH and reports success', async () => {
+			// Server-side deep-merge treats null as "delete if present"; deleting
+			// a missing provider is a no-op there, so the MCP tool still returns
+			// success without needing to inspect current state.
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
+
+			const handler = getHandler('delete_llm_api_key')
+			const result = (await handler({ provider: 'openai' })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const [patchCall] = vi.mocked(fetch).mock.calls
+			const body = JSON.parse(patchCall[1]?.body as string)
+			expect(body.settings.llm_keys).toEqual({ openai: null })
+			expect(JSON.parse(result.content[0].text)).toEqual({ success: true, provider: 'openai' })
+		})
+	})
+
+	describe('import_claude_subscription handler', () => {
+		it('POSTs /api/claude-oauth/import with camelCased token fields', async () => {
+			const mockResult = { success: true, subscription_type: 'max', expires_at: 1 }
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('import_claude_subscription')
+			await handler({
+				access_token: 'at',
+				refresh_token: 'rt',
+				expires_at: 1_700_000_000_000,
+				subscription_type: 'max',
+				scopes: ['read'],
+			})
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/claude-oauth/import',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({
+						Authorization: 'Bearer ank_testkey123',
+						'X-Workspace-Id': 'ws-default-123',
+					}),
+				}),
+			)
+			const fetchCall = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse(fetchCall[1]?.body as string)
+			expect(body).toEqual({
+				accessToken: 'at',
+				refreshToken: 'rt',
+				expiresAt: 1_700_000_000_000,
+				subscriptionType: 'max',
+				scopes: ['read'],
+			})
+		})
+	})
+
+	describe('get_claude_subscription_status handler', () => {
+		it('GETs /api/claude-oauth/status and returns payload', async () => {
+			const mockResult = {
+				connected: true,
+				valid: true,
+				subscription_type: 'max',
+				expires_at: 1,
+			}
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('get_claude_subscription_status')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/claude-oauth/status',
+				expect.objectContaining({ method: 'GET' }),
+			)
+			expect(JSON.parse(result.content[0].text)).toEqual(mockResult)
+		})
+	})
+
+	describe('disconnect_claude_subscription handler', () => {
+		it('DELETEs /api/claude-oauth', async () => {
+			mockFetchSuccess({ success: true })
+
+			const handler = getHandler('disconnect_claude_subscription')
+			await handler({})
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/claude-oauth',
+				expect.objectContaining({ method: 'DELETE' }),
+			)
 		})
 	})
 })

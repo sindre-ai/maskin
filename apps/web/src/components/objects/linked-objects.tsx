@@ -35,6 +35,7 @@ export function LinkedObjectsView({
 	asTarget,
 	workspaceId,
 	allObjects,
+	connectedObjects,
 	relationshipTypes,
 	onCreateRelationship,
 	onDeleteRelationship,
@@ -46,6 +47,7 @@ export function LinkedObjectsView({
 	asTarget: RelationshipResponse[]
 	workspaceId: string
 	allObjects: ObjectResponse[]
+	connectedObjects?: ObjectResponse[]
 	relationshipTypes: string[]
 	onCreateRelationship: (data: CreateRelationshipInput) => void
 	onDeleteRelationship: (id: string) => void
@@ -54,7 +56,14 @@ export function LinkedObjectsView({
 	const [activeFilter, setActiveFilter] = useState<string>('all')
 	const [showAddLink, setShowAddLink] = useState(false)
 
-	const objectMap = useMemo(() => new Map(allObjects.map((o) => [o.id, o])), [allObjects])
+	// Build map from both sources so linked objects always resolve, even when
+	// they fall outside the paginated workspace listing in `allObjects`.
+	const objectMap = useMemo(() => {
+		const map = new Map<string, ObjectResponse>()
+		for (const o of allObjects) map.set(o.id, o)
+		if (connectedObjects) for (const o of connectedObjects) map.set(o.id, o)
+		return map
+	}, [allObjects, connectedObjects])
 
 	// Merge all relationships into a flat list with resolved objects
 	const allRelationships = useMemo(() => {
@@ -205,11 +214,13 @@ export function LinkedObjects({
 	objectType,
 	asSource,
 	asTarget,
+	connectedObjects,
 }: {
 	objectId: string
 	objectType: string
 	asSource: RelationshipResponse[]
 	asTarget: RelationshipResponse[]
+	connectedObjects?: ObjectResponse[]
 }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const { data: allObjects } = useObjects(workspaceId)
@@ -233,6 +244,7 @@ export function LinkedObjects({
 			asTarget={asTarget}
 			workspaceId={workspaceId}
 			allObjects={allObjects ?? []}
+			connectedObjects={connectedObjects}
 			relationshipTypes={relationshipTypes}
 			onCreateRelationship={(data) => createRelationship.mutate(data)}
 			onDeleteRelationship={(id) => deleteRelationship.mutate(id)}

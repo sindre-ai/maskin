@@ -25,6 +25,7 @@ import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
 
 export interface CreateSessionParams {
 	actorId: string
@@ -176,6 +177,7 @@ export class SessionManager extends EventEmitter {
 			this.activeSessions.set(sessionId, { tempDir })
 
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
+			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars and launch container
 			const containerId = await this.launchContainer(session, tempDir, sessionId)
@@ -348,6 +350,7 @@ export class SessionManager extends EventEmitter {
 
 			// Also pull latest agent files (other sessions may have added learnings)
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
+			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars (including integration credentials) and launch container
 			const containerId = await this.launchContainer(
@@ -499,10 +502,12 @@ export class SessionManager extends EventEmitter {
 		// Non-interactive sessions pass the action prompt positionally so `claude -p`
 		// runs it and exits; interactive sets INTERACTIVE=1 so agent-run.sh takes
 		// the stdin-driven stream-json branch instead.
+		// session.actionPrompt is the user's original prompt and is never written back
+		// wrapped — safe to re-prepend on every launch, including resume.
 		if (session.interactive) {
 			envVars.INTERACTIVE = '1'
 		} else {
-			envVars.ACTION_PROMPT = session.actionPrompt
+			envVars.ACTION_PROMPT = `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`
 		}
 
 		// Inject LLM API key: agent-level first, then workspace-level fallback
@@ -759,7 +764,9 @@ export class SessionManager extends EventEmitter {
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
 				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir)
+					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir, {
+						actionPrompt: session.actionPrompt,
+					})
 					.catch((err) =>
 						logger.warn('Failed to push learnings', { sessionId, error: String(err) }),
 					)
@@ -829,7 +836,9 @@ export class SessionManager extends EventEmitter {
 			const sessionData = this.activeSessions.get(session.id)
 			if (sessionData) {
 				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir)
+					.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir, {
+						actionPrompt: session.actionPrompt,
+					})
 					.catch((err) =>
 						logger.warn('Failed to push learnings on timeout', {
 							sessionId: session.id,
@@ -1142,6 +1151,29 @@ export class SessionManager extends EventEmitter {
 				.catch((err) =>
 					logger.warn('Failed to remove session network', { sessionId, error: String(err) }),
 				)
+		}
+	}
+
+	/**
+	 * Generate the workspace briefing and write it to `/agent/workspace/WORKSPACE.md`
+	 * (inside the container) by writing to the mounted tempDir before launch.
+	 * Briefing failures never block session start — the agent can still fall back
+	 * to direct MCP queries.
+	 */
+	private async writeWorkspaceBriefing(
+		workspaceId: string,
+		tempDir: string,
+		sessionId: string,
+	): Promise<void> {
+		try {
+			const briefing = await renderWorkspaceBriefing(this.db, this.storage, workspaceId)
+			await writeFile(join(tempDir, 'workspace', 'WORKSPACE.md'), briefing)
+		} catch (err) {
+			logger.warn('Failed to write workspace briefing', {
+				sessionId,
+				workspaceId,
+				error: String(err),
+			})
 		}
 	}
 

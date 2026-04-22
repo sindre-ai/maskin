@@ -16,7 +16,7 @@ import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { Filter, X } from 'lucide-react'
@@ -115,6 +115,7 @@ function ObjectsPage() {
 			return allPages.flat().length
 		},
 		initialPageParam: 0,
+		placeholderData: keepPreviousData,
 	})
 
 	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])

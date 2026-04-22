@@ -10,6 +10,8 @@
  * substitutes these after creating the actor, in a second PATCH call.
  */
 
+import { KNOWLEDGE_NUDGES } from '../prompts'
+
 export interface SeedAgent {
 	/** Template-local id used by seedTriggers to reference this actor. */
 	$id: string
@@ -66,7 +68,9 @@ export const DEVELOPMENT_AGENTS: SeedAgent[] = [
 		$id: 'bet_planner',
 		name: 'Bet Planner',
 		tools: githubPlusMaskinTools,
-		systemPrompt: `You are a Bet Planner agent. Your job is to take a bet that has moved into "proposed" or "active" status and prepare it for activation by ensuring it has a clear goal and well-defined tasks.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are a Bet Planner agent. Your job is to take a bet that has moved into "proposed" or "active" status and prepare it for activation by ensuring it has a clear goal and well-defined tasks.
 
 When triggered, follow these steps:
 
@@ -86,7 +90,9 @@ Your aim is that any developer (human or agent) picking up a task can understand
 		$id: 'senior_developer',
 		name: 'Senior Developer',
 		tools: githubPlusMaskinTools,
-		systemPrompt: `You are a Senior Developer agent. Your job is to implement tasks by writing code, creating branches, and opening pull requests.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are a Senior Developer agent. Your job is to implement tasks by writing code, creating branches, and opening pull requests.
 
 When triggered with a task:
 
@@ -106,7 +112,9 @@ Write production-quality code. Follow existing patterns. Don't over-scope.`,
 		$id: 'code_reviewer',
 		name: 'Code Reviewer',
 		tools: githubPlusMaskinTools,
-		systemPrompt: `You are a Code Reviewer agent. Your job is to review pull requests for quality, correctness, and alignment with the bet's goal — and fix critical issues yourself.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are a Code Reviewer agent. Your job is to review pull requests for quality, correctness, and alignment with the bet's goal — and fix critical issues yourself.
 
 When triggered by a task moving to "in_review":
 
@@ -130,7 +138,9 @@ Be a pragmatic reviewer. The goal is to catch things that would actually cause p
 		$id: 'cto',
 		name: 'CTO',
 		tools: githubPlusMaskinTools,
-		systemPrompt: `You are the CTO — the final validator before work ships. You are triggered when a task moves to "testing" (after the Code Reviewer has approved code quality).
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the CTO — the final validator before work ships. You are triggered when a task moves to "testing" (after the Code Reviewer has approved code quality).
 
 ## Your role
 
@@ -157,7 +167,9 @@ You are NOT a style reviewer, not a project manager, not a pessimist. If the wor
 		$id: 'development_driver',
 		name: 'Development Driver',
 		tools: githubPlusMaskinTools,
-		systemPrompt: `You are the Development Driver agent. You keep development momentum going by ensuring completed tasks lead to the next action, and by catching untracked PRs.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Development Driver agent. You keep development momentum going by ensuring completed tasks lead to the next action, and by catching untracked PRs.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -203,7 +215,9 @@ When you do notify, \`metadata.actions\` MUST be a native JSON array, not a stri
 		$id: 'workspace_observer',
 		name: 'Workspace Observer',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Workspace Observer — a meta-agent that monitors workspace health and produces actionable insights about how the team (humans and agents) is performing.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Workspace Observer — a meta-agent that monitors workspace health and produces actionable insights about how the team (humans and agents) is performing.
 
 You do not do product work. You observe patterns and surface learnings. You look at the event log, object statuses, relationships, and agent sessions to find:
 
@@ -225,7 +239,9 @@ Communicate through objects only. Never try to message agents or humans directly
 		$id: 'insight_curator',
 		name: 'Insight Curator',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Insight Curator. Your job is to review unprocessed insights, identify clusters of related insights, and when a cluster is strong enough, create a bet (in "signal" status) that captures the theme.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Insight Curator. Your job is to review unprocessed insights, identify clusters of related insights, and when a cluster is strong enough, create a bet (in "signal" status) that captures the theme.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 

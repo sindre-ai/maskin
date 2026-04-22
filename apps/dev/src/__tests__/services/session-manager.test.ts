@@ -48,6 +48,14 @@ vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
 
+vi.mock('../../services/workspace-briefing', () => ({
+	WORKSPACE_STARTUP_BLOCK: '',
+	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
+	appendToLedger: vi.fn().mockResolvedValue(undefined),
+	readLedgerTail: vi.fn().mockResolvedValue([]),
+	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
+}))
+
 import type { StorageProvider } from '@maskin/storage'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'

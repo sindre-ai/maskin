@@ -1,4 +1,40 @@
+import { notificationActionSchema, notificationOptionSchema } from '@maskin/shared'
 import { z } from 'zod'
+
+// Keep field list in sync with `notificationMetadataSchema` in
+// packages/shared/src/schemas/notifications.ts — that schema is the canonical
+// server-side source of truth. This MCP-facing schema is intentionally stricter
+// (native arrays only, no JSON-string coercion) so agents are pushed toward the
+// correct shape; legacy stringified payloads are only tolerated at the HTTP layer.
+const notificationMetadataInput = z
+	.object({
+		actions: z
+			.array(notificationActionSchema)
+			.optional()
+			.describe(
+				'Clickable buttons rendered on the notification card. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Merged, continue", "response": "merged_continue" }, { "label": "Not ready yet", "response": "not_ready" }].',
+			),
+		input_type: z
+			.enum(['confirmation', 'single_choice', 'multiple_choice', 'text'])
+			.optional()
+			.describe(
+				'Renders a structured picker instead of action buttons. Pair with options (for single/multiple_choice) or placeholder/multiline (for text). NOTE: setting input_type disables the free-text "Reply to agent" input — only set it when you want a structured picker.',
+			),
+		options: z
+			.array(notificationOptionSchema)
+			.optional()
+			.describe(
+				'Options for single_choice / multiple_choice input_type. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Yes", "value": "yes" }, { "label": "No", "value": "no" }].',
+			),
+		question: z.string().optional(),
+		placeholder: z.string().optional(),
+		multiline: z.boolean().optional(),
+		suggestion: z.string().optional(),
+		urgency_label: z.string().optional(),
+		meta_text: z.string().optional(),
+		tags: z.array(z.string()).optional(),
+	})
+	.passthrough()
 
 const optionalWorkspaceId = z
 	.string()
@@ -473,7 +509,7 @@ export const tools = {
 	// ─── Notifications ───────────────────────────────────────
 	create_notification: {
 		description:
-			'Create a notification for a human in the workspace. Use when the agent needs human input (decision, information), wants to share a strategic recommendation, report good news, or raise an alert.',
+			'Create a notification for a human in the workspace. Use when the agent needs human input (decision, information), wants to share a strategic recommendation, report good news, or raise an alert. Pass session_id when the agent expects to be resumed with the human\'s reply — this enables the free-text "Reply to agent" input in the UI. To render clickable buttons, pass metadata.actions as a NATIVE JSON array (not a stringified one). For a structured picker (radio/checkbox/text), set metadata.input_type and metadata.options as a NATIVE JSON array.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
@@ -483,11 +519,10 @@ export const tools = {
 				),
 			title: z.string().min(1),
 			content: z.string().optional(),
-			metadata: z
-				.record(z.unknown())
+			metadata: notificationMetadataInput
 				.optional()
 				.describe(
-					'Structured data. Supports "actions" array to define custom action buttons: [{ label: "Button text", response: "value_sent_back", navigate?: { to: "object"|"objects"|"activity"|"agent"|"trigger", id?: "uuid" } }]. Also supports: input_type (confirmation|single_choice|multiple_choice|text), question, options ([{label, value, description?}]), tags, suggestion, urgency_label, meta_text.',
+					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags. Other keys pass through.',
 				),
 			source_actor_id: z.string().uuid().describe('The agent actor creating this notification'),
 			target_actor_id: z
@@ -504,7 +539,9 @@ export const tools = {
 				.string()
 				.uuid()
 				.optional()
-				.describe('Session that created this notification, for feedback routing'),
+				.describe(
+					'Session that created this notification. When set (and metadata.input_type is NOT set), the UI renders a free-text "Reply to agent" input that routes the reply back to this session.',
+				),
 		}),
 	},
 	list_notifications: {
@@ -537,7 +574,11 @@ export const tools = {
 				.enum(['pending', 'seen', 'resolved', 'dismissed'])
 				.optional()
 				.describe('New status for the notification'),
-			metadata: z.record(z.unknown()).optional().describe('Metadata to update on the notification'),
+			metadata: notificationMetadataInput
+				.optional()
+				.describe(
+					'Metadata to update on the notification. Same shape as create_notification.metadata — native arrays for actions/options, do NOT stringify.',
+				),
 		}),
 	},
 	delete_notification: {
@@ -575,6 +616,57 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
+		}),
+	},
+	// ─── LLM API Keys ─────────────────────────────────────────
+	set_llm_api_key: {
+		description:
+			"Save (or replace) a workspace LLM API key. Stored in workspace settings alongside any other providers. Returns { success, provider, last4 } — the full key is never echoed back. The key is stored as-is with no server-side validation against the provider; use the UI at /settings/keys if you need a live validation check. Mirrors the 'LLM API Keys' inputs in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			provider: z.enum(['anthropic', 'openai']),
+			api_key: z.string().min(1).describe('The API key (e.g. "sk-ant-..." or "sk-...").'),
+		}),
+	},
+	get_llm_api_keys: {
+		description:
+			"Report which LLM API keys are configured for the workspace. Returns { anthropic: { set, last4? }, openai: { set, last4? } } — never the full key. Mirrors the 'LLM API Keys' status in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	delete_llm_api_key: {
+		description:
+			'Remove a workspace LLM API key for a single provider. Other providers are left untouched.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			provider: z.enum(['anthropic', 'openai']),
+		}),
+	},
+	// ─── Claude Subscription ──────────────────────────────────
+	import_claude_subscription: {
+		description:
+			"Import Claude Pro/Max/Teams subscription tokens for the workspace (from ~/.claude/.credentials.json). Stored encrypted; used as the preferred auth for sandboxed Claude Code runs. Mirrors the 'Claude Subscription → Import credentials' action in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			access_token: z.string().min(1),
+			refresh_token: z.string().min(1),
+			expires_at: z.number().describe('Unix ms timestamp when the access token expires.'),
+			subscription_type: z.string().optional().describe('e.g. "pro", "max", "teams".'),
+			scopes: z.array(z.string()).optional(),
+		}),
+	},
+	get_claude_subscription_status: {
+		description:
+			'Check Claude subscription connection status for the workspace. Returns { connected, valid, subscription_type?, expires_at? } — never the tokens themselves.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	disconnect_claude_subscription: {
+		description: 'Disconnect the Claude subscription for the workspace (removes stored tokens).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 		}),
 	},
 	// ─── Extensions ──────────────────────────────────────────

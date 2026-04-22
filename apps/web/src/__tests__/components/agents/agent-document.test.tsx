@@ -16,6 +16,7 @@ vi.mock('@/hooks/use-actors', () => ({
 
 vi.mock('@/hooks/use-events', () => ({
 	useEvents: () => ({ data: [] }),
+	useSessionAffectedObjects: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-sessions', () => ({

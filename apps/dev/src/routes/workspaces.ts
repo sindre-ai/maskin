@@ -194,13 +194,24 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (body.settings) {
-		// Merge settings with existing
+		// Merge settings with existing. Top-level keys are shallow-merged, but
+		// `llm_keys` is deep-merged so concurrent single-provider updates (UI +
+		// MCP) don't clobber sibling providers. `null` values inside `llm_keys`
+		// are treated as deletions.
 		const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
 		if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-		updateData.settings = {
-			...(existing.settings as object),
-			...body.settings,
+		const existingSettings = (existing.settings ?? {}) as Record<string, unknown>
+		const merged: Record<string, unknown> = { ...existingSettings, ...body.settings }
+		if (body.settings.llm_keys) {
+			const existingLlm = (existingSettings.llm_keys ?? {}) as Record<string, string>
+			const mergedLlm: Record<string, string> = { ...existingLlm }
+			for (const [k, v] of Object.entries(body.settings.llm_keys)) {
+				if (v === null || v === undefined) delete mergedLlm[k]
+				else mergedLlm[k] = v
+			}
+			merged.llm_keys = mergedLlm
 		}
+		updateData.settings = merged
 	}
 
 	const [updated] = await db
