@@ -12,6 +12,7 @@ import {
 	extractFirstUpdatedObject,
 	extractGetObjectsList,
 	extractUpdateObjectsList,
+	summarizeUpdateResults,
 } from './extractors'
 
 function ObjectsApp() {
@@ -79,7 +80,7 @@ function ObjectsApp() {
 	}
 
 	const data = safeParseJson(text)
-	if (data === null) return <div className="p-4 text-sm text-foreground">{text}</div>
+	if (!data) return <div className="p-4 text-sm text-foreground">{text}</div>
 
 	const renderDocumentOrList = (objects: ObjectResponse[]) => {
 		if (objects.length === 1) {
@@ -106,8 +107,11 @@ function ObjectsApp() {
 		}
 		case 'get_objects':
 			return renderDocumentOrList(extractGetObjectsList(data))
-		case 'update_objects':
-			return renderDocumentOrList(extractUpdateObjectsList(data))
+		case 'update_objects': {
+			const updated = extractUpdateObjectsList(data)
+			if (updated.length > 0) return renderDocumentOrList(updated)
+			return <UpdateSummaryView summary={summarizeUpdateResults(data)} rawText={text} />
+		}
 		case 'create_objects':
 			return renderDocumentOrList(extractCreateObjectsList(data))
 		case 'delete_object':
@@ -171,6 +175,54 @@ function DeletedView() {
 	return (
 		<div className="p-4 text-center">
 			<p className="text-sm text-muted-foreground">Object deleted successfully.</p>
+		</div>
+	)
+}
+
+function UpdateSummaryView({
+	summary,
+	rawText,
+}: {
+	summary: {
+		objectsUpdated: number
+		objectsFailed: number
+		relationshipsCreated: number
+		relationshipsFailed: number
+	}
+	rawText: string
+}) {
+	const { objectsUpdated, objectsFailed, relationshipsCreated, relationshipsFailed } = summary
+	const hasAny = objectsUpdated + objectsFailed + relationshipsCreated + relationshipsFailed > 0
+	if (!hasAny) return <div className="p-4 text-sm text-foreground">{rawText}</div>
+	const hasFailures = objectsFailed + relationshipsFailed > 0
+	return (
+		<div className="p-4 max-w-2xl space-y-1">
+			<h2 className="text-sm font-semibold text-foreground mb-2">Update complete</h2>
+			{relationshipsCreated > 0 && (
+				<p className="text-sm text-muted-foreground">
+					{relationshipsCreated} relationship{relationshipsCreated === 1 ? '' : 's'} created
+				</p>
+			)}
+			{objectsUpdated > 0 && (
+				<p className="text-sm text-muted-foreground">
+					{objectsUpdated} object{objectsUpdated === 1 ? '' : 's'} updated
+				</p>
+			)}
+			{hasFailures && (
+				<p className="text-sm text-destructive">
+					{objectsFailed > 0 && (
+						<>
+							{objectsFailed} object update{objectsFailed === 1 ? '' : 's'} failed
+						</>
+					)}
+					{objectsFailed > 0 && relationshipsFailed > 0 && ', '}
+					{relationshipsFailed > 0 && (
+						<>
+							{relationshipsFailed} relationship{relationshipsFailed === 1 ? '' : 's'} failed
+						</>
+					)}
+				</p>
+			)}
 		</div>
 	)
 }

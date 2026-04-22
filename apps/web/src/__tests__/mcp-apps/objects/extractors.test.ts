@@ -3,6 +3,7 @@ import {
 	extractFirstUpdatedObject,
 	extractGetObjectsList,
 	extractUpdateObjectsList,
+	summarizeUpdateResults,
 } from '@/mcp-apps/objects/extractors'
 import type { ObjectResponse } from '@/mcp-apps/shared/types'
 import { describe, expect, it } from 'vitest'
@@ -69,6 +70,12 @@ describe('extractFirstUpdatedObject', () => {
 
 	it('returns null on malformed JSON', () => {
 		expect(extractFirstUpdatedObject({ content: [{ type: 'text', text: 'not json' }] })).toBeNull()
+	})
+
+	it('returns null when parsed payload is not an array', () => {
+		expect(extractFirstUpdatedObject(textEnvelope({ foo: 'bar' }))).toBeNull()
+		expect(extractFirstUpdatedObject(textEnvelope('string'))).toBeNull()
+		expect(extractFirstUpdatedObject(textEnvelope(null))).toBeNull()
 	})
 
 	it('returns null when no object matches', () => {
@@ -163,5 +170,33 @@ describe('extractCreateObjectsList', () => {
 	it('returns [] for null/undefined', () => {
 		expect(extractCreateObjectsList(null)).toEqual([])
 		expect(extractCreateObjectsList(undefined)).toEqual([])
+	})
+})
+
+describe('summarizeUpdateResults', () => {
+	it('counts successes and failures for objects and relationships', () => {
+		expect(
+			summarizeUpdateResults([
+				{ type: 'object', success: true },
+				{ type: 'object', success: false },
+				{ type: 'relationship', success: true },
+				{ type: 'relationship', success: true },
+				{ type: 'relationship', success: false },
+			]),
+		).toEqual({
+			objectsUpdated: 1,
+			objectsFailed: 1,
+			relationshipsCreated: 2,
+			relationshipsFailed: 1,
+		})
+	})
+
+	it('returns zero counts for non-array input', () => {
+		expect(summarizeUpdateResults(null)).toEqual({
+			objectsUpdated: 0,
+			objectsFailed: 0,
+			relationshipsCreated: 0,
+			relationshipsFailed: 0,
+		})
 	})
 })

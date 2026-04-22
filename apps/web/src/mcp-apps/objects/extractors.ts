@@ -14,8 +14,11 @@ export function extractFirstUpdatedObject(toolResult: {
 	const text = toolResult.content?.find((c) => c.type === 'text')?.text
 	if (!text) return null
 	try {
-		const parsed = JSON.parse(text) as UpdateObjectsResultItem[]
-		const first = parsed?.find((r) => r.type === 'object' && r.success && r.result)
+		const parsed = JSON.parse(text)
+		if (!Array.isArray(parsed)) return null
+		const first = (parsed as UpdateObjectsResultItem[]).find(
+			(r) => r?.type === 'object' && r.success && r.result,
+		)
 		return first?.result ?? null
 	} catch {
 		return null
@@ -39,6 +42,34 @@ export function extractUpdateObjectsList(data: unknown): ObjectResponse[] {
 	return (data as UpdateObjectsResultItem[])
 		.filter((r) => r?.type === 'object' && r.success && r.result)
 		.map((r) => r.result as ObjectResponse)
+}
+
+export interface UpdateObjectsSummary {
+	objectsUpdated: number
+	objectsFailed: number
+	relationshipsCreated: number
+	relationshipsFailed: number
+}
+
+/** Count successes and failures across an `update_objects` response (objects and relationships). */
+export function summarizeUpdateResults(data: unknown): UpdateObjectsSummary {
+	const summary: UpdateObjectsSummary = {
+		objectsUpdated: 0,
+		objectsFailed: 0,
+		relationshipsCreated: 0,
+		relationshipsFailed: 0,
+	}
+	if (!Array.isArray(data)) return summary
+	for (const r of data as Array<{ type?: string; success?: boolean }>) {
+		if (r?.type === 'object') {
+			if (r.success) summary.objectsUpdated += 1
+			else summary.objectsFailed += 1
+		} else if (r?.type === 'relationship') {
+			if (r.success) summary.relationshipsCreated += 1
+			else summary.relationshipsFailed += 1
+		}
+	}
+	return summary
 }
 
 /** Extract the list of created nodes from a `create_objects` response. Tolerates bare arrays for safety. */
