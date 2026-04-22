@@ -1,3 +1,4 @@
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
@@ -134,13 +135,29 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			enableSorting: false,
 		},
 		{
-			accessorKey: 'owner',
-			header: 'Owner',
+			accessorKey: 'assignees',
+			header: 'Assignees',
 			cell: ({ row }) => {
-				const ownerId = row.getValue('owner') as string | null
-				if (!ownerId) return <span className="text-muted-foreground">—</span>
-				const actor = actors?.find((a) => a.id === ownerId)
-				return <span className="text-sm">{actor?.name ?? '—'}</span>
+				const ids = (row.getValue('assignees') as string[] | undefined) ?? []
+				if (ids.length === 0) return <span className="text-muted-foreground">—</span>
+				const visible = ids.slice(0, 3)
+				const extra = ids.length - visible.length
+				return (
+					<div className="flex items-center -space-x-1.5">
+						{visible.map((id) => {
+							const actor = actors?.find((a) => a.id === id)
+							return (
+								<ActorAvatar
+									key={id}
+									name={actor?.name ?? 'Unknown'}
+									type={actor?.type ?? 'human'}
+									className="ring-2 ring-background"
+								/>
+							)
+						})}
+						{extra > 0 && <span className="ml-2 text-xs text-muted-foreground">+{extra}</span>}
+					</div>
+				)
 			},
 			enableSorting: false,
 		},

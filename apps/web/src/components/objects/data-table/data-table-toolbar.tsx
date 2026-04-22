@@ -28,8 +28,8 @@ interface DataTableToolbarProps {
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
 	statusesByType: Record<string, string[]>
-	ownerFilter?: string
-	onOwnerFilterChange: (value: string | undefined) => void
+	assignedToFilter?: string
+	onAssignedToFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
 	sort: string
 	onSortChange: (value: string) => void
@@ -53,8 +53,8 @@ export function DataTableToolbar({
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType,
-	ownerFilter,
-	onOwnerFilterChange,
+	assignedToFilter,
+	onAssignedToFilterChange,
 	actors,
 	sort,
 	onSortChange,
@@ -126,8 +126,8 @@ export function DataTableToolbar({
 				statusFilter={statusFilter}
 				onStatusFilterChange={onStatusFilterChange}
 				statusesByType={statusesByType}
-				ownerFilter={ownerFilter}
-				onOwnerFilterChange={onOwnerFilterChange}
+				assignedToFilter={assignedToFilter}
+				onAssignedToFilterChange={onAssignedToFilterChange}
 				actors={actors}
 				sort={sort}
 				onSortChange={onSortChange}

@@ -32,6 +32,12 @@ vi.mock('@/components/objects/linked-objects', () => ({
 	LinkedObjects: () => <div data-testid="linked-objects" />,
 }))
 
+// ParticipantsBar fetches actors + relationships via TanStack Query; stub it so these tests
+// don't need a QueryClient and can stay focused on the document shell.
+vi.mock('@/components/objects/participants-bar', () => ({
+	ParticipantsBar: () => <div data-testid="participants-bar" />,
+}))
+
 const baseProps = {
 	workspaceId: 'ws-1',
 	statuses: ['proposed', 'active', 'done'],

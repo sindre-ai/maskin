@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 const defaultColumns: ColumnInfo[] = [
 	{ id: 'title', label: 'Title', canHide: false },
 	{ id: 'status', label: 'Status', canHide: true },
-	{ id: 'owner', label: 'Owner', canHide: true },
+	{ id: 'assignees', label: 'Assignees', canHide: true },
 ]
 
 function renderControls(overrides: Partial<React.ComponentProps<typeof DataTableControls>> = {}) {
@@ -20,8 +20,8 @@ function renderControls(overrides: Partial<React.ComponentProps<typeof DataTable
 		statusFilter: undefined,
 		onStatusFilterChange: vi.fn(),
 		statusesByType: {},
-		ownerFilter: undefined,
-		onOwnerFilterChange: vi.fn(),
+		assignedToFilter: undefined,
+		onAssignedToFilterChange: vi.fn(),
 		actors: [],
 		sort: 'createdAt',
 		onSortChange: vi.fn(),
@@ -51,13 +51,13 @@ describe('DataTableControls', () => {
 		expect(screen.getByText('1')).toBeInTheDocument()
 	})
 
-	it('shows badge with count 1 when ownerFilter is set', () => {
-		renderControls({ ownerFilter: 'actor-1' })
+	it('shows badge with count 1 when assignedToFilter is set', () => {
+		renderControls({ assignedToFilter: 'actor-1' })
 		expect(screen.getByText('1')).toBeInTheDocument()
 	})
 
 	it('shows badge with count 2 when both filters are set', () => {
-		renderControls({ statusFilter: 'active', ownerFilter: 'actor-1' })
+		renderControls({ statusFilter: 'active', assignedToFilter: 'actor-1' })
 		expect(screen.getByText('2')).toBeInTheDocument()
 	})
 
@@ -68,23 +68,23 @@ describe('DataTableControls', () => {
 		})
 
 		await user.click(screen.getByRole('button', { name: /controls/i }))
-		// Only status checkboxes rendered (no owner/column checkboxes): ["active", "closed"]
+		// Only status checkboxes rendered (no assignee/column checkboxes): ["active", "closed"]
 		const checkboxes = screen.getAllByRole('checkbox')
 		await user.click(checkboxes[0])
 		expect(props.onStatusFilterChange).toHaveBeenCalledWith('active')
 	})
 
-	it('calls onOwnerFilterChange when owner checkbox is clicked', async () => {
+	it('calls onAssignedToFilterChange when assignee checkbox is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderControls({
 			actors: [{ id: 'actor-1', name: 'Alice', type: 'human', email: null }],
 		})
 
 		await user.click(screen.getByRole('button', { name: /controls/i }))
-		// Only owner checkboxes rendered (no status/column checkboxes): ["Alice"]
+		// Only assignee checkboxes rendered (no status/column checkboxes): ["Alice"]
 		const checkboxes = screen.getAllByRole('checkbox')
 		await user.click(checkboxes[0])
-		expect(props.onOwnerFilterChange).toHaveBeenCalledWith('actor-1')
+		expect(props.onAssignedToFilterChange).toHaveBeenCalledWith('actor-1')
 	})
 
 	it('calls onSortChange when a sort button is clicked', async () => {
@@ -124,7 +124,7 @@ describe('DataTableControls', () => {
 
 		await user.click(screen.getByRole('button', { name: /controls/i }))
 		const checkboxes = screen.getAllByRole('checkbox')
-		// Column visibility checkboxes are the only checkboxes (no status/owner filters rendered)
+		// Column visibility checkboxes are the only checkboxes (no status/assignee filters rendered)
 		await user.click(checkboxes[0])
 		expect(props.onColumnVisibilityChange).toHaveBeenCalledWith('status', false)
 	})

@@ -411,6 +411,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
+			if (args.assignedTo) params.set('assignedTo', args.assignedTo)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const result = await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {

@@ -46,3 +46,42 @@ export function useDeleteRelationship(workspaceId: string, objectId: string) {
 		},
 	})
 }
+
+// Invalidate everything that might be affected by adding/removing a participant edge:
+// the object row (derived assignees/watchers), object lists, and the relationships cache.
+function invalidateParticipantCaches(
+	queryClient: ReturnType<typeof useQueryClient>,
+	workspaceId: string,
+	objectId: string,
+) {
+	queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
+	queryClient.invalidateQueries({ queryKey: queryKeys.relationships.byObject(objectId) })
+	queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+	queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(objectId) })
+}
+
+export function useAssignActor(workspaceId: string, objectId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (actorId: string) => api.relationships.assign(workspaceId, objectId, actorId),
+		onSuccess: () => {
+			invalidateParticipantCaches(queryClient, workspaceId, objectId)
+		},
+		onError: () => {
+			toast.error('Failed to assign')
+		},
+	})
+}
+
+export function useWatchObject(workspaceId: string, objectId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (actorId: string) => api.relationships.watch(workspaceId, objectId, actorId),
+		onSuccess: () => {
+			invalidateParticipantCaches(queryClient, workspaceId, objectId)
+		},
+		onError: () => {
+			toast.error('Failed to watch')
+		},
+	})
+}

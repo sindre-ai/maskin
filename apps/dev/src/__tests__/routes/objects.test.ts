@@ -432,4 +432,81 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(404)
 		})
 	})
+
+	describe('Participants (assignees / watchers)', () => {
+		it('POST /api/objects with assignees returns the edges on the response', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [obj]
+
+			const assignee = '11111111-1111-1111-1111-111111111111'
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects',
+					buildCreateObjectBody({ assignees: [assignee] }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.assignees).toEqual([assignee])
+			expect(body.watchers).toEqual([])
+		})
+
+		it('GET /api/objects returns assignees derived from participant edges', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const a1 = '11111111-1111-1111-1111-111111111111'
+			const a2 = '22222222-2222-2222-2222-222222222222'
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[obj],
+				[
+					{ sourceId: obj.id, targetId: a1, type: 'assigned_to' },
+					{ sourceId: obj.id, targetId: a2, type: 'watches' },
+				],
+			]
+
+			const res = await app.request(jsonGet('/api/objects', { 'x-workspace-id': wsId }))
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].assignees).toEqual([a1])
+			expect(body[0].watchers).toEqual([a2])
+		})
+
+		it('PATCH with status change notifies participants (except the mutator)', async () => {
+			const existing = buildObject({ status: 'todo' })
+			const updated = { ...existing, status: 'in_progress' }
+			const ws = buildWorkspace({ id: existing.workspaceId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			const otherActor = '99999999-9999-9999-9999-999999999999'
+			mockResults.selectQueue = [
+				[existing], // load existing
+				[buildWorkspaceMember()], // membership
+				[ws], // workspace settings
+				// notifyParticipants → fetchParticipantActors
+				[
+					{ sourceId: existing.id, targetId: 'test-actor-id', type: 'assigned_to' },
+					{ sourceId: existing.id, targetId: otherActor, type: 'watches' },
+				],
+				// response decoration → fetchParticipantActors
+				[{ sourceId: existing.id, targetId: 'test-actor-id', type: 'assigned_to' }],
+			]
+			mockResults.update = [updated]
+			mockResults.insert = [updated] // notifications + events
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'in_progress' }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.status).toBe('in_progress')
+			expect(body.assignees).toEqual(['test-actor-id'])
+		})
+	})
 })

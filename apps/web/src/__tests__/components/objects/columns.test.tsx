@@ -107,7 +107,7 @@ describe('getStaticColumns', () => {
 		expect(screen.getByText('bet')).toBeInTheDocument()
 	})
 
-	it('shows actor name for owner column', () => {
+	it('shows stacked avatars for assignees column', () => {
 		const columns = getStaticColumns({
 			workspaceId: 'ws-1',
 			actors: [
@@ -115,16 +115,16 @@ describe('getStaticColumns', () => {
 				{ id: 'actor-2', name: 'Bob', type: 'human', email: null },
 			],
 		})
-		const data = [buildObjectResponse({ owner: 'actor-2', createdBy: 'actor-1' })]
+		const data = [buildObjectResponse({ assignees: ['actor-2'], createdBy: 'actor-1' })]
 		render(<TestTable data={data} columns={columns} />)
-		expect(screen.getByText('Bob')).toBeInTheDocument()
+		expect(screen.getByTitle('Bob')).toBeInTheDocument()
 	})
 
-	it('shows dash when owner is null', () => {
+	it('shows dash when no assignees', () => {
 		const columns = getStaticColumns({ workspaceId: 'ws-1' })
-		const data = [buildObjectResponse({ owner: null })]
+		const data = [buildObjectResponse({ assignees: [] })]
 		render(<TestTable data={data} columns={columns} />)
-		// Owner cell renders a dash character
+		// Assignees cell renders a dash character
 		const dashes = screen.getAllByText('—')
 		expect(dashes.length).toBeGreaterThan(0)
 	})

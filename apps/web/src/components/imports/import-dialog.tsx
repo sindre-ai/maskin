@@ -279,7 +279,6 @@ function MappingStep({
 				{ value: 'title', label: 'Title' },
 				{ value: 'content', label: 'Content' },
 				{ value: 'status', label: 'Status' },
-				{ value: 'owner', label: 'Owner' },
 				{ value: '__skip__', label: 'Skip' },
 			]
 

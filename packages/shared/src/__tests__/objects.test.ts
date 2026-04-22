@@ -49,11 +49,12 @@ describe('createObjectSchema', () => {
 			content: 'Details',
 			status: 'active',
 			metadata: { priority: 'high' },
-			owner: uuid,
+			assignees: [uuid],
 		})
 		expect(result.id).toBe(uuid)
 		expect(result.title).toBe('My bet')
 		expect(result.metadata).toEqual({ priority: 'high' })
+		expect(result.assignees).toEqual([uuid])
 	})
 
 	it('rejects missing type', () => {
@@ -70,9 +71,9 @@ describe('createObjectSchema', () => {
 		).toThrow()
 	})
 
-	it('rejects invalid uuid for owner', () => {
+	it('rejects non-uuid assignee entry', () => {
 		expect(() =>
-			createObjectSchema.parse({ type: 'task', status: 'todo', owner: 'not-uuid' }),
+			createObjectSchema.parse({ type: 'task', status: 'todo', assignees: ['not-uuid'] }),
 		).toThrow()
 	})
 })
@@ -86,16 +87,6 @@ describe('updateObjectSchema', () => {
 	it('accepts partial fields', () => {
 		const result = updateObjectSchema.parse({ title: 'Updated' })
 		expect(result.title).toBe('Updated')
-	})
-
-	it('accepts null owner to clear assignment', () => {
-		const result = updateObjectSchema.parse({ owner: null })
-		expect(result.owner).toBeNull()
-	})
-
-	it('accepts uuid owner', () => {
-		const result = updateObjectSchema.parse({ owner: uuid })
-		expect(result.owner).toBe(uuid)
 	})
 })
 
@@ -129,9 +120,9 @@ describe('objectQuerySchema', () => {
 		expect(result.type).toBe('bet')
 	})
 
-	it('accepts optional owner filter', () => {
-		const result = objectQuerySchema.parse({ owner: uuid })
-		expect(result.owner).toBe(uuid)
+	it('accepts optional assignedTo filter', () => {
+		const result = objectQuerySchema.parse({ assignedTo: uuid })
+		expect(result.assignedTo).toBe(uuid)
 	})
 })
 

@@ -35,11 +35,14 @@ export const objectResponseSchema = z.object({
 	content: z.string().nullable(),
 	status: z.string(),
 	metadata: jsonbField,
-	owner: z.string().uuid().nullable(),
 	activeSessionId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	/** Actor IDs with an `assigned_to` edge on this object. Derived, not stored on the row. */
+	assignees: z.array(z.string().uuid()).default([]),
+	/** Actor IDs with a `watches` edge on this object. Derived, not stored on the row. */
+	watchers: z.array(z.string().uuid()).default([]),
 })
 
 export const actorResponseSchema = z.object({

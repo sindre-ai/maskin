@@ -16,7 +16,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@maskin/shared'
-import { eq, inArray, or } from 'drizzle-orm'
+import { and, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -468,11 +468,13 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Delete events
 		await tx.delete(events).where(eq(events.actorId, id))
 
-		// Delete relationships
+		// Delete relationships created by this actor, plus any participation edges (assigned_to/watches)
+		// that still target the actor being deleted.
 		await tx.delete(relationships).where(eq(relationships.createdBy, id))
+		await tx
+			.delete(relationships)
+			.where(and(eq(relationships.targetType, 'actor'), eq(relationships.targetId, id)))
 
-		// Reassign objects
-		await tx.update(objects).set({ owner: null }).where(eq(objects.owner, id))
 		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
 
 		// Clean up workspace references

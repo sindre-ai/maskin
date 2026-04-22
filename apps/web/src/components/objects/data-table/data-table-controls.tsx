@@ -22,8 +22,8 @@ interface DataTableControlsProps {
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
 	statusesByType: Record<string, string[]>
-	ownerFilter?: string
-	onOwnerFilterChange: (value: string | undefined) => void
+	assignedToFilter?: string
+	onAssignedToFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
 	// Sort
 	sort: string
@@ -42,8 +42,8 @@ export function DataTableControls({
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType,
-	ownerFilter,
-	onOwnerFilterChange,
+	assignedToFilter,
+	onAssignedToFilterChange,
 	actors,
 	sort,
 	onSortChange,
@@ -52,7 +52,7 @@ export function DataTableControls({
 	groupBy,
 	onGroupByChange,
 }: DataTableControlsProps) {
-	const hasActiveFilters = !!statusFilter || !!ownerFilter
+	const hasActiveFilters = !!statusFilter || !!assignedToFilter
 
 	return (
 		<Popover>
@@ -62,7 +62,7 @@ export function DataTableControls({
 					Controls
 					{hasActiveFilters && (
 						<span className="ml-1 rounded-full bg-primary text-primary-foreground text-xs px-1.5 py-0.5">
-							{(statusFilter ? 1 : 0) + (ownerFilter ? 1 : 0)}
+							{(statusFilter ? 1 : 0) + (assignedToFilter ? 1 : 0)}
 						</span>
 					)}
 				</Button>
@@ -107,11 +107,11 @@ export function DataTableControls({
 						</>
 					)}
 
-					{/* Filter by Owner */}
+					{/* Filter by Assignee */}
 					{actors && actors.length > 0 && (
 						<>
 							<div className="p-3">
-								<p className="text-xs font-medium text-muted-foreground mb-2">Filter by owner</p>
+								<p className="text-xs font-medium text-muted-foreground mb-2">Filter by assignee</p>
 								<div className="space-y-1">
 									{actors.map((a) => (
 										<div
@@ -119,9 +119,9 @@ export function DataTableControls({
 											className="flex items-center gap-2 py-1 px-1 rounded hover:bg-muted/50 cursor-pointer text-sm"
 										>
 											<Checkbox
-												checked={ownerFilter === a.id}
+												checked={assignedToFilter === a.id}
 												onCheckedChange={(checked) =>
-													onOwnerFilterChange(checked ? a.id : undefined)
+													onAssignedToFilterChange(checked ? a.id : undefined)
 												}
 											/>
 											{a.name}

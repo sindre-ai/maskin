@@ -29,11 +29,12 @@ export function buildObjectResponse(overrides: Partial<ObjectResponse> = {}): Ob
 		content: null,
 		status: 'active',
 		metadata: null,
-		owner: null,
 		activeSessionId: null,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
+		assignees: [],
+		watchers: [],
 		...overrides,
 	}
 }

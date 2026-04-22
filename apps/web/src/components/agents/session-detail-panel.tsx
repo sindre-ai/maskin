@@ -1,11 +1,11 @@
-import { useSessionLogs } from '@/hooks/use-sessions'
 import { type AffectedObject, useSessionAffectedObjects } from '@/hooks/use-events'
+import { useSessionLogs } from '@/hooks/use-sessions'
 import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
+import { Link } from '@tanstack/react-router'
 import { CheckCircle2, Clock, FileText, MinusCircle, Terminal, XCircle } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Link } from '@tanstack/react-router'
 import { RelativeTime } from '../shared/relative-time'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet'
 import { Spinner } from '../ui/spinner'
@@ -60,9 +60,7 @@ function AffectedObjectsList({
 	workspaceId,
 }: { objects: AffectedObject[]; workspaceId: string }) {
 	if (objects.length === 0) {
-		return (
-			<p className="text-sm text-muted-foreground py-2 text-center">No objects affected</p>
-		)
+		return <p className="text-sm text-muted-foreground py-2 text-center">No objects affected</p>
 	}
 
 	return (
@@ -193,10 +191,7 @@ export function SessionDetailPanel({
 									<Spinner />
 								</div>
 							) : (
-								<AffectedObjectsList
-									objects={affectedObjects}
-									workspaceId={workspaceId}
-								/>
+								<AffectedObjectsList objects={affectedObjects} workspaceId={workspaceId} />
 							)}
 						</div>
 

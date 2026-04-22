@@ -15,7 +15,8 @@ export const createObjectSchema = z.object({
 	content: z.string().optional(),
 	status: z.string(),
 	metadata: safeMetadataSchema.optional(),
-	owner: z.string().uuid().optional(),
+	/** Actors to assign on create. Each becomes an `assigned_to` relationship edge. */
+	assignees: z.array(z.string().uuid()).max(50).optional(),
 })
 
 export const updateObjectSchema = z.object({
@@ -23,7 +24,6 @@ export const updateObjectSchema = z.object({
 	content: z.string().optional(),
 	status: z.string().optional(),
 	metadata: safeMetadataSchema.optional(),
-	owner: z.string().uuid().nullable().optional(),
 })
 
 /** Known built-in sort columns — keep in sync with sortColumns in apps/dev/src/routes/objects.ts */
@@ -33,7 +33,6 @@ export const KNOWN_SORT_COLUMNS = [
 	'title',
 	'status',
 	'type',
-	'owner',
 	'createdBy',
 ] as const
 
@@ -49,7 +48,8 @@ const sortFieldSchema = z
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
-	owner: z.string().uuid().optional(),
+	/** Filter to objects assigned to this actor (via `assigned_to` edge). */
+	assignedTo: z.string().uuid().optional(),
 	ids: z.string().optional(),
 	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),

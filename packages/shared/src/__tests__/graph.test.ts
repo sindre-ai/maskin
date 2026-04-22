@@ -22,10 +22,10 @@ describe('graphNodeSchema', () => {
 			title: 'My task',
 			content: 'Details',
 			metadata: { priority: 'high' },
-			owner: uuid,
+			assignees: [uuid],
 		})
 		expect(result.title).toBe('My task')
-		expect(result.owner).toBe(uuid)
+		expect(result.assignees).toEqual([uuid])
 	})
 
 	it('rejects missing $id', () => {

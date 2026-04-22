@@ -26,6 +26,7 @@ import { TypeBadge } from '../shared/type-badge'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectActionBanner } from './object-action-banner'
+import { ParticipantsBar } from './participants-bar'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -124,7 +125,7 @@ export function ObjectDocumentView({
 			)}
 
 			{/* Metadata badges row */}
-			<div className="flex flex-wrap items-center gap-2 mb-6">
+			<div className="flex flex-wrap items-center gap-2 mb-3">
 				<TypeBadge type={object.type} />
 				{statuses.length > 0 ? (
 					<StatusSelect current={object.status} options={statuses} onChange={handleStatusChange} />
@@ -138,6 +139,16 @@ export function ObjectDocumentView({
 					</span>
 				)}
 				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
+			</div>
+
+			{/* Participants (assignees + watchers) */}
+			<div className="mb-6">
+				<ParticipantsBar
+					workspaceId={workspaceId}
+					objectId={object.id}
+					assignees={object.assignees ?? []}
+					watchers={object.watchers ?? []}
+				/>
 			</div>
 
 			{/* Properties */}
@@ -215,7 +226,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					search: (prev) => ({
 						type: prev.type,
 						status: prev.status,
-						owner: prev.owner,
+						assignedTo: prev.assignedTo,
 						sort: prev.sort ?? 'createdAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,

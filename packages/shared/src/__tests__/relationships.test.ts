@@ -54,6 +54,52 @@ describe('createRelationshipSchema', () => {
 			}),
 		).toThrow()
 	})
+
+	it('accepts assigned_to edge from object to actor', () => {
+		const result = createRelationshipSchema.parse({
+			source_type: 'object',
+			source_id: uuid,
+			target_type: 'actor',
+			target_id: uuid2,
+			type: 'assigned_to',
+		})
+		expect(result.type).toBe('assigned_to')
+	})
+
+	it('accepts watches edge from object to actor', () => {
+		const result = createRelationshipSchema.parse({
+			source_type: 'object',
+			source_id: uuid,
+			target_type: 'actor',
+			target_id: uuid2,
+			type: 'watches',
+		})
+		expect(result.type).toBe('watches')
+	})
+
+	it('rejects assigned_to edge with wrong target_type', () => {
+		expect(() =>
+			createRelationshipSchema.parse({
+				source_type: 'object',
+				source_id: uuid,
+				target_type: 'object',
+				target_id: uuid2,
+				type: 'assigned_to',
+			}),
+		).toThrow()
+	})
+
+	it('rejects watches edge with wrong source_type', () => {
+		expect(() =>
+			createRelationshipSchema.parse({
+				source_type: 'actor',
+				source_id: uuid,
+				target_type: 'actor',
+				target_id: uuid2,
+				type: 'watches',
+			}),
+		).toThrow()
+	})
 })
 
 describe('relationshipQuerySchema', () => {

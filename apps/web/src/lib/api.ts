@@ -149,6 +149,32 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		// Assign an actor to an object — creates an `assigned_to` edge.
+		assign: (workspaceId: string, objectId: string, actorId: string) =>
+			request<RelationshipResponse>('/relationships', {
+				method: 'POST',
+				body: {
+					source_type: 'object',
+					source_id: objectId,
+					target_type: 'actor',
+					target_id: actorId,
+					type: 'assigned_to',
+				},
+				workspaceId,
+			}),
+		// Watch an object — creates a `watches` edge for the given actor.
+		watch: (workspaceId: string, objectId: string, actorId: string) =>
+			request<RelationshipResponse>('/relationships', {
+				method: 'POST',
+				body: {
+					source_type: 'object',
+					source_id: objectId,
+					target_type: 'actor',
+					target_id: actorId,
+					type: 'watches',
+				},
+				workspaceId,
+			}),
 	},
 
 	triggers: {
@@ -329,11 +355,14 @@ export interface ObjectResponse {
 	content: string | null
 	status: string
 	metadata: SafeMetadata | null
-	owner: string | null
 	activeSessionId: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	/** Actor IDs assigned to this object. Derived from `assigned_to` relationship edges. */
+	assignees: string[]
+	/** Actor IDs watching this object. Derived from `watches` relationship edges. */
+	watchers: string[]
 }
 
 export interface CreateObjectInput {
@@ -343,7 +372,8 @@ export interface CreateObjectInput {
 	content?: string
 	status: string
 	metadata?: SafeMetadata
-	owner?: string
+	/** Actor IDs to assign on create. Each becomes an `assigned_to` edge. */
+	assignees?: string[]
 }
 
 export interface UpdateObjectInput {
@@ -351,7 +381,6 @@ export interface UpdateObjectInput {
 	content?: string
 	status?: string
 	metadata?: SafeMetadata
-	owner?: string | null
 }
 
 export interface ActorListItem {

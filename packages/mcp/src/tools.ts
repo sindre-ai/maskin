@@ -160,11 +160,16 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or assignee (assignedTo). Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
+			assignedTo: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to objects assigned to this actor (matches `assigned_to` edge)'),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),

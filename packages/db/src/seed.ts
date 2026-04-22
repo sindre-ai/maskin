@@ -166,7 +166,6 @@ const [rawBet1, rawBet2] = await db
 			title: 'Simplify onboarding to 2 steps',
 			content: 'Merge team-invite into post-signup flow to reduce drop-off.',
 			status: 'active',
-			owner: demoUser.id,
 			createdBy: demoUser.id,
 		},
 		{
@@ -175,7 +174,6 @@ const [rawBet1, rawBet2] = await db
 			title: 'Add command palette',
 			content: 'Expose all actions via Cmd+K palette for power users.',
 			status: 'proposed',
-			owner: demoUser.id,
 			createdBy: demoUser.id,
 		},
 	])
@@ -194,7 +192,6 @@ const [rawTask1, rawTask2, rawTask3] = await db
 			type: 'task',
 			title: 'Remove team-invite step from onboarding',
 			status: 'in_progress',
-			owner: demoUser.id,
 			createdBy: demoUser.id,
 		},
 		{
@@ -202,7 +199,6 @@ const [rawTask1, rawTask2, rawTask3] = await db
 			type: 'task',
 			title: 'Design command palette UI',
 			status: 'todo',
-			owner: demoUser.id,
 			createdBy: demoUser.id,
 		},
 		{
@@ -222,6 +218,39 @@ const task3 = unwrap(rawTask3, 'task3')
 // ── Relationships ───────────────────────────────────────────────────────────
 
 await db.insert(relationships).values([
+	// Participation edges — demoUser is assigned to the bets and two of the tasks
+	{
+		sourceType: 'object',
+		sourceId: bet1.id,
+		targetType: 'actor',
+		targetId: demoUser.id,
+		type: 'assigned_to',
+		createdBy: demoUser.id,
+	},
+	{
+		sourceType: 'object',
+		sourceId: bet2.id,
+		targetType: 'actor',
+		targetId: demoUser.id,
+		type: 'assigned_to',
+		createdBy: demoUser.id,
+	},
+	{
+		sourceType: 'object',
+		sourceId: task1.id,
+		targetType: 'actor',
+		targetId: demoUser.id,
+		type: 'assigned_to',
+		createdBy: demoUser.id,
+	},
+	{
+		sourceType: 'object',
+		sourceId: task2.id,
+		targetType: 'actor',
+		targetId: demoUser.id,
+		type: 'assigned_to',
+		createdBy: demoUser.id,
+	},
 	{
 		sourceType: 'insight',
 		sourceId: insight1.id,

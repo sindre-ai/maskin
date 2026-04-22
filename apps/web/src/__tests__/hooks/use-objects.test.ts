@@ -39,11 +39,12 @@ function buildObject(overrides: Partial<ObjectResponse> & { id: string }): Objec
 		content: null,
 		status: 'todo',
 		metadata: null,
-		owner: null,
 		activeSessionId: null,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
+		assignees: [],
+		watchers: [],
 		...overrides,
 	}
 }

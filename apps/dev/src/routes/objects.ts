@@ -10,6 +10,7 @@ import {
 } from '@maskin/shared'
 import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
+import { notifyParticipants } from '../lib/notifications'
 import {
 	errorSchema,
 	idParamSchema,
@@ -17,6 +18,7 @@ import {
 	objectResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { fetchParticipantActors, withParticipants } from '../lib/participants'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -38,7 +40,6 @@ const sortColumns: Record<string, Column | SQL> = {
 	title: objects.title,
 	status: objects.status,
 	type: objects.type,
-	owner: objects.owner,
 	createdBy: objects.createdBy,
 }
 
@@ -156,7 +157,6 @@ app.openapi(createObjectRoute, async (c) => {
 			content: body.content,
 			status: body.status,
 			metadata: body.metadata,
-			owner: body.owner,
 			createdBy: actorId,
 		})
 		.onConflictDoNothing({ target: objects.id })
@@ -169,6 +169,24 @@ app.openapi(createObjectRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create object'), 500)
 	}
 
+	// Attach assignees as relationship edges in the same transaction-ish window.
+	const assignees = (body.assignees ?? []).filter((id, i, arr) => arr.indexOf(id) === i)
+	if (assignees.length > 0) {
+		await db
+			.insert(relationships)
+			.values(
+				assignees.map((actorIdToAssign) => ({
+					sourceType: 'object',
+					sourceId: created.id,
+					targetType: 'actor',
+					targetId: actorIdToAssign,
+					type: 'assigned_to',
+					createdBy: actorId,
+				})),
+			)
+			.onConflictDoNothing()
+	}
+
 	// Log event
 	await db.insert(events).values({
 		workspaceId,
@@ -179,7 +197,12 @@ app.openapi(createObjectRoute, async (c) => {
 		data: created,
 	})
 
-	return c.json(serialize(created) as z.infer<typeof objectResponseSchema>, 201)
+	const response = {
+		...serialize(created),
+		assignees,
+		watchers: [] as string[],
+	}
+	return c.json(response as z.infer<typeof objectResponseSchema>, 201)
 })
 
 // GET / - List objects
@@ -212,11 +235,26 @@ app.openapi(listObjectsRoute, async (c) => {
 	const conditions = [eq(objects.workspaceId, workspaceId)]
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) conditions.push(eq(objects.status, query.status))
-	if (query.owner) conditions.push(eq(objects.owner, query.owner))
 	if (query.ids) {
 		const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
 		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
+	}
+
+	// Filter to objects assigned to a specific actor via the relationships edge table.
+	if (query.assignedTo) {
+		const assignedIds = db
+			.select({ id: relationships.sourceId })
+			.from(relationships)
+			.where(
+				and(
+					eq(relationships.sourceType, 'object'),
+					eq(relationships.targetType, 'actor'),
+					eq(relationships.type, 'assigned_to'),
+					eq(relationships.targetId, query.assignedTo),
+				),
+			)
+		conditions.push(inArray(objects.id, assignedIds))
 	}
 
 	const orderBy = resolveOrderBy(query)
@@ -231,7 +269,11 @@ app.openapi(listObjectsRoute, async (c) => {
 		.offset(query.offset)
 		.orderBy(orderBy)
 
-	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	const withEdges = await withParticipants(
+		db,
+		results.map((r) => serialize(r)),
+	)
+	return c.json(withEdges as z.infer<typeof objectResponseSchema>[], 200)
 })
 
 // GET /search - Search objects by text
@@ -281,7 +323,11 @@ app.openapi(searchObjectsRoute, async (c) => {
 		.offset(query.offset)
 		.orderBy(orderBy)
 
-	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	const withEdges = await withParticipants(
+		db,
+		results.map((r) => serialize(r)),
+	)
+	return c.json(withEdges as z.infer<typeof objectResponseSchema>[], 200)
 })
 
 // GET /{id}/graph - Get object with relationships and connected objects
@@ -327,11 +373,13 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.from(relationships)
 		.where(or(eq(relationships.sourceId, id), eq(relationships.targetId, id)))
 
-	// Collect connected object IDs
+	// Collect connected object IDs — actor/workspace targets are meta edges (assigned_to, watches)
+	// and must be excluded so they aren't mistaken for objects to fetch.
+	const META_TYPES = new Set(['actor', 'workspace'])
 	const connectedIds = new Set<string>()
 	for (const rel of rels) {
-		if (rel.sourceId !== id) connectedIds.add(rel.sourceId)
-		if (rel.targetId !== id) connectedIds.add(rel.targetId)
+		if (rel.sourceId !== id && !META_TYPES.has(rel.sourceType)) connectedIds.add(rel.sourceId)
+		if (rel.targetId !== id && !META_TYPES.has(rel.targetType)) connectedIds.add(rel.targetId)
 	}
 
 	// Batch-fetch connected objects
@@ -343,11 +391,17 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			.where(inArray(objects.id, [...connectedIds]))
 	}
 
+	const [decorated] = await withParticipants(db, [serialize(object)])
+	const connectedWithEdges = await withParticipants(
+		db,
+		connectedObjects.map((r) => serialize(r)),
+	)
+
 	return c.json(
 		{
-			object: serialize(object),
+			object: decorated,
 			relationships: serializeArray(rels),
-			connected_objects: serializeArray(connectedObjects),
+			connected_objects: connectedWithEdges,
 		} as z.infer<typeof objectGraphResponseSchema>,
 		200,
 	)
@@ -385,7 +439,8 @@ app.openapi(getObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	return c.json(serialize(object) as z.infer<typeof objectResponseSchema>, 200)
+	const [decorated] = await withParticipants(db, [serialize(object)])
+	return c.json(decorated as z.infer<typeof objectResponseSchema>, 200)
 })
 
 // PATCH /{id} - Update object
@@ -485,7 +540,8 @@ app.openapi(updateObjectRoute, async (c) => {
 	}
 
 	// Log event
-	const action = body.status && body.status !== existing.status ? 'status_changed' : 'updated'
+	const statusChanged = Boolean(body.status && body.status !== existing.status)
+	const action = statusChanged ? 'status_changed' : 'updated'
 	await db.insert(events).values({
 		workspaceId: existing.workspaceId,
 		actorId,
@@ -495,7 +551,27 @@ app.openapi(updateObjectRoute, async (c) => {
 		data: { previous: existing, updated },
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
+	// Notify participants (assignees + watchers) on status change, except the mutating actor.
+	if (statusChanged) {
+		const title = updated.title ? `${updated.title}` : 'An item you follow'
+		await notifyParticipants(db, {
+			workspaceId: existing.workspaceId,
+			objectId: id,
+			sourceActorId: actorId,
+			exclude: [actorId],
+			title: `${title} moved to ${updated.status}`,
+			content: `Status changed from "${existing.status}" to "${updated.status}"`,
+			type: 'alert',
+		})
+	}
+
+	const participants = await fetchParticipantActors(db, id)
+	const response = {
+		...serialize(updated),
+		assignees: participants.assignees,
+		watchers: participants.watchers,
+	}
+	return c.json(response as z.infer<typeof objectResponseSchema>, 200)
 })
 
 // DELETE /{id} - Delete object
@@ -529,6 +605,12 @@ app.openapi(deleteObjectRoute, async (c) => {
 	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
+
+	// Drop participant edges first (FK is on target, no cascade on source_id). Object-to-object
+	// relationships aren't cleaned up by a FK either; leaving them matches historical behavior.
+	await db
+		.delete(relationships)
+		.where(and(eq(relationships.sourceType, 'object'), eq(relationships.sourceId, id)))
 
 	await db.delete(objects).where(eq(objects.id, id))
 

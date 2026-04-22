@@ -9,7 +9,8 @@ export const graphNodeSchema = z.object({
 	content: z.string().optional(),
 	status: z.string(),
 	metadata: safeMetadataSchema.optional(),
-	owner: z.string().uuid().optional(),
+	/** Actors to assign on create. Each becomes an `assigned_to` relationship edge. */
+	assignees: z.array(z.string().uuid()).max(50).optional(),
 })
 
 export const graphEdgeSchema = z.object({
@@ -21,7 +22,9 @@ export const graphEdgeSchema = z.object({
 		.describe('A $id from a node in this request, or a real UUID of an existing object'),
 	type: z
 		.string()
-		.describe('Relationship type: informs, breaks_into, blocks, relates_to, duplicates'),
+		.describe(
+			'Relationship type: informs, breaks_into, blocks, relates_to, duplicates, assigned_to, watches',
+		),
 })
 
 export const createGraphSchema = z.object({

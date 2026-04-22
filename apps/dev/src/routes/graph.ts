@@ -188,7 +188,6 @@ app.openapi(createGraphRoute, async (c) => {
 						content: node.content,
 						status: node.status,
 						metadata: node.metadata,
-						owner: node.owner,
 						createdBy: actorId,
 					})
 					.returning()
@@ -198,6 +197,24 @@ app.openapi(createGraphRoute, async (c) => {
 				}
 				idMap.set(node.$id, created.id)
 				createdNodes.push({ ...created, $id: node.$id })
+
+				// Attach assignees as `assigned_to` edges inside the same transaction.
+				const assignees = (node.assignees ?? []).filter((id, i, arr) => arr.indexOf(id) === i)
+				if (assignees.length > 0) {
+					await tx
+						.insert(relationships)
+						.values(
+							assignees.map((actorIdToAssign) => ({
+								sourceType: 'object',
+								sourceId: created.id,
+								targetType: 'actor',
+								targetId: actorIdToAssign,
+								type: 'assigned_to',
+								createdBy: actorId,
+							})),
+						)
+						.onConflictDoNothing()
+				}
 
 				await tx.insert(events).values({
 					workspaceId,

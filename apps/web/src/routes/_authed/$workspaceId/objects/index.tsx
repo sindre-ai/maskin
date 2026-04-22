@@ -28,7 +28,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	validateSearch: (search: Record<string, unknown>) => ({
 		type: typeof search.type === 'string' ? search.type : undefined,
 		status: typeof search.status === 'string' ? search.status : undefined,
-		owner: typeof search.owner === 'string' ? search.owner : undefined,
+		assignedTo: typeof search.assignedTo === 'string' ? search.assignedTo : undefined,
 		sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
 		order:
 			typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
@@ -49,7 +49,7 @@ function ObjectsPage() {
 	const {
 		type: typeFilter,
 		status: statusFilter,
-		owner: ownerFilter,
+		assignedTo: assignedToFilter,
 		sort,
 		order,
 		q,
@@ -88,12 +88,12 @@ function ObjectsPage() {
 		const f: Record<string, string> = {}
 		if (typeFilter) f.type = typeFilter
 		if (statusFilter) f.status = statusFilter
-		if (ownerFilter) f.owner = ownerFilter
+		if (assignedToFilter) f.assignedTo = assignedToFilter
 		if (idsFilter) f.ids = idsFilter
 		f.sort = sort
 		f.order = order
 		return f
-	}, [typeFilter, statusFilter, ownerFilter, idsFilter, sort, order])
+	}, [typeFilter, statusFilter, assignedToFilter, idsFilter, sort, order])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -185,7 +185,7 @@ function ObjectsPage() {
 		const staticNames: Record<string, string> = {
 			status: 'Status',
 			type: 'Type',
-			owner: 'Owner',
+			assignees: 'Assignees',
 			createdBy: 'Created by',
 			createdAt: 'Created',
 			updatedAt: 'Updated',
@@ -271,8 +271,8 @@ function ObjectsPage() {
 				statusFilter={statusFilter}
 				onStatusFilterChange={(value) => updateSearch({ status: value })}
 				statusesByType={statusesByType}
-				ownerFilter={ownerFilter}
-				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
+				assignedToFilter={assignedToFilter}
+				onAssignedToFilterChange={(value) => updateSearch({ assignedTo: value })}
 				actors={actors}
 				sort={sort}
 				onSortChange={(value) => updateSearch({ sort: value })}
