@@ -184,6 +184,12 @@ describe('notificationMetadataSchema', () => {
 		expect(() => notificationMetadataSchema.parse({ actions: 'not json' })).toThrow()
 	})
 
+	it('rejects an actions string that parses to a non-array JSON value', () => {
+		expect(() =>
+			notificationMetadataSchema.parse({ actions: '{"label":"x","response":"y"}' }),
+		).toThrow()
+	})
+
 	it('accepts a native options array for structured input', () => {
 		const result = notificationMetadataSchema.parse({
 			input_type: 'single_choice',
