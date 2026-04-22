@@ -57,6 +57,20 @@ build_context() {
     echo "" >> "$context_file"
   fi
 
+  # Append workspace knowledge (validated standing rules for this workspace).
+  # Files are written by the session manager from type='knowledge', status='validated'
+  # objects before the container boots. Each file already contains its own ## <title>.
+  if [ -d /agent/knowledge ] && [ "$(ls -A /agent/knowledge/*.md 2>/dev/null)" ]; then
+    echo "# Workspace knowledge" >> "$context_file"
+    echo "" >> "$context_file"
+    echo "The following are the workspace's standing rules, promoted from validated signal. Apply them." >> "$context_file"
+    echo "" >> "$context_file"
+    for f in /agent/knowledge/*.md; do
+      cat "$f" >> "$context_file"
+      echo "" >> "$context_file"
+    done
+  fi
+
   echo "[system] Context file written to $context_file"
 }
 

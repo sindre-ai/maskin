@@ -11,7 +11,7 @@
  * substitutes these after creating the actor, in a second PATCH call.
  */
 
-import { KNOWLEDGE_NUDGES } from '../prompts'
+import { KNOWLEDGE_CURATOR_PROMPT, KNOWLEDGE_NUDGES } from '../prompts'
 import type { SeedAgent, SeedTrigger } from './development-agents'
 
 // Maskin MCP only — for agents that act on workspace objects (bets, tasks,
@@ -334,6 +334,12 @@ The briefing should include:
 Keep it to 10 lines max. The goal is a 30-second morning read, not a report.`,
 	},
 	{
+		$id: 'knowledge_curator',
+		name: 'Knowledge Curator',
+		tools: maskinOnlyTools,
+		systemPrompt: KNOWLEDGE_CURATOR_PROMPT,
+	},
+	{
 		$id: 'notification_bouncer',
 		name: 'Notification Bouncer',
 		tools: maskinPlusSlackTools,
@@ -636,6 +642,15 @@ export const GROWTH_TRIGGERS: SeedTrigger[] = [
 		enabled: true,
 		actionPrompt:
 			"Produce today's briefing. List pending notifications first; dismiss any stale prior briefing. Compose a single notification with: today's focus (1-2 active bets), pipeline snapshot (new leads / messaged / in conversation / meetings booked), content queue, up to 3 blockers (one line each), and yesterday's wins. 10 lines max.",
+	},
+	{
+		name: 'Daily Knowledge Synthesis',
+		type: 'cron',
+		config: { expression: '0 6 * * *' },
+		targetActor$id: 'knowledge_curator',
+		enabled: true,
+		actionPrompt:
+			'Run your daily knowledge synthesis. Mine clustered insights and completed/validated bets for durable patterns worth promoting to knowledge.\n\n1. list_objects({type: "insight"}) — focus on insights in "processing" or "clustered" status. Group by theme (outreach tactics that worked, ICP segments that converted, brand-voice conventions, content angles that performed).\n2. list_objects({type: "bet"}) — focus on bets with status "completed" or "validated" in the last 14 days.\n3. list_objects({type: "knowledge"}) — read existing articles so you don\'t duplicate.\n4. For each durable theme (2+ insights) or validated-bet learning, create/update a knowledge article. Use "supersedes" + deprecate when refining.\n5. Attach "informs" edges from every source to the knowledge article.\n6. Status "validated" requires a completed bet or 3+ corroborating insights; otherwise "draft". Set metadata.confidence accordingly.\n7. Notify the human on new validated articles (source_actor_id = {{self_id}}; metadata.actions native JSON array).\n8. If nothing durable, exit silently.',
 	},
 	{
 		name: 'Morning Notification Cleanup',

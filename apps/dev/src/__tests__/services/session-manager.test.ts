@@ -1,11 +1,14 @@
 import { vi } from 'vitest'
 
 // Mock external dependencies
+const { mockWriteFile } = vi.hoisted(() => ({
+	mockWriteFile: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('node:fs/promises', () => ({
 	mkdtemp: vi.fn().mockResolvedValue('/tmp/anko-session-test'),
 	mkdir: vi.fn().mockResolvedValue(undefined),
 	chmod: vi.fn().mockResolvedValue(undefined),
-	writeFile: vi.fn().mockResolvedValue(undefined),
+	writeFile: mockWriteFile,
 	rm: vi.fn().mockResolvedValue(undefined),
 }))
 
@@ -206,6 +209,77 @@ describe('SessionManager', () => {
 		it('starts and stops watchdog without error', async () => {
 			await manager.start()
 			await manager.stop()
+		})
+	})
+
+	describe('writeWorkspaceKnowledge()', () => {
+		it('writes validated knowledge articles as markdown files into the knowledge dir', async () => {
+			mockResults.select = [
+				{
+					id: 'article-1',
+					title: 'Never push to main',
+					content: 'Always open a PR first.',
+					metadata: { summary: 'Git workflow rule', confidence: 'high' },
+					updatedAt: new Date(),
+				},
+				{
+					id: 'article-2',
+					title: 'Cap outreach at 50/day',
+					content: 'Per-inbox daily cap.',
+					metadata: { summary: 'Outreach send cap' },
+					updatedAt: new Date(),
+				},
+			]
+
+			await (
+				manager as unknown as {
+					writeWorkspaceKnowledge(workspaceId: string, tempDir: string): Promise<void>
+				}
+			).writeWorkspaceKnowledge('ws-1', '/tmp/anko-session-test')
+
+			expect(mockWriteFile).toHaveBeenCalledTimes(2)
+			const firstCall = mockWriteFile.mock.calls[0]
+			expect(firstCall?.[0]).toBe('/tmp/anko-session-test/knowledge/article-1.md')
+			expect(firstCall?.[1]).toContain('## Never push to main')
+			expect(firstCall?.[1]).toContain('Git workflow rule')
+			expect(firstCall?.[1]).toContain('Always open a PR first.')
+			expect(firstCall?.[1]).toContain('[maskin://objects/article-1]')
+		})
+
+		it('writes nothing when no validated articles exist', async () => {
+			mockResults.select = []
+
+			await (
+				manager as unknown as {
+					writeWorkspaceKnowledge(workspaceId: string, tempDir: string): Promise<void>
+				}
+			).writeWorkspaceKnowledge('ws-1', '/tmp/anko-session-test')
+
+			expect(mockWriteFile).not.toHaveBeenCalled()
+		})
+
+		it('swallows DB errors so session startup is not blocked', async () => {
+			// Force the select chain to throw when awaited
+			const ctx = createTestContext()
+			const throwingDb = new Proxy(ctx.db, {
+				get(target, prop) {
+					if (prop === 'select') {
+						return () => {
+							throw new Error('db unavailable')
+						}
+					}
+					return Reflect.get(target, prop)
+				},
+			})
+			const throwingManager = new SessionManager(throwingDb, storageProvider as StorageProvider)
+
+			await expect(
+				(
+					throwingManager as unknown as {
+						writeWorkspaceKnowledge(workspaceId: string, tempDir: string): Promise<void>
+					}
+				).writeWorkspaceKnowledge('ws-1', '/tmp/anko-session-test'),
+			).resolves.toBeUndefined()
 		})
 	})
 
