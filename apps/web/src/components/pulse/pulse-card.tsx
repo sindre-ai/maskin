@@ -52,6 +52,12 @@ export interface NotificationAction {
 /**
  * Coerce a metadata value that SHOULD be an array but may have been stringified
  * by an agent into a JSON string. Returns undefined if it can't be coerced.
+ *
+ * Why this stays lenient even though the server schema now rejects malformed
+ * strings: the DB still contains historical notifications written before the
+ * schema was tightened, and those rows must continue to render. Do NOT "clean
+ * this up" by removing the string-parse branch — it's load-bearing for legacy
+ * data. New writes are validated at the server boundary by `notificationMetadataSchema`.
  * See: `packages/shared/src/schemas/notifications.ts` for the canonical shape.
  */
 function coerceArray<T = unknown>(value: unknown): T[] | undefined {

@@ -203,6 +203,22 @@ describe('notificationMetadataSchema', () => {
 		expect(result.options).toEqual([{ label: 'Yes', value: 'yes' }])
 	})
 
+	it('accepts native actions array when composed inside createNotificationSchema', () => {
+		const result = createNotificationSchema.parse({
+			type: 'needs_input',
+			title: 'test',
+			source_actor_id: '00000000-0000-0000-0000-000000000001',
+			metadata: {
+				actions: [
+					{ label: 'Merged, continue', response: 'merged_continue' },
+					{ label: 'Not ready yet', response: 'not_ready' },
+				],
+			},
+		})
+		expect(Array.isArray(result.metadata?.actions)).toBe(true)
+		expect(result.metadata?.actions).toHaveLength(2)
+	})
+
 	it('allows unknown keys to pass through', () => {
 		const result = notificationMetadataSchema.parse({
 			blocked_by_pr: 'https://github.com/x/y/pull/1',

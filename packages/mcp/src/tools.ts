@@ -1,3 +1,4 @@
+import { notificationActionSchema, notificationOptionSchema } from '@maskin/shared'
 import { z } from 'zod'
 
 const optionalWorkspaceId = z
@@ -486,20 +487,7 @@ export const tools = {
 			metadata: z
 				.object({
 					actions: z
-						.array(
-							z.object({
-								label: z.string().describe('Button text shown to the human'),
-								response: z
-									.unknown()
-									.optional()
-									.describe('Value routed back to the agent when clicked (e.g. "merged_continue")'),
-								variant: z.enum(['default', 'outline', 'ghost', 'destructive']).optional(),
-								navigate: z
-									.object({ to: z.string(), id: z.string().optional() })
-									.optional()
-									.describe('Optional navigation target when clicked'),
-							}),
-						)
+						.array(notificationActionSchema)
 						.optional()
 						.describe(
 							'Clickable buttons rendered on the notification card. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Merged, continue", "response": "merged_continue" }, { "label": "Not ready yet", "response": "not_ready" }].',
@@ -511,13 +499,7 @@ export const tools = {
 							'Renders a structured picker instead of action buttons. Pair with options (for single/multiple_choice) or placeholder/multiline (for text). NOTE: setting input_type disables the free-text "Reply to agent" input — only set it when you want a structured picker.',
 						),
 					options: z
-						.array(
-							z.object({
-								label: z.string(),
-								value: z.string(),
-								description: z.string().optional(),
-							}),
-						)
+						.array(notificationOptionSchema)
 						.optional()
 						.describe(
 							'Options for single_choice / multiple_choice input_type. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Yes", "value": "yes" }, { "label": "No", "value": "no" }].',
