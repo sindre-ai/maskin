@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
+import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { ActorResponse, ActorWithKey, SessionResponse } from '../shared/types'
 
@@ -19,20 +20,40 @@ function ActorsApp() {
 	)?.text
 	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 
-	const data = JSON.parse(text)
+	const data = safeParseJson(text)
+	if (!data) return <div className="p-4 text-sm text-foreground">{text}</div>
+	const unwrapped = unwrapEnvelope(data)
 
 	switch (toolResult.toolName) {
 		case 'list_actors':
-			return <ActorListView actors={data.data ?? data} />
+			return isArray(unwrapped) ? (
+				<ActorListView actors={unwrapped as ActorResponse[]} />
+			) : (
+				<div className="p-4 text-sm text-foreground">{text}</div>
+			)
 		case 'create_actor':
-			return <ActorCreatedView actor={data} />
+			return isObject<ActorWithKey>(data, 'id', 'name') ? (
+				<ActorCreatedView actor={data} />
+			) : (
+				<div className="p-4 text-sm text-foreground">{text}</div>
+			)
 		case 'get_actor':
 		case 'update_actor':
-			return <ActorDetailView actor={data} />
-		case 'regenerate_api_key':
-			return <RegeneratedApiKeyView apiKey={data?.api_key ?? ''} />
+			return isObject<ActorResponse>(data, 'id', 'name') ? (
+				<ActorDetailView actor={data} />
+			) : (
+				<div className="p-4 text-sm text-foreground">{text}</div>
+			)
+		case 'regenerate_api_key': {
+			const apiKey = isObject<{ api_key?: string }>(data) ? (data.api_key ?? '') : ''
+			return <RegeneratedApiKeyView apiKey={apiKey} />
+		}
 		default:
-			return <ActorDetailView actor={data} />
+			return isObject<ActorResponse>(data, 'id', 'name') ? (
+				<ActorDetailView actor={data} />
+			) : (
+				<div className="p-4 text-sm text-foreground">{text}</div>
+			)
 	}
 }
 

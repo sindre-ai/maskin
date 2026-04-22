@@ -4,8 +4,15 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useCallback, useState } from 'react'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
+import { isArray, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { ObjectResponse } from '../shared/types'
+import {
+	extractCreateObjectsList,
+	extractFirstUpdatedObject,
+	extractGetObjectsList,
+	extractUpdateObjectsList,
+} from './extractors'
 
 function ObjectsApp() {
 	const toolResult = useToolResult()
@@ -71,85 +78,77 @@ function ObjectsApp() {
 		return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 	}
 
-	const data = JSON.parse(text)
+	const data = safeParseJson(text)
+	if (data === null) return <div className="p-4 text-sm text-foreground">{text}</div>
+
+	const renderDocumentOrList = (objects: ObjectResponse[]) => {
+		if (objects.length === 1) {
+			const obj = localObject ?? objects[0]
+			return <ObjectDocument obj={obj} handlers={editHandlers(obj)} />
+		}
+		return <ObjectListView objects={objects} />
+	}
+
+	const editHandlers = (obj: ObjectResponse) => ({
+		onUpdateTitle: handleUpdateTitle(obj),
+		onUpdateContent: handleUpdateContent(obj),
+		onUpdateStatus: handleUpdateStatus(obj),
+		onUpdateOwner: handleUpdateOwner(obj),
+		onDelete: handleDelete(obj),
+	})
 
 	switch (toolResult.toolName) {
 		case 'list_objects':
-		case 'search_objects':
-			return <ObjectListView objects={data.data ?? data} />
+		case 'search_objects': {
+			const unwrapped = unwrapEnvelope(data)
+			return <ObjectListView objects={isArray(unwrapped) ? (unwrapped as ObjectResponse[]) : []} />
+		}
 		case 'get_objects':
-			return <ObjectListView objects={extractGetObjectsList(data)} />
+			return renderDocumentOrList(
+				extractGetObjectsList(data as Parameters<typeof extractGetObjectsList>[0]),
+			)
 		case 'update_objects':
-			return <ObjectListView objects={extractUpdateObjectsList(data)} />
+			return renderDocumentOrList(
+				extractUpdateObjectsList(data as Parameters<typeof extractUpdateObjectsList>[0]),
+			)
 		case 'create_objects':
-			return <ObjectListView objects={extractCreateObjectsList(data)} />
+			return renderDocumentOrList(
+				extractCreateObjectsList(data as Parameters<typeof extractCreateObjectsList>[0]),
+			)
 		case 'delete_object':
 			return <DeletedView />
-		default: {
-			const defaultObj = localObject ?? data
-			return (
-				<div className="p-4">
-					<ObjectDocumentView
-						object={defaultObj}
-						workspaceId={defaultObj.workspaceId ?? ''}
-						statuses={[]}
-						onUpdateTitle={handleUpdateTitle(defaultObj)}
-						onUpdateContent={handleUpdateContent(defaultObj)}
-						onUpdateStatus={handleUpdateStatus(defaultObj)}
-						onUpdateOwner={handleUpdateOwner(defaultObj)}
-						onDelete={handleDelete(defaultObj)}
-					/>
-				</div>
-			)
-		}
+		default:
+			return <div className="p-4 text-sm text-foreground">{text}</div>
 	}
 }
 
-interface UpdateObjectsResultItem {
-	type?: string
-	id?: string
-	success?: boolean
-	result?: ObjectResponse
-}
-
-function extractFirstUpdatedObject(toolResult: {
-	content?: Array<{ type: string; text?: string }>
-}): ObjectResponse | null {
-	const text = toolResult.content?.find((c) => c.type === 'text')?.text
-	if (!text) return null
-	try {
-		const parsed = JSON.parse(text) as UpdateObjectsResultItem[]
-		const first = parsed?.find((r) => r.type === 'object' && r.success && r.result)
-		return first?.result ?? null
-	} catch {
-		return null
+function ObjectDocument({
+	obj,
+	handlers,
+}: {
+	obj: ObjectResponse
+	handlers: {
+		onUpdateTitle: (title: string) => Promise<void>
+		onUpdateContent: (content: string) => Promise<void>
+		onUpdateStatus: (status: string) => Promise<void>
+		onUpdateOwner: (owner: string | null) => Promise<void>
+		onDelete: () => Promise<void>
 	}
-}
-
-function extractGetObjectsList(
-	data: Array<{ success?: boolean; result?: { object?: ObjectResponse } }>,
-): ObjectResponse[] {
-	if (!Array.isArray(data)) return []
-	const out: ObjectResponse[] = []
-	for (const r of data) {
-		const obj = r?.success ? r.result?.object : undefined
-		if (obj) out.push(obj)
-	}
-	return out
-}
-
-function extractUpdateObjectsList(data: UpdateObjectsResultItem[]): ObjectResponse[] {
-	if (!Array.isArray(data)) return []
-	return data
-		.filter((r) => r?.type === 'object' && r.success && r.result)
-		.map((r) => r.result as ObjectResponse)
-}
-
-function extractCreateObjectsList(
-	data: { nodes?: ObjectResponse[] } | ObjectResponse[],
-): ObjectResponse[] {
-	if (Array.isArray(data)) return data
-	return data?.nodes ?? []
+}) {
+	return (
+		<div className="p-4">
+			<ObjectDocumentView
+				object={obj}
+				workspaceId={obj.workspaceId ?? ''}
+				statuses={[]}
+				onUpdateTitle={handlers.onUpdateTitle}
+				onUpdateContent={handlers.onUpdateContent}
+				onUpdateStatus={handlers.onUpdateStatus}
+				onUpdateOwner={handlers.onUpdateOwner}
+				onDelete={handlers.onDelete}
+			/>
+		</div>
+	)
 }
 
 function ObjectListView({ objects }: { objects: ObjectResponse[] }) {
