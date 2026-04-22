@@ -104,4 +104,36 @@ describe('resolveActions', () => {
 			{ label: 'Review tasks', response: 'acknowledged', navigate: { to: 'objects' } },
 		])
 	})
+
+	describe('stringified actions (defensive coercion)', () => {
+		it('parses a JSON-stringified actions array', () => {
+			const stringified = JSON.stringify([
+				{ label: 'Merged, continue', response: 'merged_continue' },
+				{ label: 'Not ready yet', response: 'not_ready' },
+			])
+			const result = resolveActions(buildNotification(), { actions: stringified })
+			expect(result).toEqual([
+				{ label: 'Merged, continue', response: 'merged_continue' },
+				{ label: 'Not ready yet', response: 'not_ready' },
+			])
+		})
+
+		it('falls back to defaults when actions string is malformed JSON', () => {
+			const result = resolveActions(buildNotification({ type: 'alert', objectId: 'obj-1' }), {
+				actions: 'not valid json',
+			})
+			expect(result).toEqual([
+				{ label: 'Review', response: 'acknowledged', navigate: { to: 'object' } },
+			])
+		})
+
+		it('falls back to defaults when parsed value is not an array', () => {
+			const result = resolveActions(buildNotification({ type: 'alert' }), {
+				actions: '{"label":"not an array"}',
+			})
+			expect(result).toEqual([
+				{ label: 'Review tasks', response: 'acknowledged', navigate: { to: 'objects' } },
+			])
+		})
+	})
 })

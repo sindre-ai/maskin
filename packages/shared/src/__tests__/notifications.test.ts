@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	createNotificationSchema,
+	notificationMetadataSchema,
 	notificationQuerySchema,
 	notificationStatusSchema,
 	notificationTypeSchema,
@@ -153,5 +154,83 @@ describe('notificationQuerySchema', () => {
 		const result = notificationQuerySchema.parse({ limit: '10', offset: '5' })
 		expect(result.limit).toBe(10)
 		expect(result.offset).toBe(5)
+	})
+})
+
+describe('notificationMetadataSchema', () => {
+	it('accepts a native actions array of objects', () => {
+		const result = notificationMetadataSchema.parse({
+			actions: [
+				{ label: 'Merged, continue', response: 'merged_continue' },
+				{ label: 'Not ready yet', response: 'not_ready' },
+			],
+		})
+		expect(result.actions).toHaveLength(2)
+		expect(result.actions?.[0]).toEqual({
+			label: 'Merged, continue',
+			response: 'merged_continue',
+		})
+	})
+
+	it('coerces a JSON-stringified actions array into a native array', () => {
+		const result = notificationMetadataSchema.parse({
+			actions: JSON.stringify([{ label: 'Approve', response: 'approved' }]),
+		})
+		expect(Array.isArray(result.actions)).toBe(true)
+		expect(result.actions).toEqual([{ label: 'Approve', response: 'approved' }])
+	})
+
+	it('rejects a malformed actions string', () => {
+		expect(() => notificationMetadataSchema.parse({ actions: 'not json' })).toThrow()
+	})
+
+	it('rejects an actions string that parses to a non-array JSON value', () => {
+		expect(() =>
+			notificationMetadataSchema.parse({ actions: '{"label":"x","response":"y"}' }),
+		).toThrow()
+	})
+
+	it('accepts a native options array for structured input', () => {
+		const result = notificationMetadataSchema.parse({
+			input_type: 'single_choice',
+			options: [
+				{ label: 'Yes', value: 'yes' },
+				{ label: 'No', value: 'no' },
+			],
+		})
+		expect(result.options).toHaveLength(2)
+	})
+
+	it('coerces a JSON-stringified options array', () => {
+		const result = notificationMetadataSchema.parse({
+			input_type: 'single_choice',
+			options: JSON.stringify([{ label: 'Yes', value: 'yes' }]),
+		})
+		expect(result.options).toEqual([{ label: 'Yes', value: 'yes' }])
+	})
+
+	it('accepts native actions array when composed inside createNotificationSchema', () => {
+		const result = createNotificationSchema.parse({
+			type: 'needs_input',
+			title: 'test',
+			source_actor_id: '00000000-0000-0000-0000-000000000001',
+			metadata: {
+				actions: [
+					{ label: 'Merged, continue', response: 'merged_continue' },
+					{ label: 'Not ready yet', response: 'not_ready' },
+				],
+			},
+		})
+		expect(Array.isArray(result.metadata?.actions)).toBe(true)
+		expect(result.metadata?.actions).toHaveLength(2)
+	})
+
+	it('allows unknown keys to pass through', () => {
+		const result = notificationMetadataSchema.parse({
+			blocked_by_pr: 'https://github.com/x/y/pull/1',
+			urgency_label: 'Blocking next task',
+		})
+		expect(result.urgency_label).toBe('Blocking next task')
+		expect((result as Record<string, unknown>).blocked_by_pr).toBe('https://github.com/x/y/pull/1')
 	})
 })
