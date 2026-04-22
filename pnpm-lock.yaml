@@ -41,6 +41,9 @@ importers:
       '@maskin/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@maskin/ext-knowledge':
+        specifier: workspace:*
+        version: link:../../extensions/knowledge
       '@maskin/ext-notetaker':
         specifier: workspace:*
         version: link:../../extensions/notetaker
@@ -129,6 +132,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@maskin/ext-knowledge':
+        specifier: workspace:*
+        version: link:../../extensions/knowledge
       '@maskin/ext-notetaker':
         specifier: workspace:*
         version: link:../../extensions/notetaker
@@ -287,6 +293,16 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2)
 
+  extensions/knowledge:
+    dependencies:
+      '@maskin/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   extensions/notetaker:
     dependencies:
       '@maskin/module-sdk':
@@ -337,6 +353,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@maskin/shared':
+        specifier: workspace:*
+        version: link:../shared
       drizzle-orm:
         specifier: ^0.38.0
         version: 0.38.4(@types/react@19.2.14)(kysely@0.28.14)(postgres@3.4.8)(react@19.2.4)

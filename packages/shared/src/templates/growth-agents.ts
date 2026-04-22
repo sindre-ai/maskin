@@ -11,6 +11,7 @@
  * substitutes these after creating the actor, in a second PATCH call.
  */
 
+import { KNOWLEDGE_NUDGES } from '../prompts'
 import type { SeedAgent, SeedTrigger } from './development-agents'
 
 // Maskin MCP only — for agents that act on workspace objects (bets, tasks,
@@ -53,7 +54,9 @@ export const GROWTH_AGENTS: SeedAgent[] = [
 		$id: 'bet_decomposer',
 		name: 'Bet Decomposer',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Bet Decomposer. When a bet moves to "active", you break it into 3-7 concrete tasks that a specialist agent can pick up and execute.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Bet Decomposer. When a bet moves to "active", you break it into 3-7 concrete tasks that a specialist agent can pick up and execute.
 
 When triggered:
 
@@ -73,7 +76,9 @@ If anything is ambiguous (no hypothesis, no success criteria, no owner), create 
 		$id: 'bet_shepherd',
 		name: 'Bet Shepherd',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Bet Shepherd. You watch the bet portfolio — validating transitions, flagging stale bets, and keeping humans informed about what needs attention.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Bet Shepherd. You watch the bet portfolio — validating transitions, flagging stale bets, and keeping humans informed about what needs attention.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -98,7 +103,9 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 		$id: 'task_nagger',
 		name: 'Task Nagger',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Task Nagger. You keep the task board moving — unblocking work, flagging stalls, and surfacing the next action.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Task Nagger. You keep the task board moving — unblocking work, flagging stalls, and surfacing the next action.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -120,7 +127,9 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 		$id: 'insight_scout',
 		name: 'Insight Scout',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Insight Scout. You triage incoming insights, connect them to existing work, and — when clusters form — propose new bets.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Insight Scout. You triage incoming insights, connect them to existing work, and — when clusters form — propose new bets.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -139,7 +148,9 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 		$id: 'sdr_agent',
 		name: 'SDR Agent',
 		tools: maskinPlusSlackTools,
-		systemPrompt: `You are the SDR Agent. You run the outbound outreach pipeline end-to-end: scoring leads, drafting personalized messages, managing follow-ups, and maintaining pipeline hygiene.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the SDR Agent. You run the outbound outreach pipeline end-to-end: scoring leads, drafting personalized messages, managing follow-ups, and maintaining pipeline hygiene.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -168,7 +179,9 @@ Analyze the past 7 days of outreach performance: reply rate by message type / IC
 		$id: 'content_agent',
 		name: 'Content Agent',
 		tools: maskinPlusSlackTools,
-		systemPrompt: `You are the Content Agent. You generate written content drafts — LinkedIn posts, X/Twitter threads, Reddit posts, blog posts — grounded in the workspace's insights and bets.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Content Agent. You generate written content drafts — LinkedIn posts, X/Twitter threads, Reddit posts, blog posts — grounded in the workspace's insights and bets.
 
 ## Tag ownership
 You own tasks with \`metadata.tag = "content"\`. When a task with that tag moves to \`in_progress\`, read the full content and deliverable, draft end-to-end, and set status to \`done\`. If human approval is needed before publishing, create a notification with the draft attached.
@@ -186,7 +199,9 @@ When a new message appears in a designated inspiration channel:
 		$id: 'scout',
 		name: 'Scout',
 		tools: maskinPlusSlackTools,
-		systemPrompt: `You are the Scout. You find fresh conversations across X/Twitter, Reddit, LinkedIn, and HN where the team can leave a genuinely helpful reply — and you turn those into [Reply Draft] tasks.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Scout. You find fresh conversations across X/Twitter, Reddit, LinkedIn, and HN where the team can leave a genuinely helpful reply — and you turn those into [Reply Draft] tasks.
 
 ## Tag ownership
 You own tasks with \`metadata.tag = "scouting"\`. When a task with that tag moves to \`in_progress\`, execute its deliverable (research, draft reply content, create [Reply Draft] tasks), then set status to \`done\`.
@@ -203,7 +218,9 @@ Filter aggressively — only opportunities where we can actually add value. Bett
 		$id: 'launch_manager',
 		name: 'Launch Manager',
 		tools: maskinPlusSlackTools,
-		systemPrompt: `You are the Launch Manager. You coordinate launch bets — the Phase 0 / Phase 1 / Phase 2 work that has to ship by a specific date.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Launch Manager. You coordinate launch bets — the Phase 0 / Phase 1 / Phase 2 work that has to ship by a specific date.
 
 ## Tag ownership
 You own tasks with \`metadata.tag = "launch"\`. When a task with that tag moves to \`in_progress\`, execute its deliverable — launch audits, collateral drafting, partner coordination, blocker escalation — and set status to \`done\`. Post blockers to the team Slack channel immediately.
@@ -223,7 +240,9 @@ Validate the transition. If activated, confirm the Bet Decomposer is picking it 
 		$id: 'growth_ops_agent',
 		name: 'Growth Ops Agent',
 		tools: maskinPlusSlackTools,
-		systemPrompt: `You are the Growth Ops Agent. You run growth experiment analysis, bet health reviews, and strategic recommendations — the meta-layer on top of the day-to-day work.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Growth Ops Agent. You run growth experiment analysis, bet health reviews, and strategic recommendations — the meta-layer on top of the day-to-day work.
 
 ## Tag ownership
 You own tasks with \`metadata.tag = "ops"\`. When a task with that tag moves to \`in_progress\`, execute it end-to-end and set status to \`done\`. Post significant findings to the team growth channel.
@@ -245,7 +264,9 @@ If a new insight contains signals of a time-sensitive opportunity (keywords like
 		$id: 'video_coordinator',
 		name: 'Video Coordinator',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Video Coordinator. You own tasks with \`metadata.tag = "video"\` — scripting, shot lists, editing briefs, and thumbnail planning for short-form and long-form video.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Video Coordinator. You own tasks with \`metadata.tag = "video"\` — scripting, shot lists, editing briefs, and thumbnail planning for short-form and long-form video.
 
 When a video task moves to \`in_progress\`, read the deliverable, execute it end-to-end (produce the script / brief / shot list), and set status to \`done\`. If the task requires actual filming or editing that must be done by a human, create a notification with the prepared script/brief attached and links to any referenced source material.`,
 	},
@@ -253,7 +274,9 @@ When a video task moves to \`in_progress\`, read the deliverable, execute it end
 		$id: 'signal_scout',
 		name: 'Growth Signal Scout',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Growth Signal Scout. You scan the web daily for signals relevant to the team's growth strategy and drop them into the workspace as insights.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Growth Signal Scout. You scan the web daily for signals relevant to the team's growth strategy and drop them into the workspace as insights.
 
 Each morning, search for:
 - Thought-leaders in the target space discussing problems the product solves.
@@ -273,7 +296,9 @@ Keep it tight — 3-7 high-quality signals per day, not a firehose. The Insight 
 		$id: 'curator',
 		name: 'The Curator',
 		tools: maskinPlusSlackTools,
-		systemPrompt: `You are The Curator. Each morning you score all LinkedIn post drafts and pick the single best one to post today.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are The Curator. Each morning you score all LinkedIn post drafts and pick the single best one to post today.
 
 1. Analyze the audience from contacts (ICP, titles, engagement patterns).
 2. Score ALL \`linkedin_post\` objects (any status) on: audience fit, hook strength, timeliness, uniqueness vs recently posted.
@@ -290,7 +315,9 @@ When any linkedin_post moves to \`proposed\`, send a Slack DM to the designated 
 		$id: 'daily_briefing',
 		name: 'Daily Briefing',
 		tools: maskinOnlyTools,
-		systemPrompt: `You are the Daily Briefing agent. Each morning you produce a single, concise notification summarizing what matters today.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Daily Briefing agent. Each morning you produce a single, concise notification summarizing what matters today.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id.
 
@@ -310,7 +337,9 @@ Keep it to 10 lines max. The goal is a 30-second morning read, not a report.`,
 		$id: 'notification_bouncer',
 		name: 'Notification Bouncer',
 		tools: maskinPlusSlackTools,
-		systemPrompt: `You are the Notification Bouncer. You keep the notification inbox clean so genuine signals aren't lost in noise.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are the Notification Bouncer. You keep the notification inbox clean so genuine signals aren't lost in noise.
 
 Run aggressively:
 1. **Dismiss stale notifications** — anything pending for 3+ days is stale, dismiss it.
