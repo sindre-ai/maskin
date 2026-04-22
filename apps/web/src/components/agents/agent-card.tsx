@@ -55,7 +55,7 @@ export function AgentCard({
 
 function StatusIndicator({ status }: { status: AgentStatus }) {
 	if (status === 'working') {
-		return <Spinner className="size-3 text-accent" />
+		return <Spinner className="size-3 text-status-in_progress-text" />
 	}
 	return (
 		<span
@@ -69,7 +69,7 @@ function StatusLabel({ status }: { status: AgentStatus }) {
 		<span
 			className={cn(
 				'text-xs font-medium',
-				status === 'working' && 'text-accent',
+				status === 'working' && 'text-status-in_progress-text',
 				status === 'failed' && 'text-error',
 				status === 'idle' && 'text-muted-foreground',
 			)}
