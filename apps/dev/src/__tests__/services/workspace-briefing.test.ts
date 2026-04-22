@@ -105,11 +105,18 @@ describe('readLedgerTail', () => {
 })
 
 describe('WORKSPACE_STARTUP_BLOCK', () => {
-	it('references WORKSPACE.md and the four required actions', () => {
+	it('describes the workspace terrain: briefing file, bets, tools, verdict, learning', () => {
 		expect(WORKSPACE_STARTUP_BLOCK).toContain('/agent/workspace/WORKSPACE.md')
-		expect(WORKSPACE_STARTUP_BLOCK).toContain('active bets')
+		expect(WORKSPACE_STARTUP_BLOCK).toContain('Active bets')
 		expect(WORKSPACE_STARTUP_BLOCK).toContain('metadata.verdict')
 		expect(WORKSPACE_STARTUP_BLOCK).toContain('SESSION_LEARNING.md')
+	})
+
+	it('uses contextual framing rather than imperative step-by-step commands', () => {
+		// Outcome-oriented models push back on prescriptive checklists — the
+		// block should describe terrain, not dictate a sequence of actions.
+		expect(WORKSPACE_STARTUP_BLOCK).toContain('You decide how to achieve the goal')
+		expect(WORKSPACE_STARTUP_BLOCK).not.toMatch(/^\s*1\.\s+Read/m)
 	})
 })
 

@@ -15,16 +15,21 @@ const TITLE_MAX = 120
 const EXCERPT_MAX = 180
 
 /**
- * Startup block prepended to every session's ACTION_PROMPT. Mirrors Anthropic's
- * Ralph Loop startup sequence — ports the init.sh convention to knowledge work.
+ * Briefing block prepended to every session's ACTION_PROMPT. Describes the
+ * workspace terrain rather than prescribing steps — agentic models do better
+ * with outcome-oriented context than with imperative checklists.
  */
-export const WORKSPACE_STARTUP_BLOCK = `## Startup — read this first
+export const WORKSPACE_STARTUP_BLOCK = `## This workspace
 
-1. Read \`/agent/workspace/WORKSPACE.md\`. It is your map to this workspace's current state.
-2. Pick work from active bets. Prefer continuing an in-flight bet over starting a new one.
-3. Use \`get_objects\`, \`search_objects\`, \`list_relationships\` to go deeper on anything WORKSPACE.md summarises.
-4. Update bet/task status as you work. When closing a bet, set \`metadata.verdict\` to a one-line takeaway.
-5. Before the session ends, write a one-line summary of what you did to \`/agent/workspace/SESSION_LEARNING.md\`.
+This workspace works through bets — shaped, time-boxed outcomes.
+
+- \`/agent/workspace/WORKSPACE.md\` holds the current snapshot (auto-generated from the object graph).
+- Active bets are where in-flight work lives; closed bets carry verdicts that teach the next cycle.
+- Dig deeper with \`get_objects\`, \`search_objects\`, \`list_relationships\`.
+- Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
+- A one-line note in \`/agent/workspace/SESSION_LEARNING.md\` rolls up into the next session's briefing.
+
+You decide how to achieve the goal. This is just the terrain.
 
 ---
 
