@@ -76,6 +76,40 @@ describe('Workspaces Integration', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('deep-merges llm_keys so a single-provider PATCH preserves siblings', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'LLM Keys Merge' }),
+			)
+			const ws = await createRes.json()
+
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-AAA' } },
+				}),
+			)
+			const second = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { openai: 'sk-oai-BBB' } },
+				}),
+			)
+			const afterSet = await second.json()
+			expect(afterSet.settings.llm_keys).toEqual({
+				anthropic: 'sk-ant-AAA',
+				openai: 'sk-oai-BBB',
+			})
+
+			// `null` inside llm_keys signals deletion; other providers stay.
+			const third = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+			const afterDelete = await third.json()
+			expect(afterDelete.settings.llm_keys).toEqual({ openai: 'sk-oai-BBB' })
+		})
 	})
 
 	describe('members', () => {

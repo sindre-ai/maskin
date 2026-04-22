@@ -23,6 +23,20 @@ interface McpConfig {
 	defaultWorkspaceId: string
 	/** Path to the directory containing built MCP app HTML files */
 	htmlBasePath?: string
+	/** Transport the server is exposed over. Tailors user-facing setup hints. */
+	transport?: 'stdio' | 'http'
+}
+
+function authSetupHint(config: McpConfig): string {
+	return config.transport === 'http'
+		? 'Set an `Authorization: Bearer <YOUR_MASKIN_API_KEY>` header on the MCP request (see https://sindre.ai/docs/get-started/).'
+		: 'Restart the MCP server with the API_KEY environment variable set.'
+}
+
+function workspaceSetupHint(config: McpConfig): string {
+	return config.transport === 'http'
+		? 'Either pass workspace_id to this tool or set an `X-Workspace-Id: <YOUR_WORKSPACE_ID>` header on the MCP request. Call list_workspaces to find your workspace ID.'
+		: 'Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.'
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -51,15 +65,11 @@ async function apiCall(
 	options?: { skipAuth?: boolean; skipWorkspace?: boolean; workspaceId?: string },
 ): Promise<unknown> {
 	if (!options?.skipAuth && !config.apiKey) {
-		throw new Error(
-			'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
-		)
+		throw new Error(`Not authenticated. ${authSetupHint(config)}`)
 	}
 	const effectiveWorkspaceId = options?.workspaceId ?? config.defaultWorkspaceId
 	if (!options?.skipAuth && !options?.skipWorkspace && !effectiveWorkspaceId) {
-		throw new Error(
-			'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
-		)
+		throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
 	}
 
 	const url = `${config.apiBaseUrl}${path}`
@@ -1267,6 +1277,154 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── LLM API Keys ─────────────────────────────────────────
+	// Wraps PATCH /api/workspaces/:id with settings.llm_keys. The server deep-
+	// merges `llm_keys`, so a single-provider update preserves the others and
+	// `null` signals deletion — no read-modify-write dance needed here.
+	const last4 = (s: string) => (s.length <= 4 ? s : s.slice(-4))
+
+	registerAppTool(
+		server,
+		'set_llm_api_key',
+		{
+			description: tools.set_llm_api_key.description,
+			inputSchema: tools.set_llm_api_key.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			await apiCall(
+				config,
+				'PATCH',
+				`/api/workspaces/${args.workspace_id ?? config.defaultWorkspaceId}`,
+				{ settings: { llm_keys: { [args.provider]: args.api_key } } },
+				{ workspaceId: args.workspace_id },
+			)
+			const result = { success: true, provider: args.provider, last4: last4(args.api_key) }
+			return {
+				_meta: { toolName: 'set_llm_api_key' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_llm_api_keys',
+		{
+			description: tools.get_llm_api_keys.description,
+			inputSchema: tools.get_llm_api_keys.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+			const ws = await getWorkspace(config, wsId)
+			const llmKeys = (ws.settings.llm_keys ?? {}) as Record<string, string>
+			const providerStatus = (key?: string) =>
+				key ? { set: true, last4: last4(key) } : { set: false }
+			const result = {
+				anthropic: providerStatus(llmKeys.anthropic),
+				openai: providerStatus(llmKeys.openai),
+			}
+			return {
+				_meta: { toolName: 'get_llm_api_keys' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_llm_api_key',
+		{
+			description: tools.delete_llm_api_key.description,
+			inputSchema: tools.delete_llm_api_key.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			await apiCall(
+				config,
+				'PATCH',
+				`/api/workspaces/${args.workspace_id ?? config.defaultWorkspaceId}`,
+				{ settings: { llm_keys: { [args.provider]: null } } },
+				{ workspaceId: args.workspace_id },
+			)
+			const result = { success: true, provider: args.provider }
+			return {
+				_meta: { toolName: 'delete_llm_api_key' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Claude Subscription ──────────────────────────────────
+	registerAppTool(
+		server,
+		'import_claude_subscription',
+		{
+			description: tools.import_claude_subscription.description,
+			inputSchema: tools.import_claude_subscription.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/claude-oauth/import',
+				{
+					accessToken: args.access_token,
+					refreshToken: args.refresh_token,
+					expiresAt: args.expires_at,
+					subscriptionType: args.subscription_type,
+					scopes: args.scopes,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: { toolName: 'import_claude_subscription' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_claude_subscription_status',
+		{
+			description: tools.get_claude_subscription_status.description,
+			inputSchema: tools.get_claude_subscription_status.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: { toolName: 'get_claude_subscription_status' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'disconnect_claude_subscription',
+		{
+			description: tools.disconnect_claude_subscription.description,
+			inputSchema: tools.disconnect_claude_subscription.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'DELETE', '/api/claude-oauth', undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: { toolName: 'disconnect_claude_subscription' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Extensions ──────────────────────────────────────────
 	registerAppTool(
 		server,
@@ -1850,8 +2008,12 @@ export function createMcpServer(config: McpConfig) {
 					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
 					workspaces[0]
 			} catch {
+				const setupSteps =
+					config.transport === 'http'
+						? "  1. Sign in at https://maskin.sindre.ai and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.sindre.ai/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again\n\nFull guide: https://sindre.ai/docs/get-started/"
+						: '  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again'
 				return textResponse(
-					"👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again\n\nOr pass a workspace_id directly if you have one.",
+					`👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
 				)
 			}
 
@@ -2240,6 +2402,7 @@ async function main() {
 		apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
 		apiKey: process.env.API_KEY || '',
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
+		transport: 'stdio',
 	}
 
 	const server = createMcpServer(config)

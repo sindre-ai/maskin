@@ -6,6 +6,7 @@ vi.mock('@/lib/api', () => ({
 		objects: {
 			list: vi.fn(),
 			get: vi.fn(),
+			graph: vi.fn(),
 			create: vi.fn(),
 			update: vi.fn(),
 			delete: vi.fn(),
@@ -22,6 +23,7 @@ import {
 	useCreateObject,
 	useDeleteObject,
 	useObject,
+	useObjectGraph,
 	useObjects,
 	useUpdateObject,
 } from '@/hooks/use-objects'
@@ -109,6 +111,44 @@ describe('useObject', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Not found')
+	})
+})
+
+describe('useObjectGraph', () => {
+	it('fetches graph (object + relationships + connected_objects) for an id', async () => {
+		const obj = buildObject({ id: 'bet-1', type: 'bet' })
+		const linkedTask = buildObject({ id: 'task-1', type: 'task' })
+		const graph = {
+			object: obj,
+			relationships: [
+				{
+					id: 'rel-1',
+					sourceType: 'object',
+					sourceId: 'task-1',
+					targetType: 'object',
+					targetId: 'bet-1',
+					type: 'breaks_into',
+					createdBy: 'actor-1',
+					createdAt: null,
+				},
+			],
+			connected_objects: [linkedTask],
+		}
+		vi.mocked(api.objects.graph).mockResolvedValue(graph)
+
+		const { result } = renderHook(() => useObjectGraph(workspaceId, 'bet-1'), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toEqual(graph)
+		expect(api.objects.graph).toHaveBeenCalledWith('bet-1', workspaceId)
+	})
+
+	it('is disabled when id is empty', () => {
+		const { result } = renderHook(() => useObjectGraph(workspaceId, ''), { wrapper: TestWrapper })
+		expect(result.current.isFetching).toBe(false)
+		expect(api.objects.graph).not.toHaveBeenCalled()
 	})
 })
 
