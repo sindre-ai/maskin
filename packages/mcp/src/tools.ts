@@ -1,6 +1,36 @@
 import { notificationActionSchema, notificationOptionSchema } from '@maskin/shared'
 import { z } from 'zod'
 
+const notificationMetadataInput = z
+	.object({
+		actions: z
+			.array(notificationActionSchema)
+			.optional()
+			.describe(
+				'Clickable buttons rendered on the notification card. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Merged, continue", "response": "merged_continue" }, { "label": "Not ready yet", "response": "not_ready" }].',
+			),
+		input_type: z
+			.enum(['confirmation', 'single_choice', 'multiple_choice', 'text'])
+			.optional()
+			.describe(
+				'Renders a structured picker instead of action buttons. Pair with options (for single/multiple_choice) or placeholder/multiline (for text). NOTE: setting input_type disables the free-text "Reply to agent" input — only set it when you want a structured picker.',
+			),
+		options: z
+			.array(notificationOptionSchema)
+			.optional()
+			.describe(
+				'Options for single_choice / multiple_choice input_type. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Yes", "value": "yes" }, { "label": "No", "value": "no" }].',
+			),
+		question: z.string().optional(),
+		placeholder: z.string().optional(),
+		multiline: z.boolean().optional(),
+		suggestion: z.string().optional(),
+		urgency_label: z.string().optional(),
+		meta_text: z.string().optional(),
+		tags: z.array(z.string()).optional(),
+	})
+	.passthrough()
+
 const optionalWorkspaceId = z
 	.string()
 	.uuid()
@@ -484,35 +514,7 @@ export const tools = {
 				),
 			title: z.string().min(1),
 			content: z.string().optional(),
-			metadata: z
-				.object({
-					actions: z
-						.array(notificationActionSchema)
-						.optional()
-						.describe(
-							'Clickable buttons rendered on the notification card. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Merged, continue", "response": "merged_continue" }, { "label": "Not ready yet", "response": "not_ready" }].',
-						),
-					input_type: z
-						.enum(['confirmation', 'single_choice', 'multiple_choice', 'text'])
-						.optional()
-						.describe(
-							'Renders a structured picker instead of action buttons. Pair with options (for single/multiple_choice) or placeholder/multiline (for text). NOTE: setting input_type disables the free-text "Reply to agent" input — only set it when you want a structured picker.',
-						),
-					options: z
-						.array(notificationOptionSchema)
-						.optional()
-						.describe(
-							'Options for single_choice / multiple_choice input_type. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Yes", "value": "yes" }, { "label": "No", "value": "no" }].',
-						),
-					question: z.string().optional(),
-					placeholder: z.string().optional(),
-					multiline: z.boolean().optional(),
-					suggestion: z.string().optional(),
-					urgency_label: z.string().optional(),
-					meta_text: z.string().optional(),
-					tags: z.array(z.string()).optional(),
-				})
-				.passthrough()
+			metadata: notificationMetadataInput
 				.optional()
 				.describe(
 					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags. Other keys pass through.',
@@ -567,11 +569,10 @@ export const tools = {
 				.enum(['pending', 'seen', 'resolved', 'dismissed'])
 				.optional()
 				.describe('New status for the notification'),
-			metadata: z
-				.record(z.unknown())
+			metadata: notificationMetadataInput
 				.optional()
 				.describe(
-					'Metadata to update on the notification. Same shape as create_notification.metadata — see that tool for the expected structure of actions, options, etc.',
+					'Metadata to update on the notification. Same shape as create_notification.metadata — native arrays for actions/options, do NOT stringify.',
 				),
 		}),
 	},
