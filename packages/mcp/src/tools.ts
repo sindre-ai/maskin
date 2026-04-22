@@ -1,6 +1,11 @@
 import { notificationActionSchema, notificationOptionSchema } from '@maskin/shared'
 import { z } from 'zod'
 
+// Keep field list in sync with `notificationMetadataSchema` in
+// packages/shared/src/schemas/notifications.ts — that schema is the canonical
+// server-side source of truth. This MCP-facing schema is intentionally stricter
+// (native arrays only, no JSON-string coercion) so agents are pushed toward the
+// correct shape; legacy stringified payloads are only tolerated at the HTTP layer.
 const notificationMetadataInput = z
 	.object({
 		actions: z

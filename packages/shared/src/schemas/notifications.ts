@@ -35,26 +35,20 @@ export const notificationOptionSchema = z.object({
 
 // Accept either a native array OR a JSON-stringified array, and coerce to array.
 // Agents sometimes stringify; we transparently parse instead of rejecting.
+//
+// Uses preprocess (parse string → value, then validate once) rather than a union
+// of [array, string]. A union would fall through to the string branch when a
+// native array's items fail validation, producing confusing "expected string"
+// errors. Preprocess lets the single downstream `z.array(item)` own all errors.
 function arrayOrJsonString<T extends z.ZodTypeAny>(item: T) {
-	return z.union([z.array(item), z.string()]).transform((val, ctx) => {
-		if (Array.isArray(val)) return val
+	return z.preprocess((val) => {
+		if (typeof val !== 'string') return val
 		try {
-			const parsed = JSON.parse(val)
-			if (!Array.isArray(parsed)) {
-				ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Expected JSON array' })
-				return z.NEVER
-			}
-			const result = z.array(item).safeParse(parsed)
-			if (!result.success) {
-				for (const issue of result.error.issues) ctx.addIssue(issue)
-				return z.NEVER
-			}
-			return result.data
+			return JSON.parse(val)
 		} catch {
-			ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Expected array or JSON string' })
-			return z.NEVER
+			return val
 		}
-	}) as z.ZodType<z.infer<T>[]>
+	}, z.array(item))
 }
 
 // Notification metadata is richer than generic metadata: it may contain nested
