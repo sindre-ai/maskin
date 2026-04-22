@@ -618,6 +618,57 @@ export const tools = {
 			id: z.string().uuid(),
 		}),
 	},
+	// ─── LLM API Keys ─────────────────────────────────────────
+	set_llm_api_key: {
+		description:
+			"Save (or replace) a workspace LLM API key. Stored in workspace settings alongside any other providers. Returns { success, provider, last4 } — the full key is never echoed back. The key is stored as-is with no server-side validation against the provider; use the UI at /settings/keys if you need a live validation check. Mirrors the 'LLM API Keys' inputs in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			provider: z.enum(['anthropic', 'openai']),
+			api_key: z.string().min(1).describe('The API key (e.g. "sk-ant-..." or "sk-...").'),
+		}),
+	},
+	get_llm_api_keys: {
+		description:
+			"Report which LLM API keys are configured for the workspace. Returns { anthropic: { set, last4? }, openai: { set, last4? } } — never the full key. Mirrors the 'LLM API Keys' status in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	delete_llm_api_key: {
+		description:
+			'Remove a workspace LLM API key for a single provider. Other providers are left untouched.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			provider: z.enum(['anthropic', 'openai']),
+		}),
+	},
+	// ─── Claude Subscription ──────────────────────────────────
+	import_claude_subscription: {
+		description:
+			"Import Claude Pro/Max/Teams subscription tokens for the workspace (from ~/.claude/.credentials.json). Stored encrypted; used as the preferred auth for sandboxed Claude Code runs. Mirrors the 'Claude Subscription → Import credentials' action in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			access_token: z.string().min(1),
+			refresh_token: z.string().min(1),
+			expires_at: z.number().describe('Unix ms timestamp when the access token expires.'),
+			subscription_type: z.string().optional().describe('e.g. "pro", "max", "teams".'),
+			scopes: z.array(z.string()).optional(),
+		}),
+	},
+	get_claude_subscription_status: {
+		description:
+			'Check Claude subscription connection status for the workspace. Returns { connected, valid, subscription_type?, expires_at? } — never the tokens themselves.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	disconnect_claude_subscription: {
+		description: 'Disconnect the Claude subscription for the workspace (removes stored tokens).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
 	// ─── Extensions ──────────────────────────────────────────
 	list_extensions: {
 		description:
