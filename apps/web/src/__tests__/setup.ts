@@ -7,6 +7,19 @@ import type { ReactNode } from 'react'
 import React from 'react'
 import { buildWorkspaceWithRole } from './factories'
 
+// Radix primitives call pointer-capture APIs that jsdom doesn't implement.
+if (typeof Element !== 'undefined') {
+	if (!Element.prototype.hasPointerCapture) {
+		Element.prototype.hasPointerCapture = () => false
+	}
+	if (!Element.prototype.releasePointerCapture) {
+		Element.prototype.releasePointerCapture = () => {}
+	}
+	if (!Element.prototype.scrollIntoView) {
+		Element.prototype.scrollIntoView = () => {}
+	}
+}
+
 export function createTestQueryClient() {
 	return new QueryClient({
 		defaultOptions: {

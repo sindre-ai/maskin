@@ -56,14 +56,6 @@ describe('queryKeys', () => {
 		it('all includes workspaceId', () => {
 			expect(queryKeys.relationships.all('ws-1')).toEqual(['relationships', 'ws-1'])
 		})
-
-		it('byObject includes objectId', () => {
-			expect(queryKeys.relationships.byObject('obj-1')).toEqual([
-				'relationships',
-				'object',
-				'obj-1',
-			])
-		})
 	})
 
 	describe('sessions', () => {

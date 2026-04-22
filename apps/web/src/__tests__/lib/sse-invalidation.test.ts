@@ -69,6 +69,21 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('invalidates objects for knowledge entity', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'knowledge',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.all(workspaceId),
+		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.detail(entityId),
+		})
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {

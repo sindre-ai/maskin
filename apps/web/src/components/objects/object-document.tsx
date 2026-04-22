@@ -8,9 +8,15 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
-import { useObjectRelationships } from '@/hooks/use-relationships'
-import type { ActorResponse, EventResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
+import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
+import { useWorkspaceMembers } from '@/hooks/use-workspaces'
+import type {
+	ActorResponse,
+	EventResponse,
+	MemberResponse,
+	ObjectResponse,
+	RelationshipResponse,
+} from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, Trash2 } from 'lucide-react'
@@ -32,14 +38,17 @@ interface ObjectDocumentViewProps {
 	workspaceId: string
 	statuses: string[]
 	creator?: ActorResponse
+	members?: MemberResponse[]
 	relationships?: {
 		asSource: RelationshipResponse[]
 		asTarget: RelationshipResponse[]
 	}
+	connectedObjects?: ObjectResponse[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
 	onUpdateStatus: (status: string) => void
+	onUpdateOwner: (owner: string | null) => void
 	onDelete: () => void
 	isDeleting?: boolean
 	showSaved?: boolean
@@ -50,11 +59,14 @@ export function ObjectDocumentView({
 	workspaceId,
 	statuses,
 	creator,
+	members,
 	relationships,
+	connectedObjects,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
 	onUpdateStatus,
+	onUpdateOwner,
 	onDelete,
 	isDeleting = false,
 	showSaved = false,
@@ -131,6 +143,13 @@ export function ObjectDocumentView({
 				) : (
 					<StatusBadge status={object.status} />
 				)}
+				{members && (
+					<OwnerSelect
+						members={members}
+						currentOwnerId={object.owner ?? null}
+						onChange={onUpdateOwner}
+					/>
+				)}
 				{creator && (
 					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
 						<ActorAvatar name={creator.name} type={creator.type} size="sm" />
@@ -158,6 +177,7 @@ export function ObjectDocumentView({
 						objectType={object.type}
 						asSource={relationships.asSource}
 						asTarget={relationships.asTarget}
+						connectedObjects={connectedObjects}
 					/>
 				</div>
 			)}
@@ -179,7 +199,18 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const { data: creator } = useActor(object.createdBy)
-	const { data: relationships } = useObjectRelationships(workspaceId, object.id)
+	const { data: members } = useWorkspaceMembers(workspaceId)
+	const { data: graph } = useObjectGraph(workspaceId, object.id)
+	const relationships = useMemo(() => {
+		if (!graph) return undefined
+		const asSource: RelationshipResponse[] = []
+		const asTarget: RelationshipResponse[] = []
+		for (const rel of graph.relationships) {
+			if (rel.sourceId === object.id) asSource.push(rel)
+			if (rel.targetId === object.id) asTarget.push(rel)
+		}
+		return { asSource, asTarget }
+	}, [graph, object.id])
 	const { data: events } = useEntityEvents(workspaceId, object.id)
 
 	const settings = workspace.settings as Record<string, unknown>
@@ -202,6 +233,13 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const handleUpdateStatus = useCallback(
 		(status: string) => {
 			updateObject.mutate({ id: object.id, data: { status } })
+		},
+		[object.id, updateObject],
+	)
+
+	const handleUpdateOwner = useCallback(
+		(owner: string | null) => {
+			updateObject.mutate({ id: object.id, data: { owner } })
 		},
 		[object.id, updateObject],
 	)
@@ -267,11 +305,14 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				workspaceId={workspaceId}
 				statuses={statuses}
 				creator={creator}
+				members={members}
 				relationships={relationships}
+				connectedObjects={graph?.connected_objects}
 				events={events}
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
+				onUpdateOwner={handleUpdateOwner}
 				onDelete={handleDelete}
 				isDeleting={deleteObject.isPending}
 			/>
@@ -297,6 +338,58 @@ function StatusSelect({
 				{options.map((status) => (
 					<SelectItem key={status} value={status}>
 						{status.replace(/_/g, ' ')}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
+	)
+}
+
+const UNASSIGNED_OWNER = '__none__'
+
+function OwnerSelect({
+	members,
+	currentOwnerId,
+	onChange,
+}: {
+	members: MemberResponse[]
+	currentOwnerId: string | null
+	onChange: (owner: string | null) => void
+}) {
+	const current = members.find((m) => m.actorId === currentOwnerId)
+
+	const handleChange = (value: string) => {
+		onChange(value === UNASSIGNED_OWNER ? null : value)
+	}
+
+	return (
+		<Select value={currentOwnerId ?? UNASSIGNED_OWNER} onValueChange={handleChange}>
+			<SelectTrigger>
+				<SelectValue>
+					{current ? (
+						<span className="inline-flex items-center gap-1.5">
+							<ActorAvatar name={current.name} type={current.type} size="sm" />
+							{current.name}
+						</span>
+					) : currentOwnerId ? (
+						<span className="italic text-muted-foreground">
+							Unknown ({currentOwnerId.slice(0, 8)})
+						</span>
+					) : (
+						<span className="text-muted-foreground">Unassigned</span>
+					)}
+				</SelectValue>
+			</SelectTrigger>
+			<SelectContent>
+				<SelectItem value={UNASSIGNED_OWNER}>
+					<span className="text-muted-foreground">Unassigned</span>
+				</SelectItem>
+				{members.map((m) => (
+					<SelectItem key={m.actorId} value={m.actorId}>
+						<span className="inline-flex items-center gap-1.5">
+							<ActorAvatar name={m.name} type={m.type} size="sm" />
+							{m.name}
+						</span>
 					</SelectItem>
 				))}
 			</SelectContent>
