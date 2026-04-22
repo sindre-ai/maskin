@@ -286,6 +286,11 @@ function AnthropicApiKeySection({ workspaceId }: { workspaceId: string }) {
 					{saveMutation.error?.message || 'Validation failed'}
 				</p>
 			)}
+			{removeMutation.isError && (
+				<p className="text-xs text-error mt-2">
+					{removeMutation.error?.message || 'Failed to remove key'}
+				</p>
+			)}
 		</div>
 	)
 }

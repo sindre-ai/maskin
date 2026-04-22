@@ -242,9 +242,16 @@ app.openapi(deleteRoute, (async (c) => {
 	const settings = (ws.settings as WorkspaceSettings) ?? {}
 	const { anthropic_api_key: existing, ...rest } = settings
 
+	// Also scrub any legacy plaintext copy from settings.llm_keys.anthropic so
+	// a delete fully removes the key from all storage slots.
+	const { anthropic: _legacy, ...restLlmKeys } = rest.llm_keys ?? {}
+
 	await db
 		.update(workspaces)
-		.set({ settings: rest, updatedAt: new Date() })
+		.set({
+			settings: { ...rest, llm_keys: restLlmKeys },
+			updatedAt: new Date(),
+		})
 		.where(eq(workspaces.id, workspaceId))
 
 	// Audit log — only the masked last4 of the removed key, never the plaintext.
