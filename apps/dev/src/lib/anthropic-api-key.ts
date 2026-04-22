@@ -10,6 +10,7 @@ export interface EncryptedAnthropicApiKey {
 }
 
 const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models'
+const ANTHROPIC_VALIDATION_TIMEOUT_MS = 10_000
 
 export function maskAnthropicKey(plaintext: string): string {
 	return plaintext.slice(-4)
@@ -48,6 +49,7 @@ export async function validateAnthropicApiKey(
 				'x-api-key': plaintext,
 				'anthropic-version': '2023-06-01',
 			},
+			signal: AbortSignal.timeout(ANTHROPIC_VALIDATION_TIMEOUT_MS),
 		})
 		if (res.ok) {
 			return { ok: true, status: res.status }

@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { workspaceMembers, workspaces } from '@maskin/db/schema'
+import { events, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import {
 	type EncryptedAnthropicApiKey,
@@ -179,6 +179,16 @@ app.openapi(saveRoute, (async (c) => {
 		})
 		.where(eq(workspaces.id, workspaceId))
 
+	// Audit log — only the masked last4, never the plaintext key.
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'updated',
+		entityType: 'anthropic_api_key',
+		entityId: workspaceId,
+		data: { last4: encrypted.last4, created_at: encrypted.createdAt },
+	})
+
 	logger.info('Anthropic API key saved for workspace', { workspaceId, last4: encrypted.last4 })
 
 	return c.json({
@@ -230,12 +240,22 @@ app.openapi(deleteRoute, (async (c) => {
 	}
 
 	const settings = (ws.settings as WorkspaceSettings) ?? {}
-	const { anthropic_api_key: _, ...rest } = settings
+	const { anthropic_api_key: existing, ...rest } = settings
 
 	await db
 		.update(workspaces)
 		.set({ settings: rest, updatedAt: new Date() })
 		.where(eq(workspaces.id, workspaceId))
+
+	// Audit log — only the masked last4 of the removed key, never the plaintext.
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'deleted',
+		entityType: 'anthropic_api_key',
+		entityId: workspaceId,
+		data: { last4: existing?.last4 ?? null },
+	})
 
 	logger.info('Anthropic API key removed for workspace', { workspaceId })
 	return c.json({ success: true })
