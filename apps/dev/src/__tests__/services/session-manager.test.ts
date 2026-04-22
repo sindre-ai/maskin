@@ -29,7 +29,9 @@ const mockContainerManager = {
 }
 
 vi.mock('../../services/container-manager', () => ({
-	ContainerManager: vi.fn().mockImplementation(() => mockContainerManager),
+	ContainerManager: vi.fn().mockImplementation(function () {
+		return mockContainerManager
+	}),
 }))
 
 vi.mock('../../lib/claude-oauth', () => ({

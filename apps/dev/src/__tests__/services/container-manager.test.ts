@@ -22,7 +22,9 @@ const mockDocker = {
 }
 
 vi.mock('dockerode', () => ({
-	default: vi.fn().mockImplementation(() => mockDocker),
+	default: vi.fn().mockImplementation(function () {
+		return mockDocker
+	}),
 }))
 
 vi.mock('tar-stream', () => ({

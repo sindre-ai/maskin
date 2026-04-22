@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer } = vi.hoisted(() => {
 	const mockConnect = vi.fn().mockResolvedValue(undefined)
 	const mockHandleRequest = vi.fn().mockResolvedValue(undefined)
-	const MockTransport = vi.fn().mockImplementation(() => ({
-		handleRequest: mockHandleRequest,
-	}))
+	const MockTransport = vi.fn().mockImplementation(function () {
+		return { handleRequest: mockHandleRequest }
+	})
 	const mockCreateMcpServer = vi.fn().mockReturnValue({
 		connect: mockConnect,
 	})

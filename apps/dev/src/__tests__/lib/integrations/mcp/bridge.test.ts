@@ -11,12 +11,14 @@ const { mockConnect, mockListTools, mockCallTool, mockClose, MockStdioClientTran
 
 // Mock MCP SDK Client
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
-	Client: vi.fn().mockImplementation(() => ({
-		connect: mockConnect,
-		listTools: mockListTools,
-		callTool: mockCallTool,
-		close: mockClose,
-	})),
+	Client: vi.fn().mockImplementation(function () {
+		return {
+			connect: mockConnect,
+			listTools: mockListTools,
+			callTool: mockCallTool,
+			close: mockClose,
+		}
+	}),
 }))
 
 // Mock StdioClientTransport
