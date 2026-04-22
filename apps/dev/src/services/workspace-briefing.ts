@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { objects, relationships, workspaces } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, desc, eq, gte, inArray } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, ne } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
@@ -194,7 +194,7 @@ export async function renderWorkspaceBriefing(
 				and(
 					eq(objects.workspaceId, workspaceId),
 					eq(objects.type, 'insight'),
-					eq(objects.status, 'new'),
+					ne(objects.status, 'discarded'),
 				),
 			)
 			.orderBy(desc(objects.createdAt))

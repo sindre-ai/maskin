@@ -467,6 +467,8 @@ export class SessionManager extends EventEmitter {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
+			// session.actionPrompt is the user's original prompt and is never written back
+			// wrapped — safe to re-prepend on every launch, including resume.
 			ACTION_PROMPT: `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`,
 			MASKIN_API_URL: 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
