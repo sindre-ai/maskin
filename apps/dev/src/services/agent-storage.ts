@@ -5,6 +5,7 @@ import { agentFiles } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { appendToLedger } from './workspace-briefing'
 
 export class AgentStorageManager {
 	constructor(
@@ -43,13 +44,16 @@ export class AgentStorageManager {
 
 	/**
 	 * Push new/changed files back to S3 after a session completes.
-	 * Only pushes learnings (per-session file) and memory updates.
+	 * Pushes the per-session learning file, any memory updates, and appends a
+	 * one-line entry to the workspace-scoped learnings ledger so future sessions
+	 * in this workspace can see what was tried.
 	 */
 	async pushAgentFiles(
 		actorId: string,
 		workspaceId: string,
 		sessionId: string,
 		localDir: string,
+		opts?: { actionPrompt?: string },
 	): Promise<void> {
 		let pushed = 0
 
@@ -102,7 +106,54 @@ export class AgentStorageManager {
 			// No memory dir or empty
 		}
 
+		await this.appendWorkspaceLedger(workspaceId, sessionId, localDir, opts?.actionPrompt)
+
 		logger.info(`Pushed ${pushed} files to storage`, { actorId, workspaceId, sessionId })
+	}
+
+	/**
+	 * Append a one-line summary of this session to the workspace ledger so every
+	 * future session's briefing can surface what was tried across the whole
+	 * workspace. Prefers SESSION_LEARNING.md first line, falls back to the
+	 * action prompt. Silent on failure — ledger is best-effort.
+	 */
+	private async appendWorkspaceLedger(
+		workspaceId: string,
+		sessionId: string,
+		localDir: string,
+		actionPromptFallback?: string,
+	): Promise<void> {
+		let summary = ''
+		try {
+			const buf = await readFile(join(localDir, 'workspace', 'SESSION_LEARNING.md'))
+			const firstLine = buf
+				.toString('utf-8')
+				.split('\n')
+				.find((l) => l.trim().length > 0)
+			if (firstLine) summary = firstLine.trim()
+		} catch {
+			// File absent — fall through
+		}
+
+		if (!summary && actionPromptFallback) {
+			summary = actionPromptFallback.trim().split('\n')[0] ?? ''
+		}
+		if (!summary) summary = '(no learning recorded)'
+
+		const maxSummary = 200
+		if (summary.length > maxSummary) summary = `${summary.slice(0, maxSummary - 1)}…`
+
+		const timestamp = new Date().toISOString()
+		const line = `${timestamp} · session ${sessionId.slice(0, 8)} · ${summary}`
+		try {
+			await appendToLedger(this.storage, workspaceId, line)
+		} catch (err) {
+			logger.warn('Failed to append to workspace ledger', {
+				workspaceId,
+				sessionId,
+				error: String(err),
+			})
+		}
 	}
 
 	/**
