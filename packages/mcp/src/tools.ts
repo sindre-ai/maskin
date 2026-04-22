@@ -473,7 +473,7 @@ export const tools = {
 	// ─── Notifications ───────────────────────────────────────
 	create_notification: {
 		description:
-			'Create a notification for a human in the workspace. Use when the agent needs human input (decision, information), wants to share a strategic recommendation, report good news, or raise an alert.',
+			'Create a notification for a human in the workspace. Use when the agent needs human input (decision, information), wants to share a strategic recommendation, report good news, or raise an alert. Pass session_id when the agent expects to be resumed with the human\'s reply — this enables the free-text "Reply to agent" input in the UI. To render clickable buttons, pass metadata.actions as a NATIVE JSON array (not a stringified one). For a structured picker (radio/checkbox/text), set metadata.input_type and metadata.options as a NATIVE JSON array.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
@@ -484,10 +484,56 @@ export const tools = {
 			title: z.string().min(1),
 			content: z.string().optional(),
 			metadata: z
-				.record(z.unknown())
+				.object({
+					actions: z
+						.array(
+							z.object({
+								label: z.string().describe('Button text shown to the human'),
+								response: z
+									.unknown()
+									.optional()
+									.describe('Value routed back to the agent when clicked (e.g. "merged_continue")'),
+								variant: z.enum(['default', 'outline', 'ghost', 'destructive']).optional(),
+								navigate: z
+									.object({ to: z.string(), id: z.string().optional() })
+									.optional()
+									.describe('Optional navigation target when clicked'),
+							}),
+						)
+						.optional()
+						.describe(
+							'Clickable buttons rendered on the notification card. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Merged, continue", "response": "merged_continue" }, { "label": "Not ready yet", "response": "not_ready" }].',
+						),
+					input_type: z
+						.enum(['confirmation', 'single_choice', 'multiple_choice', 'text'])
+						.optional()
+						.describe(
+							'Renders a structured picker instead of action buttons. Pair with options (for single/multiple_choice) or placeholder/multiline (for text). NOTE: setting input_type disables the free-text "Reply to agent" input — only set it when you want a structured picker.',
+						),
+					options: z
+						.array(
+							z.object({
+								label: z.string(),
+								value: z.string(),
+								description: z.string().optional(),
+							}),
+						)
+						.optional()
+						.describe(
+							'Options for single_choice / multiple_choice input_type. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Yes", "value": "yes" }, { "label": "No", "value": "no" }].',
+						),
+					question: z.string().optional(),
+					placeholder: z.string().optional(),
+					multiline: z.boolean().optional(),
+					suggestion: z.string().optional(),
+					urgency_label: z.string().optional(),
+					meta_text: z.string().optional(),
+					tags: z.array(z.string()).optional(),
+				})
+				.passthrough()
 				.optional()
 				.describe(
-					'Structured data. Supports "actions" array to define custom action buttons: [{ label: "Button text", response: "value_sent_back", navigate?: { to: "object"|"objects"|"activity"|"agent"|"trigger", id?: "uuid" } }]. Also supports: input_type (confirmation|single_choice|multiple_choice|text), question, options ([{label, value, description?}]), tags, suggestion, urgency_label, meta_text.',
+					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags. Other keys pass through.',
 				),
 			source_actor_id: z.string().uuid().describe('The agent actor creating this notification'),
 			target_actor_id: z
@@ -504,7 +550,9 @@ export const tools = {
 				.string()
 				.uuid()
 				.optional()
-				.describe('Session that created this notification, for feedback routing'),
+				.describe(
+					'Session that created this notification. When set (and metadata.input_type is NOT set), the UI renders a free-text "Reply to agent" input that routes the reply back to this session.',
+				),
 		}),
 	},
 	list_notifications: {
@@ -537,7 +585,12 @@ export const tools = {
 				.enum(['pending', 'seen', 'resolved', 'dismissed'])
 				.optional()
 				.describe('New status for the notification'),
-			metadata: z.record(z.unknown()).optional().describe('Metadata to update on the notification'),
+			metadata: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					'Metadata to update on the notification. Same shape as create_notification.metadata — see that tool for the expected structure of actions, options, etc.',
+				),
 		}),
 	},
 	delete_notification: {
