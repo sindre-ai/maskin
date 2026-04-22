@@ -72,9 +72,14 @@ app.get('/', async (c) => {
 			bridge.off('event', handler)
 		})
 
-		// Keep connection alive
-		while (true) {
-			await stream.sleep(30000)
+		// Heartbeat: write an SSE comment every 15s. Idle-timeout proxies and
+		// load balancers drop silent connections (often < 30s), and SSE comment
+		// frames (lines starting with `:`) are ignored by compliant parsers so
+		// they don't pollute the event stream.
+		while (!stream.aborted && !stream.closed) {
+			await stream.sleep(15000)
+			if (stream.aborted || stream.closed) break
+			await stream.write(': keepalive\n\n')
 		}
 	})
 })

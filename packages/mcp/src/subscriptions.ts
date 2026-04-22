@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { type ManagedSSEStream, type ParsedSSEFrame, createManagedSSE } from './lib/managed-sse.js'
+
+// Re-export for backwards compatibility with existing tests.
+export { parseSSEChunk } from './lib/managed-sse.js'
+export type { ParsedSSEFrame } from './lib/managed-sse.js'
 
 interface McpConfig {
 	apiBaseUrl: string
@@ -60,324 +65,97 @@ function normalizeEvent(raw: Record<string, unknown>): MaskinEvent {
 	}
 }
 
-export interface ParsedSSEFrame {
-	id?: string
-	event?: string
-	data?: string
-}
-
-// Split a buffer of SSE text into complete frames plus a residual partial frame.
-// Frames are `\n\n`-delimited; `\r\n` line endings are normalized to `\n`.
-// Within a frame, each line is `field: value` — `data` lines are concatenated with `\n`,
-// and lines starting with `:` are comments.
-export function parseSSEChunk(buffer: string): { frames: ParsedSSEFrame[]; residual: string } {
-	const frames: ParsedSSEFrame[] = []
-	const normalized = buffer.replace(/\r\n/g, '\n')
-	const parts = normalized.split('\n\n')
-	const residual = parts.pop() ?? ''
-	for (const part of parts) {
-		if (!part) continue
-		const frame: ParsedSSEFrame = {}
-		const dataLines: string[] = []
-		let hasField = false
-		for (const line of part.split('\n')) {
-			if (!line || line.startsWith(':')) continue
-			const colon = line.indexOf(':')
-			if (colon === -1) continue
-			const field = line.slice(0, colon)
-			let value = line.slice(colon + 1)
-			if (value.startsWith(' ')) value = value.slice(1)
-			if (field === 'id') {
-				frame.id = value
-				hasField = true
-			} else if (field === 'event') {
-				frame.event = value
-				hasField = true
-			} else if (field === 'data') {
-				dataLines.push(value)
-				hasField = true
-			}
-		}
-		if (dataLines.length) frame.data = dataLines.join('\n')
-		if (hasField) frames.push(frame)
+function parseEventFrame(frame: ParsedSSEFrame): { item?: MaskinEvent } | null {
+	if (!frame.data) return null
+	let raw: Record<string, unknown>
+	try {
+		raw = JSON.parse(frame.data) as Record<string, unknown>
+	} catch {
+		return null
 	}
-	return { frames, residual }
-}
-
-type DeliverFn = (sub: Subscription, event: MaskinEvent) => Promise<void>
-type WarnFn = (workspaceId: string, level: 'warning' | 'error', message: string) => Promise<void>
-type TerminalFn = (workspaceId: string) => void
-
-class SSEStatusError extends Error {
-	constructor(
-		public readonly status: number,
-		message?: string,
-	) {
-		super(message ?? `SSE connect failed: ${status}`)
-		this.name = 'SSEStatusError'
-	}
-}
-
-// Treat all 4xx as terminal EXCEPT 408 (Request Timeout) and 429 (Too Many
-// Requests), which are transient. 5xx is always transient.
-function isTerminalStatus(status: number): boolean {
-	if (status === 408 || status === 429) return false
-	return status >= 400 && status < 500
-}
-
-class WorkspaceStream {
-	private readonly subs = new Map<string, Subscription>()
-	private readonly filters = new Map<string, EventFilter>()
-	private abortController: AbortController | null = null
-	private lastEventId: string | null = null
-	private stopped = false
-	private reconnectAttempts = 0
-	private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-	private readonly recentEventIds: string[] = []
-	private runPromise: Promise<void> | null = null
-
-	constructor(
-		private readonly workspaceId: string,
-		private readonly config: McpConfig,
-		private readonly deliver: DeliverFn,
-		private readonly warn: WarnFn,
-		private readonly onTerminal: TerminalFn,
-	) {}
-
-	addSubscription(sub: Subscription, filter: EventFilter) {
-		this.subs.set(sub.id, sub)
-		this.filters.set(sub.id, filter)
-		if (!this.runPromise) {
-			this.runPromise = this.run()
-		}
-	}
-
-	removeSubscription(id: string): boolean {
-		const existed = this.subs.delete(id)
-		this.filters.delete(id)
-		return existed
-	}
-
-	isEmpty(): boolean {
-		return this.subs.size === 0
-	}
-
-	getSubscriptions(): Subscription[] {
-		return [...this.subs.values()]
-	}
-
-	async stop() {
-		this.stopped = true
-		if (this.reconnectTimer) {
-			clearTimeout(this.reconnectTimer)
-			this.reconnectTimer = null
-		}
-		this.abortController?.abort()
-		this.abortController = null
-		if (this.runPromise) {
-			try {
-				await this.runPromise
-			} catch {
-				// run() already logs errors; swallow here to keep shutdown clean
-			}
-		}
-	}
-
-	private async run() {
-		let terminated = false
-		try {
-			while (!this.stopped && this.subs.size > 0) {
-				try {
-					await this.connect()
-					if (this.stopped || this.subs.size === 0) break
-					await this.waitBackoff()
-				} catch (err) {
-					if (this.stopped) break
-					if (isAbortError(err)) break
-					if (err instanceof SSEStatusError && isTerminalStatus(err.status)) {
-						const authLike = err.status === 401 || err.status === 403
-						console.error(
-							`[maskin-mcp] SSE terminal status ${err.status} (workspace ${this.workspaceId})`,
-						)
-						await this.warn(
-							this.workspaceId,
-							'error',
-							authLike
-								? 'Event subscription ended: authorization failed.'
-								: `Event subscription ended: server returned ${err.status}.`,
-						)
-						for (const id of [...this.subs.keys()]) this.removeSubscription(id)
-						terminated = true
-						break
-					}
-					console.error(
-						`[maskin-mcp] SSE error (workspace ${this.workspaceId}):`,
-						err instanceof Error ? err.message : err,
-					)
-					if (this.subs.size === 0) break
-					await this.waitBackoff()
-				}
-			}
-		} finally {
-			this.runPromise = null
-			if (terminated) this.onTerminal(this.workspaceId)
-		}
-	}
-
-	private async waitBackoff() {
-		this.reconnectAttempts++
-		const attempt = Math.min(this.reconnectAttempts - 1, 5)
-		const delay = Math.min(1000 * 2 ** attempt, 30000)
-		await new Promise<void>((resolve) => {
-			this.reconnectTimer = setTimeout(() => {
-				this.reconnectTimer = null
-				resolve()
-			}, delay)
-		})
-	}
-
-	private async connect() {
-		const controller = new AbortController()
-		this.abortController = controller
-		const url = `${this.config.apiBaseUrl}/api/events`
-		const headers: Record<string, string> = {
-			Authorization: `Bearer ${this.config.apiKey}`,
-			'X-Workspace-Id': this.workspaceId,
-			Accept: 'text/event-stream',
-		}
-		if (this.lastEventId) {
-			headers['Last-Event-ID'] = this.lastEventId
-		}
-
-		const response = await fetch(url, {
-			method: 'GET',
-			headers,
-			signal: controller.signal,
-		})
-
-		if (!response.ok) {
-			throw new SSEStatusError(response.status)
-		}
-
-		this.reconnectAttempts = 0
-
-		if (!response.body) {
-			throw new Error('SSE response has no body')
-		}
-
-		const reader = response.body.getReader()
-		// Cascade abort → reader cancel. Manually-constructed ReadableStreams
-		// (and some runtimes' fetch bodies) don't always honor AbortController on
-		// their own, so we wire it up explicitly.
-		const onAbort = () => {
-			reader.cancel().catch(() => {})
-		}
-		controller.signal.addEventListener('abort', onAbort)
-		const decoder = new TextDecoder()
-		let buffer = ''
-
-		try {
-			while (!this.stopped) {
-				const { done, value } = await reader.read()
-				if (done) break
-				buffer += decoder.decode(value, { stream: true })
-				const { frames, residual } = parseSSEChunk(buffer)
-				buffer = residual
-				for (const frame of frames) {
-					await this.handleFrame(frame)
-				}
-			}
-		} finally {
-			controller.signal.removeEventListener('abort', onAbort)
-			try {
-				reader.releaseLock()
-			} catch {
-				// reader may already be released if the body was aborted
-			}
-			this.abortController = null
-		}
-	}
-
-	private async handleFrame(frame: ParsedSSEFrame) {
-		if (!frame.data) return
-		let raw: Record<string, unknown>
-		try {
-			raw = JSON.parse(frame.data) as Record<string, unknown>
-		} catch {
-			return
-		}
-		const event = normalizeEvent(raw)
-		if (frame.id) event.event_id = frame.id
-
-		if (event.event_id && this.recentEventIds.includes(event.event_id)) return
-
-		for (const [subId, sub] of this.subs) {
-			const filter = this.filters.get(subId)
-			if (!filter) continue
-			if (!matchesFilter(event, filter)) continue
-			try {
-				await this.deliver(sub, event)
-				sub.eventsDelivered++
-			} catch (err) {
-				sub.eventsDropped++
-				console.error(
-					`[maskin-mcp] Delivery failed for subscription ${subId}:`,
-					err instanceof Error ? err.message : err,
-				)
-			}
-		}
-
-		if (event.event_id) {
-			this.recentEventIds.push(event.event_id)
-			if (this.recentEventIds.length > 256) this.recentEventIds.shift()
-			this.lastEventId = event.event_id
-		}
-	}
-}
-
-function isAbortError(err: unknown): boolean {
-	return err instanceof Error && (err.name === 'AbortError' || err.message.includes('abort'))
+	const event = normalizeEvent(raw)
+	if (frame.id) event.event_id = frame.id
+	return { item: event }
 }
 
 export function createSubscriptionRegistry(
 	config: McpConfig,
 	mcpServer: McpServer,
 ): SubscriptionRegistry {
-	const streams = new Map<string, WorkspaceStream>()
+	// One ManagedSSEStream per workspace; multiple subscriptions fan out from it.
+	const streams = new Map<string, ManagedSSEStream>()
+	const subs = new Map<string, Subscription>()
+	const filters = new Map<string, EventFilter>()
 	const subToWorkspace = new Map<string, string>()
 
-	const deliver: DeliverFn = async (sub, event) => {
-		await mcpServer.server.sendLoggingMessage({
-			level: 'info',
-			logger: 'maskin/events',
-			data: {
-				subscription_id: sub.id,
-				workspace_id: sub.workspaceId,
-				event,
+	function streamForWorkspace(workspaceId: string): ManagedSSEStream {
+		let stream = streams.get(workspaceId)
+		if (stream) return stream
+		stream = createManagedSSE<MaskinEvent>({
+			url: `${config.apiBaseUrl}/api/events`,
+			headers: () => ({
+				Authorization: `Bearer ${config.apiKey}`,
+				'X-Workspace-Id': workspaceId,
+				Accept: 'text/event-stream',
+			}),
+			parseFrame: parseEventFrame,
+			onItem: async (event) => {
+				for (const [subId, wsId] of subToWorkspace) {
+					if (wsId !== workspaceId) continue
+					const sub = subs.get(subId)
+					const filter = filters.get(subId)
+					if (!sub || !filter) continue
+					if (!matchesFilter(event, filter)) continue
+					try {
+						await mcpServer.server.sendLoggingMessage({
+							level: 'info',
+							logger: 'maskin/events',
+							data: {
+								subscription_id: sub.id,
+								workspace_id: sub.workspaceId,
+								event,
+							},
+						})
+						sub.eventsDelivered++
+					} catch (err) {
+						sub.eventsDropped++
+						console.error(
+							`[maskin-mcp] Delivery failed for subscription ${subId}:`,
+							err instanceof Error ? err.message : err,
+						)
+					}
+				}
 			},
+			onWarn: async (level, message) => {
+				try {
+					await mcpServer.server.sendLoggingMessage({
+						level,
+						logger: 'maskin/events',
+						data: { workspace_id: workspaceId, message },
+					})
+				} catch (err) {
+					console.error(
+						'[maskin-mcp] Warning delivery failed:',
+						err instanceof Error ? err.message : err,
+					)
+				}
+			},
+			onTerminal: () => {
+				// Wipe all subs tied to this workspace — they can never deliver again.
+				streams.delete(workspaceId)
+				for (const [subId, wsId] of [...subToWorkspace.entries()]) {
+					if (wsId === workspaceId) {
+						subs.delete(subId)
+						filters.delete(subId)
+						subToWorkspace.delete(subId)
+					}
+				}
+			},
+			replayCap: 100,
+			logTag: `workspace ${workspaceId}`,
 		})
-	}
-
-	const warn: WarnFn = async (workspaceId, level, message) => {
-		try {
-			await mcpServer.server.sendLoggingMessage({
-				level,
-				logger: 'maskin/events',
-				data: { workspace_id: workspaceId, message },
-			})
-		} catch (err) {
-			console.error(
-				'[maskin-mcp] Warning delivery failed:',
-				err instanceof Error ? err.message : err,
-			)
-		}
-	}
-
-	const onTerminal: TerminalFn = (workspaceId) => {
-		if (!streams.delete(workspaceId)) return
-		for (const [subId, wsId] of subToWorkspace) {
-			if (wsId === workspaceId) subToWorkspace.delete(subId)
-		}
+		streams.set(workspaceId, stream)
+		return stream
 	}
 
 	return {
@@ -390,38 +168,43 @@ export function createSubscriptionRegistry(
 				eventsDelivered: 0,
 				eventsDropped: 0,
 			}
-			let stream = streams.get(workspaceId)
-			if (!stream) {
-				stream = new WorkspaceStream(workspaceId, config, deliver, warn, onTerminal)
-				streams.set(workspaceId, stream)
-			}
-			stream.addSubscription(sub, filter)
+			subs.set(sub.id, sub)
+			filters.set(sub.id, filter)
 			subToWorkspace.set(sub.id, workspaceId)
+			streamForWorkspace(workspaceId).addRef(sub.id)
 			return sub
 		},
 		remove(id) {
 			const workspaceId = subToWorkspace.get(id)
 			if (!workspaceId) return false
 			const stream = streams.get(workspaceId)
-			if (!stream) return false
-			const existed = stream.removeSubscription(id)
+			if (!stream) {
+				// Stream already torn down (terminal onTerminal path ran); the sub
+				// should already be gone from the maps. Return false so callers can
+				// treat this as "not found".
+				subs.delete(id)
+				filters.delete(id)
+				subToWorkspace.delete(id)
+				return false
+			}
+			const existed = stream.removeRef(id)
+			subs.delete(id)
+			filters.delete(id)
 			subToWorkspace.delete(id)
-			if (stream.isEmpty()) {
+			if (!stream.hasRefs()) {
 				void stream.stop()
 				streams.delete(workspaceId)
 			}
 			return existed
 		},
 		list() {
-			const all: Subscription[] = []
-			for (const stream of streams.values()) {
-				all.push(...stream.getSubscriptions())
-			}
-			return all
+			return [...subs.values()]
 		},
 		async shutdownAll() {
 			const toStop = [...streams.values()]
 			streams.clear()
+			subs.clear()
+			filters.clear()
 			subToWorkspace.clear()
 			await Promise.all(toStop.map((s) => s.stop()))
 		},

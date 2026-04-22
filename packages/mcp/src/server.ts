@@ -16,6 +16,10 @@ import {
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
+	type SessionLogSubscriptionRegistry,
+	createSessionLogSubscriptionRegistry,
+} from './session-log-subscriptions.js'
+import {
 	type EventFilter,
 	type SubscriptionRegistry,
 	createSubscriptionRegistry,
@@ -245,6 +249,8 @@ function loadHtml(config: McpConfig, filename: string): string {
 export function createMcpServer(config: McpConfig): {
 	server: McpServer
 	registry: SubscriptionRegistry
+	eventRegistry: SubscriptionRegistry
+	sessionLogRegistry: SessionLogSubscriptionRegistry
 } {
 	const server = new McpServer(
 		{
@@ -256,6 +262,7 @@ export function createMcpServer(config: McpConfig): {
 		},
 	)
 	const subscriptionRegistry = createSubscriptionRegistry(config, server)
+	const sessionLogRegistry = createSessionLogSubscriptionRegistry(config, server)
 
 	// ─── Register UI resources ─────────────────────────────────
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
@@ -876,6 +883,96 @@ export function createMcpServer(config: McpConfig): {
 			}))
 			return {
 				_meta: { toolName: 'list_event_subscriptions' },
+				content: [{ type: 'text' as const, text: JSON.stringify(subs, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'subscribe_session_logs',
+		{
+			description: tools.subscribe_session_logs.description,
+			inputSchema: tools.subscribe_session_logs.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			if (!config.apiKey) {
+				throw new Error(
+					'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
+				)
+			}
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!workspaceId) {
+				throw new Error(
+					'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
+				)
+			}
+			const sub = sessionLogRegistry.add(workspaceId, args.session_id)
+			return {
+				_meta: { toolName: 'subscribe_session_logs' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{
+								subscription_id: sub.id,
+								session_id: sub.sessionId,
+								workspace_id: sub.workspaceId,
+								created_at: sub.createdAt,
+								notice:
+									'Live logs will be delivered via MCP logging notifications with logger="maskin/session-logs". The subscription auto-removes when the session terminates. Call unsubscribe_session_logs to stop early.',
+							},
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'unsubscribe_session_logs',
+		{
+			description: tools.unsubscribe_session_logs.description,
+			inputSchema: tools.unsubscribe_session_logs.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const ok = sessionLogRegistry.remove(args.subscription_id)
+			return {
+				_meta: { toolName: 'unsubscribe_session_logs' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ ok, subscription_id: args.subscription_id }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_session_log_subscriptions',
+		{
+			description: tools.list_session_log_subscriptions.description,
+			inputSchema: tools.list_session_log_subscriptions.inputSchema.shape,
+			_meta: {},
+		},
+		async () => {
+			const subs = sessionLogRegistry.list().map((s) => ({
+				subscription_id: s.id,
+				session_id: s.sessionId,
+				workspace_id: s.workspaceId,
+				created_at: s.createdAt,
+				logs_delivered: s.logsDelivered,
+				logs_dropped: s.logsDropped,
+			}))
+			return {
+				_meta: { toolName: 'list_session_log_subscriptions' },
 				content: [{ type: 'text' as const, text: JSON.stringify(subs, null, 2) }],
 			}
 		},
@@ -2338,7 +2435,12 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
 		}
 	}
 
-	return { server, registry: subscriptionRegistry }
+	return {
+		server,
+		registry: subscriptionRegistry,
+		eventRegistry: subscriptionRegistry,
+		sessionLogRegistry,
+	}
 }
 
 // CLI entry point
@@ -2349,11 +2451,11 @@ async function main() {
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 	}
 
-	const { server, registry } = createMcpServer(config)
+	const { server, eventRegistry, sessionLogRegistry } = createMcpServer(config)
 	const transport = new StdioServerTransport()
 	const shutdown = async () => {
 		try {
-			await registry.shutdownAll()
+			await Promise.all([eventRegistry.shutdownAll(), sessionLogRegistry.shutdownAll()])
 		} catch (err) {
 			console.error('[maskin-mcp] Error during shutdown:', err)
 		}

@@ -13,7 +13,7 @@ app.post('/', async (c) => {
 			c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? '',
 		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
 	}
-	const { server, registry } = createMcpServer(mcpConfig)
+	const { server, eventRegistry, sessionLogRegistry } = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
 		enableJsonResponse: true,
@@ -36,9 +36,10 @@ app.post('/', async (c) => {
 		await server.connect(transport)
 		await transport.handleRequest(nodeReq, nodeRes, body)
 	} finally {
-		// The HTTP MCP transport is request-scoped — tear down any event
-		// subscriptions so their SSE connections don't outlive the request.
-		await registry.shutdownAll()
+		// The HTTP MCP transport is request-scoped — tear down any event and
+		// session-log subscriptions so their SSE connections don't outlive the
+		// request.
+		await Promise.all([eventRegistry.shutdownAll(), sessionLogRegistry.shutdownAll()])
 	}
 
 	// transport.handleRequest already wrote the response to nodeRes.

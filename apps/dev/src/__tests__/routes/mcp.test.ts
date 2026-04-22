@@ -1,25 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer, mockShutdownAll } =
-	vi.hoisted(() => {
-		const mockConnect = vi.fn().mockResolvedValue(undefined)
-		const mockHandleRequest = vi.fn().mockResolvedValue(undefined)
-		const mockShutdownAll = vi.fn().mockResolvedValue(undefined)
-		const MockTransport = vi.fn().mockImplementation(() => ({
-			handleRequest: mockHandleRequest,
-		}))
-		const mockCreateMcpServer = vi.fn().mockReturnValue({
-			server: { connect: mockConnect },
-			registry: { shutdownAll: mockShutdownAll, add: vi.fn(), remove: vi.fn(), list: vi.fn() },
-		})
-		return {
-			mockConnect,
-			mockHandleRequest,
-			MockTransport,
-			mockCreateMcpServer,
-			mockShutdownAll,
-		}
+const {
+	mockConnect,
+	mockHandleRequest,
+	MockTransport,
+	mockCreateMcpServer,
+	mockShutdownAll,
+	mockSessionLogShutdownAll,
+} = vi.hoisted(() => {
+	const mockConnect = vi.fn().mockResolvedValue(undefined)
+	const mockHandleRequest = vi.fn().mockResolvedValue(undefined)
+	const mockShutdownAll = vi.fn().mockResolvedValue(undefined)
+	const mockSessionLogShutdownAll = vi.fn().mockResolvedValue(undefined)
+	const MockTransport = vi.fn().mockImplementation(() => ({
+		handleRequest: mockHandleRequest,
+	}))
+	const mockCreateMcpServer = vi.fn().mockReturnValue({
+		server: { connect: mockConnect },
+		registry: { shutdownAll: mockShutdownAll, add: vi.fn(), remove: vi.fn(), list: vi.fn() },
+		eventRegistry: { shutdownAll: mockShutdownAll, add: vi.fn(), remove: vi.fn(), list: vi.fn() },
+		sessionLogRegistry: {
+			shutdownAll: mockSessionLogShutdownAll,
+			add: vi.fn(),
+			remove: vi.fn(),
+			list: vi.fn(),
+		},
 	})
+	return {
+		mockConnect,
+		mockHandleRequest,
+		MockTransport,
+		mockCreateMcpServer,
+		mockShutdownAll,
+		mockSessionLogShutdownAll,
+	}
+})
 
 vi.mock('@maskin/mcp', () => ({
 	createMcpServer: mockCreateMcpServer,

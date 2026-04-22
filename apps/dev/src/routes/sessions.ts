@@ -450,9 +450,13 @@ app.get('/:id/logs/stream', async (c) => {
 			sessionManager.off('log', handler)
 		})
 
-		// Keep connection alive, but stop if session reached terminal state
-		while (!closed) {
-			await stream.sleep(30000)
+		// Heartbeat: write an SSE comment every 15s so idle-timeout proxies don't
+		// drop the connection. Comment frames are ignored by compliant SSE
+		// parsers. Stop once the session reaches a terminal state.
+		while (!closed && !stream.aborted && !stream.closed) {
+			await stream.sleep(15000)
+			if (closed || stream.aborted || stream.closed) break
+			await stream.write(': keepalive\n\n')
 		}
 	})
 })
