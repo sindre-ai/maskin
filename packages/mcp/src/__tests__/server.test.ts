@@ -727,4 +727,111 @@ describe('tool handlers', () => {
 			expect(fetch).toHaveBeenCalledTimes(1)
 		})
 	})
+
+	describe('set_anthropic_api_key handler', () => {
+		it('POSTs to /api/anthropic-api-key with api_key body and masked response', async () => {
+			const mockResult = { success: true, last4: 'AbCd', created_at: 1_700_000_000_000 }
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('set_anthropic_api_key')
+			const result = (await handler({ api_key: 'sk-ant-test-key-AbCd' })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/anthropic-api-key',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({
+						Authorization: 'Bearer ank_testkey123',
+						'X-Workspace-Id': 'ws-default-123',
+					}),
+				}),
+			)
+			const fetchCall = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse(fetchCall[1]?.body as string)
+			expect(body).toEqual({ api_key: 'sk-ant-test-key-AbCd' })
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual(mockResult)
+			// Sanity: the full key should never appear in the response content
+			expect(result.content[0].text).not.toContain('sk-ant-test-key-AbCd')
+		})
+
+		it('uses workspace_id from args over default', async () => {
+			mockFetchSuccess({ success: true, last4: 'AbCd', created_at: 1 })
+
+			const handler = getHandler('set_anthropic_api_key')
+			await handler({ workspace_id: 'ws-custom', api_key: 'sk-ant-another' })
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/anthropic-api-key',
+				expect.objectContaining({
+					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+				}),
+			)
+		})
+
+		it('surfaces validation errors from the API', async () => {
+			mockFetchError(
+				400,
+				JSON.stringify({
+					error: { message: 'Anthropic API key validation failed' },
+				}),
+			)
+
+			const handler = getHandler('set_anthropic_api_key')
+			await expect(handler({ api_key: 'sk-ant-bogus' })).rejects.toThrow(
+				'Anthropic API key validation failed',
+			)
+		})
+	})
+
+	describe('get_anthropic_api_key_status handler', () => {
+		it('GETs /api/anthropic-api-key/status and returns masked payload', async () => {
+			const mockResult = { set: true, last4: 'AbCd', created_at: 1_700_000_000_000 }
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('get_anthropic_api_key_status')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/anthropic-api-key/status',
+				expect.objectContaining({
+					method: 'GET',
+					headers: expect.objectContaining({
+						Authorization: 'Bearer ank_testkey123',
+						'X-Workspace-Id': 'ws-default-123',
+					}),
+				}),
+			)
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual(mockResult)
+		})
+
+		it('returns { set: false } when no key is configured', async () => {
+			mockFetchSuccess({ set: false })
+
+			const handler = getHandler('get_anthropic_api_key_status')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({ set: false })
+		})
+
+		it('uses workspace_id from args over default', async () => {
+			mockFetchSuccess({ set: false })
+
+			const handler = getHandler('get_anthropic_api_key_status')
+			await handler({ workspace_id: 'ws-custom' })
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/anthropic-api-key/status',
+				expect.objectContaining({
+					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+				}),
+			)
+		})
+	})
 })

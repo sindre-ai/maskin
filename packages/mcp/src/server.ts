@@ -1267,6 +1267,49 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Anthropic API Key ────────────────────────────────────
+	registerAppTool(
+		server,
+		'set_anthropic_api_key',
+		{
+			description: tools.set_anthropic_api_key.description,
+			inputSchema: tools.set_anthropic_api_key.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/anthropic-api-key',
+				{ api_key: args.api_key },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: { toolName: 'set_anthropic_api_key' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_anthropic_api_key_status',
+		{
+			description: tools.get_anthropic_api_key_status.description,
+			inputSchema: tools.get_anthropic_api_key_status.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'GET', '/api/anthropic-api-key/status', undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: { toolName: 'get_anthropic_api_key_status' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Extensions ──────────────────────────────────────────
 	registerAppTool(
 		server,

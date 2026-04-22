@@ -577,6 +577,25 @@ export const tools = {
 			id: z.string().uuid(),
 		}),
 	},
+	// ─── Anthropic API Key ────────────────────────────────────
+	set_anthropic_api_key: {
+		description:
+			"Save (or replace) the workspace's Anthropic API key. The key is validated against Anthropic's /v1/models endpoint before being encrypted at rest. Sandboxed Claude Code runs executed by Maskin on behalf of the workspace use this key. Returns { success, last4, created_at } — the full key is never echoed back.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			api_key: z
+				.string()
+				.min(1)
+				.describe('The Anthropic API key (e.g. "sk-ant-..."). Validated before storage.'),
+		}),
+	},
+	get_anthropic_api_key_status: {
+		description:
+			'Check whether an Anthropic API key is configured for the workspace. Returns { set, last4?, created_at? } — never the full key. Mirrors the status shown in the Maskin UI settings.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
 	// ─── Extensions ──────────────────────────────────────────
 	list_extensions: {
 		description:

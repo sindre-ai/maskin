@@ -46,6 +46,8 @@ const ALL_TOOL_NAMES = [
 	'list_integration_providers',
 	'connect_integration',
 	'disconnect_integration',
+	'set_anthropic_api_key',
+	'get_anthropic_api_key_status',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
@@ -556,6 +558,41 @@ describe('empty input schema tools', () => {
 	})
 })
 
+describe('set_anthropic_api_key schema', () => {
+	const schema = tools.set_anthropic_api_key.inputSchema
+
+	it('accepts a non-empty api_key', () => {
+		const result = schema.parse({ api_key: 'sk-ant-abc' })
+		expect(result.api_key).toBe('sk-ant-abc')
+	})
+
+	it('rejects an empty api_key', () => {
+		expect(() => schema.parse({ api_key: '' })).toThrow()
+	})
+
+	it('rejects a missing api_key', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('accepts optional workspace_id', () => {
+		const result = schema.parse({ workspace_id: uuid, api_key: 'sk-ant-abc' })
+		expect(result.workspace_id).toBe(uuid)
+	})
+})
+
+describe('get_anthropic_api_key_status schema', () => {
+	const schema = tools.get_anthropic_api_key_status.inputSchema
+
+	it('accepts empty object', () => {
+		expect(schema.parse({})).toEqual({})
+	})
+
+	it('accepts optional workspace_id', () => {
+		const result = schema.parse({ workspace_id: uuid })
+		expect(result.workspace_id).toBe(uuid)
+	})
+})
+
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
 		'create_objects',
@@ -572,6 +609,8 @@ describe('workspace_id optional on most tools', () => {
 		'list_integrations',
 		'connect_integration',
 		'disconnect_integration',
+		'set_anthropic_api_key',
+		'get_anthropic_api_key_status',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {
