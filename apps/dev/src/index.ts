@@ -19,7 +19,6 @@ import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import agentSkillsRoutes from './routes/agent-skills'
-import anthropicApiKeyRoutes from './routes/anthropic-api-key'
 import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
@@ -182,7 +181,6 @@ app.route('/api/notifications', notificationsRoutes)
 app.route('/api/graph', graphRoutes)
 app.route('/api/imports', importsRoutes)
 app.route('/api/claude-oauth', claudeOauthRoutes)
-app.route('/api/anthropic-api-key', anthropicApiKeyRoutes)
 
 // Mount extension routes at /api/m/{extensionId} — auth middleware on /api/* covers these
 const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

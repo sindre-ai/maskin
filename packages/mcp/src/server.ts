@@ -1277,25 +1277,36 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	// ─── Anthropic API Key ────────────────────────────────────
+	// ─── LLM API Keys ─────────────────────────────────────────
+	// Wraps PATCH /api/workspaces/:id with settings.llm_keys. We fetch the
+	// current settings first so other providers and unrelated settings keys are
+	// preserved across a single-provider update.
+	const last4 = (s: string) => (s.length <= 4 ? s : s.slice(-4))
+
 	registerAppTool(
 		server,
-		'set_anthropic_api_key',
+		'set_llm_api_key',
 		{
-			description: tools.set_anthropic_api_key.description,
-			inputSchema: tools.set_anthropic_api_key.inputSchema.shape,
+			description: tools.set_llm_api_key.description,
+			inputSchema: tools.set_llm_api_key.inputSchema.shape,
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+			const ws = await getWorkspace(config, wsId)
+			const llmKeys = { ...((ws.settings.llm_keys ?? {}) as Record<string, string>) }
+			llmKeys[args.provider] = args.api_key
+			await apiCall(
 				config,
-				'POST',
-				'/api/anthropic-api-key',
-				{ api_key: args.api_key },
-				{ workspaceId: args.workspace_id },
+				'PATCH',
+				`/api/workspaces/${wsId}`,
+				{ settings: { ...ws.settings, llm_keys: llmKeys } },
+				{ skipWorkspace: true },
 			)
+			const result = { success: true, provider: args.provider, last4: last4(args.api_key) }
 			return {
-				_meta: { toolName: 'set_anthropic_api_key' },
+				_meta: { toolName: 'set_llm_api_key' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1303,18 +1314,124 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
-		'get_anthropic_api_key_status',
+		'get_llm_api_keys',
 		{
-			description: tools.get_anthropic_api_key_status.description,
-			inputSchema: tools.get_anthropic_api_key_status.inputSchema.shape,
+			description: tools.get_llm_api_keys.description,
+			inputSchema: tools.get_llm_api_keys.inputSchema.shape,
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', '/api/anthropic-api-key/status', undefined, {
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+			const ws = await getWorkspace(config, wsId)
+			const llmKeys = (ws.settings.llm_keys ?? {}) as Record<string, string>
+			const providerStatus = (key?: string) =>
+				key ? { set: true, last4: last4(key) } : { set: false }
+			const result = {
+				anthropic: providerStatus(llmKeys.anthropic),
+				openai: providerStatus(llmKeys.openai),
+			}
+			return {
+				_meta: { toolName: 'get_llm_api_keys' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_llm_api_key',
+		{
+			description: tools.delete_llm_api_key.description,
+			inputSchema: tools.delete_llm_api_key.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+			const ws = await getWorkspace(config, wsId)
+			const { [args.provider]: _removed, ...remaining } = (ws.settings.llm_keys ?? {}) as Record<
+				string,
+				string
+			>
+			await apiCall(
+				config,
+				'PATCH',
+				`/api/workspaces/${wsId}`,
+				{ settings: { ...ws.settings, llm_keys: remaining } },
+				{ skipWorkspace: true },
+			)
+			const result = { success: true, provider: args.provider }
+			return {
+				_meta: { toolName: 'delete_llm_api_key' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Claude Subscription ──────────────────────────────────
+	registerAppTool(
+		server,
+		'import_claude_subscription',
+		{
+			description: tools.import_claude_subscription.description,
+			inputSchema: tools.import_claude_subscription.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/claude-oauth/import',
+				{
+					accessToken: args.access_token,
+					refreshToken: args.refresh_token,
+					expiresAt: args.expires_at,
+					subscriptionType: args.subscription_type,
+					scopes: args.scopes,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: { toolName: 'import_claude_subscription' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_claude_subscription_status',
+		{
+			description: tools.get_claude_subscription_status.description,
+			inputSchema: tools.get_claude_subscription_status.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'get_anthropic_api_key_status' },
+				_meta: { toolName: 'get_claude_subscription_status' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'disconnect_claude_subscription',
+		{
+			description: tools.disconnect_claude_subscription.description,
+			inputSchema: tools.disconnect_claude_subscription.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'DELETE', '/api/claude-oauth', undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: { toolName: 'disconnect_claude_subscription' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},

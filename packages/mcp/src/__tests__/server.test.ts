@@ -758,18 +758,146 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('set_anthropic_api_key handler', () => {
-		it('POSTs to /api/anthropic-api-key with api_key body and masked response', async () => {
-			const mockResult = { success: true, last4: 'AbCd', created_at: 1_700_000_000_000 }
-			mockFetchSuccess(mockResult)
+	describe('set_llm_api_key handler', () => {
+		// Fetches list of workspaces (to read current settings), then PATCHes the
+		// workspace with merged llm_keys. Two fetch calls per invocation.
+		function mockWorkspaceThenPatch(workspace: {
+			id: string
+			name: string
+			settings: Record<string, unknown>
+		}) {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(workspace) } as Response)
+		}
 
-			const handler = getHandler('set_anthropic_api_key')
-			const result = (await handler({ api_key: 'sk-ant-test-key-AbCd' })) as {
+		it('merges new key into settings.llm_keys and returns masked last4', async () => {
+			mockWorkspaceThenPatch({
+				id: 'ws-default-123',
+				name: 'My Workspace',
+				settings: { llm_keys: { openai: 'sk-existing-openai' } },
+			})
+
+			const handler = getHandler('set_llm_api_key')
+			const result = (await handler({
+				provider: 'anthropic',
+				api_key: 'sk-ant-new-key-WXYZ',
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledTimes(2)
+			const [, patchCall] = vi.mocked(fetch).mock.calls
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
+			expect(patchCall[1]?.method).toBe('PATCH')
+			const body = JSON.parse(patchCall[1]?.body as string)
+			expect(body.settings.llm_keys).toEqual({
+				openai: 'sk-existing-openai',
+				anthropic: 'sk-ant-new-key-WXYZ',
+			})
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({ success: true, provider: 'anthropic', last4: 'WXYZ' })
+			expect(result.content[0].text).not.toContain('sk-ant-new-key-WXYZ')
+		})
+
+		it('uses workspace_id from args over default', async () => {
+			mockWorkspaceThenPatch({
+				id: 'ws-custom',
+				name: 'Other',
+				settings: {},
+			})
+
+			const handler = getHandler('set_llm_api_key')
+			await handler({ workspace_id: 'ws-custom', provider: 'openai', api_key: 'sk-foo' })
+
+			const [, patchCall] = vi.mocked(fetch).mock.calls
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-custom')
+		})
+	})
+
+	describe('get_llm_api_keys handler', () => {
+		it('reads settings.llm_keys and returns masked status per provider', async () => {
+			mockFetchSuccess([
+				{
+					id: 'ws-default-123',
+					name: 'My Workspace',
+					settings: {
+						llm_keys: { anthropic: 'sk-ant-abcdEFGH', openai: 'sk-opq-MNOP' },
+					},
+				},
+			])
+
+			const handler = getHandler('get_llm_api_keys')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({
+				anthropic: { set: true, last4: 'EFGH' },
+				openai: { set: true, last4: 'MNOP' },
+			})
+			expect(result.content[0].text).not.toContain('sk-ant-abcdEFGH')
+		})
+
+		it('returns { set: false } for missing providers', async () => {
+			mockFetchSuccess([{ id: 'ws-default-123', name: 'My Workspace', settings: { llm_keys: {} } }])
+
+			const handler = getHandler('get_llm_api_keys')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({
+				anthropic: { set: false },
+				openai: { set: false },
+			})
+		})
+	})
+
+	describe('delete_llm_api_key handler', () => {
+		it('removes the named provider and preserves others', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							{
+								id: 'ws-default-123',
+								name: 'My Workspace',
+								settings: {
+									llm_keys: { anthropic: 'sk-ant-xxx', openai: 'sk-opq' },
+								},
+							},
+						]),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) } as Response)
+
+			const handler = getHandler('delete_llm_api_key')
+			const result = (await handler({ provider: 'anthropic' })) as {
 				content: Array<{ text: string }>
 			}
 
+			const [, patchCall] = vi.mocked(fetch).mock.calls
+			const body = JSON.parse(patchCall[1]?.body as string)
+			expect(body.settings.llm_keys).toEqual({ openai: 'sk-opq' })
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({ success: true, provider: 'anthropic' })
+		})
+	})
+
+	describe('import_claude_subscription handler', () => {
+		it('POSTs /api/claude-oauth/import with camelCased token fields', async () => {
+			const mockResult = { success: true, subscription_type: 'max', expires_at: 1 }
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('import_claude_subscription')
+			await handler({
+				access_token: 'at',
+				refresh_token: 'rt',
+				expires_at: 1_700_000_000_000,
+				subscription_type: 'max',
+				scopes: ['read'],
+			})
+
 			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/anthropic-api-key',
+				'http://localhost:3000/api/claude-oauth/import',
 				expect.objectContaining({
 					method: 'POST',
 					headers: expect.objectContaining({
@@ -780,87 +908,47 @@ describe('tool handlers', () => {
 			)
 			const fetchCall = vi.mocked(fetch).mock.calls[0]
 			const body = JSON.parse(fetchCall[1]?.body as string)
-			expect(body).toEqual({ api_key: 'sk-ant-test-key-AbCd' })
-
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual(mockResult)
-			// Sanity: the full key should never appear in the response content
-			expect(result.content[0].text).not.toContain('sk-ant-test-key-AbCd')
-		})
-
-		it('uses workspace_id from args over default', async () => {
-			mockFetchSuccess({ success: true, last4: 'AbCd', created_at: 1 })
-
-			const handler = getHandler('set_anthropic_api_key')
-			await handler({ workspace_id: 'ws-custom', api_key: 'sk-ant-another' })
-
-			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/anthropic-api-key',
-				expect.objectContaining({
-					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
-				}),
-			)
-		})
-
-		it('surfaces validation errors from the API', async () => {
-			mockFetchError(
-				400,
-				JSON.stringify({
-					error: { message: 'Anthropic API key validation failed' },
-				}),
-			)
-
-			const handler = getHandler('set_anthropic_api_key')
-			await expect(handler({ api_key: 'sk-ant-bogus' })).rejects.toThrow(
-				'Anthropic API key validation failed',
-			)
+			expect(body).toEqual({
+				accessToken: 'at',
+				refreshToken: 'rt',
+				expiresAt: 1_700_000_000_000,
+				subscriptionType: 'max',
+				scopes: ['read'],
+			})
 		})
 	})
 
-	describe('get_anthropic_api_key_status handler', () => {
-		it('GETs /api/anthropic-api-key/status and returns masked payload', async () => {
-			const mockResult = { set: true, last4: 'AbCd', created_at: 1_700_000_000_000 }
+	describe('get_claude_subscription_status handler', () => {
+		it('GETs /api/claude-oauth/status and returns payload', async () => {
+			const mockResult = {
+				connected: true,
+				valid: true,
+				subscription_type: 'max',
+				expires_at: 1,
+			}
 			mockFetchSuccess(mockResult)
 
-			const handler = getHandler('get_anthropic_api_key_status')
+			const handler = getHandler('get_claude_subscription_status')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/anthropic-api-key/status',
-				expect.objectContaining({
-					method: 'GET',
-					headers: expect.objectContaining({
-						Authorization: 'Bearer ank_testkey123',
-						'X-Workspace-Id': 'ws-default-123',
-					}),
-				}),
+				'http://localhost:3000/api/claude-oauth/status',
+				expect.objectContaining({ method: 'GET' }),
 			)
-
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual(mockResult)
+			expect(JSON.parse(result.content[0].text)).toEqual(mockResult)
 		})
+	})
 
-		it('returns { set: false } when no key is configured', async () => {
-			mockFetchSuccess({ set: false })
+	describe('disconnect_claude_subscription handler', () => {
+		it('DELETEs /api/claude-oauth', async () => {
+			mockFetchSuccess({ success: true })
 
-			const handler = getHandler('get_anthropic_api_key_status')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
-
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual({ set: false })
-		})
-
-		it('uses workspace_id from args over default', async () => {
-			mockFetchSuccess({ set: false })
-
-			const handler = getHandler('get_anthropic_api_key_status')
-			await handler({ workspace_id: 'ws-custom' })
+			const handler = getHandler('disconnect_claude_subscription')
+			await handler({})
 
 			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/anthropic-api-key/status',
-				expect.objectContaining({
-					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
-				}),
+				'http://localhost:3000/api/claude-oauth',
+				expect.objectContaining({ method: 'DELETE' }),
 			)
 		})
 	})

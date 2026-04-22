@@ -9,7 +9,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { Eye, EyeOff, Trash2, Unplug } from 'lucide-react'
+import { Eye, EyeOff, Unplug } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
@@ -25,11 +25,7 @@ function KeysPage() {
 			<ClaudeOAuthSection workspaceId={workspaceId} />
 
 			<div className="border-t border-border pt-6">
-				<AnthropicApiKeySection workspaceId={workspaceId} />
-			</div>
-
-			<div className="border-t border-border pt-6">
-				<OpenAiKeyEditor workspace={workspace} workspaceId={workspaceId} />
+				<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
 			</div>
 		</div>
 	)
@@ -194,108 +190,12 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 	)
 }
 
-function AnthropicApiKeySection({ workspaceId }: { workspaceId: string }) {
-	const queryClient = useQueryClient()
-	const [draft, setDraft] = useState('')
-	const [visible, setVisible] = useState(false)
+const llmProviders = [
+	{ key: 'anthropic' as const, label: 'Anthropic', placeholder: 'sk-ant-...' },
+	{ key: 'openai' as const, label: 'OpenAI', placeholder: 'sk-...' },
+]
 
-	const invalidate = useCallback(
-		() =>
-			queryClient.invalidateQueries({ queryKey: queryKeys.anthropicApiKey.status(workspaceId) }),
-		[queryClient, workspaceId],
-	)
-
-	const statusQuery = useQuery({
-		queryKey: queryKeys.anthropicApiKey.status(workspaceId),
-		queryFn: () => api.anthropicApiKey.status(workspaceId),
-	})
-
-	const saveMutation = useMutation({
-		mutationFn: (apiKey: string) => api.anthropicApiKey.save(workspaceId, apiKey),
-		onSuccess: () => {
-			setDraft('')
-			setVisible(false)
-			invalidate()
-		},
-	})
-
-	const removeMutation = useMutation({
-		mutationFn: () => api.anthropicApiKey.remove(workspaceId),
-		onSuccess: invalidate,
-	})
-
-	const status = statusQuery.data
-	const isSet = status?.set === true
-
-	return (
-		<div>
-			<Label className="mb-1 text-muted-foreground">Anthropic API Key</Label>
-			<p className="text-xs text-muted-foreground mb-3">
-				Used by sandboxed Claude Code runs when no Claude subscription is connected. Stored
-				encrypted; only the last 4 characters are displayed after save.
-			</p>
-
-			{isSet && (
-				<div className="rounded-lg border border-border bg-bg-surface p-3 mb-3">
-					<div className="flex items-center justify-between">
-						<div className="flex items-center gap-2">
-							<div className="size-2 rounded-full bg-success" />
-							<span className="text-sm font-medium text-foreground">
-								Saved — ending in {status?.last4}
-							</span>
-						</div>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => removeMutation.mutate()}
-							disabled={removeMutation.isPending}
-						>
-							<Trash2 size={14} className="mr-1" />
-							Remove
-						</Button>
-					</div>
-				</div>
-			)}
-
-			<div className="flex gap-2">
-				<div className="relative flex-1">
-					<Input
-						type={visible ? 'text' : 'password'}
-						value={draft}
-						onChange={(e) => setDraft(e.target.value)}
-						placeholder={isSet ? 'Paste new key to replace' : 'sk-ant-...'}
-						className="pr-9"
-					/>
-					<button
-						type="button"
-						className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-						onClick={() => setVisible((v) => !v)}
-					>
-						{visible ? <EyeOff size={14} /> : <Eye size={14} />}
-					</button>
-				</div>
-				<Button
-					onClick={() => saveMutation.mutate(draft.trim())}
-					disabled={!draft.trim() || saveMutation.isPending}
-				>
-					{saveMutation.isPending ? 'Validating...' : 'Save'}
-				</Button>
-			</div>
-			{saveMutation.isError && (
-				<p className="text-xs text-error mt-2">
-					{saveMutation.error?.message || 'Validation failed'}
-				</p>
-			)}
-			{removeMutation.isError && (
-				<p className="text-xs text-error mt-2">
-					{removeMutation.error?.message || 'Failed to remove key'}
-				</p>
-			)}
-		</div>
-	)
-}
-
-function OpenAiKeyEditor({
+function LLMKeysEditor({
 	workspace,
 	workspaceId,
 }: {
@@ -306,46 +206,71 @@ function OpenAiKeyEditor({
 	const settings = workspace.settings as Record<string, unknown>
 	const savedKeys = (settings?.llm_keys as Record<string, string>) ?? {}
 
-	const [value, setValue] = useState<string>(savedKeys.openai ?? '')
-	const [visible, setVisible] = useState(false)
+	const [keys, setKeys] = useState<Record<string, string>>({
+		anthropic: savedKeys.anthropic ?? '',
+		openai: savedKeys.openai ?? '',
+	})
+	const [visible, setVisible] = useState<Record<string, boolean>>({})
 
-	const handleSave = () => {
-		const trimmed = value.trim()
-		const { openai: _current, ...rest } = savedKeys
-		const updatedKeys = trimmed ? { ...rest, openai: trimmed } : rest
+	const handleSave = (provider: string) => {
+		const value = keys[provider]?.trim()
+		const updatedKeys = { ...savedKeys }
+		if (value) {
+			updatedKeys[provider] = value
+		} else {
+			delete updatedKeys[provider]
+		}
 		updateWorkspace.mutate({
 			settings: { ...settings, llm_keys: updatedKeys },
 		})
 	}
 
-	const isDirty = value !== (savedKeys.openai ?? '')
+	const isDirty = (provider: string) => {
+		const saved = savedKeys[provider] ?? ''
+		return keys[provider] !== saved
+	}
 
 	return (
 		<div>
-			<Label className="mb-1 text-muted-foreground">OpenAI API Key</Label>
+			<Label className="mb-1 text-muted-foreground">LLM API Keys</Label>
 			<p className="text-xs text-muted-foreground mb-3">
-				Used by agents configured with the OpenAI provider.
+				Set API keys per provider. All agents in this workspace will use these keys.
 			</p>
-			<div className="flex gap-2">
-				<div className="relative flex-1">
-					<Input
-						type={visible ? 'text' : 'password'}
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						placeholder="sk-..."
-						className="pr-9"
-					/>
-					<button
-						type="button"
-						className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-						onClick={() => setVisible((v) => !v)}
-					>
-						{visible ? <EyeOff size={14} /> : <Eye size={14} />}
-					</button>
-				</div>
-				<Button onClick={handleSave} disabled={!isDirty || updateWorkspace.isPending}>
-					Save
-				</Button>
+			<div className="space-y-3">
+				{llmProviders.map((provider) => (
+					<div key={provider.key}>
+						<Label className="mb-1 text-xs text-muted-foreground">{provider.label}</Label>
+						<div className="flex gap-2">
+							<div className="relative flex-1">
+								<Input
+									type={visible[provider.key] ? 'text' : 'password'}
+									value={keys[provider.key]}
+									onChange={(e) => setKeys((prev) => ({ ...prev, [provider.key]: e.target.value }))}
+									placeholder={provider.placeholder}
+									className="pr-9"
+								/>
+								<button
+									type="button"
+									className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+									onClick={() =>
+										setVisible((prev) => ({
+											...prev,
+											[provider.key]: !prev[provider.key],
+										}))
+									}
+								>
+									{visible[provider.key] ? <EyeOff size={14} /> : <Eye size={14} />}
+								</button>
+							</div>
+							<Button
+								onClick={() => handleSave(provider.key)}
+								disabled={!isDirty(provider.key) || updateWorkspace.isPending}
+							>
+								Save
+							</Button>
+						</div>
+					</div>
+				))}
 			</div>
 		</div>
 	)
