@@ -1278,9 +1278,9 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── LLM API Keys ─────────────────────────────────────────
-	// Wraps PATCH /api/workspaces/:id with settings.llm_keys. We fetch the
-	// current settings first so other providers and unrelated settings keys are
-	// preserved across a single-provider update.
+	// Wraps PATCH /api/workspaces/:id with settings.llm_keys. The server deep-
+	// merges `llm_keys`, so a single-provider update preserves the others and
+	// `null` signals deletion — no read-modify-write dance needed here.
 	const last4 = (s: string) => (s.length <= 4 ? s : s.slice(-4))
 
 	registerAppTool(
@@ -1292,17 +1292,12 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
-			const ws = await getWorkspace(config, wsId)
-			const llmKeys = { ...((ws.settings.llm_keys ?? {}) as Record<string, string>) }
-			llmKeys[args.provider] = args.api_key
 			await apiCall(
 				config,
 				'PATCH',
-				`/api/workspaces/${wsId}`,
-				{ settings: { ...ws.settings, llm_keys: llmKeys } },
-				{ skipWorkspace: true },
+				`/api/workspaces/${args.workspace_id ?? config.defaultWorkspaceId}`,
+				{ settings: { llm_keys: { [args.provider]: args.api_key } } },
+				{ workspaceId: args.workspace_id },
 			)
 			const result = { success: true, provider: args.provider, last4: last4(args.api_key) }
 			return {
@@ -1347,19 +1342,12 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
-			const ws = await getWorkspace(config, wsId)
-			const { [args.provider]: _removed, ...remaining } = (ws.settings.llm_keys ?? {}) as Record<
-				string,
-				string
-			>
 			await apiCall(
 				config,
 				'PATCH',
-				`/api/workspaces/${wsId}`,
-				{ settings: { ...ws.settings, llm_keys: remaining } },
-				{ skipWorkspace: true },
+				`/api/workspaces/${args.workspace_id ?? config.defaultWorkspaceId}`,
+				{ settings: { llm_keys: { [args.provider]: null } } },
+				{ workspaceId: args.workspace_id },
 			)
 			const result = { success: true, provider: args.provider }
 			return {

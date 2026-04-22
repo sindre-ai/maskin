@@ -36,8 +36,10 @@ export const workspaceSettingsSchema = z.object({
 	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
 	llm_keys: z
 		.object({
-			anthropic: z.string().optional(),
-			openai: z.string().optional(),
+			// `null` on PATCH signals deletion of that provider; see the deep-merge
+			// in PATCH /api/workspaces/:id.
+			anthropic: z.string().nullable().optional(),
+			openai: z.string().nullable().optional(),
 		})
 		.default({}),
 	claude_oauth: z

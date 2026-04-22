@@ -621,7 +621,7 @@ export const tools = {
 	// ─── LLM API Keys ─────────────────────────────────────────
 	set_llm_api_key: {
 		description:
-			"Save (or replace) a workspace LLM API key. Stored in workspace settings alongside any other providers. Returns { success, provider, last4 } — the full key is never echoed back. Mirrors the 'LLM API Keys' inputs in Settings → Keys.",
+			"Save (or replace) a workspace LLM API key. Stored in workspace settings alongside any other providers. Returns { success, provider, last4 } — the full key is never echoed back. The key is stored as-is with no server-side validation against the provider; use the UI at /settings/keys if you need a live validation check. Mirrors the 'LLM API Keys' inputs in Settings → Keys.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z.enum(['anthropic', 'openai']),

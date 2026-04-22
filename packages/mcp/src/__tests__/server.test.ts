@@ -759,24 +759,11 @@ describe('tool handlers', () => {
 	})
 
 	describe('set_llm_api_key handler', () => {
-		// Fetches list of workspaces (to read current settings), then PATCHes the
-		// workspace with merged llm_keys. Two fetch calls per invocation.
-		function mockWorkspaceThenPatch(workspace: {
-			id: string
-			name: string
-			settings: Record<string, unknown>
-		}) {
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
-				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(workspace) } as Response)
-		}
-
-		it('merges new key into settings.llm_keys and returns masked last4', async () => {
-			mockWorkspaceThenPatch({
-				id: 'ws-default-123',
-				name: 'My Workspace',
-				settings: { llm_keys: { openai: 'sk-existing-openai' } },
-			})
+		// PATCHes the workspace with a single-provider delta. The server deep-
+		// merges llm_keys, so the MCP tool is a straight pass-through — no
+		// read-modify-write. One fetch call per invocation.
+		it('PATCHes only the target provider and returns masked last4', async () => {
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
 
 			const handler = getHandler('set_llm_api_key')
 			const result = (await handler({
@@ -784,15 +771,12 @@ describe('tool handlers', () => {
 				api_key: 'sk-ant-new-key-WXYZ',
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(2)
-			const [, patchCall] = vi.mocked(fetch).mock.calls
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const [patchCall] = vi.mocked(fetch).mock.calls
 			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
 			expect(patchCall[1]?.method).toBe('PATCH')
 			const body = JSON.parse(patchCall[1]?.body as string)
-			expect(body.settings.llm_keys).toEqual({
-				openai: 'sk-existing-openai',
-				anthropic: 'sk-ant-new-key-WXYZ',
-			})
+			expect(body.settings.llm_keys).toEqual({ anthropic: 'sk-ant-new-key-WXYZ' })
 
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual({ success: true, provider: 'anthropic', last4: 'WXYZ' })
@@ -800,17 +784,37 @@ describe('tool handlers', () => {
 		})
 
 		it('uses workspace_id from args over default', async () => {
-			mockWorkspaceThenPatch({
-				id: 'ws-custom',
-				name: 'Other',
-				settings: {},
-			})
+			mockFetchSuccess({ id: 'ws-custom', name: 'Other', settings: {} })
 
 			const handler = getHandler('set_llm_api_key')
 			await handler({ workspace_id: 'ws-custom', provider: 'openai', api_key: 'sk-foo' })
 
-			const [, patchCall] = vi.mocked(fetch).mock.calls
+			const [patchCall] = vi.mocked(fetch).mock.calls
 			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-custom')
+		})
+
+		it('back-to-back sets for both providers each send only their own delta', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
+				} as Response)
+
+			const handler = getHandler('set_llm_api_key')
+			await handler({ provider: 'anthropic', api_key: 'sk-ant-ABCD' })
+			await handler({ provider: 'openai', api_key: 'sk-openai-EFGH' })
+
+			const [firstCall, secondCall] = vi.mocked(fetch).mock.calls
+			expect(JSON.parse(firstCall[1]?.body as string).settings.llm_keys).toEqual({
+				anthropic: 'sk-ant-ABCD',
+			})
+			expect(JSON.parse(secondCall[1]?.body as string).settings.llm_keys).toEqual({
+				openai: 'sk-openai-EFGH',
+			})
 		})
 	})
 
@@ -852,33 +856,40 @@ describe('tool handlers', () => {
 	})
 
 	describe('delete_llm_api_key handler', () => {
-		it('removes the named provider and preserves others', async () => {
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								id: 'ws-default-123',
-								name: 'My Workspace',
-								settings: {
-									llm_keys: { anthropic: 'sk-ant-xxx', openai: 'sk-opq' },
-								},
-							},
-						]),
-				} as Response)
-				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) } as Response)
+		it('PATCHes the target provider to null so the server strips it', async () => {
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
 
 			const handler = getHandler('delete_llm_api_key')
 			const result = (await handler({ provider: 'anthropic' })) as {
 				content: Array<{ text: string }>
 			}
 
-			const [, patchCall] = vi.mocked(fetch).mock.calls
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const [patchCall] = vi.mocked(fetch).mock.calls
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
+			expect(patchCall[1]?.method).toBe('PATCH')
 			const body = JSON.parse(patchCall[1]?.body as string)
-			expect(body.settings.llm_keys).toEqual({ openai: 'sk-opq' })
+			expect(body.settings.llm_keys).toEqual({ anthropic: null })
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual({ success: true, provider: 'anthropic' })
+		})
+
+		it('delete on an unset provider still sends one PATCH and reports success', async () => {
+			// Server-side deep-merge treats null as "delete if present"; deleting
+			// a missing provider is a no-op there, so the MCP tool still returns
+			// success without needing to inspect current state.
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
+
+			const handler = getHandler('delete_llm_api_key')
+			const result = (await handler({ provider: 'openai' })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const [patchCall] = vi.mocked(fetch).mock.calls
+			const body = JSON.parse(patchCall[1]?.body as string)
+			expect(body.settings.llm_keys).toEqual({ openai: null })
+			expect(JSON.parse(result.content[0].text)).toEqual({ success: true, provider: 'openai' })
 		})
 	})
 
