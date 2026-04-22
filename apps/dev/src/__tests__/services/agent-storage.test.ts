@@ -99,6 +99,46 @@ describe('AgentStorageManager', () => {
 				expect.any(Buffer),
 			)
 		})
+
+		it('appends a summary to the workspace ledger on every push (regression guard)', async () => {
+			// The workspace-scoped ledger is what lets future sessions see what
+			// was tried across the workspace. This test pins the contract so a
+			// future refactor of pushAgentFiles cannot silently drop it.
+			;(readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+				Buffer.from('Shipped outreach automation\n'),
+			)
+			;(readdir as ReturnType<typeof vi.fn>).mockResolvedValue([])
+			mockResults.update = []
+			mockResults.insert = []
+
+			await manager.pushAgentFiles(actorId, workspaceId, 'session-1', '/tmp/agent')
+
+			const ledgerCall = (storage.put as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => (call[0] as string) === `agents/${workspaceId}/_workspace/learnings.md`,
+			)
+			expect(ledgerCall).toBeDefined()
+			const written = (ledgerCall?.[1] as Buffer).toString('utf-8')
+			expect(written).toContain('session-')
+			expect(written).toContain('Shipped outreach automation')
+		})
+
+		it('falls back to actionPrompt when no SESSION_LEARNING.md is present', async () => {
+			// readFile rejects for all paths (neither learning file nor SESSION_LEARNING exists)
+			;(readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'))
+			;(readdir as ReturnType<typeof vi.fn>).mockResolvedValue([])
+
+			await manager.pushAgentFiles(actorId, workspaceId, 'session-1', '/tmp/agent', {
+				actionPrompt: 'Reply to the new GitHub issue about billing',
+			})
+
+			const ledgerCall = (storage.put as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => (call[0] as string) === `agents/${workspaceId}/_workspace/learnings.md`,
+			)
+			expect(ledgerCall).toBeDefined()
+			expect((ledgerCall?.[1] as Buffer).toString('utf-8')).toContain(
+				'Reply to the new GitHub issue about billing',
+			)
+		})
 	})
 
 	describe('getFile()', () => {

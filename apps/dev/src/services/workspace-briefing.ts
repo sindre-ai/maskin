@@ -6,6 +6,7 @@ import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
 const MAX_ACTIVE_BETS = 10
+const MAX_PAUSED_BETS = 5
 const MAX_CLOSED_BETS = 5
 const MAX_OPEN_INSIGHTS = 10
 const MAX_LEDGER_LINES = 20
@@ -66,6 +67,14 @@ export async function readLedgerTail(
 /**
  * Append a single-line entry to the workspace ledger. Caps the ledger at
  * LEDGER_MAX_LINES (oldest entries drop). No-op if `line` is empty after trim.
+ *
+ * Skips the append (rather than proceeding with an empty baseline) if the
+ * current ledger cannot be read. Without this guard, a transient S3 error
+ * followed by a successful `put` would silently wipe all prior entries.
+ *
+ * Note: read-modify-write is not atomic. If two sessions in the same workspace
+ * complete within milliseconds of each other, one entry may be lost. V2 should
+ * move to per-session files concatenated at read time to eliminate this race.
  */
 export async function appendToLedger(
 	storage: StorageProvider,
@@ -75,14 +84,31 @@ export async function appendToLedger(
 	const trimmed = line.replace(/[\r\n]+/g, ' ').trim()
 	if (!trimmed) return
 	const key = workspaceLedgerKey(workspaceId)
-	let existing = ''
+
+	let exists: boolean
 	try {
-		if (await storage.exists(key)) {
-			existing = (await storage.get(key)).toString('utf-8')
-		}
+		exists = await storage.exists(key)
 	} catch (err) {
-		logger.warn('Failed to read ledger before append', { workspaceId, error: String(err) })
+		logger.warn('Failed to check ledger existence — skipping append', {
+			workspaceId,
+			error: String(err),
+		})
+		return
 	}
+
+	let existing = ''
+	if (exists) {
+		try {
+			existing = (await storage.get(key)).toString('utf-8')
+		} catch (err) {
+			logger.warn('Failed to read ledger before append — skipping to avoid wipe', {
+				workspaceId,
+				error: String(err),
+			})
+			return
+		}
+	}
+
 	const existingLines = existing.split('\n').filter((l) => l.length > 0)
 	const nextLines = [...existingLines, trimmed].slice(-LEDGER_MAX_LINES)
 	await storage.put(key, Buffer.from(`${nextLines.join('\n')}\n`, 'utf-8'))
@@ -120,46 +146,60 @@ export async function renderWorkspaceBriefing(
 	const taskLabel = displayNames.task ?? 'Task'
 	const insightLabel = displayNames.insight ?? 'Insight'
 
-	const activeBets = await db
-		.select()
-		.from(objects)
-		.where(
-			and(
-				eq(objects.workspaceId, workspaceId),
-				eq(objects.type, 'bet'),
-				inArray(objects.status, ['proposed', 'active']),
-			),
-		)
-		.orderBy(desc(objects.updatedAt))
-		.limit(MAX_ACTIVE_BETS)
-
 	const since = new Date(Date.now() - CLOSED_BETS_DAYS * 24 * 60 * 60 * 1000)
-	const closedBets = await db
-		.select()
-		.from(objects)
-		.where(
-			and(
-				eq(objects.workspaceId, workspaceId),
-				eq(objects.type, 'bet'),
-				inArray(objects.status, ['succeeded', 'failed', 'completed']),
-				gte(objects.updatedAt, since),
-			),
-		)
-		.orderBy(desc(objects.updatedAt))
-		.limit(MAX_CLOSED_BETS)
 
-	const openInsights = await db
-		.select()
-		.from(objects)
-		.where(
-			and(
-				eq(objects.workspaceId, workspaceId),
-				eq(objects.type, 'insight'),
-				eq(objects.status, 'new'),
-			),
-		)
-		.orderBy(desc(objects.createdAt))
-		.limit(MAX_OPEN_INSIGHTS)
+	// Independent queries run in parallel — they don't depend on each other.
+	const [activeBets, pausedBets, closedBets, openInsights] = await Promise.all([
+		db
+			.select()
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'bet'),
+					inArray(objects.status, ['proposed', 'active']),
+				),
+			)
+			.orderBy(desc(objects.updatedAt))
+			.limit(MAX_ACTIVE_BETS),
+		db
+			.select()
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'bet'),
+					eq(objects.status, 'paused'),
+				),
+			)
+			.orderBy(desc(objects.updatedAt))
+			.limit(MAX_PAUSED_BETS),
+		db
+			.select()
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'bet'),
+					inArray(objects.status, ['succeeded', 'failed', 'completed']),
+					gte(objects.updatedAt, since),
+				),
+			)
+			.orderBy(desc(objects.updatedAt))
+			.limit(MAX_CLOSED_BETS),
+		db
+			.select()
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'insight'),
+					eq(objects.status, 'new'),
+				),
+			)
+			.orderBy(desc(objects.createdAt))
+			.limit(MAX_OPEN_INSIGHTS),
+	])
 
 	// Child task progress for active bets: one batched relationship query, one
 	// batched object query.
@@ -201,9 +241,11 @@ export async function renderWorkspaceBriefing(
 	out.push(`## Active ${betLabel.toLowerCase()}s`)
 	out.push('')
 	if (activeBets.length === 0) {
-		out.push(
-			`_No active ${betLabel.toLowerCase()}s. Consider proposing one from an open ${insightLabel.toLowerCase()}._`,
-		)
+		const emptyHint =
+			openInsights.length > 0
+				? ` Consider proposing one from an open ${insightLabel.toLowerCase()}.`
+				: ''
+		out.push(`_No active ${betLabel.toLowerCase()}s.${emptyHint}_`)
 	} else {
 		for (const bet of activeBets) {
 			const counts = progressByBet.get(bet.id)
@@ -222,6 +264,18 @@ export async function renderWorkspaceBriefing(
 		}
 	}
 	out.push('')
+
+	if (pausedBets.length > 0) {
+		out.push(`## Paused ${betLabel.toLowerCase()}s`)
+		out.push('')
+		out.push(
+			'_Explicitly set aside — not part of the current cycle. Revisit only if a new signal changes the calculus._',
+		)
+		for (const bet of pausedBets) {
+			out.push(`- **${truncate(bet.title, TITLE_MAX)}**`)
+		}
+		out.push('')
+	}
 
 	out.push(`## Recently closed ${betLabel.toLowerCase()}s (last ${CLOSED_BETS_DAYS} days)`)
 	out.push('')

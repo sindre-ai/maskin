@@ -77,6 +77,26 @@ describe('appendToLedger', () => {
 		const call = (storage.put as ReturnType<typeof vi.fn>).mock.calls[0]
 		expect((call[1] as Buffer).toString('utf-8')).toBe('a b c\n')
 	})
+
+	it('skips append if exists() throws (avoids silent wipe)', async () => {
+		const storage = createMockStorage({
+			exists: vi.fn().mockRejectedValue(new Error('S3 down')),
+		})
+		await appendToLedger(storage, 'ws-1', 'new line')
+		expect(storage.put).not.toHaveBeenCalled()
+	})
+
+	it('skips append if get() throws after exists() returns true (avoids silent wipe)', async () => {
+		// This is the dangerous path: without the guard, a transient read error
+		// would fall through to an empty baseline and the put would overwrite
+		// the entire ledger with just the new line.
+		const storage = createMockStorage({
+			exists: vi.fn().mockResolvedValue(true),
+			get: vi.fn().mockRejectedValue(new Error('read timed out')),
+		})
+		await appendToLedger(storage, 'ws-1', 'new line')
+		expect(storage.put).not.toHaveBeenCalled()
+	})
 })
 
 describe('readLedgerTail', () => {
@@ -136,6 +156,7 @@ describe('renderWorkspaceBriefing', () => {
 		mockResults.selectQueue = [
 			[ws], // workspace lookup
 			[], // active bets
+			[], // paused bets
 			[], // closed bets
 			[], // open insights
 		]
@@ -146,6 +167,28 @@ describe('renderWorkspaceBriefing', () => {
 		expect(result).toContain('None in the last 30 days')
 		expect(result).toContain('No open insights')
 		expect(result).toContain('No prior session learnings yet')
+	})
+
+	it('omits the insight suggestion when no open insights exist', async () => {
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		mockResults.selectQueue = [[ws], [], [], [], []]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).toContain('No active bets')
+		expect(result).not.toContain('Consider proposing one from an open')
+	})
+
+	it('shows the insight suggestion when insights exist but no active bets', async () => {
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		const insight = buildObject({ workspaceId: ws.id, type: 'insight', status: 'new' })
+		mockResults.selectQueue = [[ws], [], [], [], [insight]]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).toContain('Consider proposing one from an open insight')
 	})
 
 	it('renders active bets with status, appetite, content excerpt, and id', async () => {
@@ -163,6 +206,7 @@ describe('renderWorkspaceBriefing', () => {
 		mockResults.selectQueue = [
 			[ws], // workspace
 			[bet], // active bets
+			[], // paused bets
 			[], // closed bets
 			[], // open insights
 			[], // child relationships
@@ -188,8 +232,9 @@ describe('renderWorkspaceBriefing', () => {
 		mockResults.selectQueue = [
 			[ws],
 			[bet],
-			[],
-			[],
+			[], // paused
+			[], // closed
+			[], // insights
 			[rel1, rel2], // child relationships
 			[task1, task2], // child tasks
 		]
@@ -209,10 +254,38 @@ describe('renderWorkspaceBriefing', () => {
 			title: 'Shipped onboarding',
 			metadata: { verdict: 'Doubled day-1 activation, kept.' },
 		})
-		mockResults.selectQueue = [[ws], [], [closed], []]
+		mockResults.selectQueue = [[ws], [], [], [closed], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('**Shipped onboarding** [succeeded] — Doubled day-1 activation')
+	})
+
+	it('renders paused bets in their own section when present', async () => {
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		const paused = buildObject({
+			workspaceId: ws.id,
+			type: 'bet',
+			status: 'paused',
+			title: 'Self-serve onboarding',
+		})
+		mockResults.selectQueue = [[ws], [], [paused], [], []]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).toContain('## Paused bets')
+		expect(result).toContain('**Self-serve onboarding**')
+		expect(result).toContain('not part of the current cycle')
+	})
+
+	it('omits the paused section entirely when no paused bets exist', async () => {
+		const { db, mockResults } = createTestContext()
+		const storage = createMockStorage()
+		const ws = buildWorkspace()
+		mockResults.selectQueue = [[ws], [], [], [], []]
+
+		const result = await renderWorkspaceBriefing(db, storage, ws.id)
+		expect(result).not.toContain('## Paused bets')
 	})
 
 	it('surfaces ledger lines under "Recent workspace learnings"', async () => {
@@ -224,7 +297,7 @@ describe('renderWorkspaceBriefing', () => {
 				.mockResolvedValue(Buffer.from('2026-04-20 · session abcd1234 · tried the outreach bet\n')),
 		})
 		const ws = buildWorkspace()
-		mockResults.selectQueue = [[ws], [], [], []]
+		mockResults.selectQueue = [[ws], [], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('Recent workspace learnings')
@@ -240,7 +313,7 @@ describe('renderWorkspaceBriefing', () => {
 				display_names: { insight: 'Signal', bet: 'Initiative', task: 'Action' },
 			},
 		})
-		mockResults.selectQueue = [[ws], [], [], []]
+		mockResults.selectQueue = [[ws], [], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
 		expect(result).toContain('## Active initiatives')
