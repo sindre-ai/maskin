@@ -28,6 +28,7 @@ import integrationsRoutes, { webhookApp } from './routes/integrations'
 import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
+import playgroundRoutes from './routes/playground'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
 import triggersRoutes from './routes/triggers'
@@ -158,6 +159,7 @@ app.use('/api/*', async (c, next) => {
 	if (path === '/api/actors' && method === 'POST') return next()
 	if (path === '/api/auth/login' && method === 'POST') return next()
 	if (path.startsWith('/api/webhooks/')) return next()
+	if (path.startsWith('/api/playground/')) return next()
 	if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 	return auth(c, next)
@@ -180,6 +182,7 @@ app.route('/api/sessions', sessionsRoutes)
 app.route('/api/notifications', notificationsRoutes)
 app.route('/api/graph', graphRoutes)
 app.route('/api/imports', importsRoutes)
+app.route('/api/playground', playgroundRoutes)
 app.route('/api/claude-oauth', claudeOauthRoutes)
 
 // Mount extension routes at /api/m/{extensionId} — auth middleware on /api/* covers these

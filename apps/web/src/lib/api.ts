@@ -284,6 +284,11 @@ export const api = {
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
 	},
 
+	playground: {
+		provision: () =>
+			request<PlaygroundProvisionResponse>('/playground/provision', { method: 'POST' }),
+	},
+
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
@@ -299,6 +304,17 @@ export const api = {
 				workspaceId,
 			}),
 	},
+}
+
+export interface PlaygroundProvisionResponse {
+	api_key: string
+	actor: {
+		id: string
+		name: string
+		type: string
+		email: string | null
+	}
+	workspace_id: string
 }
 
 export interface ClaudeOAuthExchangeResponse {
