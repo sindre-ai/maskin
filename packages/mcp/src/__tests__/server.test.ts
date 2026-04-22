@@ -637,6 +637,36 @@ describe('tool handlers', () => {
 			if (!handler) throw new Error('Handler list_objects not registered')
 			await expect(handler({})).rejects.toThrow('Not authenticated')
 		})
+
+		it('hosted-MCP setup hint mentions the Authorization header, not env vars', async () => {
+			const httpHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				httpHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, apiKey: '', transport: 'http' })
+
+			const handler = httpHandlers.get('list_objects')
+			if (!handler) throw new Error('Handler list_objects not registered')
+			await expect(handler({})).rejects.toThrow(/Authorization: Bearer/)
+		})
+
+		it('hosted-MCP missing-workspace hint mentions the X-Workspace-Id header', async () => {
+			const httpHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				httpHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '', transport: 'http' })
+
+			const handler = httpHandlers.get('list_objects')
+			if (!handler) throw new Error('Handler list_objects not registered')
+			await expect(handler({})).rejects.toThrow(/X-Workspace-Id/)
+		})
 	})
 
 	describe('create_notification handler', () => {

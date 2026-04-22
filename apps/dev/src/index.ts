@@ -75,13 +75,15 @@ app.onError((err, c) => {
 	return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 })
 
-// CORS — restrict API to configured origins, keep MCP open for chat client webviews
+// CORS — restrict API to configured origins, keep MCP open for chat client webviews.
+// Only one cors middleware runs per request: /mcp gets a wildcard policy (no credentials),
+// everything else gets the configured-origin policy with credentials.
 const allowedOrigins = process.env.CORS_ORIGIN
 	? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
 	: ['http://localhost:5173']
 
 app.use('/mcp', cors())
-app.use('*', cors({ origin: allowedOrigins, credentials: true }))
+app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 app.use('*', honoLogger())
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
