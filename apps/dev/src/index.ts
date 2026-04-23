@@ -18,6 +18,7 @@ import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from '.
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
+import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
@@ -171,6 +172,7 @@ app.route('/api/objects', objectsRoutes)
 app.route('/api/actors', actorsRoutes)
 app.route('/api/auth', authRoutes)
 app.route('/api/actors', agentSkillsRoutes)
+app.route('/api/actors', agentSkillAttachmentsRoutes)
 app.route('/api/workspaces', workspacesRoutes)
 app.route('/api/workspaces', workspaceSkillsRoutes)
 app.route('/api/relationships', relationshipsRoutes)
