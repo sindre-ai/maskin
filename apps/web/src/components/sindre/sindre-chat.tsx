@@ -338,30 +338,38 @@ function useMergedTranscript(
 		setMerged([])
 	}, [workspaceId])
 
-	// Handle upstream resets (e.g. workspace switch inside `useSindreSession`
-	// that shrinks `events`). Drop our cursor to match so we don't miss a
-	// future append.
+	// Handle upstream resets — e.g. the panel's "+" button which calls
+	// sindre.reset() + oneShot.clear() to start a fresh conversation, or a
+	// workspace switch. When either source shrinks below what we've already
+	// merged, rebuild `merged` from the current state of both sources. In the
+	// common case both reset together so `merged` ends up empty; in the rare
+	// single-side reset we lose strict interleaving of the remaining source,
+	// which is acceptable.
 	useEffect(() => {
 		if (sindreEvents.length < sindreSeenRef.current) {
 			sindreSeenRef.current = sindreEvents.length
+			oneShotSeenRef.current = oneShotEvents.length
+			setMerged([...sindreEvents, ...oneShotEvents])
 			return
 		}
 		if (sindreEvents.length === sindreSeenRef.current) return
 		const fresh = sindreEvents.slice(sindreSeenRef.current)
 		sindreSeenRef.current = sindreEvents.length
 		setMerged((prev) => prev.concat(fresh))
-	}, [sindreEvents])
+	}, [sindreEvents, oneShotEvents])
 
 	useEffect(() => {
 		if (oneShotEvents.length < oneShotSeenRef.current) {
 			oneShotSeenRef.current = oneShotEvents.length
+			sindreSeenRef.current = sindreEvents.length
+			setMerged([...sindreEvents, ...oneShotEvents])
 			return
 		}
 		if (oneShotEvents.length === oneShotSeenRef.current) return
 		const fresh = oneShotEvents.slice(oneShotSeenRef.current)
 		oneShotSeenRef.current = oneShotEvents.length
 		setMerged((prev) => prev.concat(fresh))
-	}, [oneShotEvents])
+	}, [oneShotEvents, sindreEvents])
 
 	return merged
 }
