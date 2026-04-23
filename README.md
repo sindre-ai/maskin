@@ -2,10 +2,14 @@
 
 > **Maskin is the open-source AI agent workspace for product teams — no code required.**
 
-<p align="center">
-  <!-- Drop docs/demo.gif into the repo to activate. Target: 15–30s clip showing a product person describing a workflow and agents spinning up to run it. -->
-  <img src="docs/demo.gif" alt="Maskin demo — a product person sets up an agent workflow in under a minute" width="780">
-</p>
+<!--
+  Demo GIF placeholder. Once docs/demo.gif is recorded (15–30s of a product
+  person setting up an agent workflow), restore the image tag below.
+
+  <p align="center">
+    <img src="docs/demo.gif" alt="Maskin demo — a product person sets up an agent workflow in under a minute" width="780">
+  </p>
+-->
 
 ## Install in one command
 
@@ -77,9 +81,9 @@ Prefer a local dev loop? `pnpm install && pnpm dev` runs the same stack outside 
 
 Pre-built templates configure a working workspace (object types, agents, triggers, seed objects) in one prompt:
 
-- **[Development workspace](docs/templates/development.md)** — insight triage, bet evaluation, sprint board, status-change notifications. For product teams shipping software.
-- **[Growth workspace](docs/templates/growth.md)** — competitor monitoring, content calendar, outreach pipeline, weekly digest. For launches and go-to-market.
-- **[Sales workspace](docs/templates/sales.md)** — deal pipeline, contact enrichment, follow-up reminders, Slack deal-stage alerts. For founder-led sales.
+- **[Development workspace](starter-prompts/product-development.md)** — insight triage, bet evaluation, sprint board, status-change notifications. For product teams shipping software.
+- **[Growth workspace](starter-prompts/growth.md)** — competitor monitoring, content calendar, outreach pipeline, weekly digest. For launches and go-to-market.
+- **[Sales workspace](starter-prompts/sales.md)** — deal pipeline, contact enrichment, follow-up reminders, Slack deal-stage alerts. For founder-led sales.
 
 Paste a template prompt into Claude Code (or any MCP client) after install — `get_started` applies it and hands back a running workspace in under two minutes.
 
