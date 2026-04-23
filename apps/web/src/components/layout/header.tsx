@@ -15,9 +15,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { usePageHeader } from '@/lib/page-header-context'
+import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Layers, Plus, Sparkles, Zap } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
@@ -109,6 +110,7 @@ const createItems: CreateItem[] = [
 export function Header() {
 	const matches = useMatches()
 	const { actions } = usePageHeader()
+	const { setOpen: setSindreOpen } = useSindre()
 	const router = useRouter()
 	const navigate = useNavigate()
 	const { workspaceId } = useWorkspace()
@@ -212,6 +214,15 @@ export function Header() {
 							})}
 						</DropdownMenuContent>
 					</DropdownMenu>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7"
+						onClick={() => setSindreOpen(true)}
+						aria-label="Open Sindre"
+					>
+						<Sparkles size={15} />
+					</Button>
 				</div>
 			</div>
 		</header>

@@ -12,11 +12,10 @@ import {
 	useSidebar,
 } from '@/components/ui/sidebar'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import { Activity, Bot, Layers, Sparkles, Zap } from 'lucide-react'
+import { Activity, Bot, Layers, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
@@ -32,7 +31,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const { setOpenMobile } = useSidebar()
-	const { setOpen: setSindreOpen } = useSindre()
 	const enabledModules = useEnabledModules()
 
 	const navItems = useMemo(() => {
@@ -56,18 +54,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 			<SidebarContent>
 				<SidebarGroup>
 					<SidebarMenu>
-						<SidebarMenuItem>
-							<SidebarMenuButton
-								onClick={() => {
-									setSindreOpen(true)
-									setOpenMobile(false)
-								}}
-								tooltip="Sindre"
-							>
-								<Sparkles />
-								<span>Sindre</span>
-							</SidebarMenuButton>
-						</SidebarMenuItem>
 						{navItems.map((item) => {
 							const Icon = item.icon
 							const isActive = !!matchRoute({

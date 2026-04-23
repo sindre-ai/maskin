@@ -1,5 +1,5 @@
 import { AppSidebar } from '@/components/layout/sidebar'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hooks/use-enabled-modules', () => ({
@@ -93,18 +93,9 @@ describe('AppSidebar', () => {
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
 	})
 
-	it('renders a Sindre launcher that opens the sheet without navigating', () => {
+	it('does not render a Sindre launcher — lives in the app header now', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
-		setSindreOpen.mockClear()
-		setOpenMobile.mockClear()
 		render(<AppSidebar />)
-
-		const launcher = screen.getByText('Sindre').closest('button')
-		expect(launcher).not.toBeNull()
-		expect(launcher).toHaveAttribute('data-tooltip', 'Sindre')
-
-		fireEvent.click(launcher as HTMLButtonElement)
-		expect(setSindreOpen).toHaveBeenCalledWith(true)
-		expect(setOpenMobile).toHaveBeenCalledWith(false)
+		expect(screen.queryByText('Sindre')).not.toBeInTheDocument()
 	})
 })
