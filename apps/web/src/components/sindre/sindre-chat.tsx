@@ -171,13 +171,11 @@ export function SindreChat({
 					// The backend's interactive-session input endpoint currently
 					// forwards only `content` to the container's stdin (attachments
 					// are accepted by the schema for future first-class handling but
-					// discarded at runtime). Inject a notification context block into
-					// the user turn so Sindre actually sees which notification the
-					// user clicked "Talk to Sindre" on. Objects remain attachment-
-					// only for now so their one-shot behavior stays consistent.
+					// discarded at runtime). Inline the attached objects + notifications
+					// into the user turn so Sindre actually sees what the user picked.
 					const enriched =
-						selectedNotifications.length > 0
-							? buildOneShotActionPrompt(content, [], selectedNotifications)
+						selectedObjects.length > 0 || selectedNotifications.length > 0
+							? buildOneShotActionPrompt(content, selectedObjects, selectedNotifications)
 							: content
 					if (attachments) {
 						await sindre.send(enriched, attachments, content, displayAttachments)

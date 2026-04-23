@@ -332,7 +332,14 @@ describe('SindreChat', () => {
 
 		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
 		expect(mockSend).toHaveBeenCalledWith(
-			'summarize these',
+			[
+				'summarize these',
+				'',
+				'---',
+				'Context objects:',
+				'- Bet Alpha — id: obj-1',
+				'- Task Beta — id: obj-2',
+			].join('\n'),
 			[
 				{ kind: 'object', id: 'obj-1' },
 				{ kind: 'object', id: 'obj-2' },
