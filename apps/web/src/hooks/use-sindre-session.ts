@@ -9,7 +9,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 // Vite replaces `import.meta.env.DEV` at build time. Reading it through a
 // cast keeps us out of the vite/client ambient type dependency while still
 // compiling to the same boolean.
-const IS_DEV = ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV ?? false) as boolean
+const IS_DEV = ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV ??
+	false) as boolean
 
 // Bootstrap action_prompt is required by the create-session schema (min length 1)
 // but is intentionally ignored at runtime for interactive sessions — the first
@@ -64,10 +65,11 @@ export interface UseSindreSessionResult {
 
 /**
  * Drives a single long-lived interactive Claude Code session for Sindre. On
- * first use it bootstraps a session for the given Sindre actor, persists the
- * session id in localStorage keyed by workspace, subscribes to the session's
- * stdout SSE log stream, and pipes each line through the sindre-stream parser
- * so consumers can render typed transcript events directly.
+ * first send it bootstraps a session for the given Sindre actor, subscribes
+ * to the session's stdout SSE log stream, and pipes each line through the
+ * sindre-stream parser so consumers can render typed transcript events
+ * directly. Session id is tab-local — a reload starts a fresh session on the
+ * next send.
  */
 export function useSindreSession({
 	workspaceId,
@@ -111,7 +113,16 @@ export function useSindreSession({
 			signal: controller.signal,
 			headers,
 			openWhenHidden: true,
-			async onopen() {
+			async onopen(response?: Response) {
+				// 4xx on open means the session is gone or auth expired — fatal,
+				// stop retrying. Non-2xx passed to onerror would otherwise retry
+				// forever.
+				if (response && !response.ok) {
+					const err = new Error(`SSE open failed: HTTP ${response.status}`)
+					setStatus('error')
+					setError(err)
+					throw err
+				}
 				setStatus('ready')
 			},
 			onmessage(msg) {
@@ -146,13 +157,15 @@ export function useSindreSession({
 				}
 			},
 			onerror(err) {
+				// Capture state but let fetch-event-source reconnect — most
+				// errors here are transient (network blip, server restart).
+				// Fatal errors (4xx) come through onopen above which throws
+				// to stop retries.
 				setStatus('error')
 				setError(err instanceof Error ? err : new Error(String(err)))
-				// Throw to stop fetch-event-source's default infinite retry.
-				throw err
 			},
 		}).catch(() => {
-			// onerror already captured into state; swallow the rejection.
+			// Fatal path captured into state in onopen.
 		})
 
 		return () => {

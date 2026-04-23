@@ -1,11 +1,6 @@
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
-import {
-	type ActorListItem,
-	type NotificationResponse,
-	type ObjectResponse,
-	api,
-} from '@/lib/api'
+import { type ActorListItem, type NotificationResponse, type ObjectResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import type {

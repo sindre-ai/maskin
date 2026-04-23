@@ -27,12 +27,11 @@ describe('useSindre', () => {
 		)
 	})
 
-	it('defaults to closed with no attachments and no session id', () => {
+	it('defaults to closed with no attachments', () => {
 		const { result } = renderHook(() => useSindre(), { wrapper: makeWrapper(WORKSPACE_A) })
 		expect(result.current.open).toBe(false)
 		expect(result.current.pendingAttachments).toEqual([])
 		expect(result.current.pendingMessage).toBeNull()
-		expect(result.current.sessionId).toBeNull()
 	})
 
 	it('setOpen accepts both a boolean and an updater function', () => {
@@ -129,45 +128,7 @@ describe('useSindre', () => {
 		expect(result.current.pendingMessage).toBeNull()
 	})
 
-	it('persists sessionId in localStorage scoped by workspace', () => {
-		const { result } = renderHook(() => useSindre(), { wrapper: makeWrapper(WORKSPACE_A) })
-
-		act(() => result.current.setSessionId('sess-1'))
-		expect(result.current.sessionId).toBe('sess-1')
-		expect(localStorage.getItem(`maskin-sindre-session-id:${WORKSPACE_A}`)).toBe('sess-1')
-	})
-
-	it('clears the stored sessionId when set to null', () => {
-		localStorage.setItem(`maskin-sindre-session-id:${WORKSPACE_A}`, 'sess-stale')
-		const { result } = renderHook(() => useSindre(), { wrapper: makeWrapper(WORKSPACE_A) })
-
-		expect(result.current.sessionId).toBe('sess-stale')
-
-		act(() => result.current.setSessionId(null))
-
-		expect(result.current.sessionId).toBeNull()
-		expect(localStorage.getItem(`maskin-sindre-session-id:${WORKSPACE_A}`)).toBeNull()
-	})
-
-	it('reads the stored sessionId for its workspace on mount', () => {
-		localStorage.setItem(`maskin-sindre-session-id:${WORKSPACE_A}`, 'sess-a')
-		localStorage.setItem(`maskin-sindre-session-id:${WORKSPACE_B}`, 'sess-b')
-
-		const { result: resultA } = renderHook(() => useSindre(), {
-			wrapper: makeWrapper(WORKSPACE_A),
-		})
-		const { result: resultB } = renderHook(() => useSindre(), {
-			wrapper: makeWrapper(WORKSPACE_B),
-		})
-
-		expect(resultA.current.sessionId).toBe('sess-a')
-		expect(resultB.current.sessionId).toBe('sess-b')
-	})
-
-	it('resets open state and attachments and swaps sessionId when workspace changes', () => {
-		localStorage.setItem(`maskin-sindre-session-id:${WORKSPACE_A}`, 'sess-a')
-		localStorage.setItem(`maskin-sindre-session-id:${WORKSPACE_B}`, 'sess-b')
-
+	it('resets open state and attachments when workspace changes', () => {
 		let captured: ReturnType<typeof useSindre> | null = null
 		function Consumer() {
 			captured = useSindre()
@@ -189,7 +150,7 @@ describe('useSindre', () => {
 			getCaptured().openWithContext([{ kind: 'object', id: 'obj-1' }])
 		})
 		expect(getCaptured().open).toBe(true)
-		expect(getCaptured().sessionId).toBe('sess-a')
+		expect(getCaptured().pendingAttachments).toHaveLength(1)
 
 		rerender(
 			<SindreProvider workspaceId={WORKSPACE_B}>
@@ -199,7 +160,6 @@ describe('useSindre', () => {
 
 		expect(getCaptured().open).toBe(false)
 		expect(getCaptured().pendingAttachments).toEqual([])
-		expect(getCaptured().sessionId).toBe('sess-b')
 	})
 
 	it('returns stable callback references across state changes', () => {
@@ -208,19 +168,15 @@ describe('useSindre', () => {
 		const first = {
 			setOpen: result.current.setOpen,
 			openWithContext: result.current.openWithContext,
-			setSessionId: result.current.setSessionId,
 			clearPendingAttachments: result.current.clearPendingAttachments,
 			clearPendingMessage: result.current.clearPendingMessage,
 		}
 
 		act(() => result.current.setOpen(true))
-		act(() => result.current.setSessionId('sess-1'))
 
 		expect(result.current.setOpen).toBe(first.setOpen)
 		expect(result.current.openWithContext).toBe(first.openWithContext)
 		expect(result.current.clearPendingAttachments).toBe(first.clearPendingAttachments)
 		expect(result.current.clearPendingMessage).toBe(first.clearPendingMessage)
-		// setSessionId closes over workspaceId but that didn't change — it should be stable too.
-		expect(result.current.setSessionId).toBe(first.setSessionId)
 	})
 })

@@ -184,6 +184,17 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 		}
 	}, [pendingTurn, events])
 
+	// Release the spinner if the underlying session/one-shot hook flips to a
+	// terminal state without ever emitting a turn-progress event (e.g. stream
+	// died mid-turn, container crashed on boot).
+	const activeStatus = selectedAgent ? oneShot.status : sindre.status
+	useEffect(() => {
+		if (!pendingTurn) return
+		if (activeStatus === 'error' || activeStatus === 'closed') {
+			setPendingTurn(false)
+		}
+	}, [pendingTurn, activeStatus])
+
 	const handleSend = useCallback(
 		async (content: string) => {
 			if (onSubmitOverride) {
@@ -197,9 +208,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 			setPendingTurn(true)
 			const displayAttachments = buildDisplayAttachments(activeSelection)
 			const hasContext =
-				selectedObjects.length > 0 ||
-				selectedNotifications.length > 0 ||
-				selectedFiles.length > 0
+				selectedObjects.length > 0 || selectedNotifications.length > 0 || selectedFiles.length > 0
 			try {
 				if (selectedAgent) {
 					// The one-shot hook builds its own action_prompt — pass raw

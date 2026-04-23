@@ -31,13 +31,7 @@ export function SindreTranscript({ events, starting, error, className }: SindreT
 	const isEmpty = events.length === 0 && !error
 
 	return (
-		<div
-			ref={scrollerRef}
-			className={cn(
-				'overflow-y-auto p-3 text-sm',
-				className,
-			)}
-		>
+		<div ref={scrollerRef} className={cn('overflow-y-auto p-3 text-sm', className)}>
 			{isEmpty ? (
 				<EmptyTranscript starting={starting} />
 			) : (

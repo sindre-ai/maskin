@@ -5,6 +5,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { SindrePanel } from '@/components/sindre/sindre-panel'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { PageHeaderProvider } from '@/lib/page-header-context'
@@ -108,7 +109,11 @@ function WorkspaceLayout() {
  */
 function SindrePinShell({ children }: { children: ReactNode }) {
 	const { pinned, open, panelWidth } = useSindre()
-	const pushed = pinned && open
+	const isMobile = useIsMobile()
+	// On mobile the panel overlays the viewport and the pin toggle is hidden,
+	// so a stale `pinned=true` from desktop must not apply a margin that would
+	// squash the main content off-screen.
+	const pushed = pinned && open && !isMobile
 	return (
 		<div
 			className="transition-[margin] duration-200 ease-linear"

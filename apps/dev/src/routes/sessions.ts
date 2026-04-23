@@ -447,7 +447,9 @@ app.get('/:id/logs/stream', async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 	}
 
-	const terminalStatuses = ['completed', 'failed', 'timeout']
+	// Include 'paused' so a client subscribing to an already-paused session
+	// receives replay + done instead of hanging in the keep-alive loop below.
+	const terminalStatuses = ['completed', 'failed', 'timeout', 'paused']
 
 	return streamSSE(c, async (stream) => {
 		// Check if session is already in terminal state

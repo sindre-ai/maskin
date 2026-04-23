@@ -15,9 +15,7 @@ describe('formatSindreMarkdown', () => {
 			{
 				kind: 'user',
 				text: 'What does this object contain?',
-				attachments: [
-					{ kind: 'object', id: 'obj-1', title: 'Webhook retry backlog', type: 'bet' },
-				],
+				attachments: [{ kind: 'object', id: 'obj-1', title: 'Webhook retry backlog', type: 'bet' }],
 			},
 			{ kind: 'text', text: 'The object is a bet and contains text about the backlog.' },
 		]

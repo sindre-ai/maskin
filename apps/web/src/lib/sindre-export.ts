@@ -76,11 +76,12 @@ export function downloadSindreMarkdown(markdown: string, filename: string): void
 }
 
 export function buildSindreExportFilename(agentName: string, date: Date = new Date()): string {
-	const slug = agentName
-		.trim()
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-+|-+$/g, '') || 'conversation'
+	const slug =
+		agentName
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '') || 'conversation'
 	const stamp = date.toISOString().slice(0, 10)
 	return `${slug}-${stamp}.md`
 }

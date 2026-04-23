@@ -114,7 +114,16 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 			signal: controller.signal,
 			headers,
 			openWhenHidden: true,
-			async onopen() {},
+			async onopen(response?: Response) {
+				// 4xx on open means the session is gone or auth expired — fatal,
+				// stop retrying.
+				if (response && !response.ok) {
+					const err = new Error(`SSE open failed: HTTP ${response.status}`)
+					setStatus('error')
+					setError(err)
+					throw err
+				}
+			},
 			onmessage(msg) {
 				if (msg.event === 'done') {
 					setStatus('closed')
@@ -132,13 +141,13 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 				}
 			},
 			onerror(err) {
-				const wrapped = err instanceof Error ? err : new Error(String(err))
+				// Capture state but let fetch-event-source reconnect on
+				// transient errors. Fatal 4xx is handled in onopen which throws.
 				setStatus('error')
-				setError(wrapped)
-				throw wrapped
+				setError(err instanceof Error ? err : new Error(String(err)))
 			},
 		}).catch(() => {
-			// onerror already captured into state; swallow the rejection.
+			// Fatal path captured into state in onopen.
 		})
 	}, [])
 

@@ -412,7 +412,8 @@ describe('SindreChat', () => {
 			files: [],
 			displayAttachments: [
 				{ kind: 'agent', id: 'actor-reviewer', name: 'Code Reviewer' },
-				{ kind: 'notification', id: 'notif-1', title: 'PR merged' }],
+				{ kind: 'notification', id: 'notif-1', title: 'PR merged' },
+			],
 		})
 	})
 

@@ -5,6 +5,7 @@ import {
 	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from 'react'
 
@@ -35,13 +36,6 @@ export interface SindreContextValue {
 	pendingMessage: string | null
 	clearPendingMessage: () => void
 	/**
-	 * Per-workspace Sindre session id. Persisted in localStorage so that the
-	 * transcript survives page refresh. `null` until the first message has
-	 * created a session.
-	 */
-	sessionId: string | null
-	setSessionId: (id: string | null) => void
-	/**
 	 * When true the panel docks as a traditional sidebar that pushes page
 	 * content aside; when false it floats as an overlay sheet on top of
 	 * content. Cross-workspace UI preference, persisted in localStorage.
@@ -63,35 +57,12 @@ export const SINDRE_PANEL_DEFAULT_WIDTH = 448
 
 const SindreContext = createContext<SindreContextValue | null>(null)
 
-const SESSION_ID_STORAGE_PREFIX = 'maskin-sindre-session-id:'
 const PINNED_STORAGE_KEY = 'maskin-sindre-pinned'
 const PANEL_WIDTH_STORAGE_KEY = 'maskin-sindre-panel-width'
 
 function clampPanelWidth(value: number): number {
 	if (!Number.isFinite(value)) return SINDRE_PANEL_DEFAULT_WIDTH
 	return Math.min(SINDRE_PANEL_MAX_WIDTH, Math.max(SINDRE_PANEL_MIN_WIDTH, Math.round(value)))
-}
-
-function storageKey(workspaceId: string): string {
-	return `${SESSION_ID_STORAGE_PREFIX}${workspaceId}`
-}
-
-function readStoredSessionId(workspaceId: string): string | null {
-	try {
-		return localStorage.getItem(storageKey(workspaceId))
-	} catch {
-		return null
-	}
-}
-
-function writeStoredSessionId(workspaceId: string, id: string | null): void {
-	try {
-		if (id === null) {
-			localStorage.removeItem(storageKey(workspaceId))
-		} else {
-			localStorage.setItem(storageKey(workspaceId), id)
-		}
-	} catch {}
 }
 
 function readStoredPinned(): boolean {
@@ -133,17 +104,16 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 	const [open, setOpenState] = useState(false)
 	const [pendingAttachments, setPendingAttachments] = useState<SindreAttachment[]>([])
 	const [pendingMessage, setPendingMessage] = useState<string | null>(null)
-	const [sessionId, setSessionIdState] = useState<string | null>(() =>
-		readStoredSessionId(workspaceId),
-	)
 	const [pinned, setPinnedState] = useState<boolean>(() => readStoredPinned())
 	const [panelWidth, setPanelWidthState] = useState<number>(() => readStoredPanelWidth())
+	const prevWorkspaceIdRef = useRef(workspaceId)
 
-	// Swap to the target workspace's stored session id when the workspace
-	// changes. Reset transient UI state so attachments and open state don't
-	// leak across workspaces.
+	// Reset transient UI state so attachments and open state don't leak across
+	// workspaces. Session id is tab-local (owned by useSindreSession) and
+	// resets itself on workspaceId change.
 	useEffect(() => {
-		setSessionIdState(readStoredSessionId(workspaceId))
+		if (prevWorkspaceIdRef.current === workspaceId) return
+		prevWorkspaceIdRef.current = workspaceId
 		setPendingAttachments([])
 		setPendingMessage(null)
 		setOpenState(false)
@@ -167,14 +137,6 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 		setPendingMessage(null)
 	}, [])
 
-	const setSessionId = useCallback(
-		(id: string | null) => {
-			setSessionIdState(id)
-			writeStoredSessionId(workspaceId, id)
-		},
-		[workspaceId],
-	)
-
 	const setPinned = useCallback((value: boolean) => {
 		setPinnedState(value)
 		writeStoredPinned(value)
@@ -195,8 +157,6 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 			clearPendingAttachments,
 			pendingMessage,
 			clearPendingMessage,
-			sessionId,
-			setSessionId,
 			pinned,
 			setPinned,
 			panelWidth,
@@ -210,8 +170,6 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 			clearPendingAttachments,
 			pendingMessage,
 			clearPendingMessage,
-			sessionId,
-			setSessionId,
 			pinned,
 			setPinned,
 			panelWidth,

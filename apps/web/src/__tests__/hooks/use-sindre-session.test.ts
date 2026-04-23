@@ -5,7 +5,7 @@ type FesInit = {
 	signal: AbortSignal
 	headers: Record<string, string>
 	openWhenHidden?: boolean
-	onopen: () => Promise<void>
+	onopen: (response?: Response) => Promise<void>
 	onmessage: (msg: { event?: string; data: string; id?: string }) => void
 	onerror: (err: unknown) => void
 }
@@ -236,13 +236,24 @@ describe('useSindreSession — SSE log stream', () => {
 		expect(lastFesInit?.signal.aborted).toBe(true)
 	})
 
-	it('records SSE errors as the hook error and stops retrying', async () => {
+	it('records SSE errors as the hook error without stopping retries', async () => {
 		const { result } = await renderAndBootstrap()
 		act(() => {
-			expect(() => lastFesInit?.onerror(new Error('network down'))).toThrow('network down')
+			// Transient errors no longer throw — the library auto-retries.
+			lastFesInit?.onerror(new Error('network down'))
 		})
 		expect(result.current.status).toBe('error')
 		expect(result.current.error?.message).toBe('network down')
+	})
+
+	it('throws from onopen on 4xx to stop retries', async () => {
+		const { result } = await renderAndBootstrap()
+		const badResponse = { ok: false, status: 404 } as Response
+		await act(async () => {
+			await expect(lastFesInit?.onopen(badResponse)).rejects.toThrow('HTTP 404')
+		})
+		expect(result.current.status).toBe('error')
+		expect(result.current.error?.message).toMatch(/HTTP 404/)
 	})
 })
 

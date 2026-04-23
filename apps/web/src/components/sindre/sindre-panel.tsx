@@ -193,9 +193,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 							</TooltipTrigger>
 							<TooltipContent>New conversation</TooltipContent>
 						</Tooltip>
-						{!isMobile && (
-							<PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />
-						)}
+						{!isMobile && <PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />}
 						<Button
 							type="button"
 							variant="ghost"

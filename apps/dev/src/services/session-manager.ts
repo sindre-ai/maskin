@@ -722,20 +722,41 @@ export class SessionManager extends EventEmitter {
 	}
 
 	private watchContainerExit(sessionId: string, containerId: string) {
+		// Tolerate a few transient Docker API failures in a row before giving
+		// up and marking the session failed — a single EBUSY/socket timeout
+		// shouldn't strand the session as "running" until the hour-long
+		// timeout reaper catches it.
+		const MAX_CONSECUTIVE_INSPECT_FAILURES = 5
+		let consecutiveFailures = 0
 		const poll = async () => {
 			try {
 				const status = await this.containers.inspect(containerId)
+				consecutiveFailures = 0
 				if (!status.running) {
 					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
 					return
 				}
 			} catch (err) {
-				logger.warn('Container inspect failed, stopping exit watcher', {
+				consecutiveFailures++
+				logger.warn('Container inspect failed', {
 					sessionId,
 					containerId,
 					error: String(err),
+					consecutiveFailures,
 				})
-				return
+				if (consecutiveFailures >= MAX_CONSECUTIVE_INSPECT_FAILURES) {
+					logger.error('Container inspect failed repeatedly, marking session failed', {
+						sessionId,
+						containerId,
+					})
+					await this.handleCompletion(sessionId, containerId, 1).catch((completionErr) => {
+						logger.error('handleCompletion failed after inspect give-up', {
+							sessionId,
+							error: String(completionErr),
+						})
+					})
+					return
+				}
 			}
 			setTimeout(poll, 2000)
 		}

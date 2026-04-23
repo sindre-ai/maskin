@@ -5,7 +5,7 @@ type FesInit = {
 	signal: AbortSignal
 	headers: Record<string, string>
 	openWhenHidden?: boolean
-	onopen: () => Promise<void>
+	onopen: (response?: Response) => Promise<void>
 	onmessage: (msg: { event?: string; data: string; id?: string }) => void
 	onerror: (err: unknown) => void
 }

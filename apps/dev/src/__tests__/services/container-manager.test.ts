@@ -68,6 +68,11 @@ describe('ContainerManager', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
+		// Default: inspect reports the container as running so reconnect paths
+		// proceed. Individual tests override for dead-container scenarios.
+		mockContainer.inspect.mockResolvedValue({
+			State: { Running: true, ExitCode: 0, StartedAt: null, FinishedAt: null },
+		})
 		manager = new ContainerManager()
 	})
 
@@ -469,6 +474,24 @@ describe('ContainerManager', () => {
 
 			await manager.attachStdin('s', 'c-1')
 			await expect(manager.write('s', payload)).rejects.toThrow('container gone')
+		})
+
+		it('throws instead of re-attaching when the container is no longer running', async () => {
+			const erroredStream = makeStream()
+			mockContainer.attach.mockResolvedValueOnce(erroredStream)
+
+			await manager.attachStdin('s', 'c-1')
+			erroredStream.emit('error', new Error('connection reset'))
+
+			// Container has since stopped — reconnect must bail instead of
+			// silently succeeding against a dead container.
+			mockContainer.inspect.mockResolvedValueOnce({
+				State: { Running: false, ExitCode: 137, StartedAt: null, FinishedAt: null },
+			})
+
+			await expect(manager.write('s', payload)).rejects.toThrow(/not running/)
+			// Only the original attach ran — no re-attach against the dead container.
+			expect(mockContainer.attach).toHaveBeenCalledTimes(1)
 		})
 	})
 

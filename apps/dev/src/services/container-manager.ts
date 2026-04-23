@@ -252,6 +252,13 @@ export class ContainerManager {
 		logger.warn(`Reconnecting stdin stream: session=${sessionId} container=${handle.containerId}`, {
 			reason,
 		})
+		// Verify the container is still alive before re-attaching — otherwise
+		// we'd silently re-attach to a stopped container and writes would be
+		// dropped while the API still returned success.
+		const status = await this.inspect(handle.containerId)
+		if (!status.running) {
+			throw new Error(`Cannot reconnect stdin: container ${handle.containerId} is not running`)
+		}
 		const newStream = await this.openStdinStream(handle.containerId)
 		handle.stream = newStream
 		handle.closed = false
