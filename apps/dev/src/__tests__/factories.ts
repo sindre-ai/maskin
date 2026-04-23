@@ -306,6 +306,43 @@ export function buildAgentSkill(overrides?: Record<string, unknown>) {
 	}
 }
 
+export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
+	const n = next()
+	const name = `ws-skill-${n}`
+	const workspaceId = randomUUID()
+	return {
+		id: randomUUID(),
+		workspaceId,
+		name,
+		description: `Workspace skill ${n}`,
+		content: `---\nname: ${name}\ndescription: Workspace skill ${n}\n---\n\nDo the thing ${n}`,
+		storageKey: `workspaces/${workspaceId}/skills/${name}/SKILL.md`,
+		sizeBytes: 128,
+		createdBy: randomUUID(),
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildCreateWorkspaceSkillBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	const name = `ws-skill-${n}`
+	return {
+		name,
+		content: `---\nname: ${name}\ndescription: Workspace skill ${n}\n---\n\nDo the thing ${n}`,
+		...overrides,
+	}
+}
+
+export function buildUpdateWorkspaceSkillBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		content: `---\nname: skill\ndescription: Updated skill ${n}\n---\n\nNew body ${n}`,
+		...overrides,
+	}
+}
+
 export function buildSaveSkillBody(overrides?: Record<string, unknown>) {
 	const n = next()
 	return {
