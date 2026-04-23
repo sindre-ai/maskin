@@ -816,6 +816,11 @@ export function createMcpServer(config: McpConfig): {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
+			if (config.transport === 'http') {
+				throw new Error(
+					'subscribe_events is not available over the HTTP /mcp transport: every request creates its own short-lived MCP instance and subscriptions are torn down when the request finishes. Run the MCP server over stdio to receive live events.',
+				)
+			}
 			if (!config.apiKey) {
 				throw new Error(
 					'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
@@ -908,6 +913,11 @@ export function createMcpServer(config: McpConfig): {
 			_meta: {},
 		},
 		async (args) => {
+			if (config.transport === 'http') {
+				throw new Error(
+					'subscribe_session_logs is not available over the HTTP /mcp transport: every request creates its own short-lived MCP instance and subscriptions are torn down when the request finishes. Run the MCP server over stdio to receive live logs.',
+				)
+			}
 			if (!config.apiKey) {
 				throw new Error(
 					'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',

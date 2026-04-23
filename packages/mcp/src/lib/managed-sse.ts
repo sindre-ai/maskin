@@ -118,6 +118,10 @@ export function createManagedSSE<T>(opts: ManagedSSEOptions<T>): ManagedSSEStrea
 	let stopped = false
 	let reconnectAttempts = 0
 	let runPromise: Promise<void> | null = null
+	// When the dedup ring evicts an id it has never sent back through dedup, any
+	// future replay could silently re-deliver it. Warn once per process so the
+	// client can reconcile; see comment above `dedupRingSize` for sizing.
+	let evictionWarned = false
 
 	async function waitBackoff() {
 		reconnectAttempts++
@@ -235,7 +239,16 @@ export function createManagedSSE<T>(opts: ManagedSSEOptions<T>): ManagedSSEStrea
 				// but we don't pretend it was delivered for resumption purposes.
 				if (frame.id && delivered) {
 					recentEventIds.push(frame.id)
-					if (recentEventIds.length > dedupRingSize) recentEventIds.shift()
+					if (recentEventIds.length > dedupRingSize) {
+						recentEventIds.shift()
+						if (!evictionWarned) {
+							evictionWarned = true
+							await opts.onWarn(
+								'warning',
+								`Dedup ring exceeded ${dedupRingSize} entries — a future reconnect may re-deliver already-seen frames. Increase replayCap or reconcile via get_events/get_session_logs.`,
+							)
+						}
+					}
 					lastEventId = frame.id
 				}
 			}

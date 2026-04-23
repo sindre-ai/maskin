@@ -38,14 +38,16 @@ app.get('/', async (c) => {
 
 	const lastEventId = c.req.header('Last-Event-ID')
 
+	const parsedId = Number(lastEventId)
+	const resumeFromEventId =
+		lastEventId && Number.isFinite(parsedId) && parsedId >= 0 ? parsedId : null
+
 	return streamSSE(c, async (stream) => {
-		// Replay missed events if Last-Event-ID is provided
-		const parsedId = Number(lastEventId)
-		if (lastEventId && !Number.isNaN(parsedId)) {
+		if (resumeFromEventId !== null) {
 			const missed = await db
 				.select()
 				.from(events)
-				.where(and(eq(events.workspaceId, workspaceId), gt(events.id, parsedId)))
+				.where(and(eq(events.workspaceId, workspaceId), gt(events.id, resumeFromEventId)))
 				.orderBy(asc(events.id))
 				.limit(100)
 
@@ -58,7 +60,6 @@ app.get('/', async (c) => {
 			}
 		}
 
-		// Listen for new events
 		const handler = (event: PgEvent) => {
 			if (event.workspace_id !== workspaceId) return
 
