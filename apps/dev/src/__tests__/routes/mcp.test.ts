@@ -237,6 +237,17 @@ describe('MCP Routes', () => {
 			)
 		})
 
+		it('marks the MCP config as http transport so error hints reference headers', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+
+			await app.request(jsonPostRequest('/mcp', body), undefined, env)
+
+			expect(mockCreateMcpServer).toHaveBeenCalledWith(
+				expect.objectContaining({ transport: 'http' }),
+			)
+		})
+
 		it('handles batch JSON-RPC array requests', async () => {
 			const app = await createApp()
 			const body = [

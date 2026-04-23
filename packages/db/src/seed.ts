@@ -1,3 +1,4 @@
+import { KNOWLEDGE_NUDGES } from '@maskin/shared'
 import { createDb } from './connection'
 import {
 	actors,
@@ -58,7 +59,9 @@ const [rawClusterer] = await db
 	.values({
 		type: 'agent',
 		name: 'Insight Clusterer',
-		systemPrompt: `You are an AI agent that analyzes insights and clusters them into bets.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are an AI agent that analyzes insights and clusters them into bets.
 
 When triggered, review all new/unprocessed insights in the workspace. Look for patterns, themes, and recurring signals. Group related insights together and create "bet" objects that represent strategic opportunities or problems worth addressing.
 
@@ -93,7 +96,9 @@ const [rawDecomposer] = await db
 	.values({
 		type: 'agent',
 		name: 'Bet Decomposer',
-		systemPrompt: `You are an AI agent that breaks down active bets into actionable tasks.
+		systemPrompt: `${KNOWLEDGE_NUDGES}
+
+You are an AI agent that breaks down active bets into actionable tasks.
 
 When a bet is promoted to "active" status, analyze it and create a set of concrete, actionable tasks that would move the bet forward. Each task should be:
 1. Specific and actionable (not vague)
