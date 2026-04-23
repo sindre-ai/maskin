@@ -34,7 +34,7 @@ export function SindreTranscript({ events, starting, error, className }: SindreT
 		<div
 			ref={scrollerRef}
 			className={cn(
-				'overflow-y-auto rounded-md border border-border bg-bg-surface p-3 text-sm',
+				'overflow-y-auto p-3 text-sm',
 				className,
 			)}
 		>
