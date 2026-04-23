@@ -1,11 +1,19 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Database } from '@maskin/db'
-import { agentFiles } from '@maskin/db/schema'
+import { agentFiles, agentSkills, workspaceSkills } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { appendToLedger } from './workspace-briefing'
+
+// S3 key prefixes
+export const AGENT_STORAGE_PREFIX = 'agents'
+export const WORKSPACE_SKILLS_PREFIX = 'workspaces'
+
+export function workspaceSkillKey(workspaceId: string, name: string): string {
+	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${name}/SKILL.md`
+}
 
 export class AgentStorageManager {
 	constructor(
@@ -233,6 +241,114 @@ export class AgentStorageManager {
 			)
 	}
 
+	/**
+	 * Write a workspace skill's SKILL.md to S3 under
+	 * `workspaces/{workspaceId}/skills/{name}/SKILL.md`.
+	 * Returns the storage key and the number of bytes written so callers can
+	 * persist metadata alongside the DB row. No DB mutation happens here — the
+	 * caller is expected to upsert the matching `workspace_skills` row.
+	 */
+	async putWorkspaceSkill(
+		workspaceId: string,
+		name: string,
+		content: string,
+	): Promise<{ storageKey: string; sizeBytes: number }> {
+		const storageKey = workspaceSkillKey(workspaceId, name)
+		const buffer = Buffer.from(content, 'utf-8')
+		await this.storage.put(storageKey, buffer)
+		return { storageKey, sizeBytes: buffer.length }
+	}
+
+	/**
+	 * Read a workspace skill's SKILL.md content from S3 and return it as a
+	 * UTF-8 string.
+	 */
+	async getWorkspaceSkill(workspaceId: string, name: string): Promise<string> {
+		const storageKey = workspaceSkillKey(workspaceId, name)
+		const buffer = await this.storage.get(storageKey)
+		return buffer.toString('utf-8')
+	}
+
+	/**
+	 * Delete a workspace skill's SKILL.md from S3. The caller is responsible
+	 * for deleting the matching `workspace_skills` row (which cascades to
+	 * `agent_skills`).
+	 */
+	async deleteWorkspaceSkill(workspaceId: string, name: string): Promise<void> {
+		const storageKey = workspaceSkillKey(workspaceId, name)
+		await this.storage.delete(storageKey)
+	}
+
+	/**
+	 * Download all workspace skills attached to this agent (via `agent_skills`)
+	 * into `<localDir>/skills/<name>/SKILL.md`.
+	 *
+	 * Collision rule — agent-local wins. If a `skills/<name>/` folder already
+	 * exists on disk at the time this runs (typically created by the preceding
+	 * `pullAgentFiles` call), the workspace skill for that name is skipped.
+	 * This preserves per-agent tweaks of otherwise-shared skills.
+	 */
+	async pullWorkspaceSkillsForAgent(
+		actorId: string,
+		workspaceId: string,
+		localDir: string,
+	): Promise<void> {
+		const rows = await this.db
+			.select({
+				name: workspaceSkills.name,
+				storageKey: workspaceSkills.storageKey,
+			})
+			.from(agentSkills)
+			.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
+			.where(and(eq(agentSkills.actorId, actorId), eq(workspaceSkills.workspaceId, workspaceId)))
+
+		if (rows.length === 0) {
+			logger.info('No workspace skills attached to agent', { actorId, workspaceId })
+			return
+		}
+
+		const skillsDir = join(localDir, 'skills')
+		await mkdir(skillsDir, { recursive: true })
+
+		let pulled = 0
+		let skipped = 0
+
+		for (const { name, storageKey } of rows) {
+			const skillFolder = join(skillsDir, name)
+			if (await folderExists(skillFolder)) {
+				skipped++
+				logger.info('Skipping workspace skill — agent-local folder already exists', {
+					actorId,
+					workspaceId,
+					name,
+				})
+				continue
+			}
+
+			try {
+				const data = await this.storage.get(storageKey)
+				await mkdir(skillFolder, { recursive: true })
+				await writeFile(join(skillFolder, 'SKILL.md'), data)
+				pulled++
+			} catch (err) {
+				logger.warn('Failed to pull workspace skill', {
+					actorId,
+					workspaceId,
+					name,
+					storageKey,
+					error: String(err),
+				})
+			}
+		}
+
+		logger.info('Pulled workspace skills for agent', {
+			actorId,
+			workspaceId,
+			pulled,
+			skipped,
+		})
+	}
+
 	private async upsertFileRecord(
 		actorId: string,
 		workspaceId: string,
@@ -266,5 +382,14 @@ export class AgentStorageManager {
 				sessionId,
 			})
 		}
+	}
+}
+
+async function folderExists(path: string): Promise<boolean> {
+	try {
+		const s = await stat(path)
+		return s.isDirectory()
+	} catch {
+		return false
 	}
 }

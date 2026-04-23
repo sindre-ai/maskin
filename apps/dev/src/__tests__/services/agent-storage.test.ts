@@ -5,11 +5,12 @@ vi.mock('node:fs/promises', () => ({
 	writeFile: vi.fn().mockResolvedValue(undefined),
 	readFile: vi.fn().mockResolvedValue(Buffer.from('file content')),
 	readdir: vi.fn().mockResolvedValue([]),
+	stat: vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
 }))
 
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import type { StorageProvider } from '@maskin/storage'
-import { AgentStorageManager } from '../../services/agent-storage'
+import { AgentStorageManager, workspaceSkillKey } from '../../services/agent-storage'
 import { createTestContext } from '../setup'
 
 function createMockStorage() {
@@ -211,6 +212,122 @@ describe('AgentStorageManager', () => {
 			expect(storage.delete).toHaveBeenCalledWith(
 				`agents/${workspaceId}/${actorId}/skills/my-skill/SKILL.md`,
 			)
+		})
+	})
+
+	describe('workspace skills', () => {
+		const skillName = 'deploy-check'
+		const expectedKey = `workspaces/${workspaceId}/skills/${skillName}/SKILL.md`
+
+		describe('putWorkspaceSkill()', () => {
+			it('writes SKILL.md to the workspace-scoped S3 prefix', async () => {
+				const result = await manager.putWorkspaceSkill(
+					workspaceId,
+					skillName,
+					'---\nname: deploy-check\n---\nHello',
+				)
+
+				expect(storage.put).toHaveBeenCalledWith(expectedKey, expect.any(Buffer))
+				expect(result.storageKey).toBe(expectedKey)
+				expect(result.sizeBytes).toBeGreaterThan(0)
+			})
+
+			it('round-trips content with getWorkspaceSkill()', async () => {
+				const content = '---\nname: deploy-check\n---\nBody'
+				let written: Buffer | null = null
+				storage.put.mockImplementation(async (_key, data) => {
+					written = data as Buffer
+				})
+				storage.get.mockImplementation(async (key) => {
+					if (key === expectedKey && written) return written
+					throw new Error(`unexpected key: ${key}`)
+				})
+
+				await manager.putWorkspaceSkill(workspaceId, skillName, content)
+				const readBack = await manager.getWorkspaceSkill(workspaceId, skillName)
+
+				expect(readBack).toBe(content)
+			})
+		})
+
+		describe('getWorkspaceSkill()', () => {
+			it('reads and decodes the workspace-scoped S3 key', async () => {
+				storage.get.mockResolvedValue(Buffer.from('Some skill body', 'utf-8'))
+
+				const content = await manager.getWorkspaceSkill(workspaceId, skillName)
+
+				expect(storage.get).toHaveBeenCalledWith(expectedKey)
+				expect(content).toBe('Some skill body')
+			})
+		})
+
+		describe('deleteWorkspaceSkill()', () => {
+			it('removes the workspace-scoped S3 key', async () => {
+				await manager.deleteWorkspaceSkill(workspaceId, skillName)
+
+				expect(storage.delete).toHaveBeenCalledWith(expectedKey)
+			})
+		})
+
+		describe('pullWorkspaceSkillsForAgent()', () => {
+			it('downloads each attached skill into skills/<name>/SKILL.md', async () => {
+				mockResults.select = [
+					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, 'deploy-check') },
+					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, 'pr-review') },
+				]
+				storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+
+				expect(storage.get).toHaveBeenCalledTimes(2)
+				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'deploy-check'))
+				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'pr-review'))
+				expect(writeFile).toHaveBeenCalledWith(
+					'/tmp/agent/skills/deploy-check/SKILL.md',
+					expect.any(Buffer),
+				)
+				expect(writeFile).toHaveBeenCalledWith(
+					'/tmp/agent/skills/pr-review/SKILL.md',
+					expect.any(Buffer),
+				)
+			})
+
+			it('is a no-op when the agent has no attached skills', async () => {
+				mockResults.select = []
+
+				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+
+				expect(storage.get).not.toHaveBeenCalled()
+				expect(writeFile).not.toHaveBeenCalled()
+			})
+
+			it('skips skills whose folder already exists on disk (agent-local wins)', async () => {
+				mockResults.select = [
+					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, 'deploy-check') },
+					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, 'pr-review') },
+				]
+				// deploy-check exists locally, pr-review does not
+				;(stat as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+					if (path === '/tmp/agent/skills/deploy-check') {
+						return { isDirectory: () => true } as { isDirectory: () => boolean }
+					}
+					throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+				})
+				storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+
+				expect(storage.get).toHaveBeenCalledTimes(1)
+				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'pr-review'))
+				expect(writeFile).toHaveBeenCalledWith(
+					'/tmp/agent/skills/pr-review/SKILL.md',
+					expect.any(Buffer),
+				)
+				expect(writeFile).not.toHaveBeenCalledWith(
+					'/tmp/agent/skills/deploy-check/SKILL.md',
+					expect.any(Buffer),
+				)
+			})
 		})
 	})
 })
