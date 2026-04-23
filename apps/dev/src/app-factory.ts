@@ -59,8 +59,9 @@ export interface CreateAppOptions {
 	staticDir?: string
 	/**
 	 * Mount routes from `@maskin/module-sdk` registered modules. Defaults to true.
-	 * Set to false for spec-export paths: extension `routes(env)` factories may
-	 * dereference stub deps at construction time and crash.
+	 * Set to false for spec-export paths — third-party extension routes aren't
+	 * part of the core OpenAPI contract, and booting them costs time and risks
+	 * side effects for no benefit when we just want the spec.
 	 */
 	includeExtensions?: boolean
 }
@@ -112,10 +113,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 	})
 
-	// Only one cors middleware runs per request: /mcp gets a wildcard policy
-	// (no credentials, since chat-client webviews vary by origin), everything
-	// else gets the configured-origin policy with credentials. Do not reorder:
-	// browsers reject wildcard + credentials together.
+	// /mcp uses a wildcard origin without credentials because chat-client
+	// webviews vary by origin. Do NOT add `credentials: true` to the /mcp
+	// policy — browsers reject wildcard + credentials together. /api/* uses
+	// the configured-origin policy with credentials for the web app.
 	app.use('/mcp', cors())
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use('*', honoLogger())
@@ -178,7 +179,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 				try {
 					app.route(`/api/m/${ext.id}`, ext.routes(moduleEnv))
 				} catch (err) {
-					console.error(`Failed to mount routes for extension '${ext.id}':`, err)
+					logger.error('Failed to mount extension routes', {
+						extensionId: ext.id,
+						error: String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					})
 				}
 			}
 		}
