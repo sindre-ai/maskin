@@ -58,10 +58,10 @@ export const tools = {
 					"What the user wants Maskin for, in their own words. E.g. 'product development', 'growth/launch', or a freeform description.",
 				),
 			template: z
-				.enum(['development', 'growth', 'custom'])
+				.enum(['development', 'growth', 'outbound-sales', 'custom'])
 				.optional()
 				.describe(
-					"Pick a starting template. 'development' = product team shipping software. 'growth' = founder running a pipeline with CRM. 'custom' = walk through a questionnaire. Omit to let the tool decide from use_case.",
+					"Pick a starting template. 'development' = product team shipping software. 'growth' = founder running a pipeline with CRM. 'outbound-sales' = sales team managing companies/contacts/deals with a CRM + deal pipeline. 'custom' = walk through a questionnaire. Omit to let the tool decide from use_case.",
 				),
 			team_type: z
 				.string()

@@ -65,6 +65,8 @@ On a fresh database, `pnpm dev` automatically creates a default actor + workspac
    ```
    The first two apply pre-built templates (object types, statuses, custom fields, seed objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on. Claude will ask a couple of light tailoring questions (workspace name, what you're building, near-term goal) — answer any, all, or none. Total time: under 3 minutes.
 
+   Prefer a longer, more explicit prompt that also wires up agents and triggers in one go? See [**starter prompts**](./starter-prompts/) — ready-to-paste prompts for Product Development, Growth, and Sales workspaces.
+
 Rename the default actor and workspace whenever you're ready — from the UI (Settings → Profile / Workspace) or via MCP (`update_actor`, `update_workspace`). Run `get_started` again any time on a different workspace by passing `workspace_id`.
 
 > Want demo data instead? Run `pnpm db:seed` for a pre-populated example workspace.
