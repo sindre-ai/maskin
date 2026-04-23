@@ -42,6 +42,7 @@ const ALL_TOOL_NAMES = [
 	'subscribe_session_logs',
 	'unsubscribe_session_logs',
 	'list_session_log_subscriptions',
+	'wait_for_session',
 	'run_agent',
 	'create_notification',
 	'list_notifications',

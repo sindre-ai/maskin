@@ -25,6 +25,7 @@ import {
 	createSubscriptionRegistry,
 } from './subscriptions.js'
 import { tools } from './tools.js'
+import { waitForSessionTerminal } from './wait-for-session.js'
 
 interface McpConfig {
 	apiBaseUrl: string
@@ -974,6 +975,104 @@ export function createMcpServer(config: McpConfig): {
 			return {
 				_meta: { toolName: 'list_session_log_subscriptions' },
 				content: [{ type: 'text' as const, text: JSON.stringify(subs, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'wait_for_session',
+		{
+			description: tools.wait_for_session.description,
+			inputSchema: tools.wait_for_session.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			if (!config.apiKey) {
+				throw new Error(
+					'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
+				)
+			}
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!workspaceId) {
+				throw new Error(
+					'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
+				)
+			}
+			const wsOpts = { workspaceId }
+			const terminalStatuses = ['completed', 'failed', 'timeout']
+
+			// Pre-check: if the session is already terminal, skip opening an SSE
+			// stream (which would replay the entire log history unboundedly).
+			const initialSession = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.session_id}`,
+				undefined,
+				wsOpts,
+			)) as { id: string; status: string }
+
+			if (terminalStatuses.includes(initialSession.status)) {
+				return {
+					_meta: { toolName: 'wait_for_session' },
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify(
+								{
+									session_id: args.session_id,
+									status: initialSession.status,
+									already_terminal: true,
+									timed_out: false,
+									session: initialSession,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				}
+			}
+
+			const timeoutMs = args.timeout_seconds * 1000
+			const outcome = await waitForSessionTerminal(
+				{ apiBaseUrl: config.apiBaseUrl, apiKey: config.apiKey },
+				workspaceId,
+				args.session_id,
+				timeoutMs,
+			)
+
+			// Fetch the final session record so the result includes up-to-date
+			// details (status, timestamps, error) regardless of how the wait ended.
+			const finalSession = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.session_id}`,
+				undefined,
+				wsOpts,
+			)) as { id: string; status: string }
+
+			const status = outcome.reason === 'done' ? outcome.status : finalSession.status
+			const timedOut = outcome.reason === 'timeout'
+			return {
+				_meta: { toolName: 'wait_for_session' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{
+								session_id: args.session_id,
+								status,
+								already_terminal: false,
+								timed_out: timedOut,
+								wait_reason: outcome.reason,
+								session: finalSession,
+							},
+							null,
+							2,
+						),
+					},
+				],
 			}
 		},
 	)

@@ -28,11 +28,11 @@ export interface SessionLogSubscriptionRegistry {
 // The backend emits `event: stdout|stderr|system` with `data` set to the raw
 // text content (no JSON wrapping). A synthetic kind='done' is produced when
 // the server sends `event: done, data: completed|failed`.
-type SessionLogItem =
+export type SessionLogItem =
 	| { kind: 'log'; stream: 'stdout' | 'stderr' | 'system'; content: string }
 	| { kind: 'done'; status: string }
 
-function parseLogFrame(
+export function parseLogFrame(
 	frame: ParsedSSEFrame,
 ): { item?: SessionLogItem; terminal?: boolean } | null {
 	if (frame.event === 'done') {

@@ -506,6 +506,23 @@ export const tools = {
 			'List all active session-log subscriptions for this MCP session with their session IDs and per-subscription delivery counters. Useful for debugging why logs are (or are not) arriving, and for recovering a lost subscription_id before calling unsubscribe_session_logs.',
 		inputSchema: z.object({}),
 	},
+	wait_for_session: {
+		description:
+			"Block until a running session terminates, then return the final status and session details as a tool result. Unlike subscribe_session_logs (which streams line-by-line via MCP logging notifications that some clients do not render in the chat UI), this tool's result is returned on the original tool call — so completion is always visible to the user. Use this when you've spawned a session with create_session and want to surface 'agent done' back to the human. For a create+wait combo in one call, use run_agent instead.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			session_id: z.string().uuid(),
+			timeout_seconds: z
+				.number()
+				.int()
+				.min(5)
+				.max(3600)
+				.default(600)
+				.describe(
+					'Maximum time to wait for the session to terminate. On timeout, the tool returns with timed_out: true and the current session status.',
+				),
+		}),
+	},
 	run_agent: {
 		description:
 			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session + get_session_logs separately if you need non-blocking execution.',
