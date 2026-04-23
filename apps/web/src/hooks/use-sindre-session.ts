@@ -16,6 +16,30 @@ const IS_DEV = ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV
 // real user turn arrives via POST /api/sessions/:id/input.
 const BOOTSTRAP_ACTION_PROMPT = 'Sindre interactive chat'
 
+const RUNNING_POLL_INTERVAL_MS = 300
+const RUNNING_POLL_TIMEOUT_MS = 20_000
+const TERMINAL_SESSION_STATUSES = new Set(['failed', 'timeout', 'completed'])
+
+/**
+ * Poll `GET /api/sessions/:id` until the session's container transitions to
+ * `running`. The create endpoint returns as soon as the DB row is written
+ * (status `pending`), so a plain POST /input straight after create hits a 409
+ * — this gives the backend a chance to pull agent files + launch the
+ * container before we hand it the user's first turn.
+ */
+async function waitForRunning(sessionId: string, workspaceId: string): Promise<void> {
+	const deadline = Date.now() + RUNNING_POLL_TIMEOUT_MS
+	while (Date.now() < deadline) {
+		const session = await api.sessions.get(sessionId, workspaceId)
+		if (session.status === 'running') return
+		if (TERMINAL_SESSION_STATUSES.has(session.status)) {
+			throw new Error(`Session ${session.status} before it could start`)
+		}
+		await new Promise((resolve) => setTimeout(resolve, RUNNING_POLL_INTERVAL_MS))
+	}
+	throw new Error('Sindre session did not start in time')
+}
+
 export type SindreSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | 'closed' | 'error'
 
 export interface UseSindreSessionOptions {
@@ -68,36 +92,6 @@ export function useSindreSession({
 		setError(null)
 		setStatus('idle')
 	}, [workspaceId])
-
-	// Bootstrap an interactive session for Sindre when none is persisted.
-	useEffect(() => {
-		if (!enabled) return
-		if (!workspaceId || !sindreActorId) return
-		if (sessionId) return
-		if (startingRef.current) return
-
-		startingRef.current = true
-		setStatus('starting')
-		setError(null)
-
-		api.sessions
-			.create(workspaceId, {
-				actor_id: sindreActorId,
-				action_prompt: BOOTSTRAP_ACTION_PROMPT,
-				config: { interactive: true },
-				auto_start: true,
-			})
-			.then((session) => {
-				setSessionId(session.id)
-			})
-			.catch((err) => {
-				setStatus('error')
-				setError(err instanceof Error ? err : new Error(String(err)))
-			})
-			.finally(() => {
-				startingRef.current = false
-			})
-	}, [enabled, workspaceId, sindreActorId, sessionId])
 
 	// Subscribe to the session's live SSE log stream and pipe stdout through
 	// the sindre-stream parser. stderr/system lines are surfaced as `debug`
@@ -173,8 +167,41 @@ export function useSindreSession({
 			displayText?: string,
 			displayAttachments?: UserAttachmentView[],
 		) => {
-			if (!sessionId) throw new Error('Sindre session is not ready yet')
 			if (!workspaceId) throw new Error('No workspace selected')
+			if (!sindreActorId) throw new Error('Sindre agent not available')
+
+			// Lazy bootstrap — only create the container on the user's first
+			// turn, so opening the panel (or re-mounting the app) never spawns
+			// a session.
+			let currentSessionId = sessionId
+			if (!currentSessionId) {
+				if (startingRef.current) throw new Error('Sindre session is still starting')
+				startingRef.current = true
+				setStatus('starting')
+				setError(null)
+				try {
+					const session = await api.sessions.create(workspaceId, {
+						actor_id: sindreActorId,
+						action_prompt: BOOTSTRAP_ACTION_PROMPT,
+						config: { interactive: true },
+						auto_start: true,
+					})
+					currentSessionId = session.id
+					setSessionId(session.id)
+					// Wait for the container to actually be running before we
+					// POST the user's turn — otherwise the input endpoint
+					// rejects with 409 "Session is not running".
+					await waitForRunning(currentSessionId, workspaceId)
+				} catch (err) {
+					setStatus('error')
+					const wrapped = err instanceof Error ? err : new Error(String(err))
+					setError(wrapped)
+					throw wrapped
+				} finally {
+					startingRef.current = false
+				}
+			}
+
 			setEvents((prev) =>
 				prev.concat({
 					kind: 'user',
@@ -185,9 +212,9 @@ export function useSindreSession({
 				}),
 			)
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
-			await api.sessions.input(sessionId, body, workspaceId)
+			await api.sessions.input(currentSessionId, body, workspaceId)
 		},
-		[sessionId, workspaceId],
+		[sessionId, workspaceId, sindreActorId],
 	)
 
 	const reset = useCallback(() => {

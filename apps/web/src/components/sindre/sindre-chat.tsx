@@ -154,11 +154,18 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	)
 
 	const showTranscript = surface === 'sheet'
-	const sindreReady = sindre.status === 'ready' || sindre.status === 'connecting'
+	// Lazy bootstrap: the composer is usable whenever the Sindre actor is
+	// present — the first send() call creates the container. Only disable
+	// while the Sindre session is actively booting (post-create, pre-
+	// running), in an error state, or finished.
+	const sindreBlocked =
+		sindre.status === 'starting' || sindre.status === 'error' || sindre.status === 'closed'
 	const oneShotBusy = oneShot.status === 'starting'
-	const sessionReady = selectedAgent ? !oneShotBusy : sindreReady
-	const disabled = selectedAgent ? !sessionReady : !sessionReady || !sindreActorId
-	const starting = !selectedAgent && (sindre.status === 'starting' || sindre.status === 'idle')
+	const disabled = selectedAgent ? oneShotBusy : sindreBlocked || !sindreActorId
+	// Show the "Connecting to Sindre…" empty-state only while we're actively
+	// booting a session. `idle` is now the default-empty state and shouldn't
+	// trigger the connecting copy.
+	const starting = !selectedAgent && sindre.status === 'starting'
 	const error = selectedAgent ? oneShot.error : sindre.error
 
 	const [pendingTurn, setPendingTurn] = useState(false)

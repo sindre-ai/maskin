@@ -24,6 +24,9 @@ vi.mock('@/lib/api', () => ({
 		sessions: {
 			create: vi.fn(),
 			input: vi.fn(),
+			// Lazy bootstrap polls GET /sessions/:id until status === 'running';
+			// default the mock to "already running" so tests don't hang.
+			get: vi.fn(),
 		},
 	},
 }))
@@ -65,6 +68,9 @@ beforeEach(() => {
 	vi.clearAllMocks()
 	lastFesInit = null
 	localStorage.clear()
+	// Default: pretend the container is already running so waitForRunning
+	// returns immediately. Individual tests can override.
+	vi.mocked(api.sessions.get).mockResolvedValue(buildSession('sess-running'))
 })
 
 afterEach(() => {
@@ -72,43 +78,43 @@ afterEach(() => {
 })
 
 describe('useSindreSession — bootstrap', () => {
-	it('creates an interactive session for Sindre on mount', async () => {
+	it('does not create a session on mount — lazy bootstrap waits for send()', () => {
+		renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
+			wrapper: TestWrapper,
+		})
+		expect(api.sessions.create).not.toHaveBeenCalled()
+		expect(mockFetchEventSource).not.toHaveBeenCalled()
+	})
+
+	it('creates the session on the first send() and waits for running', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-new'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
 		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
 
-		expect(result.current.sessionId).toBeNull()
-		expect(result.current.status).toBe('starting')
+		await act(async () => {
+			await result.current.send('hi')
+		})
 
-		await waitFor(() => expect(api.sessions.create).toHaveBeenCalledTimes(1))
+		expect(api.sessions.create).toHaveBeenCalledTimes(1)
 		expect(api.sessions.create).toHaveBeenCalledWith(workspaceId, {
 			actor_id: sindreActorId,
 			action_prompt: 'Sindre interactive chat',
 			config: { interactive: true },
 			auto_start: true,
 		})
-
-		await waitFor(() => expect(result.current.sessionId).toBe('sess-new'))
-		// The session id is intentionally kept in memory only — refreshing
-		// the page drops it and a fresh container is created next mount.
-		expect(localStorage.getItem(`maskin-sindre-session-${workspaceId}`)).toBeNull()
+		expect(api.sessions.get).toHaveBeenCalledWith('sess-new', workspaceId)
+		expect(result.current.sessionId).toBe('sess-new')
 	})
 
-	it('does not bootstrap when sindreActorId is null', () => {
-		renderHook(() => useSindreSession({ workspaceId, sindreActorId: null }), {
+	it('throws from send() when sindreActorId is null', async () => {
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId: null }), {
 			wrapper: TestWrapper,
 		})
+		await expect(result.current.send('hi')).rejects.toThrow(/not available/i)
 		expect(api.sessions.create).not.toHaveBeenCalled()
-	})
-
-	it('does not bootstrap when disabled', () => {
-		renderHook(() => useSindreSession({ workspaceId, sindreActorId, enabled: false }), {
-			wrapper: TestWrapper,
-		})
-		expect(api.sessions.create).not.toHaveBeenCalled()
-		expect(mockFetchEventSource).not.toHaveBeenCalled()
 	})
 
 	it('captures errors from session creation as the hook error', async () => {
@@ -118,23 +124,32 @@ describe('useSindreSession — bootstrap', () => {
 			wrapper: TestWrapper,
 		})
 
-		await waitFor(() => expect(result.current.status).toBe('error'))
+		await act(async () => {
+			await expect(result.current.send('hi')).rejects.toThrow('boom')
+		})
+		expect(result.current.status).toBe('error')
 		expect(result.current.error?.message).toBe('boom')
 		expect(result.current.sessionId).toBeNull()
 	})
 })
 
-describe('useSindreSession — SSE log stream', () => {
-	beforeEach(() => {
-		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
+async function renderAndBootstrap() {
+	vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
+	vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+	const hook = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
+		wrapper: TestWrapper,
 	})
+	// Trigger lazy bootstrap via send().
+	await act(async () => {
+		await hook.result.current.send('hi')
+	})
+	await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
+	return hook
+}
 
+describe('useSindreSession — SSE log stream', () => {
 	it('subscribes to the session log stream with auth + workspace headers', async () => {
-		renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
-			wrapper: TestWrapper,
-		})
-
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalledTimes(1))
+		await renderAndBootstrap()
 		expect(mockFetchEventSource).toHaveBeenCalledWith(
 			'/api/sessions/sess-1/logs/stream',
 			expect.objectContaining({
@@ -148,11 +163,7 @@ describe('useSindreSession — SSE log stream', () => {
 	})
 
 	it('parses stdout lines through sindre-stream and exposes them as events', async () => {
-		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
-			wrapper: TestWrapper,
-		})
-
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
+		const { result } = await renderAndBootstrap()
 		await act(async () => {
 			await lastFesInit?.onopen()
 		})
@@ -167,15 +178,13 @@ describe('useSindreSession — SSE log stream', () => {
 		act(() => lastFesInit?.onmessage({ event: 'stdout', data: assistantLine }))
 
 		expect(result.current.events).toEqual([
+			{ kind: 'user', text: 'hi' },
 			{ kind: 'text', text: 'hello world', sessionId: 'sess-1', messageId: 'msg_1' },
 		])
 	})
 
 	it('emits one event per content block when the assistant envelope is multi-block', async () => {
-		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
-			wrapper: TestWrapper,
-		})
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
+		const { result } = await renderAndBootstrap()
 		await act(async () => {
 			await lastFesInit?.onopen()
 		})
@@ -193,28 +202,25 @@ describe('useSindreSession — SSE log stream', () => {
 		})
 		act(() => lastFesInit?.onmessage({ event: 'stdout', data: multi }))
 
-		expect(result.current.events.map((e) => e.kind)).toEqual(['thinking', 'text'])
+		expect(result.current.events.map((e) => e.kind)).toEqual(['user', 'thinking', 'text'])
 	})
 
 	it('surfaces stderr lines as debug events so the UI can collapse them', async () => {
-		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
-			wrapper: TestWrapper,
-		})
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
+		const { result } = await renderAndBootstrap()
 		await act(async () => {
 			await lastFesInit?.onopen()
 		})
 
 		act(() => lastFesInit?.onmessage({ event: 'stderr', data: 'something failed' }))
 
-		expect(result.current.events).toEqual([{ kind: 'debug', raw: '[stderr] something failed' }])
+		expect(result.current.events).toEqual([
+			{ kind: 'user', text: 'hi' },
+			{ kind: 'debug', raw: '[stderr] something failed' },
+		])
 	})
 
 	it('marks the stream as closed when the server sends a done event', async () => {
-		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
-			wrapper: TestWrapper,
-		})
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
+		const { result } = await renderAndBootstrap()
 		await act(async () => {
 			await lastFesInit?.onopen()
 		})
@@ -224,22 +230,14 @@ describe('useSindreSession — SSE log stream', () => {
 	})
 
 	it('aborts the SSE stream on unmount', async () => {
-		const { unmount } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
-			wrapper: TestWrapper,
-		})
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
-
+		const { unmount } = await renderAndBootstrap()
 		expect(lastFesInit?.signal.aborted).toBe(false)
 		unmount()
 		expect(lastFesInit?.signal.aborted).toBe(true)
 	})
 
 	it('records SSE errors as the hook error and stops retrying', async () => {
-		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
-			wrapper: TestWrapper,
-		})
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
-
+		const { result } = await renderAndBootstrap()
 		act(() => {
 			expect(() => lastFesInit?.onerror(new Error('network down'))).toThrow('network down')
 		})
@@ -254,12 +252,12 @@ describe('useSindreSession — send', () => {
 	})
 
 	it('posts content via api.sessions.input', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
 		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
 		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
 
 		await act(async () => {
 			await result.current.send('hello sindre')
@@ -273,12 +271,12 @@ describe('useSindreSession — send', () => {
 	})
 
 	it('forwards attachments when provided', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
 		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
 		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
 
 		const attachments = [{ kind: 'object', id: 'obj-1' }]
 		await act(async () => {
@@ -292,46 +290,62 @@ describe('useSindreSession — send', () => {
 		)
 	})
 
-	it('throws when called before a session is bootstrapped', async () => {
+	it('throws when called without a Sindre actor', async () => {
 		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId: null }), {
 			wrapper: TestWrapper,
 		})
-		await expect(result.current.send('hi')).rejects.toThrow(/not ready/i)
+		await expect(result.current.send('hi')).rejects.toThrow(/not available/i)
 	})
 })
 
 describe('useSindreSession — reset & workspace switching', () => {
-	it('reset clears the session and triggers a fresh bootstrap', async () => {
+	it('reset clears the session; the next send() creates a fresh one', async () => {
 		vi.mocked(api.sessions.create)
 			.mockResolvedValueOnce(buildSession('sess-old'))
 			.mockResolvedValueOnce(buildSession('sess-fresh'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
 		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
-		await waitFor(() => expect(result.current.sessionId).toBe('sess-old'))
+		await act(async () => {
+			await result.current.send('first')
+		})
+		expect(result.current.sessionId).toBe('sess-old')
 
 		act(() => result.current.reset())
 		expect(result.current.sessionId).toBeNull()
 		expect(result.current.events).toEqual([])
 
-		await waitFor(() => expect(api.sessions.create).toHaveBeenCalledTimes(2))
-		await waitFor(() => expect(result.current.sessionId).toBe('sess-fresh'))
+		await act(async () => {
+			await result.current.send('second')
+		})
+		expect(api.sessions.create).toHaveBeenCalledTimes(2)
+		expect(result.current.sessionId).toBe('sess-fresh')
 	})
 
-	it('bootstraps a fresh session when the workspaceId changes', async () => {
+	it('forgets the session when the workspaceId changes; next send bootstraps again', async () => {
 		vi.mocked(api.sessions.create)
 			.mockResolvedValueOnce(buildSession('sess-ws1'))
 			.mockResolvedValueOnce(buildSession('sess-ws2'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
 		const { result, rerender } = renderHook(
 			({ wsId }) => useSindreSession({ workspaceId: wsId, sindreActorId }),
 			{ wrapper: TestWrapper, initialProps: { wsId: 'ws-1' } },
 		)
-		await waitFor(() => expect(result.current.sessionId).toBe('sess-ws1'))
+		await act(async () => {
+			await result.current.send('first')
+		})
+		expect(result.current.sessionId).toBe('sess-ws1')
 
 		rerender({ wsId: 'ws-2' })
-		await waitFor(() => expect(result.current.sessionId).toBe('sess-ws2'))
+		expect(result.current.sessionId).toBeNull()
+
+		await act(async () => {
+			await result.current.send('second')
+		})
+		expect(result.current.sessionId).toBe('sess-ws2')
 		expect(api.sessions.create).toHaveBeenCalledTimes(2)
 	})
 })
