@@ -64,6 +64,7 @@ vi.mock('../../services/workspace-briefing', () => ({
 }))
 
 import type { StorageProvider } from '@maskin/storage'
+import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
@@ -177,6 +178,12 @@ describe('SessionManager', () => {
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
 
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
 			// Select queue in startSession → hasCapacity → launchContainer order.
 			mockResults.selectQueue = [
 				[session], // startSession: load session
@@ -218,6 +225,12 @@ describe('SessionManager', () => {
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
 
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
 			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
 
 			await manager.startSession(session.id)
@@ -251,6 +264,12 @@ describe('SessionManager', () => {
 				tools: null,
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
 
 			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
 
@@ -389,6 +408,12 @@ describe('SessionManager', () => {
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
 
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
 			// resumeSession → launchContainer → attachStdin
 			mockResults.selectQueue = [
 				[session], // resumeSession: load session
@@ -400,6 +425,86 @@ describe('SessionManager', () => {
 			await manager.resumeSession(session.id)
 
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+		})
+	})
+
+	describe('startSession() — workspace skills wiring', () => {
+		it('pulls attached workspace skills immediately after agent files', async () => {
+			const session = buildSession({
+				status: 'pending',
+				actorId: 'actor-1',
+				workspaceId: 'ws-1',
+				containerId: null,
+			})
+
+			const pullAgentFilesSpy = vi
+				.spyOn(AgentStorageManager.prototype, 'pullAgentFiles')
+				.mockResolvedValue(undefined)
+			const pullWorkspaceSkillsSpy = vi
+				.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent')
+				.mockResolvedValue({ pulled: 0, skipped: 0, failures: [] })
+
+			// Short-circuit container launch so the test doesn't need to mock the full
+			// launchContainer DB/Docker path — the wiring we care about runs earlier.
+			vi.spyOn(
+				manager as unknown as {
+					launchContainer(
+						session: ReturnType<typeof buildSession>,
+						tempDir: string,
+						name?: string,
+					): Promise<string>
+				},
+				'launchContainer',
+			).mockResolvedValue('container-abc')
+
+			// startSession → select session, hasCapacity → select workspace + count.
+			// renderWorkspaceBriefing falls back gracefully when later selects return
+			// empty (writeWorkspaceBriefing catches all errors).
+			mockResults.selectQueue = [[session], [{ settings: {} }], [{ count: 0 }]]
+
+			await manager.startSession(session.id)
+
+			expect(pullAgentFilesSpy).toHaveBeenCalledWith('actor-1', 'ws-1', expect.any(String))
+			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith('actor-1', 'ws-1', expect.any(String))
+
+			const agentFilesOrder = pullAgentFilesSpy.mock.invocationCallOrder[0] ?? 0
+			const workspaceSkillsOrder = pullWorkspaceSkillsSpy.mock.invocationCallOrder[0] ?? 0
+			expect(workspaceSkillsOrder).toBeGreaterThan(agentFilesOrder)
+		})
+
+		it('still calls pullWorkspaceSkillsForAgent when the agent has no attachments', async () => {
+			// pullWorkspaceSkillsForAgent is documented as a no-op when the join
+			// returns no rows; session-manager should still invoke it unconditionally
+			// so the caller owns the empty-case semantics (not session-manager).
+			const session = buildSession({
+				status: 'pending',
+				actorId: 'actor-2',
+				workspaceId: 'ws-2',
+				containerId: null,
+			})
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullAgentFiles').mockResolvedValue(undefined)
+			const pullWorkspaceSkillsSpy = vi
+				.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent')
+				.mockResolvedValue({ pulled: 0, skipped: 0, failures: [] })
+
+			vi.spyOn(
+				manager as unknown as {
+					launchContainer(
+						session: ReturnType<typeof buildSession>,
+						tempDir: string,
+						name?: string,
+					): Promise<string>
+				},
+				'launchContainer',
+			).mockResolvedValue('container-xyz')
+
+			mockResults.selectQueue = [[session], [{ settings: {} }], [{ count: 0 }]]
+
+			await manager.startSession(session.id)
+
+			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledTimes(1)
+			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith('actor-2', 'ws-2', expect.any(String))
 		})
 	})
 

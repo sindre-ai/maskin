@@ -11,6 +11,7 @@ import {
 	text,
 	timestamp,
 	unique,
+	uniqueIndex,
 	uuid,
 } from 'drizzle-orm/pg-core'
 
@@ -249,6 +250,55 @@ export const agentFiles = pgTable(
 		unique('agent_files_actor_path_uniq').on(t.actorId, t.workspaceId, t.path),
 	],
 )
+
+// ── Workspace Skills ───────────────────────────────────────────────────────
+
+export const workspaceSkills = pgTable(
+	'workspace_skills',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		description: text('description'),
+		content: text('content').notNull(),
+		storageKey: text('storage_key').notNull(),
+		sizeBytes: integer('size_bytes').notNull(),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('workspace_skills_ws_name_uniq').on(t.workspaceId, t.name),
+		check('workspace_skills_name_format', sql`${t.name} ~ '^[a-z0-9-]{1,64}$'`),
+	],
+)
+
+export type WorkspaceSkill = typeof workspaceSkills.$inferSelect
+export type NewWorkspaceSkill = typeof workspaceSkills.$inferInsert
+
+// ── Agent Skills ───────────────────────────────────────────────────────────
+
+export const agentSkills = pgTable(
+	'agent_skills',
+	{
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		workspaceSkillId: uuid('workspace_skill_id')
+			.notNull()
+			.references(() => workspaceSkills.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.workspaceSkillId] }),
+		index('agent_skills_actor_idx').on(t.actorId),
+	],
+)
+
+export type AgentSkill = typeof agentSkills.$inferSelect
+export type NewAgentSkill = typeof agentSkills.$inferInsert
 
 // ── Imports ───────────────────────────────────────────────────────────
 

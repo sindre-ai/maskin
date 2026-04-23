@@ -126,6 +126,26 @@ describe('queryKeys', () => {
 		})
 	})
 
+	describe('workspaceSkills', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.workspaceSkills.all('ws-1')).toEqual(['workspace-skills', 'ws-1'])
+		})
+
+		it('detail includes workspaceId and name', () => {
+			expect(queryKeys.workspaceSkills.detail('ws-1', 'my-skill')).toEqual([
+				'workspace-skills',
+				'ws-1',
+				'my-skill',
+			])
+		})
+	})
+
+	describe('agentSkillAttachments', () => {
+		it('all includes actorId', () => {
+			expect(queryKeys.agentSkillAttachments.all('a-1')).toEqual(['agent-skill-attachments', 'a-1'])
+		})
+	})
+
 	describe('notifications', () => {
 		it('all includes workspaceId', () => {
 			expect(queryKeys.notifications.all('ws-1')).toEqual(['notifications', 'ws-1'])

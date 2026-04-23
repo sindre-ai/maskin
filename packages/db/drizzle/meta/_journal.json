@@ -15,6 +15,13 @@
       "when": 1774695399422,
       "tag": "0001_same_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776934298312,
+      "tag": "0011_workspace_skills",
+      "breakpoints": true
     }
   ]
 }

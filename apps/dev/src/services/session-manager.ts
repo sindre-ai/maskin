@@ -23,7 +23,7 @@ import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
-import { AgentStorageManager } from './agent-storage'
+import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
 
@@ -177,6 +177,12 @@ export class SessionManager extends EventEmitter {
 			this.activeSessions.set(sessionId, { tempDir })
 
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
+			const pullResult = await this.agentStorage.pullWorkspaceSkillsForAgent(
+				session.actorId,
+				session.workspaceId,
+				tempDir,
+			)
+			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars and launch container. Let launchContainer derive
@@ -350,8 +356,17 @@ export class SessionManager extends EventEmitter {
 			await writeFile(snapshotPath, snapshotBuffer)
 			await execFileAsync('tar', ['-xzf', snapshotPath, '-C', tempDir])
 
-			// Also pull latest agent files (other sessions may have added learnings)
+			// Pull latest agent files AND workspace skills — between pause and resume
+			// the attachment set and skill content may have changed, so overwrite
+			// any stale snapshot folders for currently-attached skills.
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
+			const pullResult = await this.agentStorage.pullWorkspaceSkillsForAgent(
+				session.actorId,
+				session.workspaceId,
+				tempDir,
+				{ overwrite: true },
+			)
+			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars (including integration credentials) and launch container
@@ -1104,6 +1119,18 @@ export class SessionManager extends EventEmitter {
 				logger.error('Failed to drain queue in watchdog', { workspaceId, error: String(err) }),
 			)
 		}
+	}
+
+	private async reportSkillPullFailures(
+		sessionId: string,
+		result: PullWorkspaceSkillsResult,
+	): Promise<void> {
+		if (result.failures.length === 0) return
+		const names = result.failures.map((f) => f.name).join(', ')
+		await this.insertSystemLog(
+			sessionId,
+			`Warning: ${result.failures.length} workspace skill(s) could not be pulled and are unavailable in this session: ${names}`,
+		)
 	}
 
 	private async insertSystemLog(sessionId: string, content: string): Promise<void> {

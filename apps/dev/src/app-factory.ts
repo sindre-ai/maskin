@@ -13,6 +13,7 @@ import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from '.
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
+import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
@@ -26,6 +27,7 @@ import objectsRoutes from './routes/objects'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
 import triggersRoutes from './routes/triggers'
+import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
 import type { SessionManager } from './services/session-manager'
@@ -160,7 +162,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
+	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
+	app.route('/api/workspaces', workspaceSkillsRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/integrations', integrationsRoutes)

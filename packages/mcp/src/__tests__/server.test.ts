@@ -758,6 +758,156 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('workspace skills handlers', () => {
+		describe('list_workspace_skills handler', () => {
+			it('GETs /api/workspaces/:id/skills with the default workspace', async () => {
+				mockFetchSuccess([
+					{ id: 's1', name: 'bug-fix', description: 'Bug-fix skill', sizeBytes: 42 },
+				])
+
+				const handler = getHandler('list_workspace_skills')
+				const result = (await handler({})) as { content: Array<{ text: string }> }
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/workspaces/ws-default-123/skills',
+					expect.objectContaining({
+						method: 'GET',
+						headers: expect.objectContaining({
+							Authorization: 'Bearer ank_testkey123',
+							'X-Workspace-Id': 'ws-default-123',
+						}),
+					}),
+				)
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed).toHaveLength(1)
+				expect(parsed[0].name).toBe('bug-fix')
+			})
+
+			it('uses workspace_id from args over default', async () => {
+				mockFetchSuccess([])
+				const handler = getHandler('list_workspace_skills')
+				await handler({ workspace_id: 'ws-custom' })
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/workspaces/ws-custom/skills',
+					expect.objectContaining({
+						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+					}),
+				)
+			})
+		})
+
+		describe('get_workspace_skill handler', () => {
+			it('GETs /api/workspaces/:id/skills/:name with the full skill', async () => {
+				mockFetchSuccess({ id: 's1', name: 'bug-fix', content: '# Bug fix skill' })
+
+				const handler = getHandler('get_workspace_skill')
+				const result = (await handler({ name: 'bug-fix' })) as {
+					content: Array<{ text: string }>
+				}
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
+					expect.objectContaining({ method: 'GET' }),
+				)
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.content).toBe('# Bug fix skill')
+			})
+
+			it('url-encodes the name segment', async () => {
+				mockFetchSuccess({})
+				const handler = getHandler('get_workspace_skill')
+				// skillNameSchema rejects non-[a-z0-9-] names, so this is defense-in-depth
+				// for a name with characters that still need escaping as a path segment.
+				await handler({ name: 'a-b' })
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/workspaces/ws-default-123/skills/a-b',
+					expect.anything(),
+				)
+			})
+		})
+
+		describe('create_workspace_skill handler', () => {
+			it('POSTs /api/workspaces/:id/skills with name and content', async () => {
+				mockFetchSuccess({ id: 's1', name: 'bug-fix', content: '# body' })
+
+				const handler = getHandler('create_workspace_skill')
+				const result = (await handler({ name: 'bug-fix', content: '# body' })) as {
+					content: Array<{ text: string }>
+				}
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/workspaces/ws-default-123/skills',
+					expect.objectContaining({ method: 'POST' }),
+				)
+				const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)
+				expect(body).toEqual({ name: 'bug-fix', content: '# body' })
+				expect(JSON.parse(result.content[0].text).name).toBe('bug-fix')
+			})
+
+			it('uses workspace_id from args when provided', async () => {
+				mockFetchSuccess({})
+				const handler = getHandler('create_workspace_skill')
+				await handler({ workspace_id: 'ws-custom', name: 'my-skill', content: '# x' })
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/workspaces/ws-custom/skills',
+					expect.objectContaining({ method: 'POST' }),
+				)
+			})
+		})
+
+		describe('update_workspace_skill handler', () => {
+			it('PUTs /api/workspaces/:id/skills/:name with content only', async () => {
+				mockFetchSuccess({ id: 's1', name: 'bug-fix', content: '# updated' })
+
+				const handler = getHandler('update_workspace_skill')
+				await handler({ name: 'bug-fix', content: '# updated' })
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
+					expect.objectContaining({ method: 'PUT' }),
+				)
+				const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)
+				expect(body).toEqual({ content: '# updated' })
+			})
+		})
+
+		describe('delete_workspace_skill handler', () => {
+			it('DELETEs /api/workspaces/:id/skills/:name', async () => {
+				mockFetchSuccess({ deleted: true })
+
+				const handler = getHandler('delete_workspace_skill')
+				const result = (await handler({ name: 'bug-fix' })) as {
+					content: Array<{ text: string }>
+				}
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
+					expect.objectContaining({ method: 'DELETE' }),
+				)
+				expect(JSON.parse(result.content[0].text)).toEqual({ deleted: true })
+			})
+		})
+
+		it('throws when no workspace is configured and none provided', async () => {
+			vi.clearAllMocks()
+			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				handlersNoWs.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+
+			const handler = handlersNoWs.get('list_workspace_skills')
+			if (!handler) throw new Error('handler missing')
+			await expect(handler({})).rejects.toThrow(/No workspace specified/)
+		})
+	})
+
 	describe('set_llm_api_key handler', () => {
 		// PATCHes the workspace with a single-provider delta. The server deep-
 		// merges llm_keys, so the MCP tool is a straight pass-through — no

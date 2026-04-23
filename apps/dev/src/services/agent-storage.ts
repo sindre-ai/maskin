@@ -1,11 +1,27 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Database } from '@maskin/db'
-import { agentFiles } from '@maskin/db/schema'
+import { agentFiles, agentSkills, workspaceSkills } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { appendToLedger } from './workspace-briefing'
+
+export const AGENT_STORAGE_PREFIX = 'agents'
+export const WORKSPACE_SKILLS_PREFIX = 'workspaces'
+
+// Keyed on the skill's UUID so concurrent writers with the same `name` can
+// never collide on the same S3 object — a stale rollback from a losing writer
+// cannot then delete the winner's object.
+export function workspaceSkillKey(workspaceId: string, skillId: string): string {
+	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${skillId}/SKILL.md`
+}
+
+export type PullWorkspaceSkillsResult = {
+	pulled: number
+	skipped: number
+	failures: { name: string; storageKey: string; error: string }[]
+}
 
 export class AgentStorageManager {
 	constructor(
@@ -21,16 +37,28 @@ export class AgentStorageManager {
 		const prefix = `agents/${workspaceId}/${actorId}/`
 		const keys = await this.storage.list(prefix)
 
+		// Per-key try/catch so one bad object doesn't abort the whole pull with an
+		// opaque first-error message. We collect every failure and throw an
+		// aggregate at the end so the caller (session-manager.start) sees every
+		// missing/unreadable file instead of just the first.
+		const failures: { key: string; error: string }[] = []
 		for (const key of keys) {
 			const relativePath = key.slice(prefix.length)
 			const localPath = join(localDir, relativePath)
-
-			// Ensure parent directory exists
-			const parentDir = join(localPath, '..')
-			await mkdir(parentDir, { recursive: true })
-
-			const data = await this.storage.get(key)
-			await writeFile(localPath, data)
+			try {
+				const parentDir = join(localPath, '..')
+				await mkdir(parentDir, { recursive: true })
+				const data = await this.storage.get(key)
+				await writeFile(localPath, data)
+			} catch (err) {
+				logger.error('Failed to pull agent file', {
+					actorId,
+					workspaceId,
+					key,
+					error: String(err),
+				})
+				failures.push({ key, error: String(err) })
+			}
 		}
 
 		// Ensure directory structure exists even if empty
@@ -39,7 +67,18 @@ export class AgentStorageManager {
 		await mkdir(join(localDir, 'memory'), { recursive: true })
 		await mkdir(join(localDir, 'workspace'), { recursive: true })
 
-		logger.info(`Pulled ${keys.length} agent files`, { actorId, workspaceId })
+		logger.info(`Pulled ${keys.length - failures.length}/${keys.length} agent files`, {
+			actorId,
+			workspaceId,
+			failed: failures.length,
+		})
+
+		if (failures.length > 0) {
+			const summary = failures.map((f) => `${f.key}: ${f.error}`).join('; ')
+			throw new Error(
+				`Failed to pull ${failures.length}/${keys.length} agent files for ${actorId}: ${summary}`,
+			)
+		}
 	}
 
 	/**
@@ -77,16 +116,42 @@ export class AgentStorageManager {
 				sessionId,
 			)
 			pushed++
-		} catch {
-			// No learning file produced — that's fine
+		} catch (err) {
+			// ENOENT just means the session didn't produce a learning file — fine.
+			// Anything else (S3 5xx, auth expiry, DB failure in upsertFileRecord)
+			// is a real error we must not swallow silently.
+			if (!isFileNotFound(err)) {
+				logger.error('Failed to push session learning file', {
+					actorId,
+					workspaceId,
+					sessionId,
+					error: String(err),
+				})
+			}
 		}
 
-		// Push memory files (CLAUDE.md, consolidated-learnings.md, etc.)
+		// Push memory files (CLAUDE.md, consolidated-learnings.md, etc.).
+		// Missing directory is fine (agent may never have written memory); a
+		// mid-loop upload failure for any specific file is a real error and is
+		// logged per-file so partial uploads don't silently desync.
 		const memoryDir = join(localDir, 'memory')
+		let memoryFiles: string[] = []
 		try {
-			const files = await readdir(memoryDir)
-			for (const file of files) {
-				const filePath = join(memoryDir, file)
+			memoryFiles = await readdir(memoryDir)
+		} catch (err) {
+			if (!isFileNotFound(err)) {
+				logger.error('Failed to read memory directory', {
+					actorId,
+					workspaceId,
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+
+		for (const file of memoryFiles) {
+			const filePath = join(memoryDir, file)
+			try {
 				const data = await readFile(filePath)
 				const relativePath = `memory/${file}`
 				const key = `agents/${workspaceId}/${actorId}/${relativePath}`
@@ -101,9 +166,15 @@ export class AgentStorageManager {
 					sessionId,
 				)
 				pushed++
+			} catch (err) {
+				logger.error('Failed to push memory file', {
+					actorId,
+					workspaceId,
+					sessionId,
+					file,
+					error: String(err),
+				})
 			}
-		} catch {
-			// No memory dir or empty
 		}
 
 		await this.appendWorkspaceLedger(workspaceId, sessionId, localDir, opts?.actionPrompt)
@@ -131,8 +202,14 @@ export class AgentStorageManager {
 				.split('\n')
 				.find((l) => l.trim().length > 0)
 			if (firstLine) summary = firstLine.trim()
-		} catch {
-			// File absent — fall through
+		} catch (err) {
+			if (!isFileNotFound(err)) {
+				logger.warn('Failed to read SESSION_LEARNING.md for ledger', {
+					workspaceId,
+					sessionId,
+					error: String(err),
+				})
+			}
 		}
 
 		if (!summary && actionPromptFallback) {
@@ -233,6 +310,105 @@ export class AgentStorageManager {
 			)
 	}
 
+	async putWorkspaceSkill(
+		workspaceId: string,
+		skillId: string,
+		content: string,
+	): Promise<{ storageKey: string; sizeBytes: number }> {
+		const storageKey = workspaceSkillKey(workspaceId, skillId)
+		const buffer = Buffer.from(content, 'utf-8')
+		await this.storage.put(storageKey, buffer)
+		return { storageKey, sizeBytes: buffer.length }
+	}
+
+	async getWorkspaceSkill(workspaceId: string, skillId: string): Promise<string> {
+		const storageKey = workspaceSkillKey(workspaceId, skillId)
+		const buffer = await this.storage.get(storageKey)
+		return buffer.toString('utf-8')
+	}
+
+	async deleteWorkspaceSkill(workspaceId: string, skillId: string): Promise<void> {
+		const storageKey = workspaceSkillKey(workspaceId, skillId)
+		await this.storage.delete(storageKey)
+	}
+
+	/**
+	 * Collision rule — agent-local wins unless `overwrite: true`. If a
+	 * `skills/<name>/` folder already exists on disk, the workspace skill for
+	 * that name is skipped so per-agent tweaks survive. On resume we pass
+	 * `overwrite: true` so updated workspace-skill content is re-pulled over
+	 * stale snapshot contents.
+	 */
+	async pullWorkspaceSkillsForAgent(
+		actorId: string,
+		workspaceId: string,
+		localDir: string,
+		options: { overwrite?: boolean } = {},
+	): Promise<PullWorkspaceSkillsResult> {
+		const rows = await this.db
+			.select({
+				name: workspaceSkills.name,
+				storageKey: workspaceSkills.storageKey,
+			})
+			.from(agentSkills)
+			.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
+			.where(and(eq(agentSkills.actorId, actorId), eq(workspaceSkills.workspaceId, workspaceId)))
+
+		if (rows.length === 0) {
+			logger.info('No workspace skills attached to agent', { actorId, workspaceId })
+			return { pulled: 0, skipped: 0, failures: [] }
+		}
+
+		const skillsDir = join(localDir, 'skills')
+		await mkdir(skillsDir, { recursive: true })
+
+		let pulled = 0
+		let skipped = 0
+		const failures: { name: string; storageKey: string; error: string }[] = []
+
+		for (const { name, storageKey } of rows) {
+			const skillFolder = join(skillsDir, name)
+			if (!options.overwrite && (await folderExists(skillFolder))) {
+				skipped++
+				logger.info('Skipping workspace skill — agent-local folder already exists', {
+					actorId,
+					workspaceId,
+					name,
+				})
+				continue
+			}
+
+			try {
+				const data = await this.storage.get(storageKey)
+				if (options.overwrite) {
+					await rm(skillFolder, { recursive: true, force: true })
+				}
+				await mkdir(skillFolder, { recursive: true })
+				await writeFile(join(skillFolder, 'SKILL.md'), data)
+				pulled++
+			} catch (err) {
+				logger.error('Failed to pull workspace skill', {
+					actorId,
+					workspaceId,
+					name,
+					storageKey,
+					error: String(err),
+				})
+				failures.push({ name, storageKey, error: String(err) })
+			}
+		}
+
+		logger.info('Pulled workspace skills for agent', {
+			actorId,
+			workspaceId,
+			pulled,
+			skipped,
+			failed: failures.length,
+		})
+
+		return { pulled, skipped, failures }
+	}
+
 	private async upsertFileRecord(
 		actorId: string,
 		workspaceId: string,
@@ -267,4 +443,22 @@ export class AgentStorageManager {
 			})
 		}
 	}
+}
+
+async function folderExists(path: string): Promise<boolean> {
+	try {
+		const s = await stat(path)
+		return s.isDirectory()
+	} catch {
+		return false
+	}
+}
+
+function isFileNotFound(err: unknown): boolean {
+	return (
+		typeof err === 'object' &&
+		err !== null &&
+		'code' in err &&
+		(err as { code?: string }).code === 'ENOENT'
+	)
 }

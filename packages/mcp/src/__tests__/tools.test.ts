@@ -1,6 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ZodObject } from 'zod'
 import { tools } from '../tools'
+
+// Hoisted mocks so the create_workspace_skill → get_workspace_skill round-trip
+// can register handlers through the real server.ts wiring.
+vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
+	registerAppTool: vi.fn(),
+	registerAppResource: vi.fn(),
+	RESOURCE_MIME_TYPE: 'text/html',
+}))
+vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
+	McpServer: vi.fn().mockImplementation(() => ({})),
+}))
+vi.mock('node:fs', () => ({
+	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
+}))
 
 const uuid = '550e8400-e29b-41d4-a716-446655440000'
 const uuid2 = '660e8400-e29b-41d4-a716-446655440000'
@@ -25,6 +39,11 @@ const ALL_TOOL_NAMES = [
 	'list_workspaces',
 	'get_workspace_schema',
 	'add_workspace_member',
+	'list_workspace_skills',
+	'get_workspace_skill',
+	'create_workspace_skill',
+	'update_workspace_skill',
+	'delete_workspace_skill',
 	'get_events',
 	'create_trigger',
 	'update_trigger',
@@ -397,6 +416,136 @@ describe('create_trigger schema', () => {
 	})
 })
 
+describe('list_workspace_skills schema', () => {
+	const schema = tools.list_workspace_skills.inputSchema
+
+	it('accepts empty input', () => {
+		expect(schema.parse({})).toEqual({})
+	})
+
+	it('accepts optional workspace_id', () => {
+		expect(schema.parse({ workspace_id: uuid }).workspace_id).toBe(uuid)
+	})
+
+	it('rejects invalid workspace_id', () => {
+		expect(() => schema.parse({ workspace_id: 'not-uuid' })).toThrow()
+	})
+})
+
+describe('get_workspace_skill schema', () => {
+	const schema = tools.get_workspace_skill.inputSchema
+
+	it('accepts valid name', () => {
+		const result = schema.parse({ name: 'my-skill' })
+		expect(result.name).toBe('my-skill')
+		expect(result.workspace_id).toBeUndefined()
+	})
+
+	it('accepts optional workspace_id with name', () => {
+		const result = schema.parse({ workspace_id: uuid, name: 'skill-1' })
+		expect(result.workspace_id).toBe(uuid)
+		expect(result.name).toBe('skill-1')
+	})
+
+	it('rejects missing name', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects uppercase name', () => {
+		expect(() => schema.parse({ name: 'MySkill' })).toThrow()
+	})
+
+	it('rejects name with spaces', () => {
+		expect(() => schema.parse({ name: 'my skill' })).toThrow()
+	})
+
+	it('rejects name with underscores', () => {
+		expect(() => schema.parse({ name: 'my_skill' })).toThrow()
+	})
+
+	it('rejects empty name', () => {
+		expect(() => schema.parse({ name: '' })).toThrow()
+	})
+
+	it('rejects name longer than 64 chars', () => {
+		expect(() => schema.parse({ name: 'a'.repeat(65) })).toThrow()
+	})
+})
+
+describe('create_workspace_skill schema', () => {
+	const schema = tools.create_workspace_skill.inputSchema
+
+	it('accepts valid name + content', () => {
+		const result = schema.parse({ name: 'my-skill', content: '# Hello' })
+		expect(result.name).toBe('my-skill')
+		expect(result.content).toBe('# Hello')
+	})
+
+	it('accepts optional workspace_id', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			name: 'my-skill',
+			content: '# Hello',
+		})
+		expect(result.workspace_id).toBe(uuid)
+	})
+
+	it('rejects missing name', () => {
+		expect(() => schema.parse({ content: 'x' })).toThrow()
+	})
+
+	it('rejects missing content', () => {
+		expect(() => schema.parse({ name: 'my-skill' })).toThrow()
+	})
+
+	it('rejects empty content', () => {
+		expect(() => schema.parse({ name: 'my-skill', content: '' })).toThrow()
+	})
+
+	it('rejects invalid name format', () => {
+		expect(() => schema.parse({ name: 'Bad Name', content: 'x' })).toThrow()
+	})
+})
+
+describe('update_workspace_skill schema', () => {
+	const schema = tools.update_workspace_skill.inputSchema
+
+	it('accepts valid name + content', () => {
+		const result = schema.parse({ name: 'my-skill', content: '# Updated' })
+		expect(result.name).toBe('my-skill')
+		expect(result.content).toBe('# Updated')
+	})
+
+	it('rejects missing content', () => {
+		expect(() => schema.parse({ name: 'my-skill' })).toThrow()
+	})
+
+	it('rejects empty content', () => {
+		expect(() => schema.parse({ name: 'my-skill', content: '' })).toThrow()
+	})
+
+	it('rejects invalid name', () => {
+		expect(() => schema.parse({ name: 'Bad', content: 'x' })).toThrow()
+	})
+})
+
+describe('delete_workspace_skill schema', () => {
+	const schema = tools.delete_workspace_skill.inputSchema
+
+	it('accepts valid name', () => {
+		const result = schema.parse({ name: 'my-skill' })
+		expect(result.name).toBe('my-skill')
+	})
+
+	it('rejects missing name', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects invalid name format', () => {
+		expect(() => schema.parse({ name: 'Invalid Name' })).toThrow()
+	})
+})
+
 describe('add_workspace_member schema', () => {
 	const schema = tools.add_workspace_member.inputSchema
 
@@ -666,6 +815,11 @@ describe('workspace_id optional on most tools', () => {
 		'search_objects',
 		'list_relationships',
 		'delete_relationship',
+		'list_workspace_skills',
+		'get_workspace_skill',
+		'create_workspace_skill',
+		'update_workspace_skill',
+		'delete_workspace_skill',
 		'get_events',
 		'create_trigger',
 		'list_triggers',
@@ -688,4 +842,126 @@ describe('workspace_id optional on most tools', () => {
 			expect(shape.workspace_id.isOptional()).toBe(true)
 		})
 	}
+})
+
+describe('workspace skill tools — end-to-end round-trip', () => {
+	// Drives the real tool handlers registered by createMcpServer against a
+	// fake backend that stores the skill in memory. This verifies the MCP tool
+	// surface actually round-trips a skill through create → get.
+	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+	beforeEach(async () => {
+		vi.clearAllMocks()
+		handlers = new Map()
+
+		const { registerAppTool } = await import('@modelcontextprotocol/ext-apps/server')
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+		})
+
+		const { createMcpServer } = await import('../server')
+		createMcpServer({
+			apiBaseUrl: 'http://localhost:3000',
+			apiKey: 'ank_testkey123',
+			defaultWorkspaceId: 'ws-e2e-123',
+		})
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function getHandler(name: string) {
+		const handler = handlers.get(name)
+		if (!handler) throw new Error(`Handler ${name} not registered`)
+		return handler
+	}
+
+	it('creates a workspace skill via create_workspace_skill and reads it back via get_workspace_skill', async () => {
+		// Fake backend: route POST /skills → store in memory, GET /skills/:name → read from memory
+		const store = new Map<string, { id: string; name: string; content: string }>()
+		let nextId = 1
+
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+			const url = input as string
+			const method = init?.method ?? 'GET'
+			const body = init?.body ? JSON.parse(init.body as string) : undefined
+
+			const createMatch = url.match(/\/api\/workspaces\/([^/]+)\/skills$/)
+			if (method === 'POST' && createMatch) {
+				const id = `skill-${nextId++}`
+				const stored = { id, name: body.name, content: body.content }
+				const key = `${createMatch[1]}::${body.name}`
+				if (store.has(key)) {
+					return {
+						ok: false,
+						status: 409,
+						text: () => Promise.resolve('conflict'),
+					} as Response
+				}
+				store.set(key, stored)
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							...stored,
+							workspaceId: createMatch[1],
+							description: 'Ship to prod',
+							storageKey: `workspaces/${createMatch[1]}/skills/${body.name}/SKILL.md`,
+							sizeBytes: Buffer.byteLength(body.content, 'utf-8'),
+							createdBy: null,
+							createdAt: new Date().toISOString(),
+							updatedAt: new Date().toISOString(),
+						}),
+				} as Response
+			}
+
+			const getMatch = url.match(/\/api\/workspaces\/([^/]+)\/skills\/([^/]+)$/)
+			if (method === 'GET' && getMatch) {
+				const key = `${getMatch[1]}::${getMatch[2]}`
+				const found = store.get(key)
+				if (!found) {
+					return {
+						ok: false,
+						status: 404,
+						text: () => Promise.resolve('not found'),
+					} as Response
+				}
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							...found,
+							workspaceId: getMatch[1],
+							description: 'Ship to prod',
+							storageKey: `workspaces/${getMatch[1]}/skills/${found.name}/SKILL.md`,
+							sizeBytes: Buffer.byteLength(found.content, 'utf-8'),
+							createdBy: null,
+							createdAt: new Date().toISOString(),
+							updatedAt: new Date().toISOString(),
+						}),
+				} as Response
+			}
+
+			throw new Error(`Unhandled fake fetch: ${method} ${url}`)
+		})
+
+		const create = getHandler('create_workspace_skill')
+		const createRes = (await create({
+			name: 'deploy-prod',
+			content: '---\nname: deploy-prod\ndescription: Ship to prod\n---\n\nBody',
+		})) as { content: Array<{ text: string }> }
+		const created = JSON.parse(createRes.content[0].text)
+		expect(created.name).toBe('deploy-prod')
+		expect(created.id).toBe('skill-1')
+
+		const get = getHandler('get_workspace_skill')
+		const getRes = (await get({ name: 'deploy-prod' })) as { content: Array<{ text: string }> }
+		const fetched = JSON.parse(getRes.content[0].text)
+
+		// Round-trip: id and content match what was created.
+		expect(fetched.id).toBe(created.id)
+		expect(fetched.name).toBe('deploy-prod')
+		expect(fetched.content).toBe('---\nname: deploy-prod\ndescription: Ship to prod\n---\n\nBody')
+	})
 })
