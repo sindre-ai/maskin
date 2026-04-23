@@ -151,6 +151,21 @@ describe('SindreChat', () => {
 		await waitFor(() => expect(textarea.value).toBe(''))
 	})
 
+	it('preserves the draft and surfaces an error when send fails', async () => {
+		mockSend.mockClear()
+		mockSend.mockRejectedValueOnce(new Error('network down'))
+		setHookResult({ status: 'ready' })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'important prompt' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+		expect(textarea.value).toBe('important prompt')
+		expect(await screen.findByRole('alert')).toHaveTextContent(/network down/)
+	})
+
 	it('disables the composer while the session is starting', () => {
 		setHookResult({ status: 'starting' })
 		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)

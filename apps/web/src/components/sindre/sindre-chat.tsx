@@ -404,6 +404,7 @@ function Composer({
 }: ComposerProps) {
 	const [value, setValue] = useState('')
 	const [sending, setSending] = useState(false)
+	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
 	const slashPosRef = useRef<number | null>(null)
@@ -416,12 +417,20 @@ function Composer({
 			if (!canSend) return
 			const content = value.trim()
 			setSending(true)
+			setSendError(null)
+			let sent = false
 			try {
 				await onSend(content)
-				setValue('')
+				sent = true
+			} catch (err) {
+				setSendError(err instanceof Error ? err.message : 'Failed to send')
 			} finally {
 				setSending(false)
 			}
+			// Only clear the composer after the send actually resolved without
+			// error — a rejected send keeps the draft so the user can retry
+			// without losing a carefully crafted prompt.
+			if (sent) setValue('')
 		},
 		[canSend, onSend, value],
 	)
@@ -538,6 +547,15 @@ function Composer({
 					{showSpinner ? <Spinner /> : <Send size={16} />}
 				</Button>
 			</form>
+			{sendError ? (
+				<p
+					role="alert"
+					className="px-1 text-error text-xs"
+					aria-live="polite"
+				>
+					{sendError} — your message is preserved; try again.
+				</p>
+			) : null}
 			<div className="flex items-center gap-1">
 				<Button
 					type="button"
