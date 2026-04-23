@@ -1,7 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+const requireFromHere = createRequire(import.meta.url)
 import { type ExecEvent, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
 import type {
@@ -32,7 +35,7 @@ function spawnSandboxCreate(config: {
 }): void {
 	// Resolve the absolute path to microsandbox from the parent process
 	// so the child can require it regardless of cwd.
-	const msbPath = require.resolve('microsandbox')
+	const msbPath = requireFromHere.resolve('microsandbox')
 	const script = `
 const { Sandbox, Mount, NetworkPolicy } = require(${JSON.stringify(msbPath)});
 const config = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
