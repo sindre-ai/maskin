@@ -35,7 +35,13 @@ export type SindreEvent =
 			sessionId?: string
 			messageId?: string
 	  }
-	| { kind: 'thinking'; text: string; sessionId?: string; messageId?: string }
+	| {
+			kind: 'thinking'
+			text: string
+			redacted?: boolean
+			sessionId?: string
+			messageId?: string
+	  }
 	| {
 			kind: 'result'
 			subtype: string
@@ -85,22 +91,24 @@ function parseAssistant(envelope: Record<string, unknown>): SindreEvent[] | null
 			if (id === undefined || name === undefined) continue
 			events.push({ kind: 'tool_use', id, name, input: block.input, sessionId, messageId })
 		} else if (type === 'thinking') {
-			// @debug-thinking-format: the assistant-text path renders reliably but
-			// the thinking block sometimes renders with no body — log the raw
-			// block shape so we can figure out which field the CLI is actually
-			// putting the thinking content in.
-			// biome-ignore lint/suspicious/noConsole: diagnostic logging
-			console.info('[sindre-stream] thinking block envelope', {
-				blockKeys: Object.keys(block),
-				rawBlock: block,
+			// The CLI emits two flavours of thinking block:
+			//   1. Plain: `{ type: 'thinking', thinking: '...' }` — the model's
+			//      internal reasoning, streamed as text.
+			//   2. Redacted: `{ type: 'thinking', thinking: '', signature: '...' }`
+			//      — Anthropic withholds the content but confirms thinking
+			//      happened via a signature. Still surface it so the user sees
+			//      "Sindre thought about this" rather than a silent gap.
+			const rawText = asString(block.thinking) ?? asString(block.text) ?? ''
+			const signature = asString(block.signature)
+			const redacted = rawText.length === 0 && signature !== undefined
+			if (rawText.length === 0 && !redacted) continue
+			events.push({
+				kind: 'thinking',
+				text: rawText,
+				...(redacted ? { redacted: true } : {}),
+				sessionId,
+				messageId,
 			})
-			const text = asString(block.thinking) ?? asString(block.text)
-			if (text === undefined) {
-				// biome-ignore lint/suspicious/noConsole: diagnostic logging
-				console.warn('[sindre-stream] thinking block has no string text/thinking field', block)
-				continue
-			}
-			events.push({ kind: 'thinking', text, sessionId, messageId })
 		}
 	}
 

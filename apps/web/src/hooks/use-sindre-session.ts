@@ -6,6 +6,11 @@ import { type SindreEvent, type UserAttachmentView, parseSindreLine } from '@/li
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+// Vite replaces `import.meta.env.DEV` at build time. Reading it through a
+// cast keeps us out of the vite/client ambient type dependency while still
+// compiling to the same boolean.
+const IS_DEV = ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV ?? false) as boolean
+
 const STORAGE_PREFIX = 'maskin-sindre-session'
 
 // Bootstrap action_prompt is required by the create-session schema (min length 1)
@@ -146,6 +151,17 @@ export function useSindreSession({
 				setStatus('ready')
 			},
 			onmessage(msg) {
+				// Dev-only firehose: dump every SSE envelope so the raw CLI
+				// stream is inspectable in DevTools when diagnosing rendering
+				// mismatches. Gated on IS_DEV so production builds
+				// stay quiet.
+				if (IS_DEV) {
+					// biome-ignore lint/suspicious/noConsole: dev diagnostic
+					console.debug('[sindre-session] SSE envelope', {
+						event: msg.event,
+						data: msg.data,
+					})
+				}
 				if (msg.event === 'done') {
 					setStatus('closed')
 					return
@@ -153,6 +169,10 @@ export function useSindreSession({
 				if (msg.event === 'stdout') {
 					const parsed = parseSindreLine(msg.data)
 					if (parsed.length === 0) return
+					if (IS_DEV) {
+						// biome-ignore lint/suspicious/noConsole: dev diagnostic
+						console.debug('[sindre-session] parsed events', parsed)
+					}
 					setEvents((prev) => prev.concat(parsed))
 					return
 				}

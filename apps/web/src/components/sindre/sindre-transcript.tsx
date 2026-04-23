@@ -83,7 +83,7 @@ function TranscriptRow({ event }: { event: SindreEvent }) {
 		case 'text':
 			return <AssistantTextBlock text={event.text} />
 		case 'thinking':
-			return <ThinkingBlock text={event.text} />
+			return <ThinkingBlock text={event.text} redacted={event.redacted} />
 		case 'tool_use':
 			return <ToolUseBlock name={event.name} input={event.input} />
 		case 'result':
@@ -185,16 +185,12 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 	)
 }
 
-function ThinkingBlock({ text }: { text: string }) {
-	// @debug-thinking-format: log what the renderer actually receives so we
-	// can tell if the event pipeline is dropping content vs. the parser never
-	// filled it in the first place.
-	// biome-ignore lint/suspicious/noConsole: diagnostic logging
-	console.info('[sindre-transcript] rendering thinking block', {
-		length: text.length,
-		preview: text.slice(0, 120),
-	})
+function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean }) {
 	const [open, setOpen] = useState(false)
+	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
+	const body = redacted
+		? 'Anthropic withheld the internal reasoning for this turn. Sindre still thought about the problem — the content just isn’t available here.'
+		: text
 	return (
 		<div className="rounded-md border border-border bg-bg text-xs">
 			<button
@@ -208,11 +204,11 @@ function ThinkingBlock({ text }: { text: string }) {
 				) : (
 					<ChevronRight size={14} className="shrink-0 not-italic text-text-muted" />
 				)}
-				<span className="text-text-muted">Thinking</span>
+				<span className="text-text-muted">{label}</span>
 			</button>
 			{open && (
 				<div className="whitespace-pre-wrap border-t border-border px-3 py-2 text-text-muted italic">
-					{text}
+					{body}
 				</div>
 			)}
 		</div>
