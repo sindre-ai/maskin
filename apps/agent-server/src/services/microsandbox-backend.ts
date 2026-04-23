@@ -55,17 +55,18 @@ function msbCreate(config: {
 	}
 	args.push(config.image)
 
-	// Run msb with a completely clean env (via env -i). The same command
-	// works from a fresh shell but fails from the agent-server's process
-	// tree. An inherited env var (likely from agent-server's .env) is
-	// confusing libkrun's VMM boot — strip everything except the bare
-	// minimum (PATH, HOME) that msb and libkrun need.
+	// Run msb as a transient systemd service (not --scope). --scope keeps
+	// the process as a descendant of the caller; a plain transient service
+	// is reparented to systemd PID 1. Confirmed: msb fails only when it's
+	// a descendant of the agent-server process tree, and this fully detaches.
 	execFileSync(
-		'/usr/bin/env',
+		'/usr/bin/systemd-run',
 		[
-			'-i',
-			`PATH=${process.env.PATH ?? '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}`,
-			`HOME=${process.env.HOME ?? '/root'}`,
+			'--wait',
+			'--pipe',
+			'--quiet',
+			'--collect',
+			'--service-type=exec',
 			MSB_BIN,
 			...args,
 		],
