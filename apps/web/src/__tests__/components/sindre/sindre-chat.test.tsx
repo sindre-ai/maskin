@@ -414,6 +414,57 @@ describe('SindreChat', () => {
 		})
 	})
 
+	it('dispatches clear_all after a confirmed send so chips do not ride along', async () => {
+		mockSend.mockClear()
+		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: null,
+					objects: [{ id: 'obj-1', title: 'Bet Alpha' }],
+					notifications: [],
+				}}
+				onDispatchSelection={dispatch}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'summarize' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+		await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: 'clear_all' }))
+	})
+
+	it('keeps selection chips when send rejects so the user can retry', async () => {
+		mockSend.mockClear()
+		mockSend.mockRejectedValueOnce(new Error('boom'))
+		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
+		render(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				selection={{
+					agent: null,
+					objects: [{ id: 'obj-1', title: 'Bet Alpha' }],
+					notifications: [],
+				}}
+				onDispatchSelection={dispatch}
+			/>,
+		)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: 'summarize' } })
+		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1))
+		expect(dispatch).not.toHaveBeenCalledWith({ type: 'clear_all' })
+	})
+
 	it('renders a chip per notification and dispatches remove_notification on click', async () => {
 		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
 		const user = userEvent.setup()

@@ -183,6 +183,10 @@ export function SindreChat({
 						await sindre.send(enriched, undefined, content, displayAttachments)
 					}
 				}
+				// Confirmed sent — clear the composer's chips so the same agent /
+				// objects / notifications don't ride along on the next turn. The
+				// user message bubble already displays them as context.
+				onDispatchSelection?.({ type: 'clear_all' })
 			} catch (err) {
 				setPendingTurn(false)
 				throw err
@@ -193,6 +197,7 @@ export function SindreChat({
 			events.length,
 			oneShot,
 			onSubmitOverride,
+			onDispatchSelection,
 			sindre,
 			selectedAgent,
 			selectedObjects,
