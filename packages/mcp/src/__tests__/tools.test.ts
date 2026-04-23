@@ -25,6 +25,11 @@ const ALL_TOOL_NAMES = [
 	'list_workspaces',
 	'get_workspace_schema',
 	'add_workspace_member',
+	'list_workspace_skills',
+	'get_workspace_skill',
+	'create_workspace_skill',
+	'update_workspace_skill',
+	'delete_workspace_skill',
 	'get_events',
 	'create_trigger',
 	'update_trigger',
@@ -397,6 +402,136 @@ describe('create_trigger schema', () => {
 	})
 })
 
+describe('list_workspace_skills schema', () => {
+	const schema = tools.list_workspace_skills.inputSchema
+
+	it('accepts empty input', () => {
+		expect(schema.parse({})).toEqual({})
+	})
+
+	it('accepts optional workspace_id', () => {
+		expect(schema.parse({ workspace_id: uuid }).workspace_id).toBe(uuid)
+	})
+
+	it('rejects invalid workspace_id', () => {
+		expect(() => schema.parse({ workspace_id: 'not-uuid' })).toThrow()
+	})
+})
+
+describe('get_workspace_skill schema', () => {
+	const schema = tools.get_workspace_skill.inputSchema
+
+	it('accepts valid name', () => {
+		const result = schema.parse({ name: 'my-skill' })
+		expect(result.name).toBe('my-skill')
+		expect(result.workspace_id).toBeUndefined()
+	})
+
+	it('accepts optional workspace_id with name', () => {
+		const result = schema.parse({ workspace_id: uuid, name: 'skill-1' })
+		expect(result.workspace_id).toBe(uuid)
+		expect(result.name).toBe('skill-1')
+	})
+
+	it('rejects missing name', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects uppercase name', () => {
+		expect(() => schema.parse({ name: 'MySkill' })).toThrow()
+	})
+
+	it('rejects name with spaces', () => {
+		expect(() => schema.parse({ name: 'my skill' })).toThrow()
+	})
+
+	it('rejects name with underscores', () => {
+		expect(() => schema.parse({ name: 'my_skill' })).toThrow()
+	})
+
+	it('rejects empty name', () => {
+		expect(() => schema.parse({ name: '' })).toThrow()
+	})
+
+	it('rejects name longer than 64 chars', () => {
+		expect(() => schema.parse({ name: 'a'.repeat(65) })).toThrow()
+	})
+})
+
+describe('create_workspace_skill schema', () => {
+	const schema = tools.create_workspace_skill.inputSchema
+
+	it('accepts valid name + content', () => {
+		const result = schema.parse({ name: 'my-skill', content: '# Hello' })
+		expect(result.name).toBe('my-skill')
+		expect(result.content).toBe('# Hello')
+	})
+
+	it('accepts optional workspace_id', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			name: 'my-skill',
+			content: '# Hello',
+		})
+		expect(result.workspace_id).toBe(uuid)
+	})
+
+	it('rejects missing name', () => {
+		expect(() => schema.parse({ content: 'x' })).toThrow()
+	})
+
+	it('rejects missing content', () => {
+		expect(() => schema.parse({ name: 'my-skill' })).toThrow()
+	})
+
+	it('rejects empty content', () => {
+		expect(() => schema.parse({ name: 'my-skill', content: '' })).toThrow()
+	})
+
+	it('rejects invalid name format', () => {
+		expect(() => schema.parse({ name: 'Bad Name', content: 'x' })).toThrow()
+	})
+})
+
+describe('update_workspace_skill schema', () => {
+	const schema = tools.update_workspace_skill.inputSchema
+
+	it('accepts valid name + content', () => {
+		const result = schema.parse({ name: 'my-skill', content: '# Updated' })
+		expect(result.name).toBe('my-skill')
+		expect(result.content).toBe('# Updated')
+	})
+
+	it('rejects missing content', () => {
+		expect(() => schema.parse({ name: 'my-skill' })).toThrow()
+	})
+
+	it('rejects empty content', () => {
+		expect(() => schema.parse({ name: 'my-skill', content: '' })).toThrow()
+	})
+
+	it('rejects invalid name', () => {
+		expect(() => schema.parse({ name: 'Bad', content: 'x' })).toThrow()
+	})
+})
+
+describe('delete_workspace_skill schema', () => {
+	const schema = tools.delete_workspace_skill.inputSchema
+
+	it('accepts valid name', () => {
+		const result = schema.parse({ name: 'my-skill' })
+		expect(result.name).toBe('my-skill')
+	})
+
+	it('rejects missing name', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects invalid name format', () => {
+		expect(() => schema.parse({ name: 'Invalid Name' })).toThrow()
+	})
+})
+
 describe('add_workspace_member schema', () => {
 	const schema = tools.add_workspace_member.inputSchema
 
@@ -666,6 +801,11 @@ describe('workspace_id optional on most tools', () => {
 		'search_objects',
 		'list_relationships',
 		'delete_relationship',
+		'list_workspace_skills',
+		'get_workspace_skill',
+		'create_workspace_skill',
+		'update_workspace_skill',
+		'delete_workspace_skill',
 		'get_events',
 		'create_trigger',
 		'list_triggers',

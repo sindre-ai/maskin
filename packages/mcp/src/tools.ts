@@ -1,4 +1,4 @@
-import { notificationActionSchema, notificationOptionSchema } from '@maskin/shared'
+import { notificationActionSchema, notificationOptionSchema, skillNameSchema } from '@maskin/shared'
 import { z } from 'zod'
 
 // Keep field list in sync with `notificationMetadataSchema` in
@@ -335,6 +335,62 @@ export const tools = {
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe('Role: owner (full control), admin (manage members), member (read/write)'),
+		}),
+	},
+	// ─── Workspace Skills ─────────────────────────────────────
+	// Shared, workspace-scoped skills that any agent in the workspace can be given.
+	// NOT the same as per-agent skills (those live under an agent's own file store).
+	list_workspace_skills: {
+		description:
+			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	get_workspace_skill: {
+		description:
+			'Get a shared workspace skill by name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: skillNameSchema.describe(
+				'Skill name. Lowercase letters, numbers, and hyphens only; max 64 chars.',
+			),
+		}),
+	},
+	create_workspace_skill: {
+		description:
+			'Create a shared workspace skill. The skill is stored once in the workspace and can be attached to any number of agents afterwards — NOT a per-agent skill. Content must be valid SKILL.md (markdown with optional YAML frontmatter); the server parses the frontmatter to extract the description.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: skillNameSchema.describe(
+				'Skill name. Lowercase letters, numbers, and hyphens only; max 64 chars. Must be unique within the workspace.',
+			),
+			content: z
+				.string()
+				.min(1)
+				.describe(
+					'Full SKILL.md content. Optional YAML frontmatter (--- name, description, ... ---) is parsed for the description.',
+				),
+		}),
+	},
+	update_workspace_skill: {
+		description:
+			'Replace the content of an existing shared workspace skill. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: skillNameSchema.describe('Name of the workspace skill to update.'),
+			content: z
+				.string()
+				.min(1)
+				.describe('New SKILL.md content. Replaces the existing body entirely.'),
+		}),
+	},
+	delete_workspace_skill: {
+		description:
+			'Delete a shared workspace skill. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: skillNameSchema.describe('Name of the workspace skill to delete.'),
 		}),
 	},
 	get_events: {

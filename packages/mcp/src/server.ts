@@ -760,6 +760,133 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Workspace Skills ────────────────────────────────────
+	// Thin HTTP wrappers around /api/workspaces/:workspaceId/skills — the shared
+	// skill library. These are workspace-scoped, attachable to any agent in the
+	// workspace. The backend route enforces membership; we resolve the effective
+	// workspace ID from the arg or DEFAULT_WORKSPACE_ID before building the path.
+	const resolveWorkspaceId = (workspaceId?: string): string => {
+		const wsId = workspaceId ?? config.defaultWorkspaceId
+		if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+		return wsId
+	}
+
+	registerAppTool(
+		server,
+		'list_workspace_skills',
+		{
+			description: tools.list_workspace_skills.description,
+			inputSchema: tools.list_workspace_skills.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: { toolName: 'list_workspace_skills' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_workspace_skill',
+		{
+			description: tools.get_workspace_skill.description,
+			inputSchema: tools.get_workspace_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
+				undefined,
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: { toolName: 'get_workspace_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_workspace_skill',
+		{
+			description: tools.create_workspace_skill.description,
+			inputSchema: tools.create_workspace_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/workspaces/${wsId}/skills`,
+				{ name: args.name, content: args.content },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: { toolName: 'create_workspace_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_workspace_skill',
+		{
+			description: tools.update_workspace_skill.description,
+			inputSchema: tools.update_workspace_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'PUT',
+				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
+				{ content: args.content },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: { toolName: 'update_workspace_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_workspace_skill',
+		{
+			description: tools.delete_workspace_skill.description,
+			inputSchema: tools.delete_workspace_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'DELETE',
+				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
+				undefined,
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: { toolName: 'delete_workspace_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Events ───────────────────────────────────────────────
 	registerAppTool(
 		server,
