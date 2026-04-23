@@ -890,6 +890,7 @@ export function createMcpServer(config: McpConfig): {
 				created_at: s.createdAt,
 				events_delivered: s.eventsDelivered,
 				events_dropped: s.eventsDropped,
+				events_filtered: s.eventsFiltered,
 			}))
 			return {
 				_meta: { toolName: 'list_event_subscriptions' },

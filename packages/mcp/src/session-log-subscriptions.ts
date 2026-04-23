@@ -66,7 +66,6 @@ export function createSessionLogSubscriptionRegistry(
 			}),
 			parseFrame: parseLogFrame,
 			onItem: async (item) => {
-				const isDone = item.kind === 'done'
 				const isError = item.kind === 'log' && item.stream === 'stderr'
 				const level = isError ? 'error' : 'info'
 				const data =
@@ -78,6 +77,7 @@ export function createSessionLogSubscriptionRegistry(
 								stream: item.stream,
 								content: item.content,
 							}
+				let firstDeliveryError: unknown = null
 				for (const [subId, sessId] of subToSession) {
 					if (sessId !== sessionId) continue
 					const sub = subs.get(subId)
@@ -91,16 +91,17 @@ export function createSessionLogSubscriptionRegistry(
 						sub.logsDelivered++
 					} catch (err) {
 						sub.logsDropped++
+						if (firstDeliveryError === null) firstDeliveryError = err
 						console.error(
 							`[maskin-mcp] Session-log delivery failed for ${subId}:`,
 							err instanceof Error ? err.message : err,
 						)
 					}
 				}
-				if (isDone) {
-					// The managed-sse will invoke onTerminal after this frame is
-					// processed; nothing else to do here.
-				}
+				// Don't suppress isDone branching on delivery failure: managed-sse will
+				// hand the terminal frame to onTerminal regardless. But re-throw on
+				// delivery error so lastEventId stays put and a reconnect retries.
+				if (firstDeliveryError !== null) throw firstDeliveryError
 			},
 			onWarn: async (level, message) => {
 				try {

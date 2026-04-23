@@ -35,6 +35,7 @@ export interface Subscription {
 	createdAt: string
 	eventsDelivered: number
 	eventsDropped: number
+	eventsFiltered: number
 }
 
 export interface SubscriptionRegistry {
@@ -110,12 +111,16 @@ export function createSubscriptionRegistry(
 				// subtypes here — treat the whole category as `warning`.
 				const isNotification = event.entity_type === 'notification'
 				const level = isNotification ? 'warning' : 'info'
+				let firstDeliveryError: unknown = null
 				for (const [subId, wsId] of subToWorkspace) {
 					if (wsId !== workspaceId) continue
 					const sub = subs.get(subId)
 					const filter = filters.get(subId)
 					if (!sub || !filter) continue
-					if (!matchesFilter(event, filter)) continue
+					if (!matchesFilter(event, filter)) {
+						sub.eventsFiltered++
+						continue
+					}
 					try {
 						await mcpServer.server.sendLoggingMessage({
 							level,
@@ -129,12 +134,17 @@ export function createSubscriptionRegistry(
 						sub.eventsDelivered++
 					} catch (err) {
 						sub.eventsDropped++
+						if (firstDeliveryError === null) firstDeliveryError = err
 						console.error(
 							`[maskin-mcp] Delivery failed for subscription ${subId}:`,
 							err instanceof Error ? err.message : err,
 						)
 					}
 				}
+				// Re-throw so managed-sse holds back lastEventId and the next reconnect
+				// replays this event. The shared transport means a single delivery
+				// failure usually implies the rest would too, so don't pretend success.
+				if (firstDeliveryError !== null) throw firstDeliveryError
 			},
 			onWarn: async (level, message) => {
 				try {
@@ -177,6 +187,7 @@ export function createSubscriptionRegistry(
 				createdAt: new Date().toISOString(),
 				eventsDelivered: 0,
 				eventsDropped: 0,
+				eventsFiltered: 0,
 			}
 			subs.set(sub.id, sub)
 			filters.set(sub.id, filter)

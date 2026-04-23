@@ -248,6 +248,36 @@ describe('MCP Routes', () => {
 			)
 		})
 
+		it('tears down event and session-log subscriptions after the request', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/list', id: 1 }
+
+			await app.request(
+				jsonPostRequest('/mcp', body, { Authorization: 'Bearer ank_test' }),
+				undefined,
+				env,
+			)
+
+			expect(mockShutdownAll).toHaveBeenCalledTimes(1)
+			expect(mockSessionLogShutdownAll).toHaveBeenCalledTimes(1)
+		})
+
+		it('still tears down subscriptions when handleRequest rejects', async () => {
+			mockHandleRequest.mockRejectedValueOnce(new Error('boom'))
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/list', id: 1 }
+
+			const res = await app.request(
+				jsonPostRequest('/mcp', body, { Authorization: 'Bearer ank_test' }),
+				undefined,
+				env,
+			)
+
+			expect(res.status).toBe(500)
+			expect(mockShutdownAll).toHaveBeenCalledTimes(1)
+			expect(mockSessionLogShutdownAll).toHaveBeenCalledTimes(1)
+		})
+
 		it('handles batch JSON-RPC array requests', async () => {
 			const app = await createApp()
 			const body = [

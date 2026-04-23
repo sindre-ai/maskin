@@ -106,6 +106,12 @@ export interface ManagedSSEStream {
 export function createManagedSSE<T>(opts: ManagedSSEOptions<T>): ManagedSSEStream {
 	const refs = new Set<string>()
 	const recentEventIds: string[] = []
+	// Dedup ring must be at least as large as the backend's replay window, or a
+	// resume after we delivered a full replay window's worth of frames could
+	// re-deliver the oldest ones (their ids would have aged out of the ring).
+	// 2× replayCap gives slack for overlap; floor at 256 keeps the small-replay
+	// case (event stream replayCap=100) bounded above the typical noise.
+	const dedupRingSize = Math.max(256, opts.replayCap * 2)
 	let abortController: AbortController | null = null
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 	let lastEventId: string | null = null
@@ -213,17 +219,23 @@ export function createManagedSSE<T>(opts: ManagedSSEOptions<T>): ManagedSSEStrea
 				// duplicate — skip delivery, do not advance lastEventId
 			} else {
 				fresh = true
+				let delivered = true
 				try {
 					await opts.onItem(parsed.item, { eventId: frame.id })
 				} catch (err) {
+					delivered = false
 					console.error(
 						`[maskin-mcp] Item delivery failed (${opts.logTag}):`,
 						err instanceof Error ? err.message : err,
 					)
 				}
-				if (frame.id) {
+				// Only advance the resume cursor + dedup ring on success. On failure,
+				// the next reconnect will replay this id; if a later id succeeds the
+				// failed one is permanently lost (counted as dropped by the registry),
+				// but we don't pretend it was delivered for resumption purposes.
+				if (frame.id && delivered) {
 					recentEventIds.push(frame.id)
-					if (recentEventIds.length > 256) recentEventIds.shift()
+					if (recentEventIds.length > dedupRingSize) recentEventIds.shift()
 					lastEventId = frame.id
 				}
 			}
