@@ -614,8 +614,7 @@ function Composer({
 	return (
 		<div
 			className={cn(
-				'relative flex flex-col gap-1 rounded-md border border-border bg-bg-surface p-2',
-				surface === 'pulse-bar' && 'shadow-sm',
+				'relative flex flex-col gap-1 rounded-md border border-border bg-bg-surface p-2 shadow-sm',
 			)}
 		>
 			<SlashPicker
