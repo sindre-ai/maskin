@@ -13,7 +13,7 @@ import {
 	registerAppResource,
 	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { tools } from './tools.js'
 
@@ -883,6 +883,71 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: { toolName: 'delete_workspace_skill' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// Expose each workspace skill as an MCP resource at
+	// skill://maskin/{workspaceId}/{name}. This complements the tools above and
+	// lines up with the upcoming MCP Skills primitive — when clients start
+	// treating `skill://` resources as first-class skills natively, no server
+	// change is needed.
+	type WorkspaceSkillListRow = {
+		id: string
+		name: string
+		description: string | null
+	}
+	type WorkspaceSkillDetailRow = WorkspaceSkillListRow & { content: string }
+
+	server.resource(
+		'workspace-skill',
+		new ResourceTemplate('skill://maskin/{workspaceId}/{name}', {
+			list: async () => {
+				if (!config.defaultWorkspaceId) return { resources: [] }
+				try {
+					const skills = (await apiCall(
+						config,
+						'GET',
+						`/api/workspaces/${config.defaultWorkspaceId}/skills`,
+						undefined,
+						{ workspaceId: config.defaultWorkspaceId },
+					)) as WorkspaceSkillListRow[]
+					return {
+						resources: skills.map((s) => ({
+							uri: `skill://maskin/${config.defaultWorkspaceId}/${encodeURIComponent(s.name)}`,
+							name: s.name,
+							description: s.description ?? undefined,
+							mimeType: 'text/markdown',
+						})),
+					}
+				} catch (err) {
+					console.error('[MCP] Failed to list workspace skills:', err)
+					return { resources: [] }
+				}
+			},
+		}),
+		async (uri, variables) => {
+			const workspaceId = Array.isArray(variables.workspaceId)
+				? variables.workspaceId[0]
+				: variables.workspaceId
+			const name = Array.isArray(variables.name) ? variables.name[0] : variables.name
+			if (!workspaceId) throw new Error(`Missing workspaceId in skill URI: ${uri.toString()}`)
+			if (!name) throw new Error(`Missing name in skill URI: ${uri.toString()}`)
+			const skill = (await apiCall(
+				config,
+				'GET',
+				`/api/workspaces/${workspaceId}/skills/${encodeURIComponent(name)}`,
+				undefined,
+				{ workspaceId },
+			)) as WorkspaceSkillDetailRow
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'text/markdown',
+						text: skill.content,
+					},
+				],
 			}
 		},
 	)
