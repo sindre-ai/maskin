@@ -26,17 +26,24 @@ type Env = {
 const app = new OpenAPIHono<Env>()
 
 function isUniqueViolation(err: unknown, constraintName: string): boolean {
-	if (!err || typeof err !== 'object') return false
-	const e = err as {
-		code?: string
-		constraint_name?: string
-		constraint?: string
-		message?: string
+	// Drizzle wraps the driver's PostgresError as `err.cause`, so inspect both
+	// the top-level error and its `cause` chain before giving up.
+	for (let current: unknown = err; current && typeof current === 'object'; ) {
+		const e = current as {
+			code?: string
+			constraint_name?: string
+			constraint?: string
+			message?: string
+			cause?: unknown
+		}
+		if (e.code === '23505') {
+			const name = e.constraint_name ?? e.constraint
+			if (name === constraintName) return true
+			if (typeof e.message === 'string' && e.message.includes(constraintName)) return true
+		}
+		current = e.cause
 	}
-	if (e.code !== '23505') return false
-	const name = e.constraint_name ?? e.constraint
-	if (name === constraintName) return true
-	return typeof e.message === 'string' && e.message.includes(constraintName)
+	return false
 }
 
 async function requireWorkspaceMember(db: Database, workspaceId: string, actorId: string) {

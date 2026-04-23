@@ -178,6 +178,12 @@ describe('SessionManager', () => {
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
 
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
 			// Select queue in startSession → hasCapacity → launchContainer order.
 			mockResults.selectQueue = [
 				[session], // startSession: load session
@@ -219,6 +225,12 @@ describe('SessionManager', () => {
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
 
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
 			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
 
 			await manager.startSession(session.id)
@@ -252,6 +264,12 @@ describe('SessionManager', () => {
 				tools: null,
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
 
 			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
 
@@ -389,6 +407,12 @@ describe('SessionManager', () => {
 				tools: null,
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
 
 			// resumeSession → launchContainer → attachStdin
 			mockResults.selectQueue = [
