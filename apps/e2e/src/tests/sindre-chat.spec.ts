@@ -128,7 +128,7 @@ test.describe('Sindre chat surfaces', () => {
 		await expect(chips.getByText('Shipping Plan')).toBeVisible()
 	})
 
-	test('refresh preserves the transcript: stored sessionId reused, stream resubscribes', async ({
+	test('refresh bootstraps a fresh session and resubscribes the stream', async ({
 		page,
 		account,
 	}) => {
@@ -155,13 +155,14 @@ test.describe('Sindre chat surfaces', () => {
 			.poll(() => mocks.streamSubscriptions, { timeout: 10_000 })
 			.toBeGreaterThanOrEqual(1)
 
-		// The session hook persists the container id in localStorage so the
-		// refresh can pick up the running container.
+		// Session id is tab-scoped React state — no localStorage persistence.
+		// Refreshing the page bootstraps a new interactive session and the
+		// watchdog pauses the old one on idle.
 		const storedSessionId = await page.evaluate(
 			(ws) => localStorage.getItem(`maskin-sindre-session-${ws}`),
 			account.workspaceId,
 		)
-		expect(storedSessionId).toBe(mocks.sessionId)
+		expect(storedSessionId).toBeNull()
 
 		const sessionsBefore = mocks.sessionsCreated
 		const subscriptionsBefore = mocks.streamSubscriptions
@@ -169,12 +170,14 @@ test.describe('Sindre chat surfaces', () => {
 		await page.reload()
 		await openSheetFromSidebar(page)
 
-		// The stored session id is reused — no new session is bootstrapped —
-		// and the SSE stream resubscribes on the fresh page instance.
+		// A fresh session is bootstrapped and the SSE stream resubscribes on
+		// the new page instance.
+		await expect
+			.poll(() => mocks.sessionsCreated, { timeout: 10_000 })
+			.toBeGreaterThan(sessionsBefore)
 		await expect
 			.poll(() => mocks.streamSubscriptions, { timeout: 10_000 })
 			.toBeGreaterThan(subscriptionsBefore)
-		expect(mocks.sessionsCreated).toBe(sessionsBefore)
 	})
 
 	test("a notification's 'Talk to Sindre' action opens the sheet with that notification in context", async ({

@@ -368,6 +368,39 @@ describe('SessionManager', () => {
 				'not in paused state or no snapshot',
 			)
 		})
+
+		it('re-attaches stdin when resuming an interactive session', async () => {
+			// Regression guard: writeInput after resume must not fail because stdin
+			// was never re-attached to the post-resume container.
+			const session = buildSession({
+				status: 'paused',
+				interactive: true,
+				snapshotPath: 'snapshots/abc.tar.gz',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Sindre.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: null,
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			// resumeSession → launchContainer → attachStdin
+			mockResults.selectQueue = [
+				[session], // resumeSession: load session
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+			]
+
+			await manager.resumeSession(session.id)
+
+			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+		})
 	})
 
 	describe('start() and stop()', () => {

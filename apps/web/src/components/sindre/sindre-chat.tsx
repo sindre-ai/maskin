@@ -270,6 +270,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	// value has already been consumed; it flips back to false on each null so
 	// the next transition — including an identical repeat — fires again.
 	const autoSendConsumedRef = useRef(false)
+	const [autoSendError, setAutoSendError] = useState<string | null>(null)
 	useEffect(() => {
 		if (!autoSendMessage || autoSendMessage.length === 0) {
 			autoSendConsumedRef.current = false
@@ -277,8 +278,13 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 		}
 		if (autoSendConsumedRef.current) return
 		autoSendConsumedRef.current = true
-		void handleSend(autoSendMessage).catch(() => {
-			// Errors are surfaced through the session/one-shot hook state.
+		setAutoSendError(null)
+		void handleSend(autoSendMessage).catch((err) => {
+			// Session/one-shot hook errors surface via hook.error. Synchronous
+			// throws before the hook sees the send (e.g. missing sindreActorId,
+			// api.sessions.create reject) don't — capture them here so the user
+			// sees feedback instead of a silent no-op.
+			setAutoSendError(err instanceof Error ? err.message : 'Failed to send')
 		})
 		onAutoSendConsumed?.()
 	}, [autoSendMessage, handleSend, onAutoSendConsumed])
@@ -340,6 +346,8 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 				onRemoveObject={handleRemoveObject}
 				onRemoveNotification={handleRemoveNotification}
 				onRemoveFile={handleRemoveFile}
+				externalError={autoSendError}
+				onDismissExternalError={() => setAutoSendError(null)}
 			/>
 		</div>
 	)
@@ -466,6 +474,8 @@ interface ComposerProps {
 	onRemoveObject: (id: string) => void
 	onRemoveNotification: (id: string) => void
 	onRemoveFile: (name: string) => void
+	externalError?: string | null
+	onDismissExternalError?: () => void
 }
 
 /**
@@ -498,6 +508,8 @@ function Composer({
 	onRemoveObject,
 	onRemoveNotification,
 	onRemoveFile,
+	externalError,
+	onDismissExternalError,
 }: ComposerProps) {
 	const [value, setValue] = useState('')
 	const [sending, setSending] = useState(false)
@@ -516,6 +528,7 @@ function Composer({
 			const content = value.trim()
 			setSending(true)
 			setSendError(null)
+			onDismissExternalError?.()
 			let sent = false
 			try {
 				await onSend(content)
@@ -530,7 +543,7 @@ function Composer({
 			// without losing a carefully crafted prompt.
 			if (sent) setValue('')
 		},
-		[canSend, onSend, value],
+		[canSend, onDismissExternalError, onSend, value],
 	)
 
 	const handleKeyDown = useCallback(
@@ -674,9 +687,9 @@ function Composer({
 					disabled={disabled}
 					rows={1}
 				/>
-				{sendError ? (
+				{sendError || externalError ? (
 					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
-						{sendError} — your message is preserved; try again.
+						{sendError ?? externalError} — your message is preserved; try again.
 					</p>
 				) : null}
 				<div className="flex items-center gap-1">

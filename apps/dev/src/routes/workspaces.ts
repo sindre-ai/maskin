@@ -11,6 +11,7 @@ import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -248,13 +249,22 @@ const addMemberRoute = createRoute({
 			description: 'Member added',
 			content: { 'application/json': { schema: z.object({ added: z.boolean() }) } },
 		},
+		403: {
+			description: 'Caller is not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
-app.openapi(addMemberRoute, async (c) => {
+app.openapi(addMemberRoute, (async (c) => {
 	const db = c.get('db')
+	const callerId = c.get('actorId')
 	const { id: workspaceId } = c.req.valid('param')
 	const { actor_id, role } = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
 
 	await db.insert(workspaceMembers).values({
 		workspaceId,
@@ -263,7 +273,7 @@ app.openapi(addMemberRoute, async (c) => {
 	})
 
 	return c.json({ added: true }, 201)
-})
+}) as RouteHandler<typeof addMemberRoute, Env>)
 
 // GET /api/workspaces/:id/members
 const listMembersRoute = createRoute({

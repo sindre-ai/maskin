@@ -102,10 +102,12 @@ describe('Workspaces Routes', () => {
 	})
 
 	describe('POST /api/workspaces/:id/members', () => {
-		it('adds a member and returns 201', async () => {
+		it('adds a member and returns 201 when caller is a member', async () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			// isWorkspaceMember(callerId, wsId) → one row (caller is a member)
+			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }]]
 			mockResults.insert = [{}]
 
 			const res = await app.request(
@@ -118,6 +120,25 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(201)
 			const body = await res.json()
 			expect(body.added).toBe(true)
+		})
+
+		it('returns 403 when caller is not a member of the workspace', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			// isWorkspaceMember → no rows
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, {
+					actor_id: actorId,
+					role: 'member',
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.code).toBe('FORBIDDEN')
 		})
 	})
 

@@ -811,26 +811,64 @@ export class SessionManager extends EventEmitter {
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
-		await this.db
-			.update(sessions)
-			.set({
+		// SSE clients subscribed to /logs/stream rely on the "Session
+		// completed|failed|timed out|paused" system log to emit their `done`
+		// event and close. If any DB write below throws, subscribers would sit
+		// in the 30s keep-alive loop indefinitely — so swallow persistence
+		// errors here and always attempt the terminal system log.
+		try {
+			await this.db
+				.update(sessions)
+				.set({
+					status,
+					result: { exit_code: exitCode },
+					completedAt: new Date(),
+					updatedAt: new Date(),
+				})
+				.where(eq(sessions.id, sessionId))
+		} catch (err) {
+			logger.error('Failed to update session status in handleCompletion', {
+				sessionId,
 				status,
-				result: { exit_code: exitCode },
-				completedAt: new Date(),
-				updatedAt: new Date(),
+				error: String(err),
 			})
-			.where(eq(sessions.id, sessionId))
+		}
 
-		await this.db.insert(events).values({
-			workspaceId: session.workspaceId,
-			actorId: session.actorId,
-			action: `session_${status}`,
-			entityType: 'session',
-			entityId: sessionId,
-			data: { exit_code: exitCode },
-		})
+		try {
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: `session_${status}`,
+				entityType: 'session',
+				entityId: sessionId,
+				data: { exit_code: exitCode },
+			})
+		} catch (err) {
+			logger.error('Failed to insert completion event in handleCompletion', {
+				sessionId,
+				status,
+				error: String(err),
+			})
+		}
 
-		await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
+		try {
+			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
+		} catch (err) {
+			logger.error('Failed to write terminal system log — SSE clients may hang', {
+				sessionId,
+				status,
+				error: String(err),
+			})
+			// Last-ditch fan-out: synthesize a log event on the bus so SSE
+			// subscribers see `done` even when DB insert is failing. The log id
+			// is synthetic (negative) so it can't collide with real rows.
+			this.emit('log', {
+				sessionId,
+				logId: -Date.now(),
+				stream: 'system',
+				data: `Session ${status} with exit code ${exitCode}`,
+			})
+		}
 
 		// Clear active session link on object
 		await this.clearActiveSession(sessionId)
