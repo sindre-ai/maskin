@@ -269,7 +269,10 @@ export const workspaceSkills = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [uniqueIndex('workspace_skills_ws_name_uniq').on(t.workspaceId, t.name)],
+	(t) => [
+		uniqueIndex('workspace_skills_ws_name_uniq').on(t.workspaceId, t.name),
+		check('workspace_skills_name_format', sql`${t.name} ~ '^[a-z0-9-]{1,64}$'`),
+	],
 )
 
 export type WorkspaceSkill = typeof workspaceSkills.$inferSelect
