@@ -403,6 +403,53 @@ export const tools = {
 			limit: z.number().int().min(1).max(100).default(50),
 		}),
 	},
+	subscribe_events: {
+		description:
+			'Subscribe to live workspace events. The MCP server opens a long-lived SSE connection to the backend for the workspace and pushes matching events to this client as logging notifications (logger="maskin/events"). Use this to react to activity in real time (object created/updated/deleted, status changes, trigger fires, session completions, etc.). For historical queries or backfill, use get_events instead. Filters are combined with AND across fields, OR within a field; omit all filters to receive every event in the workspace. Returns { subscription_id, workspace_id }. Remember to call unsubscribe_events when done. ' +
+			'Notifications: workspace notifications (alert / recommendation / needs_input / good_news) are surfaced as events with entity_type: "notification" — subscribe with filter.entity_type: ["notification"] to receive them live; no separate notifications subscription is needed. ' +
+			'Context cost: each delivered event consumes tokens in this agent’s conversation. Prefer narrow filters (specific entity_type + action lists) over broad ones; omit filters only for short-lived diagnostic windows. ' +
+			'Transport caveat: live subscriptions only persist when the MCP server is running over the stdio transport. Over the HTTP /mcp transport every request creates its own short-lived MCP instance and any subscriptions are torn down when the request finishes.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			filter: z
+				.object({
+					entity_type: z
+						.array(z.string())
+						.optional()
+						.describe(
+							'Only deliver events whose entity_type is in this list (e.g. ["task", "bet"])',
+						),
+					entity_id: z
+						.array(z.string().uuid())
+						.optional()
+						.describe('Only deliver events touching these specific object IDs'),
+					action: z
+						.array(z.string())
+						.optional()
+						.describe(
+							'Only deliver events with these actions (e.g. ["created", "status_changed"])',
+						),
+					actor_id: z
+						.array(z.string().uuid())
+						.optional()
+						.describe('Only deliver events produced by these actors'),
+				})
+				.optional()
+				.describe('Optional filters. Omit to receive every event in the workspace.'),
+		}),
+	},
+	unsubscribe_events: {
+		description:
+			'Stop receiving live events for a given subscription_id returned by subscribe_events. Returns { ok: true } if the subscription existed, { ok: false } otherwise.',
+		inputSchema: z.object({
+			subscription_id: z.string().uuid(),
+		}),
+	},
+	list_event_subscriptions: {
+		description:
+			'List all active event subscriptions for this MCP session with their filters and per-subscription delivery counters. Useful for debugging why events are (or are not) arriving, and for recovering a lost subscription_id before calling unsubscribe_events.',
+		inputSchema: z.object({}),
+	},
 	create_trigger: {
 		description:
 			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor.",
@@ -530,6 +577,26 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 		}),
+	},
+	subscribe_session_logs: {
+		description:
+			'Subscribe to live log output from a container session (stdout, stderr, and system messages). The MCP server opens a long-lived SSE connection to /api/sessions/:id/logs/stream and pushes each log line to this client as a logging notification (logger="maskin/session-logs"). Use this to watch a session you spawned with create_session in real time, instead of polling get_session. Delivery format: { subscription_id, kind: "log", session_id, stream: "stdout"|"stderr"|"system", content } per line, then a final { kind: "done", session_id, status: "completed"|"failed"|"timeout" } when the session terminates — after which the subscription is auto-removed. If the stream ends before a terminal frame (e.g., transport error, auth revocation) the client still receives a { kind: "terminated", session_id, reason } close signal. For historical or already-completed sessions, use get_session with include_logs: true instead. Returns { subscription_id, session_id }.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			session_id: z.string().uuid(),
+		}),
+	},
+	unsubscribe_session_logs: {
+		description:
+			'Stop receiving live log notifications for a given subscription_id returned by subscribe_session_logs. Returns { ok: true } if the subscription existed, { ok: false } otherwise.',
+		inputSchema: z.object({
+			subscription_id: z.string().uuid(),
+		}),
+	},
+	list_session_log_subscriptions: {
+		description:
+			'List all active session-log subscriptions for this MCP session with their session IDs and per-subscription delivery counters. Useful for debugging why logs are (or are not) arriving, and for recovering a lost subscription_id before calling unsubscribe_session_logs.',
+		inputSchema: z.object({}),
 	},
 	run_agent: {
 		description:

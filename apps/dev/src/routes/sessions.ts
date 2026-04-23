@@ -466,36 +466,56 @@ app.get('/:id/logs/stream', async (c) => {
 	// receives replay + done instead of hanging in the keep-alive loop below.
 	const terminalStatuses = ['completed', 'failed', 'timeout', 'paused']
 
+	const parsedLogId = Number(lastLogId)
+	const resumeFromLogId =
+		lastLogId && Number.isFinite(parsedLogId) && parsedLogId >= 0 ? parsedLogId : null
+
 	return streamSSE(c, async (stream) => {
+		// Emit a terminal `done` frame with an id strictly greater than any log id
+		// the client has seen, so a reconnect's Last-Event-ID will skip past it and
+		// the dedup ring can recognize it on replay.
+		const emitDone = async (status: string, lastSeenLogId: number) => {
+			await stream.writeSSE({
+				id: String(lastSeenLogId + 1),
+				event: 'done',
+				data: status,
+			})
+		}
+
 		// Check if session is already in terminal state
 		const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
 
 		if (session && terminalStatuses.includes(session.status)) {
-			// Replay all logs for completed sessions, then close
-			const allLogs = await db
+			// Replay logs the client has not yet seen, capped at 500, then close.
+			const replayConds = [eq(sessionLogs.sessionId, sessionId)]
+			if (resumeFromLogId !== null) replayConds.push(gt(sessionLogs.id, resumeFromLogId))
+			const replayed = await db
 				.select()
 				.from(sessionLogs)
-				.where(eq(sessionLogs.sessionId, sessionId))
+				.where(and(...replayConds))
 				.orderBy(asc(sessionLogs.id))
+				.limit(500)
 
-			for (const log of allLogs) {
+			let maxLogId = resumeFromLogId ?? 0
+			for (const log of replayed) {
 				await stream.writeSSE({
 					id: String(log.id),
 					event: log.stream,
 					data: log.content,
 				})
+				if (log.id > maxLogId) maxLogId = log.id
 			}
-			await stream.writeSSE({ event: 'done', data: session.status })
+			await emitDone(session.status, maxLogId)
 			return
 		}
 
 		// Replay missed logs if Last-Event-ID is provided
-		const parsedLogId = Number(lastLogId)
-		if (lastLogId && Number.isFinite(parsedLogId) && parsedLogId > 0) {
+		let maxLogId = resumeFromLogId ?? 0
+		if (resumeFromLogId !== null) {
 			const missed = await db
 				.select()
 				.from(sessionLogs)
-				.where(and(eq(sessionLogs.sessionId, sessionId), gt(sessionLogs.id, parsedLogId)))
+				.where(and(eq(sessionLogs.sessionId, sessionId), gt(sessionLogs.id, resumeFromLogId)))
 				.orderBy(asc(sessionLogs.id))
 				.limit(500)
 
@@ -505,11 +525,22 @@ app.get('/:id/logs/stream', async (c) => {
 					event: log.stream,
 					data: log.content,
 				})
+				if (log.id > maxLogId) maxLogId = log.id
 			}
 		}
 
-		// Subscribe to live log stream
+		// Resolver that wakes the heartbeat loop the moment a terminal frame is written.
+		let resolveClosed: (() => void) | null = null
+		const closedPromise = new Promise<void>((resolve) => {
+			resolveClosed = resolve
+		})
 		let closed = false
+		const markClosed = () => {
+			if (closed) return
+			closed = true
+			resolveClosed?.()
+		}
+
 		// Maps a system-log prefix to the `done` payload to emit when a session
 		// reaches that terminal state. Using prefix matching because log content
 		// may include trailing detail (e.g. "Session completed with exit code 0").
@@ -519,8 +550,11 @@ app.get('/:id/logs/stream', async (c) => {
 			{ prefix: 'Session timed out', done: 'timeout' },
 			{ prefix: 'Session paused', done: 'paused' },
 		]
+
+		// Subscribe to live log stream
 		const handler = (event: SessionLogEvent) => {
 			if (event.sessionId !== sessionId) return
+			if (event.logId > maxLogId) maxLogId = event.logId
 			// writeSSE returns a Promise. We're in an event listener (sync) so
 			// we can't await it — but we must attach an error handler to avoid
 			// unhandled rejections when the client disconnects mid-write or
@@ -535,29 +569,36 @@ app.get('/:id/logs/stream', async (c) => {
 				if (event.stream === 'system') {
 					const terminal = TERMINAL_SYSTEM_LOGS.find((t) => event.data.startsWith(t.prefix))
 					if (terminal) {
-						closed = true
-						await stream.writeSSE({ event: 'done', data: terminal.done })
+						await emitDone(terminal.done, maxLogId)
+						markClosed()
 					}
 				}
 			}
 			emit().catch((err) => {
-				closed = true
 				sessionManager.off('log', handler)
 				logger.warn('SSE log write failed; detaching listener', {
 					err: err instanceof Error ? err.message : String(err),
 					sessionId,
 				})
+				markClosed()
 			})
 		}
 
 		sessionManager.on('log', handler)
 		stream.onAbort(() => {
 			sessionManager.off('log', handler)
+			markClosed()
 		})
 
-		// Keep connection alive, but stop if session reached terminal state
-		while (!closed) {
-			await stream.sleep(30000)
+		// Heartbeat: write an SSE comment every 15s so idle-timeout proxies don't
+		// drop the connection. Comment frames are ignored by compliant SSE
+		// parsers. The race on closedPromise wakes the loop immediately when the
+		// session terminates, so we don't keep the socket open for up to 15s
+		// after the `done` frame.
+		while (!closed && !stream.aborted && !stream.closed) {
+			await Promise.race([stream.sleep(15000), closedPromise])
+			if (closed || stream.aborted || stream.closed) break
+			await stream.write(': keepalive\n\n')
 		}
 	})
 })
