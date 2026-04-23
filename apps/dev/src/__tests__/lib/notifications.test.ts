@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { notifyParticipants } from '../../lib/notifications'
 
 type MockRow = { sourceId: string; targetId: string; type: string }
@@ -16,6 +16,7 @@ function createMockDb(edges: MockRow[]) {
 		select: () => ({
 			from: () => ({
 				where: () => ({
+					// biome-ignore lint/suspicious/noThenProperty: mock needs .then for Drizzle's await
 					then: (resolve: (v: unknown) => void) => resolve(edges),
 				}),
 			}),
@@ -29,8 +30,10 @@ function createMockDb(edges: MockRow[]) {
 				}
 				const chain = {
 					returning: () => ({
+						// biome-ignore lint/suspicious/noThenProperty: mock needs .then for Drizzle's await
 						then: (resolve: (v: unknown) => void) => resolve(nextInsertReturn),
 					}),
+					// biome-ignore lint/suspicious/noThenProperty: mock needs .then for Drizzle's await
 					then: (resolve: (v: unknown) => void) => resolve([]),
 				}
 				return chain

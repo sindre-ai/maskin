@@ -443,12 +443,9 @@ describe('Objects Routes', () => {
 
 			const assignee = '11111111-1111-1111-1111-111111111111'
 			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/objects',
-					buildCreateObjectBody({ assignees: [assignee] }),
-					{ 'x-workspace-id': wsId },
-				),
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody({ assignees: [assignee] }), {
+					'x-workspace-id': wsId,
+				}),
 			)
 
 			expect(res.status).toBe(201)

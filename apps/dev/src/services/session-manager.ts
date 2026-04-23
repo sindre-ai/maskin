@@ -18,6 +18,7 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
+import { buildObjectiveContext } from '../lib/agents/objective-context'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
@@ -460,11 +461,31 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
+		// When the session is scoped to an object, prepend a shared-objective block so the agent
+		// shares context with humans and other agents on the same objective. Opt-in: no behaviour
+		// change for sessions without `config.object_id`.
+		let actionPrompt = session.actionPrompt
+		const scopedObjectId = sessionConfig.object_id as string | undefined
+		if (scopedObjectId) {
+			try {
+				const objective = await buildObjectiveContext(this.db, scopedObjectId)
+				if (objective) {
+					actionPrompt = `${objective}\n\n---\n\n${actionPrompt}`
+				}
+			} catch (err) {
+				logger.warn('Failed to build objective context; falling back to bare prompt', {
+					sessionId: session.id,
+					objectId: scopedObjectId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
-			ACTION_PROMPT: session.actionPrompt,
+			ACTION_PROMPT: actionPrompt,
 			MASKIN_API_URL: 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}

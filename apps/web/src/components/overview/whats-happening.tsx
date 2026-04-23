@@ -6,6 +6,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { useActors } from '@/hooks/use-actors'
 import { useBets } from '@/hooks/use-bets'
+import { useEvents } from '@/hooks/use-events'
 import { useObjects } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
@@ -13,10 +14,12 @@ import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib
 import type {
 	ActorListItem,
 	ActorResponse,
+	EventResponse,
 	ObjectResponse,
 	RelationshipResponse,
 	SessionResponse,
 } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { useMemo } from 'react'
@@ -33,6 +36,8 @@ export function WhatsHappening() {
 	const { data: sessions, isLoading: sessionsLoading } = useWorkspaceSessions(workspaceId)
 	const { data: actors, isLoading: actorsLoading } = useActors(workspaceId)
 	const { data: relationships, isLoading: relsLoading } = useRelationships(workspaceId)
+	const { data: events } = useEvents(workspaceId, { limit: '100' })
+	const currentActor = getStoredActor()
 
 	const isLoading = betsLoading || tasksLoading || sessionsLoading || actorsLoading || relsLoading
 
@@ -76,6 +81,53 @@ export function WhatsHappening() {
 		}
 	}, [bets])
 
+	// ─── My Work ──────────────────────────────────────────────────────────────
+	// Build object ID sets from the relationships edge table, then resolve to
+	// objects loaded alongside bets + tasks. Memoised so the sections don't
+	// rebuild on every render.
+	const myObjectIds = useMemo(() => {
+		const assigned = new Set<string>()
+		const watching = new Set<string>()
+		if (!currentActor) return { assigned, watching }
+		for (const rel of relationships ?? []) {
+			if (rel.targetType !== 'actor' || rel.targetId !== currentActor.id) continue
+			if (rel.sourceType === 'actor') continue
+			if (rel.type === 'assigned_to') assigned.add(rel.sourceId)
+			else if (rel.type === 'watches') watching.add(rel.sourceId)
+		}
+		return { assigned, watching }
+	}, [relationships, currentActor])
+
+	const myAssigned = useMemo(() => {
+		const pool = [...(bets ?? []), ...(tasks ?? [])]
+		return pool.filter((o) => myObjectIds.assigned.has(o.id))
+	}, [bets, tasks, myObjectIds])
+
+	const myWatching = useMemo(() => {
+		const pool = [...(bets ?? []), ...(tasks ?? [])]
+		return pool.filter((o) => myObjectIds.watching.has(o.id))
+	}, [bets, tasks, myObjectIds])
+
+	const myMentions = useMemo(() => {
+		if (!currentActor || !events) return []
+		const pool = [...(bets ?? []), ...(tasks ?? [])]
+		const byId = new Map(pool.map((o) => [o.id, o]))
+		const seen = new Set<string>()
+		const hits: { event: EventResponse; object: ObjectResponse }[] = []
+		for (const event of events) {
+			if (event.action !== 'commented') continue
+			const data = event.data as { mentions?: string[] } | null
+			if (!data?.mentions?.includes(currentActor.id)) continue
+			const object = byId.get(event.entityId)
+			if (!object || seen.has(object.id)) continue
+			seen.add(object.id)
+			hits.push({ event, object })
+		}
+		return hits
+	}, [events, bets, tasks, currentActor])
+
+	const hasMyWork = myAssigned.length > 0 || myWatching.length > 0 || myMentions.length > 0
+
 	if (isLoading) {
 		return (
 			<div className="space-y-6">
@@ -90,7 +142,7 @@ export function WhatsHappening() {
 		activeBets.length > 0 || activeSessions.length > 0 || inProgressTasks.length > 0
 	const hasUpcoming = proposedBets.length > 0 || todoTasks.length > 0
 
-	if (!hasActivity && !hasUpcoming) {
+	if (!hasActivity && !hasUpcoming && !hasMyWork) {
 		return (
 			<EmptyState
 				title="Nothing happening yet"
@@ -101,6 +153,17 @@ export function WhatsHappening() {
 
 	return (
 		<div className="space-y-8">
+			{/* My Work — objects the current actor is responsible for or watching */}
+			{hasMyWork && (
+				<MyWorkSection
+					assigned={myAssigned}
+					watching={myWatching}
+					mentions={myMentions}
+					relationships={relationships ?? []}
+					workspaceId={workspaceId}
+				/>
+			)}
+
 			{/* In Progress */}
 			<InProgressSection
 				bets={activeBets}
@@ -382,4 +445,122 @@ function FlowStage({
 
 function FlowArrow() {
 	return <span className="text-muted-foreground text-sm">→</span>
+}
+
+function MyWorkSection({
+	assigned,
+	watching,
+	mentions,
+	relationships,
+	workspaceId,
+}: {
+	assigned: ObjectResponse[]
+	watching: ObjectResponse[]
+	mentions: { event: EventResponse; object: ObjectResponse }[]
+	relationships: RelationshipResponse[]
+	workspaceId: string
+}) {
+	const totalCount = assigned.length + watching.length + mentions.length
+	return (
+		<section className="space-y-4">
+			<SectionHeader title="My Work" count={totalCount} />
+
+			{assigned.length > 0 && (
+				<MyWorkGroup
+					label="Assigned to you"
+					objects={assigned}
+					relationships={relationships}
+					workspaceId={workspaceId}
+				/>
+			)}
+
+			{watching.length > 0 && (
+				<MyWorkGroup
+					label="Watching"
+					objects={watching}
+					relationships={relationships}
+					workspaceId={workspaceId}
+				/>
+			)}
+
+			{mentions.length > 0 && (
+				<div className="space-y-2">
+					<p className="text-xs font-medium text-muted-foreground pl-1">Mentioned</p>
+					<div className="space-y-2">
+						{mentions.slice(0, 5).map(({ object }) => {
+							if (object.type === 'bet') {
+								const insightCount = relationships.filter(
+									(r) => r.targetId === object.id && r.type === 'informs',
+								).length
+								const taskCount = relationships.filter(
+									(r) => r.sourceId === object.id && r.type === 'breaks_into',
+								).length
+								return (
+									<BetCard
+										key={object.id}
+										bet={object}
+										workspaceId={workspaceId}
+										insightCount={insightCount}
+										taskCount={taskCount}
+									/>
+								)
+							}
+							return <TaskItem key={object.id} task={object} workspaceId={workspaceId} />
+						})}
+						{mentions.length > 5 && (
+							<p className="text-xs text-muted-foreground pl-1">
+								+{mentions.length - 5} more mentions
+							</p>
+						)}
+					</div>
+				</div>
+			)}
+		</section>
+	)
+}
+
+function MyWorkGroup({
+	label,
+	objects,
+	relationships,
+	workspaceId,
+}: {
+	label: string
+	objects: ObjectResponse[]
+	relationships: RelationshipResponse[]
+	workspaceId: string
+}) {
+	const bets = objects.filter((o) => o.type === 'bet')
+	const rest = objects.filter((o) => o.type !== 'bet')
+
+	return (
+		<div className="space-y-2">
+			<p className="text-xs font-medium text-muted-foreground pl-1">{label}</p>
+			<div className="space-y-2">
+				{bets.map((bet) => {
+					const insightCount = relationships.filter(
+						(r) => r.targetId === bet.id && r.type === 'informs',
+					).length
+					const taskCount = relationships.filter(
+						(r) => r.sourceId === bet.id && r.type === 'breaks_into',
+					).length
+					return (
+						<BetCard
+							key={bet.id}
+							bet={bet}
+							workspaceId={workspaceId}
+							insightCount={insightCount}
+							taskCount={taskCount}
+						/>
+					)
+				})}
+				{rest.slice(0, 5).map((obj) => (
+					<TaskItem key={obj.id} task={obj} workspaceId={workspaceId} />
+				))}
+				{rest.length > 5 && (
+					<p className="text-xs text-muted-foreground pl-1">+{rest.length - 5} more</p>
+				)}
+			</div>
+		</div>
+	)
 }
