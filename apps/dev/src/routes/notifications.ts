@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, notifications } from '@maskin/db/schema'
+import { events, actors, notifications, sessions } from '@maskin/db/schema'
 import {
 	createNotificationSchema,
 	notificationQuerySchema,
@@ -9,6 +9,7 @@ import {
 } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	idParamSchema,
@@ -17,12 +18,14 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -293,6 +296,7 @@ const respondNotificationRoute = createRoute({
 app.openapi(respondNotificationRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
@@ -345,10 +349,104 @@ app.openapi(respondNotificationRoute, (async (c) => {
 		data: { response: body.response },
 	})
 
-	// Container session resume is handled via session-manager (Docker pause/resume)
+	// Fire-and-forget: wake the agent that created this notification so it can
+	// act on the human's response. Prefer resuming the originating paused session
+	// (preserves context); otherwise spawn a new session for the source agent.
+	if (notification.sourceActorId && sessionManager) {
+		wakeSourceAgent({
+			sessionManager,
+			db,
+			workspaceId: notification.workspaceId,
+			sourceActorId: notification.sourceActorId,
+			linkedSessionId: notification.sessionId,
+			notificationId: updated.id,
+			title: updated.title,
+			content: updated.content,
+			response: body.response,
+			createdBy: actorId,
+		}).catch((err) =>
+			logger.error('Failed to wake source agent for notification response', {
+				notificationId: updated.id,
+				sourceActorId: notification.sourceActorId,
+				error: String(err),
+			}),
+		)
+	}
 
 	return c.json(serialize(updated) as z.infer<typeof notificationResponseSchema>)
 }) as RouteHandler<typeof respondNotificationRoute, Env>)
+
+async function wakeSourceAgent(ctx: {
+	sessionManager: SessionManager
+	db: Database
+	workspaceId: string
+	sourceActorId: string
+	linkedSessionId: string | null
+	notificationId: string
+	title: string
+	content: string | null
+	response: unknown
+	createdBy: string
+}): Promise<void> {
+	const [sourceActor] = await ctx.db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, ctx.sourceActorId))
+		.limit(1)
+
+	if (!sourceActor || sourceActor.type !== 'agent') return
+
+	if (ctx.linkedSessionId) {
+		const [linked] = await ctx.db
+			.select({ status: sessions.status })
+			.from(sessions)
+			.where(eq(sessions.id, ctx.linkedSessionId))
+			.limit(1)
+
+		if (linked?.status === 'paused') {
+			await ctx.sessionManager.resumeSession(ctx.linkedSessionId)
+			return
+		}
+	}
+
+	await ctx.sessionManager.createSession(ctx.workspaceId, {
+		actorId: ctx.sourceActorId,
+		actionPrompt: buildResponsePrompt({
+			notificationId: ctx.notificationId,
+			title: ctx.title,
+			content: ctx.content,
+			response: ctx.response,
+		}),
+		config: {
+			notification_response: {
+				notification_id: ctx.notificationId,
+				response: ctx.response,
+			},
+		},
+		createdBy: ctx.createdBy,
+	})
+}
+
+function buildResponsePrompt(ctx: {
+	notificationId: string
+	title: string
+	content: string | null
+	response: unknown
+}): string {
+	const responseText =
+		typeof ctx.response === 'string' ? ctx.response : JSON.stringify(ctx.response)
+	return [
+		'A human responded to a notification you created. Read the response and act on it.',
+		'',
+		`Notification ID: ${ctx.notificationId}`,
+		`Notification title: ${ctx.title}`,
+		...(ctx.content ? ['Notification content:', '"""', ctx.content, '"""', ''] : ['']),
+		'Human response:',
+		'"""',
+		responseText,
+		'"""',
+	].join('\n')
+}
 
 // DELETE /api/notifications/:id
 const deleteNotificationRoute = createRoute({

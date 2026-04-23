@@ -1,6 +1,6 @@
 import { buildCreateNotificationBody, buildNotification, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: notificationsRoutes } = await import('../../routes/notifications')
 
@@ -163,9 +163,13 @@ describe('Notifications Routes', () => {
 
 	describe('POST /api/notifications/:id/respond', () => {
 		it('returns 200 when responding to pending notification', async () => {
-			const notification = buildNotification({ workspaceId: wsId, status: 'pending' })
+			const notification = buildNotification({
+				workspaceId: wsId,
+				status: 'pending',
+				sourceActorId: null,
+			})
 			const resolved = { ...notification, status: 'resolved', resolvedAt: new Date() }
-			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			const { app, mockResults } = createSessionTestApp(notificationsRoutes, '/api/notifications')
 			// First select: notification lookup, second: membership check
 			mockResults.selectQueue = [[notification], [buildWorkspaceMember()]]
 			mockResults.update = [resolved]
@@ -183,9 +187,120 @@ describe('Notifications Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it('spawns a session for the source agent when responding', async () => {
+			const sourceAgentId = '00000000-0000-0000-0000-0000000000aa'
+			const notification = buildNotification({
+				workspaceId: wsId,
+				status: 'pending',
+				sourceActorId: sourceAgentId,
+				sessionId: null,
+			})
+			const resolved = { ...notification, status: 'resolved', resolvedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				notificationsRoutes,
+				'/api/notifications',
+			)
+			// notification lookup, membership check, source actor lookup (agent)
+			mockResults.selectQueue = [[notification], [buildWorkspaceMember()], [{ type: 'agent' }]]
+			mockResults.update = [resolved]
+			mockResults.insert = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/notifications/${notification.id}/respond`,
+					{ response: 'Approved' },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			// Fire-and-forget — wait a tick for the async wake to run.
+			await new Promise((r) => setImmediate(r))
+			expect(sessionManager.createSession).toHaveBeenCalledWith(
+				wsId,
+				expect.objectContaining({
+					actorId: sourceAgentId,
+					actionPrompt: expect.stringContaining('Approved'),
+				}),
+			)
+			expect(sessionManager.resumeSession).not.toHaveBeenCalled()
+		})
+
+		it('resumes the linked session when paused instead of spawning a new one', async () => {
+			const sourceAgentId = '00000000-0000-0000-0000-0000000000aa'
+			const linkedSessionId = '00000000-0000-0000-0000-0000000000bb'
+			const notification = buildNotification({
+				workspaceId: wsId,
+				status: 'pending',
+				sourceActorId: sourceAgentId,
+				sessionId: linkedSessionId,
+			})
+			const resolved = { ...notification, status: 'resolved', resolvedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				notificationsRoutes,
+				'/api/notifications',
+			)
+			// notification lookup, membership check, source actor lookup, linked session lookup
+			mockResults.selectQueue = [
+				[notification],
+				[buildWorkspaceMember()],
+				[{ type: 'agent' }],
+				[{ status: 'paused' }],
+			]
+			mockResults.update = [resolved]
+			mockResults.insert = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/notifications/${notification.id}/respond`,
+					{ response: 'Approved' },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			await new Promise((r) => setImmediate(r))
+			expect(sessionManager.resumeSession).toHaveBeenCalledWith(linkedSessionId)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('does not wake non-agent source actors', async () => {
+			const sourceHumanId = '00000000-0000-0000-0000-0000000000cc'
+			const notification = buildNotification({
+				workspaceId: wsId,
+				status: 'pending',
+				sourceActorId: sourceHumanId,
+				sessionId: null,
+			})
+			const resolved = { ...notification, status: 'resolved', resolvedAt: new Date() }
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				notificationsRoutes,
+				'/api/notifications',
+			)
+			mockResults.selectQueue = [[notification], [buildWorkspaceMember()], [{ type: 'human' }]]
+			mockResults.update = [resolved]
+			mockResults.insert = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/notifications/${notification.id}/respond`,
+					{ response: 'Approved' },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			await new Promise((r) => setImmediate(r))
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+			expect(sessionManager.resumeSession).not.toHaveBeenCalled()
+		})
+
 		it('returns 400 when notification already resolved', async () => {
 			const notification = buildNotification({ workspaceId: wsId, status: 'resolved' })
-			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			const { app, mockResults } = createSessionTestApp(notificationsRoutes, '/api/notifications')
 			// First select: notification lookup, second: membership check
 			mockResults.selectQueue = [[notification], [buildWorkspaceMember()]]
 
@@ -204,7 +319,7 @@ describe('Notifications Routes', () => {
 		})
 
 		it('returns 404 when notification not found', async () => {
-			const { app } = createTestApp(notificationsRoutes, '/api/notifications')
+			const { app } = createSessionTestApp(notificationsRoutes, '/api/notifications')
 
 			const res = await app.request(
 				jsonRequest(
