@@ -112,7 +112,17 @@ function UserMessageBlock({ text }: { text: string }) {
 }
 
 function AssistantTextBlock({ text }: { text: string }) {
-	return <MarkdownContent content={text} className="text-accent-foreground" size="sm" />
+	// MarkdownContent applies `prose-p:text-muted-foreground` internally, which
+	// overrides plain text-color classes on the outer wrapper. Target the
+	// rendered <p>/<li> nodes directly so the body text matches the user
+	// bubble's text-accent-foreground.
+	return (
+		<MarkdownContent
+			content={text}
+			className="[&_li]:!text-accent-foreground [&_p]:!text-accent-foreground"
+			size="sm"
+		/>
+	)
 }
 
 function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
