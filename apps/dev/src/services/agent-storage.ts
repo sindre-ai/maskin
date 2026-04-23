@@ -7,12 +7,14 @@ import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { appendToLedger } from './workspace-briefing'
 
-// S3 key prefixes
 export const AGENT_STORAGE_PREFIX = 'agents'
 export const WORKSPACE_SKILLS_PREFIX = 'workspaces'
 
-export function workspaceSkillKey(workspaceId: string, name: string): string {
-	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${name}/SKILL.md`
+// Keyed on the skill's UUID so concurrent writers with the same `name` can
+// never collide on the same S3 object — a stale rollback from a losing writer
+// cannot then delete the winner's object.
+export function workspaceSkillKey(workspaceId: string, skillId: string): string {
+	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${skillId}/SKILL.md`
 }
 
 export class AgentStorageManager {
@@ -279,41 +281,25 @@ export class AgentStorageManager {
 			)
 	}
 
-	/**
-	 * Write a workspace skill's SKILL.md to S3 under
-	 * `workspaces/{workspaceId}/skills/{name}/SKILL.md`.
-	 * Returns the storage key and the number of bytes written so callers can
-	 * persist metadata alongside the DB row. No DB mutation happens here — the
-	 * caller is expected to upsert the matching `workspace_skills` row.
-	 */
 	async putWorkspaceSkill(
 		workspaceId: string,
-		name: string,
+		skillId: string,
 		content: string,
 	): Promise<{ storageKey: string; sizeBytes: number }> {
-		const storageKey = workspaceSkillKey(workspaceId, name)
+		const storageKey = workspaceSkillKey(workspaceId, skillId)
 		const buffer = Buffer.from(content, 'utf-8')
 		await this.storage.put(storageKey, buffer)
 		return { storageKey, sizeBytes: buffer.length }
 	}
 
-	/**
-	 * Read a workspace skill's SKILL.md content from S3 and return it as a
-	 * UTF-8 string.
-	 */
-	async getWorkspaceSkill(workspaceId: string, name: string): Promise<string> {
-		const storageKey = workspaceSkillKey(workspaceId, name)
+	async getWorkspaceSkill(workspaceId: string, skillId: string): Promise<string> {
+		const storageKey = workspaceSkillKey(workspaceId, skillId)
 		const buffer = await this.storage.get(storageKey)
 		return buffer.toString('utf-8')
 	}
 
-	/**
-	 * Delete a workspace skill's SKILL.md from S3. The caller is responsible
-	 * for deleting the matching `workspace_skills` row (which cascades to
-	 * `agent_skills`).
-	 */
-	async deleteWorkspaceSkill(workspaceId: string, name: string): Promise<void> {
-		const storageKey = workspaceSkillKey(workspaceId, name)
+	async deleteWorkspaceSkill(workspaceId: string, skillId: string): Promise<void> {
+		const storageKey = workspaceSkillKey(workspaceId, skillId)
 		await this.storage.delete(storageKey)
 	}
 

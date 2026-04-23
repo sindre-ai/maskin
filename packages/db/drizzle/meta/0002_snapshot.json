@@ -1823,7 +1823,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "workspace_skills_name_format": {
+          "name": "workspace_skills_name_format",
+          "value": "\"workspace_skills\".\"name\" ~ '^[a-z0-9-]{1,64}$'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.workspaces": {

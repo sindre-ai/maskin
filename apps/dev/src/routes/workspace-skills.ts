@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
@@ -12,7 +13,7 @@ import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import type { AgentStorageManager } from '../services/agent-storage'
+import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 
 type Env = {
 	Variables: {
@@ -224,32 +225,21 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 	}
 	const description = parsed.description ? parsed.description : null
 
-	// Fail fast on name conflict so we don't needlessly write to S3
-	const [existing] = await db
-		.select({ id: workspaceSkills.id })
-		.from(workspaceSkills)
-		.where(and(eq(workspaceSkills.workspaceId, workspaceId), eq(workspaceSkills.name, body.name)))
-		.limit(1)
-
-	if (existing) {
-		return c.json(
-			createApiError('CONFLICT', 'A skill with this name already exists in this workspace'),
-			409,
-		)
-	}
-
-	// Write S3 first, then insert DB. Roll back S3 on DB failure.
-	const { storageKey, sizeBytes } = await storage.putWorkspaceSkill(
-		workspaceId,
-		body.name,
-		body.content,
-	)
+	// DB first, then S3. The unique index on (workspace_id, name) atomically
+	// rejects duplicate names, so two concurrent creators race on the DB (one
+	// wins with 201, the other gets 409) rather than on a shared S3 object.
+	// storageKey is derived from the row's UUID so no two writers ever target
+	// the same key.
+	const skillId = randomUUID()
+	const storageKey = workspaceSkillKey(workspaceId, skillId)
+	const sizeBytes = Buffer.byteLength(body.content, 'utf-8')
 
 	let created: typeof workspaceSkills.$inferSelect | undefined
 	try {
 		const rows = await db
 			.insert(workspaceSkills)
 			.values({
+				id: skillId,
 				workspaceId,
 				name: body.name,
 				description,
@@ -261,17 +251,6 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 			.returning()
 		created = rows[0]
 	} catch (err) {
-		// Roll back the S3 write so the store doesn't hold an orphan object
-		try {
-			await storage.deleteWorkspaceSkill(workspaceId, body.name)
-		} catch (rollbackErr) {
-			logger.warn('Failed to roll back S3 write after DB failure', {
-				workspaceId,
-				name: body.name,
-				error: String(rollbackErr),
-			})
-		}
-		// If the insert failed due to the unique index, surface that as 409
 		if (err instanceof Error && /workspace_skills_ws_name_uniq/.test(err.message)) {
 			return c.json(
 				createApiError('CONFLICT', 'A skill with this name already exists in this workspace'),
@@ -282,12 +261,29 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 	}
 
 	if (!created) {
-		try {
-			await storage.deleteWorkspaceSkill(workspaceId, body.name)
-		} catch {
-			// best effort
-		}
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace skill'), 500)
+	}
+
+	try {
+		await storage.putWorkspaceSkill(workspaceId, skillId, body.content)
+	} catch (err) {
+		// S3 write failed — remove the DB row we just inserted so we don't leave
+		// metadata pointing at a missing object. Cascade drops any (unlikely)
+		// attachment the caller raced in.
+		try {
+			await db.delete(workspaceSkills).where(eq(workspaceSkills.id, skillId))
+		} catch (rollbackErr) {
+			logger.error(
+				'Failed to roll back DB insert after S3 write failure — row now points at missing storage key',
+				{
+					workspaceId,
+					skillId,
+					storageKey,
+					error: String(rollbackErr),
+				},
+			)
+		}
+		throw err
 	}
 
 	// Audit event — do NOT include the content field (8KB NOTIFY payload cap).
@@ -390,7 +386,10 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	}
 	const description = parsed.description ? parsed.description : null
 
-	const { sizeBytes } = await storage.putWorkspaceSkill(workspaceId, name, body.content)
+	// S3 key is keyed on the skill's UUID, so writing here cannot collide with
+	// a concurrent create-with-same-name (which would race on a different id)
+	// or a delete-then-create cycle (new id = new key).
+	const { sizeBytes } = await storage.putWorkspaceSkill(workspaceId, existing.id, body.content)
 
 	const now = new Date()
 	let updated: typeof workspaceSkills.$inferSelect | undefined
@@ -407,16 +406,18 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 			.returning()
 		updated = rows[0]
 	} catch (err) {
-		// Roll back the S3 write so storage doesn't hold v2 while the DB still
-		// reports v1 metadata. The previous content is the authoritative copy
-		// of record at this point.
+		// Roll back the S3 write to the previous content. Since the S3 key is
+		// scoped to this skill's UUID, the rollback only ever affects this skill
+		// — it cannot overwrite a concurrent successful update on a different
+		// skill that happened to share the same name.
 		try {
-			await storage.putWorkspaceSkill(workspaceId, name, existing.content)
+			await storage.putWorkspaceSkill(workspaceId, existing.id, existing.content)
 		} catch (rollbackErr) {
 			logger.error(
 				'Failed to roll back S3 write after DB update failure — storage now holds new content while DB reports old metadata',
 				{
 					workspaceId,
+					skillId: existing.id,
 					name,
 					error: String(rollbackErr),
 				},
@@ -426,13 +427,9 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	}
 
 	if (!updated) {
-		// The row vanished between the select and the update (concurrent delete).
-		// Roll back the S3 write to match.
-		try {
-			await storage.deleteWorkspaceSkill(workspaceId, name)
-		} catch {
-			// best effort
-		}
+		// Row vanished between select and update (concurrent delete). The
+		// concurrent delete also removed its own S3 object (scoped to the same
+		// id), so no rollback is needed here.
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 
@@ -507,19 +504,18 @@ app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 
-	// DB first — if the DB delete succeeds, cascades remove agent_skills
-	// attachments. Delete S3 second as best-effort; an orphan S3 object is
-	// recoverable (and will be overwritten if the skill is recreated with the
-	// same name), but a dangling DB row pointing at a vanished storage key is
-	// not: the session-manager pull would then fail loudly for every attached
-	// agent.
+	// DB first — cascades remove agent_skills attachments. Delete S3 second as
+	// best-effort; an orphan S3 object keyed on the deleted skill's UUID is
+	// inert and cannot be picked up by a future recreate (which will mint a
+	// new UUID = new S3 key).
 	await db.delete(workspaceSkills).where(eq(workspaceSkills.id, existing.id))
 
 	try {
-		await storage.deleteWorkspaceSkill(workspaceId, name)
+		await storage.deleteWorkspaceSkill(workspaceId, existing.id)
 	} catch (err) {
 		logger.error('Failed to delete workspace skill from storage (orphan object left)', {
 			workspaceId,
+			skillId: existing.id,
 			name,
 			storageKey: existing.storageKey,
 			error: String(err),

@@ -49,6 +49,7 @@ type Env = {
 export function createTestContext() {
 	const mockResults: Record<string, unknown[]> = {}
 	const queues: Record<string, unknown[][]> = {}
+	const errors: Record<string, Error | undefined> = {}
 
 	const db = new Proxy({} as Database, {
 		get: (_target, prop) => {
@@ -62,7 +63,10 @@ export function createTestContext() {
 				// Map selectDistinct to the same bucket as select
 				const key = prop === 'selectDistinct' ? 'select' : (prop as string)
 				return () => {
-					// Use queue if available, fall back to static mockResults
+					const errorKey = `${key}Error`
+					if (errors[errorKey]) {
+						return createChain(undefined, errors[errorKey])
+					}
 					const queueKey = `${key}Queue`
 					const queue = queues[queueKey]
 					if (queue && queue.length > 0) {
@@ -73,7 +77,6 @@ export function createTestContext() {
 			}
 			if (prop === 'transaction') {
 				return async (fn: (tx: Database) => Promise<unknown>) => {
-					// Execute the transaction callback with the same mock db
 					return fn(db)
 				}
 			}
@@ -81,12 +84,15 @@ export function createTestContext() {
 		},
 	})
 
-	// Proxy to allow setting queues via mockResults.selectQueue etc.
 	const results = new Proxy(mockResults, {
 		set: (target, prop, value) => {
 			const key = String(prop)
 			if (key.endsWith('Queue')) {
 				queues[key] = value as unknown[][]
+				return true
+			}
+			if (key.endsWith('Error')) {
+				errors[key] = value as Error | undefined
 				return true
 			}
 			target[key] = value as unknown[]
@@ -97,6 +103,9 @@ export function createTestContext() {
 			if (key.endsWith('Queue')) {
 				return queues[key]
 			}
+			if (key.endsWith('Error')) {
+				return errors[key]
+			}
 			return target[key]
 		},
 	})
@@ -104,7 +113,7 @@ export function createTestContext() {
 	return { db, mockResults: results }
 }
 
-function createChain(returnValue?: unknown): Record<string, unknown> {
+function createChain(returnValue?: unknown, error?: Error): Record<string, unknown> {
 	const chain: Record<string, unknown> = {}
 	const methods = [
 		'select',
@@ -128,7 +137,13 @@ function createChain(returnValue?: unknown): Record<string, unknown> {
 		chain[m] = () => chain
 	}
 	// biome-ignore lint/suspicious/noThenProperty: mock needs .then for Drizzle's await
-	chain.then = (resolve: (v: unknown) => void) => resolve(returnValue ?? [])
+	chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+		if (error) {
+			if (reject) return reject(error)
+			throw error
+		}
+		return resolve(returnValue ?? [])
+	}
 	chain.catch = () => chain
 	return chain
 }

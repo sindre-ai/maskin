@@ -310,13 +310,14 @@ export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 	const n = next()
 	const name = `ws-skill-${n}`
 	const workspaceId = randomUUID()
+	const id = randomUUID()
 	return {
-		id: randomUUID(),
+		id,
 		workspaceId,
 		name,
 		description: `Workspace skill ${n}`,
 		content: `---\nname: ${name}\ndescription: Workspace skill ${n}\n---\n\nDo the thing ${n}`,
-		storageKey: `workspaces/${workspaceId}/skills/${name}/SKILL.md`,
+		storageKey: `workspaces/${workspaceId}/skills/${id}/SKILL.md`,
 		sizeBytes: 128,
 		createdBy: randomUUID(),
 		createdAt: new Date(),

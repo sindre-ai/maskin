@@ -221,14 +221,14 @@ describe('AgentStorageManager', () => {
 	})
 
 	describe('workspace skills', () => {
-		const skillName = 'deploy-check'
-		const expectedKey = `workspaces/${workspaceId}/skills/${skillName}/SKILL.md`
+		const skillId = '11111111-1111-1111-1111-111111111111'
+		const expectedKey = `workspaces/${workspaceId}/skills/${skillId}/SKILL.md`
 
 		describe('putWorkspaceSkill()', () => {
 			it('writes SKILL.md to the workspace-scoped S3 prefix', async () => {
 				const result = await manager.putWorkspaceSkill(
 					workspaceId,
-					skillName,
+					skillId,
 					'---\nname: deploy-check\n---\nHello',
 				)
 
@@ -248,8 +248,8 @@ describe('AgentStorageManager', () => {
 					throw new Error(`unexpected key: ${key}`)
 				})
 
-				await manager.putWorkspaceSkill(workspaceId, skillName, content)
-				const readBack = await manager.getWorkspaceSkill(workspaceId, skillName)
+				await manager.putWorkspaceSkill(workspaceId, skillId, content)
+				const readBack = await manager.getWorkspaceSkill(workspaceId, skillId)
 
 				expect(readBack).toBe(content)
 			})
@@ -259,7 +259,7 @@ describe('AgentStorageManager', () => {
 			it('reads and decodes the workspace-scoped S3 key', async () => {
 				storage.get.mockResolvedValue(Buffer.from('Some skill body', 'utf-8'))
 
-				const content = await manager.getWorkspaceSkill(workspaceId, skillName)
+				const content = await manager.getWorkspaceSkill(workspaceId, skillId)
 
 				expect(storage.get).toHaveBeenCalledWith(expectedKey)
 				expect(content).toBe('Some skill body')
@@ -268,25 +268,28 @@ describe('AgentStorageManager', () => {
 
 		describe('deleteWorkspaceSkill()', () => {
 			it('removes the workspace-scoped S3 key', async () => {
-				await manager.deleteWorkspaceSkill(workspaceId, skillName)
+				await manager.deleteWorkspaceSkill(workspaceId, skillId)
 
 				expect(storage.delete).toHaveBeenCalledWith(expectedKey)
 			})
 		})
 
 		describe('pullWorkspaceSkillsForAgent()', () => {
+			const deployCheckId = '22222222-2222-2222-2222-222222222222'
+			const prReviewId = '33333333-3333-3333-3333-333333333333'
+
 			it('downloads each attached skill into skills/<name>/SKILL.md', async () => {
 				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, 'deploy-check') },
-					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, 'pr-review') },
+					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
+					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
 				]
 				storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
 
 				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
 
 				expect(storage.get).toHaveBeenCalledTimes(2)
-				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'deploy-check'))
-				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'pr-review'))
+				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, deployCheckId))
+				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, prReviewId))
 				expect(writeFile).toHaveBeenCalledWith(
 					join('/tmp/agent/skills/deploy-check/SKILL.md'),
 					expect.any(Buffer),
@@ -310,7 +313,7 @@ describe('AgentStorageManager', () => {
 				// Silent failure here would start the session without skills the user
 				// attached — fail fast instead so operators see the DB↔S3 divergence.
 				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, 'deploy-check') },
+					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
 				]
 				storage.get.mockRejectedValue(new Error('NoSuchKey'))
 
@@ -321,8 +324,8 @@ describe('AgentStorageManager', () => {
 
 			it('skips skills whose folder already exists on disk (agent-local wins)', async () => {
 				mockResults.select = [
-					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, 'deploy-check') },
-					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, 'pr-review') },
+					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
+					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
 				]
 				// deploy-check exists locally, pr-review does not
 				const existingFolder = join('/tmp/agent/skills/deploy-check')
@@ -337,7 +340,7 @@ describe('AgentStorageManager', () => {
 				await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
 
 				expect(storage.get).toHaveBeenCalledTimes(1)
-				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'pr-review'))
+				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, prReviewId))
 				expect(writeFile).toHaveBeenCalledWith(
 					join('/tmp/agent/skills/pr-review/SKILL.md'),
 					expect.any(Buffer),

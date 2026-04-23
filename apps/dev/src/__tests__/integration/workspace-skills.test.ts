@@ -124,8 +124,8 @@ describe('Workspace Skills Integration', () => {
 			expect(created.description).toBe('Ship to prod')
 			expect(created.sizeBytes).toBe(Buffer.byteLength(SKILL_BODY, 'utf-8'))
 
-			// SKILL.md landed at the canonical S3 key.
-			const key = workspaceSkillKey(workspaceId, 'deploy-prod')
+			// SKILL.md landed at the UUID-keyed S3 path.
+			const key = workspaceSkillKey(workspaceId, created.id)
 			expect(storage._store.has(key)).toBe(true)
 			expect(storage._store.get(key)?.toString('utf-8')).toBe(SKILL_BODY)
 
@@ -160,12 +160,13 @@ describe('Workspace Skills Integration', () => {
 		it('updates skill content and re-fetching returns the new body', async () => {
 			const app = createSkillsApp(storage)
 
-			await app.request(
+			const createRes = await app.request(
 				jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
 					name: 'deploy-prod',
 					content: SKILL_BODY,
 				}),
 			)
+			const created = await createRes.json()
 
 			const newContent =
 				'---\nname: deploy-prod\ndescription: Ship to prod v2\n---\n\nRun the deploy carefully.'
@@ -179,7 +180,7 @@ describe('Workspace Skills Integration', () => {
 			expect(updated.content).toBe(newContent)
 			expect(updated.description).toBe('Ship to prod v2')
 
-			const key = workspaceSkillKey(workspaceId, 'deploy-prod')
+			const key = workspaceSkillKey(workspaceId, created.id)
 			expect(storage._store.get(key)?.toString('utf-8')).toBe(newContent)
 
 			const getRes = await app.request(jsonGet(`/api/workspaces/${workspaceId}/skills/deploy-prod`))
@@ -360,7 +361,7 @@ describe('Workspace Skills Integration', () => {
 			expect(remainingAttachments).toHaveLength(0)
 
 			// S3 object was deleted.
-			expect(storage._store.has(workspaceSkillKey(workspaceId, 'deploy-prod'))).toBe(false)
+			expect(storage._store.has(workspaceSkillKey(workspaceId, skill.id))).toBe(false)
 		})
 	})
 })

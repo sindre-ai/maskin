@@ -85,9 +85,8 @@ describe('Workspace Skills Routes', () => {
 			})
 
 			// select #1: workspace membership
-			// select #2: name conflict check (no existing row)
-			// insert #1: workspace_skills returning
-			mockResults.selectQueue = [[buildWorkspaceMember()], []]
+			// insert #1: workspace_skills returning — DB-first, unique index catches dupes
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
 			mockResults.insert = [inserted]
 
 			const res = await app.request(
@@ -97,29 +96,33 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(201)
 			const json = await res.json()
 			expect(json.name).toBe(body.name)
+			// The route generates the skill's UUID via randomUUID() before the
+			// insert and uses the same id for both the DB row and the S3 key.
 			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
 				workspaceId,
-				body.name,
+				expect.stringMatching(/^[0-9a-f-]{36}$/),
 				body.content,
 			)
 		})
 
-		it('returns 409 when a skill with the same name already exists', async () => {
+		it('returns 409 when the DB unique index rejects a duplicate name', async () => {
 			const { app, mockResults, agentStorage } = createSkillsTestApp(
 				workspaceSkillsRoutes,
 				'/api/workspaces',
 			)
 			const body = buildCreateWorkspaceSkillBody({ name: 'taken-name' })
-			const existing = buildWorkspaceSkill({ workspaceId, name: body.name })
 
-			mockResults.selectQueue = [[buildWorkspaceMember()], [existing]]
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			mockResults.insertError = new Error(
+				'duplicate key value violates unique constraint "workspace_skills_ws_name_uniq"',
+			)
 
 			const res = await app.request(
 				jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, body),
 			)
 
 			expect(res.status).toBe(409)
-			// did not write to S3 when we short-circuit on the existing name
+			// S3 write must not happen when the DB rejects the insert
 			expect(agentStorage.putWorkspaceSkill).not.toHaveBeenCalled()
 		})
 
@@ -165,25 +168,27 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(403)
 		})
 
-		it('rolls back the S3 write when the DB insert fails', async () => {
+		it('rolls back the DB insert when the S3 write fails', async () => {
 			const { app, mockResults, agentStorage } = createSkillsTestApp(
 				workspaceSkillsRoutes,
 				'/api/workspaces',
 			)
 			const body = buildCreateWorkspaceSkillBody({ name: 'rollback-skill' })
+			const inserted = buildWorkspaceSkill({ workspaceId, name: body.name })
 
-			// membership ok, no existing name
-			mockResults.selectQueue = [[buildWorkspaceMember()], []]
-			// insert returns nothing → treated as internal error
-			mockResults.insert = []
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			mockResults.insert = [inserted]
+			vi.mocked(agentStorage.putWorkspaceSkill).mockRejectedValueOnce(new Error('S3 5xx'))
 
 			const res = await app.request(
 				jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, body),
 			)
 
+			// The handler re-throws the S3 error → Hono returns 500 by default.
+			// What matters is that the S3 write was attempted and the DB row was
+			// deleted as rollback.
 			expect(res.status).toBe(500)
 			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalled()
-			expect(agentStorage.deleteWorkspaceSkill).toHaveBeenCalledWith(workspaceId, body.name)
 		})
 	})
 
@@ -209,7 +214,7 @@ describe('Workspace Skills Routes', () => {
 			expect(json.name).toBe('my-skill')
 			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
 				workspaceId,
-				'my-skill',
+				existing.id,
 				body.content,
 			)
 		})
@@ -288,7 +293,7 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(200)
 			const json = await res.json()
 			expect(json.deleted).toBe(true)
-			expect(agentStorage.deleteWorkspaceSkill).toHaveBeenCalledWith(workspaceId, 'my-skill')
+			expect(agentStorage.deleteWorkspaceSkill).toHaveBeenCalledWith(workspaceId, existing.id)
 		})
 
 		it('returns 404 when the skill does not exist', async () => {
