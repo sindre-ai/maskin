@@ -55,13 +55,20 @@ function msbCreate(config: {
 	}
 	args.push(config.image)
 
-	// Run msb via systemd-run --scope so it's placed in a fresh transient
-	// cgroup, outside the agent-server's cgroup hierarchy. The same command
-	// works from a standalone shell but fails from the agent-server's
-	// process tree — likely due to inherited cgroup constraints.
+	// Run msb with a completely clean env (via env -i). The same command
+	// works from a fresh shell but fails from the agent-server's process
+	// tree. An inherited env var (likely from agent-server's .env) is
+	// confusing libkrun's VMM boot — strip everything except the bare
+	// minimum (PATH, HOME) that msb and libkrun need.
 	execFileSync(
-		'/usr/bin/systemd-run',
-		['--scope', '--quiet', '--collect', MSB_BIN, ...args],
+		'/usr/bin/env',
+		[
+			'-i',
+			`PATH=${process.env.PATH ?? '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}`,
+			`HOME=${process.env.HOME ?? '/root'}`,
+			MSB_BIN,
+			...args,
+		],
 		{
 			timeout: 180_000,
 			stdio: ['ignore', 'pipe', 'pipe'],
