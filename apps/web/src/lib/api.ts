@@ -244,6 +244,8 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		stop: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
 	},
 
 	events: {

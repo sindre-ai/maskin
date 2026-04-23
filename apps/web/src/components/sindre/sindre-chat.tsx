@@ -10,7 +10,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
 import { useSindreSession } from '@/hooks/use-sindre-session'
-import type { SessionInputAttachment } from '@/lib/api'
+import { type SessionInputAttachment, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	EMPTY_SINDRE_SELECTION,
@@ -26,11 +26,22 @@ import {
 	type ChangeEvent,
 	type FormEvent,
 	type KeyboardEvent,
+	forwardRef,
 	useCallback,
 	useEffect,
+	useImperativeHandle,
 	useRef,
 	useState,
 } from 'react'
+
+/**
+ * Imperative API for parents that render a `<SindreChat>` but also need to
+ * reach in to start a fresh conversation (e.g. the panel's `+` button).
+ */
+export interface SindreChatHandle {
+	/** Stops the current Sindre container, clears local transcript + selection. */
+	newChat: () => void
+}
 
 export type SindreChatSurface = 'sheet' | 'pulse-bar'
 
@@ -91,18 +102,21 @@ export interface SindreChatProps {
  * - otherwise → forwards to the persistent Sindre session via
  *   `useSindreSession`, attaching objects (if any) as first-class attachments.
  */
-export function SindreChat({
-	workspaceId,
-	sindreActorId,
-	surface,
-	selection,
-	onDispatchSelection,
-	onSubmitOverride,
-	autoSendMessage,
-	onAutoSendConsumed,
-	onEventsChange,
-	className,
-}: SindreChatProps) {
+export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function SindreChat(
+	{
+		workspaceId,
+		sindreActorId,
+		surface,
+		selection,
+		onDispatchSelection,
+		onSubmitOverride,
+		autoSendMessage,
+		onAutoSendConsumed,
+		onEventsChange,
+		className,
+	},
+	ref,
+) {
 	const activeSelection = selection ?? EMPTY_SINDRE_SELECTION
 	const selectedAgent = activeSelection.agent
 	const selectedObjects = activeSelection.objects
@@ -119,6 +133,24 @@ export function SindreChat({
 	useEffect(() => {
 		onEventsChange?.(events)
 	}, [events, onEventsChange])
+
+	useImperativeHandle(
+		ref,
+		() => ({
+			newChat: () => {
+				const currentSessionId = sindre.sessionId
+				if (currentSessionId && workspaceId) {
+					// Fire-and-forget: release the container server-side so it
+					// isn't left idling until the watchdog auto-pauses it.
+					api.sessions.stop(currentSessionId, workspaceId).catch(() => {})
+				}
+				sindre.reset()
+				oneShot.clear()
+				onDispatchSelection?.({ type: 'clear_all' })
+			},
+		}),
+		[sindre, oneShot, workspaceId, onDispatchSelection],
+	)
 
 	const showTranscript = surface === 'sheet'
 	const sindreReady = sindre.status === 'ready' || sindre.status === 'connecting'
@@ -273,7 +305,7 @@ export function SindreChat({
 			/>
 		</div>
 	)
-}
+})
 
 function isTurnProgressEvent(event: SindreEvent): boolean {
 	return (

@@ -822,6 +822,11 @@ export class SessionManager extends EventEmitter {
 	private async runWatchdog(): Promise<void> {
 		const now = new Date()
 		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
+		// Interactive sessions (the Sindre chat) get paused sooner since they're
+		// long-lived holders of container slots and the user often walks away
+		// mid-conversation. Non-interactive agent runs keep the slower 10-min
+		// grace period.
+		const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
 
 		// 1. Find sessions past timeout — push learnings before cleanup
 		const timedOut = await this.db
@@ -909,8 +914,11 @@ export class SessionManager extends EventEmitter {
 				.limit(1)
 
 			const lastActivity = lastLog?.createdAt ?? session.startedAt
-			if (lastActivity && lastActivity < tenMinutesAgo) {
-				logger.info(`Auto-pausing idle session: ${session.id}`)
+			const cutoff = session.interactive ? fiveMinutesAgo : tenMinutesAgo
+			if (lastActivity && lastActivity < cutoff) {
+				logger.info(`Auto-pausing idle session: ${session.id}`, {
+					interactive: session.interactive,
+				})
 				this.pauseSession(session.id).catch((err) =>
 					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
 				)

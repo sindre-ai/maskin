@@ -1,4 +1,4 @@
-import { SindreChat } from '@/components/sindre/sindre-chat'
+import { SindreChat, type SindreChatHandle } from '@/components/sindre/sindre-chat'
 import { SindreSidebarProvider } from '@/components/sindre/sindre-sidebar-provider'
 import { Button } from '@/components/ui/button'
 import {
@@ -24,7 +24,7 @@ import {
 	sindreSelectionReducer,
 } from '@/lib/sindre-selection'
 import type { SindreEvent } from '@/lib/sindre-stream'
-import { Copy, Download, MoreHorizontal, Pin, PinOff, X } from 'lucide-react'
+import { Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 const SINDRE_AGENT_NAME = 'Sindre'
@@ -55,7 +55,12 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	} = useSindre()
 	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
 	const panelRef = useRef<HTMLDivElement | null>(null)
+	const chatRef = useRef<SindreChatHandle | null>(null)
 	const [events, setEvents] = useState<SindreEvent[]>([])
+
+	const handleNewChat = useCallback(() => {
+		chatRef.current?.newChat()
+	}, [])
 
 	const buildExportMarkdown = useCallback(() => {
 		const actor = getStoredActor()
@@ -153,6 +158,21 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 						</DropdownMenu>
 					</div>
 					<div className="flex items-center gap-1">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon"
+									className="h-7 w-7"
+									onClick={handleNewChat}
+									aria-label="New conversation"
+								>
+									<Plus size={15} />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>New conversation</TooltipContent>
+						</Tooltip>
 						<PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />
 						<Button
 							type="button"
@@ -168,6 +188,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				</SidebarHeader>
 				<SidebarContent className="min-h-0 flex-1 p-3">
 					<SindreChat
+						ref={chatRef}
 						workspaceId={workspaceId}
 						sindreActorId={sindreActorId}
 						surface="sheet"
