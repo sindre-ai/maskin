@@ -155,4 +155,28 @@ describe('invalidateFromSSE', () => {
 			queryKey: queryKeys.workspaces.all(),
 		})
 	})
+
+	it('invalidates workspace skills for workspace_skill entity', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'workspace_skill',
+			entity_id: entityId,
+			action: 'created',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.workspaceSkills.all(workspaceId),
+		})
+	})
+
+	it('invalidates all agent skill attachments for agent_skill entity', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'agent_skill',
+			entity_id: entityId,
+			action: 'attached',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['agent-skill-attachments'],
+		})
+	})
 })

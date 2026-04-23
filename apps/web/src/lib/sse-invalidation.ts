@@ -40,5 +40,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'workspace':
 			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all() })
 			break
+		case 'workspace_skill':
+			// all() is a prefix of detail() so this covers both list and detail queries
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
+			break
+		case 'agent_skill':
+			// The event's entity_id is the workspace-skill id; the target actorId is not in the
+			// SSE payload, so invalidate all attachment queries in this tab with a broad prefix.
+			queryClient.invalidateQueries({ queryKey: ['agent-skill-attachments'] })
+			break
 	}
 }

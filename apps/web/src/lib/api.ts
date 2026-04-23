@@ -299,6 +299,41 @@ export const api = {
 				workspaceId,
 			}),
 	},
+
+	workspaceSkills: {
+		list: (workspaceId: string) =>
+			request<WorkspaceSkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
+		get: (workspaceId: string, name: string) =>
+			request<WorkspaceSkillDetail>(`/workspaces/${workspaceId}/skills/${name}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateWorkspaceSkillInput) =>
+			request<WorkspaceSkillDetail>(`/workspaces/${workspaceId}/skills`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (workspaceId: string, name: string, data: UpdateWorkspaceSkillInput) =>
+			request<WorkspaceSkillDetail>(`/workspaces/${workspaceId}/skills/${name}`, {
+				method: 'PUT',
+				body: data,
+				workspaceId,
+			}),
+		delete: (workspaceId: string, name: string) =>
+			request<{ deleted: boolean }>(`/workspaces/${workspaceId}/skills/${name}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		listForActor: (actorId: string) =>
+			request<AttachedWorkspaceSkill[]>(`/actors/${actorId}/workspace-skills`),
+		attach: (actorId: string, workspaceSkillId: string) =>
+			request<AttachedWorkspaceSkill>(`/actors/${actorId}/workspace-skills`, {
+				method: 'POST',
+				body: { workspaceSkillId },
+			}),
+		detach: (actorId: string, workspaceSkillId: string) =>
+			request<{ deleted: boolean }>(`/actors/${actorId}/workspace-skills/${workspaceSkillId}`, {
+				method: 'DELETE',
+			}),
+	},
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -548,6 +583,35 @@ export interface SaveSkillInput {
 	description: string
 	content: string
 	frontmatter?: Record<string, unknown>
+}
+
+export interface WorkspaceSkillListItem {
+	id: string
+	workspaceId: string
+	name: string
+	description: string | null
+	storageKey: string
+	sizeBytes: number
+	createdBy: string | null
+	createdAt: string | null
+	updatedAt: string | null
+}
+
+export interface WorkspaceSkillDetail extends WorkspaceSkillListItem {
+	content: string
+}
+
+export interface AttachedWorkspaceSkill extends WorkspaceSkillListItem {
+	attachedAt: string | null
+}
+
+export interface CreateWorkspaceSkillInput {
+	name: string
+	content: string
+}
+
+export interface UpdateWorkspaceSkillInput {
+	content: string
 }
 
 export interface CreateSessionInput {
