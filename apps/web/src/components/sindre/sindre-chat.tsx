@@ -69,6 +69,12 @@ export interface SindreChatProps {
 	autoSendMessage?: string | null
 	/** Fired after `autoSendMessage` has been dispatched. */
 	onAutoSendConsumed?: () => void
+	/**
+	 * Emits the merged transcript events to the parent on each change. Used by
+	 * the panel's "export conversation" menu without lifting the underlying
+	 * session hooks out of this component.
+	 */
+	onEventsChange?: (events: SindreEvent[]) => void
 	className?: string
 }
 
@@ -94,6 +100,7 @@ export function SindreChat({
 	onSubmitOverride,
 	autoSendMessage,
 	onAutoSendConsumed,
+	onEventsChange,
 	className,
 }: SindreChatProps) {
 	const activeSelection = selection ?? EMPTY_SINDRE_SELECTION
@@ -108,6 +115,10 @@ export function SindreChat({
 	// answered by the selected agent renders immediately after the user's last
 	// Sindre turn (and vice versa).
 	const events = useMergedTranscript(workspaceId, sindre.events, oneShot.events)
+
+	useEffect(() => {
+		onEventsChange?.(events)
+	}, [events, onEventsChange])
 
 	const showTranscript = surface === 'sheet'
 	const sindreReady = sindre.status === 'ready' || sindre.status === 'connecting'

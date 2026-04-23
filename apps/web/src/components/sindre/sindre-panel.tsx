@@ -1,9 +1,21 @@
 import { SindreChat } from '@/components/sindre/sindre-chat'
 import { SindreSidebarProvider } from '@/components/sindre/sindre-sidebar-provider'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Sidebar, SidebarContent, SidebarHeader } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { getStoredActor } from '@/lib/auth'
 import { type SindreAttachment, useSindre } from '@/lib/sindre-context'
+import {
+	buildSindreExportFilename,
+	downloadSindreMarkdown,
+	formatSindreMarkdown,
+} from '@/lib/sindre-export'
 import {
 	EMPTY_SINDRE_SELECTION,
 	type SindreSelectionAgent,
@@ -11,8 +23,11 @@ import {
 	type SindreSelectionObject,
 	sindreSelectionReducer,
 } from '@/lib/sindre-selection'
-import { Pin, PinOff, X } from 'lucide-react'
-import { useEffect, useReducer, useRef } from 'react'
+import type { SindreEvent } from '@/lib/sindre-stream'
+import { Copy, Download, MoreHorizontal, Pin, PinOff, X } from 'lucide-react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+
+const SINDRE_AGENT_NAME = 'Sindre'
 
 interface SindrePanelProps {
 	workspaceId: string
@@ -40,6 +55,32 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	} = useSindre()
 	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
 	const panelRef = useRef<HTMLDivElement | null>(null)
+	const [events, setEvents] = useState<SindreEvent[]>([])
+
+	const buildExportMarkdown = useCallback(() => {
+		const actor = getStoredActor()
+		return formatSindreMarkdown(events, {
+			workspaceId,
+			frontendUrl:
+				typeof window !== 'undefined' ? window.location.origin : 'https://maskin.sindre.ai',
+			userName: actor?.name?.trim() || 'You',
+			agentName: SINDRE_AGENT_NAME,
+		})
+	}, [events, workspaceId])
+
+	const handleCopy = useCallback(async () => {
+		const md = buildExportMarkdown()
+		try {
+			await navigator.clipboard.writeText(md)
+		} catch {
+			// Clipboard access is best-effort; fall back silently.
+		}
+	}, [buildExportMarkdown])
+
+	const handleDownload = useCallback(() => {
+		const md = buildExportMarkdown()
+		downloadSindreMarkdown(md, buildSindreExportFilename(SINDRE_AGENT_NAME))
+	}, [buildExportMarkdown])
 
 	useEffect(() => {
 		if (pendingAttachments.length === 0) return
@@ -86,6 +127,30 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
 					<h2 className="font-semibold text-base">Sindre</h2>
 					<div className="flex items-center gap-1">
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon"
+									className="h-7 w-7"
+									aria-label="Conversation menu"
+									disabled={events.length === 0}
+								>
+									<MoreHorizontal size={15} />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end" className="w-56">
+								<DropdownMenuItem onSelect={() => void handleCopy()}>
+									<Copy size={14} />
+									Copy as markdown
+								</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => handleDownload()}>
+									<Download size={14} />
+									Download as markdown
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
 						<PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />
 						<Button
 							type="button"
@@ -108,6 +173,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 						onDispatchSelection={dispatch}
 						autoSendMessage={pendingMessage}
 						onAutoSendConsumed={clearPendingMessage}
+						onEventsChange={setEvents}
 					/>
 				</SidebarContent>
 			</Sidebar>
