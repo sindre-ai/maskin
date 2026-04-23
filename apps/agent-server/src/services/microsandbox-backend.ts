@@ -55,14 +55,18 @@ function msbCreate(config: {
 	}
 	args.push(config.image)
 
-	// Run msb under setsid so it's in a brand-new session/process group,
-	// fully detached from the agent-server's process tree. Without this,
-	// msb inside the agent-server's descent fails the VMM handshake, even
-	// though it works fine from a standalone shell.
-	execFileSync('/usr/bin/setsid', ['--wait', MSB_BIN, ...args], {
-		timeout: 180_000,
-		stdio: ['ignore', 'pipe', 'pipe'],
-	})
+	// Run msb via systemd-run --scope so it's placed in a fresh transient
+	// cgroup, outside the agent-server's cgroup hierarchy. The same command
+	// works from a standalone shell but fails from the agent-server's
+	// process tree — likely due to inherited cgroup constraints.
+	execFileSync(
+		'/usr/bin/systemd-run',
+		['--scope', '--quiet', '--collect', MSB_BIN, ...args],
+		{
+			timeout: 180_000,
+			stdio: ['ignore', 'pipe', 'pipe'],
+		},
+	)
 }
 
 export class MicrosandboxBackend implements RuntimeBackend {
