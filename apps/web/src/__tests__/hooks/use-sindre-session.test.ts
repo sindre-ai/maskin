@@ -32,7 +32,7 @@ vi.mock('@/lib/auth', () => ({
 	getApiKey: () => 'test-api-key',
 }))
 
-import { loadStoredSindreSessionId, useSindreSession } from '@/hooks/use-sindre-session'
+import { useSindreSession } from '@/hooks/use-sindre-session'
 import type { SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
@@ -72,7 +72,7 @@ afterEach(() => {
 })
 
 describe('useSindreSession — bootstrap', () => {
-	it('creates an interactive session for Sindre when none is persisted', async () => {
+	it('creates an interactive session for Sindre on mount', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-new'))
 
 		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
@@ -91,18 +91,9 @@ describe('useSindreSession — bootstrap', () => {
 		})
 
 		await waitFor(() => expect(result.current.sessionId).toBe('sess-new'))
-		expect(localStorage.getItem(`maskin-sindre-session-${workspaceId}`)).toBe('sess-new')
-	})
-
-	it('reuses a persisted sessionId without creating a new session', () => {
-		localStorage.setItem(`maskin-sindre-session-${workspaceId}`, 'sess-existing')
-
-		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
-			wrapper: TestWrapper,
-		})
-
-		expect(result.current.sessionId).toBe('sess-existing')
-		expect(api.sessions.create).not.toHaveBeenCalled()
+		// The session id is intentionally kept in memory only — refreshing
+		// the page drops it and a fresh container is created next mount.
+		expect(localStorage.getItem(`maskin-sindre-session-${workspaceId}`)).toBeNull()
 	})
 
 	it('does not bootstrap when sindreActorId is null', () => {
@@ -120,12 +111,6 @@ describe('useSindreSession — bootstrap', () => {
 		expect(mockFetchEventSource).not.toHaveBeenCalled()
 	})
 
-	it('exposes a load helper for the persisted sessionId', () => {
-		localStorage.setItem(`maskin-sindre-session-${workspaceId}`, 'sess-x')
-		expect(loadStoredSindreSessionId(workspaceId)).toBe('sess-x')
-		expect(loadStoredSindreSessionId('other-ws')).toBeNull()
-	})
-
 	it('captures errors from session creation as the hook error', async () => {
 		vi.mocked(api.sessions.create).mockRejectedValue(new Error('boom'))
 
@@ -141,7 +126,7 @@ describe('useSindreSession — bootstrap', () => {
 
 describe('useSindreSession — SSE log stream', () => {
 	beforeEach(() => {
-		localStorage.setItem(`maskin-sindre-session-${workspaceId}`, 'sess-1')
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
 	})
 
 	it('subscribes to the session log stream with auth + workspace headers', async () => {
@@ -265,7 +250,7 @@ describe('useSindreSession — SSE log stream', () => {
 
 describe('useSindreSession — send', () => {
 	beforeEach(() => {
-		localStorage.setItem(`maskin-sindre-session-${workspaceId}`, 'sess-1')
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
 	})
 
 	it('posts content via api.sessions.input', async () => {
@@ -308,7 +293,6 @@ describe('useSindreSession — send', () => {
 	})
 
 	it('throws when called before a session is bootstrapped', async () => {
-		localStorage.clear()
 		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId: null }), {
 			wrapper: TestWrapper,
 		})
@@ -317,37 +301,37 @@ describe('useSindreSession — send', () => {
 })
 
 describe('useSindreSession — reset & workspace switching', () => {
-	it('reset clears the persisted session and triggers a fresh bootstrap', async () => {
-		localStorage.setItem(`maskin-sindre-session-${workspaceId}`, 'sess-old')
-		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-fresh'))
+	it('reset clears the session and triggers a fresh bootstrap', async () => {
+		vi.mocked(api.sessions.create)
+			.mockResolvedValueOnce(buildSession('sess-old'))
+			.mockResolvedValueOnce(buildSession('sess-fresh'))
 
 		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
-		expect(result.current.sessionId).toBe('sess-old')
+		await waitFor(() => expect(result.current.sessionId).toBe('sess-old'))
 
 		act(() => result.current.reset())
 		expect(result.current.sessionId).toBeNull()
 		expect(result.current.events).toEqual([])
-		expect(localStorage.getItem(`maskin-sindre-session-${workspaceId}`)).toBeNull()
 
-		await waitFor(() => expect(api.sessions.create).toHaveBeenCalledTimes(1))
+		await waitFor(() => expect(api.sessions.create).toHaveBeenCalledTimes(2))
 		await waitFor(() => expect(result.current.sessionId).toBe('sess-fresh'))
-		expect(localStorage.getItem(`maskin-sindre-session-${workspaceId}`)).toBe('sess-fresh')
 	})
 
-	it('switches to a different persisted session when workspaceId changes', async () => {
-		localStorage.setItem('maskin-sindre-session-ws-1', 'sess-ws1')
-		localStorage.setItem('maskin-sindre-session-ws-2', 'sess-ws2')
+	it('bootstraps a fresh session when the workspaceId changes', async () => {
+		vi.mocked(api.sessions.create)
+			.mockResolvedValueOnce(buildSession('sess-ws1'))
+			.mockResolvedValueOnce(buildSession('sess-ws2'))
 
 		const { result, rerender } = renderHook(
 			({ wsId }) => useSindreSession({ workspaceId: wsId, sindreActorId }),
 			{ wrapper: TestWrapper, initialProps: { wsId: 'ws-1' } },
 		)
-		expect(result.current.sessionId).toBe('sess-ws1')
+		await waitFor(() => expect(result.current.sessionId).toBe('sess-ws1'))
 
 		rerender({ wsId: 'ws-2' })
 		await waitFor(() => expect(result.current.sessionId).toBe('sess-ws2'))
-		expect(api.sessions.create).not.toHaveBeenCalled()
+		expect(api.sessions.create).toHaveBeenCalledTimes(2)
 	})
 })

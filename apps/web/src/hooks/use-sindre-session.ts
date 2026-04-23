@@ -11,37 +11,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 // compiling to the same boolean.
 const IS_DEV = ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV ?? false) as boolean
 
-const STORAGE_PREFIX = 'maskin-sindre-session'
-
 // Bootstrap action_prompt is required by the create-session schema (min length 1)
 // but is intentionally ignored at runtime for interactive sessions — the first
 // real user turn arrives via POST /api/sessions/:id/input.
 const BOOTSTRAP_ACTION_PROMPT = 'Sindre interactive chat'
-
-function storageKey(workspaceId: string): string {
-	return `${STORAGE_PREFIX}-${workspaceId}`
-}
-
-export function loadStoredSindreSessionId(workspaceId: string): string | null {
-	if (!workspaceId) return null
-	try {
-		return localStorage.getItem(storageKey(workspaceId))
-	} catch {
-		return null
-	}
-}
-
-function saveStoredSindreSessionId(workspaceId: string, sessionId: string): void {
-	try {
-		localStorage.setItem(storageKey(workspaceId), sessionId)
-	} catch {}
-}
-
-export function clearStoredSindreSessionId(workspaceId: string): void {
-	try {
-		localStorage.removeItem(storageKey(workspaceId))
-	} catch {}
-}
 
 export type SindreSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | 'closed' | 'error'
 
@@ -77,9 +50,7 @@ export function useSindreSession({
 	sindreActorId,
 	enabled = true,
 }: UseSindreSessionOptions): UseSindreSessionResult {
-	const [sessionId, setSessionId] = useState<string | null>(() =>
-		loadStoredSindreSessionId(workspaceId),
-	)
+	const [sessionId, setSessionId] = useState<string | null>(null)
 	const [status, setStatus] = useState<SindreSessionStatus>('idle')
 	const [events, setEvents] = useState<SindreEvent[]>([])
 	const [error, setError] = useState<Error | null>(null)
@@ -92,7 +63,7 @@ export function useSindreSession({
 		if (prevWorkspaceIdRef.current === workspaceId) return
 		prevWorkspaceIdRef.current = workspaceId
 		startingRef.current = false
-		setSessionId(loadStoredSindreSessionId(workspaceId))
+		setSessionId(null)
 		setEvents([])
 		setError(null)
 		setStatus('idle')
@@ -117,7 +88,6 @@ export function useSindreSession({
 				auto_start: true,
 			})
 			.then((session) => {
-				saveStoredSindreSessionId(workspaceId, session.id)
 				setSessionId(session.id)
 			})
 			.catch((err) => {
@@ -221,13 +191,12 @@ export function useSindreSession({
 	)
 
 	const reset = useCallback(() => {
-		if (workspaceId) clearStoredSindreSessionId(workspaceId)
 		startingRef.current = false
 		setSessionId(null)
 		setEvents([])
 		setError(null)
 		setStatus('idle')
-	}, [workspaceId])
+	}, [])
 
 	return useMemo(
 		() => ({ sessionId, status, events, error, send, reset }),
