@@ -747,6 +747,31 @@ describe('SindreChat', () => {
 			/>,
 		)
 		expect(mockSend).toHaveBeenCalledTimes(1)
+
+		// Consumer clears the prop, then the user types the same message again.
+		// This second transition from null must fire the send again — the
+		// previous sticky-ref bug silently dropped it.
+		rerender(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				autoSendMessage={null}
+				onAutoSendConsumed={onConsumed}
+			/>,
+		)
+		rerender(
+			<SindreChat
+				workspaceId="ws-1"
+				sindreActorId="actor-sindre"
+				surface="sheet"
+				autoSendMessage="from bar"
+				onAutoSendConsumed={onConsumed}
+			/>,
+		)
+
+		await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(2))
+		expect(onConsumed).toHaveBeenCalledTimes(2)
 	})
 
 	it('merges one-shot events after Sindre events in the transcript', () => {

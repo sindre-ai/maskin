@@ -162,11 +162,13 @@ export function useSindreSession({
 				}
 			},
 			onerror(err) {
-				// Capture state but let fetch-event-source reconnect — most
-				// errors here are transient (network blip, server restart).
+				// Transient network blips / server restarts land here.
+				// fetch-event-source reconnects automatically when onerror
+				// returns without throwing — flipping status to 'error' would
+				// prematurely release the chat surface's pending spinner
+				// mid-retry, so we only capture the error for diagnostics.
 				// Fatal errors (4xx) come through onopen above which throws
 				// to stop retries.
-				setStatus('error')
 				setError(err instanceof Error ? err : new Error(String(err)))
 			},
 		}).catch(() => {

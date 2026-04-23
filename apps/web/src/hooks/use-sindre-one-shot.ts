@@ -141,9 +141,12 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 				}
 			},
 			onerror(err) {
-				// Capture state but let fetch-event-source reconnect on
-				// transient errors. Fatal 4xx is handled in onopen which throws.
-				setStatus('error')
+				// Transient network blips / server restarts land here.
+				// fetch-event-source reconnects automatically when onerror
+				// returns without throwing — flipping status to 'error' would
+				// prematurely release the UI's pending spinner mid-retry, so
+				// we only capture the error for diagnostics. Fatal 4xx is
+				// handled in onopen (it throws to stop retries).
 				setError(err instanceof Error ? err : new Error(String(err)))
 			},
 		}).catch(() => {

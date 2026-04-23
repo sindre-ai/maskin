@@ -266,14 +266,17 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	)
 
 	// Auto-send a message forwarded from another surface (e.g. the Pulse input
-	// bar opening the sheet). Guard with a ref so the same message is only
-	// consumed once even if the effect re-runs before the caller clears the
-	// prop.
-	const autoSendConsumedRef = useRef<string | null>(null)
+	// bar opening the sheet). The ref tracks whether the *current* non-null
+	// value has already been consumed; it flips back to false on each null so
+	// the next transition — including an identical repeat — fires again.
+	const autoSendConsumedRef = useRef(false)
 	useEffect(() => {
-		if (!autoSendMessage || autoSendMessage.length === 0) return
-		if (autoSendConsumedRef.current === autoSendMessage) return
-		autoSendConsumedRef.current = autoSendMessage
+		if (!autoSendMessage || autoSendMessage.length === 0) {
+			autoSendConsumedRef.current = false
+			return
+		}
+		if (autoSendConsumedRef.current) return
+		autoSendConsumedRef.current = true
 		void handleSend(autoSendMessage).catch(() => {
 			// Errors are surfaced through the session/one-shot hook state.
 		})

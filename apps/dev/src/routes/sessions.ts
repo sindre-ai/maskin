@@ -11,6 +11,7 @@ import {
 import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, formatZodError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	sessionLogResponseSchema,
@@ -506,19 +507,33 @@ app.get('/:id/logs/stream', async (c) => {
 		]
 		const handler = (event: SessionLogEvent) => {
 			if (event.sessionId !== sessionId) return
-			stream.writeSSE({
-				id: String(event.logId),
-				event: event.stream,
-				data: event.data,
-			})
-
-			if (event.stream === 'system') {
-				const terminal = TERMINAL_SYSTEM_LOGS.find((t) => event.data.startsWith(t.prefix))
-				if (terminal) {
-					closed = true
-					stream.writeSSE({ event: 'done', data: terminal.done })
+			// writeSSE returns a Promise. We're in an event listener (sync) so
+			// we can't await it — but we must attach an error handler to avoid
+			// unhandled rejections when the client disconnects mid-write or
+			// backpressure propagates a socket error. Dropped writes are not
+			// recoverable here; just log and detach so we stop trying.
+			const emit = async () => {
+				await stream.writeSSE({
+					id: String(event.logId),
+					event: event.stream,
+					data: event.data,
+				})
+				if (event.stream === 'system') {
+					const terminal = TERMINAL_SYSTEM_LOGS.find((t) => event.data.startsWith(t.prefix))
+					if (terminal) {
+						closed = true
+						await stream.writeSSE({ event: 'done', data: terminal.done })
+					}
 				}
 			}
+			emit().catch((err) => {
+				closed = true
+				sessionManager.off('log', handler)
+				logger.warn('SSE log write failed; detaching listener', {
+					err: err instanceof Error ? err.message : String(err),
+					sessionId,
+				})
+			})
 		}
 
 		sessionManager.on('log', handler)

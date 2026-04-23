@@ -236,13 +236,20 @@ describe('useSindreSession — SSE log stream', () => {
 		expect(lastFesInit?.signal.aborted).toBe(true)
 	})
 
-	it('records SSE errors as the hook error without stopping retries', async () => {
+	it('records SSE errors as the hook error without flipping status (transient)', async () => {
 		const { result } = await renderAndBootstrap()
+		await act(async () => {
+			await lastFesInit?.onopen()
+		})
+		expect(result.current.status).toBe('ready')
+
 		act(() => {
-			// Transient errors no longer throw — the library auto-retries.
+			// Transient errors must not change status — fetch-event-source
+			// retries automatically, and flipping to 'error' would release
+			// the UI's pending spinner mid-retry.
 			lastFesInit?.onerror(new Error('network down'))
 		})
-		expect(result.current.status).toBe('error')
+		expect(result.current.status).toBe('ready')
 		expect(result.current.error?.message).toBe('network down')
 	})
 
