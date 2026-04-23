@@ -593,8 +593,8 @@ export interface WorkspaceSkillListItem {
 	storageKey: string
 	sizeBytes: number
 	createdBy: string | null
-	createdAt: string | null
-	updatedAt: string | null
+	createdAt: string
+	updatedAt: string
 }
 
 export interface WorkspaceSkillDetail extends WorkspaceSkillListItem {
@@ -602,7 +602,7 @@ export interface WorkspaceSkillDetail extends WorkspaceSkillListItem {
 }
 
 export interface AttachedWorkspaceSkill extends WorkspaceSkillListItem {
-	attachedAt: string | null
+	attachedAt: string
 }
 
 export interface CreateWorkspaceSkillInput {

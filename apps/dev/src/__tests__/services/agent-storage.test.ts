@@ -301,6 +301,19 @@ describe('AgentStorageManager', () => {
 				expect(writeFile).not.toHaveBeenCalled()
 			})
 
+			it('throws when an attached skill cannot be pulled from S3', async () => {
+				// Silent failure here would start the session without skills the user
+				// attached — fail fast instead so operators see the DB↔S3 divergence.
+				mockResults.select = [
+					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, 'deploy-check') },
+				]
+				storage.get.mockRejectedValue(new Error('NoSuchKey'))
+
+				await expect(
+					manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent'),
+				).rejects.toThrow(/deploy-check/)
+			})
+
 			it('skips skills whose folder already exists on disk (agent-local wins)', async () => {
 				mockResults.select = [
 					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, 'deploy-check') },

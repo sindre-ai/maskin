@@ -43,10 +43,10 @@ const workspaceSkillListItemSchema = z.object({
 	name: z.string(),
 	description: z.string().nullable(),
 	storageKey: z.string(),
-	sizeBytes: z.number(),
+	sizeBytes: z.number().int().nonnegative(),
 	createdBy: z.string().uuid().nullable(),
-	createdAt: z.string().nullable(),
-	updatedAt: z.string().nullable(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
 })
 
 const workspaceSkillDetailSchema = workspaceSkillListItemSchema.extend({
@@ -439,8 +439,24 @@ app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 
-	await storage.deleteWorkspaceSkill(workspaceId, name)
+	// DB first — if the DB delete succeeds, cascades remove agent_skills
+	// attachments. Delete S3 second as best-effort; an orphan S3 object is
+	// recoverable (and will be overwritten if the skill is recreated with the
+	// same name), but a dangling DB row pointing at a vanished storage key is
+	// not: the session-manager pull would then fail loudly for every attached
+	// agent.
 	await db.delete(workspaceSkills).where(eq(workspaceSkills.id, existing.id))
+
+	try {
+		await storage.deleteWorkspaceSkill(workspaceId, name)
+	} catch (err) {
+		logger.error('Failed to delete workspace skill from storage (orphan object left)', {
+			workspaceId,
+			name,
+			storageKey: existing.storageKey,
+			error: String(err),
+		})
+	}
 
 	await db.insert(events).values({
 		workspaceId,

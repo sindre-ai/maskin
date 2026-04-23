@@ -312,6 +312,7 @@ export class AgentStorageManager {
 
 		let pulled = 0
 		let skipped = 0
+		const failures: { name: string; storageKey: string; error: string }[] = []
 
 		for (const { name, storageKey } of rows) {
 			const skillFolder = join(skillsDir, name)
@@ -331,13 +332,14 @@ export class AgentStorageManager {
 				await writeFile(join(skillFolder, 'SKILL.md'), data)
 				pulled++
 			} catch (err) {
-				logger.warn('Failed to pull workspace skill', {
+				logger.error('Failed to pull workspace skill', {
 					actorId,
 					workspaceId,
 					name,
 					storageKey,
 					error: String(err),
 				})
+				failures.push({ name, storageKey, error: String(err) })
 			}
 		}
 
@@ -346,7 +348,19 @@ export class AgentStorageManager {
 			workspaceId,
 			pulled,
 			skipped,
+			failed: failures.length,
 		})
+
+		if (failures.length > 0) {
+			// Surface the failure to the caller rather than silently starting a
+			// session without skills the user attached. A missing S3 object here
+			// means the DB ↔ storage state has diverged and the agent would run
+			// with incomplete context — better to fail fast.
+			const names = failures.map((f) => f.name).join(', ')
+			throw new Error(
+				`Failed to pull ${failures.length} workspace skill(s) for agent ${actorId}: ${names}`,
+			)
+		}
 	}
 
 	private async upsertFileRecord(

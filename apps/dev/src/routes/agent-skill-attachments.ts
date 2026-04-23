@@ -35,11 +35,11 @@ const attachedSkillSchema = z.object({
 	name: z.string(),
 	description: z.string().nullable(),
 	storageKey: z.string(),
-	sizeBytes: z.number(),
+	sizeBytes: z.number().int().nonnegative(),
 	createdBy: z.string().uuid().nullable(),
-	createdAt: z.string().nullable(),
-	updatedAt: z.string().nullable(),
-	attachedAt: z.string().nullable(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+	attachedAt: z.string(),
 })
 
 const actorIdParam = z.object({ actorId: z.string().uuid() })
@@ -168,6 +168,10 @@ const attachSkillRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor or workspace skill not found',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Internal server error',
+		},
 	},
 })
 
@@ -217,18 +221,20 @@ app.openapi(attachSkillRoute, (async (c) => {
 		.onConflictDoNothing()
 		.returning()
 
-	const attachedAt =
-		inserted[0]?.createdAt ??
-		(
-			await db
-				.select({ createdAt: agentSkills.createdAt })
-				.from(agentSkills)
-				.where(
-					and(eq(agentSkills.actorId, actorId), eq(agentSkills.workspaceSkillId, workspaceSkillId)),
-				)
-				.limit(1)
-		)[0]?.createdAt ??
-		null
+	let attachedAt = inserted[0]?.createdAt
+	if (!attachedAt) {
+		const [existing] = await db
+			.select({ createdAt: agentSkills.createdAt })
+			.from(agentSkills)
+			.where(
+				and(eq(agentSkills.actorId, actorId), eq(agentSkills.workspaceSkillId, workspaceSkillId)),
+			)
+			.limit(1)
+		attachedAt = existing?.createdAt
+	}
+	if (!attachedAt) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to attach skill'), 500)
+	}
 
 	// Only record an event for the first attach, not for idempotent re-attaches.
 	if (inserted.length > 0) {
