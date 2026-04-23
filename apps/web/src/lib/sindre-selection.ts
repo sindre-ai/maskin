@@ -38,12 +38,7 @@ export interface SindreSelection {
 	agent: SindreSelectionAgent | null
 	objects: SindreSelectionObject[]
 	notifications: SindreSelectionNotification[]
-	/**
-	 * Markdown files the user has uploaded for this turn. Optional on the
-	 * interface so existing call sites that literal-build a selection object
-	 * (many tests) keep compiling; consumers read it as `selection.files ?? []`.
-	 */
-	files?: SindreSelectionFile[]
+	files: SindreSelectionFile[]
 }
 
 export const EMPTY_SINDRE_SELECTION: SindreSelection = {
@@ -163,14 +158,12 @@ export function sindreSelectionReducer(
 			return { ...state, notifications: next }
 		}
 		case 'add_file': {
-			const files = state.files ?? []
-			if (files.some((f) => f.name === action.file.name)) return state
-			return { ...state, files: [...files, action.file] }
+			if (state.files.some((f) => f.name === action.file.name)) return state
+			return { ...state, files: [...state.files, action.file] }
 		}
 		case 'remove_file': {
-			const files = state.files ?? []
-			const next = files.filter((f) => f.name !== action.name)
-			if (next.length === files.length) return state
+			const next = state.files.filter((f) => f.name !== action.name)
+			if (next.length === state.files.length) return state
 			return { ...state, files: next }
 		}
 		case 'clear_all': {
@@ -178,7 +171,7 @@ export function sindreSelectionReducer(
 				state.agent === null &&
 				state.objects.length === 0 &&
 				state.notifications.length === 0 &&
-				(state.files ?? []).length === 0
+				state.files.length === 0
 			) {
 				return state
 			}

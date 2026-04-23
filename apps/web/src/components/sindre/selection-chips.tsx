@@ -30,8 +30,7 @@ export function SelectionChips({
 	const hasAgent = selection.agent !== null
 	const hasObjects = selection.objects.length > 0
 	const hasNotifications = selection.notifications.length > 0
-	const files = selection.files ?? []
-	const hasFiles = files.length > 0
+	const hasFiles = selection.files.length > 0
 	if (!hasAgent && !hasObjects && !hasNotifications && !hasFiles) return null
 
 	const agentLabel = selection.agent?.name?.trim() || selection.agent?.id || 'Unnamed agent'
@@ -73,7 +72,7 @@ export function SelectionChips({
 					/>
 				)
 			})}
-			{files.map((file) => (
+			{selection.files.map((file) => (
 				<Chip
 					key={file.name}
 					icon={<FileText size={12} aria-hidden />}

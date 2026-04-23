@@ -123,7 +123,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	const selectedAgent = activeSelection.agent
 	const selectedObjects = activeSelection.objects
 	const selectedNotifications = activeSelection.notifications
-	const selectedFiles = activeSelection.files ?? []
+	const selectedFiles = activeSelection.files
 
 	const sindre = useSindreSession({ workspaceId, sindreActorId })
 	const oneShot = useSindreOneShot()
@@ -239,11 +239,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 								selectedFiles,
 							)
 						: content
-					if (attachments) {
-						await sindre.send(enriched, attachments, content, displayAttachments)
-					} else {
-						await sindre.send(enriched, undefined, content, displayAttachments)
-					}
+					await sindre.send(enriched, attachments, content, displayAttachments)
 				}
 				// Confirmed sent — clear the composer's chips so the same agent /
 				// objects / notifications don't ride along on the next turn. The
@@ -426,7 +422,7 @@ function buildDisplayAttachments(selection: SindreSelection): UserAttachmentView
 	for (const n of selection.notifications) {
 		out.push({ kind: 'notification', id: n.id, title: n.title ?? null })
 	}
-	for (const f of selection.files ?? []) {
+	for (const f of selection.files) {
 		out.push({ kind: 'file', name: f.name, sizeBytes: f.sizeBytes })
 	}
 	return out.length > 0 ? out : undefined

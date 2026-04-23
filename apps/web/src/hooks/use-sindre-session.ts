@@ -19,7 +19,7 @@ const BOOTSTRAP_ACTION_PROMPT = 'Sindre interactive chat'
 
 const RUNNING_POLL_INTERVAL_MS = 300
 const RUNNING_POLL_TIMEOUT_MS = 20_000
-const TERMINAL_SESSION_STATUSES = new Set(['failed', 'timeout', 'completed'])
+const TERMINAL_SESSION_STATUSES = new Set(['failed', 'timeout', 'completed', 'paused'])
 
 /**
  * Poll `GET /api/sessions/:id` until the session's container transitions to
@@ -131,7 +131,6 @@ export function useSindreSession({
 				// mismatches. Gated on IS_DEV so production builds
 				// stay quiet.
 				if (IS_DEV) {
-					// biome-ignore lint/suspicious/noConsole: dev diagnostic
 					console.debug('[sindre-session] SSE envelope', {
 						event: msg.event,
 						data: msg.data,
@@ -145,7 +144,6 @@ export function useSindreSession({
 					const parsed = parseSindreLine(msg.data)
 					if (parsed.length === 0) return
 					if (IS_DEV) {
-						// biome-ignore lint/suspicious/noConsole: dev diagnostic
 						console.debug('[sindre-session] parsed events', parsed)
 					}
 					setEvents((prev) => prev.concat(parsed))

@@ -282,6 +282,7 @@ describe('SindreChat', () => {
 						{ id: 'obj-2', title: null, type: null },
 					],
 					notifications: [],
+					files: [],
 				}}
 			/>,
 		)
@@ -324,6 +325,7 @@ describe('SindreChat', () => {
 						{ id: 'obj-2', title: 'Task Beta' },
 					],
 					notifications: [],
+					files: [],
 				}}
 			/>,
 		)
@@ -365,6 +367,7 @@ describe('SindreChat', () => {
 					agent: null,
 					objects: [],
 					notifications: [{ id: 'notif-1', title: 'Build failed' }],
+					files: [],
 				}}
 			/>,
 		)
@@ -394,6 +397,7 @@ describe('SindreChat', () => {
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
 					notifications: [{ id: 'notif-1', title: 'PR merged' }],
+					files: [],
 				}}
 			/>,
 		)
@@ -429,6 +433,7 @@ describe('SindreChat', () => {
 					agent: null,
 					objects: [{ id: 'obj-1', title: 'Bet Alpha' }],
 					notifications: [],
+					files: [],
 				}}
 				onDispatchSelection={dispatch}
 			/>,
@@ -455,6 +460,7 @@ describe('SindreChat', () => {
 					agent: null,
 					objects: [{ id: 'obj-1', title: 'Bet Alpha' }],
 					notifications: [],
+					files: [],
 				}}
 				onDispatchSelection={dispatch}
 			/>,
@@ -480,6 +486,7 @@ describe('SindreChat', () => {
 					agent: null,
 					objects: [],
 					notifications: [{ id: 'notif-1', title: 'Build failed' }],
+					files: [],
 				}}
 				onDispatchSelection={dispatch}
 			/>,
@@ -502,6 +509,7 @@ describe('SindreChat', () => {
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
 					notifications: [],
+					files: [],
 				}}
 			/>,
 		)
@@ -521,6 +529,7 @@ describe('SindreChat', () => {
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
 					notifications: [],
+					files: [],
 				}}
 			/>,
 		)
@@ -540,6 +549,7 @@ describe('SindreChat', () => {
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
 					notifications: [],
+					files: [],
 				}}
 			/>,
 		)
@@ -616,7 +626,7 @@ describe('SindreChat', () => {
 	it('dispatches add_agent and strips the triggering `/` when an agent is picked', async () => {
 		const user = userEvent.setup()
 		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
-		const selection: SindreSelection = { agent: null, objects: [], notifications: [] }
+		const selection: SindreSelection = { agent: null, objects: [], notifications: [], files: [] }
 
 		render(
 			<SindreChat
@@ -654,7 +664,7 @@ describe('SindreChat', () => {
 				workspaceId="ws-1"
 				sindreActorId="actor-sindre"
 				surface="sheet"
-				selection={{ agent: null, objects: [], notifications: [] }}
+				selection={{ agent: null, objects: [], notifications: [], files: [] }}
 				onDispatchSelection={dispatch}
 			/>,
 			{ wrapper: WithQueryClient },
@@ -757,6 +767,7 @@ describe('SindreChat', () => {
 					agent: { id: 'actor-reviewer', name: 'Code Reviewer' },
 					objects: [],
 					notifications: [],
+					files: [],
 				}}
 			/>,
 		)

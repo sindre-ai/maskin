@@ -18,87 +18,67 @@ import * as React from 'react'
 export const SindreSidebarProvider = React.forwardRef<
 	HTMLDivElement,
 	React.ComponentProps<'div'> & {
-		defaultOpen?: boolean
-		open?: boolean
-		onOpenChange?: (open: boolean) => void
+		open: boolean
+		onOpenChange: (open: boolean) => void
 	}
->(
-	(
-		{
-			defaultOpen = false,
-			open: openProp,
-			onOpenChange: setOpenProp,
-			className,
-			style,
-			children,
-			...props
+>(({ open, onOpenChange, className, style, children, ...props }, ref) => {
+	// We intentionally *don't* delegate to shadcn's mobile Sheet fallback —
+	// on mobile the Sindre panel should look and behave exactly like on
+	// desktop (right-fixed sidebar, full-height slide). Overriding isMobile
+	// to `false` in the SidebarContext skips the Sheet branch inside the
+	// primitive; we still read the real breakpoint elsewhere via the hook
+	// directly (e.g. to hide the pin button, which is meaningless when
+	// there's nothing to push aside).
+	const setOpen = React.useCallback(
+		(value: boolean | ((value: boolean) => boolean)) => {
+			const openState = typeof value === 'function' ? value(open) : value
+			onOpenChange(openState)
 		},
-		ref,
-	) => {
-		// We intentionally *don't* delegate to shadcn's mobile Sheet fallback —
-		// on mobile the Sindre panel should look and behave exactly like on
-		// desktop (right-fixed sidebar, full-height slide). Overriding isMobile
-		// to `false` in the SidebarContext skips the Sheet branch inside the
-		// primitive; we still read the real breakpoint elsewhere via the hook
-		// directly (e.g. to hide the pin button, which is meaningless when
-		// there's nothing to push aside).
-		const [_open, _setOpen] = React.useState(defaultOpen)
-		const open = openProp ?? _open
-		const setOpen = React.useCallback(
-			(value: boolean | ((value: boolean) => boolean)) => {
-				const openState = typeof value === 'function' ? value(open) : value
-				if (setOpenProp) {
-					setOpenProp(openState)
-				} else {
-					_setOpen(openState)
-				}
-			},
-			[setOpenProp, open],
-		)
+		[onOpenChange, open],
+	)
 
-		// Report `isMobile: false` in the context so shadcn's Sidebar primitive
-		// skips its mobile Sheet branch. `openMobile` is effectively unused but
-		// kept in the shape the context expects.
-		const toggleSidebar = React.useCallback(() => {
-			return setOpen((prev) => !prev)
-		}, [setOpen])
+	// Report `isMobile: false` in the context so shadcn's Sidebar primitive
+	// skips its mobile Sheet branch. `openMobile` is effectively unused but
+	// kept in the shape the context expects.
+	const toggleSidebar = React.useCallback(() => {
+		return setOpen((prev) => !prev)
+	}, [setOpen])
 
-		const state = open ? 'expanded' : 'collapsed'
+	const state = open ? 'expanded' : 'collapsed'
 
-		const contextValue = React.useMemo(
-			() => ({
-				state: state as 'expanded' | 'collapsed',
-				open,
-				setOpen,
-				isMobile: false,
-				openMobile: false,
-				setOpenMobile: () => {},
-				toggleSidebar,
-			}),
-			[state, open, setOpen, toggleSidebar],
-		)
+	const contextValue = React.useMemo(
+		() => ({
+			state: state as 'expanded' | 'collapsed',
+			open,
+			setOpen,
+			isMobile: false,
+			openMobile: false,
+			setOpenMobile: () => {},
+			toggleSidebar,
+		}),
+		[state, open, setOpen, toggleSidebar],
+	)
 
-		return (
-			<SidebarContext.Provider value={contextValue}>
-				<TooltipProvider delayDuration={0}>
-					<div
-						style={style}
-						// Force-display the nested shadcn Sidebar wrapper regardless of
-						// the `hidden md:block` it applies — we want the right-fixed
-						// panel on every breakpoint, not just desktop.
-						className={cn(
-							'pointer-events-none fixed inset-0 z-40',
-							'[&_[data-side=right]]:!block',
-							className,
-						)}
-						ref={ref}
-						{...props}
-					>
-						{children}
-					</div>
-				</TooltipProvider>
-			</SidebarContext.Provider>
-		)
-	},
-)
+	return (
+		<SidebarContext.Provider value={contextValue}>
+			<TooltipProvider delayDuration={0}>
+				<div
+					style={style}
+					// Force-display the nested shadcn Sidebar wrapper regardless of
+					// the `hidden md:block` it applies — we want the right-fixed
+					// panel on every breakpoint, not just desktop.
+					className={cn(
+						'pointer-events-none fixed inset-0 z-40',
+						'[&_[data-side=right]]:!block',
+						className,
+					)}
+					ref={ref}
+					{...props}
+				>
+					{children}
+				</div>
+			</TooltipProvider>
+		</SidebarContext.Provider>
+	)
+})
 SindreSidebarProvider.displayName = 'SindreSidebarProvider'

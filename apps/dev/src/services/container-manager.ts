@@ -181,10 +181,6 @@ export class ContainerManager {
 	}
 
 	private trackStreamLifecycle(sessionId: string, handle: StdinHandle): void {
-		const on = (
-			handle.stream as unknown as { on?: (event: string, cb: (err?: unknown) => void) => void }
-		).on
-		if (typeof on !== 'function') return
 		const markClosed = (reason: string, err?: unknown) => {
 			if (handle.closed) return
 			handle.closed = true
@@ -194,9 +190,9 @@ export class ContainerManager {
 				})
 			}
 		}
-		on.call(handle.stream, 'error', (err) => markClosed('error', err))
-		on.call(handle.stream, 'end', () => markClosed('end'))
-		on.call(handle.stream, 'close', () => markClosed('close'))
+		handle.stream.on('error', (err: unknown) => markClosed('error', err))
+		handle.stream.on('end', () => markClosed('end'))
+		handle.stream.on('close', () => markClosed('close'))
 	}
 
 	/**
