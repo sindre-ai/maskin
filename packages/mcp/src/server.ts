@@ -15,7 +15,17 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import {
+	type SessionLogSubscriptionRegistry,
+	createSessionLogSubscriptionRegistry,
+} from './session-log-subscriptions.js'
+import {
+	type EventFilter,
+	type SubscriptionRegistry,
+	createSubscriptionRegistry,
+} from './subscriptions.js'
 import { tools } from './tools.js'
+import { waitForSessionTerminal } from './wait-for-session.js'
 
 interface McpConfig {
 	apiBaseUrl: string
@@ -238,7 +248,8 @@ function loadHtml(config: McpConfig, filename: string): string {
 	const fullPath = resolve(basePath, filename)
 	try {
 		const html = readFileSync(fullPath, 'utf-8')
-		console.log(`[MCP] Loaded HTML resource: ${filename} (${html.length} bytes) from ${fullPath}`)
+		// stderr only — stdout is reserved for JSON-RPC on the stdio transport
+		console.error(`[MCP] Loaded HTML resource: ${filename} (${html.length} bytes) from ${fullPath}`)
 		return html
 	} catch (err) {
 		console.error(`[MCP] Failed to load HTML resource: ${fullPath}`, err)
@@ -246,16 +257,29 @@ function loadHtml(config: McpConfig, filename: string): string {
 	}
 }
 
-export function createMcpServer(config: McpConfig) {
-	const server = new McpServer({
-		name: 'maskin',
-		version: '0.1.0',
-	})
+export function createMcpServer(config: McpConfig): {
+	server: McpServer
+	registry: SubscriptionRegistry
+	eventRegistry: SubscriptionRegistry
+	sessionLogRegistry: SessionLogSubscriptionRegistry
+} {
+	const server = new McpServer(
+		{
+			name: 'maskin',
+			version: '0.1.0',
+		},
+		{
+			capabilities: { logging: {} },
+		},
+	)
+	const subscriptionRegistry = createSubscriptionRegistry(config, server)
+	const sessionLogRegistry = createSessionLogSubscriptionRegistry(config, server)
 
 	// ─── Register UI resources ─────────────────────────────────
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
 		registerAppResource(server, `${name}-ui`, uri, { mimeType: RESOURCE_MIME_TYPE }, async () => {
-			console.log(`[MCP] Resource read requested: ${uri} (${name}.html)`)
+			// stderr only — stdout is reserved for JSON-RPC on the stdio transport
+			console.error(`[MCP] Resource read requested: ${uri} (${name}.html)`)
 			return {
 				contents: [{ uri, mimeType: RESOURCE_MIME_TYPE, text: loadHtml(config, `${name}.html`) }],
 			}
@@ -780,6 +804,285 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: { toolName: 'get_events' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'subscribe_events',
+		{
+			description: tools.subscribe_events.description,
+			inputSchema: tools.subscribe_events.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			if (!config.apiKey) {
+				throw new Error(
+					'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
+				)
+			}
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!workspaceId) {
+				throw new Error(
+					'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
+				)
+			}
+			const filter = (args.filter ?? {}) as EventFilter
+			const sub = subscriptionRegistry.add(workspaceId, filter)
+			return {
+				_meta: { toolName: 'subscribe_events' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{
+								subscription_id: sub.id,
+								workspace_id: sub.workspaceId,
+								filter: sub.filter,
+								created_at: sub.createdAt,
+								notice:
+									'Live events will be delivered via MCP logging notifications with logger="maskin/events". Call unsubscribe_events to stop.',
+							},
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'unsubscribe_events',
+		{
+			description: tools.unsubscribe_events.description,
+			inputSchema: tools.unsubscribe_events.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const ok = subscriptionRegistry.remove(args.subscription_id)
+			return {
+				_meta: { toolName: 'unsubscribe_events' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ ok, subscription_id: args.subscription_id }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_event_subscriptions',
+		{
+			description: tools.list_event_subscriptions.description,
+			inputSchema: tools.list_event_subscriptions.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async () => {
+			const subs = subscriptionRegistry.list().map((s) => ({
+				subscription_id: s.id,
+				workspace_id: s.workspaceId,
+				filter: s.filter,
+				created_at: s.createdAt,
+				events_delivered: s.eventsDelivered,
+				events_dropped: s.eventsDropped,
+			}))
+			return {
+				_meta: { toolName: 'list_event_subscriptions' },
+				content: [{ type: 'text' as const, text: JSON.stringify(subs, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'subscribe_session_logs',
+		{
+			description: tools.subscribe_session_logs.description,
+			inputSchema: tools.subscribe_session_logs.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			if (!config.apiKey) {
+				throw new Error(
+					'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
+				)
+			}
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!workspaceId) {
+				throw new Error(
+					'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
+				)
+			}
+			const sub = sessionLogRegistry.add(workspaceId, args.session_id)
+			return {
+				_meta: { toolName: 'subscribe_session_logs' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{
+								subscription_id: sub.id,
+								session_id: sub.sessionId,
+								workspace_id: sub.workspaceId,
+								created_at: sub.createdAt,
+								notice:
+									'Live logs will be delivered via MCP logging notifications with logger="maskin/session-logs". The subscription auto-removes when the session terminates. Call unsubscribe_session_logs to stop early.',
+							},
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'unsubscribe_session_logs',
+		{
+			description: tools.unsubscribe_session_logs.description,
+			inputSchema: tools.unsubscribe_session_logs.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const ok = sessionLogRegistry.remove(args.subscription_id)
+			return {
+				_meta: { toolName: 'unsubscribe_session_logs' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ ok, subscription_id: args.subscription_id }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_session_log_subscriptions',
+		{
+			description: tools.list_session_log_subscriptions.description,
+			inputSchema: tools.list_session_log_subscriptions.inputSchema.shape,
+			_meta: {},
+		},
+		async () => {
+			const subs = sessionLogRegistry.list().map((s) => ({
+				subscription_id: s.id,
+				session_id: s.sessionId,
+				workspace_id: s.workspaceId,
+				created_at: s.createdAt,
+				logs_delivered: s.logsDelivered,
+				logs_dropped: s.logsDropped,
+			}))
+			return {
+				_meta: { toolName: 'list_session_log_subscriptions' },
+				content: [{ type: 'text' as const, text: JSON.stringify(subs, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'wait_for_session',
+		{
+			description: tools.wait_for_session.description,
+			inputSchema: tools.wait_for_session.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			if (!config.apiKey) {
+				throw new Error(
+					'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
+				)
+			}
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!workspaceId) {
+				throw new Error(
+					'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
+				)
+			}
+			const wsOpts = { workspaceId }
+			const terminalStatuses = ['completed', 'failed', 'timeout']
+
+			// Pre-check: if the session is already terminal, skip opening an SSE
+			// stream (which would replay the entire log history unboundedly).
+			const initialSession = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.session_id}`,
+				undefined,
+				wsOpts,
+			)) as { id: string; status: string }
+
+			if (terminalStatuses.includes(initialSession.status)) {
+				return {
+					_meta: { toolName: 'wait_for_session' },
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify(
+								{
+									session_id: args.session_id,
+									status: initialSession.status,
+									already_terminal: true,
+									timed_out: false,
+									session: initialSession,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				}
+			}
+
+			const timeoutMs = args.timeout_seconds * 1000
+			const outcome = await waitForSessionTerminal(
+				{ apiBaseUrl: config.apiBaseUrl, apiKey: config.apiKey },
+				workspaceId,
+				args.session_id,
+				timeoutMs,
+			)
+
+			// Fetch the final session record so the result includes up-to-date
+			// details (status, timestamps, error) regardless of how the wait ended.
+			const finalSession = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.session_id}`,
+				undefined,
+				wsOpts,
+			)) as { id: string; status: string }
+
+			const status = outcome.reason === 'done' ? outcome.status : finalSession.status
+			const timedOut = outcome.reason === 'timeout'
+			return {
+				_meta: { toolName: 'wait_for_session' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{
+								session_id: args.session_id,
+								status,
+								already_terminal: false,
+								timed_out: timedOut,
+								wait_reason: outcome.reason,
+								session: finalSession,
+							},
+							null,
+							2,
+						),
+					},
+				],
 			}
 		},
 	)
@@ -2393,7 +2696,12 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
 		}
 	}
 
-	return server
+	return {
+		server,
+		registry: subscriptionRegistry,
+		eventRegistry: subscriptionRegistry,
+		sessionLogRegistry,
+	}
 }
 
 // CLI entry point
@@ -2405,8 +2713,24 @@ async function main() {
 		transport: 'stdio',
 	}
 
-	const server = createMcpServer(config)
+	const { server, eventRegistry, sessionLogRegistry } = createMcpServer(config)
 	const transport = new StdioServerTransport()
+	const shutdown = async () => {
+		try {
+			await Promise.all([eventRegistry.shutdownAll(), sessionLogRegistry.shutdownAll()])
+		} catch (err) {
+			console.error('[maskin-mcp] Error during shutdown:', err)
+		}
+	}
+	transport.onclose = () => {
+		void shutdown()
+	}
+	const handleSignal = (signal: NodeJS.Signals) => {
+		console.error(`[maskin-mcp] Received ${signal}, shutting down`)
+		void shutdown().then(() => process.exit(0))
+	}
+	process.on('SIGINT', handleSignal)
+	process.on('SIGTERM', handleSignal)
 	await server.connect(transport)
 	console.error('MCP server started (stdio transport)')
 }

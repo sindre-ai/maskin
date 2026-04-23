@@ -14,7 +14,7 @@ app.post('/', async (c) => {
 		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
 		transport: 'http' as const,
 	}
-	const mcpServer = createMcpServer(mcpConfig)
+	const { server, eventRegistry, sessionLogRegistry } = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
 		enableJsonResponse: true,
@@ -33,8 +33,15 @@ app.post('/', async (c) => {
 		(body as Record<string, unknown>)?.method ??
 		(Array.isArray(body) ? body.map((b: { method?: string }) => b.method) : 'unknown')
 	console.log(`[MCP] POST /mcp — method: ${JSON.stringify(method)}`)
-	await mcpServer.connect(transport)
-	await transport.handleRequest(nodeReq, nodeRes, body)
+	try {
+		await server.connect(transport)
+		await transport.handleRequest(nodeReq, nodeRes, body)
+	} finally {
+		// The HTTP MCP transport is request-scoped — tear down any event and
+		// session-log subscriptions so their SSE connections don't outlive the
+		// request.
+		await Promise.all([eventRegistry.shutdownAll(), sessionLogRegistry.shutdownAll()])
+	}
 
 	// transport.handleRequest already wrote the response to nodeRes.
 	// Signal @hono/node-server to skip writing headers again.
