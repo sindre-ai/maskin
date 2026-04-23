@@ -4,6 +4,7 @@ import { events, actors, agentSkills, workspaceMembers, workspaceSkills } from '
 import { attachSkillSchema } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 
@@ -237,19 +238,29 @@ app.openapi(attachSkillRoute, (async (c) => {
 	}
 
 	// Only record an event for the first attach, not for idempotent re-attaches.
+	// The mutation already succeeded; swallow audit-write failures rather than
+	// 500-ing the caller.
 	if (inserted.length > 0) {
-		await db.insert(events).values({
-			workspaceId: skill.workspaceId,
-			actorId: callerActorId,
-			action: 'attached',
-			entityType: 'agent_skill',
-			entityId: skill.id,
-			data: {
+		try {
+			await db.insert(events).values({
+				workspaceId: skill.workspaceId,
+				actorId: callerActorId,
+				action: 'attached',
+				entityType: 'agent_skill',
+				entityId: skill.id,
+				data: {
+					actorId,
+					workspaceSkillId: skill.id,
+					skillName: skill.name,
+				},
+			})
+		} catch (err) {
+			logger.error('Failed to record agent_skill attached audit event', {
 				actorId,
 				workspaceSkillId: skill.id,
-				skillName: skill.name,
-			},
-		})
+				error: String(err),
+			})
+		}
 	}
 
 	const response = {
@@ -331,18 +342,26 @@ app.openapi(detachSkillRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Skill attachment not found'), 404)
 	}
 
-	await db.insert(events).values({
-		workspaceId: skill.workspaceId,
-		actorId: callerActorId,
-		action: 'detached',
-		entityType: 'agent_skill',
-		entityId: skill.id,
-		data: {
+	try {
+		await db.insert(events).values({
+			workspaceId: skill.workspaceId,
+			actorId: callerActorId,
+			action: 'detached',
+			entityType: 'agent_skill',
+			entityId: skill.id,
+			data: {
+				actorId,
+				workspaceSkillId: skill.id,
+				skillName: skill.name,
+			},
+		})
+	} catch (err) {
+		logger.error('Failed to record agent_skill detached audit event', {
 			actorId,
 			workspaceSkillId: skill.id,
-			skillName: skill.name,
-		},
-	})
+			error: String(err),
+		})
+	}
 
 	return c.json({ deleted: true as const }, 200)
 }) as RouteHandler<typeof detachSkillRoute, Env>)

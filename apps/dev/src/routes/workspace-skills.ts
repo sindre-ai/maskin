@@ -210,7 +210,18 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	const parsed = parseSkillMd(body.content)
+	let parsed: ReturnType<typeof parseSkillMd>
+	try {
+		parsed = parseSkillMd(body.content)
+	} catch (err) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				err instanceof Error ? err.message : 'Invalid SKILL.md content',
+			),
+			400,
+		)
+	}
 	const description = parsed.description ? parsed.description : null
 
 	// Fail fast on name conflict so we don't needlessly write to S3
@@ -222,7 +233,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 
 	if (existing) {
 		return c.json(
-			createApiError('BAD_REQUEST', 'A skill with this name already exists in this workspace'),
+			createApiError('CONFLICT', 'A skill with this name already exists in this workspace'),
 			409,
 		)
 	}
@@ -263,7 +274,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 		// If the insert failed due to the unique index, surface that as 409
 		if (err instanceof Error && /workspace_skills_ws_name_uniq/.test(err.message)) {
 			return c.json(
-				createApiError('BAD_REQUEST', 'A skill with this name already exists in this workspace'),
+				createApiError('CONFLICT', 'A skill with this name already exists in this workspace'),
 				409,
 			)
 		}
@@ -279,20 +290,30 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace skill'), 500)
 	}
 
-	// Audit event — do NOT include the content field (8KB NOTIFY payload cap)
-	await db.insert(events).values({
-		workspaceId,
-		actorId: callerActorId,
-		action: 'created',
-		entityType: 'workspace_skill',
-		entityId: created.id,
-		data: {
-			id: created.id,
-			name: created.name,
-			description: created.description,
-			sizeBytes: created.sizeBytes,
-		},
-	})
+	// Audit event — do NOT include the content field (8KB NOTIFY payload cap).
+	// The mutation has already succeeded; a failing audit write must not
+	// translate into a 500 for the caller.
+	try {
+		await db.insert(events).values({
+			workspaceId,
+			actorId: callerActorId,
+			action: 'created',
+			entityType: 'workspace_skill',
+			entityId: created.id,
+			data: {
+				id: created.id,
+				name: created.name,
+				description: created.description,
+				sizeBytes: created.sizeBytes,
+			},
+		})
+	} catch (err) {
+		logger.error('Failed to record workspace_skill created audit event', {
+			workspaceId,
+			skillId: created.id,
+			error: String(err),
+		})
+	}
 
 	return c.json(serialize(created) as z.infer<typeof workspaceSkillDetailSchema>, 201)
 }) as RouteHandler<typeof createWorkspaceSkillRoute, Env>)
@@ -355,40 +376,87 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 
-	const parsed = parseSkillMd(body.content)
+	let parsed: ReturnType<typeof parseSkillMd>
+	try {
+		parsed = parseSkillMd(body.content)
+	} catch (err) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				err instanceof Error ? err.message : 'Invalid SKILL.md content',
+			),
+			400,
+		)
+	}
 	const description = parsed.description ? parsed.description : null
 
 	const { sizeBytes } = await storage.putWorkspaceSkill(workspaceId, name, body.content)
 
 	const now = new Date()
-	const [updated] = await db
-		.update(workspaceSkills)
-		.set({
-			content: body.content,
-			description,
-			sizeBytes,
-			updatedAt: now,
-		})
-		.where(eq(workspaceSkills.id, existing.id))
-		.returning()
+	let updated: typeof workspaceSkills.$inferSelect | undefined
+	try {
+		const rows = await db
+			.update(workspaceSkills)
+			.set({
+				content: body.content,
+				description,
+				sizeBytes,
+				updatedAt: now,
+			})
+			.where(eq(workspaceSkills.id, existing.id))
+			.returning()
+		updated = rows[0]
+	} catch (err) {
+		// Roll back the S3 write so storage doesn't hold v2 while the DB still
+		// reports v1 metadata. The previous content is the authoritative copy
+		// of record at this point.
+		try {
+			await storage.putWorkspaceSkill(workspaceId, name, existing.content)
+		} catch (rollbackErr) {
+			logger.error(
+				'Failed to roll back S3 write after DB update failure — storage now holds new content while DB reports old metadata',
+				{
+					workspaceId,
+					name,
+					error: String(rollbackErr),
+				},
+			)
+		}
+		throw err
+	}
 
 	if (!updated) {
+		// The row vanished between the select and the update (concurrent delete).
+		// Roll back the S3 write to match.
+		try {
+			await storage.deleteWorkspaceSkill(workspaceId, name)
+		} catch {
+			// best effort
+		}
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 
-	await db.insert(events).values({
-		workspaceId,
-		actorId: callerActorId,
-		action: 'updated',
-		entityType: 'workspace_skill',
-		entityId: updated.id,
-		data: {
-			id: updated.id,
-			name: updated.name,
-			description: updated.description,
-			sizeBytes: updated.sizeBytes,
-		},
-	})
+	try {
+		await db.insert(events).values({
+			workspaceId,
+			actorId: callerActorId,
+			action: 'updated',
+			entityType: 'workspace_skill',
+			entityId: updated.id,
+			data: {
+				id: updated.id,
+				name: updated.name,
+				description: updated.description,
+				sizeBytes: updated.sizeBytes,
+			},
+		})
+	} catch (err) {
+		logger.error('Failed to record workspace_skill updated audit event', {
+			workspaceId,
+			skillId: updated.id,
+			error: String(err),
+		})
+	}
 
 	return c.json(serialize(updated) as z.infer<typeof workspaceSkillDetailSchema>, 200)
 }) as RouteHandler<typeof updateWorkspaceSkillRoute, Env>)
@@ -458,19 +526,27 @@ app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 		})
 	}
 
-	await db.insert(events).values({
-		workspaceId,
-		actorId: callerActorId,
-		action: 'deleted',
-		entityType: 'workspace_skill',
-		entityId: existing.id,
-		data: {
-			id: existing.id,
-			name: existing.name,
-			description: existing.description,
-			sizeBytes: existing.sizeBytes,
-		},
-	})
+	try {
+		await db.insert(events).values({
+			workspaceId,
+			actorId: callerActorId,
+			action: 'deleted',
+			entityType: 'workspace_skill',
+			entityId: existing.id,
+			data: {
+				id: existing.id,
+				name: existing.name,
+				description: existing.description,
+				sizeBytes: existing.sizeBytes,
+			},
+		})
+	} catch (err) {
+		logger.error('Failed to record workspace_skill deleted audit event', {
+			workspaceId,
+			skillId: existing.id,
+			error: String(err),
+		})
+	}
 
 	return c.json({ deleted: true as const }, 200)
 }) as RouteHandler<typeof deleteWorkspaceSkillRoute, Env>)

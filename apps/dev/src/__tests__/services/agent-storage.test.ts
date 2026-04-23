@@ -9,6 +9,7 @@ vi.mock('node:fs/promises', () => ({
 }))
 
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { StorageProvider } from '@maskin/storage'
 import { AgentStorageManager, workspaceSkillKey } from '../../services/agent-storage'
 import { createTestContext } from '../setup'
@@ -86,7 +87,9 @@ describe('AgentStorageManager', () => {
 
 		it('pushes memory files to S3', async () => {
 			// Learning file doesn't exist
-			;(readFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('ENOENT'))
+			;(readFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+			)
 			// Memory dir has files
 			;(readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['CLAUDE.md', 'notes.md'])
 			;(readFile as ReturnType<typeof vi.fn>).mockResolvedValue(Buffer.from('memory data'))
@@ -125,7 +128,9 @@ describe('AgentStorageManager', () => {
 
 		it('falls back to actionPrompt when no SESSION_LEARNING.md is present', async () => {
 			// readFile rejects for all paths (neither learning file nor SESSION_LEARNING exists)
-			;(readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'))
+			;(readFile as ReturnType<typeof vi.fn>).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+			)
 			;(readdir as ReturnType<typeof vi.fn>).mockResolvedValue([])
 
 			await manager.pushAgentFiles(actorId, workspaceId, 'session-1', '/tmp/agent', {
@@ -283,11 +288,11 @@ describe('AgentStorageManager', () => {
 				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'deploy-check'))
 				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'pr-review'))
 				expect(writeFile).toHaveBeenCalledWith(
-					'/tmp/agent/skills/deploy-check/SKILL.md',
+					join('/tmp/agent/skills/deploy-check/SKILL.md'),
 					expect.any(Buffer),
 				)
 				expect(writeFile).toHaveBeenCalledWith(
-					'/tmp/agent/skills/pr-review/SKILL.md',
+					join('/tmp/agent/skills/pr-review/SKILL.md'),
 					expect.any(Buffer),
 				)
 			})
@@ -320,8 +325,9 @@ describe('AgentStorageManager', () => {
 					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, 'pr-review') },
 				]
 				// deploy-check exists locally, pr-review does not
+				const existingFolder = join('/tmp/agent/skills/deploy-check')
 				;(stat as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
-					if (path === '/tmp/agent/skills/deploy-check') {
+					if (path === existingFolder) {
 						return { isDirectory: () => true } as { isDirectory: () => boolean }
 					}
 					throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
@@ -333,11 +339,11 @@ describe('AgentStorageManager', () => {
 				expect(storage.get).toHaveBeenCalledTimes(1)
 				expect(storage.get).toHaveBeenCalledWith(workspaceSkillKey(workspaceId, 'pr-review'))
 				expect(writeFile).toHaveBeenCalledWith(
-					'/tmp/agent/skills/pr-review/SKILL.md',
+					join('/tmp/agent/skills/pr-review/SKILL.md'),
 					expect.any(Buffer),
 				)
 				expect(writeFile).not.toHaveBeenCalledWith(
-					'/tmp/agent/skills/deploy-check/SKILL.md',
+					join('/tmp/agent/skills/deploy-check/SKILL.md'),
 					expect.any(Buffer),
 				)
 			})

@@ -329,7 +329,14 @@ export class SessionManager extends EventEmitter {
 			await execAsync(`tar -xzf "${snapshotPath}" -C "${tempDir}"`)
 
 			// Also pull latest agent files (other sessions may have added learnings)
+			// and workspace skills the agent has been attached to (the attachment
+			// set may have changed since the snapshot was taken).
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
+			await this.agentStorage.pullWorkspaceSkillsForAgent(
+				session.actorId,
+				session.workspaceId,
+				tempDir,
+			)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars (including integration credentials) and launch container

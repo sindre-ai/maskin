@@ -85,16 +85,42 @@ export class AgentStorageManager {
 				sessionId,
 			)
 			pushed++
-		} catch {
-			// No learning file produced — that's fine
+		} catch (err) {
+			// ENOENT just means the session didn't produce a learning file — fine.
+			// Anything else (S3 5xx, auth expiry, DB failure in upsertFileRecord)
+			// is a real error we must not swallow silently.
+			if (!isFileNotFound(err)) {
+				logger.error('Failed to push session learning file', {
+					actorId,
+					workspaceId,
+					sessionId,
+					error: String(err),
+				})
+			}
 		}
 
-		// Push memory files (CLAUDE.md, consolidated-learnings.md, etc.)
+		// Push memory files (CLAUDE.md, consolidated-learnings.md, etc.).
+		// Missing directory is fine (agent may never have written memory); a
+		// mid-loop upload failure for any specific file is a real error and is
+		// logged per-file so partial uploads don't silently desync.
 		const memoryDir = join(localDir, 'memory')
+		let memoryFiles: string[] = []
 		try {
-			const files = await readdir(memoryDir)
-			for (const file of files) {
-				const filePath = join(memoryDir, file)
+			memoryFiles = await readdir(memoryDir)
+		} catch (err) {
+			if (!isFileNotFound(err)) {
+				logger.error('Failed to read memory directory', {
+					actorId,
+					workspaceId,
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+
+		for (const file of memoryFiles) {
+			const filePath = join(memoryDir, file)
+			try {
 				const data = await readFile(filePath)
 				const relativePath = `memory/${file}`
 				const key = `agents/${workspaceId}/${actorId}/${relativePath}`
@@ -109,9 +135,15 @@ export class AgentStorageManager {
 					sessionId,
 				)
 				pushed++
+			} catch (err) {
+				logger.error('Failed to push memory file', {
+					actorId,
+					workspaceId,
+					sessionId,
+					file,
+					error: String(err),
+				})
 			}
-		} catch {
-			// No memory dir or empty
 		}
 
 		await this.appendWorkspaceLedger(workspaceId, sessionId, localDir, opts?.actionPrompt)
@@ -139,8 +171,14 @@ export class AgentStorageManager {
 				.split('\n')
 				.find((l) => l.trim().length > 0)
 			if (firstLine) summary = firstLine.trim()
-		} catch {
-			// File absent — fall through
+		} catch (err) {
+			if (!isFileNotFound(err)) {
+				logger.warn('Failed to read SESSION_LEARNING.md for ledger', {
+					workspaceId,
+					sessionId,
+					error: String(err),
+				})
+			}
 		}
 
 		if (!summary && actionPromptFallback) {
@@ -406,4 +444,13 @@ async function folderExists(path: string): Promise<boolean> {
 	} catch {
 		return false
 	}
+}
+
+function isFileNotFound(err: unknown): boolean {
+	return (
+		typeof err === 'object' &&
+		err !== null &&
+		'code' in err &&
+		(err as { code?: string }).code === 'ENOENT'
+	)
 }
