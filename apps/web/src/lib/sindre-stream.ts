@@ -85,8 +85,21 @@ function parseAssistant(envelope: Record<string, unknown>): SindreEvent[] | null
 			if (id === undefined || name === undefined) continue
 			events.push({ kind: 'tool_use', id, name, input: block.input, sessionId, messageId })
 		} else if (type === 'thinking') {
+			// @debug-thinking-format: the assistant-text path renders reliably but
+			// the thinking block sometimes renders with no body — log the raw
+			// block shape so we can figure out which field the CLI is actually
+			// putting the thinking content in.
+			// biome-ignore lint/suspicious/noConsole: diagnostic logging
+			console.info('[sindre-stream] thinking block envelope', {
+				blockKeys: Object.keys(block),
+				rawBlock: block,
+			})
 			const text = asString(block.thinking) ?? asString(block.text)
-			if (text === undefined) continue
+			if (text === undefined) {
+				// biome-ignore lint/suspicious/noConsole: diagnostic logging
+				console.warn('[sindre-stream] thinking block has no string text/thinking field', block)
+				continue
+			}
 			events.push({ kind: 'thinking', text, sessionId, messageId })
 		}
 	}

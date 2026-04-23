@@ -186,6 +186,14 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 }
 
 function ThinkingBlock({ text }: { text: string }) {
+	// @debug-thinking-format: log what the renderer actually receives so we
+	// can tell if the event pipeline is dropping content vs. the parser never
+	// filled it in the first place.
+	// biome-ignore lint/suspicious/noConsole: diagnostic logging
+	console.info('[sindre-transcript] rendering thinking block', {
+		length: text.length,
+		preview: text.slice(0, 120),
+	})
 	const [open, setOpen] = useState(false)
 	return (
 		<div className="rounded-md border border-border bg-bg text-xs">

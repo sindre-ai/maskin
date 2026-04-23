@@ -492,8 +492,10 @@ function Composer({
 		(result: SlashPickerResult) => {
 			if (result.kind === 'agent') {
 				onDispatchSelection?.({ type: 'add_agent', agent: result.ref })
-			} else {
+			} else if (result.kind === 'object') {
 				onDispatchSelection?.({ type: 'add_object', object: result.ref })
+			} else {
+				onDispatchSelection?.({ type: 'add_notification', notification: result.ref })
 			}
 			// The `/` that triggered the picker (if any) is dropped as soon as
 			// the user commits a pick — keeping the rest of the in-progress
@@ -583,12 +585,12 @@ function Composer({
 					size="sm"
 					variant="ghost"
 					className="h-7 gap-1 px-2 text-xs text-text-secondary"
-					onClick={() => openPickerForKind('object')}
+					onClick={() => openPickerForKind('item')}
 					disabled={disabled}
-					aria-label="Attach objects"
+					aria-label="Attach items"
 				>
 					<Box size={14} aria-hidden />
-					Objects
+					Items
 				</Button>
 			</div>
 		</div>

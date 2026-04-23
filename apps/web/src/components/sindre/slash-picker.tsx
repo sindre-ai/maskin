@@ -1,12 +1,21 @@
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
-import { type ActorListItem, type ObjectResponse, api } from '@/lib/api'
+import {
+	type ActorListItem,
+	type NotificationResponse,
+	type ObjectResponse,
+	api,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
-import type { SindreSelectionAgent, SindreSelectionObject } from '@/lib/sindre-selection'
+import type {
+	SindreSelectionAgent,
+	SindreSelectionNotification,
+	SindreSelectionObject,
+} from '@/lib/sindre-selection'
 import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
-import { Bot, Box, Check } from 'lucide-react'
+import { Bell, Bot, Box, Check } from 'lucide-react'
 import {
 	type KeyboardEvent,
 	type ReactNode,
@@ -32,11 +41,21 @@ import {
  * exposes the picker primitive.
  */
 
-export type SlashKindId = 'agent' | 'object'
+export type SlashKindId = 'agent' | 'item'
 
 export type SlashPickerResult =
 	| { kind: 'agent'; ref: SindreSelectionAgent }
 	| { kind: 'object'; ref: SindreSelectionObject }
+	| { kind: 'notification'; ref: SindreSelectionNotification }
+
+/**
+ * Discriminated union surfaced by the "item" kind — combines workspace objects
+ * (bets, tasks, insights, …) and notifications into a single searchable list
+ * so the user picks "context" in one place rather than via two separate kinds.
+ */
+export type ItemSearchResult =
+	| { kind: 'object'; object: ObjectResponse }
+	| { kind: 'notification'; notification: NotificationResponse }
 
 export interface SlashSearchContext {
 	workspaceId: string
@@ -60,7 +79,11 @@ export interface SlashKindDef<TItem = unknown> {
 	 */
 	loadMore?: (query: string, ctx: SlashSearchContext, currentItems: TItem[]) => Promise<TItem[]>
 	keyOf: (item: TItem) => string
-	renderItem: (item: TItem) => { primary: string; secondary?: string | null }
+	renderItem: (item: TItem) => {
+		primary: string
+		secondary?: string | null
+		icon?: ReactNode
+	}
 	toResult: (item: TItem) => SlashPickerResult
 }
 
@@ -97,26 +120,66 @@ const agentKind: SlashKindDef<ActorListItem> = {
 	toResult: (a) => ({ kind: 'agent', ref: { id: a.id, name: a.name } }),
 }
 
-const objectKind: SlashKindDef<ObjectResponse> = {
-	id: 'object',
-	label: 'Object',
+const itemKind: SlashKindDef<ItemSearchResult> = {
+	id: 'item',
+	label: 'Item',
 	icon: <Box size={14} aria-hidden />,
-	placeholder: 'Search objects…',
-	emptyCopy: 'No objects found.',
+	placeholder: 'Search items…',
+	emptyCopy: 'No items found.',
 	multi: true,
+	// Fetch objects + notifications in parallel and show notifications first
+	// so the freshest signal is easiest to grab; objects fill the rest of the
+	// page. Pagination only walks the object list — notifications are small
+	// enough that a single page is typically the whole set.
 	search: async (query, { workspaceId, signal }) => {
-		const results = await fetchObjectPage(workspaceId, query, 0)
+		const [objects, notifications] = await Promise.all([
+			fetchObjectPage(workspaceId, query, 0),
+			fetchNotificationPage(workspaceId, query),
+		])
 		if (signal.aborted) return []
-		return results
+		return [...notifications.map(notificationItem), ...objects.map(objectItem)]
 	},
 	loadMore: async (query, { workspaceId, signal }, currentItems) => {
-		const results = await fetchObjectPage(workspaceId, query, currentItems.length)
+		const currentObjects = currentItems.filter((i) => i.kind === 'object').length
+		const nextObjects = await fetchObjectPage(workspaceId, query, currentObjects)
 		if (signal.aborted) return []
-		return results
+		return nextObjects.map(objectItem)
 	},
-	keyOf: (o) => o.id,
-	renderItem: (o) => ({ primary: o.title || 'Untitled', secondary: o.type }),
-	toResult: (o) => ({ kind: 'object', ref: { id: o.id, title: o.title, type: o.type } }),
+	keyOf: (item) => `${item.kind}:${item.kind === 'object' ? item.object.id : item.notification.id}`,
+	renderItem: (item) => {
+		if (item.kind === 'object') {
+			return {
+				primary: item.object.title || 'Untitled',
+				secondary: item.object.type,
+				icon: <Box size={12} aria-hidden />,
+			}
+		}
+		return {
+			primary: item.notification.title || 'Untitled notification',
+			secondary: 'notification',
+			icon: <Bell size={12} aria-hidden />,
+		}
+	},
+	toResult: (item) => {
+		if (item.kind === 'object') {
+			return {
+				kind: 'object',
+				ref: { id: item.object.id, title: item.object.title, type: item.object.type },
+			}
+		}
+		return {
+			kind: 'notification',
+			ref: { id: item.notification.id, title: item.notification.title },
+		}
+	},
+}
+
+function objectItem(object: ObjectResponse): ItemSearchResult {
+	return { kind: 'object', object }
+}
+
+function notificationItem(notification: NotificationResponse): ItemSearchResult {
+	return { kind: 'notification', notification }
 }
 
 function fetchObjectPage(
@@ -135,8 +198,19 @@ function fetchObjectPage(
 	return api.objects.list(workspaceId, params)
 }
 
+function fetchNotificationPage(
+	workspaceId: string,
+	query: string,
+): Promise<NotificationResponse[]> {
+	const needle = query.trim().toLowerCase()
+	return api.notifications.list(workspaceId, { limit: '50' }).then((all) => {
+		if (!needle) return all
+		return all.filter((n) => (n.title ?? '').toLowerCase().includes(needle))
+	})
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous registry — each entry carries its own TItem
-export const SLASH_KINDS: ReadonlyArray<SlashKindDef<any>> = [agentKind, objectKind]
+export const SLASH_KINDS: ReadonlyArray<SlashKindDef<any>> = [agentKind, itemKind]
 
 // ---------------------------------------------------------------------------
 // Public component
@@ -145,6 +219,7 @@ export const SLASH_KINDS: ReadonlyArray<SlashKindDef<any>> = [agentKind, objectK
 export interface SlashPickerSelection {
 	agent?: SindreSelectionAgent | null
 	objects?: SindreSelectionObject[]
+	notifications?: SindreSelectionNotification[]
 }
 
 export interface SlashPickerProps {
@@ -472,7 +547,7 @@ function ActiveKindList({
 				{items.map((item) => {
 					const key = kind.keyOf(item)
 					const view = kind.renderItem(item)
-					const isSelected = isSelectedForKind(kind.id, key, selected)
+					const isSelected = isSelectedForItem(kind.id, item, selected, kind.toResult)
 					return (
 						<Command.Item
 							key={key}
@@ -480,6 +555,7 @@ function ActiveKindList({
 							onSelect={() => onPick(item)}
 							className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
 						>
+							{view.icon ? <span className="text-muted-foreground">{view.icon}</span> : null}
 							<span className="min-w-0 flex-1">
 								<span className="block truncate">{view.primary}</span>
 								{view.secondary ? (
@@ -508,13 +584,25 @@ function ActiveKindList({
 	)
 }
 
-function isSelectedForKind(
+function isSelectedForItem<T>(
 	kindId: SlashKindId,
-	key: string,
+	item: T,
 	selected: SlashPickerSelection | undefined,
+	toResult: (item: T) => SlashPickerResult,
 ): boolean {
 	if (!selected) return false
-	if (kindId === 'agent') return selected.agent?.id === key
-	if (kindId === 'object') return selected.objects?.some((o) => o.id === key) ?? false
+	if (kindId === 'agent') {
+		const id = (item as unknown as { id: string }).id
+		return selected.agent?.id === id
+	}
+	// Multi-select "item" kind — discriminate by the resolved SlashPickerResult
+	// so objects and notifications each hit their own bucket in the selection.
+	const resolved = toResult(item)
+	if (resolved.kind === 'object') {
+		return selected.objects?.some((o) => o.id === resolved.ref.id) ?? false
+	}
+	if (resolved.kind === 'notification') {
+		return selected.notifications?.some((n) => n.id === resolved.ref.id) ?? false
+	}
 	return false
 }

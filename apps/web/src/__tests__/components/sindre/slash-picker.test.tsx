@@ -20,6 +20,7 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		actors: { list: vi.fn() },
 		objects: { list: vi.fn(), search: vi.fn() },
+		notifications: { list: vi.fn() },
 	},
 }))
 
@@ -42,6 +43,7 @@ beforeEach(() => {
 	vi.mocked(api.actors.list).mockResolvedValue(listAgents())
 	vi.mocked(api.objects.list).mockResolvedValue(listObjects())
 	vi.mocked(api.objects.search).mockResolvedValue(listObjects())
+	vi.mocked(api.notifications.list).mockResolvedValue([])
 })
 
 function renderPicker(
@@ -72,9 +74,9 @@ function renderPicker(
 
 describe('SLASH_KINDS registry', () => {
 	it('ships with the two initial kinds in a stable order', () => {
-		expect(SLASH_KINDS.map((k) => k.id)).toEqual(['agent', 'object'])
+		expect(SLASH_KINDS.map((k) => k.id)).toEqual(['agent', 'item'])
 		expect(SLASH_KINDS.find((k) => k.id === 'agent')?.multi).toBe(false)
-		expect(SLASH_KINDS.find((k) => k.id === 'object')?.multi).toBe(true)
+		expect(SLASH_KINDS.find((k) => k.id === 'item')?.multi).toBe(true)
 	})
 })
 
@@ -84,7 +86,7 @@ describe('<SlashPicker>', () => {
 
 		expect(screen.getByPlaceholderText('Choose a kind…')).toBeInTheDocument()
 		expect(screen.getByText('Agent')).toBeInTheDocument()
-		expect(screen.getByText('Object')).toBeInTheDocument()
+		expect(screen.getByText('Item')).toBeInTheDocument()
 	})
 
 	it('drills into a kind when its menu entry is clicked', async () => {
@@ -128,7 +130,7 @@ describe('<SlashPicker>', () => {
 
 	it('multi-selecting an object fires onSelect without closing', async () => {
 		const user = userEvent.setup()
-		const { onSelect, onOpenChange } = renderPicker({ initialKindId: 'object' })
+		const { onSelect, onOpenChange } = renderPicker({ initialKindId: 'item' })
 
 		const item = await screen.findByText('Bet Alpha')
 		await user.click(item)
@@ -143,7 +145,7 @@ describe('<SlashPicker>', () => {
 
 	it('renders a checkmark for already-selected objects', async () => {
 		renderPicker({
-			initialKindId: 'object',
+			initialKindId: 'item',
 			selected: { objects: [{ id: 'obj-1', title: 'Bet Alpha', type: 'bet' }] },
 		})
 
@@ -156,9 +158,9 @@ describe('<SlashPicker>', () => {
 
 	it('calls the object search endpoint when a query is entered', async () => {
 		const user = userEvent.setup()
-		renderPicker({ initialKindId: 'object' })
+		renderPicker({ initialKindId: 'item' })
 
-		await user.type(screen.getByPlaceholderText('Search objects…'), 'alpha')
+		await user.type(screen.getByPlaceholderText('Search items…'), 'alpha')
 
 		await waitFor(() => expect(api.objects.search).toHaveBeenCalled())
 		const lastCall = vi.mocked(api.objects.search).mock.calls.at(-1)
@@ -176,7 +178,7 @@ describe('<SlashPicker>', () => {
 		vi.mocked(api.objects.list).mockResolvedValueOnce(fullPage).mockResolvedValueOnce(nextPage)
 
 		const user = userEvent.setup()
-		renderPicker({ initialKindId: 'object' })
+		renderPicker({ initialKindId: 'item' })
 
 		const loadMore = await screen.findByRole('button', { name: 'Load more' })
 		expect(api.objects.list).toHaveBeenCalledTimes(1)

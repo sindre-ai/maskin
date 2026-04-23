@@ -45,6 +45,7 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		actors: { list: vi.fn() },
 		objects: { list: vi.fn(), search: vi.fn() },
+		notifications: { list: vi.fn().mockResolvedValue([]) },
 	},
 }))
 
@@ -494,10 +495,10 @@ describe('SindreChat', () => {
 
 	// ---- Task 36: composer picker entry points --------------------------------
 
-	it('renders the Agent and Objects picker buttons next to the composer', () => {
+	it('renders the Agent and Items picker buttons next to the composer', () => {
 		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
 		expect(screen.getByRole('button', { name: /pick an agent/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /attach objects/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /attach items/i })).toBeInTheDocument()
 	})
 
 	it('opens the picker pre-filtered to agents when the Agent button is clicked', async () => {
@@ -513,15 +514,15 @@ describe('SindreChat', () => {
 		expect(screen.queryByPlaceholderText('Choose a kind…')).not.toBeInTheDocument()
 	})
 
-	it('opens the picker pre-filtered to objects when the Objects button is clicked', async () => {
+	it('opens the picker pre-filtered to items when the Items button is clicked', async () => {
 		const user = userEvent.setup()
 		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />, {
 			wrapper: WithQueryClient,
 		})
 
-		await user.click(screen.getByRole('button', { name: /attach objects/i }))
+		await user.click(screen.getByRole('button', { name: /attach items/i }))
 
-		expect(await screen.findByPlaceholderText('Search objects…')).toBeInTheDocument()
+		expect(await screen.findByPlaceholderText('Search items…')).toBeInTheDocument()
 	})
 
 	it('opens the picker at the top-level kind menu when `/` is typed at the start', async () => {
@@ -590,7 +591,7 @@ describe('SindreChat', () => {
 		await waitFor(() => expect(textarea.value).toBe('hi '))
 	})
 
-	it('dispatches add_object when the Objects button path picks an object', async () => {
+	it('dispatches add_object when the Items button path picks an object', async () => {
 		const user = userEvent.setup()
 		const dispatch = vi.fn<(action: SindreSelectionAction) => void>()
 
@@ -605,7 +606,7 @@ describe('SindreChat', () => {
 			{ wrapper: WithQueryClient },
 		)
 
-		await user.click(screen.getByRole('button', { name: /attach objects/i }))
+		await user.click(screen.getByRole('button', { name: /attach items/i }))
 		await user.click(await screen.findByRole('option', { name: /Bet Alpha/ }))
 
 		expect(dispatch).toHaveBeenCalledWith({
