@@ -177,7 +177,7 @@ describe('SindrePanel', () => {
 
 		await screen.findByPlaceholderText('Message Sindre')
 		await waitFor(() =>
-			expect(mockSend).toHaveBeenCalledWith('hey sindre', undefined, 'hey sindre'),
+			expect(mockSend).toHaveBeenCalledWith('hey sindre', undefined, 'hey sindre', undefined),
 		)
 	})
 

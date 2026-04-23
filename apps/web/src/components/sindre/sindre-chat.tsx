@@ -20,7 +20,7 @@ import {
 	type SindreSelectionObject,
 	buildOneShotActionPrompt,
 } from '@/lib/sindre-selection'
-import type { SindreEvent } from '@/lib/sindre-stream'
+import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
 import { Bot, Box, Send } from 'lucide-react'
 import {
 	type ChangeEvent,
@@ -144,6 +144,7 @@ export function SindreChat({
 			}
 			pendingBaselineRef.current = events.length
 			setPendingTurn(true)
+			const displayAttachments = buildDisplayAttachments(activeSelection)
 			try {
 				if (selectedAgent) {
 					await oneShot.send({
@@ -152,6 +153,7 @@ export function SindreChat({
 						content,
 						objects: selectedObjects,
 						notifications: selectedNotifications,
+						displayAttachments,
 					})
 				} else {
 					const attachments = selectionToAttachments(selectedObjects, selectedNotifications)
@@ -167,9 +169,9 @@ export function SindreChat({
 							? buildOneShotActionPrompt(content, [], selectedNotifications)
 							: content
 					if (attachments) {
-						await sindre.send(enriched, attachments, content)
+						await sindre.send(enriched, attachments, content, displayAttachments)
 					} else {
-						await sindre.send(enriched, undefined, content)
+						await sindre.send(enriched, undefined, content, displayAttachments)
 					}
 				}
 			} catch (err) {
@@ -251,9 +253,6 @@ export function SindreChat({
 				placeholder={placeholder}
 				selection={activeSelection}
 				onDispatchSelection={onDispatchSelection}
-			/>
-			<SelectionChips
-				selection={activeSelection}
 				onRemoveAgent={handleRemoveAgent}
 				onRemoveObject={handleRemoveObject}
 				onRemoveNotification={handleRemoveNotification}
@@ -323,6 +322,20 @@ function useMergedTranscript(
 	return merged
 }
 
+function buildDisplayAttachments(selection: SindreSelection): UserAttachmentView[] | undefined {
+	const out: UserAttachmentView[] = []
+	if (selection.agent) {
+		out.push({ kind: 'agent', id: selection.agent.id, name: selection.agent.name ?? null })
+	}
+	for (const o of selection.objects) {
+		out.push({ kind: 'object', id: o.id, title: o.title ?? null, type: o.type ?? null })
+	}
+	for (const n of selection.notifications) {
+		out.push({ kind: 'notification', id: n.id, title: n.title ?? null })
+	}
+	return out.length > 0 ? out : undefined
+}
+
 function selectionToAttachments(
 	objects: SindreSelectionObject[],
 	notifications: SindreSelectionNotification[],
@@ -354,6 +367,9 @@ interface ComposerProps {
 	placeholder: string
 	selection: SindreSelection
 	onDispatchSelection?: (action: SindreSelectionAction) => void
+	onRemoveAgent: () => void
+	onRemoveObject: (id: string) => void
+	onRemoveNotification: (id: string) => void
 }
 
 /**
@@ -382,6 +398,9 @@ function Composer({
 	placeholder,
 	selection,
 	onDispatchSelection,
+	onRemoveAgent,
+	onRemoveObject,
+	onRemoveNotification,
 }: ComposerProps) {
 	const [value, setValue] = useState('')
 	const [sending, setSending] = useState(false)
@@ -491,6 +510,12 @@ function Composer({
 				anchor={
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
+			/>
+			<SelectionChips
+				selection={selection}
+				onRemoveAgent={onRemoveAgent}
+				onRemoveObject={onRemoveObject}
+				onRemoveNotification={onRemoveNotification}
 			/>
 			<form onSubmit={handleSubmit} className="flex items-end gap-2">
 				<Textarea

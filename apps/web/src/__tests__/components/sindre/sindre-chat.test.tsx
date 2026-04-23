@@ -146,7 +146,7 @@ describe('SindreChat', () => {
 		fireEvent.click(sendButton)
 
 		await waitFor(() =>
-			expect(mockSend).toHaveBeenCalledWith('hello sindre', undefined, 'hello sindre'),
+			expect(mockSend).toHaveBeenCalledWith('hello sindre', undefined, 'hello sindre', undefined),
 		)
 		await waitFor(() => expect(textarea.value).toBe(''))
 	})
@@ -170,7 +170,7 @@ describe('SindreChat', () => {
 		fireEvent.keyDown(textarea, { key: 'Enter' })
 
 		await waitFor(() =>
-			expect(mockSend).toHaveBeenCalledWith('hi there', undefined, 'hi there'),
+			expect(mockSend).toHaveBeenCalledWith('hi there', undefined, 'hi there', undefined),
 		)
 		await waitFor(() => expect(textarea.value).toBe(''))
 	})
@@ -226,7 +226,9 @@ describe('SindreChat', () => {
 		fireEvent.change(textarea, { target: { value: 'hello' } })
 		fireEvent.click(screen.getByRole('button', { name: /send message/i }))
 
-		await waitFor(() => expect(mockSend).toHaveBeenCalledWith('hello', undefined, 'hello'))
+		await waitFor(() =>
+			expect(mockSend).toHaveBeenCalledWith('hello', undefined, 'hello', undefined),
+		)
 
 		// Mid-turn: spinner showing, send button disabled, Enter is ignored.
 		const spinnerButton = screen.getByRole('button', { name: /send message/i })
@@ -282,6 +284,11 @@ describe('SindreChat', () => {
 				{ id: 'obj-2', title: null, type: null },
 			],
 			notifications: [],
+			displayAttachments: [
+				{ kind: 'agent', id: 'actor-reviewer', name: 'Code Reviewer' },
+				{ kind: 'object', id: 'obj-1', title: 'PR #42', type: 'task' },
+				{ kind: 'object', id: 'obj-2', title: null, type: null },
+			],
 		})
 		expect(mockSend).not.toHaveBeenCalled()
 		await waitFor(() => expect(textarea.value).toBe(''))
@@ -316,6 +323,10 @@ describe('SindreChat', () => {
 				{ kind: 'object', id: 'obj-2' },
 			],
 			'summarize these',
+			[
+				{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: null },
+				{ kind: 'object', id: 'obj-2', title: 'Task Beta', type: null },
+			],
 		)
 		expect(mockOneShotSend).not.toHaveBeenCalled()
 	})
@@ -345,6 +356,7 @@ describe('SindreChat', () => {
 			),
 			[{ kind: 'notification', id: 'notif-1' }],
 			'what happened?',
+			[{ kind: 'notification', id: 'notif-1', title: 'Build failed' }],
 		)
 	})
 
@@ -373,6 +385,9 @@ describe('SindreChat', () => {
 			content: 'take a look',
 			objects: [],
 			notifications: [{ id: 'notif-1', title: 'PR merged' }],
+			displayAttachments: [
+				{ kind: 'agent', id: 'actor-reviewer', name: 'Code Reviewer' },
+				{ kind: 'notification', id: 'notif-1', title: 'PR merged' }],
 		})
 	})
 
@@ -628,7 +643,7 @@ describe('SindreChat', () => {
 		)
 
 		await waitFor(() =>
-			expect(mockSend).toHaveBeenCalledWith('from bar', undefined, 'from bar'),
+			expect(mockSend).toHaveBeenCalledWith('from bar', undefined, 'from bar', undefined),
 		)
 		expect(onConsumed).toHaveBeenCalledTimes(1)
 

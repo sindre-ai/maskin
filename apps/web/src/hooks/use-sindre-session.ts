@@ -2,7 +2,7 @@ import { api } from '@/lib/api'
 import type { SessionInputAttachment } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
 import { API_BASE } from '@/lib/constants'
-import { type SindreEvent, parseSindreLine } from '@/lib/sindre-stream'
+import { type SindreEvent, type UserAttachmentView, parseSindreLine } from '@/lib/sindre-stream'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -55,6 +55,7 @@ export interface UseSindreSessionResult {
 		content: string,
 		attachments?: SessionInputAttachment[],
 		displayText?: string,
+		displayAttachments?: UserAttachmentView[],
 	) => Promise<void>
 	reset: () => void
 }
@@ -176,10 +177,23 @@ export function useSindreSession({
 	}, [enabled, workspaceId, sessionId])
 
 	const send = useCallback(
-		async (content: string, attachments?: SessionInputAttachment[], displayText?: string) => {
+		async (
+			content: string,
+			attachments?: SessionInputAttachment[],
+			displayText?: string,
+			displayAttachments?: UserAttachmentView[],
+		) => {
 			if (!sessionId) throw new Error('Sindre session is not ready yet')
 			if (!workspaceId) throw new Error('No workspace selected')
-			setEvents((prev) => prev.concat({ kind: 'user', text: displayText ?? content }))
+			setEvents((prev) =>
+				prev.concat({
+					kind: 'user',
+					text: displayText ?? content,
+					...(displayAttachments && displayAttachments.length > 0
+						? { attachments: displayAttachments }
+						: {}),
+				}),
+			)
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
 			await api.sessions.input(sessionId, body, workspaceId)
 		},

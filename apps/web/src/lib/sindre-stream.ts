@@ -19,8 +19,13 @@
  * behind a "debug" bucket without losing data.
  */
 
+export type UserAttachmentView =
+	| { kind: 'agent'; id: string; name: string | null }
+	| { kind: 'object'; id: string; title: string | null; type: string | null }
+	| { kind: 'notification'; id: string; title: string | null }
+
 export type SindreEvent =
-	| { kind: 'user'; text: string }
+	| { kind: 'user'; text: string; attachments?: UserAttachmentView[] }
 	| { kind: 'text'; text: string; sessionId?: string; messageId?: string }
 	| {
 			kind: 'tool_use'

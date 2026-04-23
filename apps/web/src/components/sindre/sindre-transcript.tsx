@@ -1,8 +1,8 @@
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/cn'
-import type { SindreEvent } from '@/lib/sindre-stream'
-import { ChevronDown, ChevronRight, Wrench } from 'lucide-react'
+import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
+import { Bell, Bot, Box, ChevronDown, ChevronRight, Wrench } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 interface SindreTranscriptProps {
@@ -79,7 +79,7 @@ function TranscriptError({ error }: { error: Error }) {
 function TranscriptRow({ event }: { event: SindreEvent }) {
 	switch (event.kind) {
 		case 'user':
-			return <UserMessageBlock text={event.text} />
+			return <UserMessageBlock text={event.text} attachments={event.attachments} />
 		case 'text':
 			return <AssistantTextBlock text={event.text} />
 		case 'thinking':
@@ -101,14 +101,45 @@ function TranscriptRow({ event }: { event: SindreEvent }) {
 	}
 }
 
-function UserMessageBlock({ text }: { text: string }) {
+function UserMessageBlock({
+	text,
+	attachments,
+}: {
+	text: string
+	attachments?: UserAttachmentView[]
+}) {
 	return (
 		<div className="flex justify-end">
-			<div className="max-w-[85%] whitespace-pre-wrap rounded-md bg-accent px-3 py-2 text-accent-foreground text-sm">
-				{text}
+			<div className="flex max-w-[85%] flex-col gap-1 rounded-md bg-accent px-3 py-2 text-accent-foreground text-sm">
+				{attachments && attachments.length > 0 ? (
+					<ul className="flex flex-wrap gap-1" aria-label="Attached context">
+						{attachments.map((a) => (
+							<li
+								key={`${a.kind}:${a.id}`}
+								className="inline-flex max-w-full items-center gap-1 rounded-full bg-accent-foreground/15 px-2 py-0.5 text-[11px]"
+							>
+								<UserAttachmentIcon kind={a.kind} />
+								<span className="max-w-[12rem] truncate">{userAttachmentLabel(a)}</span>
+							</li>
+						))}
+					</ul>
+				) : null}
+				<span className="whitespace-pre-wrap">{text}</span>
 			</div>
 		</div>
 	)
+}
+
+function UserAttachmentIcon({ kind }: { kind: UserAttachmentView['kind'] }) {
+	if (kind === 'agent') return <Bot size={12} aria-hidden />
+	if (kind === 'object') return <Box size={12} aria-hidden />
+	return <Bell size={12} aria-hidden />
+}
+
+function userAttachmentLabel(a: UserAttachmentView): string {
+	if (a.kind === 'agent') return a.name?.trim() || a.id
+	if (a.kind === 'object') return a.title?.trim() || a.id
+	return a.title?.trim() || a.id
 }
 
 function AssistantTextBlock({ text }: { text: string }) {

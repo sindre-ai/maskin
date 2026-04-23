@@ -7,7 +7,7 @@ import {
 	type SindreSelectionObject,
 	buildOneShotActionPrompt,
 } from '@/lib/sindre-selection'
-import { type SindreEvent, parseSindreLine } from '@/lib/sindre-stream'
+import { type SindreEvent, type UserAttachmentView, parseSindreLine } from '@/lib/sindre-stream'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -19,6 +19,7 @@ export interface SendOneShotArgs {
 	content: string
 	objects?: SindreSelectionObject[]
 	notifications?: SindreSelectionNotification[]
+	displayAttachments?: UserAttachmentView[]
 }
 
 export interface UseSindreOneShotResult {
@@ -52,7 +53,14 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 	}, [])
 
 	const send = useCallback(async (args: SendOneShotArgs) => {
-		const { workspaceId, agent, content, objects = [], notifications = [] } = args
+		const {
+			workspaceId,
+			agent,
+			content,
+			objects = [],
+			notifications = [],
+			displayAttachments,
+		} = args
 		if (!workspaceId) throw new Error('No workspace selected')
 		if (!agent?.id) throw new Error('No agent selected')
 
@@ -62,7 +70,15 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 
 		setStatus('starting')
 		setError(null)
-		setEvents((prev) => prev.concat({ kind: 'user', text: content }))
+		setEvents((prev) =>
+			prev.concat({
+				kind: 'user',
+				text: content,
+				...(displayAttachments && displayAttachments.length > 0
+					? { attachments: displayAttachments }
+					: {}),
+			}),
+		)
 
 		let session: { id: string }
 		try {
