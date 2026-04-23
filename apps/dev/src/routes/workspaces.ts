@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
+	SINDRE_DEFAULT,
 	createWorkspaceSchema,
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
@@ -10,6 +11,7 @@ import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -72,25 +74,54 @@ app.openapi(createWorkspaceRoute, async (c) => {
 
 	const settings = workspaceSettingsSchema.parse(body.settings ?? {})
 
-	const [workspace] = await db
-		.insert(workspaces)
-		.values({
-			name: body.name,
-			settings,
-			createdBy: actorId,
+	const workspace = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.insert(workspaces)
+			.values({
+				name: body.name,
+				settings,
+				createdBy: actorId,
+			})
+			.returning()
+
+		if (!ws) return null
+
+		// Auto-add creator as owner
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId,
+			role: 'owner',
 		})
-		.returning()
+
+		// Seed Sindre — the built-in meta-agent shipped with every workspace.
+		const [sindre] = await tx
+			.insert(actors)
+			.values({
+				type: SINDRE_DEFAULT.type,
+				name: SINDRE_DEFAULT.name,
+				isSystem: SINDRE_DEFAULT.isSystem,
+				systemPrompt: SINDRE_DEFAULT.systemPrompt,
+				llmProvider: SINDRE_DEFAULT.llmProvider,
+				llmConfig: SINDRE_DEFAULT.llmConfig,
+				tools: SINDRE_DEFAULT.tools,
+				createdBy: actorId,
+			})
+			.returning()
+
+		if (!sindre) throw new Error('Failed to seed Sindre actor')
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: sindre.id,
+			role: 'member',
+		})
+
+		return ws
+	})
 
 	if (!workspace) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
 	}
-
-	// Auto-add creator as owner
-	await db.insert(workspaceMembers).values({
-		workspaceId: workspace.id,
-		actorId,
-		role: 'owner',
-	})
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
 })
@@ -218,13 +249,22 @@ const addMemberRoute = createRoute({
 			description: 'Member added',
 			content: { 'application/json': { schema: z.object({ added: z.boolean() }) } },
 		},
+		403: {
+			description: 'Caller is not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
-app.openapi(addMemberRoute, async (c) => {
+app.openapi(addMemberRoute, (async (c) => {
 	const db = c.get('db')
+	const callerId = c.get('actorId')
 	const { id: workspaceId } = c.req.valid('param')
 	const { actor_id, role } = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
 
 	await db.insert(workspaceMembers).values({
 		workspaceId,
@@ -233,7 +273,7 @@ app.openapi(addMemberRoute, async (c) => {
 	})
 
 	return c.json({ added: true }, 201)
-})
+}) as RouteHandler<typeof addMemberRoute, Env>)
 
 // GET /api/workspaces/:id/members
 const listMembersRoute = createRoute({

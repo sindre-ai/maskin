@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
 import {
 	createSessionSchema,
+	sessionInputSchema,
 	sessionLogQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
@@ -10,6 +11,7 @@ import {
 import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, formatZodError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	sessionLogResponseSchema,
@@ -311,6 +313,72 @@ app.openapi(resumeSessionRoute, (async (c) => {
 	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof resumeSessionRoute, Env>)
 
+// POST /:id/input - Send a user turn to an interactive session
+const inputSessionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/input',
+	tags: ['Sessions'],
+	summary: 'Send a user input turn to an interactive session',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: {
+			content: { 'application/json': { schema: sessionInputSchema } },
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.object({ ok: z.literal(true) }) } },
+			description: 'Input accepted',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not interactive or not running',
+		},
+	},
+})
+
+app.openapi(inputSessionRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	if (!session.interactive) {
+		return c.json(createApiError('CONFLICT', 'Session is not interactive'), 409)
+	}
+	if (session.status !== 'running') {
+		return c.json(
+			createApiError('CONFLICT', `Session is not running (status: ${session.status})`),
+			409,
+		)
+	}
+
+	try {
+		await sessionManager.writeInput(id, {
+			type: 'user',
+			message: { role: 'user', content: body.content },
+		})
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		return c.json(createApiError('BAD_REQUEST', message), 400)
+	}
+
+	return c.json({ ok: true as const })
+}) as RouteHandler<typeof inputSessionRoute, Env>)
+
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({
 	method: 'get',
@@ -361,9 +429,23 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 app.get('/:id/logs/stream', async (c) => {
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
-	const sessionId = c.req.param('id')
+	const rawSessionId = c.req.param('id')
 	const workspaceId = c.req.header('x-workspace-id')
 	const lastLogId = c.req.header('Last-Event-ID')
+
+	// Reject non-UUID session ids up front — passing a malformed string into
+	// the DB query produces a Postgres "invalid input syntax for type uuid"
+	// that surfaces as an uncaught 500.
+	const parsedParams = sessionParamsSchema.safeParse({ id: rawSessionId })
+	if (!parsedParams.success) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid session id', [
+				{ field: 'id', message: 'Must be a UUID', expected: 'UUID string' },
+			]),
+			400,
+		)
+	}
+	const sessionId = parsedParams.data.id
 
 	if (!workspaceId) {
 		return c.json(
@@ -380,7 +462,9 @@ app.get('/:id/logs/stream', async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 	}
 
-	const terminalStatuses = ['completed', 'failed', 'timeout']
+	// Include 'paused' so a client subscribing to an already-paused session
+	// receives replay + done instead of hanging in the keep-alive loop below.
+	const terminalStatuses = ['completed', 'failed', 'timeout', 'paused']
 
 	const parsedLogId = Number(lastLogId)
 	const resumeFromLogId =
@@ -457,23 +541,47 @@ app.get('/:id/logs/stream', async (c) => {
 			resolveClosed?.()
 		}
 
+		// Maps a system-log prefix to the `done` payload to emit when a session
+		// reaches that terminal state. Using prefix matching because log content
+		// may include trailing detail (e.g. "Session completed with exit code 0").
+		const TERMINAL_SYSTEM_LOGS: Array<{ prefix: string; done: string }> = [
+			{ prefix: 'Session completed', done: 'completed' },
+			{ prefix: 'Session failed', done: 'failed' },
+			{ prefix: 'Session timed out', done: 'timeout' },
+			{ prefix: 'Session paused', done: 'paused' },
+		]
+
 		// Subscribe to live log stream
 		const handler = (event: SessionLogEvent) => {
 			if (event.sessionId !== sessionId) return
 			if (event.logId > maxLogId) maxLogId = event.logId
-			stream.writeSSE({
-				id: String(event.logId),
-				event: event.stream,
-				data: event.data,
+			// writeSSE returns a Promise. We're in an event listener (sync) so
+			// we can't await it — but we must attach an error handler to avoid
+			// unhandled rejections when the client disconnects mid-write or
+			// backpressure propagates a socket error. Dropped writes are not
+			// recoverable here; just log and detach so we stop trying.
+			const emit = async () => {
+				await stream.writeSSE({
+					id: String(event.logId),
+					event: event.stream,
+					data: event.data,
+				})
+				if (event.stream === 'system') {
+					const terminal = TERMINAL_SYSTEM_LOGS.find((t) => event.data.startsWith(t.prefix))
+					if (terminal) {
+						await emitDone(terminal.done, maxLogId)
+						markClosed()
+					}
+				}
+			}
+			emit().catch((err) => {
+				sessionManager.off('log', handler)
+				logger.warn('SSE log write failed; detaching listener', {
+					err: err instanceof Error ? err.message : String(err),
+					sessionId,
+				})
+				markClosed()
 			})
-
-			// Close stream when session completes (system log signals completion)
-			if (event.stream === 'system' && event.data.startsWith('Session completed')) {
-				emitDone('completed', maxLogId).finally(markClosed)
-			}
-			if (event.stream === 'system' && event.data.startsWith('Session failed')) {
-				emitDone('failed', maxLogId).finally(markClosed)
-			}
 		}
 
 		sessionManager.on('log', handler)

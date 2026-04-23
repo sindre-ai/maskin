@@ -26,6 +26,29 @@ interface WorkspaceResponse {
 	settings: Record<string, unknown>
 }
 
+interface ActorListItem {
+	id: string
+	type: string
+	name: string
+	email: string | null
+	role?: string
+}
+
+interface ActorResponse {
+	id: string
+	type: string
+	name: string
+	email: string | null
+	systemPrompt: string | null
+	tools: Record<string, unknown> | null
+	memory: Record<string, unknown> | null
+	llmProvider: string | null
+	llmConfig: Record<string, unknown> | null
+	isSystem: boolean
+	createdAt: string | null
+	updatedAt: string | null
+}
+
 export class TestAPI {
 	constructor(
 		private apiKey: string,
@@ -76,6 +99,71 @@ export class TestAPI {
 			headers: this.headers(workspaceId),
 		})
 		if (!res.ok) throw new Error(`deleteObject failed: ${res.status}`)
+	}
+
+	async createWorkspace(name: string): Promise<WorkspaceResponse> {
+		const res = await fetch(`${this.baseURL}/api/workspaces`, {
+			method: 'POST',
+			headers: this.headers(),
+			body: JSON.stringify({ name }),
+		})
+		if (!res.ok) throw new Error(`createWorkspace failed: ${res.status}`)
+		return res.json()
+	}
+
+	async listWorkspaceActors(workspaceId: string): Promise<ActorListItem[]> {
+		const res = await fetch(`${this.baseURL}/api/actors`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listWorkspaceActors failed: ${res.status}`)
+		return res.json()
+	}
+
+	async getActor(id: string): Promise<ActorResponse> {
+		const res = await fetch(`${this.baseURL}/api/actors/${id}`, {
+			headers: this.headers(),
+		})
+		if (!res.ok) throw new Error(`getActor failed: ${res.status}`)
+		return res.json()
+	}
+
+	async updateActor(
+		id: string,
+		data: {
+			system_prompt?: string | null
+			tools?: Record<string, unknown> | null
+			llm_provider?: string | null
+			llm_config?: Record<string, unknown> | null
+		},
+	): Promise<ActorResponse> {
+		const res = await fetch(`${this.baseURL}/api/actors/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`updateActor failed: ${res.status}`)
+		return res.json()
+	}
+
+	async deleteActorRaw(
+		id: string,
+		workspaceId: string,
+	): Promise<{ status: number; body: unknown }> {
+		const res = await fetch(`${this.baseURL}/api/actors/${id}`, {
+			method: 'DELETE',
+			headers: this.headers(workspaceId),
+		})
+		const body = await res.json().catch(() => null)
+		return { status: res.status, body }
+	}
+
+	async resetActor(id: string, workspaceId: string): Promise<ActorResponse> {
+		const res = await fetch(`${this.baseURL}/api/actors/${id}/reset`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`resetActor failed: ${res.status}`)
+		return res.json()
 	}
 }
 

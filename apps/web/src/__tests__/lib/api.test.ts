@@ -167,3 +167,56 @@ describe('request', () => {
 		}
 	})
 })
+
+describe('sessions.input', () => {
+	it('POSTs content to /sessions/:id/input with workspace header', async () => {
+		vi.mocked(getApiKey).mockReturnValue('ank_key')
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+
+		const result = await api.sessions.input('sess-1', { content: 'hello' }, 'ws-1')
+
+		expect(result).toEqual({ ok: true })
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'/api/sessions/sess-1/input',
+			expect.objectContaining({
+				method: 'POST',
+				headers: expect.objectContaining({
+					'Content-Type': 'application/json',
+					'X-Workspace-Id': 'ws-1',
+				}),
+				body: JSON.stringify({ content: 'hello' }),
+			}),
+		)
+	})
+
+	it('includes attachments when provided', async () => {
+		vi.mocked(getApiKey).mockReturnValue('ank_key')
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+
+		await api.sessions.input(
+			'sess-1',
+			{ content: 'review this', attachments: [{ kind: 'object', id: 'obj-1' }] },
+			'ws-1',
+		)
+
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'/api/sessions/sess-1/input',
+			expect.objectContaining({
+				body: JSON.stringify({
+					content: 'review this',
+					attachments: [{ kind: 'object', id: 'obj-1' }],
+				}),
+			}),
+		)
+	})
+
+	it('throws ApiError on 409 when session is not interactive or not running', async () => {
+		const errorBody = { error: { code: 'CONFLICT', message: 'Session is not interactive' } }
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 409 }))
+
+		await expect(api.sessions.input('sess-1', { content: 'hi' }, 'ws-1')).rejects.toMatchObject({
+			status: 409,
+			message: 'Session is not interactive',
+		})
+	})
+})
