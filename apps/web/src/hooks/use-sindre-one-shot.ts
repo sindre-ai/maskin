@@ -104,7 +104,13 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 		const headers: Record<string, string> = { 'X-Workspace-Id': workspaceId }
 		if (apiKey) headers.Authorization = `Bearer ${apiKey}`
 
-		await fetchEventSource(`${API_BASE}/sessions/${session.id}/logs/stream`, {
+		// Fire-and-forget: the SSE stream stays open for the entire one-shot
+		// turn (container exits when the agent finishes replying). Awaiting
+		// it here would hold the composer's "sending" state hostage until
+		// the agent is done, which is exactly what the user sees as a stale
+		// spinner after the reply has already rendered. The hook's own
+		// status / events / error are updated via the callbacks below.
+		fetchEventSource(`${API_BASE}/sessions/${session.id}/logs/stream`, {
 			signal: controller.signal,
 			headers,
 			openWhenHidden: true,
