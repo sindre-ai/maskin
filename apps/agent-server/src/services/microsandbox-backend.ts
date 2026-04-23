@@ -59,27 +59,28 @@ function msbCreate(config: {
 	// the process as a descendant of the caller; a plain transient service
 	// is reparented to systemd PID 1. Confirmed: msb fails only when it's
 	// a descendant of the agent-server process tree, and this fully detaches.
-	// Run as a transient systemd service with --service-type=forking so
-	// systemd tracks the VM daemon (not the short-lived msb create PID)
-	// as the main process. Without this, systemd cgroup-kills the VM when
-	// msb create exits. --wait blocks until the fork happens.
+	// Detach msb from agent-server's process tree via a transient systemd
+	// unit (not --scope, so it reparents to systemd PID 1). Pass
+	// KillMode=process so systemd tracks the service but does not cgroup-kill
+	// the msb subprocesses that own the VM when the main PID exits.
 	execFileSync(
 		'/usr/bin/systemd-run',
 		[
 			'--quiet',
-			'--wait',
-			'--service-type=forking',
+			'--property=KillMode=process',
+			'--property=ExecStopPost=',
 			MSB_BIN,
 			...args,
 		],
 		{
-			timeout: 180_000,
+			timeout: 30_000,
 			stdio: ['ignore', 'pipe', 'pipe'],
 		},
 	)
 
-	// Poll until the sandbox is Running (msb reports capitalized status).
-	const deadline = Date.now() + 60_000
+	// Poll until the sandbox is Running (msb statuses are capitalized).
+	const deadline = Date.now() + 90_000
+	let lastStatus = ''
 	while (Date.now() < deadline) {
 		try {
 			const out = execFileSync(
@@ -90,7 +91,8 @@ function msbCreate(config: {
 			const list = JSON.parse(out) as Array<{ name: string; status: string }>
 			const entry = list.find((s) => s.name === config.name)
 			if (entry?.status?.toLowerCase() === 'running') return
-			if (entry && entry.status?.toLowerCase() !== 'running') {
+			if (entry && entry.status !== lastStatus) {
+				lastStatus = entry.status
 				logger.info(`Sandbox ${config.name} status: ${entry.status}`)
 			}
 		} catch {
@@ -98,7 +100,9 @@ function msbCreate(config: {
 		}
 		execFileSync('/bin/sleep', ['0.5'], { stdio: 'ignore' })
 	}
-	throw new Error(`msb create timeout: sandbox ${config.name} did not reach running state`)
+	throw new Error(
+		`msb create timeout: sandbox ${config.name} stuck at status ${lastStatus || 'unknown'}`,
+	)
 }
 
 export class MicrosandboxBackend implements RuntimeBackend {
