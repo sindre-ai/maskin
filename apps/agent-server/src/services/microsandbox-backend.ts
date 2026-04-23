@@ -61,8 +61,12 @@ if (config.maxDurationSecs !== undefined) {
 Sandbox.createDetached(opts).then(() => {
   process.exit(0);
 }).catch((err) => {
-  process.stderr.write(err.message);
+  process.stderr.write('MSB_ERROR: ' + (err && err.stack ? err.stack : String(err)) + '\\n');
   process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+  process.stderr.write('MSB_UNCAUGHT: ' + (err && err.stack ? err.stack : String(err)) + '\\n');
+  process.exit(2);
 });
 `
 	// Write script and config to temp files. Bash closes inherited FDs
@@ -189,11 +193,17 @@ export class MicrosandboxBackend implements RuntimeBackend {
 				}),
 			})
 		} catch (err) {
-			const stderr =
-				err instanceof Error && 'stderr' in err
-					? String((err as { stderr: unknown }).stderr)
-					: String(err)
-			throw new Error(`Sandbox creation failed: ${stderr}`)
+			const e = err as { stderr?: Buffer | string; stdout?: Buffer | string; status?: number; signal?: string; message?: string }
+			const stderr = e.stderr ? String(e.stderr) : ''
+			const stdout = e.stdout ? String(e.stdout) : ''
+			logger.error('Sandbox child process failed', {
+				stderr,
+				stdout,
+				status: e.status,
+				signal: e.signal,
+				message: e.message,
+			})
+			throw new Error(`Sandbox creation failed: ${stderr || e.message || 'unknown'}`)
 		}
 
 		// Reconnect to the detached sandbox from the parent process
