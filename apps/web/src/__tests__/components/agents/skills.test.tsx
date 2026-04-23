@@ -8,6 +8,11 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
+
 const mockMutate = vi.fn()
 const mockDeleteMutate = vi.fn()
 const mockSaveSkill = {
@@ -20,6 +25,16 @@ vi.mock('@/hooks/use-skills', () => ({
 	useSkill: (...args: unknown[]) => mockUseSkill(...args),
 	useSaveSkill: () => mockSaveSkill,
 	useDeleteSkill: () => ({ mutate: mockDeleteMutate }),
+}))
+
+vi.mock('@/hooks/use-workspace-skills', () => ({
+	useWorkspaceSkills: () => ({ data: [], isLoading: false }),
+}))
+
+vi.mock('@/hooks/use-agent-skill-attachments', () => ({
+	useAgentSkillAttachments: () => ({ data: [], isLoading: false }),
+	useAttachSkill: () => ({ mutate: vi.fn() }),
+	useDetachSkill: () => ({ mutate: vi.fn() }),
 }))
 
 const mockUseSkills = vi.fn()
