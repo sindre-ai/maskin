@@ -10,7 +10,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
 import { useSindreSession } from '@/hooks/use-sindre-session'
-import { type SessionInputAttachment, api } from '@/lib/api'
+import type { SessionInputAttachment } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	EMPTY_SINDRE_SELECTION,
@@ -138,18 +138,16 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 		ref,
 		() => ({
 			newChat: () => {
-				const currentSessionId = sindre.sessionId
-				if (currentSessionId && workspaceId) {
-					// Fire-and-forget: release the container server-side so it
-					// isn't left idling until the watchdog auto-pauses it.
-					api.sessions.stop(currentSessionId, workspaceId).catch(() => {})
-				}
+				// Front-end-only reset: the previous Sindre container keeps
+				// running so any in-flight work the user kicked off there
+				// completes in the background. The watchdog will pause it
+				// once it goes idle.
 				sindre.reset()
 				oneShot.clear()
 				onDispatchSelection?.({ type: 'clear_all' })
 			},
 		}),
-		[sindre, oneShot, workspaceId, onDispatchSelection],
+		[sindre, oneShot, onDispatchSelection],
 	)
 
 	const showTranscript = surface === 'sheet'
