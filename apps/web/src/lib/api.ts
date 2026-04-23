@@ -608,6 +608,8 @@ export interface SessionLogResponse {
 	sessionId: string
 	stream: string
 	content: string
+	/** Actor who authored this row. Non-null only for `user_message` entries. */
+	authorActorId: string | null
 	createdAt: string | null
 }
 

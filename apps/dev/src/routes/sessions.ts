@@ -496,6 +496,7 @@ const postSessionMessageRoute = createRoute({
 
 app.openapi(postSessionMessageRoute, (async (c) => {
 	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -518,17 +519,11 @@ app.openapi(postSessionMessageRoute, (async (c) => {
 		)
 	}
 
-	// Tag the message with the actor so the agent (and other watchers) know who spoke.
-	const tagged = `[from ${actorId}] ${content}`
-	const [row] = await db
-		.insert(sessionLogs)
-		.values({
-			sessionId: id,
-			stream: 'user_message',
-			content: tagged,
-		})
-		.returning()
-
+	// Go through the SessionManager so the row is both persisted AND broadcast on the
+	// live /logs/stream SSE feed. The author is carried in a typed column, not in the
+	// message body — which closes the spoofing hole the previous "[from <uuid>] …"
+	// prefix left open.
+	const row = await sessionManager.postUserMessage(id, actorId, content)
 	if (!row) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to record message'), 500)
 	}

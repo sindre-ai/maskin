@@ -423,6 +423,26 @@ export const tools = {
 				.describe('Max log lines to return (only used when include_logs is true)'),
 		}),
 	},
+	get_session_logs: {
+		description:
+			'Fetch session log rows (stdout, stderr, system, and user_message). Use the `stream` filter to narrow. The `user_message` stream carries interjections from humans watching the session — call this periodically with `stream: "user_message"` and `since: <last_seen_id>` during long-running work to pick up new instructions. Each row has `authorActorId` for user_message rows so you know who spoke.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid(),
+			stream: z
+				.enum(['stdout', 'stderr', 'system', 'user_message'])
+				.optional()
+				.describe('Filter to a specific stream'),
+			since: z
+				.number()
+				.int()
+				.optional()
+				.describe(
+					'Only return rows with id > this value. Use the previous call’s last id to paginate.',
+				),
+			limit: z.number().int().min(1).max(500).default(100),
+		}),
+	},
 	stop_session: {
 		description: 'Stop a running session',
 		inputSchema: z.object({
@@ -592,8 +612,10 @@ export const tools = {
 				.int()
 				.min(5)
 				.max(3600)
-				.default(900)
-				.describe('How long to poll before giving up (default 15 minutes, max 1 hour)'),
+				.default(300)
+				.describe(
+					'How long to poll before giving up (default 5 minutes, max 1 hour). Many MCP clients kill tool calls well before an hour — if you expect a long wait, call this with a shorter timeout and retry with get_notification afterwards instead of holding the tool blocked.',
+				),
 			poll_interval_seconds: z
 				.number()
 				.int()

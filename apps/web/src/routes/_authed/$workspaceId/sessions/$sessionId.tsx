@@ -168,22 +168,15 @@ function LogRow({
 	log: SessionLogResponse
 	actorsById: Map<string, ActorListItem>
 }) {
-	// `user_message` rows are tagged "[from <actor-id>] <text>" — extract the speaker.
-	let prefix: string | null = null
-	let body = log.content
-	if (log.stream === 'user_message') {
-		const match = /^\[from ([0-9a-f-]+)\]\s*(.*)$/s.exec(log.content)
-		if (match) {
-			const actor = actorsById.get(match[1] ?? '')
-			prefix = actor?.name ?? 'You'
-			body = match[2] ?? ''
-		}
-	}
+	// `user_message` rows carry the speaker in `authorActorId` so the content body is
+	// treated as pure text (no client-side regex parsing, no spoofing from user input).
+	const author = log.authorActorId ? actorsById.get(log.authorActorId) : null
+	const prefix = log.stream === 'user_message' ? (author?.name ?? 'Workspace member') : null
 
 	return (
 		<div className={cn('whitespace-pre-wrap break-words', STREAM_COLOR[log.stream] ?? '')}>
 			{prefix && <span className="font-semibold mr-2">{prefix}:</span>}
-			{body}
+			{log.content}
 		</div>
 	)
 }

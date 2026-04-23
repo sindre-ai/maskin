@@ -217,6 +217,8 @@ export const sessionLogs = pgTable(
 			.notNull(),
 		stream: text('stream').notNull(),
 		content: text('content').notNull(),
+		/** Actor who posted this row. Only set for `user_message` rows. */
+		authorActorId: uuid('author_actor_id').references(() => actors.id, { onDelete: 'set null' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [index('session_logs_session_idx').on(t.sessionId, t.createdAt)],

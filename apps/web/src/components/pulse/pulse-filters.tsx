@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 const filters = [
 	{ label: 'All', value: 'all' },
 	{ label: 'Needs you', value: 'needs_input' },
+	{ label: 'Mentions', value: 'mention' },
 	{ label: 'Recommendations', value: 'recommendation' },
 	{ label: 'Alerts', value: 'alert' },
 	{ label: 'Good news', value: 'good_news' },

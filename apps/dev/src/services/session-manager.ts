@@ -694,6 +694,38 @@ export class SessionManager extends EventEmitter {
 		})()
 	}
 
+	/**
+	 * Persist a human-authored message into session_logs AND emit it on the live log
+	 * stream so watchers see it immediately. Keeps the DB record as the source of
+	 * truth; the emit is what makes the /logs/stream SSE endpoint broadcast it.
+	 */
+	async postUserMessage(
+		sessionId: string,
+		authorActorId: string,
+		content: string,
+	): Promise<typeof sessionLogs.$inferSelect | null> {
+		const [log] = await this.db
+			.insert(sessionLogs)
+			.values({
+				sessionId,
+				stream: 'user_message',
+				content,
+				authorActorId,
+			})
+			.returning()
+
+		if (!log) return null
+
+		this.emit('log', {
+			sessionId,
+			logId: log.id,
+			stream: 'user_message',
+			data: content,
+		} satisfies SessionLogEvent)
+
+		return log
+	}
+
 	private watchContainerExit(sessionId: string, containerId: string) {
 		const poll = async () => {
 			try {

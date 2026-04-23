@@ -20,6 +20,13 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'relationship':
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
+			// Participation edges (`assigned_to`, `watches`) are derived into the objects
+			// response as `assignees[]` + `watchers[]`. We can't tell from the NOTIFY payload
+			// which object was the source, so invalidate the workspace-wide object caches.
+			// Object-to-object edges (`informs`, `breaks_into`, …) benefit too: LinkedObjects
+			// counts update without a reload.
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 			break
 		case 'trigger':
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })

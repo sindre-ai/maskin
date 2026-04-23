@@ -1163,6 +1163,33 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'get_session_logs',
+		{
+			description: tools.get_session_logs.description,
+			inputSchema: tools.get_session_logs.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			if (args.stream) params.set('stream', args.stream)
+			if (args.since !== undefined) params.set('since', String(args.since))
+			if (args.limit) params.set('limit', String(args.limit))
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.id}/logs?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: { toolName: 'get_session_logs' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'stop_session',
 		{
 			description: tools.stop_session.description,

@@ -53,6 +53,7 @@ function buildLog(overrides: Partial<SessionLogResponse> & { id: number }): Sess
 		sessionId: 'session-1',
 		stream: 'stdout',
 		content: 'log line',
+		authorActorId: null,
 		createdAt: null,
 		...overrides,
 	}

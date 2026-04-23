@@ -175,6 +175,8 @@ export const sessionLogResponseSchema = z.object({
 	sessionId: z.string().uuid(),
 	stream: z.string(),
 	content: z.string(),
+	/** Actor who authored this row. Non-null only for `user_message` entries. */
+	authorActorId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 })
 

@@ -16,7 +16,11 @@ export interface ContainerCreateOptions {
 }
 
 export interface LogChunk {
-	stream: 'stdout' | 'stderr' | 'system'
+	/**
+	 * `user_message` rows come from humans watching the session, not the container —
+	 * reusing the same emitter keeps SSE listeners dead-simple.
+	 */
+	stream: 'stdout' | 'stderr' | 'system' | 'user_message'
 	data: string
 }
 

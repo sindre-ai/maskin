@@ -230,6 +230,7 @@ export function buildSessionLog(overrides?: Record<string, unknown>) {
 		sessionId: randomUUID(),
 		stream: 'stdout',
 		content: `Log line ${n}`,
+		authorActorId: null,
 		createdAt: new Date(),
 		...overrides,
 	}

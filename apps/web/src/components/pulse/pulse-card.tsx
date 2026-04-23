@@ -18,6 +18,7 @@ const typeLabels: Record<string, string> = {
 	recommendation: 'Pattern detected',
 	good_news: 'Good news',
 	alert: 'Alert',
+	mention: 'Mentioned',
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -88,6 +89,18 @@ export function resolveActions(
 		case 'good_news':
 			return hasObject
 				? [{ label: 'View', response: 'acknowledged', navigate: { to: 'object' } }]
+				: []
+		case 'mention':
+			// Mention pings should resolve quietly when the human reads the referenced
+			// object. No decision, just a "seen it" acknowledgement.
+			return hasObject
+				? [
+						{
+							label: 'View comment',
+							response: 'acknowledged',
+							navigate: { to: 'object' },
+						},
+					]
 				: []
 		default:
 			return []

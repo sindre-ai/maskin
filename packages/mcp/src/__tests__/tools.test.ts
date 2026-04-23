@@ -33,6 +33,7 @@ const ALL_TOOL_NAMES = [
 	'create_session',
 	'list_sessions',
 	'get_session',
+	'get_session_logs',
 	'stop_session',
 	'pause_session',
 	'resume_session',
@@ -350,7 +351,7 @@ describe('request_approval schema', () => {
 			question: 'Should I push to main?',
 		})
 		expect(result.title).toBe('Confirm before pushing')
-		expect(result.timeout_seconds).toBe(900)
+		expect(result.timeout_seconds).toBe(300)
 		expect(result.poll_interval_seconds).toBe(3)
 	})
 

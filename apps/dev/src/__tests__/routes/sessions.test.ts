@@ -452,17 +452,21 @@ describe('Sessions Routes', () => {
 	})
 
 	describe('POST /api/sessions/:id/messages', () => {
-		it('records a user_message log row and returns 201', async () => {
+		it('records a user_message via the session manager and returns 201', async () => {
 			const session = buildSession({ workspaceId: wsId, status: 'running' })
 			const log = buildSessionLog({
 				sessionId: session.id,
 				stream: 'user_message',
-				content: '[from test-actor-id] please pause and ask me first',
+				content: 'please pause and ask me first',
+				authorActorId: 'test-actor-id',
 			})
-			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
 			// auth check, membership check
 			mockResults.selectQueue = [[session], [{ workspaceId: wsId, actorId: 'test-actor-id' }]]
-			mockResults.insert = [log]
+			;(sessionManager.postUserMessage as ReturnType<typeof vi.fn>).mockResolvedValue(log)
 
 			const res = await app.request(
 				jsonRequest(
@@ -476,7 +480,12 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(201)
 			const body = await res.json()
 			expect(body.stream).toBe('user_message')
-			expect(body.content).toContain('please pause and ask me first')
+			expect(body.authorActorId).toBe('test-actor-id')
+			expect(sessionManager.postUserMessage).toHaveBeenCalledWith(
+				session.id,
+				'test-actor-id',
+				'please pause and ask me first',
+			)
 		})
 
 		it('returns 409 when the session is not accepting input', async () => {

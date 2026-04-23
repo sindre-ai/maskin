@@ -3,6 +3,9 @@ import { relationships } from '@maskin/db/schema'
 import { PARTICIPANT_RELATIONSHIP_TYPES } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 
+// Mutable copy so Drizzle's `inArray` accepts it without the double-cast trick.
+const PARTICIPANT_TYPE_LIST: string[] = [...PARTICIPANT_RELATIONSHIP_TYPES]
+
 export type Participants = { assignees: string[]; watchers: string[] }
 
 /**
@@ -30,10 +33,7 @@ export async function fetchParticipants(
 				eq(relationships.sourceType, 'object'),
 				eq(relationships.targetType, 'actor'),
 				inArray(relationships.sourceId, objectIds),
-				inArray(
-					relationships.type,
-					PARTICIPANT_RELATIONSHIP_TYPES as readonly string[] as string[],
-				),
+				inArray(relationships.type, PARTICIPANT_TYPE_LIST),
 			),
 		)
 
