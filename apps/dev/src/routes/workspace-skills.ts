@@ -56,7 +56,7 @@ const workspaceSkillDetailSchema = workspaceSkillListItemSchema.extend({
 const workspaceIdParam = z.object({ workspaceId: z.string().uuid() })
 const workspaceIdAndNameParam = z.object({
 	workspaceId: z.string().uuid(),
-	name: z.string(),
+	name: skillNameSchema,
 })
 
 // -- Routes --
@@ -343,20 +343,6 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
-	}
-
-	const nameResult = skillNameSchema.safeParse(name)
-	if (!nameResult.success) {
-		return c.json(
-			createApiError('VALIDATION_ERROR', 'Invalid skill name', [
-				{
-					field: 'name',
-					message: 'Use lowercase letters, numbers, and hyphens only',
-					expected: 'pattern: /^[a-z0-9-]+$/',
-				},
-			]),
-			400,
-		)
 	}
 
 	const [existing] = await db
