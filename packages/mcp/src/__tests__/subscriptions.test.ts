@@ -406,6 +406,49 @@ describe('event delivery', () => {
 		expect(mock._send).not.toHaveBeenCalled()
 		await registry.shutdownAll()
 	})
+
+	it('elevates notification events to warning severity', async () => {
+		const mock = makeMockServer()
+		const chunks = [
+			buildSSEFrame(
+				{
+					workspace_id: 'ws-1',
+					actor_id: 'actor-1',
+					action: 'created',
+					entity_type: 'notification',
+					entity_id: 'notif-1',
+					event_id: '1',
+				},
+				{ id: '1' },
+			),
+			buildSSEFrame(
+				{
+					workspace_id: 'ws-1',
+					actor_id: 'actor-1',
+					action: 'created',
+					entity_type: 'task',
+					entity_id: 'task-1',
+					event_id: '2',
+				},
+				{ id: '2' },
+			),
+		]
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeSSEResponse(chunks))
+
+		const registry = createSubscriptionRegistry(config, mock as never)
+		registry.add('ws-1', {})
+
+		await new Promise((r) => setTimeout(r, 20))
+
+		expect(mock._send).toHaveBeenCalledTimes(2)
+		const [first, second] = mock._send.mock.calls.map((c) => c[0])
+		expect(first.data.event.entity_type).toBe('notification')
+		expect(first.level).toBe('warning')
+		expect(second.data.event.entity_type).toBe('task')
+		expect(second.level).toBe('info')
+
+		await registry.shutdownAll()
+	})
 })
 
 describe('reconnection', () => {

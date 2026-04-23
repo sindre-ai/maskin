@@ -100,6 +100,16 @@ export function createSubscriptionRegistry(
 			}),
 			parseFrame: parseEventFrame,
 			onItem: async (event) => {
+				// Workspace notifications (type: alert / recommendation / needs_input /
+				// good_news) are user-facing by design — the `notifications` table
+				// exists precisely to route things at the human. Elevate their
+				// severity one rung above normal events so MCP clients that
+				// distinguish log levels in their UI can surface them more
+				// prominently. The PG NOTIFY trigger drops the full notification
+				// payload to stay under the 8KB limit, so we can't distinguish the
+				// subtypes here — treat the whole category as `warning`.
+				const isNotification = event.entity_type === 'notification'
+				const level = isNotification ? 'warning' : 'info'
 				for (const [subId, wsId] of subToWorkspace) {
 					if (wsId !== workspaceId) continue
 					const sub = subs.get(subId)
@@ -108,7 +118,7 @@ export function createSubscriptionRegistry(
 					if (!matchesFilter(event, filter)) continue
 					try {
 						await mcpServer.server.sendLoggingMessage({
-							level: 'info',
+							level,
 							logger: 'maskin/events',
 							data: {
 								subscription_id: sub.id,

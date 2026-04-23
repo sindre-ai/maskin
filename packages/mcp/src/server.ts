@@ -2471,6 +2471,27 @@ async function main() {
 	process.on('SIGTERM', handleSignal)
 	await server.connect(transport)
 	console.error('MCP server started (stdio transport)')
+
+	// Auto-subscribe to workspace notifications on startup so the agent always
+	// sees user-facing messages (alert / recommendation / needs_input /
+	// good_news) without having to remember to call subscribe_events. Only fires
+	// in stdio mode — the HTTP transport is request-scoped so a subscription
+	// here would be torn down immediately by the /mcp route's finally block.
+	if (config.apiKey && config.defaultWorkspaceId) {
+		try {
+			const sub = eventRegistry.add(config.defaultWorkspaceId, {
+				entity_type: ['notification'],
+			})
+			console.error(
+				`[maskin-mcp] Auto-subscribed to notifications for workspace ${config.defaultWorkspaceId} (subscription ${sub.id})`,
+			)
+		} catch (err) {
+			console.error(
+				'[maskin-mcp] Failed to auto-subscribe to notifications:',
+				err instanceof Error ? err.message : err,
+			)
+		}
+	}
 }
 
 main().catch(console.error)
