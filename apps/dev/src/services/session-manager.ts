@@ -717,6 +717,17 @@ export class SessionManager extends EventEmitter {
 					sessionId,
 					error: String(err),
 				})
+				// Surface the interruption so SSE clients don't hang on a blank
+				// spinner while the container keeps running without logs.
+				await this.insertSystemLog(
+					sessionId,
+					'Log stream interrupted — session may still be running',
+				).catch((logErr) =>
+					logger.error('Failed to write log-stream-interrupted system log', {
+						sessionId,
+						error: String(logErr),
+					}),
+				)
 			}
 		})()
 	}

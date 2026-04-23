@@ -476,10 +476,12 @@ app.openapi(resetActorRoute, (async (c) => {
 	const [updated] = await db
 		.update(actors)
 		.set({
+			name: SINDRE_DEFAULT.name,
 			systemPrompt: SINDRE_DEFAULT.systemPrompt,
 			llmProvider: SINDRE_DEFAULT.llmProvider,
 			llmConfig: SINDRE_DEFAULT.llmConfig,
 			tools: SINDRE_DEFAULT.tools,
+			memory: null,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))

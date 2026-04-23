@@ -82,12 +82,19 @@ export function useSindreSession({
 	const [error, setError] = useState<Error | null>(null)
 	const startingRef = useRef(false)
 	const prevWorkspaceIdRef = useRef(workspaceId)
+	// Monotonic counter bumped whenever the session is discarded (reset() or
+	// workspace switch). An in-flight send() captures the counter before
+	// bootstrap and bails out if it changed — otherwise a fast reset between
+	// `api.sessions.create` resolving and `waitForRunning` finishing would
+	// re-mount an SSE stream on a session the user thought they discarded.
+	const generationRef = useRef(0)
 
 	// Reset transcript + reload persisted sessionId when the workspace switches
 	// (StrictMode-safe: only fires when workspaceId actually changes).
 	useEffect(() => {
 		if (prevWorkspaceIdRef.current === workspaceId) return
 		prevWorkspaceIdRef.current = workspaceId
+		generationRef.current += 1
 		startingRef.current = false
 		setSessionId(null)
 		setEvents([])
@@ -185,6 +192,7 @@ export function useSindreSession({
 			// turn, so opening the panel (or re-mounting the app) never spawns
 			// a session.
 			let currentSessionId = sessionId
+			const generation = generationRef.current
 			if (!currentSessionId) {
 				if (startingRef.current) throw new Error('Sindre session is still starting')
 				startingRef.current = true
@@ -197,20 +205,38 @@ export function useSindreSession({
 						config: { interactive: true },
 						auto_start: true,
 					})
+					// If reset() fired between create() resolving and now, the
+					// user discarded this session — don't mount an SSE stream
+					// on it.
+					if (generationRef.current !== generation) {
+						throw new Error('Sindre session was reset during bootstrap')
+					}
 					currentSessionId = session.id
 					setSessionId(session.id)
 					// Wait for the container to actually be running before we
 					// POST the user's turn — otherwise the input endpoint
 					// rejects with 409 "Session is not running".
 					await waitForRunning(currentSessionId, workspaceId)
+					if (generationRef.current !== generation) {
+						throw new Error('Sindre session was reset during bootstrap')
+					}
 				} catch (err) {
-					setStatus('error')
-					const wrapped = err instanceof Error ? err : new Error(String(err))
-					setError(wrapped)
-					throw wrapped
+					if (generationRef.current === generation) {
+						setStatus('error')
+						const wrapped = err instanceof Error ? err : new Error(String(err))
+						setError(wrapped)
+						throw wrapped
+					}
+					// Reset happened — don't clobber the post-reset 'idle' state
+					// with 'error'. Still surface the cancellation to the caller.
+					throw err instanceof Error ? err : new Error(String(err))
 				} finally {
 					startingRef.current = false
 				}
+			}
+
+			if (generationRef.current !== generation) {
+				throw new Error('Sindre session was reset during bootstrap')
 			}
 
 			setEvents((prev) =>
@@ -229,6 +255,7 @@ export function useSindreSession({
 	)
 
 	const reset = useCallback(() => {
+		generationRef.current += 1
 		startingRef.current = false
 		setSessionId(null)
 		setEvents([])

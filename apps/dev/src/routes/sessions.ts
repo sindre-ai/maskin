@@ -476,7 +476,7 @@ app.get('/:id/logs/stream', async (c) => {
 
 		// Replay missed logs if Last-Event-ID is provided
 		const parsedLogId = Number(lastLogId)
-		if (lastLogId && !Number.isNaN(parsedLogId)) {
+		if (lastLogId && Number.isFinite(parsedLogId) && parsedLogId > 0) {
 			const missed = await db
 				.select()
 				.from(sessionLogs)
