@@ -11,6 +11,13 @@ vi.mock('node:fs/promises', () => ({
 
 vi.mock('node:child_process', () => ({
 	exec: vi.fn((_cmd: string, cb: (err: Error | null) => void) => cb(null)),
+	execFile: vi.fn(
+		(
+			_cmd: string,
+			_args: string[],
+			cb: (err: Error | null, stdout: string, stderr: string) => void,
+		) => cb(null, '', ''),
+	),
 }))
 
 const mockContainerManager = {

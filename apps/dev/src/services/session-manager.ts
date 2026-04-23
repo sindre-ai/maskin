@@ -1,11 +1,11 @@
-import { exec as execCb } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
-const execAsync = promisify(execCb)
+const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -346,7 +346,7 @@ export class SessionManager extends EventEmitter {
 
 			const snapshotPath = join(tempDir, 'snapshot.tar.gz')
 			await writeFile(snapshotPath, snapshotBuffer)
-			await execAsync(`tar -xzf "${snapshotPath}" -C "${tempDir}"`)
+			await execFileAsync('tar', ['-xzf', snapshotPath, '-C', tempDir])
 
 			// Also pull latest agent files (other sessions may have added learnings)
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
@@ -884,6 +884,13 @@ export class SessionManager extends EventEmitter {
 				data: {},
 			})
 
+			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
+				logger.warn('Failed to write timeout system log', {
+					sessionId: session.id,
+					error: String(err),
+				}),
+			)
+
 			await this.clearActiveSession(session.id)
 			await this.cleanupBrowserSidecar(session.id)
 			await this.cleanupSession(session.id)
@@ -894,11 +901,13 @@ export class SessionManager extends EventEmitter {
 			)
 		}
 
-		// 2. Auto-pause idle sessions (no log output for >10 minutes)
+		// 2. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
+		// Interactive sessions (Sindre chat) are long-lived by design and naturally
+		// idle between user turns — pausing them silently breaks the next /input call.
 		const runningSessions = await this.db
 			.select()
 			.from(sessions)
-			.where(eq(sessions.status, 'running'))
+			.where(and(eq(sessions.status, 'running'), eq(sessions.interactive, false)))
 
 		for (const session of runningSessions) {
 			const [lastLog] = await this.db

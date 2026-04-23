@@ -493,6 +493,15 @@ app.get('/:id/logs/stream', async (c) => {
 
 		// Subscribe to live log stream
 		let closed = false
+		// Maps a system-log prefix to the `done` payload to emit when a session
+		// reaches that terminal state. Using prefix matching because log content
+		// may include trailing detail (e.g. "Session completed with exit code 0").
+		const TERMINAL_SYSTEM_LOGS: Array<{ prefix: string; done: string }> = [
+			{ prefix: 'Session completed', done: 'completed' },
+			{ prefix: 'Session failed', done: 'failed' },
+			{ prefix: 'Session timed out', done: 'timeout' },
+			{ prefix: 'Session paused', done: 'paused' },
+		]
 		const handler = (event: SessionLogEvent) => {
 			if (event.sessionId !== sessionId) return
 			stream.writeSSE({
@@ -501,14 +510,12 @@ app.get('/:id/logs/stream', async (c) => {
 				data: event.data,
 			})
 
-			// Close stream when session completes (system log signals completion)
-			if (event.stream === 'system' && event.data.startsWith('Session completed')) {
-				closed = true
-				stream.writeSSE({ event: 'done', data: 'completed' })
-			}
-			if (event.stream === 'system' && event.data.startsWith('Session failed')) {
-				closed = true
-				stream.writeSSE({ event: 'done', data: 'failed' })
+			if (event.stream === 'system') {
+				const terminal = TERMINAL_SYSTEM_LOGS.find((t) => event.data.startsWith(t.prefix))
+				if (terminal) {
+					closed = true
+					stream.writeSSE({ event: 'done', data: terminal.done })
+				}
 			}
 		}
 
