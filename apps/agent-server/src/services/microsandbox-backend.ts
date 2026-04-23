@@ -78,11 +78,8 @@ process.on('uncaughtException', (err) => {
 	writeFileSync(configPath, JSON.stringify(config))
 	try {
 		execFileSync(
-			'/bin/bash',
-			[
-				'-c',
-				`for fd in $(seq 3 255); do eval "exec \$fd>&-" 2>/dev/null; done; exec ${process.execPath} ${scriptPath} ${configPath}`,
-			],
+			process.execPath,
+			[scriptPath, configPath],
 			{
 				timeout: 120_000,
 				stdio: ['ignore', 'pipe', 'pipe'],
