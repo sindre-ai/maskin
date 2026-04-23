@@ -19,7 +19,7 @@ Set up a Maskin Outbound Sales workspace for me.
 
 Call the `get_started` MCP tool with:
   template: "outbound-sales"
-  apply:    true
+  confirm:  true
 
 That single call provisions:
 

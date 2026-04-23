@@ -20,7 +20,7 @@ Set up a Maskin Growth workspace for me.
 
 Call the `get_started` MCP tool with:
   template: "growth"
-  apply:    true
+  confirm:  true
 
 That single call provisions:
 

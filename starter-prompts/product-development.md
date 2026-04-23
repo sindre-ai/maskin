@@ -19,7 +19,7 @@ Set up a Maskin Product Development workspace for me.
 
 Call the `get_started` MCP tool with:
   template: "development"
-  apply:    true
+  confirm:  true
 
 That single call provisions:
 
