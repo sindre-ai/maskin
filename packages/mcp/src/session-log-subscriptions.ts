@@ -27,7 +27,8 @@ export interface SessionLogSubscriptionRegistry {
 // A single parsed log line from /api/sessions/:id/logs/stream.
 // The backend emits `event: stdout|stderr|system` with `data` set to the raw
 // text content (no JSON wrapping). A synthetic kind='done' is produced when
-// the server sends `event: done, data: completed|failed`.
+// the server sends `event: done, data: <session status>` — the status is
+// whatever terminal state the session reached (completed | failed | timeout).
 type SessionLogItem =
 	| { kind: 'log'; stream: 'stdout' | 'stderr' | 'system'; content: string }
 	| { kind: 'done'; status: string }
@@ -57,6 +58,11 @@ export function createSessionLogSubscriptionRegistry(
 	function streamForSession(workspaceId: string, sessionId: string): ManagedSSEStream {
 		let stream = streams.get(sessionId)
 		if (stream) return stream
+		// Set to true once a `done` frame is fully delivered to every subscriber
+		// (no firstDeliveryError). If the stream terminates and this is still
+		// false, onTerminal sends a fallback `terminated` notification so the
+		// client never sees a silent teardown.
+		let terminalDelivered = false
 		stream = createManagedSSE<SessionLogItem>({
 			url: `${config.apiBaseUrl}/api/sessions/${sessionId}/logs/stream`,
 			headers: () => ({
@@ -98,10 +104,11 @@ export function createSessionLogSubscriptionRegistry(
 						)
 					}
 				}
-				// Don't suppress isDone branching on delivery failure: managed-sse will
-				// hand the terminal frame to onTerminal regardless. But re-throw on
-				// delivery error so lastEventId stays put and a reconnect retries.
+				// Re-throw on delivery error so managed-sse holds lastEventId / dedup
+				// state — a reconnect will retry. Terminal frames still propagate
+				// to onTerminal via handleFrame's `terminal` return value.
 				if (firstDeliveryError !== null) throw firstDeliveryError
+				if (item.kind === 'done') terminalDelivered = true
 			},
 			onWarn: async (level, message) => {
 				try {
@@ -117,13 +124,40 @@ export function createSessionLogSubscriptionRegistry(
 					)
 				}
 			},
-			onTerminal: () => {
-				streams.delete(sessionId)
-				for (const [subId, sessId] of [...subToSession.entries()]) {
-					if (sessId === sessionId) {
-						subs.delete(subId)
-						subToSession.delete(subId)
+			onTerminal: (reason) => {
+				const orphaned = [...subToSession.entries()].filter(([, s]) => s === sessionId)
+				// Best-effort fallback: if no `done` frame was fully delivered, the
+				// client would otherwise see a silent teardown (auth error, transport
+				// drop, or delivery failure on the `done` frame itself). Send a
+				// `terminated` notification so every subscriber learns the stream
+				// closed.
+				if (!terminalDelivered) {
+					for (const [subId] of orphaned) {
+						const sub = subs.get(subId)
+						if (!sub) continue
+						mcpServer.server
+							.sendLoggingMessage({
+								level: reason === 'auth_error' ? 'error' : 'info',
+								logger: 'maskin/session-logs',
+								data: {
+									subscription_id: sub.id,
+									kind: 'terminated' as const,
+									session_id: sessionId,
+									reason,
+								},
+							})
+							.catch((err) => {
+								console.error(
+									'[maskin-mcp] Session-log terminal notification failed:',
+									err instanceof Error ? err.message : err,
+								)
+							})
 					}
+				}
+				streams.delete(sessionId)
+				for (const [subId] of orphaned) {
+					subs.delete(subId)
+					subToSession.delete(subId)
 				}
 			},
 			// Matches the backend replay cap in apps/dev/src/routes/sessions.ts.
