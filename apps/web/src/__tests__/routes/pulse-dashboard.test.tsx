@@ -54,6 +54,10 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/sindre/sindre-pulse-bar', () => ({
+	SindrePulseBar: () => <div data-testid="sindre-pulse-bar" />,
+}))
+
 vi.mock('@/components/overview/whats-happening', () => ({
 	WhatsHappening: () => <div data-testid="whats-happening" />,
 }))

@@ -118,6 +118,12 @@ describe('sessionConfigSchema', () => {
 		expect(result.cpu_shares).toBe(1024)
 		expect(result.mcps).toEqual([])
 		expect(result.env_vars).toEqual({})
+		expect(result.interactive).toBe(false)
+	})
+
+	it('accepts interactive=true', () => {
+		const result = sessionConfigSchema.parse({ interactive: true })
+		expect(result.interactive).toBe(true)
 	})
 
 	it('coerces timeout_seconds from string', () => {

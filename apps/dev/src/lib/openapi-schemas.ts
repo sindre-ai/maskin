@@ -157,6 +157,7 @@ export const sessionResponseSchema = z.object({
 	containerId: z.string().nullable(),
 	actionPrompt: z.string(),
 	config: jsonbField,
+	interactive: z.boolean(),
 	result: jsonbField,
 	snapshotPath: z.string().nullable(),
 	startedAt: z.string().nullable(),

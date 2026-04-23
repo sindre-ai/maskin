@@ -1,0 +1,9 @@
+{
+	"type": "result",
+	"subtype": "error_max_turns",
+	"is_error": true,
+	"duration_ms": 9120,
+	"num_turns": 10,
+	"session_id": "sess-sindre-123",
+	"total_cost_usd": 0.012
+}

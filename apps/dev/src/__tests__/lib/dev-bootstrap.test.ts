@@ -45,7 +45,7 @@ describe('maybeBootstrapDev', () => {
 		expect(result?.created).toBe(false)
 	})
 
-	it('creates actor + workspace + membership when DB has no credentials', async () => {
+	it('creates actor + workspace + membership + Sindre when DB has no credentials', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults } = createTestContext()
@@ -54,6 +54,8 @@ describe('maybeBootstrapDev', () => {
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
 			[{ id: 'ws-1', name: 'My Workspace' }],
 			[{ workspaceId: 'ws-1', actorId: 'actor-1', role: 'owner' }],
+			[{ id: 'sindre-1', name: 'Sindre', isSystem: true }],
+			[{ workspaceId: 'ws-1', actorId: 'sindre-1', role: 'member' }],
 		]
 
 		const result = await maybeBootstrapDev(db)
@@ -63,5 +65,20 @@ describe('maybeBootstrapDev', () => {
 		expect(result?.workspaceName).toBe('My Workspace')
 		expect(result?.apiKey.startsWith('ank_')).toBe(true)
 		expect(result?.created).toBe(true)
+	})
+
+	it('throws if Sindre seeding fails so the transaction rolls back', async () => {
+		process.env.NODE_ENV = 'development'
+		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[]]
+		mockResults.insertQueue = [
+			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
+			[{ id: 'ws-1', name: 'My Workspace' }],
+			[{ workspaceId: 'ws-1', actorId: 'actor-1', role: 'owner' }],
+			[], // Sindre actor insert returns empty → should throw
+		]
+
+		await expect(maybeBootstrapDev(db)).rejects.toThrow(/Sindre/)
 	})
 })

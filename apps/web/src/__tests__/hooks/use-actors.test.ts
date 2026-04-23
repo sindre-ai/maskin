@@ -8,13 +8,29 @@ vi.mock('@/lib/api', () => ({
 			get: vi.fn(),
 			create: vi.fn(),
 			update: vi.fn(),
+			reset: vi.fn(),
 		},
 	},
 }))
 
-import { useActor, useActors, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
+vi.mock('sonner', () => ({
+	toast: {
+		success: vi.fn(),
+		error: vi.fn(),
+	},
+}))
+
+import {
+	useActor,
+	useActors,
+	useAgent,
+	useCreateActor,
+	useResetActor,
+	useUpdateActor,
+} from '@/hooks/use-actors'
 import type { ActorListItem, ActorResponse, ActorWithKey } from '@/lib/api'
 import { api } from '@/lib/api'
+import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -38,6 +54,7 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		memory: null,
 		llmProvider: null,
 		llmConfig: null,
+		isSystem: false,
 		createdAt: null,
 		updatedAt: null,
 		...overrides,
@@ -169,5 +186,29 @@ describe('useUpdateActor', () => {
 		result.current.mutate({ id: 'actor-1', data: { name: 'Nope' } })
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Not found')
+	})
+})
+
+describe('useResetActor', () => {
+	it('calls api.actors.reset with id and workspaceId and toasts success', async () => {
+		const reset = buildActorResponse({ id: 'actor-1', name: 'Sindre', isSystem: true })
+		vi.mocked(api.actors.reset).mockResolvedValue(reset)
+
+		const { result } = renderHook(() => useResetActor(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate('actor-1')
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.actors.reset).toHaveBeenCalledWith('actor-1', workspaceId)
+		expect(toast.success).toHaveBeenCalledWith('Agent reset to default')
+	})
+
+	it('toasts error when reset fails', async () => {
+		vi.mocked(api.actors.reset).mockRejectedValue(new Error('Forbidden'))
+
+		const { result } = renderHook(() => useResetActor(workspaceId), { wrapper: TestWrapper })
+
+		result.current.mutate('actor-1')
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(toast.error).toHaveBeenCalledWith('Failed to reset agent')
 	})
 })
