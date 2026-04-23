@@ -41,19 +41,42 @@ describe('AgentStorageManager', () => {
 	describe('pullAgentFiles()', () => {
 		it('downloads files from S3 and writes locally', async () => {
 			const prefix = `agents/${workspaceId}/${actorId}/`
-			storage.list.mockResolvedValue([
-				`${prefix}skills/my-skill/SKILL.md`,
-				`${prefix}memory/CLAUDE.md`,
-			])
+			const wsPrefix = `workspaces/${workspaceId}/`
+			storage.list.mockImplementation(async (p: string) => {
+				if (p === prefix) {
+					return [`${prefix}skills/my-skill/SKILL.md`, `${prefix}memory/CLAUDE.md`]
+				}
+				if (p === wsPrefix) return []
+				return []
+			})
 			storage.get.mockResolvedValue(Buffer.from('file data'))
 
 			await manager.pullAgentFiles(actorId, workspaceId, '/tmp/agent')
 
 			expect(storage.list).toHaveBeenCalledWith(prefix)
+			expect(storage.list).toHaveBeenCalledWith(wsPrefix)
 			expect(storage.get).toHaveBeenCalledTimes(2)
 			expect(writeFile).toHaveBeenCalledTimes(2)
 			// Ensures directory structure created
 			expect(mkdir).toHaveBeenCalled()
+		})
+
+		it('pulls workspace-shared files before personal files', async () => {
+			const prefix = `agents/${workspaceId}/${actorId}/`
+			const wsPrefix = `workspaces/${workspaceId}/`
+			storage.list.mockImplementation(async (p: string) => {
+				if (p === wsPrefix) return [`${wsPrefix}skills/team-skill/SKILL.md`]
+				if (p === prefix) return [`${prefix}skills/team-skill/SKILL.md`]
+				return []
+			})
+			storage.get.mockResolvedValue(Buffer.from('file data'))
+
+			await manager.pullAgentFiles(actorId, workspaceId, '/tmp/agent')
+
+			const writeCalls = (writeFile as ReturnType<typeof vi.fn>).mock.calls
+			expect(writeCalls).toHaveLength(2)
+			// The second write (personal) happens to the same path, overriding the workspace file.
+			expect(writeCalls[0][0]).toEqual(writeCalls[1][0])
 		})
 
 		it('creates empty directory structure even with no files', async () => {

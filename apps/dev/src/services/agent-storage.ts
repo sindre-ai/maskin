@@ -3,9 +3,19 @@ import { join } from 'node:path'
 import type { Database } from '@maskin/db'
 import { agentFiles } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { appendToLedger } from './workspace-briefing'
+
+/** S3 prefix for workspace-scoped files (team skills, etc.). */
+function workspacePrefix(workspaceId: string): string {
+	return `workspaces/${workspaceId}/`
+}
+
+/** S3 key for a workspace-scoped file. */
+function workspaceKey(workspaceId: string, fileType: string, path: string): string {
+	return `${workspacePrefix(workspaceId)}${fileType}/${path}`
+}
 
 export class AgentStorageManager {
 	constructor(
@@ -16,21 +26,37 @@ export class AgentStorageManager {
 	/**
 	 * Pull all agent files from S3 into a local directory.
 	 * Creates the directory structure: /agent/{skills,learnings,memory}
+	 *
+	 * Pulls in two passes so that personal files override workspace-shared ones
+	 * on name collision (e.g. `skills/foo/SKILL.md`):
+	 *   1. workspace-scoped files under `workspaces/{workspaceId}/` (team skills)
+	 *   2. actor-scoped files under `agents/{workspaceId}/{actorId}/` (personal)
 	 */
 	async pullAgentFiles(actorId: string, workspaceId: string, localDir: string): Promise<void> {
+		let total = 0
+
+		// Pass 1: workspace-shared files (team skills, etc.)
+		const wsPrefix = workspacePrefix(workspaceId)
+		const wsKeys = await this.storage.list(wsPrefix)
+		for (const key of wsKeys) {
+			const relativePath = key.slice(wsPrefix.length)
+			const localPath = join(localDir, relativePath)
+			await mkdir(join(localPath, '..'), { recursive: true })
+			const data = await this.storage.get(key)
+			await writeFile(localPath, data)
+			total++
+		}
+
+		// Pass 2: personal files — written second so same-named files win.
 		const prefix = `agents/${workspaceId}/${actorId}/`
 		const keys = await this.storage.list(prefix)
-
 		for (const key of keys) {
 			const relativePath = key.slice(prefix.length)
 			const localPath = join(localDir, relativePath)
-
-			// Ensure parent directory exists
-			const parentDir = join(localPath, '..')
-			await mkdir(parentDir, { recursive: true })
-
+			await mkdir(join(localPath, '..'), { recursive: true })
 			const data = await this.storage.get(key)
 			await writeFile(localPath, data)
+			total++
 		}
 
 		// Ensure directory structure exists even if empty
@@ -39,7 +65,12 @@ export class AgentStorageManager {
 		await mkdir(join(localDir, 'memory'), { recursive: true })
 		await mkdir(join(localDir, 'workspace'), { recursive: true })
 
-		logger.info(`Pulled ${keys.length} agent files`, { actorId, workspaceId })
+		logger.info(`Pulled ${total} agent files`, {
+			actorId,
+			workspaceId,
+			personal: keys.length,
+			shared: wsKeys.length,
+		})
 	}
 
 	/**
@@ -264,6 +295,93 @@ export class AgentStorageManager {
 				storageKey,
 				sizeBytes,
 				sessionId,
+			})
+		}
+	}
+
+	// ── Workspace-scoped files (team skills, etc.) ────────────────────────────
+
+	/**
+	 * Get a workspace-scoped file's content from S3.
+	 */
+	async getWorkspaceFile(workspaceId: string, fileType: string, path: string): Promise<Buffer> {
+		return this.storage.get(workspaceKey(workspaceId, fileType, path))
+	}
+
+	/**
+	 * List workspace-scoped file records from DB (actor_id IS NULL).
+	 */
+	async listWorkspaceFileRecords(workspaceId: string, fileType?: string) {
+		const conditions = [eq(agentFiles.workspaceId, workspaceId), isNull(agentFiles.actorId)]
+		if (fileType) conditions.push(eq(agentFiles.fileType, fileType))
+		return this.db
+			.select()
+			.from(agentFiles)
+			.where(and(...conditions))
+	}
+
+	/**
+	 * Upload a workspace-scoped file (team skill, etc.) to storage.
+	 */
+	async uploadWorkspaceFile(
+		workspaceId: string,
+		fileType: string,
+		path: string,
+		content: Buffer,
+	): Promise<string> {
+		const relativePath = `${fileType}/${path}`
+		const key = workspaceKey(workspaceId, fileType, path)
+		await this.storage.put(key, content)
+		await this.upsertWorkspaceFileRecord(workspaceId, fileType, relativePath, key, content.length)
+		return key
+	}
+
+	/**
+	 * Delete a workspace-scoped file from storage.
+	 */
+	async deleteWorkspaceFile(workspaceId: string, fileType: string, path: string): Promise<void> {
+		const relativePath = `${fileType}/${path}`
+		const key = workspaceKey(workspaceId, fileType, path)
+		await this.storage.delete(key)
+
+		await this.db
+			.delete(agentFiles)
+			.where(
+				and(
+					isNull(agentFiles.actorId),
+					eq(agentFiles.workspaceId, workspaceId),
+					eq(agentFiles.path, relativePath),
+				),
+			)
+	}
+
+	private async upsertWorkspaceFileRecord(
+		workspaceId: string,
+		fileType: string,
+		path: string,
+		storageKey: string,
+		sizeBytes: number,
+	): Promise<void> {
+		const updated = await this.db
+			.update(agentFiles)
+			.set({ storageKey, sizeBytes, updatedAt: new Date() })
+			.where(
+				and(
+					isNull(agentFiles.actorId),
+					eq(agentFiles.workspaceId, workspaceId),
+					eq(agentFiles.path, path),
+				),
+			)
+			.returning()
+
+		if (updated.length === 0) {
+			await this.db.insert(agentFiles).values({
+				actorId: null,
+				workspaceId,
+				fileType,
+				path,
+				storageKey,
+				sizeBytes,
 			})
 		}
 	}

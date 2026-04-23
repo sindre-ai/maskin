@@ -121,6 +121,10 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `PATCH /api/workspaces/:id` — update workspace
 - `POST /api/workspaces/:id/members` — add member
 - `GET /api/workspaces/:id/members` — list members
+- `GET /api/workspaces/:id/skills` — list team skills (shared SKILL.md files)
+- `GET /api/workspaces/:id/skills/:name` — get a single team skill
+- `PUT /api/workspaces/:id/skills/:name` — create or update a team skill
+- `DELETE /api/workspaces/:id/skills/:name` — delete a team skill
 
 ### Relationships (`/api/relationships`)
 - `POST /api/relationships` — create relationship

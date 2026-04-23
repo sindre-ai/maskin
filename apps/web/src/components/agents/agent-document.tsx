@@ -320,7 +320,7 @@ export function AgentDocumentView({
 
 					{/* Skills */}
 					<Section title="Skills">
-						<Skills actorId={agent.id} />
+						<Skills scope={{ kind: 'actor', actorId: agent.id }} />
 					</Section>
 
 					{/* Memory */}

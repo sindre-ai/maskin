@@ -41,6 +41,11 @@ export const queryKeys = {
 		all: (actorId: string) => ['skills', actorId] as const,
 		detail: (actorId: string, skillName: string) => ['skills', actorId, skillName] as const,
 	},
+	workspaceSkills: {
+		all: (workspaceId: string) => ['workspace-skills', workspaceId] as const,
+		detail: (workspaceId: string, skillName: string) =>
+			['workspace-skills', workspaceId, skillName] as const,
+	},
 	sessions: {
 		all: (workspaceId: string) => ['sessions', workspaceId] as const,
 		detail: (id: string) => ['sessions', 'detail', id] as const,

@@ -31,6 +31,7 @@ import objectsRoutes from './routes/objects'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
 import triggersRoutes from './routes/triggers'
+import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
@@ -171,6 +172,7 @@ app.route('/api/actors', actorsRoutes)
 app.route('/api/auth', authRoutes)
 app.route('/api/actors', agentSkillsRoutes)
 app.route('/api/workspaces', workspacesRoutes)
+app.route('/api/workspaces', workspaceSkillsRoutes)
 app.route('/api/relationships', relationshipsRoutes)
 app.route('/api/triggers', triggersRoutes)
 app.route('/api/integrations', integrationsRoutes)

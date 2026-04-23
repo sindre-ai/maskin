@@ -18,30 +18,112 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useDeleteSkill, useSaveSkill, useSkill, useSkills } from '@/hooks/use-skills'
-import type { SkillListItem } from '@/lib/api'
+import {
+	useDeleteWorkspaceSkill,
+	useSaveWorkspaceSkill,
+	useWorkspaceSkill,
+	useWorkspaceSkills,
+} from '@/hooks/use-workspace-skills'
+import type { SaveSkillInput, SkillDetail, SkillListItem } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { parseSkillMd } from '@maskin/shared'
 import { BookOpen, FileText, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
+/**
+ * Skills can be scoped to a single actor ("personal skills" attached to one
+ * agent) or to a workspace ("team skills" shared by every member and every
+ * agent container session running in the workspace).
+ */
+export type SkillsScope = { kind: 'actor'; actorId: string } | { kind: 'workspace' }
+
 interface SkillsProps {
-	actorId: string
+	scope: SkillsScope
+	emptyMessage?: string
 }
 
-export function Skills({ actorId }: SkillsProps) {
+export function Skills(props: SkillsProps) {
+	// One inner component per scope so each one's hook call order is stable.
+	return props.scope.kind === 'actor' ? (
+		<ActorSkills actorId={props.scope.actorId} emptyMessage={props.emptyMessage} />
+	) : (
+		<WorkspaceSkills emptyMessage={props.emptyMessage} />
+	)
+}
+
+function ActorSkills({ actorId, emptyMessage }: { actorId: string; emptyMessage?: string }) {
 	const { workspaceId } = useWorkspace()
 	const { data: skills, isLoading } = useSkills(actorId, workspaceId)
 	const deleteSkill = useDeleteSkill(actorId, workspaceId)
 
+	return (
+		<SkillsView
+			skills={skills}
+			isLoading={isLoading}
+			emptyMessage={
+				emptyMessage ?? 'No skills configured. Add skills to extend what this agent can do.'
+			}
+			onDelete={(name) => deleteSkill.mutate(name)}
+			renderForm={({ editingName, onDone }) => (
+				<ActorSkillForm actorId={actorId} editingName={editingName} onDone={onDone} />
+			)}
+			renderImport={({ open, onClose }) => (
+				<ActorImportDialog actorId={actorId} open={open} onClose={onClose} />
+			)}
+		/>
+	)
+}
+
+function WorkspaceSkills({ emptyMessage }: { emptyMessage?: string }) {
+	const { workspaceId } = useWorkspace()
+	const { data: skills, isLoading } = useWorkspaceSkills(workspaceId)
+	const deleteSkill = useDeleteWorkspaceSkill(workspaceId)
+
+	return (
+		<SkillsView
+			skills={skills}
+			isLoading={isLoading}
+			emptyMessage={
+				emptyMessage ??
+				'No team skills yet. Shared skills are visible to every workspace member and every agent session.'
+			}
+			onDelete={(name) => deleteSkill.mutate(name)}
+			renderForm={({ editingName, onDone }) => (
+				<WorkspaceSkillForm editingName={editingName} onDone={onDone} />
+			)}
+			renderImport={({ open, onClose }) => <WorkspaceImportDialog open={open} onClose={onClose} />}
+		/>
+	)
+}
+
+// ── Shared view shell ────────────────────────────────────────────────────
+
+interface SkillsViewProps {
+	skills: SkillListItem[] | undefined
+	isLoading: boolean
+	emptyMessage: string
+	onDelete: (name: string) => void
+	renderForm: (args: { editingName?: string; onDone: () => void }) => React.ReactNode
+	renderImport: (args: { open: boolean; onClose: () => void }) => React.ReactNode
+}
+
+function SkillsView({
+	skills,
+	isLoading,
+	emptyMessage,
+	onDelete,
+	renderForm,
+	renderImport,
+}: SkillsViewProps) {
 	const [addingSkill, setAddingSkill] = useState(false)
 	const [editingSkill, setEditingSkill] = useState<string | null>(null)
 	const [importOpen, setImportOpen] = useState(false)
 
 	const handleDelete = useCallback(
 		(name: string) => {
-			deleteSkill.mutate(name)
+			onDelete(name)
 		},
-		[deleteSkill],
+		[onDelete],
 	)
 
 	if (isLoading) {
@@ -56,12 +138,12 @@ export function Skills({ actorId }: SkillsProps) {
 				<div className="space-y-2 mb-3">
 					{skillList.map((skill) =>
 						editingSkill === skill.name ? (
-							<SkillForm
-								key={skill.name}
-								actorId={actorId}
-								editingName={skill.name}
-								onDone={() => setEditingSkill(null)}
-							/>
+							<div key={skill.name}>
+								{renderForm({
+									editingName: skill.name,
+									onDone: () => setEditingSkill(null),
+								})}
+							</div>
 						) : (
 							<SkillCard
 								key={skill.name}
@@ -73,13 +155,11 @@ export function Skills({ actorId }: SkillsProps) {
 					)}
 				</div>
 			) : (
-				<p className="text-xs text-muted-foreground mb-3">
-					No skills configured. Add skills to extend what this agent can do.
-				</p>
+				<p className="text-xs text-muted-foreground mb-3">{emptyMessage}</p>
 			)}
 
 			{addingSkill ? (
-				<SkillForm actorId={actorId} onDone={() => setAddingSkill(false)} />
+				renderForm({ onDone: () => setAddingSkill(false) })
 			) : (
 				<div className="flex flex-wrap items-center gap-2">
 					<Button size="sm" variant="outline" onClick={() => setAddingSkill(true)}>
@@ -93,7 +173,7 @@ export function Skills({ actorId }: SkillsProps) {
 				</div>
 			)}
 
-			<ImportSkillDialog actorId={actorId} open={importOpen} onClose={() => setImportOpen(false)} />
+			{renderImport({ open: importOpen, onClose: () => setImportOpen(false) })}
 		</div>
 	)
 }
@@ -153,32 +233,34 @@ function SkillCard({
 	)
 }
 
-function SkillForm({
-	actorId,
-	editingName,
-	onDone,
-}: {
-	actorId: string
+// ── Form: shared fields + two thin adapters ──────────────────────────────
+
+interface SkillFormSharedProps {
 	editingName?: string
 	onDone: () => void
-}) {
-	const { workspaceId } = useWorkspace()
-	const saveSkill = useSaveSkill(actorId, workspaceId)
-	const { data: existing } = useSkill(actorId, editingName ?? null, workspaceId)
+	existing: SkillDetail | undefined
+	isSaving: boolean
+	onSave: (name: string, data: SaveSkillInput) => void
+}
 
+function SkillFormShared({
+	editingName,
+	onDone,
+	existing,
+	isSaving,
+	onSave,
+}: SkillFormSharedProps) {
 	const [name, setName] = useState(editingName ?? '')
 	const [description, setDescription] = useState('')
 	const [content, setContent] = useState('')
 	const [showAdvanced, setShowAdvanced] = useState(false)
 
-	// Advanced frontmatter fields
 	const [disableModelInvocation, setDisableModelInvocation] = useState(false)
 	const [allowedTools, setAllowedTools] = useState('')
 	const [context, setContext] = useState<'none' | 'fork'>('none')
 	const [agent, setAgent] = useState('')
 	const [model, setModel] = useState('')
 
-	// Load existing skill data when editing
 	useEffect(() => {
 		if (existing) {
 			setDescription(existing.description)
@@ -207,17 +289,11 @@ function SkillForm({
 		if (agent.trim()) frontmatter.agent = agent.trim()
 		if (model.trim()) frontmatter.model = model.trim()
 
-		saveSkill.mutate(
-			{
-				skillName: name.trim(),
-				data: {
-					description: description.trim(),
-					content,
-					frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
-				},
-			},
-			{ onSuccess: onDone },
-		)
+		onSave(name.trim(), {
+			description: description.trim(),
+			content,
+			frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
+		})
 	}
 
 	return (
@@ -255,7 +331,6 @@ function SkillForm({
 				/>
 			</div>
 
-			{/* Advanced settings toggle */}
 			<Button variant="ghost" size="sm" onClick={() => setShowAdvanced(!showAdvanced)}>
 				{showAdvanced ? 'Hide' : 'Show'} advanced options
 			</Button>
@@ -319,25 +394,70 @@ function SkillForm({
 				<Button size="sm" variant="ghost" onClick={onDone}>
 					Cancel
 				</Button>
-				<Button size="sm" onClick={handleSave} disabled={!canSave || saveSkill.isPending}>
-					{saveSkill.isPending ? 'Saving...' : 'Save'}
+				<Button size="sm" onClick={handleSave} disabled={!canSave || isSaving}>
+					{isSaving ? 'Saving...' : 'Save'}
 				</Button>
 			</div>
 		</div>
 	)
 }
 
-function ImportSkillDialog({
+function ActorSkillForm({
 	actorId,
-	open,
-	onClose,
+	editingName,
+	onDone,
 }: {
 	actorId: string
-	open: boolean
-	onClose: () => void
+	editingName?: string
+	onDone: () => void
 }) {
 	const { workspaceId } = useWorkspace()
 	const saveSkill = useSaveSkill(actorId, workspaceId)
+	const { data: existing } = useSkill(actorId, editingName ?? null, workspaceId)
+
+	return (
+		<SkillFormShared
+			editingName={editingName}
+			onDone={onDone}
+			existing={existing}
+			isSaving={saveSkill.isPending}
+			onSave={(name, data) => saveSkill.mutate({ skillName: name, data }, { onSuccess: onDone })}
+		/>
+	)
+}
+
+function WorkspaceSkillForm({
+	editingName,
+	onDone,
+}: {
+	editingName?: string
+	onDone: () => void
+}) {
+	const { workspaceId } = useWorkspace()
+	const saveSkill = useSaveWorkspaceSkill(workspaceId)
+	const { data: existing } = useWorkspaceSkill(workspaceId, editingName ?? null)
+
+	return (
+		<SkillFormShared
+			editingName={editingName}
+			onDone={onDone}
+			existing={existing}
+			isSaving={saveSkill.isPending}
+			onSave={(name, data) => saveSkill.mutate({ skillName: name, data }, { onSuccess: onDone })}
+		/>
+	)
+}
+
+// ── Import: shared shell + two adapters ──────────────────────────────────
+
+interface ImportDialogSharedProps {
+	open: boolean
+	onClose: () => void
+	isSaving: boolean
+	onSave: (name: string, data: SaveSkillInput, onSuccess: () => void) => void
+}
+
+function ImportDialogShared({ open, onClose, isSaving, onSave }: ImportDialogSharedProps) {
 	const [raw, setRaw] = useState('')
 	const [error, setError] = useState<string | null>(null)
 
@@ -354,20 +474,16 @@ function ImportSkillDialog({
 			)
 
 			setError(null)
-			saveSkill.mutate(
+			onSave(
+				parsed.name,
 				{
-					skillName: parsed.name,
-					data: {
-						description: parsed.description ?? '',
-						content: parsed.content,
-						frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
-					},
+					description: parsed.description ?? '',
+					content: parsed.content,
+					frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
 				},
-				{
-					onSuccess: () => {
-						setRaw('')
-						onClose()
-					},
+				() => {
+					setRaw('')
+					onClose()
 				},
 			)
 		} catch {
@@ -414,11 +530,47 @@ function ImportSkillDialog({
 					>
 						Cancel
 					</Button>
-					<Button onClick={handleImport} disabled={!raw.trim() || saveSkill.isPending}>
-						{saveSkill.isPending ? 'Importing...' : 'Import'}
+					<Button onClick={handleImport} disabled={!raw.trim() || isSaving}>
+						{isSaving ? 'Importing...' : 'Import'}
 					</Button>
 				</div>
 			</DialogContent>
 		</Dialog>
+	)
+}
+
+function ActorImportDialog({
+	actorId,
+	open,
+	onClose,
+}: {
+	actorId: string
+	open: boolean
+	onClose: () => void
+}) {
+	const { workspaceId } = useWorkspace()
+	const saveSkill = useSaveSkill(actorId, workspaceId)
+
+	return (
+		<ImportDialogShared
+			open={open}
+			onClose={onClose}
+			isSaving={saveSkill.isPending}
+			onSave={(name, data, onSuccess) => saveSkill.mutate({ skillName: name, data }, { onSuccess })}
+		/>
+	)
+}
+
+function WorkspaceImportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+	const { workspaceId } = useWorkspace()
+	const saveSkill = useSaveWorkspaceSkill(workspaceId)
+
+	return (
+		<ImportDialogShared
+			open={open}
+			onClose={onClose}
+			isSaving={saveSkill.isPending}
+			onSave={(name, data, onSuccess) => saveSkill.mutate({ skillName: name, data }, { onSuccess })}
+		/>
 	)
 }

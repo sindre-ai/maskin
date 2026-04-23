@@ -56,6 +56,8 @@ const ALL_TOOL_NAMES = [
 	'create_extension',
 	'update_extension',
 	'delete_extension',
+	'list_skills',
+	'get_skill',
 ]
 
 describe('tool definitions', () => {
@@ -656,6 +658,40 @@ describe('disconnect_claude_subscription schema', () => {
 	})
 })
 
+describe('list_skills schema', () => {
+	const schema = tools.list_skills.inputSchema
+
+	it('accepts empty object', () => {
+		expect(schema.parse({})).toEqual({})
+	})
+
+	it('accepts optional workspace_id', () => {
+		expect(schema.parse({ workspace_id: uuid }).workspace_id).toBe(uuid)
+	})
+
+	it('rejects non-uuid workspace_id', () => {
+		expect(() => schema.parse({ workspace_id: 'not-uuid' })).toThrow()
+	})
+})
+
+describe('get_skill schema', () => {
+	const schema = tools.get_skill.inputSchema
+
+	it('accepts name with default workspace', () => {
+		expect(schema.parse({ name: 'my-skill' }).name).toBe('my-skill')
+	})
+
+	it('rejects missing name', () => {
+		expect(() => schema.parse({ workspace_id: uuid })).toThrow()
+	})
+
+	it('accepts workspace_id and name', () => {
+		const result = schema.parse({ workspace_id: uuid, name: 'my-skill' })
+		expect(result.workspace_id).toBe(uuid)
+		expect(result.name).toBe('my-skill')
+	})
+})
+
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
 		'create_objects',
@@ -678,6 +714,8 @@ describe('workspace_id optional on most tools', () => {
 		'import_claude_subscription',
 		'get_claude_subscription_status',
 		'disconnect_claude_subscription',
+		'list_skills',
+		'get_skill',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {

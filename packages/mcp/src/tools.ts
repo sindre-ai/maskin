@@ -782,4 +782,25 @@ export const tools = {
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
 		}),
 	},
+
+	// ─── Skills ──────────────────────────────────────────────
+	list_skills: {
+		description:
+			"List team skills shared at the workspace level. Each entry has a name, description, and size — call get_skill to fetch the full SKILL.md content. These skills are the workspace's shared instructions and are visible to every member of the workspace; they are also mounted into every agent container session running in this workspace.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	get_skill: {
+		description:
+			'Fetch a single team skill by name. Returns the full SKILL.md content (YAML frontmatter parsed out) plus the raw body. Use after list_skills to inspect or apply a specific shared skill.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: z
+				.string()
+				.describe(
+					'Skill name (slug). Use the name reported by list_skills, e.g. "triage-incident".',
+				),
+		}),
+	},
 } as const

@@ -38,17 +38,17 @@ describe('Skills', () => {
 
 	it('shows "Loading skills..." when loading', () => {
 		mockUseSkills.mockReturnValue({ data: undefined, isLoading: true })
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 		expect(screen.getByText('Loading skills...')).toBeInTheDocument()
 	})
 
 	it('shows empty message when no skills', () => {
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 		expect(screen.getByText(/No skills configured/)).toBeInTheDocument()
 	})
 
 	it('shows "Add Skill" and "Import SKILL.md" buttons', () => {
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 		expect(screen.getByRole('button', { name: /Add Skill/ })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Import SKILL.md/ })).toBeInTheDocument()
 	})
@@ -56,7 +56,7 @@ describe('Skills', () => {
 	it('renders skill name and description', () => {
 		const skills = [buildSkillListItem({ name: 'deploy', description: 'Deploy to production' })]
 		mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 		expect(screen.getByText('deploy')).toBeInTheDocument()
 		expect(screen.getByText('Deploy to production')).toBeInTheDocument()
 	})
@@ -65,7 +65,7 @@ describe('Skills', () => {
 		const user = userEvent.setup()
 		const skills = [buildSkillListItem({ name: 'deploy' })]
 		mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 
 		await user.click(screen.getByRole('button', { name: 'Delete skill' }))
 		expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
@@ -76,7 +76,7 @@ describe('Skills', () => {
 		const user = userEvent.setup()
 		const skills = [buildSkillListItem({ name: 'deploy' })]
 		mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 
 		await user.click(screen.getByRole('button', { name: 'Delete skill' }))
 		await user.click(screen.getByRole('button', { name: 'Delete' }))
@@ -87,7 +87,7 @@ describe('Skills', () => {
 		const user = userEvent.setup()
 		const skills = [buildSkillListItem({ name: 'deploy' })]
 		mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 
 		await user.click(screen.getByRole('button', { name: 'Delete skill' }))
 		await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -96,7 +96,7 @@ describe('Skills', () => {
 
 	it('shows SkillForm when "Add Skill" clicked', async () => {
 		const user = userEvent.setup()
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 
 		await user.click(screen.getByRole('button', { name: /Add Skill/ }))
 
@@ -107,7 +107,7 @@ describe('Skills', () => {
 
 	it('hides SkillForm when cancel clicked', async () => {
 		const user = userEvent.setup()
-		render(<Skills actorId="agent-1" />)
+		render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 
 		await user.click(screen.getByRole('button', { name: /Add Skill/ }))
 		await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -118,7 +118,7 @@ describe('Skills', () => {
 	describe('SkillForm', () => {
 		it('Save button disabled when name empty', async () => {
 			const user = userEvent.setup()
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 			await user.click(screen.getByRole('button', { name: /Add Skill/ }))
 
 			expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
@@ -126,7 +126,7 @@ describe('Skills', () => {
 
 		it('Save button disabled when description empty', async () => {
 			const user = userEvent.setup()
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 			await user.click(screen.getByRole('button', { name: /Add Skill/ }))
 
 			await user.type(screen.getByPlaceholderText('e.g. deploy, review-pr'), 'my-skill')
@@ -136,7 +136,7 @@ describe('Skills', () => {
 
 		it('Save button enabled when name and description filled', async () => {
 			const user = userEvent.setup()
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 			await user.click(screen.getByRole('button', { name: /Add Skill/ }))
 
 			await user.type(screen.getByPlaceholderText('e.g. deploy, review-pr'), 'my-skill')
@@ -150,7 +150,7 @@ describe('Skills', () => {
 
 		it('shows advanced options when toggled', async () => {
 			const user = userEvent.setup()
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 			await user.click(screen.getByRole('button', { name: /Add Skill/ }))
 			await user.click(screen.getByRole('button', { name: /Show advanced options/ }))
 
@@ -161,7 +161,7 @@ describe('Skills', () => {
 
 		it('calls saveSkill.mutate with correct data on save', async () => {
 			const user = userEvent.setup()
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 			await user.click(screen.getByRole('button', { name: /Add Skill/ }))
 
 			await user.type(screen.getByPlaceholderText('e.g. deploy, review-pr'), 'deploy')
@@ -193,7 +193,7 @@ describe('Skills', () => {
 			const user = userEvent.setup()
 			const skills = [buildSkillListItem({ name: 'deploy' })]
 			mockUseSkills.mockReturnValue({ data: skills, isLoading: false })
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 
 			await user.click(screen.getByRole('button', { name: 'Edit skill' }))
 			const nameInput = screen.getByPlaceholderText('e.g. deploy, review-pr')
@@ -204,7 +204,7 @@ describe('Skills', () => {
 	describe('ImportSkillDialog', () => {
 		it('Import button disabled when textarea empty', async () => {
 			const user = userEvent.setup()
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 
 			await user.click(screen.getByRole('button', { name: /Import SKILL.md/ }))
 
@@ -218,7 +218,7 @@ describe('Skills', () => {
 				throw new Error('parse error')
 			})
 
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 			await user.click(screen.getByRole('button', { name: /Import SKILL.md/ }))
 
 			const textarea = screen.getByPlaceholderText(/---/)
@@ -238,7 +238,7 @@ describe('Skills', () => {
 				frontmatter: {},
 			})
 
-			render(<Skills actorId="agent-1" />)
+			render(<Skills scope={{ kind: 'actor', actorId: 'agent-1' }} />)
 			await user.click(screen.getByRole('button', { name: /Import SKILL.md/ }))
 
 			const textarea = screen.getByPlaceholderText(/---/)

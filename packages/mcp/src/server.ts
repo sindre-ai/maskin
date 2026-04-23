@@ -13,7 +13,7 @@ import {
 	registerAppResource,
 	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { tools } from './tools.js'
 
@@ -2362,6 +2362,120 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
   2. The workspace URL above as a clickable link.
   3. ${claudeOauthConnected ? 'A "How to get the machine moving" section — see the template-specific guidance below.' : 'A "Connect your Claude subscription" section (see guidance below) BEFORE the "How to get the machine moving" section.'}${claudeCredsBlock}${devPipelineGuidance}`,
 			)
+		},
+	)
+
+	// ─── Skills ───────────────────────────────────────────────
+	// Workspace-shared ("team") skills. Exposed as both tools (works in every
+	// MCP client today) and resources at skill://maskin/{workspaceId}/{name}
+	// (lines up with the upcoming MCP Skills primitive).
+
+	type SkillListItem = {
+		name: string
+		description: string
+		size_bytes: number | null
+		updated_at: string | null
+	}
+	type SkillDetail = SkillListItem & {
+		content: string
+		frontmatter: Record<string, unknown>
+	}
+
+	async function fetchSkillList(workspaceId?: string): Promise<SkillListItem[]> {
+		const ws = workspaceId ?? config.defaultWorkspaceId
+		if (!ws) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+		return (await apiCall(config, 'GET', `/api/workspaces/${ws}/skills`, undefined, {
+			workspaceId: ws,
+		})) as SkillListItem[]
+	}
+
+	async function fetchSkillDetail(name: string, workspaceId?: string): Promise<SkillDetail> {
+		const ws = workspaceId ?? config.defaultWorkspaceId
+		if (!ws) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+		return (await apiCall(
+			config,
+			'GET',
+			`/api/workspaces/${ws}/skills/${encodeURIComponent(name)}`,
+			undefined,
+			{ workspaceId: ws },
+		)) as SkillDetail
+	}
+
+	registerAppTool(
+		server,
+		'list_skills',
+		{
+			description: tools.list_skills.description,
+			inputSchema: tools.list_skills.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const skills = await fetchSkillList(args.workspace_id)
+			return {
+				_meta: { toolName: 'list_skills' },
+				content: [{ type: 'text' as const, text: JSON.stringify(skills, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_skill',
+		{
+			description: tools.get_skill.description,
+			inputSchema: tools.get_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const skill = await fetchSkillDetail(args.name, args.workspace_id)
+			return {
+				_meta: { toolName: 'get_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(skill, null, 2) }],
+			}
+		},
+	)
+
+	// Expose each team skill as an MCP resource at skill://maskin/{workspaceId}/{name}.
+	// Uses the default workspace for listing so clients without the workspace ID
+	// still see something useful; reading is always workspace-scoped via the URI.
+	server.resource(
+		'workspace-skill',
+		new ResourceTemplate('skill://maskin/{workspaceId}/{name}', {
+			list: async () => {
+				if (!config.defaultWorkspaceId) return { resources: [] }
+				try {
+					const skills = await fetchSkillList(config.defaultWorkspaceId)
+					return {
+						resources: skills.map((s) => ({
+							uri: `skill://maskin/${config.defaultWorkspaceId}/${encodeURIComponent(s.name)}`,
+							name: s.name,
+							description: s.description,
+							mimeType: 'text/markdown',
+						})),
+					}
+				} catch (err) {
+					console.error('[MCP] Failed to list team skills:', err)
+					return { resources: [] }
+				}
+			},
+		}),
+		async (uri, variables) => {
+			const workspaceId = Array.isArray(variables.workspaceId)
+				? variables.workspaceId[0]
+				: variables.workspaceId
+			const name = Array.isArray(variables.name) ? variables.name[0] : variables.name
+			if (!name) throw new Error(`Invalid skill resource URI: ${uri.toString()}`)
+			const skill = await fetchSkillDetail(name, workspaceId)
+			const body = [`# ${skill.name}`, '', skill.description, '', skill.content].join('\n')
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'text/markdown',
+						text: body,
+					},
+				],
+			}
 		},
 	)
 

@@ -225,13 +225,14 @@ export const sessionLogs = pgTable(
 
 // ── Agent Files ────────────────────────────────────────────────────────────
 
+// Rows with actor_id NULL are workspace-scoped (team skills etc.); non-null rows
+// are personal to one actor. Uniqueness is enforced via partial indexes created
+// in migration 0009_nullable_agent_files_actor.sql.
 export const agentFiles = pgTable(
 	'agent_files',
 	{
 		id: uuid('id').defaultRandom().primaryKey(),
-		actorId: uuid('actor_id')
-			.references(() => actors.id)
-			.notNull(),
+		actorId: uuid('actor_id').references(() => actors.id),
 		workspaceId: uuid('workspace_id')
 			.references(() => workspaces.id)
 			.notNull(),
@@ -243,10 +244,7 @@ export const agentFiles = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [
-		index('agent_files_actor_type_idx').on(t.actorId, t.fileType),
-		unique('agent_files_actor_path_uniq').on(t.actorId, t.workspaceId, t.path),
-	],
+	(t) => [index('agent_files_actor_type_idx').on(t.actorId, t.fileType)],
 )
 
 // ── Imports ───────────────────────────────────────────────────────────

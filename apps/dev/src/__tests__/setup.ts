@@ -198,6 +198,10 @@ export function createMockAgentStorage(overrides?: Record<string, unknown>) {
 		listFiles: vi.fn().mockResolvedValue([]),
 		pullAgentFiles: vi.fn().mockResolvedValue(undefined),
 		pushAgentFiles: vi.fn().mockResolvedValue(undefined),
+		listWorkspaceFileRecords: vi.fn().mockResolvedValue([]),
+		getWorkspaceFile: vi.fn().mockResolvedValue(Buffer.from('')),
+		uploadWorkspaceFile: vi.fn().mockResolvedValue('key'),
+		deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
 		...overrides,
 	} as unknown as AgentStorageManager
 }

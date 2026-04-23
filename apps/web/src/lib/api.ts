@@ -223,6 +223,24 @@ export const api = {
 			}),
 	},
 
+	workspaceSkills: {
+		list: (workspaceId: string) =>
+			request<SkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
+		get: (workspaceId: string, skillName: string) =>
+			request<SkillDetail>(`/workspaces/${workspaceId}/skills/${skillName}`, { workspaceId }),
+		save: (workspaceId: string, skillName: string, data: SaveSkillInput) =>
+			request<SkillDetail>(`/workspaces/${workspaceId}/skills/${skillName}`, {
+				method: 'PUT',
+				body: data,
+				workspaceId,
+			}),
+		delete: (workspaceId: string, skillName: string) =>
+			request<{ ok: boolean }>(`/workspaces/${workspaceId}/skills/${skillName}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+	},
+
 	sessions: {
 		create: (workspaceId: string, data: CreateSessionInput) =>
 			request<SessionResponse>('/sessions', { method: 'POST', body: data, workspaceId }),
