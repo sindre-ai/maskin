@@ -43,6 +43,6 @@ export const config: ProviderConfig = {
 	mcp: {
 		command: 'npx',
 		args: ['-y', '@modelcontextprotocol/server-github'],
-		envKey: 'GITHUB_PERSONAL_ACCESS_TOKEN',
+		envKey: 'GITHUB_TOKEN',
 	},
 }
