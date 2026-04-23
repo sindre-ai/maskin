@@ -1,31 +1,63 @@
 {
 	"name": "@maskin/mcp",
-	"version": "0.0.1",
-	"private": true,
+	"version": "0.1.0",
+	"description": "Maskin MCP server — connect Claude, Cursor, Cline, and any MCP client to a Maskin workspace.",
+	"keywords": [
+		"mcp",
+		"model-context-protocol",
+		"maskin",
+		"claude",
+		"cursor",
+		"cline",
+		"agents",
+		"ai"
+	],
+	"homepage": "https://github.com/sindre-ai/maskin/tree/main/packages/mcp#readme",
+	"bugs": {
+		"url": "https://github.com/sindre-ai/maskin/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/sindre-ai/maskin.git",
+		"directory": "packages/mcp"
+	},
 	"license": "Apache-2.0",
+	"author": "Maskin contributors",
 	"type": "module",
+	"bin": {
+		"maskin-mcp": "dist/cli.js"
+	},
+	"files": ["dist", "README.md", "LICENSE"],
 	"exports": {
 		".": {
-			"types": "./src/index.ts",
+			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
 		}
 	},
 	"scripts": {
-		"start": "tsx src/server.ts",
-		"build": "tsc",
+		"start": "tsx src/cli.ts",
+		"build": "tsup",
 		"type-check": "tsc --noEmit",
-		"test": "vitest"
+		"test": "vitest",
+		"prepublishOnly": "pnpm build"
 	},
 	"dependencies": {
-		"@maskin/module-sdk": "workspace:*",
-		"@maskin/shared": "workspace:*",
 		"@modelcontextprotocol/ext-apps": "^1.6.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {
+		"@maskin/module-sdk": "workspace:*",
+		"@maskin/shared": "workspace:*",
+		"tsup": "^8.3.0",
 		"tsx": "^4.21.0",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"publishConfig": {
+		"access": "public"
 	}
 }

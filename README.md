@@ -300,7 +300,27 @@ External agents connect via the Model Context Protocol (39 tools available), sup
 
 ## MCP Reference
 
-Maskin exposes 39 MCP tools over both stdio and HTTP. See **Quick Start → Get started from Claude Code** above for the one-command setup. Other clients (Claude Desktop, OpenAI agents, custom implementations) use the same env vars (`API_BASE_URL`, `API_KEY`, `WORKSPACE_ID`) — point them at `pnpm --filter @maskin/mcp start` for stdio, or `POST http://localhost:3000/mcp` for HTTP.
+Maskin exposes 39 MCP tools over both stdio and HTTP. See **Quick Start → Get started from Claude Code** above for the one-command setup.
+
+Other clients (Claude Desktop, Cursor, Cline, Continue, custom implementations) install the published [`@maskin/mcp`](packages/mcp/README.md) npm package and pass the same env vars (`API_BASE_URL`, `API_KEY`, `WORKSPACE_ID`):
+
+```json
+{
+  "mcpServers": {
+    "maskin": {
+      "command": "npx",
+      "args": ["-y", "@maskin/mcp"],
+      "env": {
+        "API_BASE_URL": "http://localhost:3000",
+        "API_KEY": "ank_...",
+        "WORKSPACE_ID": "..."
+      }
+    }
+  }
+}
+```
+
+For hosted setups, point clients at `POST http://your-host/mcp` directly — the HTTP transport is built into the Maskin server. Full client-by-client setup walkthrough lives in [`packages/mcp/README.md`](packages/mcp/README.md).
 
 The first tool a new agent should call is `get_started` — it previews and applies a workspace template, or walks the user through a custom setup.
 
