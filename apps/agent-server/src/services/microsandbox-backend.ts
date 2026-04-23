@@ -1,10 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-
-const requireFromHere = createRequire(import.meta.url)
 import { type ExecEvent, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
 import type {
@@ -15,85 +11,54 @@ import type {
 	SandboxStatus as SandboxStatusType,
 } from './runtime-backend'
 
+const MSB_BIN = '/root/.microsandbox/bin/msb'
+
 /**
- * Spawn sandbox creation in a child process.
+ * Boot a sandbox via the `msb create` CLI.
  *
- * Sandbox.create() fails with a handshake timeout when called from
- * within the agent-server's long-running process, but works in standalone
- * scripts. As a workaround, we use Sandbox.createDetached() in a
- * short-lived child process, then reconnect from the parent via
- * Sandbox.get().connect().
+ * Calling Sandbox.create() from the Node SDK inside the agent-server's
+ * long-running process consistently fails the VMM handshake. Shelling
+ * out to the msb binary bypasses the NAPI layer for boot, and we then
+ * reconnect via Sandbox.get().connect() to get an SDK handle for
+ * subsequent exec/fs operations on the already-running sandbox.
  */
-function spawnSandboxCreate(config: {
+function msbCreate(config: {
 	name: string
 	image: string
 	memoryMib: number
 	cpus: number
 	env: Record<string, string>
-	volumePaths: Array<{ guest: string; host: string; readonly: boolean }>
+	volumes: Array<{ host: string; guest: string }>
 	maxDurationSecs?: number
 }): void {
-	// Resolve the absolute path to microsandbox from the parent process
-	// so the child can require it regardless of cwd.
-	const msbPath = requireFromHere.resolve('microsandbox')
-	const script = `
-const { Sandbox, Mount, NetworkPolicy } = require(${JSON.stringify(msbPath)});
-const config = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8'));
-const volumes = {};
-for (const v of config.volumePaths) {
-  volumes[v.guest] = Mount.bind(v.host, { readonly: v.readonly });
-}
-const opts = {
-  name: config.name,
-  image: config.image,
-  memoryMib: config.memoryMib,
-  cpus: config.cpus,
-  env: config.env,
-  volumes,
-  network: NetworkPolicy.allowAll(),
-  replace: true,
-  quietLogs: true,
-  pullPolicy: 'always',
-};
-if (config.maxDurationSecs !== undefined) {
-  opts.maxDurationSecs = config.maxDurationSecs;
-}
-Sandbox.createDetached(opts).then(() => {
-  process.exit(0);
-}).catch((err) => {
-  process.stderr.write('MSB_ERROR: ' + (err && err.stack ? err.stack : String(err)) + '\\n');
-  process.exit(1);
-});
-process.on('uncaughtException', (err) => {
-  process.stderr.write('MSB_UNCAUGHT: ' + (err && err.stack ? err.stack : String(err)) + '\\n');
-  process.exit(2);
-});
-`
-	// Write script and config to temp files. Bash closes inherited FDs
-	// (postgres, HTTP, S3 sockets) before exec-ing node with a clean FD table.
-	const ts = Date.now()
-	const scriptPath = join(tmpdir(), `msb-spawn-${ts}.js`)
-	const configPath = join(tmpdir(), `msb-config-${ts}.json`)
-	writeFileSync(scriptPath, script)
-	writeFileSync(configPath, JSON.stringify(config))
-	try {
-		execFileSync(
-			process.execPath,
-			[scriptPath, configPath],
-			{
-				timeout: 120_000,
-				stdio: ['ignore', 'pipe', 'pipe'],
-				cwd: process.cwd(),
-			},
-		)
-	} finally {
-		try {
-			unlinkSync(scriptPath)
-		} catch {}
-		try {
-			unlinkSync(configPath)
-		} catch {}
+	const args = [
+		'create',
+		'--name',
+		config.name,
+		'--memory',
+		`${config.memoryMib}M`,
+		'--cpus',
+		String(config.cpus),
+		'--replace',
+		'--pull',
+		'always',
+		'--quiet',
+	]
+	for (const [key, value] of Object.entries(config.env)) {
+		args.push('-e', `${key}=${value}`)
 	}
+	for (const v of config.volumes) {
+		args.push('-v', `${v.host}:${v.guest}`)
+	}
+	if (config.maxDurationSecs !== undefined) {
+		args.push('--max-duration', `${config.maxDurationSecs}s`)
+	}
+	args.push(config.image)
+
+	execFileSync(MSB_BIN, args, {
+		timeout: 180_000,
+		stdio: ['ignore', 'pipe', 'pipe'],
+	})
 }
 
 export class MicrosandboxBackend implements RuntimeBackend {
@@ -108,7 +73,7 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	}
 
 	async create(options: SandboxCreateOptions): Promise<string> {
-		// Store options — Sandbox.create() both creates and boots the VM,
+		// Store options — `msb create` both creates and boots the VM,
 		// so actual creation is deferred to start().
 		this.createOptions.set(options.name, options)
 		logger.info(`Microsandbox config stored: ${options.name}`, { image: options.image })
@@ -121,12 +86,12 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			throw new Error(`No create options for sandbox: ${sandboxId}`)
 		}
 
-		const volumePaths: Array<{ guest: string; host: string; readonly: boolean }> = []
+		const volumes: Array<{ host: string; guest: string }> = []
 		let agentHostPath: string | undefined
 		for (const bind of options.binds) {
-			const [source, dest, mode] = bind.split(':')
+			const [source, dest] = bind.split(':')
 			if (source && dest) {
-				volumePaths.push({ guest: dest, host: source, readonly: mode === 'ro' })
+				volumes.push({ host: source, guest: dest })
 				if (dest === '/agent') agentHostPath = source
 			}
 		}
@@ -174,36 +139,42 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			})
 		}
 
-		// Spawn sandbox creation in a child process. Sandbox.create() fails
-		// with a handshake timeout when called from the agent-server process
-		// but works in standalone scripts — likely a NAPI/libuv interaction.
+		// Boot the sandbox via the msb CLI. The SDK's Sandbox.create() fails
+		// the VMM handshake when called from the agent-server's event loop;
+		// shelling out to the binary avoids that NAPI interaction entirely.
 		try {
-			spawnSandboxCreate({
+			msbCreate({
 				name: options.name,
 				image: options.image,
 				memoryMib: options.memoryMb,
 				cpus: Math.max(1, Math.round(options.cpuShares / 1024)),
 				env: sanitizedEnv,
-				volumePaths,
+				volumes,
 				...(options.maxDurationSecs !== undefined && {
 					maxDurationSecs: options.maxDurationSecs,
 				}),
 			})
 		} catch (err) {
-			const e = err as { stderr?: Buffer | string; stdout?: Buffer | string; status?: number; signal?: string; message?: string }
+			const e = err as {
+				stderr?: Buffer | string
+				stdout?: Buffer | string
+				status?: number
+				signal?: string
+				message?: string
+			}
 			const stderr = e.stderr ? String(e.stderr) : ''
 			const stdout = e.stdout ? String(e.stdout) : ''
-			logger.error('Sandbox child process failed', {
+			logger.error('msb create failed', {
 				stderr,
 				stdout,
 				status: e.status,
 				signal: e.signal,
 				message: e.message,
 			})
-			throw new Error(`Sandbox creation failed: ${stderr || e.message || 'unknown'}`)
+			throw new Error(`msb create failed: ${stderr || e.message || 'unknown'}`)
 		}
 
-		// Reconnect to the detached sandbox from the parent process
+		// Reconnect via the SDK to get a handle for exec/fs/shellStream
 		const handle = await Sandbox.get(options.name)
 		const sandbox = await handle.connect()
 
@@ -281,8 +252,13 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			}
 		}
 		this.resolveExit(sandboxId, 137)
+		// Use the CLI for removal too — it handles stop+remove atomically
+		// and doesn't depend on the SDK handle still being valid.
 		try {
-			await Sandbox.remove(sandboxId)
+			execFileSync(MSB_BIN, ['remove', '-f', '--quiet', sandboxId], {
+				timeout: 30_000,
+				stdio: ['ignore', 'ignore', 'ignore'],
+			})
 		} catch {
 			// May already be removed
 		}
