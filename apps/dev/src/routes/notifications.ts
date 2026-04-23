@@ -352,26 +352,24 @@ app.openapi(respondNotificationRoute, (async (c) => {
 	// Fire-and-forget: wake the agent that created this notification so it can
 	// act on the human's response. Prefer resuming the originating paused session
 	// (preserves context); otherwise spawn a new session for the source agent.
-	if (notification.sourceActorId && sessionManager) {
-		wakeSourceAgent({
-			sessionManager,
-			db,
-			workspaceId: notification.workspaceId,
-			sourceActorId: notification.sourceActorId,
-			linkedSessionId: notification.sessionId,
+	wakeSourceAgent({
+		sessionManager,
+		db,
+		workspaceId: notification.workspaceId,
+		sourceActorId: notification.sourceActorId,
+		linkedSessionId: notification.sessionId,
+		notificationId: updated.id,
+		title: updated.title,
+		content: updated.content,
+		response: body.response,
+		createdBy: actorId,
+	}).catch((err) =>
+		logger.error('Failed to wake source agent for notification response', {
 			notificationId: updated.id,
-			title: updated.title,
-			content: updated.content,
-			response: body.response,
-			createdBy: actorId,
-		}).catch((err) =>
-			logger.error('Failed to wake source agent for notification response', {
-				notificationId: updated.id,
-				sourceActorId: notification.sourceActorId,
-				error: String(err),
-			}),
-		)
-	}
+			sourceActorId: notification.sourceActorId,
+			error: String(err),
+		}),
+	)
 
 	return c.json(serialize(updated) as z.infer<typeof notificationResponseSchema>)
 }) as RouteHandler<typeof respondNotificationRoute, Env>)
@@ -396,6 +394,7 @@ async function wakeSourceAgent(ctx: {
 
 	if (!sourceActor || sourceActor.type !== 'agent') return
 
+	let continuationOfSessionId: string | null = null
 	if (ctx.linkedSessionId) {
 		const [linked] = await ctx.db
 			.select({ status: sessions.status })
@@ -403,10 +402,29 @@ async function wakeSourceAgent(ctx: {
 			.where(eq(sessions.id, ctx.linkedSessionId))
 			.limit(1)
 
-		if (linked?.status === 'paused') {
+		const status = linked?.status
+
+		if (status === 'paused') {
 			await ctx.sessionManager.resumeSession(ctx.linkedSessionId)
 			return
 		}
+
+		// Active sessions can't be signalled — there is no stdin/mid-run prompt
+		// channel into a running container. Skip rather than race: the response
+		// is persisted on the notification and the agent can read it via MCP
+		// when it next polls, finishes, or is auto-paused + resumed.
+		if (status === 'pending' || status === 'starting' || status === 'running') {
+			logger.info('Skipping wake: linked session is still active', {
+				notificationId: ctx.notificationId,
+				sessionId: ctx.linkedSessionId,
+				status,
+			})
+			return
+		}
+
+		// Terminal states (completed, failed, timeout, stopped, snapshotting, etc.)
+		// → spawn a new session and reference the prior one for context continuity.
+		continuationOfSessionId = ctx.linkedSessionId
 	}
 
 	await ctx.sessionManager.createSession(ctx.workspaceId, {
@@ -416,11 +434,13 @@ async function wakeSourceAgent(ctx: {
 			title: ctx.title,
 			content: ctx.content,
 			response: ctx.response,
+			continuationOfSessionId,
 		}),
 		config: {
 			notification_response: {
 				notification_id: ctx.notificationId,
 				response: ctx.response,
+				...(continuationOfSessionId ? { continuation_of_session_id: continuationOfSessionId } : {}),
 			},
 		},
 		createdBy: ctx.createdBy,
@@ -432,12 +452,19 @@ function buildResponsePrompt(ctx: {
 	title: string
 	content: string | null
 	response: unknown
+	continuationOfSessionId: string | null
 }): string {
 	const responseText =
 		typeof ctx.response === 'string' ? ctx.response : JSON.stringify(ctx.response)
 	return [
 		'A human responded to a notification you created. Read the response and act on it.',
 		'',
+		...(ctx.continuationOfSessionId
+			? [
+					`This is a continuation of session ${ctx.continuationOfSessionId}, which has ended. Review its logs for prior context if needed.`,
+					'',
+				]
+			: []),
 		`Notification ID: ${ctx.notificationId}`,
 		`Notification title: ${ctx.title}`,
 		...(ctx.content ? ['Notification content:', '"""', ctx.content, '"""', ''] : ['']),
