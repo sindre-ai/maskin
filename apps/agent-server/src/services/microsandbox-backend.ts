@@ -38,7 +38,7 @@ function spawnSandboxCreate(config: {
 	const msbPath = requireFromHere.resolve('microsandbox')
 	const script = `
 const { Sandbox, Mount, NetworkPolicy } = require(${JSON.stringify(msbPath)});
-const config = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+const config = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8'));
 const volumes = {};
 for (const v of config.volumePaths) {
   volumes[v.guest] = Mount.bind(v.host, { readonly: v.readonly });
