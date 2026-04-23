@@ -1,5 +1,4 @@
 import { SidebarContext } from '@/components/ui/sidebar'
-import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
 import { TooltipProvider } from '@radix-ui/react-tooltip'
 import * as React from 'react'
@@ -36,8 +35,13 @@ export const SindreSidebarProvider = React.forwardRef<
 		},
 		ref,
 	) => {
-		const isMobile = useIsMobile()
-
+		// We intentionally *don't* delegate to shadcn's mobile Sheet fallback —
+		// on mobile the Sindre panel should look and behave exactly like on
+		// desktop (right-fixed sidebar, full-height slide). Overriding isMobile
+		// to `false` in the SidebarContext skips the Sheet branch inside the
+		// primitive; we still read the real breakpoint elsewhere via the hook
+		// directly (e.g. to hide the pin button, which is meaningless when
+		// there's nothing to push aside).
 		const [_open, _setOpen] = React.useState(defaultOpen)
 		const open = openProp ?? _open
 		const setOpen = React.useCallback(
@@ -52,21 +56,9 @@ export const SindreSidebarProvider = React.forwardRef<
 			[setOpenProp, open],
 		)
 
-		// Upstream shadcn Sidebar keeps `open` (desktop) and `openMobile` as
-		// separate state, toggled via `toggleSidebar`. We route every opener
-		// (header Sparkles button, + button, notification "Talk to Sindre",
-		// etc.) through the Sindre context's `setOpen`, so we mirror that
-		// same value into `openMobile` on mobile — otherwise the desktop
-		// `open=true` never reaches the mobile Sheet and the panel appears
-		// invisible.
-		const openMobile = isMobile ? open : false
-		const setOpenMobile = React.useCallback(
-			(value: boolean) => {
-				if (isMobile) setOpen(value)
-			},
-			[isMobile, setOpen],
-		)
-
+		// Report `isMobile: false` in the context so shadcn's Sidebar primitive
+		// skips its mobile Sheet branch. `openMobile` is effectively unused but
+		// kept in the shape the context expects.
 		const toggleSidebar = React.useCallback(() => {
 			return setOpen((prev) => !prev)
 		}, [setOpen])
@@ -78,12 +70,12 @@ export const SindreSidebarProvider = React.forwardRef<
 				state: state as 'expanded' | 'collapsed',
 				open,
 				setOpen,
-				isMobile,
-				openMobile,
-				setOpenMobile,
+				isMobile: false,
+				openMobile: false,
+				setOpenMobile: () => {},
 				toggleSidebar,
 			}),
-			[state, open, setOpen, isMobile, openMobile, toggleSidebar],
+			[state, open, setOpen, toggleSidebar],
 		)
 
 		return (
@@ -91,7 +83,14 @@ export const SindreSidebarProvider = React.forwardRef<
 				<TooltipProvider delayDuration={0}>
 					<div
 						style={style}
-						className={cn('pointer-events-none fixed inset-0 z-40', className)}
+						// Force-display the nested shadcn Sidebar wrapper regardless of
+						// the `hidden md:block` it applies — we want the right-fixed
+						// panel on every breakpoint, not just desktop.
+						className={cn(
+							'pointer-events-none fixed inset-0 z-40',
+							'[&_[data-side=right]]:!block',
+							className,
+						)}
 						ref={ref}
 						{...props}
 					>

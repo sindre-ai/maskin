@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sidebar, SidebarContent, SidebarHeader } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { getStoredActor } from '@/lib/auth'
 import { type SindreAttachment, useSindre } from '@/lib/sindre-context'
 import {
@@ -59,6 +60,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const panelRef = useRef<HTMLDivElement | null>(null)
 	const chatRef = useRef<SindreChatHandle | null>(null)
 	const [events, setEvents] = useState<SindreEvent[]>([])
+	const isMobile = useIsMobile()
 
 	const handleNewChat = useCallback(() => {
 		chatRef.current?.newChat()
@@ -123,7 +125,14 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		<SindreSidebarProvider
 			open={open}
 			onOpenChange={setOpen}
-			style={{ '--sidebar-width': `${panelWidth}px` } as React.CSSProperties}
+			style={
+				{
+					// On narrow viewports the configured width can exceed the
+					// screen — clamp to 100vw so the panel never hangs off the
+					// right edge.
+					'--sidebar-width': `min(${panelWidth}px, 100vw)`,
+				} as React.CSSProperties
+			}
 		>
 			<Sidebar
 				ref={panelRef}
@@ -134,7 +143,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				<ResizeHandle
 					width={panelWidth}
 					onWidthChange={setPanelWidth}
-					visible={open}
+					visible={open && !isMobile}
 				/>
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
 					<div className="flex items-center gap-1">
@@ -180,7 +189,9 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 							</TooltipTrigger>
 							<TooltipContent>New conversation</TooltipContent>
 						</Tooltip>
-						<PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />
+						{!isMobile && (
+							<PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />
+						)}
 						<Button
 							type="button"
 							variant="ghost"
