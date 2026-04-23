@@ -138,14 +138,14 @@ export function Header() {
 	}
 
 	return (
-		<header className="flex h-16 shrink-0 items-center gap-2">
-			<div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
-				<SidebarTrigger className="md:hidden -ml-1" />
+		<header className="flex h-11 shrink-0 items-center gap-2 border-b border-border">
+			<div className="flex w-full items-center gap-1 px-3 lg:gap-2 lg:px-4">
+				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7" />
 				{crumbs.length > 1 && (
 					<Button
 						variant="ghost"
 						size="icon"
-						className="md:hidden -ml-1"
+						className="md:hidden -ml-1 h-7 w-7"
 						onClick={() => router.history.back()}
 					>
 						<ArrowLeft />
@@ -157,7 +157,7 @@ export function Header() {
 						<Button
 							variant="ghost"
 							size="icon"
-							className="-ml-1"
+							className="-ml-1 h-7 w-7"
 							onClick={() => router.history.back()}
 						>
 							<ArrowLeft />
@@ -192,8 +192,8 @@ export function Header() {
 					{actions}
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
-							<Button variant="ghost" size="icon">
-								<Plus className="h-4 w-4" />
+							<Button variant="ghost" size="icon" className="h-7 w-7">
+								<Plus size={15} />
 								<span className="sr-only">Create new</span>
 							</Button>
 						</DropdownMenuTrigger>
