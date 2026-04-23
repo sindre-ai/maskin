@@ -1,4 +1,3 @@
-import './extensions'
 import type { Database } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
@@ -23,16 +22,15 @@ function createStubDeps(): AppDeps {
 }
 
 /**
- * Construct the same Hono app the runtime uses (via `createApp`) with stub
- * deps and return the OpenAPI 3.1 document as a plain JSON object. Used by
- * `scripts/dump-openapi.ts` to produce `packages/sdk/openapi.json` without
- * starting Postgres, S3, or Docker.
+ * Build the OpenAPI 3.1 document from the same `createApp` used at runtime,
+ * without booting Postgres, S3, or Docker. Intended for tooling that dumps
+ * the spec to JSON for SDK generation.
  *
  * Return type is widened to `Record<string, unknown>` so consumers don't pull
  * in `openapi3-ts` as a transitive type dependency — the value is serialized
  * straight to JSON anyway.
  */
 export function buildOpenAPIDocument(): Record<string, unknown> {
-	const app = createApp(createStubDeps())
+	const app = createApp(createStubDeps(), { includeExtensions: false })
 	return app.getOpenAPI31Document(getOpenApiConfig()) as unknown as Record<string, unknown>
 }

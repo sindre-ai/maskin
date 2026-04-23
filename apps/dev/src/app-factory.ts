@@ -57,6 +57,12 @@ export interface CreateAppOptions {
 	corsOrigins?: string[]
 	/** Directory to serve as static files (SPA). Defaults to STATIC_DIR env or ../../web/dist. */
 	staticDir?: string
+	/**
+	 * Mount routes from `@maskin/module-sdk` registered modules. Defaults to true.
+	 * Set to false for spec-export paths: extension `routes(env)` factories may
+	 * dereference stub deps at construction time and crash.
+	 */
+	includeExtensions?: boolean
 }
 
 const OPENAPI_INFO = {
@@ -106,6 +112,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 	})
 
+	// Only one cors middleware runs per request: /mcp gets a wildcard policy
+	// (no credentials, since chat-client webviews vary by origin), everything
+	// else gets the configured-origin policy with credentials. Do not reorder:
+	// browsers reject wildcard + credentials together.
 	app.use('/mcp', cors())
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use('*', honoLogger())
@@ -123,6 +133,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		return c.json({ status: 'ok', timestamp: new Date().toISOString() })
 	})
 
+	// Auth allowlist — each exemption has a distinct reason; do not tighten
+	// without checking the corresponding flow:
+	//   - /api/health, /api/openapi.json: public discovery endpoints
+	//   - POST /api/actors: signup bootstrap, mints the first API key
+	//   - POST /api/auth/login: pre-auth credential exchange
+	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
+	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -154,13 +171,15 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/imports', importsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 
-	const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
-	for (const ext of getAllModules()) {
-		if (ext.routes) {
-			try {
-				app.route(`/api/m/${ext.id}`, ext.routes(moduleEnv))
-			} catch (err) {
-				console.error(`Failed to mount routes for extension '${ext.id}':`, err)
+	if (options.includeExtensions !== false) {
+		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
+		for (const ext of getAllModules()) {
+			if (ext.routes) {
+				try {
+					app.route(`/api/m/${ext.id}`, ext.routes(moduleEnv))
+				} catch (err) {
+					console.error(`Failed to mount routes for extension '${ext.id}':`, err)
+				}
 			}
 		}
 	}
