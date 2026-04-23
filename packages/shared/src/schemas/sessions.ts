@@ -73,10 +73,16 @@ export const sessionQuerySchema = z.object({
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
-	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
+	/** `user_message` rows are inline interjections from a workspace member to a running agent. */
+	stream: z.enum(['stdout', 'stderr', 'system', 'user_message']).optional(),
 	limit: z.coerce.number().int().min(1).max(500).default(100),
 })
 
 export const sessionParamsSchema = z.object({
 	id: z.string().uuid(),
+})
+
+/** Body for POST /sessions/:id/messages — a workspace member writing into a live session. */
+export const createSessionMessageSchema = z.object({
+	content: z.string().min(1).max(10_000),
 })

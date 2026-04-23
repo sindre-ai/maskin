@@ -450,4 +450,65 @@ describe('Sessions Routes', () => {
 			controller.abort()
 		})
 	})
+
+	describe('POST /api/sessions/:id/messages', () => {
+		it('records a user_message log row and returns 201', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'running' })
+			const log = buildSessionLog({
+				sessionId: session.id,
+				stream: 'user_message',
+				content: '[from test-actor-id] please pause and ask me first',
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			// auth check, membership check
+			mockResults.selectQueue = [[session], [{ workspaceId: wsId, actorId: 'test-actor-id' }]]
+			mockResults.insert = [log]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/messages`,
+					{ content: 'please pause and ask me first' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.stream).toBe('user_message')
+			expect(body.content).toContain('please pause and ask me first')
+		})
+
+		it('returns 409 when the session is not accepting input', async () => {
+			const session = buildSession({ workspaceId: wsId, status: 'completed' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session], [{ workspaceId: wsId, actorId: 'test-actor-id' }]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/messages`,
+					{ content: 'too late?' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
+		it('returns 404 when the session does not exist', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions/00000000-0000-0000-0000-000000000099/messages',
+					{ content: 'hi' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
 })

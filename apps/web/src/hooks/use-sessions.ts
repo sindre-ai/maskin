@@ -87,3 +87,18 @@ export function useSessionLogs(sessionId: string | null, workspaceId: string, en
 		enabled: !!sessionId && enabled,
 	})
 }
+
+// Send a message into a running session. The backend writes a `user_message` row
+// in session_logs, which (a) appears for everyone watching the live stream and
+// (b) is read by the agent runtime on its next turn.
+export function useSendUserMessage(sessionId: string, workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (content: string) => api.sessions.sendMessage(sessionId, workspaceId, content),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: [...queryKeys.sessions.logs(sessionId), 'all'],
+			})
+		},
+	})
+}

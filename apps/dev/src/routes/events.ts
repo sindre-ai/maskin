@@ -192,29 +192,32 @@ app.openapi(createCommentRoute, (async (c) => {
 			throw new Error('Failed to create comment')
 		}
 
-		// Create notifications for @mentioned agents (batched)
+		// Create notifications for everyone @mentioned. Agents need a `needs_input`
+		// notification (their runtime polls for these); humans get a lighter `mention`
+		// type so they see the ping in the Pulse tray without it pretending to be a
+		// blocking decision.
 		if (body.mentions?.length) {
 			const mentionedActors = await tx
 				.select({ id: actors.id, type: actors.type, name: actors.name })
 				.from(actors)
 				.where(inArray(actors.id, body.mentions))
 
-			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
-
-			if (agentActors.length > 0) {
+			if (mentionedActors.length > 0) {
 				const createdNotifications = await tx
 					.insert(notifications)
 					.values(
-						agentActors.map((agent) => ({
-							workspaceId,
-							type: 'needs_input' as const,
-							title: '@mentioned by comment',
-							content: body.content,
-							sourceActorId: actorId,
-							targetActorId: agent.id,
-							objectId: body.entity_id,
-							status: 'pending' as const,
-						})),
+						mentionedActors
+							.filter((a) => a.id !== actorId) // never ping yourself
+							.map((target) => ({
+								workspaceId,
+								type: target.type === 'agent' ? ('needs_input' as const) : ('mention' as const),
+								title: '@mentioned in a comment',
+								content: body.content,
+								sourceActorId: actorId,
+								targetActorId: target.id,
+								objectId: body.entity_id,
+								status: 'pending' as const,
+							})),
 					)
 					.returning()
 

@@ -260,6 +260,13 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<SessionLogResponse[]>(`/sessions/${id}/logs${qs}`, { workspaceId })
 		},
+		// Inject a message into a running session — backed by the user_message stream.
+		sendMessage: (id: string, workspaceId: string, content: string) =>
+			request<SessionLogResponse>(`/sessions/${id}/messages`, {
+				method: 'POST',
+				body: { content },
+				workspaceId,
+			}),
 	},
 
 	events: {

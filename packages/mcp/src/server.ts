@@ -979,6 +979,108 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// request_approval — create + poll a needs_input notification, return the response.
+	// Blocks the agent's tool call until the human responds (or timeout). The notification
+	// metadata carries `input_type` + (optional) `options`, both consumed by PulseCard so
+	// the human gets a richer card without any extra UI plumbing.
+	registerAppTool(
+		server,
+		'request_approval',
+		{
+			description: tools.request_approval.description,
+			inputSchema: tools.request_approval.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const {
+				workspace_id,
+				source_actor_id,
+				title,
+				question,
+				options,
+				object_id,
+				session_id,
+				target_actor_id,
+				timeout_seconds,
+				poll_interval_seconds,
+			} = args
+
+			const inputType = options && options.length > 0 ? 'single_choice' : 'text'
+			const created = (await apiCall(
+				config,
+				'POST',
+				'/api/notifications',
+				{
+					type: 'needs_input',
+					title,
+					content: question,
+					source_actor_id,
+					target_actor_id,
+					object_id,
+					session_id,
+					metadata: {
+						input_type: inputType,
+						question,
+						...(options && options.length > 0 ? { options } : {}),
+					},
+				},
+				{ workspaceId: workspace_id },
+			)) as { id: string }
+
+			const deadline = Date.now() + timeout_seconds * 1000
+			const pollMs = poll_interval_seconds * 1000
+
+			while (Date.now() < deadline) {
+				await new Promise((r) => setTimeout(r, pollMs))
+				const current = (await apiCall(
+					config,
+					'GET',
+					`/api/notifications/${created.id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { status: string; metadata?: { response?: unknown } | null }
+
+				if (current.status === 'resolved') {
+					return {
+						_meta: { toolName: 'request_approval' },
+						content: [
+							{
+								type: 'text' as const,
+								text: JSON.stringify(
+									{ status: 'resolved', response: current.metadata?.response ?? null },
+									null,
+									2,
+								),
+							},
+						],
+					}
+				}
+				if (current.status === 'dismissed') {
+					return {
+						_meta: { toolName: 'request_approval' },
+						content: [
+							{ type: 'text' as const, text: JSON.stringify({ status: 'dismissed' }, null, 2) },
+						],
+					}
+				}
+			}
+
+			return {
+				_meta: { toolName: 'request_approval' },
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{ status: 'timeout', notification_id: created.id, decision: 'no_response' },
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
 	// ─── Sessions ─────────────────────────────────────────────
 	registerAppTool(
 		server,

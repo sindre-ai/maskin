@@ -6,6 +6,8 @@ export const notificationTypeSchema = z.enum([
 	'recommendation',
 	'good_news',
 	'alert',
+	/** Lightweight ping when a human is @mentioned in a comment. */
+	'mention',
 ])
 
 export const notificationStatusSchema = z.enum(['pending', 'seen', 'resolved', 'dismissed'])

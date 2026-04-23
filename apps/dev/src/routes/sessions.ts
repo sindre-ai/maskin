@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
 import {
+	createSessionMessageSchema,
 	createSessionSchema,
 	sessionLogQuerySchema,
 	sessionParamsSchema,
@@ -17,6 +18,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -456,5 +458,82 @@ app.get('/:id/logs/stream', async (c) => {
 		}
 	})
 })
+
+// POST /:id/messages - Inject a user message into a running session. Inserts a `user_message`
+// row in session_logs which (a) shows up in the live log stream for everyone watching the
+// session and (b) is consumed by the agent runtime on its next turn.
+const postSessionMessageRoute = createRoute({
+	method: 'post',
+	path: '/{id}/messages',
+	tags: ['Sessions'],
+	summary: 'Post a user message into a running session',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: {
+			content: { 'application/json': { schema: createSessionMessageSchema } },
+		},
+	},
+	responses: {
+		201: {
+			content: { 'application/json': { schema: sessionLogResponseSchema } },
+			description: 'Message recorded',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a member of the session workspace',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not accepting input',
+		},
+	},
+})
+
+app.openapi(postSessionMessageRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { content } = c.req.valid('json')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) {
+		return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	}
+	if (!(await isWorkspaceMember(db, actorId, session.workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a workspace member'), 403)
+	}
+	// Only running / starting / waiting_for_input sessions can be talked to. Completed,
+	// failed, paused etc. would leave the message dangling.
+	const ACCEPTING = new Set(['pending', 'queued', 'starting', 'running', 'waiting_for_input'])
+	if (!ACCEPTING.has(session.status)) {
+		return c.json(
+			createApiError('BAD_REQUEST', `Session is ${session.status} and not accepting input`),
+			409,
+		)
+	}
+
+	// Tag the message with the actor so the agent (and other watchers) know who spoke.
+	const tagged = `[from ${actorId}] ${content}`
+	const [row] = await db
+		.insert(sessionLogs)
+		.values({
+			sessionId: id,
+			stream: 'user_message',
+			content: tagged,
+		})
+		.returning()
+
+	if (!row) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to record message'), 500)
+	}
+
+	return c.json(serialize(row) as z.infer<typeof sessionLogResponseSchema>, 201)
+}) as RouteHandler<typeof postSessionMessageRoute, Env>)
 
 export default app

@@ -42,6 +42,7 @@ const ALL_TOOL_NAMES = [
 	'get_notification',
 	'update_notification',
 	'delete_notification',
+	'request_approval',
 	'list_integrations',
 	'list_integration_providers',
 	'connect_integration',
@@ -334,6 +335,45 @@ describe('create_notification schema', () => {
 				type: 'alert',
 				title: '',
 				source_actor_id: uuid,
+			}),
+		).toThrow()
+	})
+})
+
+describe('request_approval schema', () => {
+	const schema = tools.request_approval.inputSchema
+
+	it('accepts a free-text approval request', () => {
+		const result = schema.parse({
+			source_actor_id: uuid,
+			title: 'Confirm before pushing',
+			question: 'Should I push to main?',
+		})
+		expect(result.title).toBe('Confirm before pushing')
+		expect(result.timeout_seconds).toBe(900)
+		expect(result.poll_interval_seconds).toBe(3)
+	})
+
+	it('accepts options for a multiple-choice request', () => {
+		const result = schema.parse({
+			source_actor_id: uuid,
+			title: 'Pick a path',
+			question: 'Which way?',
+			options: [
+				{ label: 'Yes', value: 'yes' },
+				{ label: 'No', value: 'no' },
+			],
+		})
+		expect(result.options).toHaveLength(2)
+	})
+
+	it('rejects timeout above 1 hour', () => {
+		expect(() =>
+			schema.parse({
+				source_actor_id: uuid,
+				title: 'X',
+				question: 'Y',
+				timeout_seconds: 3601,
 			}),
 		).toThrow()
 	})

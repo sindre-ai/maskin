@@ -552,6 +552,57 @@ export const tools = {
 			id: z.string().uuid(),
 		}),
 	},
+	request_approval: {
+		description:
+			'Block until a human responds to an approval request. Use when the agent needs a yes/no decision, a choice between options, or free-text input before continuing. Creates a `needs_input` notification and polls for the response. Returns the human-supplied value (or { decision: "no_response" } if the timeout is hit). Prefer this over create_notification when you actually need the answer to proceed.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			source_actor_id: z.string().uuid().describe('The agent actor making the request'),
+			title: z.string().min(1).describe('Short label shown in the notification card'),
+			question: z.string().describe('Full question / context shown to the human'),
+			options: z
+				.array(
+					z.object({
+						label: z.string(),
+						value: z.string(),
+						description: z.string().optional(),
+					}),
+				)
+				.optional()
+				.describe(
+					'Optional multiple-choice options. If provided, the human picks one and the response is the chosen `value`. If omitted, the human writes free text.',
+				),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Related object so the human can click through to context'),
+			session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Session that requested the approval, for routing'),
+			target_actor_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Specific human to ask. Omit to ask any workspace member.'),
+			timeout_seconds: z
+				.number()
+				.int()
+				.min(5)
+				.max(3600)
+				.default(900)
+				.describe('How long to poll before giving up (default 15 minutes, max 1 hour)'),
+			poll_interval_seconds: z
+				.number()
+				.int()
+				.min(1)
+				.max(60)
+				.default(3)
+				.describe('How often to poll the notification status (default 3s)'),
+		}),
+	},
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
 		description: 'List integrations connected to the workspace',
