@@ -225,31 +225,38 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 	}
 	const description = parsed.description ? parsed.description : null
 
-	// DB first, then S3. The unique index on (workspace_id, name) atomically
-	// rejects duplicate names, so two concurrent creators race on the DB (one
-	// wins with 201, the other gets 409) rather than on a shared S3 object.
-	// storageKey is derived from the row's UUID so no two writers ever target
-	// the same key.
+	// Atomic DB + S3 create. Order: INSERT inside tx → S3 put → tx commits.
+	// - Unique-name violation: caught on INSERT, S3 never touched (→ 409).
+	// - S3 failure: throws inside tx, DB row rolls back; no orphan row.
+	// - tx commit failure (rare): S3 holds an object under the row's UUID, but
+	//   no DB row references that UUID, so it's an inert orphan (cannot be
+	//   discovered or read by any code path).
 	const skillId = randomUUID()
 	const storageKey = workspaceSkillKey(workspaceId, skillId)
 	const sizeBytes = Buffer.byteLength(body.content, 'utf-8')
 
 	let created: typeof workspaceSkills.$inferSelect | undefined
 	try {
-		const rows = await db
-			.insert(workspaceSkills)
-			.values({
-				id: skillId,
-				workspaceId,
-				name: body.name,
-				description,
-				content: body.content,
-				storageKey,
-				sizeBytes,
-				createdBy: callerActorId,
-			})
-			.returning()
-		created = rows[0]
+		created = await db.transaction(async (tx) => {
+			const rows = await tx
+				.insert(workspaceSkills)
+				.values({
+					id: skillId,
+					workspaceId,
+					name: body.name,
+					description,
+					content: body.content,
+					storageKey,
+					sizeBytes,
+					createdBy: callerActorId,
+				})
+				.returning()
+			const row = rows[0]
+			if (!row) throw new Error('INSERT returned no row')
+
+			await storage.putWorkspaceSkill(workspaceId, skillId, body.content)
+			return row
+		})
 	} catch (err) {
 		if (err instanceof Error && /workspace_skills_ws_name_uniq/.test(err.message)) {
 			return c.json(
@@ -262,28 +269,6 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 
 	if (!created) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace skill'), 500)
-	}
-
-	try {
-		await storage.putWorkspaceSkill(workspaceId, skillId, body.content)
-	} catch (err) {
-		// S3 write failed — remove the DB row we just inserted so we don't leave
-		// metadata pointing at a missing object. Cascade drops any (unlikely)
-		// attachment the caller raced in.
-		try {
-			await db.delete(workspaceSkills).where(eq(workspaceSkills.id, skillId))
-		} catch (rollbackErr) {
-			logger.error(
-				'Failed to roll back DB insert after S3 write failure — row now points at missing storage key',
-				{
-					workspaceId,
-					skillId,
-					storageKey,
-					error: String(rollbackErr),
-				},
-			)
-		}
-		throw err
 	}
 
 	// Audit event — do NOT include the content field (8KB NOTIFY payload cap).
@@ -386,15 +371,27 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	}
 	const description = parsed.description ? parsed.description : null
 
-	// S3 key is keyed on the skill's UUID, so writing here cannot collide with
-	// a concurrent create-with-same-name (which would race on a different id)
-	// or a delete-then-create cycle (new id = new key).
-	const { sizeBytes } = await storage.putWorkspaceSkill(workspaceId, existing.id, body.content)
-
+	const sizeBytes = Buffer.byteLength(body.content, 'utf-8')
 	const now = new Date()
-	let updated: typeof workspaceSkills.$inferSelect | undefined
-	try {
-		const rows = await db
+
+	// Atomic DB + S3 update. Inside a tx: re-SELECT FOR UPDATE serializes
+	// concurrent updaters on this row, then UPDATE runs, then S3 put runs.
+	// - S3 failure: throws inside tx → UPDATE rolls back, S3 was never written
+	//   (put failed), so DB and S3 stay in sync on the previous content.
+	// - Concurrent delete between outer SELECT and re-SELECT: lock-acquire
+	//   sees no row → return 404, S3 not touched.
+	// - Per-UUID S3 key + row lock means no other writer can race the put.
+	const updated = await db.transaction(async (tx) => {
+		const [locked] = await tx
+			.select()
+			.from(workspaceSkills)
+			.where(eq(workspaceSkills.id, existing.id))
+			.for('update')
+			.limit(1)
+
+		if (!locked) return undefined
+
+		const rows = await tx
 			.update(workspaceSkills)
 			.set({
 				content: body.content,
@@ -404,32 +401,16 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 			})
 			.where(eq(workspaceSkills.id, existing.id))
 			.returning()
-		updated = rows[0]
-	} catch (err) {
-		// Roll back the S3 write to the previous content. Since the S3 key is
-		// scoped to this skill's UUID, the rollback only ever affects this skill
-		// — it cannot overwrite a concurrent successful update on a different
-		// skill that happened to share the same name.
-		try {
-			await storage.putWorkspaceSkill(workspaceId, existing.id, existing.content)
-		} catch (rollbackErr) {
-			logger.error(
-				'Failed to roll back S3 write after DB update failure — storage now holds new content while DB reports old metadata',
-				{
-					workspaceId,
-					skillId: existing.id,
-					name,
-					error: String(rollbackErr),
-				},
-			)
-		}
-		throw err
-	}
+		const row = rows[0]
+		if (!row) return undefined
+
+		await storage.putWorkspaceSkill(workspaceId, existing.id, body.content)
+		return row
+	})
 
 	if (!updated) {
-		// Row vanished between select and update (concurrent delete). The
-		// concurrent delete also removed its own S3 object (scoped to the same
-		// id), so no rollback is needed here.
+		// Row vanished between outer SELECT and the row lock (concurrent delete).
+		// No S3 rollback needed — the put never ran (we returned before it).
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 

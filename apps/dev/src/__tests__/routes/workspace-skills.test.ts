@@ -169,6 +169,10 @@ describe('Workspace Skills Routes', () => {
 		})
 
 		it('rolls back the DB insert when the S3 write fails', async () => {
+			// The INSERT and the S3 put run inside a single db.transaction, so a
+			// throw from the put unwinds the tx — no orphan workspace_skills row
+			// is committed. The mock tx runs the callback, propagates the throw,
+			// and the route returns 500 (Hono's default for re-thrown errors).
 			const { app, mockResults, agentStorage } = createSkillsTestApp(
 				workspaceSkillsRoutes,
 				'/api/workspaces',
@@ -184,9 +188,6 @@ describe('Workspace Skills Routes', () => {
 				jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, body),
 			)
 
-			// The handler re-throws the S3 error → Hono returns 500 by default.
-			// What matters is that the S3 write was attempted and the DB row was
-			// deleted as rollback.
 			expect(res.status).toBe(500)
 			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalled()
 		})
@@ -202,7 +203,8 @@ describe('Workspace Skills Routes', () => {
 			const body = buildUpdateWorkspaceSkillBody()
 			const updated = { ...existing, content: body.content }
 
-			mockResults.selectQueue = [[buildWorkspaceMember()], [existing]]
+			// 3 selects: workspace membership, outer existing lookup, inner SELECT FOR UPDATE inside tx
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
 			mockResults.update = [updated]
 
 			const res = await app.request(
@@ -274,6 +276,42 @@ describe('Workspace Skills Routes', () => {
 			)
 
 			expect(res.status).toBe(403)
+		})
+
+		it('does not perform a stale-content S3 rollback when the S3 write fails', async () => {
+			// Old behavior re-put existing.content (stale) on DB-update failure,
+			// which could overwrite a concurrent successful update. New behavior:
+			// UPDATE runs inside a tx and S3 put runs after the row lock — if the
+			// put throws, the tx rolls back the DB and S3 was never modified.
+			// What matters: putWorkspaceSkill is called exactly once (with the new
+			// content), never a second time with the prior content.
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({
+				workspaceId,
+				name: 'my-skill',
+				content: '---\nname: x\n---\nOLD',
+			})
+			const body = buildUpdateWorkspaceSkillBody({ content: '---\nname: x\n---\nNEW' })
+
+			// outer SELECT, inner SELECT FOR UPDATE both return existing
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
+			mockResults.update = [{ ...existing, content: body.content }]
+			vi.mocked(agentStorage.putWorkspaceSkill).mockRejectedValueOnce(new Error('S3 5xx'))
+
+			const res = await app.request(
+				jsonRequest('PUT', `/api/workspaces/${workspaceId}/skills/my-skill`, body),
+			)
+
+			expect(res.status).toBe(500)
+			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledTimes(1)
+			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
+				workspaceId,
+				existing.id,
+				body.content,
+			)
 		})
 	})
 

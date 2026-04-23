@@ -132,6 +132,7 @@ function createChain(returnValue?: unknown, error?: Error): Record<string, unkno
 		'innerJoin',
 		'onConflictDoUpdate',
 		'onConflictDoNothing',
+		'for',
 	]
 	for (const m of methods) {
 		chain[m] = () => chain

@@ -69,6 +69,36 @@ describe('AgentStorageManager', () => {
 			expect(mkdir).toHaveBeenCalledWith(expect.stringContaining('memory'), { recursive: true })
 			expect(mkdir).toHaveBeenCalledWith(expect.stringContaining('workspace'), { recursive: true })
 		})
+
+		it('continues past per-file failures, then throws an aggregate error naming each failed key', async () => {
+			// Without per-key try/catch, the first bad object would abort the whole
+			// pull with only its key in the error message. The aggregate error must
+			// name every failure so operators can see the full divergence.
+			const prefix = `agents/${workspaceId}/${actorId}/`
+			storage.list.mockResolvedValue([
+				`${prefix}memory/CLAUDE.md`,
+				`${prefix}skills/broken/SKILL.md`,
+				`${prefix}learnings/session-1.md`,
+			])
+			storage.get.mockImplementation(async (key: string) => {
+				if (key.includes('broken')) throw new Error('NoSuchKey')
+				return Buffer.from('ok', 'utf-8')
+			})
+
+			await expect(manager.pullAgentFiles(actorId, workspaceId, '/tmp/agent')).rejects.toThrow(
+				/skills\/broken\/SKILL\.md/,
+			)
+
+			// The two healthy files were still written despite the middle failure.
+			expect(writeFile).toHaveBeenCalledWith(
+				join('/tmp/agent/memory/CLAUDE.md'),
+				expect.any(Buffer),
+			)
+			expect(writeFile).toHaveBeenCalledWith(
+				join('/tmp/agent/learnings/session-1.md'),
+				expect.any(Buffer),
+			)
+		})
 	})
 
 	describe('pushAgentFiles()', () => {
@@ -309,17 +339,31 @@ describe('AgentStorageManager', () => {
 				expect(writeFile).not.toHaveBeenCalled()
 			})
 
-			it('throws when an attached skill cannot be pulled from S3', async () => {
-				// Silent failure here would start the session without skills the user
-				// attached — fail fast instead so operators see the DB↔S3 divergence.
+			it('does not throw when an attached skill cannot be pulled from S3', async () => {
+				// A single missing/unreadable skill must NOT block agent startup.
+				// The session continues with whatever skills did load; operators see
+				// the divergence via the per-skill error log written by the manager.
 				mockResults.select = [
 					{ name: 'deploy-check', storageKey: workspaceSkillKey(workspaceId, deployCheckId) },
+					{ name: 'pr-review', storageKey: workspaceSkillKey(workspaceId, prReviewId) },
 				]
-				storage.get.mockRejectedValue(new Error('NoSuchKey'))
+				storage.get.mockRejectedValueOnce(new Error('NoSuchKey'))
+				storage.get.mockResolvedValueOnce(Buffer.from('body', 'utf-8'))
 
 				await expect(
 					manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent'),
-				).rejects.toThrow(/deploy-check/)
+				).resolves.toBeUndefined()
+
+				// pr-review still gets written
+				expect(writeFile).toHaveBeenCalledWith(
+					join('/tmp/agent/skills/pr-review/SKILL.md'),
+					expect.any(Buffer),
+				)
+				// deploy-check (the failing one) is not written
+				expect(writeFile).not.toHaveBeenCalledWith(
+					join('/tmp/agent/skills/deploy-check/SKILL.md'),
+					expect.any(Buffer),
+				)
 			})
 
 			it('skips skills whose folder already exists on disk (agent-local wins)', async () => {

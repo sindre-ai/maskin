@@ -31,16 +31,28 @@ export class AgentStorageManager {
 		const prefix = `agents/${workspaceId}/${actorId}/`
 		const keys = await this.storage.list(prefix)
 
+		// Per-key try/catch so one bad object doesn't abort the whole pull with an
+		// opaque first-error message. We collect every failure and throw an
+		// aggregate at the end so the caller (session-manager.start) sees every
+		// missing/unreadable file instead of just the first.
+		const failures: { key: string; error: string }[] = []
 		for (const key of keys) {
 			const relativePath = key.slice(prefix.length)
 			const localPath = join(localDir, relativePath)
-
-			// Ensure parent directory exists
-			const parentDir = join(localPath, '..')
-			await mkdir(parentDir, { recursive: true })
-
-			const data = await this.storage.get(key)
-			await writeFile(localPath, data)
+			try {
+				const parentDir = join(localPath, '..')
+				await mkdir(parentDir, { recursive: true })
+				const data = await this.storage.get(key)
+				await writeFile(localPath, data)
+			} catch (err) {
+				logger.error('Failed to pull agent file', {
+					actorId,
+					workspaceId,
+					key,
+					error: String(err),
+				})
+				failures.push({ key, error: String(err) })
+			}
 		}
 
 		// Ensure directory structure exists even if empty
@@ -49,7 +61,18 @@ export class AgentStorageManager {
 		await mkdir(join(localDir, 'memory'), { recursive: true })
 		await mkdir(join(localDir, 'workspace'), { recursive: true })
 
-		logger.info(`Pulled ${keys.length} agent files`, { actorId, workspaceId })
+		logger.info(`Pulled ${keys.length - failures.length}/${keys.length} agent files`, {
+			actorId,
+			workspaceId,
+			failed: failures.length,
+		})
+
+		if (failures.length > 0) {
+			const summary = failures.map((f) => `${f.key}: ${f.error}`).join('; ')
+			throw new Error(
+				`Failed to pull ${failures.length}/${keys.length} agent files for ${actorId}: ${summary}`,
+			)
+		}
 	}
 
 	/**
@@ -367,6 +390,10 @@ export class AgentStorageManager {
 			}
 		}
 
+		// Per-skill failures are logged above and counted in `failed`. We do NOT
+		// throw — a single missing or unreadable S3 object must not block the
+		// agent from starting at all. Operators see the divergence in logs and
+		// the skill-attachment list; the session proceeds with whatever did load.
 		logger.info('Pulled workspace skills for agent', {
 			actorId,
 			workspaceId,
@@ -374,17 +401,6 @@ export class AgentStorageManager {
 			skipped,
 			failed: failures.length,
 		})
-
-		if (failures.length > 0) {
-			// Surface the failure to the caller rather than silently starting a
-			// session without skills the user attached. A missing S3 object here
-			// means the DB ↔ storage state has diverged and the agent would run
-			// with incomplete context — better to fail fast.
-			const names = failures.map((f) => f.name).join(', ')
-			throw new Error(
-				`Failed to pull ${failures.length} workspace skill(s) for agent ${actorId}: ${names}`,
-			)
-		}
 	}
 
 	private async upsertFileRecord(
