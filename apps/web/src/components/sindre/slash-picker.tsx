@@ -52,10 +52,19 @@ export interface SlashKindDef<TItem = unknown> {
 	emptyCopy: string
 	multi: boolean
 	search: (query: string, ctx: SlashSearchContext) => Promise<TItem[]>
+	/**
+	 * Optional pagination. When defined, the picker shows a "Load more" button
+	 * after the initial results and concatenates each page into the visible
+	 * list. The page size is what `search` / `loadMore` return; the picker
+	 * stops showing the button when a page comes back empty.
+	 */
+	loadMore?: (query: string, ctx: SlashSearchContext, currentItems: TItem[]) => Promise<TItem[]>
 	keyOf: (item: TItem) => string
 	renderItem: (item: TItem) => { primary: string; secondary?: string | null }
 	toResult: (item: TItem) => SlashPickerResult
 }
+
+const OBJECT_PAGE_SIZE = 20
 
 // ---------------------------------------------------------------------------
 // Built-in kinds
@@ -96,16 +105,34 @@ const objectKind: SlashKindDef<ObjectResponse> = {
 	emptyCopy: 'No objects found.',
 	multi: true,
 	search: async (query, { workspaceId, signal }) => {
-		const needle = query.trim()
-		const results = needle
-			? await api.objects.search(workspaceId, { q: needle, limit: '20' })
-			: await api.objects.list(workspaceId, { limit: '20' })
+		const results = await fetchObjectPage(workspaceId, query, 0)
+		if (signal.aborted) return []
+		return results
+	},
+	loadMore: async (query, { workspaceId, signal }, currentItems) => {
+		const results = await fetchObjectPage(workspaceId, query, currentItems.length)
 		if (signal.aborted) return []
 		return results
 	},
 	keyOf: (o) => o.id,
 	renderItem: (o) => ({ primary: o.title || 'Untitled', secondary: o.type }),
 	toResult: (o) => ({ kind: 'object', ref: { id: o.id, title: o.title, type: o.type } }),
+}
+
+function fetchObjectPage(
+	workspaceId: string,
+	query: string,
+	offset: number,
+): Promise<ObjectResponse[]> {
+	const needle = query.trim()
+	const params: Record<string, string> = {
+		limit: String(OBJECT_PAGE_SIZE),
+		offset: String(offset),
+	}
+	if (needle) {
+		return api.objects.search(workspaceId, { ...params, q: needle })
+	}
+	return api.objects.list(workspaceId, params)
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous registry — each entry carries its own TItem
@@ -240,6 +267,8 @@ function SlashPickerBody({
 	const [query, setQuery] = useState('')
 	const [items, setItems] = useState<unknown[]>([])
 	const [loading, setLoading] = useState(false)
+	const [loadingMore, setLoadingMore] = useState(false)
+	const [hasMore, setHasMore] = useState(false)
 	const [error, setError] = useState<Error | null>(null)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset query/items/error whenever the active kind flips
@@ -247,6 +276,7 @@ function SlashPickerBody({
 		setQuery('')
 		setItems([])
 		setError(null)
+		setHasMore(false)
 	}, [activeKindId])
 
 	useEffect(() => {
@@ -260,11 +290,13 @@ function SlashPickerBody({
 				.then((results) => {
 					if (controller.signal.aborted) return
 					setItems(results)
+					setHasMore(Boolean(activeKind.loadMore) && results.length >= OBJECT_PAGE_SIZE)
 				})
 				.catch((err) => {
 					if (controller.signal.aborted) return
 					setError(err instanceof Error ? err : new Error('Search failed'))
 					setItems([])
+					setHasMore(false)
 				})
 				.finally(() => {
 					if (!controller.signal.aborted) setLoading(false)
@@ -275,6 +307,24 @@ function SlashPickerBody({
 			clearTimeout(timer)
 		}
 	}, [activeKind, query, workspaceId, queryClient])
+
+	const handleLoadMore = useCallback(async () => {
+		if (!activeKind?.loadMore || loadingMore) return
+		setLoadingMore(true)
+		try {
+			const next = await activeKind.loadMore(
+				query,
+				{ workspaceId, signal: new AbortController().signal, queryClient },
+				items,
+			)
+			setItems((prev) => prev.concat(next))
+			setHasMore(next.length >= OBJECT_PAGE_SIZE)
+		} catch (err) {
+			setError(err instanceof Error ? err : new Error('Load more failed'))
+		} finally {
+			setLoadingMore(false)
+		}
+	}, [activeKind, items, loadingMore, query, queryClient, workspaceId])
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLDivElement>) => {
@@ -315,6 +365,9 @@ function SlashPickerBody({
 						loading={loading}
 						error={error}
 						selected={selected}
+						hasMore={hasMore}
+						loadingMore={loadingMore}
+						onLoadMore={handleLoadMore}
 						onPick={(item) => onPick(activeKind.toResult(item), activeKind)}
 					/>
 				) : (
@@ -377,10 +430,23 @@ interface ActiveKindListProps {
 	loading: boolean
 	error: Error | null
 	selected?: SlashPickerSelection
+	hasMore: boolean
+	loadingMore: boolean
+	onLoadMore: () => void
 	onPick: (item: unknown) => void
 }
 
-function ActiveKindList({ kind, items, loading, error, selected, onPick }: ActiveKindListProps) {
+function ActiveKindList({
+	kind,
+	items,
+	loading,
+	error,
+	selected,
+	hasMore,
+	loadingMore,
+	onLoadMore,
+	onPick,
+}: ActiveKindListProps) {
 	if (error) {
 		return <div className="px-3 py-3 text-sm text-error">{error.message || 'Search failed'}</div>
 	}
@@ -395,37 +461,50 @@ function ActiveKindList({ kind, items, loading, error, selected, onPick }: Activ
 		return <div className="px-3 py-3 text-sm text-muted-foreground">{kind.emptyCopy}</div>
 	}
 	return (
-		<Command.Group
-			heading={kind.label}
-			className={cn(
-				'px-1 py-1 text-xs text-muted-foreground',
-				'[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1',
-			)}
-		>
-			{items.map((item) => {
-				const key = kind.keyOf(item)
-				const view = kind.renderItem(item)
-				const isSelected = isSelectedForKind(kind.id, key, selected)
-				return (
-					<Command.Item
-						key={key}
-						value={key}
-						onSelect={() => onPick(item)}
-						className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-					>
-						<span className="min-w-0 flex-1">
-							<span className="block truncate">{view.primary}</span>
-							{view.secondary ? (
-								<span className="block truncate text-xs text-muted-foreground">
-									{view.secondary}
-								</span>
-							) : null}
-						</span>
-						{kind.multi && isSelected ? <Check size={14} aria-label="Selected" /> : null}
-					</Command.Item>
-				)
-			})}
-		</Command.Group>
+		<>
+			<Command.Group
+				heading={kind.label}
+				className={cn(
+					'px-1 py-1 text-xs text-muted-foreground',
+					'[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1',
+				)}
+			>
+				{items.map((item) => {
+					const key = kind.keyOf(item)
+					const view = kind.renderItem(item)
+					const isSelected = isSelectedForKind(kind.id, key, selected)
+					return (
+						<Command.Item
+							key={key}
+							value={key}
+							onSelect={() => onPick(item)}
+							className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+						>
+							<span className="min-w-0 flex-1">
+								<span className="block truncate">{view.primary}</span>
+								{view.secondary ? (
+									<span className="block truncate text-xs text-muted-foreground">
+										{view.secondary}
+									</span>
+								) : null}
+							</span>
+							{kind.multi && isSelected ? <Check size={14} aria-label="Selected" /> : null}
+						</Command.Item>
+					)
+				})}
+			</Command.Group>
+			{hasMore ? (
+				<button
+					type="button"
+					onClick={onLoadMore}
+					disabled={loadingMore}
+					className="flex w-full items-center justify-center gap-2 rounded px-2 py-2 text-text-secondary text-xs hover:bg-bg-hover disabled:opacity-60"
+				>
+					{loadingMore ? <Spinner /> : null}
+					{loadingMore ? 'Loading…' : 'Load more'}
+				</button>
+			) : null}
+		</>
 	)
 }
 

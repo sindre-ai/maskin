@@ -166,6 +166,35 @@ describe('<SlashPicker>', () => {
 		expect(lastCall?.[1]).toMatchObject({ q: 'alpha' })
 	})
 
+	it('shows a Load more button after a full first page and appends the next page on click', async () => {
+		const fullPage = Array.from({ length: 20 }, (_, i) =>
+			buildObjectResponse({ id: `obj-p1-${i}`, title: `First ${i}`, type: 'task' }),
+		)
+		const nextPage = Array.from({ length: 5 }, (_, i) =>
+			buildObjectResponse({ id: `obj-p2-${i}`, title: `Second ${i}`, type: 'task' }),
+		)
+		vi.mocked(api.objects.list).mockResolvedValueOnce(fullPage).mockResolvedValueOnce(nextPage)
+
+		const user = userEvent.setup()
+		renderPicker({ initialKindId: 'object' })
+
+		const loadMore = await screen.findByRole('button', { name: 'Load more' })
+		expect(api.objects.list).toHaveBeenCalledTimes(1)
+
+		await user.click(loadMore)
+
+		await waitFor(() => expect(api.objects.list).toHaveBeenCalledTimes(2))
+		expect(vi.mocked(api.objects.list).mock.calls[1][1]).toMatchObject({
+			limit: '20',
+			offset: '20',
+		})
+		expect(await screen.findByText('Second 0')).toBeInTheDocument()
+		// Second page returned fewer than the page size, so the button is gone.
+		await waitFor(() => {
+			expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+		})
+	})
+
 	it('walks back to the kind menu when Backspace is pressed on an empty query', async () => {
 		const user = userEvent.setup()
 		renderPicker()
