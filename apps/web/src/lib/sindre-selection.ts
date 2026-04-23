@@ -28,16 +28,29 @@ export interface SindreSelectionNotification {
 	title?: string | null
 }
 
+export interface SindreSelectionFile {
+	name: string
+	content: string
+	sizeBytes: number
+}
+
 export interface SindreSelection {
 	agent: SindreSelectionAgent | null
 	objects: SindreSelectionObject[]
 	notifications: SindreSelectionNotification[]
+	/**
+	 * Markdown files the user has uploaded for this turn. Optional on the
+	 * interface so existing call sites that literal-build a selection object
+	 * (many tests) keep compiling; consumers read it as `selection.files ?? []`.
+	 */
+	files?: SindreSelectionFile[]
 }
 
 export const EMPTY_SINDRE_SELECTION: SindreSelection = {
 	agent: null,
 	objects: [],
 	notifications: [],
+	files: [],
 }
 
 /**
@@ -52,8 +65,9 @@ export function buildOneShotActionPrompt(
 	content: string,
 	objects: SindreSelectionObject[],
 	notifications: SindreSelectionNotification[] = [],
+	files: SindreSelectionFile[] = [],
 ): string {
-	if (objects.length === 0 && notifications.length === 0) return content
+	if (objects.length === 0 && notifications.length === 0 && files.length === 0) return content
 	const lines: string[] = [content, '', '---']
 	if (objects.length > 0) {
 		lines.push('Context objects:')
@@ -71,6 +85,13 @@ export function buildOneShotActionPrompt(
 			lines.push(`- ${label} — id: ${n.id}`)
 		}
 	}
+	if (files.length > 0) {
+		if (objects.length > 0 || notifications.length > 0) lines.push('')
+		lines.push('Attached files:')
+		for (const f of files) {
+			lines.push('', `--- ${f.name} ---`, f.content, `--- end ${f.name} ---`)
+		}
+	}
 	return lines.join('\n')
 }
 
@@ -86,6 +107,8 @@ export type SindreSelectionAction =
 	| { type: 'remove_object'; id: string }
 	| { type: 'add_notification'; notification: SindreSelectionNotification }
 	| { type: 'remove_notification'; id: string }
+	| { type: 'add_file'; file: SindreSelectionFile }
+	| { type: 'remove_file'; name: string }
 	| { type: 'clear_all' }
 
 /**
@@ -139,8 +162,24 @@ export function sindreSelectionReducer(
 			if (next.length === state.notifications.length) return state
 			return { ...state, notifications: next }
 		}
+		case 'add_file': {
+			const files = state.files ?? []
+			if (files.some((f) => f.name === action.file.name)) return state
+			return { ...state, files: [...files, action.file] }
+		}
+		case 'remove_file': {
+			const files = state.files ?? []
+			const next = files.filter((f) => f.name !== action.name)
+			if (next.length === files.length) return state
+			return { ...state, files: next }
+		}
 		case 'clear_all': {
-			if (state.agent === null && state.objects.length === 0 && state.notifications.length === 0) {
+			if (
+				state.agent === null &&
+				state.objects.length === 0 &&
+				state.notifications.length === 0 &&
+				(state.files ?? []).length === 0
+			) {
 				return state
 			}
 			return EMPTY_SINDRE_SELECTION

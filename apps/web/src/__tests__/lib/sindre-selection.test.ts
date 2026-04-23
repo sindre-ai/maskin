@@ -86,7 +86,12 @@ describe('buildOneShotActionPrompt', () => {
 	})
 
 	it('exports an empty selection constant with no agent, objects, or notifications', () => {
-		expect(EMPTY_SINDRE_SELECTION).toEqual({ agent: null, objects: [], notifications: [] })
+		expect(EMPTY_SINDRE_SELECTION).toEqual({
+			agent: null,
+			objects: [],
+			notifications: [],
+			files: [],
+		})
 	})
 })
 

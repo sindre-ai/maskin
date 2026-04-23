@@ -21,7 +21,9 @@ import {
 	buildOneShotActionPrompt,
 } from '@/lib/sindre-selection'
 import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
-import { Bot, Box, Send } from 'lucide-react'
+import { Bot, Box, Paperclip, Send } from 'lucide-react'
+
+const FILE_MAX_BYTES = 1024 * 1024 // 1 MB per upload — plenty for markdown
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -121,6 +123,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	const selectedAgent = activeSelection.agent
 	const selectedObjects = activeSelection.objects
 	const selectedNotifications = activeSelection.notifications
+	const selectedFiles = activeSelection.files ?? []
 
 	const sindre = useSindreSession({ workspaceId, sindreActorId })
 	const oneShot = useSindreOneShot()
@@ -186,14 +189,22 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 			pendingBaselineRef.current = events.length
 			setPendingTurn(true)
 			const displayAttachments = buildDisplayAttachments(activeSelection)
+			const hasContext =
+				selectedObjects.length > 0 ||
+				selectedNotifications.length > 0 ||
+				selectedFiles.length > 0
 			try {
 				if (selectedAgent) {
+					// The one-shot hook builds its own action_prompt — pass raw
+					// content + files so it can include them without us
+					// double-enriching.
 					await oneShot.send({
 						workspaceId,
 						agent: selectedAgent,
 						content,
 						objects: selectedObjects,
 						notifications: selectedNotifications,
+						files: selectedFiles,
 						displayAttachments,
 					})
 				} else {
@@ -201,12 +212,17 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 					// The backend's interactive-session input endpoint currently
 					// forwards only `content` to the container's stdin (attachments
 					// are accepted by the schema for future first-class handling but
-					// discarded at runtime). Inline the attached objects + notifications
-					// into the user turn so Sindre actually sees what the user picked.
-					const enriched =
-						selectedObjects.length > 0 || selectedNotifications.length > 0
-							? buildOneShotActionPrompt(content, selectedObjects, selectedNotifications)
-							: content
+					// discarded at runtime). Inline the attached objects, notifications,
+					// and uploaded files into the user turn so Sindre actually sees
+					// what the user picked.
+					const enriched = hasContext
+						? buildOneShotActionPrompt(
+								content,
+								selectedObjects,
+								selectedNotifications,
+								selectedFiles,
+							)
+						: content
 					if (attachments) {
 						await sindre.send(enriched, attachments, content, displayAttachments)
 					} else {
@@ -232,6 +248,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 			selectedAgent,
 			selectedObjects,
 			selectedNotifications,
+			selectedFiles,
 			workspaceId,
 		],
 	)
@@ -269,6 +286,13 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 		[onDispatchSelection],
 	)
 
+	const handleRemoveFile = useCallback(
+		(name: string) => {
+			onDispatchSelection?.({ type: 'remove_file', name })
+		},
+		[onDispatchSelection],
+	)
+
 	const placeholder = computePlaceholder(surface, selectedAgent?.name)
 
 	return (
@@ -300,6 +324,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 				onRemoveAgent={handleRemoveAgent}
 				onRemoveObject={handleRemoveObject}
 				onRemoveNotification={handleRemoveNotification}
+				onRemoveFile={handleRemoveFile}
 			/>
 		</div>
 	)
@@ -385,6 +410,9 @@ function buildDisplayAttachments(selection: SindreSelection): UserAttachmentView
 	for (const n of selection.notifications) {
 		out.push({ kind: 'notification', id: n.id, title: n.title ?? null })
 	}
+	for (const f of selection.files ?? []) {
+		out.push({ kind: 'file', name: f.name, sizeBytes: f.sizeBytes })
+	}
 	return out.length > 0 ? out : undefined
 }
 
@@ -422,6 +450,7 @@ interface ComposerProps {
 	onRemoveAgent: () => void
 	onRemoveObject: (id: string) => void
 	onRemoveNotification: (id: string) => void
+	onRemoveFile: (name: string) => void
 }
 
 /**
@@ -453,6 +482,7 @@ function Composer({
 	onRemoveAgent,
 	onRemoveObject,
 	onRemoveNotification,
+	onRemoveFile,
 }: ComposerProps) {
 	const [value, setValue] = useState('')
 	const [sending, setSending] = useState(false)
@@ -460,6 +490,7 @@ function Composer({
 	const [pickerOpen, setPickerOpen] = useState(false)
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
 	const slashPosRef = useRef<number | null>(null)
+	const fileInputRef = useRef<HTMLInputElement | null>(null)
 	const canSend = value.trim().length > 0 && !disabled && !sending && !pending
 	const showSpinner = sending || pending
 
@@ -556,6 +587,30 @@ function Composer({
 		}
 	}, [])
 
+	const handleFileSelection = useCallback(
+		async (event: ChangeEvent<HTMLInputElement>) => {
+			const input = event.target
+			const files = Array.from(input.files ?? [])
+			input.value = '' // allow re-picking the same file after removing it
+			for (const file of files) {
+				if (file.size > FILE_MAX_BYTES) {
+					setSendError(`${file.name} is larger than ${FILE_MAX_BYTES / 1024}KB`)
+					continue
+				}
+				try {
+					const content = await file.text()
+					onDispatchSelection?.({
+						type: 'add_file',
+						file: { name: file.name, content, sizeBytes: file.size },
+					})
+				} catch {
+					setSendError(`Failed to read ${file.name}`)
+				}
+			}
+		},
+		[onDispatchSelection],
+	)
+
 	return (
 		<div
 			className={cn(
@@ -579,6 +634,17 @@ function Composer({
 				onRemoveAgent={onRemoveAgent}
 				onRemoveObject={onRemoveObject}
 				onRemoveNotification={onRemoveNotification}
+				onRemoveFile={onRemoveFile}
+			/>
+			<input
+				ref={fileInputRef}
+				type="file"
+				accept=".md,.markdown,text/markdown,text/plain"
+				multiple
+				className="hidden"
+				onChange={(e) => void handleFileSelection(e)}
+				aria-hidden
+				tabIndex={-1}
 			/>
 			<form onSubmit={handleSubmit}>
 				<Textarea
@@ -620,6 +686,18 @@ function Composer({
 					>
 						<Box size={14} aria-hidden />
 						Items
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-7 gap-1 px-2 text-xs text-text-secondary"
+						onClick={() => fileInputRef.current?.click()}
+						disabled={disabled}
+						aria-label="Upload markdown file"
+					>
+						<Paperclip size={14} aria-hidden />
+						Upload
 					</Button>
 					<div className="ml-auto">
 						<Button

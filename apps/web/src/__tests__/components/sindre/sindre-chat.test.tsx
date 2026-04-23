@@ -300,6 +300,7 @@ describe('SindreChat', () => {
 				{ id: 'obj-2', title: null, type: null },
 			],
 			notifications: [],
+			files: [],
 			displayAttachments: [
 				{ kind: 'agent', id: 'actor-reviewer', name: 'Code Reviewer' },
 				{ kind: 'object', id: 'obj-1', title: 'PR #42', type: 'task' },
@@ -408,6 +409,7 @@ describe('SindreChat', () => {
 			content: 'take a look',
 			objects: [],
 			notifications: [{ id: 'notif-1', title: 'PR merged' }],
+			files: [],
 			displayAttachments: [
 				{ kind: 'agent', id: 'actor-reviewer', name: 'Code Reviewer' },
 				{ kind: 'notification', id: 'notif-1', title: 'PR merged' }],
@@ -686,6 +688,7 @@ describe('SindreChat', () => {
 			agent: null,
 			objects: [],
 			notifications: [],
+			files: [],
 		})
 		expect(mockSend).not.toHaveBeenCalled()
 		expect(mockOneShotSend).not.toHaveBeenCalled()

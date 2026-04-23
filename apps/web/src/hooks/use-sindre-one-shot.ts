@@ -3,6 +3,7 @@ import { getApiKey } from '@/lib/auth'
 import { API_BASE } from '@/lib/constants'
 import {
 	type SindreSelectionAgent,
+	type SindreSelectionFile,
 	type SindreSelectionNotification,
 	type SindreSelectionObject,
 	buildOneShotActionPrompt,
@@ -19,6 +20,7 @@ export interface SendOneShotArgs {
 	content: string
 	objects?: SindreSelectionObject[]
 	notifications?: SindreSelectionNotification[]
+	files?: SindreSelectionFile[]
 	displayAttachments?: UserAttachmentView[]
 }
 
@@ -59,6 +61,7 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 			content,
 			objects = [],
 			notifications = [],
+			files = [],
 			displayAttachments,
 		} = args
 		if (!workspaceId) throw new Error('No workspace selected')
@@ -84,7 +87,7 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 		try {
 			session = await api.sessions.create(workspaceId, {
 				actor_id: agent.id,
-				action_prompt: buildOneShotActionPrompt(content, objects, notifications),
+				action_prompt: buildOneShotActionPrompt(content, objects, notifications, files),
 				auto_start: true,
 			})
 		} catch (err) {

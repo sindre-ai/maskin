@@ -2,7 +2,7 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/cn'
 import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
-import { Bell, Bot, Box, ChevronDown, ChevronRight, Wrench } from 'lucide-react'
+import { Bell, Bot, Box, ChevronDown, ChevronRight, FileText, Wrench } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 interface SindreTranscriptProps {
@@ -115,7 +115,7 @@ function UserMessageBlock({
 					<ul className="flex flex-wrap gap-1" aria-label="Attached context">
 						{attachments.map((a) => (
 							<li
-								key={`${a.kind}:${a.id}`}
+								key={attachmentKey(a)}
 								className="inline-flex max-w-full items-center gap-1 rounded-full bg-accent-foreground/15 px-2 py-0.5 text-[11px]"
 							>
 								<UserAttachmentIcon kind={a.kind} />
@@ -130,15 +130,22 @@ function UserMessageBlock({
 	)
 }
 
+function attachmentKey(a: UserAttachmentView): string {
+	if (a.kind === 'file') return `file:${a.name}`
+	return `${a.kind}:${a.id}`
+}
+
 function UserAttachmentIcon({ kind }: { kind: UserAttachmentView['kind'] }) {
 	if (kind === 'agent') return <Bot size={12} aria-hidden />
 	if (kind === 'object') return <Box size={12} aria-hidden />
+	if (kind === 'file') return <FileText size={12} aria-hidden />
 	return <Bell size={12} aria-hidden />
 }
 
 function userAttachmentLabel(a: UserAttachmentView): string {
 	if (a.kind === 'agent') return a.name?.trim() || a.id
 	if (a.kind === 'object') return a.title?.trim() || a.id
+	if (a.kind === 'file') return a.name
 	return a.title?.trim() || a.id
 }
 

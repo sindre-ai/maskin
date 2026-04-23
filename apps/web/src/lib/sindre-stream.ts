@@ -23,6 +23,7 @@ export type UserAttachmentView =
 	| { kind: 'agent'; id: string; name: string | null }
 	| { kind: 'object'; id: string; title: string | null; type: string | null }
 	| { kind: 'notification'; id: string; title: string | null }
+	| { kind: 'file'; name: string; sizeBytes: number }
 
 export type SindreEvent =
 	| { kind: 'user'; text: string; attachments?: UserAttachmentView[] }

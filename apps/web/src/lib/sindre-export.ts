@@ -56,6 +56,9 @@ function renderAttachment(attachment: UserAttachmentView, ctx: SindreExportConte
 		const title = attachment.title?.trim() || 'Notification'
 		return `Notification: ${title}`
 	}
+	if (attachment.kind === 'file') {
+		return `File: ${attachment.name}`
+	}
 	const name = attachment.name?.trim() || 'Agent'
 	return `Agent: ${name}`
 }

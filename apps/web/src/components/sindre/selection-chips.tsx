@@ -1,6 +1,6 @@
 import { cn } from '@/lib/cn'
 import type { SindreSelection } from '@/lib/sindre-selection'
-import { Bell, Bot, Box, X } from 'lucide-react'
+import { Bell, Bot, Box, FileText, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 export interface SelectionChipsProps {
@@ -8,6 +8,7 @@ export interface SelectionChipsProps {
 	onRemoveAgent: () => void
 	onRemoveObject: (id: string) => void
 	onRemoveNotification: (id: string) => void
+	onRemoveFile: (name: string) => void
 	className?: string
 }
 
@@ -23,12 +24,15 @@ export function SelectionChips({
 	onRemoveAgent,
 	onRemoveObject,
 	onRemoveNotification,
+	onRemoveFile,
 	className,
 }: SelectionChipsProps) {
 	const hasAgent = selection.agent !== null
 	const hasObjects = selection.objects.length > 0
 	const hasNotifications = selection.notifications.length > 0
-	if (!hasAgent && !hasObjects && !hasNotifications) return null
+	const files = selection.files ?? []
+	const hasFiles = files.length > 0
+	if (!hasAgent && !hasObjects && !hasNotifications && !hasFiles) return null
 
 	const agentLabel = selection.agent?.name?.trim() || selection.agent?.id || 'Unnamed agent'
 
@@ -69,6 +73,15 @@ export function SelectionChips({
 					/>
 				)
 			})}
+			{files.map((file) => (
+				<Chip
+					key={file.name}
+					icon={<FileText size={12} aria-hidden />}
+					label={file.name}
+					onRemove={() => onRemoveFile(file.name)}
+					removeLabel={`Remove ${file.name}`}
+				/>
+			))}
 		</ul>
 	)
 }
