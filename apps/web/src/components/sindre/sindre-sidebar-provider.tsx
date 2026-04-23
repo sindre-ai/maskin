@@ -37,7 +37,6 @@ export const SindreSidebarProvider = React.forwardRef<
 		ref,
 	) => {
 		const isMobile = useIsMobile()
-		const [openMobile, setOpenMobile] = React.useState(false)
 
 		const [_open, _setOpen] = React.useState(defaultOpen)
 		const open = openProp ?? _open
@@ -53,9 +52,24 @@ export const SindreSidebarProvider = React.forwardRef<
 			[setOpenProp, open],
 		)
 
+		// Upstream shadcn Sidebar keeps `open` (desktop) and `openMobile` as
+		// separate state, toggled via `toggleSidebar`. We route every opener
+		// (header Sparkles button, + button, notification "Talk to Sindre",
+		// etc.) through the Sindre context's `setOpen`, so we mirror that
+		// same value into `openMobile` on mobile — otherwise the desktop
+		// `open=true` never reaches the mobile Sheet and the panel appears
+		// invisible.
+		const openMobile = isMobile ? open : false
+		const setOpenMobile = React.useCallback(
+			(value: boolean) => {
+				if (isMobile) setOpen(value)
+			},
+			[isMobile, setOpen],
+		)
+
 		const toggleSidebar = React.useCallback(() => {
-			return isMobile ? setOpenMobile((prev) => !prev) : setOpen((prev) => !prev)
-		}, [isMobile, setOpen])
+			return setOpen((prev) => !prev)
+		}, [setOpen])
 
 		const state = open ? 'expanded' : 'collapsed'
 
