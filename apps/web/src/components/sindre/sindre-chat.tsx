@@ -580,62 +580,60 @@ function Composer({
 				onRemoveObject={onRemoveObject}
 				onRemoveNotification={onRemoveNotification}
 			/>
-			<form onSubmit={handleSubmit} className="flex items-end gap-2">
+			<form onSubmit={handleSubmit}>
 				<Textarea
 					autoResize
 					value={value}
 					onChange={handleChange}
 					onKeyDown={handleKeyDown}
 					placeholder={placeholder}
-					className="max-h-40 min-h-[36px] flex-1 resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
 					disabled={disabled}
 					rows={1}
 				/>
-				<Button
-					type="submit"
-					size="icon"
-					variant="ghost"
-					disabled={!canSend}
-					aria-label="Send message"
-				>
-					{showSpinner ? <Spinner /> : <Send size={16} />}
-				</Button>
+				{sendError ? (
+					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
+						{sendError} — your message is preserved; try again.
+					</p>
+				) : null}
+				<div className="flex items-center gap-1">
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-7 gap-1 px-2 text-xs text-text-secondary"
+						onClick={() => openPickerForKind('agent')}
+						disabled={disabled}
+						aria-label="Pick an agent"
+					>
+						<Bot size={14} aria-hidden />
+						Agent
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-7 gap-1 px-2 text-xs text-text-secondary"
+						onClick={() => openPickerForKind('item')}
+						disabled={disabled}
+						aria-label="Attach items"
+					>
+						<Box size={14} aria-hidden />
+						Items
+					</Button>
+					<div className="ml-auto">
+						<Button
+							type="submit"
+							size="icon"
+							variant="ghost"
+							disabled={!canSend}
+							aria-label="Send message"
+						>
+							{showSpinner ? <Spinner /> : <Send size={16} />}
+						</Button>
+					</div>
+				</div>
 			</form>
-			{sendError ? (
-				<p
-					role="alert"
-					className="px-1 text-error text-xs"
-					aria-live="polite"
-				>
-					{sendError} — your message is preserved; try again.
-				</p>
-			) : null}
-			<div className="flex items-center gap-1">
-				<Button
-					type="button"
-					size="sm"
-					variant="ghost"
-					className="h-7 gap-1 px-2 text-xs text-text-secondary"
-					onClick={() => openPickerForKind('agent')}
-					disabled={disabled}
-					aria-label="Pick an agent"
-				>
-					<Bot size={14} aria-hidden />
-					Agent
-				</Button>
-				<Button
-					type="button"
-					size="sm"
-					variant="ghost"
-					className="h-7 gap-1 px-2 text-xs text-text-secondary"
-					onClick={() => openPickerForKind('item')}
-					disabled={disabled}
-					aria-label="Attach items"
-				>
-					<Box size={14} aria-hidden />
-					Items
-				</Button>
-			</div>
 		</div>
 	)
 }
