@@ -246,4 +246,26 @@
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
 	}
+
+	/* Slim scrollbars — claude.ai-style thin track. Firefox uses the
+	   `scrollbar-width` rule; Chromium/Safari pick up the `-webkit-*`
+	   pseudo-elements. */
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: var(--border) transparent;
+	}
+	*::-webkit-scrollbar {
+		width: 6px;
+		height: 6px;
+	}
+	*::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	*::-webkit-scrollbar-thumb {
+		background-color: var(--border);
+		border-radius: 9999px;
+	}
+	*::-webkit-scrollbar-thumb:hover {
+		background-color: var(--border-hover, var(--border));
+	}
 }

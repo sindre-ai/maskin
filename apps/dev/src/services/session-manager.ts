@@ -1,11 +1,11 @@
-import { exec as execCb } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
-const execAsync = promisify(execCb)
+const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -24,12 +24,21 @@ import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager } from './agent-storage'
-import { ContainerManager, type LogChunk } from './container-manager'
+import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
 
 export interface CreateSessionParams {
 	actorId: string
 	actionPrompt: string
+	/**
+	 * Free-form session config. Recognized keys include:
+	 *   - `interactive?: boolean` — when true, start the container with stdin
+	 *     attached so subsequent user turns can be delivered via
+	 *     `ContainerManager.write()`. The value is also persisted to
+	 *     `sessions.interactive` so downstream routes (e.g. the input route)
+	 *     can gate on it without re-parsing config.
+	 *   - everything else is passed through as-is to the container env/runtime.
+	 */
 	config?: Record<string, unknown>
 	triggerId?: string
 	createdBy: string
@@ -86,6 +95,9 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
+		const config = params.config ?? {}
+		const interactive = config.interactive === true
+
 		const [session] = await this.db
 			.insert(sessions)
 			.values({
@@ -94,7 +106,8 @@ export class SessionManager extends EventEmitter {
 				triggerId: params.triggerId,
 				status: 'pending',
 				actionPrompt: params.actionPrompt,
-				config: params.config ?? {},
+				config,
+				interactive,
 				createdBy: params.createdBy,
 			})
 			.returning()
@@ -166,8 +179,10 @@ export class SessionManager extends EventEmitter {
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
-			// Build env vars and launch container
-			const containerId = await this.launchContainer(session, tempDir, sessionId)
+			// Build env vars and launch container. Let launchContainer derive
+			// the container name from session.id so re-entry (e.g. a watchdog
+			// retry) doesn't collide with a Docker name we forced ourselves.
+			const containerId = await this.launchContainer(session, tempDir)
 
 			await this.db
 				.update(sessions)
@@ -208,11 +223,21 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
 			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
+	}
+
+	/**
+	 * Deliver a user turn to an interactive session's stdin. Caller must have
+	 * already validated the session is interactive and in `running` state; this
+	 * method only performs the stdin write and propagates any underlying error.
+	 */
+	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+		await this.containers.write(sessionId, payload)
 	}
 
 	async stopSession(sessionId: string): Promise<void> {
@@ -226,6 +251,7 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
+		this.containers.detachStdin(sessionId)
 		await this.containers.stop(session.containerId)
 		// handleCompletion will be called by the exit watcher
 	}
@@ -262,6 +288,7 @@ export class SessionManager extends EventEmitter {
 			await this.storage.put(snapshotKey, tarStream as import('node:stream').Readable)
 
 			// Stop and remove container
+			this.containers.detachStdin(sessionId)
 			await this.containers.stop(session.containerId)
 			await this.containers.remove(session.containerId)
 
@@ -321,7 +348,7 @@ export class SessionManager extends EventEmitter {
 
 			const snapshotPath = join(tempDir, 'snapshot.tar.gz')
 			await writeFile(snapshotPath, snapshotBuffer)
-			await execAsync(`tar -xzf "${snapshotPath}" -C "${tempDir}"`)
+			await execFileAsync('tar', ['-xzf', snapshotPath, '-C', tempDir])
 
 			// Also pull latest agent files (other sessions may have added learnings)
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
@@ -372,6 +399,7 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
 			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
@@ -467,11 +495,21 @@ export class SessionManager extends EventEmitter {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
-			// session.actionPrompt is the user's original prompt and is never written back
-			// wrapped — safe to re-prepend on every launch, including resume.
-			ACTION_PROMPT: `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`,
 			MASKIN_API_URL: 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
+		}
+
+		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
+		// arrives via POST /api/sessions/:id/input over the attached stdin stream.
+		// Non-interactive sessions pass the action prompt positionally so `claude -p`
+		// runs it and exits; interactive sets INTERACTIVE=1 so agent-run.sh takes
+		// the stdin-driven stream-json branch instead.
+		// session.actionPrompt is the user's original prompt and is never written back
+		// wrapped — safe to re-prepend on every launch, including resume.
+		if (session.interactive) {
+			envVars.INTERACTIVE = '1'
+		} else {
+			envVars.ACTION_PROMPT = `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`
 		}
 
 		// Inject LLM API key: agent-level first, then workspace-level fallback
@@ -570,6 +608,7 @@ export class SessionManager extends EventEmitter {
 			'AGENT_RUNTIME',
 			'SYSTEM_PROMPT',
 			'ACTION_PROMPT',
+			'INTERACTIVE',
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
 			'ANTHROPIC_API_KEY',
@@ -635,9 +674,15 @@ export class SessionManager extends EventEmitter {
 			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
 			binds: [`${tempDir}:/agent:rw`],
 			networkMode,
+			interactive: session.interactive,
 		})
 
 		await this.containers.start(containerId)
+
+		if (session.interactive) {
+			await this.containers.attachStdin(session.id, containerId)
+		}
+
 		return containerId
 	}
 
@@ -674,25 +719,57 @@ export class SessionManager extends EventEmitter {
 					sessionId,
 					error: String(err),
 				})
+				// Surface the interruption so SSE clients don't hang on a blank
+				// spinner while the container keeps running without logs.
+				await this.insertSystemLog(
+					sessionId,
+					'Log stream interrupted — session may still be running',
+				).catch((logErr) =>
+					logger.error('Failed to write log-stream-interrupted system log', {
+						sessionId,
+						error: String(logErr),
+					}),
+				)
 			}
 		})()
 	}
 
 	private watchContainerExit(sessionId: string, containerId: string) {
+		// Tolerate a few transient Docker API failures in a row before giving
+		// up and marking the session failed — a single EBUSY/socket timeout
+		// shouldn't strand the session as "running" until the hour-long
+		// timeout reaper catches it.
+		const MAX_CONSECUTIVE_INSPECT_FAILURES = 5
+		let consecutiveFailures = 0
 		const poll = async () => {
 			try {
 				const status = await this.containers.inspect(containerId)
+				consecutiveFailures = 0
 				if (!status.running) {
 					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
 					return
 				}
 			} catch (err) {
-				logger.warn('Container inspect failed, stopping exit watcher', {
+				consecutiveFailures++
+				logger.warn('Container inspect failed', {
 					sessionId,
 					containerId,
 					error: String(err),
+					consecutiveFailures,
 				})
-				return
+				if (consecutiveFailures >= MAX_CONSECUTIVE_INSPECT_FAILURES) {
+					logger.error('Container inspect failed repeatedly, marking session failed', {
+						sessionId,
+						containerId,
+					})
+					await this.handleCompletion(sessionId, containerId, 1).catch((completionErr) => {
+						logger.error('handleCompletion failed after inspect give-up', {
+							sessionId,
+							error: String(completionErr),
+						})
+					})
+					return
+				}
 			}
 			setTimeout(poll, 2000)
 		}
@@ -734,31 +811,70 @@ export class SessionManager extends EventEmitter {
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
-		await this.db
-			.update(sessions)
-			.set({
+		// SSE clients subscribed to /logs/stream rely on the "Session
+		// completed|failed|timed out|paused" system log to emit their `done`
+		// event and close. If any DB write below throws, subscribers would sit
+		// in the 30s keep-alive loop indefinitely — so swallow persistence
+		// errors here and always attempt the terminal system log.
+		try {
+			await this.db
+				.update(sessions)
+				.set({
+					status,
+					result: { exit_code: exitCode },
+					completedAt: new Date(),
+					updatedAt: new Date(),
+				})
+				.where(eq(sessions.id, sessionId))
+		} catch (err) {
+			logger.error('Failed to update session status in handleCompletion', {
+				sessionId,
 				status,
-				result: { exit_code: exitCode },
-				completedAt: new Date(),
-				updatedAt: new Date(),
+				error: String(err),
 			})
-			.where(eq(sessions.id, sessionId))
+		}
 
-		await this.db.insert(events).values({
-			workspaceId: session.workspaceId,
-			actorId: session.actorId,
-			action: `session_${status}`,
-			entityType: 'session',
-			entityId: sessionId,
-			data: { exit_code: exitCode },
-		})
+		try {
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: `session_${status}`,
+				entityType: 'session',
+				entityId: sessionId,
+				data: { exit_code: exitCode },
+			})
+		} catch (err) {
+			logger.error('Failed to insert completion event in handleCompletion', {
+				sessionId,
+				status,
+				error: String(err),
+			})
+		}
 
-		await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
+		try {
+			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
+		} catch (err) {
+			logger.error('Failed to write terminal system log — SSE clients may hang', {
+				sessionId,
+				status,
+				error: String(err),
+			})
+			// Last-ditch fan-out: synthesize a log event on the bus so SSE
+			// subscribers see `done` even when DB insert is failing. The log id
+			// is synthetic (negative) so it can't collide with real rows.
+			this.emit('log', {
+				sessionId,
+				logId: -Date.now(),
+				stream: 'system',
+				data: `Session ${status} with exit code ${exitCode}`,
+			})
+		}
 
 		// Clear active session link on object
 		await this.clearActiveSession(sessionId)
 
 		// Cleanup
+		this.containers.detachStdin(sessionId)
 		await this.cleanupBrowserSidecar(sessionId)
 		await this.containers
 			.remove(containerId)
@@ -804,6 +920,7 @@ export class SessionManager extends EventEmitter {
 			}
 
 			if (session.containerId) {
+				this.containers.detachStdin(session.id)
 				await this.containers.stop(session.containerId).catch((err) =>
 					logger.warn('Failed to stop timed-out container', {
 						sessionId: session.id,
@@ -839,6 +956,13 @@ export class SessionManager extends EventEmitter {
 				data: {},
 			})
 
+			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
+				logger.warn('Failed to write timeout system log', {
+					sessionId: session.id,
+					error: String(err),
+				}),
+			)
+
 			await this.clearActiveSession(session.id)
 			await this.cleanupBrowserSidecar(session.id)
 			await this.cleanupSession(session.id)
@@ -849,11 +973,13 @@ export class SessionManager extends EventEmitter {
 			)
 		}
 
-		// 2. Auto-pause idle sessions (no log output for >10 minutes)
+		// 2. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
+		// Interactive sessions (Sindre chat) are long-lived by design and naturally
+		// idle between user turns — pausing them silently breaks the next /input call.
 		const runningSessions = await this.db
 			.select()
 			.from(sessions)
-			.where(eq(sessions.status, 'running'))
+			.where(and(eq(sessions.status, 'running'), eq(sessions.interactive, false)))
 
 		for (const session of runningSessions) {
 			const [lastLog] = await this.db

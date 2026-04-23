@@ -6,7 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-install Claude Code CLI (avoids npm install on every session start)
-RUN npm install -g @anthropic-ai/claude-code
+# Version is pinned because the stream-json I/O format is not stable across
+# Claude Code releases — the interactive Sindre session parses these lines
+# verbatim, so a silent CLI bump can break parsing. Bump this deliberately
+# after re-validating the stream-json fixtures.
+RUN npm install -g @anthropic-ai/claude-code@2.1.112
 
 # Pre-install Playwright MCP server (connects to external browser via CDP)
 RUN npm install -g @playwright/mcp

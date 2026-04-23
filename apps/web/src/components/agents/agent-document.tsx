@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useDeleteActor, useUpdateActor } from '@/hooks/use-actors'
+import { useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
@@ -33,6 +33,7 @@ import {
 	ChevronRight,
 	Clock,
 	MinusCircle,
+	RotateCcw,
 	Trash2,
 	XCircle,
 } from 'lucide-react'
@@ -515,6 +516,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
+	const resetActor = useResetActor(workspaceId)
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
@@ -526,6 +528,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	)
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [confirmReset, setConfirmReset] = useState(false)
 
 	const handleDelete = useCallback(() => {
 		deleteActor.mutate(agent.id, {
@@ -535,35 +538,67 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		})
 	}, [agent.id, deleteActor, navigate, workspaceId])
 
-	const deleteActions = useMemo(
-		() =>
-			confirmDelete ? (
+	const handleReset = useCallback(() => {
+		resetActor.mutate(agent.id, {
+			onSuccess: () => {
+				setConfirmReset(false)
+			},
+		})
+	}, [agent.id, resetActor])
+
+	const headerActions = useMemo(() => {
+		if (agent.isSystem) {
+			return confirmReset ? (
 				<div className="flex items-center gap-2">
-					<span className="text-xs text-error">Delete this agent?</span>
-					<Button
-						variant="destructive"
-						size="sm"
-						onClick={handleDelete}
-						disabled={deleteActor.isPending}
-					>
-						{deleteActor.isPending ? 'Deleting...' : 'Confirm'}
+					<span className="text-xs text-muted-foreground">Reset this agent to defaults?</span>
+					<Button size="sm" onClick={handleReset} disabled={resetActor.isPending}>
+						{resetActor.isPending ? 'Resetting...' : 'Confirm'}
 					</Button>
-					<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+					<Button variant="ghost" size="sm" onClick={() => setConfirmReset(false)}>
 						Cancel
 					</Button>
 				</div>
 			) : (
-				<Button
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 text-muted-foreground hover:text-error"
-					onClick={() => setConfirmDelete(true)}
-				>
-					<Trash2 size={15} />
+				<Button variant="ghost" size="sm" onClick={() => setConfirmReset(true)}>
+					<RotateCcw size={14} />
+					Reset to default
 				</Button>
-			),
-		[confirmDelete, handleDelete, deleteActor.isPending],
-	)
+			)
+		}
+		return confirmDelete ? (
+			<div className="flex items-center gap-2">
+				<span className="text-xs text-error">Delete this agent?</span>
+				<Button
+					variant="destructive"
+					size="sm"
+					onClick={handleDelete}
+					disabled={deleteActor.isPending}
+				>
+					{deleteActor.isPending ? 'Deleting...' : 'Confirm'}
+				</Button>
+				<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+					Cancel
+				</Button>
+			</div>
+		) : (
+			<Button
+				variant="ghost"
+				size="icon"
+				className="h-7 w-7 text-muted-foreground hover:text-error"
+				onClick={() => setConfirmDelete(true)}
+			>
+				<Trash2 size={15} />
+			</Button>
+		)
+	}, [
+		agent.isSystem,
+		confirmDelete,
+		confirmReset,
+		handleDelete,
+		handleReset,
+		deleteActor.isPending,
+		resetActor.isPending,
+	])
 
 	const handleUpdateName = useCallback(
 		(name: string) => {
@@ -609,7 +644,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 
 	return (
 		<>
-			<PageHeader actions={deleteActions} />
+			<PageHeader actions={headerActions} />
 			<AgentDocumentView
 				agent={agent}
 				workspaceId={workspaceId}

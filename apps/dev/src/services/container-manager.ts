@@ -13,6 +13,12 @@ export interface ContainerCreateOptions {
 	binds: string[]
 	networkMode?: string
 	cmd?: string[]
+	/**
+	 * When true, the container is created with stdin attached so callers can stream
+	 * stream-json user turns in. Also injects `INTERACTIVE=1` into the container env
+	 * so the in-container entrypoint switches to interactive mode.
+	 */
+	interactive?: boolean
 }
 
 export interface LogChunk {
@@ -27,8 +33,37 @@ export interface ContainerStatus {
 	finishedAt: string | null
 }
 
+/**
+ * Stream-JSON user message payload accepted on the Claude Code CLI stdin when
+ * running in interactive stream-json mode. Shape is pinned by the fixture at
+ * `apps/dev/src/__tests__/fixtures/claude-stdin-user-message.json`.
+ */
+export interface StreamJsonUserMessage {
+	type: 'user'
+	message: {
+		role: 'user'
+		content: string
+	}
+}
+
+/**
+ * Tracks a session's stdin stream alongside the container id it was attached
+ * to, so `write()` can re-attach after an unexpected error/end.
+ */
+interface StdinHandle {
+	stream: NodeJS.ReadWriteStream
+	containerId: string
+	closed: boolean
+}
+
 export class ContainerManager {
 	private docker: Docker
+	/**
+	 * Stdin handles for interactive sessions, keyed by sessionId. A handle is
+	 * inserted by `attachStdin()` after the container starts and removed when
+	 * the session's container is stopped or removed.
+	 */
+	private stdinStreams = new Map<string, StdinHandle>()
 
 	constructor() {
 		this.docker = new Docker()
@@ -85,13 +120,20 @@ export class ContainerManager {
 	}
 
 	async create(options: ContainerCreateOptions): Promise<string> {
-		const env = Object.entries(options.env).map(([k, v]) => `${k}=${v}`)
+		const envMap = options.interactive ? { ...options.env, INTERACTIVE: '1' } : options.env
+		const env = Object.entries(envMap).map(([k, v]) => `${k}=${v}`)
 
 		const container = await this.docker.createContainer({
 			Image: options.image,
 			name: options.name,
 			Env: env,
 			...(options.cmd && { Cmd: options.cmd }),
+			...(options.interactive && {
+				AttachStdin: true,
+				OpenStdin: true,
+				StdinOnce: false,
+				Tty: false,
+			}),
 			HostConfig: {
 				Memory: options.memoryMb * 1024 * 1024,
 				CpuShares: options.cpuShares,
@@ -101,7 +143,10 @@ export class ContainerManager {
 			},
 		})
 
-		logger.info(`Container created: ${container.id}`, { name: options.name })
+		logger.info(`Container created: ${container.id}`, {
+			name: options.name,
+			interactive: options.interactive ?? false,
+		})
 		return container.id
 	}
 
@@ -109,6 +154,128 @@ export class ContainerManager {
 		const container = this.docker.getContainer(containerId)
 		await container.start()
 		logger.info(`Container started: ${containerId}`)
+	}
+
+	/**
+	 * Attach to a running container's stdin and persist the returned duplex stream
+	 * keyed by `sessionId` for the life of the session. Callers use
+	 * `getStdinStream(sessionId)` to write stream-json user turns on subsequent
+	 * input. Must be called after `start()` on a container created with
+	 * `interactive: true`.
+	 */
+	async attachStdin(sessionId: string, containerId: string): Promise<void> {
+		const stream = await this.openStdinStream(containerId)
+		const handle: StdinHandle = { stream, containerId, closed: false }
+		this.trackStreamLifecycle(sessionId, handle)
+		this.stdinStreams.set(sessionId, handle)
+		logger.info(`Stdin attached: session=${sessionId} container=${containerId}`)
+	}
+
+	private async openStdinStream(containerId: string): Promise<NodeJS.ReadWriteStream> {
+		const container = this.docker.getContainer(containerId)
+		return (await container.attach({
+			stream: true,
+			stdin: true,
+			hijack: true,
+		})) as NodeJS.ReadWriteStream
+	}
+
+	private trackStreamLifecycle(sessionId: string, handle: StdinHandle): void {
+		const markClosed = (reason: string, err?: unknown) => {
+			if (handle.closed) return
+			handle.closed = true
+			if (err) {
+				logger.warn(`Stdin stream ${reason}: session=${sessionId}`, {
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+		handle.stream.on('error', (err: unknown) => markClosed('error', err))
+		handle.stream.on('end', () => markClosed('end'))
+		handle.stream.on('close', () => markClosed('close'))
+	}
+
+	/**
+	 * Returns the persisted stdin stream for a session, or undefined if none is
+	 * attached.
+	 */
+	getStdinStream(sessionId: string): NodeJS.WritableStream | undefined {
+		return this.stdinStreams.get(sessionId)?.stream
+	}
+
+	/**
+	 * Serialize `payload` as one newline-delimited JSON line and write it to the
+	 * stdin stream handle attached for this session. If the stream has errored
+	 * or ended unexpectedly, re-attach to the container and retry the write
+	 * once before propagating the error. Throws if no stream was ever attached
+	 * (i.e. `attachStdin()` was not called) or was explicitly detached.
+	 */
+	async write(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+		const handle = this.stdinStreams.get(sessionId)
+		if (!handle) {
+			throw new Error(`No stdin stream attached for session ${sessionId}`)
+		}
+		const line = `${JSON.stringify(payload)}\n`
+
+		if (handle.closed) {
+			await this.reconnectStdin(sessionId, handle, 'stream already closed before write')
+		}
+
+		try {
+			await this.writeLine(handle.stream, line)
+			return
+		} catch (err: unknown) {
+			const reason = err instanceof Error ? err.message : String(err)
+			await this.reconnectStdin(sessionId, handle, reason)
+			await this.writeLine(handle.stream, line)
+		}
+	}
+
+	private writeLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
+		return new Promise<void>((resolve, reject) => {
+			stream.write(line, (err) => {
+				if (err) reject(err)
+				else resolve()
+			})
+		})
+	}
+
+	private async reconnectStdin(
+		sessionId: string,
+		handle: StdinHandle,
+		reason: string,
+	): Promise<void> {
+		logger.warn(`Reconnecting stdin stream: session=${sessionId} container=${handle.containerId}`, {
+			reason,
+		})
+		// Verify the container is still alive before re-attaching — otherwise
+		// we'd silently re-attach to a stopped container and writes would be
+		// dropped while the API still returned success.
+		const status = await this.inspect(handle.containerId)
+		if (!status.running) {
+			throw new Error(`Cannot reconnect stdin: container ${handle.containerId} is not running`)
+		}
+		const newStream = await this.openStdinStream(handle.containerId)
+		handle.stream = newStream
+		handle.closed = false
+		this.trackStreamLifecycle(sessionId, handle)
+	}
+
+	/**
+	 * End and forget the stdin stream for a session. Safe to call when no stream
+	 * is attached.
+	 */
+	detachStdin(sessionId: string): void {
+		const handle = this.stdinStreams.get(sessionId)
+		if (!handle) return
+		this.stdinStreams.delete(sessionId)
+		try {
+			handle.stream.end()
+		} catch (err: unknown) {
+			logger.warn(`Failed to end stdin stream for session ${sessionId}`, {
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
 	}
 
 	async stop(containerId: string, timeoutSeconds = 10): Promise<void> {

@@ -46,7 +46,7 @@ describe('GitHub provider config', () => {
 	it('has MCP config', () => {
 		expect(config.mcp).toBeDefined()
 		expect(config.mcp?.command).toBe('npx')
-		expect(config.mcp?.envKey).toBe('GITHUB_PERSONAL_ACCESS_TOKEN')
+		expect(config.mcp?.envKey).toBe('GITHUB_TOKEN')
 	})
 })
 
