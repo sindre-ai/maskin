@@ -149,8 +149,14 @@ export function useSindreOneShot(): UseSindreOneShotResult {
 				// handled in onopen (it throws to stop retries).
 				setError(err instanceof Error ? err : new Error(String(err)))
 			},
-		}).catch(() => {
-			// Fatal path captured into state in onopen.
+		}).catch((err) => {
+			// onopen handles the fatal HTTP path. Anything else landing here
+			// (abort-before-open, DNS, bug inside onmessage) must still be
+			// logged or it disappears silently.
+			if (controller.signal.aborted) return
+			console.error('[sindre-one-shot] SSE connection failed', err)
+			setError(err instanceof Error ? err : new Error(String(err)))
+			setStatus('error')
 		})
 	}, [])
 

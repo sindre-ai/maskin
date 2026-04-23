@@ -27,6 +27,7 @@ import {
 import type { SindreEvent } from '@/lib/sindre-stream'
 import { Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
 import { type PointerEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 const SINDRE_AGENT_NAME = 'Sindre'
 
@@ -81,8 +82,10 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		const md = buildExportMarkdown()
 		try {
 			await navigator.clipboard.writeText(md)
-		} catch {
-			// Clipboard access is best-effort; fall back silently.
+			toast.success('Conversation copied as markdown')
+		} catch (err) {
+			console.error('[sindre] clipboard copy failed', err)
+			toast.error('Could not copy — try Download instead')
 		}
 	}, [buildExportMarkdown])
 

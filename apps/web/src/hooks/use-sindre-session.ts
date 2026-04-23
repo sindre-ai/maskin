@@ -171,8 +171,14 @@ export function useSindreSession({
 				// to stop retries.
 				setError(err instanceof Error ? err : new Error(String(err)))
 			},
-		}).catch(() => {
-			// Fatal path captured into state in onopen.
+		}).catch((err) => {
+			// onopen already sets error state for the fatal HTTP path it throws
+			// from. Anything else that lands here (abort-before-open, DNS, bug
+			// inside onmessage) must still be logged or it vanishes silently.
+			if (controller.signal.aborted) return
+			console.error('[sindre-session] SSE connection failed', err)
+			setError(err instanceof Error ? err : new Error(String(err)))
+			setStatus('error')
 		})
 
 		return () => {

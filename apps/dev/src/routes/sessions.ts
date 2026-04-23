@@ -429,9 +429,23 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 app.get('/:id/logs/stream', async (c) => {
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
-	const sessionId = c.req.param('id')
+	const rawSessionId = c.req.param('id')
 	const workspaceId = c.req.header('x-workspace-id')
 	const lastLogId = c.req.header('Last-Event-ID')
+
+	// Reject non-UUID session ids up front — passing a malformed string into
+	// the DB query produces a Postgres "invalid input syntax for type uuid"
+	// that surfaces as an uncaught 500.
+	const parsedParams = sessionParamsSchema.safeParse({ id: rawSessionId })
+	if (!parsedParams.success) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid session id', [
+				{ field: 'id', message: 'Must be a UUID', expected: 'UUID string' },
+			]),
+			400,
+		)
+	}
+	const sessionId = parsedParams.data.id
 
 	if (!workspaceId) {
 		return c.json(

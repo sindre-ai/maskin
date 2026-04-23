@@ -607,9 +607,10 @@ function Composer({
 			const input = event.target
 			const files = Array.from(input.files ?? [])
 			input.value = '' // allow re-picking the same file after removing it
+			const failures: string[] = []
 			for (const file of files) {
 				if (file.size > FILE_MAX_BYTES) {
-					setSendError(`${file.name} is larger than ${FILE_MAX_BYTES / 1024}KB`)
+					failures.push(`${file.name} is larger than ${FILE_MAX_BYTES / 1024}KB`)
 					continue
 				}
 				try {
@@ -618,10 +619,12 @@ function Composer({
 						type: 'add_file',
 						file: { name: file.name, content, sizeBytes: file.size },
 					})
-				} catch {
-					setSendError(`Failed to read ${file.name}`)
+				} catch (err) {
+					console.error(`[sindre] failed to read ${file.name}`, err)
+					failures.push(`Failed to read ${file.name}`)
 				}
 			}
+			if (failures.length > 0) setSendError(failures.join('; '))
 		},
 		[onDispatchSelection],
 	)

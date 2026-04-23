@@ -179,8 +179,10 @@ export class SessionManager extends EventEmitter {
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
-			// Build env vars and launch container
-			const containerId = await this.launchContainer(session, tempDir, sessionId)
+			// Build env vars and launch container. Let launchContainer derive
+			// the container name from session.id so re-entry (e.g. a watchdog
+			// retry) doesn't collide with a Docker name we forced ourselves.
+			const containerId = await this.launchContainer(session, tempDir)
 
 			await this.db
 				.update(sessions)
