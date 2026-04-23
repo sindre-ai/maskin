@@ -125,8 +125,8 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				className="pointer-events-auto"
 			>
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
-					<h2 className="font-semibold text-base">Sindre</h2>
 					<div className="flex items-center gap-1">
+						<h2 className="font-semibold text-base">Sindre</h2>
 						<DropdownMenu>
 							<DropdownMenuTrigger asChild>
 								<Button
@@ -140,7 +140,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 									<MoreHorizontal size={15} />
 								</Button>
 							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end" className="w-56">
+							<DropdownMenuContent align="start" className="w-56">
 								<DropdownMenuItem onSelect={() => void handleCopy()}>
 									<Copy size={14} />
 									Copy as markdown
@@ -151,6 +151,8 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 								</DropdownMenuItem>
 							</DropdownMenuContent>
 						</DropdownMenu>
+					</div>
+					<div className="flex items-center gap-1">
 						<PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />
 						<Button
 							type="button"
