@@ -79,6 +79,8 @@ export const objects = pgTable(
 		metadata: jsonb('metadata'),
 		owner: uuid('owner').references(() => actors.id),
 		activeSessionId: uuid('active_session_id'),
+		isPublic: boolean('is_public').default(false).notNull(),
+		publicToken: text('public_token').unique(),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
