@@ -26,7 +26,6 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@maskin/shared": "workspace:*",
 		"drizzle-orm": "^0.38.0",
 		"postgres": "^3.4.0"
 	},

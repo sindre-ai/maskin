@@ -10,25 +10,10 @@
  * substitutes these after creating the actor, in a second PATCH call.
  */
 
-import { KNOWLEDGE_CURATOR_PROMPT, KNOWLEDGE_NUDGES } from '../prompts'
+import type { SeedAgent, SeedTrigger } from '@maskin/module-sdk'
+import { KNOWLEDGE_NUDGES } from '../prompts'
 
-export interface SeedAgent {
-	/** Template-local id used by seedTriggers to reference this actor. */
-	$id: string
-	name: string
-	systemPrompt: string
-	tools?: Record<string, unknown>
-}
-
-export interface SeedTrigger {
-	name: string
-	type: 'event' | 'cron'
-	config: Record<string, unknown>
-	actionPrompt: string
-	/** $id of a SeedAgent (or a real UUID if the user already has one). */
-	targetActor$id: string
-	enabled: boolean
-}
+export type { SeedAgent, SeedTrigger }
 
 // Standard tool bundle for agents that need to act on the workspace + GitHub.
 const maskinOnlyTools = {
@@ -247,12 +232,6 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 
 You are methodical and precise. You always link insights to the bets you create via "informs" relationships. You write clear, actionable bet descriptions that explain why the bet exists and what the goal is. You notify the human via Maskin notifications so they can review your proposals.`,
 	},
-	{
-		$id: 'knowledge_curator',
-		name: 'Knowledge Curator',
-		tools: maskinOnlyTools,
-		systemPrompt: KNOWLEDGE_CURATOR_PROMPT,
-	},
 ]
 
 export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
@@ -365,28 +344,6 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		enabled: true,
 		actionPrompt:
 			'Run your daily insight curation. Find clusters of related unprocessed insights and, when a cluster is strong enough, propose a bet for the team to review.\n\n1. List all insights in "new" status.\n2. Identify clusters by theme (bugs, feature requests, reliability, process improvements).\n3. Mark obvious duplicates as "discarded" with a "duplicates" relationship pointing to the better one.\n4. For each cluster with 2+ insights, evaluate whether it\'s actionable: clear problem, enough signal, worth investigating.\n5. For each actionable cluster, create a bet in "signal" status with a clear title, a description summarizing what/why/goal, and "informs" relationships from each source insight. Move the clustered insights to "processing".\n6. Notify the human via a Maskin notification (source_actor_id = {{self_id}}; metadata.actions MUST be a native JSON array with at least one actionable button beyond "Dismiss", e.g. [{"label":"Promote to proposed","response":"promote"},{"label":"Discard","response":"discard"}]).\n7. If no actionable clusters are found, exit silently.\n\nLean towards creating the signal when in doubt — humans can always discard it.',
-	},
-	{
-		name: 'Daily Knowledge Synthesis',
-		type: 'cron',
-		config: { expression: '0 6 * * *' },
-		targetActor$id: 'knowledge_curator',
-		enabled: true,
-		actionPrompt:
-			'Run your daily knowledge synthesis. Insight curation ran an hour ago; fresh clusters and any newly completed bets are ready to mine.\n\n1. list_objects({type: "insight"}) — focus on insights recently moved to "processing" or "clustered". Group by theme.\n2. list_objects({type: "bet"}) — focus on bets with status "completed" or "validated" in the last 14 days. Each is a candidate rule source.\n3. list_objects({type: "knowledge"}) — read existing articles so you don\'t duplicate.\n4. For each durable theme (recurring across 2+ insights) or validated-bet learning, either create a new knowledge object or update an existing one (supersedes + deprecate the old, if you\'re refining it).\n5. Attach "informs" relationships from every source insight/bet to the knowledge article.\n6. Set status "validated" ONLY when you have a completed bet or 3+ corroborating insights; otherwise "draft". Set metadata.confidence accordingly.\n7. Notify the human via a Maskin notification for each new validated article (source_actor_id = {{self_id}}; metadata.actions native JSON array, e.g. [{"label":"Keep","response":"keep"},{"label":"Deprecate","response":"deprecate"}]).\n8. If nothing durable has surfaced, exit silently.',
-	},
-	{
-		name: 'Bet Completed → Knowledge Synthesis',
-		type: 'event',
-		config: {
-			entity_type: 'bet',
-			action: 'status_changed',
-			to_status: 'completed',
-		},
-		targetActor$id: 'knowledge_curator',
-		enabled: false,
-		actionPrompt:
-			'A bet just completed. Read it and its "informs" insights. Decide whether the outcome codifies a durable rule worth promoting to knowledge. If yes, create or update a knowledge article (status "validated", confidence "high") with "informs" edges from the bet and its source insights. If the outcome refines an existing article, use "supersedes" and mark the old one "deprecated". If nothing durable emerges, exit silently.',
 	},
 	{
 		name: 'Daily Code Review Analysis',

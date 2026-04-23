@@ -11,7 +11,7 @@
  * substitutes these after creating the actor, in a second PATCH call.
  */
 
-import { KNOWLEDGE_CURATOR_PROMPT, KNOWLEDGE_NUDGES } from '../prompts'
+import { KNOWLEDGE_NUDGES } from '../prompts'
 import type { SeedAgent, SeedTrigger } from './development-agents'
 
 // Maskin MCP only — for agents that act on workspace objects.
@@ -166,12 +166,6 @@ Your actor ID is {{self_id}} — always pass this as source_actor_id when creati
 - Ground all recommendations in the actual context from the company and contact objects.
 - Keep the coaching brief actionable — every recommendation should have a clear next step.`,
 	},
-	{
-		$id: 'knowledge_curator',
-		name: 'Knowledge Curator',
-		tools: maskinOnlyTools,
-		systemPrompt: KNOWLEDGE_CURATOR_PROMPT,
-	},
 ]
 
 export const OUTBOUND_SALES_TRIGGERS: SeedTrigger[] = [
@@ -229,14 +223,5 @@ export const OUTBOUND_SALES_TRIGGERS: SeedTrigger[] = [
 		enabled: true,
 		actionPrompt:
 			'Run your daily pipeline review. Load all deals and group by status. Flag stale deals (no status change in 7+ days) with specific next-action recommendations. Calculate pipeline health metrics: stage distribution, conversion rates, velocity, and total value by stage. Identify bottlenecks. Create an insight with the full analysis and a notification with the top 3 action items. If the pipeline is healthy, say so briefly.',
-	},
-	{
-		name: 'Daily Knowledge Synthesis',
-		type: 'cron',
-		config: { expression: '0 9 * * *' },
-		targetActor$id: 'knowledge_curator',
-		enabled: true,
-		actionPrompt:
-			'Run your daily knowledge synthesis. Mine insights and completed deals/bets for durable sales patterns worth codifying as knowledge (ICP conventions, disqualification rules, objection-handling tactics that worked, outreach angles that converted).\n\n1. list_objects({type: "insight"}) — focus on recently clustered/processed insights. Group by theme.\n2. list_objects({type: "deal"}) — focus on deals recently moved to "closed_won" or "closed_lost" in the last 14 days.\n3. list_objects({type: "bet"}) — focus on validated/completed bets.\n4. list_objects({type: "knowledge"}) — read existing articles.\n5. For each durable theme or validated-deal/bet learning, create/update a knowledge article. Use "supersedes" + deprecate when refining.\n6. Attach "informs" edges from every source to the knowledge article.\n7. Status "validated" requires a completed deal/bet or 3+ corroborating insights; otherwise "draft". Set metadata.confidence accordingly.\n8. Notify the human on new validated articles (source_actor_id = {{self_id}}; metadata.actions native JSON array).\n9. If nothing durable, exit silently.',
 	},
 ]

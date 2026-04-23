@@ -13,6 +13,14 @@
 			"types": "./server/index.ts",
 			"default": "./server/index.ts"
 		},
+		"./seeds": {
+			"types": "./server/seeds.ts",
+			"default": "./server/seeds.ts"
+		},
+		"./boot-hook": {
+			"types": "./server/boot-hook.ts",
+			"default": "./server/boot-hook.ts"
+		},
 		"./web": {
 			"types": "./web/index.ts",
 			"default": "./web/index.ts"
@@ -23,7 +31,9 @@
 		}
 	},
 	"dependencies": {
-		"@maskin/module-sdk": "workspace:*"
+		"@maskin/db": "workspace:*",
+		"@maskin/module-sdk": "workspace:*",
+		"drizzle-orm": "^0.38.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0"

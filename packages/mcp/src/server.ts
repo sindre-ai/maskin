@@ -1,13 +1,51 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
+import { KNOWLEDGE_SEED_AGENTS, KNOWLEDGE_SEED_TRIGGERS } from '@maskin/ext-knowledge/seeds'
+import {
+	type SeedAgent,
+	type SeedTrigger,
+	getAllModules,
+	getModuleDefaultSettings,
+} from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
 	WORKSPACE_TEMPLATES,
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
 } from '@maskin/shared'
+
+/**
+ * Seeds contributed by extensions, keyed by module id. When a template's
+ * `enabled_modules` list includes an extension, its seeds are spliced into the
+ * template's seedAgents/seedTriggers at apply-time. This keeps each extension
+ * owning its own agents/triggers while letting templates stay agnostic.
+ */
+const EXTENSION_SEEDS: Record<
+	string,
+	{ agents: SeedAgent[]; triggers: SeedTrigger[] } | undefined
+> = {
+	knowledge: { agents: KNOWLEDGE_SEED_AGENTS, triggers: KNOWLEDGE_SEED_TRIGGERS },
+}
+
+function mergeExtensionSeeds(template: WorkspaceTemplate): {
+	seedAgents: SeedAgent[]
+	seedTriggers: SeedTrigger[]
+} {
+	const enabled = (template.settings.enabled_modules ?? []) as string[]
+	const extraAgents: SeedAgent[] = []
+	const extraTriggers: SeedTrigger[] = []
+	for (const id of enabled) {
+		const ext = EXTENSION_SEEDS[id]
+		if (!ext) continue
+		extraAgents.push(...ext.agents)
+		extraTriggers.push(...ext.triggers)
+	}
+	return {
+		seedAgents: [...(template.seedAgents ?? []), ...extraAgents],
+		seedTriggers: [...(template.seedTriggers ?? []), ...extraTriggers],
+	}
+}
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -2023,13 +2061,16 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				seedSummary = `Settings applied, but seeding examples failed: ${String(err)}. You can re-run get_started or add objects manually.`
 			}
 
+			// Merge template seeds with contributions from any enabled extensions.
+			const { seedAgents, seedTriggers } = mergeExtensionSeeds(template)
+
 			// Create seed agents (if any). Track $id → real UUID so triggers can resolve
 			// their target actor, and so {{self_id}} placeholders in system prompts can
 			// be substituted with the real actor id in a second PATCH.
 			const actorIdMap: Record<string, string> = {}
 			let agentsCreated = 0
-			if (template.seedAgents && template.seedAgents.length > 0) {
-				for (const agent of template.seedAgents) {
+			if (seedAgents.length > 0) {
+				for (const agent of seedAgents) {
 					try {
 						const created = (await apiCall(
 							config,
@@ -2064,8 +2105,8 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 
 			// Create seed triggers, resolving targetActor$id to a real UUID.
 			let triggersCreated = 0
-			if (template.seedTriggers && template.seedTriggers.length > 0) {
-				for (const trigger of template.seedTriggers) {
+			if (seedTriggers.length > 0) {
+				for (const trigger of seedTriggers) {
 					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
 					try {
 						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)

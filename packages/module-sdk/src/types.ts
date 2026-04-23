@@ -68,6 +68,45 @@ export interface ModuleDefinition {
 	mcpTools?: McpToolDefinition[]
 	/** Default workspace settings this module contributes when first enabled */
 	defaultSettings?: ModuleDefaultSettings
+	/**
+	 * Optional session-boot hook. Called from the session manager once per
+	 * enabled module after agent files are pulled into the session temp dir,
+	 * before the container launches. Lets the module write additional context
+	 * files (picked up by agent-run.sh and merged into CLAUDE.md) or otherwise
+	 * prepare the container's /agent/ tree. Must not throw — failures are
+	 * logged and ignored so a broken module cannot block the session.
+	 */
+	sessionBootHook?: (params: SessionBootHookParams) => Promise<void>
+}
+
+/** A seed agent definition a module or template contributes. */
+export interface SeedAgent {
+	/** Template-local id used by seedTriggers to reference this actor. */
+	$id: string
+	name: string
+	systemPrompt: string
+	tools?: Record<string, unknown>
+}
+
+/** A seed trigger definition a module or template contributes. */
+export interface SeedTrigger {
+	name: string
+	type: 'event' | 'cron'
+	config: Record<string, unknown>
+	actionPrompt: string
+	/** $id of a SeedAgent (or a real UUID if the user already has one). */
+	targetActor$id: string
+	enabled: boolean
+}
+
+/** Params passed to a module's sessionBootHook. */
+export interface SessionBootHookParams {
+	/** Drizzle database instance, for querying workspace-scoped data. */
+	db: Database
+	/** Workspace the session is starting in. */
+	workspaceId: string
+	/** Local path mounted as /agent in the container. Write additional files here. */
+	tempDir: string
 }
 
 /** Default settings a module contributes to workspace settings when enabled */

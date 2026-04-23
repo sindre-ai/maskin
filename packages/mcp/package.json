@@ -17,6 +17,7 @@
 		"test": "vitest"
 	},
 	"dependencies": {
+		"@maskin/ext-knowledge": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",
 		"@modelcontextprotocol/ext-apps": "^1.2.2",

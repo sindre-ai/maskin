@@ -8,6 +8,7 @@ import {
 	MODULE_ID,
 	MODULE_NAME,
 } from '../shared.js'
+import { knowledgeSessionBootHook } from './boot-hook.js'
 
 const knowledgeExtension: ModuleDefinition = {
 	id: MODULE_ID,
@@ -24,6 +25,7 @@ const knowledgeExtension: ModuleDefinition = {
 		},
 	],
 	defaultSettings: KNOWLEDGE_DEFAULT_SETTINGS,
+	sessionBootHook: knowledgeSessionBootHook,
 }
 
 export default knowledgeExtension

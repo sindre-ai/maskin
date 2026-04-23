@@ -1,5 +1,13 @@
-import { KNOWLEDGE_NUDGES } from '@maskin/shared'
 import { createDb } from './connection'
+
+// Inlined to keep @maskin/db free of @maskin/shared dependency (avoids cycle
+// shared → module-sdk → db → shared). Kept verbatim in sync with the canonical
+// copy in @maskin/shared/src/prompts.ts — if one changes, update both.
+const KNOWLEDGE_NUDGES = `
+Before answering domain questions or making assumptions about data, schemas, or tooling, call search_objects({type:'knowledge', q:'<terms>'}). If relevant titles come back, call get_objects({ids:['<uuid>']}) to read the full article.
+
+When the user corrects a factual assumption, establishes a data-model or tooling truth, or validates a non-obvious convention worth keeping past this session, call create_objects({type:'knowledge', ...}) and link it back with an informs edge from the current session.
+`.trim()
 import {
 	actors,
 	notifications,

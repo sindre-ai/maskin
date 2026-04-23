@@ -16,6 +16,7 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
+import { getEnabledModuleIds, getModule } from '@maskin/module-sdk'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
@@ -155,7 +156,7 @@ export class SessionManager extends EventEmitter {
 		try {
 			// Pull agent files from S3 to temp dir (chmod 777 so non-root agent user in container can write)
 			const tempDir = await mkdtemp(join(tmpdir(), 'anko-session-'))
-			for (const sub of ['', 'skills', 'learnings', 'memory', 'workspace', 'knowledge']) {
+			for (const sub of ['', 'skills', 'learnings', 'memory', 'workspace']) {
 				const dir = sub ? join(tempDir, sub) : tempDir
 				if (sub) await mkdir(dir, { recursive: true })
 				await chmod(dir, 0o777)
@@ -163,7 +164,7 @@ export class SessionManager extends EventEmitter {
 			this.activeSessions.set(sessionId, { tempDir })
 
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
-			await this.writeWorkspaceKnowledge(session.workspaceId, tempDir)
+			await this.callModuleBootHooks(session.workspaceId, tempDir)
 
 			// Build env vars and launch container
 			const containerId = await this.launchContainer(session, tempDir, sessionId)
@@ -324,11 +325,9 @@ export class SessionManager extends EventEmitter {
 
 			// Also pull latest agent files (other sessions may have added learnings)
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
-			// Ensure the knowledge dir exists on resume (snapshots from before this
-			// feature won't have it) and refresh with the latest validated articles.
-			await mkdir(join(tempDir, 'knowledge'), { recursive: true })
-			await chmod(join(tempDir, 'knowledge'), 0o777)
-			await this.writeWorkspaceKnowledge(session.workspaceId, tempDir)
+			// Refresh module-contributed context (e.g. the Knowledge extension's
+			// workspace rules) — bootHooks create their own subdirs under tempDir.
+			await this.callModuleBootHooks(session.workspaceId, tempDir)
 
 			// Build env vars (including integration credentials) and launch container
 			const containerId = await this.launchContainer(
@@ -978,72 +977,34 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Fetch validated knowledge articles for the workspace and write them as
-	 * markdown files into `${tempDir}/knowledge/`. agent-run.sh appends these to
-	 * the generated CLAUDE.md so every session boots with the workspace's
-	 * standing rules in context, not dependent on the agent remembering to
-	 * search. Budget capped so one oversized article cannot blow up boot.
+	 * Dispatch session-boot hooks from every enabled module. Each hook can
+	 * write additional context files into tempDir; agent-run.sh picks them up
+	 * when building CLAUDE.md (e.g. the Knowledge extension writes workspace
+	 * rules into /agent/knowledge/). A failing hook must not block session
+	 * startup, so errors are logged and ignored per-module.
 	 */
-	private async writeWorkspaceKnowledge(workspaceId: string, tempDir: string): Promise<void> {
-		const MAX_TOTAL_BYTES = 20_000
-		const MAX_ARTICLE_BYTES = 4_000
+	private async callModuleBootHooks(workspaceId: string, tempDir: string): Promise<void> {
+		const [workspace] = await this.db
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
 
-		try {
-			const articles = await this.db
-				.select()
-				.from(objects)
-				.where(
-					and(
-						eq(objects.workspaceId, workspaceId),
-						eq(objects.type, 'knowledge'),
-						eq(objects.status, 'validated'),
-					),
-				)
-				.orderBy(desc(objects.updatedAt))
+		const enabledModuleIds = getEnabledModuleIds(
+			(workspace?.settings as Record<string, unknown>) ?? null,
+		)
 
-			if (articles.length === 0) return
-
-			const knowledgeDir = join(tempDir, 'knowledge')
-			let totalBytes = 0
-			let written = 0
-
-			for (const article of articles) {
-				if (totalBytes >= MAX_TOTAL_BYTES) break
-
-				const metadata = (article.metadata as Record<string, unknown> | null) ?? {}
-				const summary = typeof metadata.summary === 'string' ? metadata.summary : ''
-				const title = article.title?.trim() || 'Untitled'
-				const full = article.content?.trim() ?? ''
-				// Prefer full content when we have room; otherwise fall back to summary.
-				const bodyFull = summary ? `${summary}\n\n${full}`.trim() : full
-				const remaining = MAX_TOTAL_BYTES - totalBytes
-				const bodyBudget = Math.min(MAX_ARTICLE_BYTES, remaining)
-				const body =
-					Buffer.byteLength(bodyFull, 'utf8') <= bodyBudget
-						? bodyFull
-						: summary || `${bodyFull.slice(0, bodyBudget - 200)}…`
-
-				const file = `## ${title}\n\n${body}\n\n[maskin://objects/${article.id}]\n`
-				const bytes = Buffer.byteLength(file, 'utf8')
-				if (bytes > bodyBudget) continue
-
-				// Filenames are content-addressed by article id so resumed/re-booted sessions
-				// overwrite the same file when an article is updated.
-				await writeFile(join(knowledgeDir, `${article.id}.md`), file)
-				totalBytes += bytes
-				written++
+		for (const id of enabledModuleIds) {
+			const mod = getModule(id)
+			if (!mod?.sessionBootHook) continue
+			try {
+				await mod.sessionBootHook({ db: this.db, workspaceId, tempDir })
+			} catch (err) {
+				logger.warn(`Module sessionBootHook failed: ${id}`, {
+					workspaceId,
+					error: String(err),
+				})
 			}
-
-			logger.info(`Wrote ${written} workspace knowledge articles for session`, {
-				workspaceId,
-				totalBytes,
-			})
-		} catch (err) {
-			// Do not block session startup on a knowledge read failure; log and continue.
-			logger.warn('Failed to write workspace knowledge', {
-				workspaceId,
-				error: String(err),
-			})
 		}
 	}
 

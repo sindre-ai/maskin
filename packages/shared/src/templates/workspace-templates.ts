@@ -70,7 +70,7 @@ const developmentTemplate: WorkspaceTemplate = {
 			insight: [{ name: 'tags', type: 'text', required: false }],
 		},
 		relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
-		enabled_modules: ['work'],
+		enabled_modules: ['work', 'knowledge'],
 	},
 	seedNodes: [
 		{
@@ -263,7 +263,7 @@ const growthTemplate: WorkspaceTemplate = {
 			'decision_maker_at',
 			'derived_from',
 		],
-		enabled_modules: ['work'],
+		enabled_modules: ['work', 'knowledge'],
 	},
 	seedNodes: [
 		{
@@ -416,7 +416,7 @@ const outboundSalesTemplate: WorkspaceTemplate = {
 			'duplicates',
 			'belongs_to',
 		],
-		enabled_modules: ['work'],
+		enabled_modules: ['work', 'knowledge'],
 	},
 	seedNodes: [
 		{

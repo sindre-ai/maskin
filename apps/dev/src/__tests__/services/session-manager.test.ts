@@ -1,14 +1,11 @@
 import { vi } from 'vitest'
 
 // Mock external dependencies
-const { mockWriteFile } = vi.hoisted(() => ({
-	mockWriteFile: vi.fn().mockResolvedValue(undefined),
-}))
 vi.mock('node:fs/promises', () => ({
 	mkdtemp: vi.fn().mockResolvedValue('/tmp/anko-session-test'),
 	mkdir: vi.fn().mockResolvedValue(undefined),
 	chmod: vi.fn().mockResolvedValue(undefined),
-	writeFile: mockWriteFile,
+	writeFile: vi.fn().mockResolvedValue(undefined),
 	rm: vi.fn().mockResolvedValue(undefined),
 }))
 
@@ -212,74 +209,90 @@ describe('SessionManager', () => {
 		})
 	})
 
-	describe('writeWorkspaceKnowledge()', () => {
-		it('writes validated knowledge articles as markdown files into the knowledge dir', async () => {
-			mockResults.select = [
-				{
-					id: 'article-1',
-					title: 'Never push to main',
-					content: 'Always open a PR first.',
-					metadata: { summary: 'Git workflow rule', confidence: 'high' },
-					updatedAt: new Date(),
-				},
-				{
-					id: 'article-2',
-					title: 'Cap outreach at 50/day',
-					content: 'Per-inbox daily cap.',
-					metadata: { summary: 'Outreach send cap' },
-					updatedAt: new Date(),
-				},
-			]
+	describe('callModuleBootHooks()', () => {
+		it('invokes sessionBootHook on each enabled module with db, workspaceId, tempDir', async () => {
+			const hookA = vi.fn().mockResolvedValue(undefined)
+			const hookB = vi.fn().mockResolvedValue(undefined)
 
-			await (
-				manager as unknown as {
-					writeWorkspaceKnowledge(workspaceId: string, tempDir: string): Promise<void>
-				}
-			).writeWorkspaceKnowledge('ws-1', '/tmp/anko-session-test')
-
-			expect(mockWriteFile).toHaveBeenCalledTimes(2)
-			const firstCall = mockWriteFile.mock.calls[0]
-			expect(firstCall?.[0]).toBe('/tmp/anko-session-test/knowledge/article-1.md')
-			expect(firstCall?.[1]).toContain('## Never push to main')
-			expect(firstCall?.[1]).toContain('Git workflow rule')
-			expect(firstCall?.[1]).toContain('Always open a PR first.')
-			expect(firstCall?.[1]).toContain('[maskin://objects/article-1]')
-		})
-
-		it('writes nothing when no validated articles exist', async () => {
-			mockResults.select = []
-
-			await (
-				manager as unknown as {
-					writeWorkspaceKnowledge(workspaceId: string, tempDir: string): Promise<void>
-				}
-			).writeWorkspaceKnowledge('ws-1', '/tmp/anko-session-test')
-
-			expect(mockWriteFile).not.toHaveBeenCalled()
-		})
-
-		it('swallows DB errors so session startup is not blocked', async () => {
-			// Force the select chain to throw when awaited
-			const ctx = createTestContext()
-			const throwingDb = new Proxy(ctx.db, {
-				get(target, prop) {
-					if (prop === 'select') {
-						return () => {
-							throw new Error('db unavailable')
-						}
-					}
-					return Reflect.get(target, prop)
-				},
+			// Register two fake modules in the shared registry; one disabled so we
+			// verify filtering by enabled_modules as well as hook dispatch.
+			const { registerModule, clearModules } = await import('@maskin/module-sdk')
+			clearModules()
+			registerModule({
+				id: 'mod-a',
+				name: 'Mod A',
+				version: '0.0.0',
+				objectTypes: [],
+				sessionBootHook: hookA,
 			})
-			const throwingManager = new SessionManager(throwingDb, storageProvider as StorageProvider)
+			registerModule({
+				id: 'mod-b',
+				name: 'Mod B',
+				version: '0.0.0',
+				objectTypes: [],
+				sessionBootHook: hookB,
+			})
+			registerModule({
+				id: 'mod-c',
+				name: 'Mod C',
+				version: '0.0.0',
+				objectTypes: [],
+				// No sessionBootHook — should be skipped silently.
+			})
+
+			mockResults.select = [{ id: 'ws-1', settings: { enabled_modules: ['mod-a', 'mod-c'] } }]
+
+			await (
+				manager as unknown as {
+					callModuleBootHooks(workspaceId: string, tempDir: string): Promise<void>
+				}
+			).callModuleBootHooks('ws-1', '/tmp/anko-session-test')
+
+			expect(hookA).toHaveBeenCalledTimes(1)
+			expect(hookA).toHaveBeenCalledWith(
+				expect.objectContaining({
+					workspaceId: 'ws-1',
+					tempDir: '/tmp/anko-session-test',
+				}),
+			)
+			expect(hookB).not.toHaveBeenCalled() // disabled
+			clearModules()
+		})
+
+		it('swallows errors from a single module hook and continues dispatching', async () => {
+			const hookFailing = vi.fn().mockRejectedValue(new Error('boom'))
+			const hookOk = vi.fn().mockResolvedValue(undefined)
+
+			const { registerModule, clearModules } = await import('@maskin/module-sdk')
+			clearModules()
+			registerModule({
+				id: 'fails',
+				name: 'Fails',
+				version: '0.0.0',
+				objectTypes: [],
+				sessionBootHook: hookFailing,
+			})
+			registerModule({
+				id: 'ok',
+				name: 'OK',
+				version: '0.0.0',
+				objectTypes: [],
+				sessionBootHook: hookOk,
+			})
+
+			mockResults.select = [{ id: 'ws-1', settings: { enabled_modules: ['fails', 'ok'] } }]
 
 			await expect(
 				(
-					throwingManager as unknown as {
-						writeWorkspaceKnowledge(workspaceId: string, tempDir: string): Promise<void>
+					manager as unknown as {
+						callModuleBootHooks(workspaceId: string, tempDir: string): Promise<void>
 					}
-				).writeWorkspaceKnowledge('ws-1', '/tmp/anko-session-test'),
+				).callModuleBootHooks('ws-1', '/tmp/anko-session-test'),
 			).resolves.toBeUndefined()
+
+			expect(hookFailing).toHaveBeenCalledTimes(1)
+			expect(hookOk).toHaveBeenCalledTimes(1)
+			clearModules()
 		})
 	})
 
