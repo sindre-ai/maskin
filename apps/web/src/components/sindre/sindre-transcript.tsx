@@ -112,7 +112,7 @@ function UserMessageBlock({ text }: { text: string }) {
 }
 
 function AssistantTextBlock({ text }: { text: string }) {
-	return <MarkdownContent content={text} className="text-text" size="sm" />
+	return <MarkdownContent content={text} className="text-accent-foreground" size="sm" />
 }
 
 function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
