@@ -55,7 +55,11 @@ function msbCreate(config: {
 	}
 	args.push(config.image)
 
-	execFileSync(MSB_BIN, args, {
+	// Run msb under setsid so it's in a brand-new session/process group,
+	// fully detached from the agent-server's process tree. Without this,
+	// msb inside the agent-server's descent fails the VMM handshake, even
+	// though it works fine from a standalone shell.
+	execFileSync('/usr/bin/setsid', ['--wait', MSB_BIN, ...args], {
 		timeout: 180_000,
 		stdio: ['ignore', 'pipe', 'pipe'],
 	})
