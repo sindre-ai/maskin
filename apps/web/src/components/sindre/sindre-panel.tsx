@@ -138,7 +138,11 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				ref={panelRef}
 				side="right"
 				collapsible="offcanvas"
-				className="pointer-events-auto"
+				// `!flex` overrides the primitive's `hidden md:flex` so the
+				// inner fixed panel renders on mobile too. The outer
+				// `hidden md:block` wrapper is already forced visible by the
+				// SindreSidebarProvider via `[&_[data-side=right]]:!block`.
+				className="pointer-events-auto !flex"
 			>
 				<ResizeHandle
 					width={panelWidth}
