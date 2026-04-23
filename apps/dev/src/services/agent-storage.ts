@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Database } from '@maskin/db'
 import { agentFiles, agentSkills, workspaceSkills } from '@maskin/db/schema'
@@ -15,6 +15,12 @@ export const WORKSPACE_SKILLS_PREFIX = 'workspaces'
 // cannot then delete the winner's object.
 export function workspaceSkillKey(workspaceId: string, skillId: string): string {
 	return `${WORKSPACE_SKILLS_PREFIX}/${workspaceId}/skills/${skillId}/SKILL.md`
+}
+
+export type PullWorkspaceSkillsResult = {
+	pulled: number
+	skipped: number
+	failures: { name: string; storageKey: string; error: string }[]
 }
 
 export class AgentStorageManager {
@@ -327,19 +333,18 @@ export class AgentStorageManager {
 	}
 
 	/**
-	 * Download all workspace skills attached to this agent (via `agent_skills`)
-	 * into `<localDir>/skills/<name>/SKILL.md`.
-	 *
-	 * Collision rule — agent-local wins. If a `skills/<name>/` folder already
-	 * exists on disk at the time this runs (typically created by the preceding
-	 * `pullAgentFiles` call), the workspace skill for that name is skipped.
-	 * This preserves per-agent tweaks of otherwise-shared skills.
+	 * Collision rule — agent-local wins unless `overwrite: true`. If a
+	 * `skills/<name>/` folder already exists on disk, the workspace skill for
+	 * that name is skipped so per-agent tweaks survive. On resume we pass
+	 * `overwrite: true` so updated workspace-skill content is re-pulled over
+	 * stale snapshot contents.
 	 */
 	async pullWorkspaceSkillsForAgent(
 		actorId: string,
 		workspaceId: string,
 		localDir: string,
-	): Promise<void> {
+		options: { overwrite?: boolean } = {},
+	): Promise<PullWorkspaceSkillsResult> {
 		const rows = await this.db
 			.select({
 				name: workspaceSkills.name,
@@ -351,7 +356,7 @@ export class AgentStorageManager {
 
 		if (rows.length === 0) {
 			logger.info('No workspace skills attached to agent', { actorId, workspaceId })
-			return
+			return { pulled: 0, skipped: 0, failures: [] }
 		}
 
 		const skillsDir = join(localDir, 'skills')
@@ -363,7 +368,7 @@ export class AgentStorageManager {
 
 		for (const { name, storageKey } of rows) {
 			const skillFolder = join(skillsDir, name)
-			if (await folderExists(skillFolder)) {
+			if (!options.overwrite && (await folderExists(skillFolder))) {
 				skipped++
 				logger.info('Skipping workspace skill — agent-local folder already exists', {
 					actorId,
@@ -375,6 +380,9 @@ export class AgentStorageManager {
 
 			try {
 				const data = await this.storage.get(storageKey)
+				if (options.overwrite) {
+					await rm(skillFolder, { recursive: true, force: true })
+				}
 				await mkdir(skillFolder, { recursive: true })
 				await writeFile(join(skillFolder, 'SKILL.md'), data)
 				pulled++
@@ -390,10 +398,6 @@ export class AgentStorageManager {
 			}
 		}
 
-		// Per-skill failures are logged above and counted in `failed`. We do NOT
-		// throw — a single missing or unreadable S3 object must not block the
-		// agent from starting at all. Operators see the divergence in logs and
-		// the skill-attachment list; the session proceeds with whatever did load.
 		logger.info('Pulled workspace skills for agent', {
 			actorId,
 			workspaceId,
@@ -401,6 +405,8 @@ export class AgentStorageManager {
 			skipped,
 			failed: failures.length,
 		})
+
+		return { pulled, skipped, failures }
 	}
 
 	private async upsertFileRecord(

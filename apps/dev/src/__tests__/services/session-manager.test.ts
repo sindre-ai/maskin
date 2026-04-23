@@ -217,7 +217,7 @@ describe('SessionManager', () => {
 				.mockResolvedValue(undefined)
 			const pullWorkspaceSkillsSpy = vi
 				.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent')
-				.mockResolvedValue(undefined)
+				.mockResolvedValue({ pulled: 0, skipped: 0, failures: [] })
 
 			// Short-circuit container launch so the test doesn't need to mock the full
 			// launchContainer DB/Docker path — the wiring we care about runs earlier.
@@ -261,7 +261,7 @@ describe('SessionManager', () => {
 			vi.spyOn(AgentStorageManager.prototype, 'pullAgentFiles').mockResolvedValue(undefined)
 			const pullWorkspaceSkillsSpy = vi
 				.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent')
-				.mockResolvedValue(undefined)
+				.mockResolvedValue({ pulled: 0, skipped: 0, failures: [] })
 
 			vi.spyOn(
 				manager as unknown as {

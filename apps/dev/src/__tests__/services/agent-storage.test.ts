@@ -350,9 +350,10 @@ describe('AgentStorageManager', () => {
 				storage.get.mockRejectedValueOnce(new Error('NoSuchKey'))
 				storage.get.mockResolvedValueOnce(Buffer.from('body', 'utf-8'))
 
-				await expect(
-					manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent'),
-				).resolves.toBeUndefined()
+				const result = await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+				expect(result.pulled).toBe(1)
+				expect(result.failures).toHaveLength(1)
+				expect(result.failures[0]?.name).toBe('deploy-check')
 
 				// pr-review still gets written
 				expect(writeFile).toHaveBeenCalledWith(

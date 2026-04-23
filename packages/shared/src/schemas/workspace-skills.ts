@@ -16,15 +16,17 @@ export const workspaceSkillSchema = z.object({
 
 export type WorkspaceSkill = z.infer<typeof workspaceSkillSchema>
 
+export const MAX_WORKSPACE_SKILL_CONTENT_BYTES = 256_000
+
 export const createWorkspaceSkillSchema = z.object({
 	name: skillNameSchema,
-	content: z.string().min(1),
+	content: z.string().min(1).max(MAX_WORKSPACE_SKILL_CONTENT_BYTES),
 })
 
 export type CreateWorkspaceSkillInput = z.infer<typeof createWorkspaceSkillSchema>
 
 export const updateWorkspaceSkillSchema = z.object({
-	content: z.string().min(1),
+	content: z.string().min(1).max(MAX_WORKSPACE_SKILL_CONTENT_BYTES),
 })
 
 export type UpdateWorkspaceSkillInput = z.infer<typeof updateWorkspaceSkillSchema>

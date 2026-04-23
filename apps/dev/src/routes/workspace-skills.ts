@@ -25,6 +25,20 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+function isUniqueViolation(err: unknown, constraintName: string): boolean {
+	if (!err || typeof err !== 'object') return false
+	const e = err as {
+		code?: string
+		constraint_name?: string
+		constraint?: string
+		message?: string
+	}
+	if (e.code !== '23505') return false
+	const name = e.constraint_name ?? e.constraint
+	if (name === constraintName) return true
+	return typeof e.message === 'string' && e.message.includes(constraintName)
+}
+
 async function requireWorkspaceMember(db: Database, workspaceId: string, actorId: string) {
 	const [member] = await db
 		.select()
@@ -236,6 +250,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 	const sizeBytes = Buffer.byteLength(body.content, 'utf-8')
 
 	let created: typeof workspaceSkills.$inferSelect | undefined
+	let s3PutSucceeded = false
 	try {
 		created = await db.transaction(async (tx) => {
 			const rows = await tx
@@ -255,14 +270,23 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 			if (!row) throw new Error('INSERT returned no row')
 
 			await storage.putWorkspaceSkill(workspaceId, skillId, body.content)
+			s3PutSucceeded = true
 			return row
 		})
 	} catch (err) {
-		if (err instanceof Error && /workspace_skills_ws_name_uniq/.test(err.message)) {
+		if (isUniqueViolation(err, 'workspace_skills_ws_name_uniq')) {
 			return c.json(
 				createApiError('CONFLICT', 'A skill with this name already exists in this workspace'),
 				409,
 			)
+		}
+		if (s3PutSucceeded) {
+			logger.error('Orphan S3 object after workspace_skill commit failure', {
+				workspaceId,
+				skillId,
+				storageKey,
+				error: String(err),
+			})
 		}
 		throw err
 	}

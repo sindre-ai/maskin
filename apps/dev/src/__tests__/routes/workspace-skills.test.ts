@@ -113,9 +113,11 @@ describe('Workspace Skills Routes', () => {
 			const body = buildCreateWorkspaceSkillBody({ name: 'taken-name' })
 
 			mockResults.selectQueue = [[buildWorkspaceMember()]]
-			mockResults.insertError = new Error(
-				'duplicate key value violates unique constraint "workspace_skills_ws_name_uniq"',
+			const uniqueErr = Object.assign(
+				new Error('duplicate key value violates unique constraint "workspace_skills_ws_name_uniq"'),
+				{ code: '23505', constraint_name: 'workspace_skills_ws_name_uniq' },
 			)
+			mockResults.insertError = uniqueErr
 
 			const res = await app.request(
 				jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, body),
