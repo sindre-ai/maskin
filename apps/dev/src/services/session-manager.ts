@@ -164,6 +164,11 @@ export class SessionManager extends EventEmitter {
 			this.activeSessions.set(sessionId, { tempDir })
 
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
+			await this.agentStorage.pullWorkspaceSkillsForAgent(
+				session.actorId,
+				session.workspaceId,
+				tempDir,
+			)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars and launch container
