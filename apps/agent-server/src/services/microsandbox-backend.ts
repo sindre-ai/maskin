@@ -59,22 +59,39 @@ function msbCreate(config: {
 	// the process as a descendant of the caller; a plain transient service
 	// is reparented to systemd PID 1. Confirmed: msb fails only when it's
 	// a descendant of the agent-server process tree, and this fully detaches.
+	// NOTE: no --collect, no --wait — `msb create` exits after daemonizing
+	// the VM. If we --wait, the transient service ends when msb exits and
+	// --collect would tear down the VM child. Fire-and-forget the unit
+	// creation; we verify success via `msb list` below.
 	execFileSync(
 		'/usr/bin/systemd-run',
-		[
-			'--wait',
-			'--pipe',
-			'--quiet',
-			'--collect',
-			'--service-type=exec',
-			MSB_BIN,
-			...args,
-		],
+		['--quiet', MSB_BIN, ...args],
 		{
 			timeout: 180_000,
 			stdio: ['ignore', 'pipe', 'pipe'],
 		},
 	)
+
+	// Poll msb list --running until our sandbox appears (or 60s timeout).
+	const deadline = Date.now() + 60_000
+	while (Date.now() < deadline) {
+		try {
+			const out = execFileSync(
+				MSB_BIN,
+				['list', '--running', '--format', 'json'],
+				{ timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] },
+			).toString()
+			const list = JSON.parse(out) as Array<{ name: string; status: string }>
+			if (list.some((s) => s.name === config.name && s.status === 'running')) {
+				return
+			}
+		} catch {
+			// Transient; keep polling
+		}
+		// short sleep
+		execFileSync('/bin/sleep', ['0.5'], { stdio: 'ignore' })
+	}
+	throw new Error(`msb create timeout: sandbox ${config.name} did not reach running state`)
 }
 
 export class MicrosandboxBackend implements RuntimeBackend {
