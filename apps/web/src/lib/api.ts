@@ -116,6 +116,8 @@ export const api = {
 			request<ActorResponse>(`/actors/${id}`, { method: 'PATCH', body: data }),
 		regenerateApiKey: (id: string) =>
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
+		reset: (id: string, workspaceId: string) =>
+			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
 	},
@@ -236,6 +238,14 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<SessionLogResponse[]>(`/sessions/${id}/logs${qs}`, { workspaceId })
 		},
+		input: (id: string, body: SessionInputBody, workspaceId: string) =>
+			request<{ ok: true }>(`/sessions/${id}/input`, {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		stop: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
 	},
 
 	events: {
@@ -404,6 +414,7 @@ export interface ActorResponse extends ActorListItem {
 	memory: Record<string, unknown> | null
 	llmProvider: string | null
 	llmConfig: Record<string, unknown> | null
+	isSystem: boolean
 	createdAt: string | null
 	updatedAt: string | null
 }
@@ -614,9 +625,22 @@ export interface UpdateWorkspaceSkillInput {
 	content: string
 }
 
+export interface SessionConfigInput {
+	/** Start the container with stdin attached so subsequent user turns can be delivered via the input route. */
+	interactive?: boolean
+	base_image?: string
+	runtime?: 'claude-code' | 'codex' | 'custom'
+	timeout_seconds?: number
+	memory_mb?: number
+	cpu_shares?: number
+	env_vars?: Record<string, string>
+	mcps?: Array<Record<string, unknown>>
+}
+
 export interface CreateSessionInput {
 	actor_id: string
 	action_prompt: string
+	config?: SessionConfigInput
 	auto_start?: boolean
 }
 
@@ -637,6 +661,16 @@ export interface SessionResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+}
+
+export interface SessionInputAttachment {
+	kind: string
+	id: string
+}
+
+export interface SessionInputBody {
+	content: string
+	attachments?: SessionInputAttachment[]
 }
 
 export interface SessionLogResponse {

@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { vi } from 'vitest'
 
 // Mock dockerode
@@ -10,6 +13,7 @@ const mockContainer = {
 	logs: vi.fn(),
 	putArchive: vi.fn(),
 	getArchive: vi.fn(),
+	attach: vi.fn(),
 }
 
 const mockDocker = {
@@ -36,11 +40,39 @@ vi.mock('tar-stream', () => ({
 
 import { ContainerManager } from '../../services/container-manager'
 
+function makeStream(
+	overrides: Partial<{
+		write: (line: string, cb: (err?: Error | null) => void) => void
+		end: () => void
+	}> = {},
+) {
+	const listeners = new Map<string, Array<(arg?: unknown) => void>>()
+	const stream = {
+		write: overrides.write ?? vi.fn((_line: string, cb: (err?: Error | null) => void) => cb()),
+		end: overrides.end ?? vi.fn(),
+		on: vi.fn((event: string, cb: (arg?: unknown) => void) => {
+			const list = listeners.get(event) ?? []
+			list.push(cb)
+			listeners.set(event, list)
+			return stream
+		}),
+		emit: (event: string, arg?: unknown) => {
+			for (const cb of listeners.get(event) ?? []) cb(arg)
+		},
+	}
+	return stream
+}
+
 describe('ContainerManager', () => {
 	let manager: ContainerManager
 
 	beforeEach(() => {
 		vi.clearAllMocks()
+		// Default: inspect reports the container as running so reconnect paths
+		// proceed. Individual tests override for dead-container scenarios.
+		mockContainer.inspect.mockResolvedValue({
+			State: { Running: true, ExitCode: 0, StartedAt: null, FinishedAt: null },
+		})
 		manager = new ContainerManager()
 	})
 
@@ -70,6 +102,50 @@ describe('ContainerManager', () => {
 					ExtraHosts: ['host.docker.internal:host-gateway'],
 				},
 			})
+		})
+
+		it('attaches stdin and sets INTERACTIVE=1 when interactive is true', async () => {
+			mockDocker.createContainer.mockResolvedValue({ id: 'interactive-container' })
+
+			await manager.create({
+				image: 'test-image',
+				name: 'interactive',
+				env: { FOO: 'bar' },
+				memoryMb: 256,
+				cpuShares: 512,
+				binds: [],
+				interactive: true,
+			})
+
+			expect(mockDocker.createContainer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					Env: expect.arrayContaining(['FOO=bar', 'INTERACTIVE=1']),
+					AttachStdin: true,
+					OpenStdin: true,
+					StdinOnce: false,
+					Tty: false,
+				}),
+			)
+		})
+
+		it('does not set stdin flags or INTERACTIVE when interactive is false/unset', async () => {
+			mockDocker.createContainer.mockResolvedValue({ id: 'regular-container' })
+
+			await manager.create({
+				image: 'test-image',
+				name: 'regular',
+				env: { FOO: 'bar' },
+				memoryMb: 256,
+				cpuShares: 512,
+				binds: [],
+			})
+
+			const call = mockDocker.createContainer.mock.calls[0][0]
+			expect(call).not.toHaveProperty('AttachStdin')
+			expect(call).not.toHaveProperty('OpenStdin')
+			expect(call).not.toHaveProperty('StdinOnce')
+			expect(call).not.toHaveProperty('Tty')
+			expect(call.Env).not.toContain('INTERACTIVE=1')
 		})
 
 		it('uses custom network mode', async () => {
@@ -234,6 +310,231 @@ describe('ContainerManager', () => {
 
 			expect(chunks).toHaveLength(1)
 			expect(chunks[0].data).toBe('complete')
+		})
+	})
+
+	describe('attachStdin() / getStdinStream() / detachStdin()', () => {
+		it('attaches stdin and stores the stream keyed by sessionId', async () => {
+			const stream = makeStream()
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('session-1', 'container-xyz')
+
+			expect(mockDocker.getContainer).toHaveBeenCalledWith('container-xyz')
+			expect(mockContainer.attach).toHaveBeenCalledWith({
+				stream: true,
+				stdin: true,
+				hijack: true,
+			})
+			expect(manager.getStdinStream('session-1')).toBe(stream)
+		})
+
+		it('getStdinStream returns undefined when no stream is attached', () => {
+			expect(manager.getStdinStream('unknown')).toBeUndefined()
+		})
+
+		it('detachStdin ends the stream and removes it from the map', async () => {
+			const stream = makeStream()
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('session-2', 'container-xyz')
+			manager.detachStdin('session-2')
+
+			expect(stream.end).toHaveBeenCalled()
+			expect(manager.getStdinStream('session-2')).toBeUndefined()
+		})
+
+		it('detachStdin is a no-op when no stream is attached', () => {
+			expect(() => manager.detachStdin('unknown')).not.toThrow()
+		})
+
+		it('detachStdin swallows errors from stream.end()', async () => {
+			const stream = makeStream({
+				end: vi.fn(() => {
+					throw new Error('already closed')
+				}),
+			})
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('session-3', 'container-xyz')
+
+			expect(() => manager.detachStdin('session-3')).not.toThrow()
+			expect(manager.getStdinStream('session-3')).toBeUndefined()
+		})
+	})
+
+	describe('write() reconnect/retry', () => {
+		const payload = {
+			type: 'user' as const,
+			message: { role: 'user' as const, content: 'hello' },
+		}
+
+		it('writes the serialized payload to the attached stream on the happy path', async () => {
+			const stream = makeStream()
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('s', 'c-1')
+			await manager.write('s', payload)
+
+			expect(stream.write).toHaveBeenCalledTimes(1)
+			const writtenLine = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0]
+			expect(writtenLine).toBe(`${JSON.stringify(payload)}\n`)
+		})
+
+		it('throws when no stream was ever attached for the session', async () => {
+			await expect(manager.write('never-attached', payload)).rejects.toThrow(
+				'No stdin stream attached for session never-attached',
+			)
+		})
+
+		it('reconnects and retries once when the stream write fails, then succeeds', async () => {
+			const failingStream = makeStream({
+				write: vi.fn((_line: string, cb: (err?: Error | null) => void) =>
+					cb(new Error('stdin write EPIPE')),
+				),
+			})
+			const recoveredStream = makeStream()
+			mockContainer.attach
+				.mockResolvedValueOnce(failingStream)
+				.mockResolvedValueOnce(recoveredStream)
+
+			await manager.attachStdin('s', 'c-1')
+			await manager.write('s', payload)
+
+			// First attach for attachStdin, second attach for reconnect.
+			expect(mockContainer.attach).toHaveBeenCalledTimes(2)
+			expect(recoveredStream.write).toHaveBeenCalledTimes(1)
+			// After reconnect, getStdinStream returns the new stream.
+			expect(manager.getStdinStream('s')).toBe(recoveredStream)
+		})
+
+		it('reconnects when the attached stream has already ended before write', async () => {
+			const endedStream = makeStream()
+			const recoveredStream = makeStream()
+			mockContainer.attach.mockResolvedValueOnce(endedStream).mockResolvedValueOnce(recoveredStream)
+
+			await manager.attachStdin('s', 'c-1')
+			// Simulate unexpected end event on the original stream.
+			endedStream.emit('end')
+
+			await manager.write('s', payload)
+
+			expect(mockContainer.attach).toHaveBeenCalledTimes(2)
+			expect(endedStream.write).not.toHaveBeenCalled()
+			expect(recoveredStream.write).toHaveBeenCalledTimes(1)
+		})
+
+		it('reconnects when the attached stream errored before write', async () => {
+			const erroredStream = makeStream()
+			const recoveredStream = makeStream()
+			mockContainer.attach
+				.mockResolvedValueOnce(erroredStream)
+				.mockResolvedValueOnce(recoveredStream)
+
+			await manager.attachStdin('s', 'c-1')
+			erroredStream.emit('error', new Error('connection reset'))
+
+			await manager.write('s', payload)
+
+			expect(mockContainer.attach).toHaveBeenCalledTimes(2)
+			expect(recoveredStream.write).toHaveBeenCalledTimes(1)
+		})
+
+		it('propagates the error if the retried write also fails', async () => {
+			const firstStream = makeStream({
+				write: vi.fn((_line: string, cb: (err?: Error | null) => void) =>
+					cb(new Error('first write failed')),
+				),
+			})
+			const secondStream = makeStream({
+				write: vi.fn((_line: string, cb: (err?: Error | null) => void) =>
+					cb(new Error('retry write failed')),
+				),
+			})
+			mockContainer.attach.mockResolvedValueOnce(firstStream).mockResolvedValueOnce(secondStream)
+
+			await manager.attachStdin('s', 'c-1')
+			await expect(manager.write('s', payload)).rejects.toThrow('retry write failed')
+
+			// Retry happened exactly once (two total writes: original + retry).
+			expect(firstStream.write).toHaveBeenCalledTimes(1)
+			expect(secondStream.write).toHaveBeenCalledTimes(1)
+			expect(mockContainer.attach).toHaveBeenCalledTimes(2)
+		})
+
+		it('propagates the error if reconnecting itself fails', async () => {
+			const firstStream = makeStream({
+				write: vi.fn((_line: string, cb: (err?: Error | null) => void) =>
+					cb(new Error('initial write failed')),
+				),
+			})
+			mockContainer.attach
+				.mockResolvedValueOnce(firstStream)
+				.mockRejectedValueOnce(new Error('container gone'))
+
+			await manager.attachStdin('s', 'c-1')
+			await expect(manager.write('s', payload)).rejects.toThrow('container gone')
+		})
+
+		it('throws instead of re-attaching when the container is no longer running', async () => {
+			const erroredStream = makeStream()
+			mockContainer.attach.mockResolvedValueOnce(erroredStream)
+
+			await manager.attachStdin('s', 'c-1')
+			erroredStream.emit('error', new Error('connection reset'))
+
+			// Container has since stopped — reconnect must bail instead of
+			// silently succeeding against a dead container.
+			mockContainer.inspect.mockResolvedValueOnce({
+				State: { Running: false, ExitCode: 137, StartedAt: null, FinishedAt: null },
+			})
+
+			await expect(manager.write('s', payload)).rejects.toThrow(/not running/)
+			// Only the original attach ran — no re-attach against the dead container.
+			expect(mockContainer.attach).toHaveBeenCalledTimes(1)
+		})
+	})
+
+	describe('write() matches t13 stream-json fixture format', () => {
+		const fixturePath = join(
+			dirname(fileURLToPath(import.meta.url)),
+			'..',
+			'fixtures',
+			'claude-stdin-user-message.json',
+		)
+		const fixtureText = readFileSync(fixturePath, 'utf-8')
+		const fixture = JSON.parse(fixtureText) as {
+			type: 'user'
+			message: { role: 'user'; content: string }
+		}
+
+		it('serializes the fixture payload as one newline-terminated JSON line', async () => {
+			const stream = makeStream()
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('fixture-session', 'c-fixture')
+			await manager.write('fixture-session', fixture)
+
+			expect(stream.write).toHaveBeenCalledTimes(1)
+			const writtenLine = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+
+			// Exactly one trailing newline, no embedded newlines in the JSON body.
+			expect(writtenLine.endsWith('\n')).toBe(true)
+			expect(writtenLine.slice(0, -1)).not.toContain('\n')
+
+			// Compact (not pretty-printed) — must match `JSON.stringify` exactly so the
+			// Claude CLI sees a single stream-json line per turn.
+			expect(writtenLine).toBe(`${JSON.stringify(fixture)}\n`)
+
+			// Shape round-trips to the original fixture object (type, role, content).
+			expect(JSON.parse(writtenLine.trimEnd())).toEqual(fixture)
+		})
+
+		it('fixture has the stream-json user-message shape the CLI expects', () => {
+			expect(fixture.type).toBe('user')
+			expect(fixture.message.role).toBe('user')
+			expect(typeof fixture.message.content).toBe('string')
+			expect(fixture.message.content.length).toBeGreaterThan(0)
 		})
 	})
 

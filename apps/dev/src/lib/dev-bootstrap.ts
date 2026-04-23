@@ -1,6 +1,7 @@
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
+import { SINDRE_DEFAULT } from '@maskin/shared'
 import { and, eq, isNotNull } from 'drizzle-orm'
 
 export interface DevBootstrapResult {
@@ -42,21 +43,50 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 
 	if (!actor) throw new Error('dev bootstrap: failed to create actor')
 
-	const [workspace] = await db
-		.insert(workspaces)
-		.values({
-			name: 'My Workspace',
-			createdBy: actor.id,
+	const workspace = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.insert(workspaces)
+			.values({
+				name: 'My Workspace',
+				createdBy: actor.id,
+			})
+			.returning()
+
+		if (!ws) return null
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: actor.id,
+			role: 'owner',
 		})
-		.returning()
+
+		// Seed Sindre — the built-in meta-agent shipped with every workspace.
+		const [sindre] = await tx
+			.insert(actors)
+			.values({
+				type: SINDRE_DEFAULT.type,
+				name: SINDRE_DEFAULT.name,
+				isSystem: SINDRE_DEFAULT.isSystem,
+				systemPrompt: SINDRE_DEFAULT.systemPrompt,
+				llmProvider: SINDRE_DEFAULT.llmProvider,
+				llmConfig: SINDRE_DEFAULT.llmConfig,
+				tools: SINDRE_DEFAULT.tools,
+				createdBy: actor.id,
+			})
+			.returning()
+
+		if (!sindre) throw new Error('dev bootstrap: failed to seed Sindre actor')
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: sindre.id,
+			role: 'member',
+		})
+
+		return ws
+	})
 
 	if (!workspace) throw new Error('dev bootstrap: failed to create workspace')
-
-	await db.insert(workspaceMembers).values({
-		workspaceId: workspace.id,
-		actorId: actor.id,
-		role: 'owner',
-	})
 
 	return {
 		apiKey: key,

@@ -1,0 +1,19 @@
+{
+	"type": "assistant",
+	"message": {
+		"id": "msg_01THINK",
+		"type": "message",
+		"role": "assistant",
+		"content": [
+			{
+				"type": "thinking",
+				"thinking": "User is asking about workspace state — I should call list_objects first."
+			}
+		],
+		"model": "claude-sonnet-4-5",
+		"stop_reason": null,
+		"usage": { "input_tokens": 30, "output_tokens": 15 }
+	},
+	"parent_tool_use_id": null,
+	"session_id": "sess-sindre-123"
+}

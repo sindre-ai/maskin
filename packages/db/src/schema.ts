@@ -191,6 +191,7 @@ export const sessions = pgTable(
 		containerId: text('container_id'),
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
+		interactive: boolean('interactive').notNull().default(false),
 		result: jsonb('result'),
 		snapshotPath: text('snapshot_path'),
 		startedAt: timestamp('started_at', { withTimezone: true }),

@@ -2,13 +2,17 @@ import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
+import { SindrePanel } from '@/components/sindre/sindre-panel'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { useActors } from '@/hooks/use-actors'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { PageHeaderProvider } from '@/lib/page-header-context'
+import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
-import { useCallback, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useMemo, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
 
@@ -38,6 +42,7 @@ export const Route = createFileRoute('/_authed/$workspaceId')({
 function WorkspaceLayout() {
 	const { workspaceId } = Route.useParams()
 	const { data: workspaces } = useWorkspaces()
+	const { data: actors } = useActors(workspaceId, { enabled: !!workspaceId })
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
@@ -45,6 +50,14 @@ function WorkspaceLayout() {
 	const workspace = useMemo(
 		() => workspaces?.find((w) => w.id === workspaceId),
 		[workspaces, workspaceId],
+	)
+
+	// Resolve the per-workspace Sindre meta-agent by name (matches SINDRE_DEFAULT
+	// in packages/shared/src/templates/sindre-agent.ts). Null until actors load
+	// or when the workspace is missing Sindre (e.g. pre-backfill).
+	const sindreActorId = useMemo(
+		() => actors?.find((a) => a.type === 'agent' && a.name === 'Sindre')?.id ?? null,
+		[actors],
 	)
 
 	const [open, setOpenState] = useState(getInitialOpen)
@@ -67,18 +80,46 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<PageHeaderProvider>
-				<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-					<AppSidebar />
-					<SidebarInset className="min-w-0">
-						<Header />
-						<div className="flex flex-col flex-1 overflow-auto p-8">
-							<Outlet />
-						</div>
-					</SidebarInset>
-				</SidebarProvider>
-			</PageHeaderProvider>
-			<CommandPalette />
+			<SindreProvider workspaceId={workspaceId}>
+				<PageHeaderProvider>
+					<SindrePinShell>
+						<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+							<AppSidebar />
+							<SidebarInset className="min-w-0">
+								<Header />
+								<div className="flex flex-col flex-1 overflow-auto p-8">
+									<Outlet />
+								</div>
+							</SidebarInset>
+						</SidebarProvider>
+					</SindrePinShell>
+				</PageHeaderProvider>
+				<CommandPalette />
+				<SindrePanel workspaceId={workspaceId} sindreActorId={sindreActorId} />
+			</SindreProvider>
 		</WorkspaceContext.Provider>
+	)
+}
+
+/**
+ * Wraps the main layout so that when Sindre is pinned AND open, the layout
+ * gets a right margin equal to the Sindre panel width — the panel is always
+ * fixed-positioned, so this margin is what makes it "push content aside"
+ * instead of floating over it.
+ */
+function SindrePinShell({ children }: { children: ReactNode }) {
+	const { pinned, open, panelWidth } = useSindre()
+	const isMobile = useIsMobile()
+	// On mobile the panel overlays the viewport and the pin toggle is hidden,
+	// so a stale `pinned=true` from desktop must not apply a margin that would
+	// squash the main content off-screen.
+	const pushed = pinned && open && !isMobile
+	return (
+		<div
+			className="transition-[margin] duration-200 ease-linear"
+			style={{ marginRight: pushed ? `${panelWidth}px` : 0 }}
+		>
+			{children}
+		</div>
 	)
 }
