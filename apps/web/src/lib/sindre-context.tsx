@@ -48,12 +48,29 @@ export interface SindreContextValue {
 	 */
 	pinned: boolean
 	setPinned: (value: boolean) => void
+	/**
+	 * User-adjustable panel width in pixels. Clamped to
+	 * `[SINDRE_PANEL_MIN_WIDTH, SINDRE_PANEL_MAX_WIDTH]` on write, persisted
+	 * cross-workspace in localStorage.
+	 */
+	panelWidth: number
+	setPanelWidth: (value: number) => void
 }
+
+export const SINDRE_PANEL_MIN_WIDTH = 320
+export const SINDRE_PANEL_MAX_WIDTH = 640
+export const SINDRE_PANEL_DEFAULT_WIDTH = 448
 
 const SindreContext = createContext<SindreContextValue | null>(null)
 
 const SESSION_ID_STORAGE_PREFIX = 'maskin-sindre-session-id:'
 const PINNED_STORAGE_KEY = 'maskin-sindre-pinned'
+const PANEL_WIDTH_STORAGE_KEY = 'maskin-sindre-panel-width'
+
+function clampPanelWidth(value: number): number {
+	if (!Number.isFinite(value)) return SINDRE_PANEL_DEFAULT_WIDTH
+	return Math.min(SINDRE_PANEL_MAX_WIDTH, Math.max(SINDRE_PANEL_MIN_WIDTH, Math.round(value)))
+}
 
 function storageKey(workspaceId: string): string {
 	return `${SESSION_ID_STORAGE_PREFIX}${workspaceId}`
@@ -91,6 +108,22 @@ function writeStoredPinned(value: boolean): void {
 	} catch {}
 }
 
+function readStoredPanelWidth(): number {
+	try {
+		const raw = localStorage.getItem(PANEL_WIDTH_STORAGE_KEY)
+		const parsed = raw === null ? Number.NaN : Number(raw)
+		return Number.isFinite(parsed) ? clampPanelWidth(parsed) : SINDRE_PANEL_DEFAULT_WIDTH
+	} catch {
+		return SINDRE_PANEL_DEFAULT_WIDTH
+	}
+}
+
+function writeStoredPanelWidth(value: number): void {
+	try {
+		localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(value))
+	} catch {}
+}
+
 interface SindreProviderProps {
 	workspaceId: string
 	children: ReactNode
@@ -104,6 +137,7 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 		readStoredSessionId(workspaceId),
 	)
 	const [pinned, setPinnedState] = useState<boolean>(() => readStoredPinned())
+	const [panelWidth, setPanelWidthState] = useState<number>(() => readStoredPanelWidth())
 
 	// Swap to the target workspace's stored session id when the workspace
 	// changes. Reset transient UI state so attachments and open state don't
@@ -146,6 +180,12 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 		writeStoredPinned(value)
 	}, [])
 
+	const setPanelWidth = useCallback((value: number) => {
+		const clamped = clampPanelWidth(value)
+		setPanelWidthState(clamped)
+		writeStoredPanelWidth(clamped)
+	}, [])
+
 	const value = useMemo<SindreContextValue>(
 		() => ({
 			open,
@@ -159,6 +199,8 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 			setSessionId,
 			pinned,
 			setPinned,
+			panelWidth,
+			setPanelWidth,
 		}),
 		[
 			open,
@@ -172,6 +214,8 @@ export function SindreProvider({ workspaceId, children }: SindreProviderProps) {
 			setSessionId,
 			pinned,
 			setPinned,
+			panelWidth,
+			setPanelWidth,
 		],
 	)
 

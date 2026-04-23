@@ -13,8 +13,6 @@ import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
 import { type ReactNode, useCallback, useMemo, useState } from 'react'
 
-const SINDRE_PANEL_WIDTH = '28rem'
-
 const STORAGE_KEY = 'maskin-sidebar-open'
 
 // Migrate old key
@@ -109,12 +107,12 @@ function WorkspaceLayout() {
  * instead of floating over it.
  */
 function SindrePinShell({ children }: { children: ReactNode }) {
-	const { pinned, open } = useSindre()
+	const { pinned, open, panelWidth } = useSindre()
 	const pushed = pinned && open
 	return (
 		<div
 			className="transition-[margin] duration-200 ease-linear"
-			style={{ marginRight: pushed ? SINDRE_PANEL_WIDTH : 0 }}
+			style={{ marginRight: pushed ? `${panelWidth}px` : 0 }}
 		>
 			{children}
 		</div>

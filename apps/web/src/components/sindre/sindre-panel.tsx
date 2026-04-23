@@ -25,7 +25,7 @@ import {
 } from '@/lib/sindre-selection'
 import type { SindreEvent } from '@/lib/sindre-stream'
 import { Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { type PointerEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 const SINDRE_AGENT_NAME = 'Sindre'
 
@@ -52,6 +52,8 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		clearPendingMessage,
 		pinned,
 		setPinned,
+		panelWidth,
+		setPanelWidth,
 	} = useSindre()
 	const [selection, dispatch] = useReducer(sindreSelectionReducer, EMPTY_SINDRE_SELECTION)
 	const panelRef = useRef<HTMLDivElement | null>(null)
@@ -121,7 +123,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		<SindreSidebarProvider
 			open={open}
 			onOpenChange={setOpen}
-			style={{ '--sidebar-width': '28rem' } as React.CSSProperties}
+			style={{ '--sidebar-width': `${panelWidth}px` } as React.CSSProperties}
 		>
 			<Sidebar
 				ref={panelRef}
@@ -129,6 +131,11 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				collapsible="offcanvas"
 				className="pointer-events-auto"
 			>
+				<ResizeHandle
+					width={panelWidth}
+					onWidthChange={setPanelWidth}
+					visible={open}
+				/>
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
 					<div className="flex items-center gap-1">
 						<h2 className="font-semibold text-base">Sindre</h2>
@@ -201,6 +208,69 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				</SidebarContent>
 			</Sidebar>
 		</SindreSidebarProvider>
+	)
+}
+
+/**
+ * Thin vertical hit-target on the left edge of the Sindre panel. Captures
+ * pointer events and reports the live drag width back via `onWidthChange` —
+ * the panel container re-renders immediately so the drag feels responsive.
+ * Clamping to [min, max] happens inside the Sindre context setter so the
+ * user can't drag the panel off-screen or down to zero.
+ */
+function ResizeHandle({
+	width,
+	onWidthChange,
+	visible,
+}: {
+	width: number
+	onWidthChange: (next: number) => void
+	visible: boolean
+}) {
+	const dragStartRef = useRef<{ startX: number; startWidth: number } | null>(null)
+
+	const handlePointerDown = useCallback(
+		(event: PointerEvent<HTMLButtonElement>) => {
+			event.preventDefault()
+			event.currentTarget.setPointerCapture(event.pointerId)
+			dragStartRef.current = { startX: event.clientX, startWidth: width }
+			document.body.style.cursor = 'ew-resize'
+			document.body.style.userSelect = 'none'
+		},
+		[width],
+	)
+
+	const handlePointerMove = useCallback(
+		(event: PointerEvent<HTMLButtonElement>) => {
+			const drag = dragStartRef.current
+			if (!drag) return
+			// Sidebar lives on the right edge, so dragging left should grow it.
+			const delta = drag.startX - event.clientX
+			onWidthChange(drag.startWidth + delta)
+		},
+		[onWidthChange],
+	)
+
+	const endDrag = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+		if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+			event.currentTarget.releasePointerCapture(event.pointerId)
+		}
+		dragStartRef.current = null
+		document.body.style.cursor = ''
+		document.body.style.userSelect = ''
+	}, [])
+
+	if (!visible) return null
+	return (
+		<button
+			type="button"
+			aria-label="Resize Sindre panel"
+			onPointerDown={handlePointerDown}
+			onPointerMove={handlePointerMove}
+			onPointerUp={endDrag}
+			onPointerCancel={endDrag}
+			className="absolute inset-y-0 left-0 z-20 w-1 -translate-x-1/2 cursor-ew-resize bg-transparent transition-colors hover:bg-border"
+		/>
 	)
 }
 
