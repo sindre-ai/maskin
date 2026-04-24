@@ -68,6 +68,38 @@ export interface ModuleDefinition {
 	mcpTools?: McpToolDefinition[]
 	/** Default workspace settings this module contributes when first enabled */
 	defaultSettings?: ModuleDefaultSettings
+	/**
+	 * Agents to seed when this module is enabled in a workspace. Idempotent —
+	 * agents matched by name in the workspace are not recreated.
+	 */
+	defaultAgents?: ModuleAgentDefinition[]
+	/**
+	 * Triggers to seed when this module is enabled. `targetActor$id` references
+	 * a `defaultAgent.$id` and is resolved to the real actor UUID at install
+	 * time. Idempotent — triggers matched by name in the workspace are not
+	 * recreated.
+	 */
+	defaultTriggers?: ModuleTriggerDefinition[]
+}
+
+/** Agent seeded when a module is enabled in a workspace */
+export interface ModuleAgentDefinition {
+	/** Module-local id used by defaultTriggers to reference this agent */
+	$id: string
+	name: string
+	systemPrompt: string
+	tools?: Record<string, unknown>
+}
+
+/** Trigger seeded when a module is enabled in a workspace */
+export interface ModuleTriggerDefinition {
+	name: string
+	type: 'cron' | 'event' | 'reminder'
+	config: Record<string, unknown>
+	actionPrompt: string
+	/** $id of a ModuleAgentDefinition in the same module */
+	targetActor$id: string
+	enabled: boolean
 }
 
 /** Default settings a module contributes to workspace settings when enabled */

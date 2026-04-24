@@ -1,10 +1,12 @@
 import type { ModuleDefinition } from '@maskin/module-sdk'
 import {
+	KNOWLEDGE_AGENTS,
 	KNOWLEDGE_DEFAULT_SETTINGS,
 	KNOWLEDGE_DISPLAY_NAME,
 	KNOWLEDGE_FIELDS,
 	KNOWLEDGE_RELATIONSHIP_TYPES,
 	KNOWLEDGE_STATUSES,
+	KNOWLEDGE_TRIGGERS,
 	MODULE_ID,
 	MODULE_NAME,
 } from '../shared.js'
@@ -24,6 +26,8 @@ const knowledgeExtension: ModuleDefinition = {
 		},
 	],
 	defaultSettings: KNOWLEDGE_DEFAULT_SETTINGS,
+	defaultAgents: KNOWLEDGE_AGENTS,
+	defaultTriggers: KNOWLEDGE_TRIGGERS,
 }
 
 export default knowledgeExtension

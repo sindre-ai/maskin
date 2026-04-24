@@ -6,10 +6,13 @@ import { Switch } from '@/components/ui/switch'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
+import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { queryKeys } from '@/lib/query-keys'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getAllWebModules, getWebModule } from '@maskin/module-sdk'
+import { getAllWebModules } from '@maskin/module-sdk'
+import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { Monitor, Moon, Sun, Trash2 } from 'lucide-react'
 import { useState } from 'react'
@@ -65,42 +68,42 @@ function GeneralPage() {
 function ExtensionsSection() {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
+	const queryClient = useQueryClient()
 	const settings = workspace.settings as Record<string, unknown>
 	const enabledModules = useEnabledModules()
 	const allModules = getAllWebModules()
 	const customExtensions = useCustomExtensions()
 	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-	const handleToggle = (moduleId: string, enabled: boolean) => {
-		const next = enabled
-			? [...enabledModules, moduleId]
-			: enabledModules.filter((m) => m !== moduleId)
-
-		let mergedSettings: Record<string, unknown> = { ...settings, enabled_modules: next }
-
-		// When enabling, merge the module's default settings (only add missing keys)
+	const handleToggle = async (moduleId: string, enabled: boolean) => {
+		// Enabling delegates to the server endpoint, which performs the full
+		// settings merge AND seeds the module's defaultAgents + defaultTriggers
+		// idempotently. The client-side settings merge isn't enough because it
+		// can't create actors/triggers.
 		if (enabled) {
-			const mod = getWebModule(moduleId)
-			const defaults = mod?.defaultSettings
-			if (defaults) {
-				const currentDisplayNames = (settings?.display_names as Record<string, string>) ?? {}
-				const currentStatuses = (settings?.statuses as Record<string, string[]>) ?? {}
-				mergedSettings = {
-					...mergedSettings,
-					display_names: {
-						...defaults.display_names,
-						...currentDisplayNames,
-					},
-					statuses: {
-						...defaults.statuses,
-						...currentStatuses,
-					},
+			try {
+				const result = await api.workspaces.enableModule(workspaceId, moduleId)
+				queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all() })
+				queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+				queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+				const seeded = result.agents_created + result.triggers_created
+				if (seeded > 0) {
+					toast.success(
+						`Enabled — seeded ${result.agents_created} agent(s) and ${result.triggers_created} trigger(s)`,
+					)
 				}
+			} catch {
+				toast.error('Failed to enable extension')
 			}
+			return
 		}
 
+		// Disabling: just remove from enabled_modules. We deliberately leave
+		// any seeded agents/triggers in place — the user can delete them
+		// manually if they want a clean wipe.
+		const next = enabledModules.filter((m) => m !== moduleId)
 		updateWorkspace.mutate(
-			{ settings: mergedSettings },
+			{ settings: { ...settings, enabled_modules: next } },
 			{ onError: () => toast.error('Failed to update extensions') },
 		)
 	}

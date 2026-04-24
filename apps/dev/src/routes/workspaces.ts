@@ -1,13 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
+import { actors, triggers, workspaceMembers, workspaces } from '@maskin/db/schema'
+import { getModule } from '@maskin/module-sdk'
 import {
 	SINDRE_DEFAULT,
 	createWorkspaceSchema,
 	updateWorkspaceSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -310,5 +311,181 @@ app.openapi(listMembersRoute, async (c) => {
 
 	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
 })
+
+// POST /api/workspaces/:id/modules/:moduleId/enable
+//
+// Enables a built-in module in a workspace. Idempotent — safe to re-run.
+// Performs the full settings merge (display_names, statuses, field_definitions,
+// relationship_types) and seeds the module's defaultAgents + defaultTriggers
+// from the @maskin/module-sdk registry. Existing agents/triggers matched by
+// name are skipped, never duplicated or overwritten.
+const enableModuleRoute = createRoute({
+	method: 'post',
+	path: '/{id}/modules/{moduleId}/enable',
+	tags: ['workspaces'],
+	summary: 'Enable a module in a workspace and seed its agents + triggers',
+	request: {
+		params: z.object({
+			id: z.string().uuid(),
+			moduleId: z.string().min(1),
+		}),
+	},
+	responses: {
+		200: {
+			description: 'Module enabled',
+			content: {
+				'application/json': {
+					schema: z.object({
+						workspace: workspaceResponseSchema,
+						agents_created: z.number(),
+						triggers_created: z.number(),
+					}),
+				},
+			},
+		},
+		403: {
+			description: 'Caller is not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace or module not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(enableModuleRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id: workspaceId, moduleId } = c.req.valid('param')
+
+	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	const mod = getModule(moduleId)
+	if (!mod) {
+		return c.json(createApiError('NOT_FOUND', `Module not found: ${moduleId}`), 404)
+	}
+
+	const [existing] = await db
+		.select()
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	// Merge module defaults into workspace settings. Existing keys win — we
+	// only add what isn't already there, so re-enabling never clobbers user
+	// customisation.
+	const settings = (existing.settings ?? {}) as Record<string, unknown>
+	const defaults = mod.defaultSettings ?? {}
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? (settings.enabled_modules as string[])
+		: ['work']
+
+	const merged: Record<string, unknown> = {
+		...settings,
+		enabled_modules: enabledModules.includes(moduleId)
+			? enabledModules
+			: [...enabledModules, moduleId],
+		display_names: { ...defaults.display_names, ...((settings.display_names as object) ?? {}) },
+		statuses: { ...defaults.statuses, ...((settings.statuses as object) ?? {}) },
+		field_definitions: {
+			...defaults.field_definitions,
+			...((settings.field_definitions as object) ?? {}),
+		},
+		relationship_types: Array.from(
+			new Set([
+				...((settings.relationship_types as string[]) ?? []),
+				...(defaults.relationship_types ?? []),
+			]),
+		),
+	}
+
+	await db
+		.update(workspaces)
+		.set({ settings: merged, updatedAt: new Date() })
+		.where(eq(workspaces.id, workspaceId))
+
+	// Seed agents — idempotent by name within the workspace. Track $id → real
+	// UUID so triggers can resolve their target actor below.
+	const actorIdMap: Record<string, string> = {}
+	let agentsCreated = 0
+	for (const agent of mod.defaultAgents ?? []) {
+		const [existingMember] = await db
+			.select({ actorId: workspaceMembers.actorId })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, agent.name)))
+			.limit(1)
+
+		if (existingMember) {
+			actorIdMap[agent.$id] = existingMember.actorId
+			continue
+		}
+
+		const [created] = await db
+			.insert(actors)
+			.values({
+				type: 'agent',
+				name: agent.name,
+				systemPrompt: agent.systemPrompt,
+				tools: agent.tools,
+				createdBy: callerId,
+			})
+			.returning({ id: actors.id })
+
+		if (!created) continue
+
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: created.id,
+			role: 'member',
+		})
+
+		actorIdMap[agent.$id] = created.id
+		agentsCreated++
+	}
+
+	// Seed triggers — idempotent by name within the workspace.
+	let triggersCreated = 0
+	for (const trigger of mod.defaultTriggers ?? []) {
+		const targetActorId = actorIdMap[trigger.targetActor$id]
+		if (!targetActorId) continue // referenced agent missing — skip silently
+
+		const [existingTrigger] = await db
+			.select({ id: triggers.id })
+			.from(triggers)
+			.where(and(eq(triggers.workspaceId, workspaceId), eq(triggers.name, trigger.name)))
+			.limit(1)
+		if (existingTrigger) continue
+
+		await db.insert(triggers).values({
+			workspaceId,
+			name: trigger.name,
+			type: trigger.type,
+			config: trigger.config,
+			actionPrompt: trigger.actionPrompt,
+			targetActorId,
+			enabled: trigger.enabled,
+			createdBy: callerId,
+		})
+		triggersCreated++
+	}
+
+	const [updated] = await db
+		.select()
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	return c.json({
+		workspace: serialize(updated) as z.infer<typeof workspaceResponseSchema>,
+		agents_created: agentsCreated,
+		triggers_created: triggersCreated,
+	})
+}) as RouteHandler<typeof enableModuleRoute, Env>)
 
 export default app
