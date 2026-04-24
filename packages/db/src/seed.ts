@@ -74,7 +74,7 @@ For each bet you create:
 
 Use the update_memory tool to track which insights you've already processed.`,
 		llmProvider: 'anthropic',
-		llmConfig: { model: 'claude-sonnet-4-20250514', temperature: 0.3 },
+		llmConfig: { model: 'claude-opus-4-7', temperature: 0.3 },
 		tools: {
 			allowed: [
 				'create_object',
@@ -109,7 +109,7 @@ When a bet is promoted to "active" status, analyze it and create a set of concre
 
 Consider the bet's content, any related insights, and what a product team would need to do to act on this opportunity.`,
 		llmProvider: 'anthropic',
-		llmConfig: { model: 'claude-sonnet-4-20250514', temperature: 0.3 },
+		llmConfig: { model: 'claude-opus-4-7', temperature: 0.3 },
 		tools: {
 			allowed: ['create_object', 'list_objects', 'create_relationship', 'update_memory', 'done'],
 		},

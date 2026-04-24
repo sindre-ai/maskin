@@ -141,7 +141,7 @@ function WorkspaceSkillsSection({
 					<Link
 						to="/$workspaceId/settings/skills"
 						params={{ workspaceId }}
-						className="text-accent underline-offset-2 hover:underline"
+						className="text-primary underline underline-offset-2 hover:opacity-80"
 					>
 						Settings → Skills
 					</Link>

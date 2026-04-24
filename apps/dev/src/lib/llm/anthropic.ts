@@ -17,7 +17,7 @@ export class AnthropicAdapter implements LLMAdapter {
 		const otherMessages = options.messages.filter((m) => m.role !== 'system')
 
 		const body: Record<string, unknown> = {
-			model: options.model || 'claude-sonnet-4-20250514',
+			model: options.model || 'claude-opus-4-7',
 			max_tokens: 4096,
 			messages: otherMessages.map((m) => {
 				if (m.role === 'tool') {
