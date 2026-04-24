@@ -31,6 +31,17 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 			adjustHeight()
 		}, [adjustHeight, props.value])
 
+		React.useEffect(() => {
+			if (!autoResize || typeof document === 'undefined' || !document.fonts?.ready) return
+			let cancelled = false
+			document.fonts.ready.then(() => {
+				if (!cancelled) adjustHeight()
+			})
+			return () => {
+				cancelled = true
+			}
+		}, [adjustHeight, autoResize])
+
 		return (
 			<textarea
 				className={cn(
