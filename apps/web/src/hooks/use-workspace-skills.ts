@@ -33,13 +33,21 @@ export function useCreateWorkspaceSkill(workspaceId: string) {
 export function useUpdateWorkspaceSkill(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: ({ name, data }: { name: string; data: UpdateWorkspaceSkillInput }) =>
+		mutationFn: ({
+			name,
+			data,
+		}: { name: string; data: UpdateWorkspaceSkillInput; newName?: string }) =>
 			api.workspaceSkills.update(workspaceId, name, data),
 		onSuccess: (_data, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.workspaceSkills.detail(workspaceId, variables.name),
 			})
+			if (variables.newName && variables.newName !== variables.name) {
+				queryClient.invalidateQueries({
+					queryKey: queryKeys.workspaceSkills.detail(workspaceId, variables.newName),
+				})
+			}
 		},
 	})
 }

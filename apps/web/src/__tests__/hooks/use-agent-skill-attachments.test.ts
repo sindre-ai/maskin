@@ -26,6 +26,7 @@ const attached = {
 	description: 'A skill',
 	storageKey: 'workspaces/ws-1/skills/my-skill/SKILL.md',
 	sizeBytes: 200,
+	isValid: true,
 	createdBy: '22222222-2222-2222-2222-222222222222',
 	createdAt: '2026-04-23T00:00:00Z',
 	updatedAt: '2026-04-23T00:00:00Z',

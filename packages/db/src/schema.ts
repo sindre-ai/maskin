@@ -265,6 +265,7 @@ export const workspaceSkills = pgTable(
 		content: text('content').notNull(),
 		storageKey: text('storage_key').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
+		isValid: boolean('is_valid').notNull().default(true),
 		createdBy: uuid('created_by').references(() => actors.id),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

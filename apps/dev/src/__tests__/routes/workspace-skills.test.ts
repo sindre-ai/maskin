@@ -26,6 +26,7 @@ describe('Workspace Skills Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].name).toBe(skillListRow.name)
+			expect(body[0].isValid).toBe(true)
 			// list response must NOT include content
 			expect(body[0].content).toBeUndefined()
 		})
@@ -96,6 +97,7 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(201)
 			const json = await res.json()
 			expect(json.name).toBe(body.name)
+			expect(json.isValid).toBe(true)
 			// The route generates the skill's UUID via randomUUID() before the
 			// insert and uses the same id for both the DB row and the S3 key.
 			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
@@ -103,6 +105,35 @@ describe('Workspace Skills Routes', () => {
 				expect.stringMatching(/^[0-9a-f-]{36}$/),
 				body.content,
 			)
+		})
+
+		it('stores unparseable content as an invalid skill', async () => {
+			// Drag-and-drop may land files that don't have SKILL.md frontmatter.
+			// We persist them with is_valid=false so users can fix them in-UI.
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const body = {
+				name: 'not-yet-valid',
+				content: 'no frontmatter here, just a plain markdown body',
+			}
+			const inserted = buildWorkspaceSkill({
+				workspaceId,
+				name: body.name,
+				content: body.content,
+				description: null,
+				isValid: false,
+			})
+
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			mockResults.insert = [inserted]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, body),
+			)
+
+			expect(res.status).toBe(201)
+			const json = await res.json()
+			expect(json.isValid).toBe(false)
+			expect(json.description).toBeNull()
 		})
 
 		it('returns 409 when the DB unique index rejects a duplicate name', async () => {
@@ -278,6 +309,61 @@ describe('Workspace Skills Routes', () => {
 			)
 
 			expect(res.status).toBe(403)
+		})
+
+		it('renames a skill and rewrites the frontmatter name', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({
+				workspaceId,
+				name: 'old-name',
+				content: '---\nname: old-name\ndescription: existing\n---\n\nBody',
+			})
+			const body = {
+				name: 'new-name',
+				content: '---\nname: old-name\ndescription: existing\n---\n\nBody',
+			}
+			const updated = { ...existing, name: 'new-name' }
+
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PUT', `/api/workspaces/${workspaceId}/skills/old-name`, body),
+			)
+
+			expect(res.status).toBe(200)
+			const json = await res.json()
+			expect(json.name).toBe('new-name')
+			// The storage put should receive content whose frontmatter name has
+			// been rewritten to match the new DB name.
+			const putCall = vi.mocked(agentStorage.putWorkspaceSkill).mock.calls[0]
+			expect(putCall?.[2]).toContain('name: new-name')
+			expect(putCall?.[2]).not.toContain('name: old-name')
+		})
+
+		it('returns 409 when renaming collides with an existing skill', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const existing = buildWorkspaceSkill({ workspaceId, name: 'old-name' })
+			const body = {
+				name: 'taken-name',
+				content: '---\nname: old-name\ndescription: existing\n---\n\nBody',
+			}
+
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
+			const uniqueErr = Object.assign(
+				new Error('duplicate key value violates unique constraint "workspace_skills_ws_name_uniq"'),
+				{ code: '23505', constraint_name: 'workspace_skills_ws_name_uniq' },
+			)
+			mockResults.updateError = uniqueErr
+
+			const res = await app.request(
+				jsonRequest('PUT', `/api/workspaces/${workspaceId}/skills/old-name`, body),
+			)
+
+			expect(res.status).toBe(409)
 		})
 
 		it('does not perform a stale-content S3 rollback when the S3 write fails', async () => {

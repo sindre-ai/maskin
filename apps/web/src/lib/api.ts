@@ -603,6 +603,7 @@ export interface WorkspaceSkillListItem {
 	description: string | null
 	storageKey: string
 	sizeBytes: number
+	isValid: boolean
 	createdBy: string | null
 	createdAt: string
 	updatedAt: string
@@ -622,6 +623,7 @@ export interface CreateWorkspaceSkillInput {
 }
 
 export interface UpdateWorkspaceSkillInput {
+	name?: string
 	content: string
 }
 

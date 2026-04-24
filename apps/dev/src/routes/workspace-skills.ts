@@ -5,6 +5,7 @@ import { events, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import {
 	createWorkspaceSkillSchema,
 	parseSkillMd,
+	serializeSkillMd,
 	skillNameSchema,
 	updateWorkspaceSkillSchema,
 } from '@maskin/shared'
@@ -66,6 +67,7 @@ const workspaceSkillListItemSchema = z.object({
 	description: z.string().nullable(),
 	storageKey: z.string(),
 	sizeBytes: z.number().int().nonnegative(),
+	isValid: z.boolean(),
 	createdBy: z.string().uuid().nullable(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
@@ -122,6 +124,7 @@ app.openapi(listWorkspaceSkillsRoute, (async (c) => {
 			description: workspaceSkills.description,
 			storageKey: workspaceSkills.storageKey,
 			sizeBytes: workspaceSkills.sizeBytes,
+			isValid: workspaceSkills.isValid,
 			createdBy: workspaceSkills.createdBy,
 			createdAt: workspaceSkills.createdAt,
 			updatedAt: workspaceSkills.updatedAt,
@@ -232,19 +235,19 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	let parsed: ReturnType<typeof parseSkillMd>
+	// Invalid SKILL.md content is accepted so the user can land it in the UI
+	// and fix the formatting. Invalid rows are flagged `is_valid=false` and
+	// skipped when agent sessions pull workspace skills. `parseSkillMd` only
+	// throws on malformed YAML — a file without frontmatter returns an empty
+	// name, which we treat as invalid here.
+	let parsed: ReturnType<typeof parseSkillMd> | null = null
 	try {
 		parsed = parseSkillMd(body.content)
-	} catch (err) {
-		return c.json(
-			createApiError(
-				'BAD_REQUEST',
-				err instanceof Error ? err.message : 'Invalid SKILL.md content',
-			),
-			400,
-		)
+	} catch {
+		parsed = null
 	}
-	const description = parsed.description ? parsed.description : null
+	const description = parsed?.description ? parsed.description : null
+	const isValid = parsed !== null && skillNameSchema.safeParse(parsed.name).success
 
 	// Atomic DB + S3 create. Order: INSERT inside tx → S3 put → tx commits.
 	// - Unique-name violation: caught on INSERT, S3 never touched (→ 409).
@@ -270,6 +273,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 					content: body.content,
 					storageKey,
 					sizeBytes,
+					isValid,
 					createdBy: callerActorId,
 				})
 				.returning()
@@ -363,6 +367,10 @@ const updateWorkspaceSkillRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace skill not found',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'A skill with this name already exists',
+		},
 	},
 })
 
@@ -388,21 +396,38 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 
-	let parsed: ReturnType<typeof parseSkillMd>
+	let parsed: ReturnType<typeof parseSkillMd> | null = null
 	try {
 		parsed = parseSkillMd(body.content)
-	} catch (err) {
-		return c.json(
-			createApiError(
-				'BAD_REQUEST',
-				err instanceof Error ? err.message : 'Invalid SKILL.md content',
-			),
-			400,
-		)
+	} catch {
+		parsed = null
 	}
-	const description = parsed.description ? parsed.description : null
+	const description = parsed?.description ? parsed.description : null
 
-	const sizeBytes = Buffer.byteLength(body.content, 'utf-8')
+	// Rename sync: when the DB name changes and the content parses, rewrite the
+	// SKILL.md frontmatter `name:` so the stored file matches the new identity.
+	// Invalid content can't be re-serialised safely — store as-is and let the
+	// user fix it via the UI.
+	const isRename = body.name !== undefined && body.name !== existing.name
+	const finalName = isRename && body.name ? body.name : existing.name
+	const finalContent =
+		isRename && parsed
+			? serializeSkillMd({
+					name: finalName,
+					description: parsed.description,
+					frontmatter: parsed.frontmatter,
+					content: parsed.content,
+				})
+			: body.content
+
+	// A rename-rewrite always produces a valid frontmatter name (Zod already
+	// validated body.name). Otherwise, require parseSkillMd to have returned a
+	// schema-valid name — empty/missing frontmatter counts as invalid.
+	const isValid =
+		(isRename && parsed !== null) ||
+		(parsed !== null && skillNameSchema.safeParse(parsed.name).success)
+
+	const sizeBytes = Buffer.byteLength(finalContent, 'utf-8')
 	const now = new Date()
 
 	// Atomic DB + S3 update. Inside a tx: re-SELECT FOR UPDATE serializes
@@ -412,32 +437,45 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	// - Concurrent delete between outer SELECT and re-SELECT: lock-acquire
 	//   sees no row → return 404, S3 not touched.
 	// - Per-UUID S3 key + row lock means no other writer can race the put.
-	const updated = await db.transaction(async (tx) => {
-		const [locked] = await tx
-			.select()
-			.from(workspaceSkills)
-			.where(eq(workspaceSkills.id, existing.id))
-			.for('update')
-			.limit(1)
+	let updated: typeof workspaceSkills.$inferSelect | undefined
+	try {
+		updated = await db.transaction(async (tx) => {
+			const [locked] = await tx
+				.select()
+				.from(workspaceSkills)
+				.where(eq(workspaceSkills.id, existing.id))
+				.for('update')
+				.limit(1)
 
-		if (!locked) return undefined
+			if (!locked) return undefined
 
-		const rows = await tx
-			.update(workspaceSkills)
-			.set({
-				content: body.content,
-				description,
-				sizeBytes,
-				updatedAt: now,
-			})
-			.where(eq(workspaceSkills.id, existing.id))
-			.returning()
-		const row = rows[0]
-		if (!row) return undefined
+			const rows = await tx
+				.update(workspaceSkills)
+				.set({
+					name: finalName,
+					content: finalContent,
+					description,
+					sizeBytes,
+					isValid,
+					updatedAt: now,
+				})
+				.where(eq(workspaceSkills.id, existing.id))
+				.returning()
+			const row = rows[0]
+			if (!row) return undefined
 
-		await storage.putWorkspaceSkill(workspaceId, existing.id, body.content)
-		return row
-	})
+			await storage.putWorkspaceSkill(workspaceId, existing.id, finalContent)
+			return row
+		})
+	} catch (err) {
+		if (isUniqueViolation(err, 'workspace_skills_ws_name_uniq')) {
+			return c.json(
+				createApiError('CONFLICT', 'A skill with this name already exists in this workspace'),
+				409,
+			)
+		}
+		throw err
+	}
 
 	if (!updated) {
 		// Row vanished between outer SELECT and the row lock (concurrent delete).

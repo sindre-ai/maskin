@@ -9,6 +9,7 @@ export const workspaceSkillSchema = z.object({
 	content: z.string(),
 	storageKey: z.string(),
 	sizeBytes: z.number().int().nonnegative(),
+	isValid: z.boolean(),
 	createdBy: z.string().uuid().nullable(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
@@ -26,6 +27,7 @@ export const createWorkspaceSkillSchema = z.object({
 export type CreateWorkspaceSkillInput = z.infer<typeof createWorkspaceSkillSchema>
 
 export const updateWorkspaceSkillSchema = z.object({
+	name: skillNameSchema.optional(),
 	content: z.string().min(1).max(MAX_WORKSPACE_SKILL_CONTENT_BYTES),
 })
 

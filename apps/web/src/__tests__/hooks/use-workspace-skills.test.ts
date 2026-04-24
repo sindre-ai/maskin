@@ -30,6 +30,7 @@ const skillListItem = {
 	description: 'A helpful skill',
 	storageKey: 'workspaces/ws-1/skills/my-skill/SKILL.md',
 	sizeBytes: 128,
+	isValid: true,
 	createdBy: '22222222-2222-2222-2222-222222222222',
 	createdAt: '2026-04-23T00:00:00Z',
 	updatedAt: '2026-04-23T00:00:00Z',
@@ -141,6 +142,29 @@ describe('use-workspace-skills', () => {
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.workspaceSkills.update).toHaveBeenCalledWith('ws-1', 'my-skill', {
 				content: 'new',
+			})
+		})
+
+		it('renames a workspace skill via the name field', async () => {
+			vi.mocked(api.workspaceSkills.update).mockResolvedValue({
+				...skillDetail,
+				name: 'renamed',
+			})
+
+			const { result } = renderHook(() => useUpdateWorkspaceSkill('ws-1'), {
+				wrapper: TestWrapper,
+			})
+
+			result.current.mutate({
+				name: 'my-skill',
+				data: { name: 'renamed', content: skillDetail.content },
+				newName: 'renamed',
+			})
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.workspaceSkills.update).toHaveBeenCalledWith('ws-1', 'my-skill', {
+				name: 'renamed',
+				content: skillDetail.content,
 			})
 		})
 	})
