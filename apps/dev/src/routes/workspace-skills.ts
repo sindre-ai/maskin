@@ -404,28 +404,28 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	}
 	const description = parsed?.description ? parsed.description : null
 
-	// Rename sync: when the DB name changes and the content parses, rewrite the
-	// SKILL.md frontmatter `name:` so the stored file matches the new identity.
+	// Frontmatter/DB-name sync: whenever the content parses, rewrite the
+	// SKILL.md frontmatter `name:` to match the row's name (either the new
+	// rename target, or the existing name if the user edited only content).
+	// This prevents the stored file from drifting away from the row identity
+	// when the user submits content with a stale or mismatched `name:`.
 	// Invalid content can't be re-serialised safely — store as-is and let the
 	// user fix it via the UI.
-	const isRename = body.name !== undefined && body.name !== existing.name
-	const finalName = isRename && body.name ? body.name : existing.name
-	const finalContent =
-		isRename && parsed
-			? serializeSkillMd({
-					name: finalName,
-					description: parsed.description,
-					frontmatter: parsed.frontmatter,
-					content: parsed.content,
-				})
-			: body.content
+	const finalName = body.name ?? existing.name
+	const finalContent = parsed
+		? serializeSkillMd({
+				name: finalName,
+				description: parsed.description,
+				frontmatter: parsed.frontmatter,
+				content: parsed.content,
+			})
+		: body.content
 
-	// A rename-rewrite always produces a valid frontmatter name (Zod already
-	// validated body.name). Otherwise, require parseSkillMd to have returned a
-	// schema-valid name — empty/missing frontmatter counts as invalid.
-	const isValid =
-		(isRename && parsed !== null) ||
-		(parsed !== null && skillNameSchema.safeParse(parsed.name).success)
+	// `finalName` is always a schema-valid name: either Zod-validated `body.name`
+	// or the existing row's name (validated when the row was last written).
+	// So a successful parse plus a rewrite guarantees the stored content has a
+	// schema-valid frontmatter name.
+	const isValid = parsed !== null
 
 	const sizeBytes = Buffer.byteLength(finalContent, 'utf-8')
 	const now = new Date()

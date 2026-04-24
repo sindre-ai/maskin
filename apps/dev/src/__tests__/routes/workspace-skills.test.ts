@@ -233,7 +233,11 @@ describe('Workspace Skills Routes', () => {
 				'/api/workspaces',
 			)
 			const existing = buildWorkspaceSkill({ workspaceId, name: 'my-skill' })
-			const body = buildUpdateWorkspaceSkillBody()
+			// Submit content whose frontmatter name diverges from the row name
+			// to confirm the route rewrites it back to match `existing.name`.
+			const body = {
+				content: '---\nname: stale-name\ndescription: Updated\n---\n\nNew body',
+			}
 			const updated = { ...existing, content: body.content }
 
 			// 3 selects: workspace membership, outer existing lookup, inner SELECT FOR UPDATE inside tx
@@ -247,11 +251,12 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(200)
 			const json = await res.json()
 			expect(json.name).toBe('my-skill')
-			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
-				workspaceId,
-				existing.id,
-				body.content,
-			)
+			const putCall = vi.mocked(agentStorage.putWorkspaceSkill).mock.calls[0]
+			expect(putCall?.[0]).toBe(workspaceId)
+			expect(putCall?.[1]).toBe(existing.id)
+			// Frontmatter is rewritten to match the row name even on non-rename updates.
+			expect(putCall?.[2]).toContain('name: my-skill')
+			expect(putCall?.[2]).not.toContain('name: stale-name')
 		})
 
 		it('returns 404 when the skill does not exist', async () => {
@@ -380,9 +385,11 @@ describe('Workspace Skills Routes', () => {
 			const existing = buildWorkspaceSkill({
 				workspaceId,
 				name: 'my-skill',
-				content: '---\nname: x\n---\nOLD',
+				content: '---\nname: my-skill\ndescription: existing\n---\nOLD',
 			})
-			const body = buildUpdateWorkspaceSkillBody({ content: '---\nname: x\n---\nNEW' })
+			const body = buildUpdateWorkspaceSkillBody({
+				content: '---\nname: my-skill\ndescription: existing\n---\nNEW',
+			})
 
 			// outer SELECT, inner SELECT FOR UPDATE both return existing
 			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
@@ -395,11 +402,11 @@ describe('Workspace Skills Routes', () => {
 
 			expect(res.status).toBe(500)
 			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledTimes(1)
-			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
-				workspaceId,
-				existing.id,
-				body.content,
-			)
+			const putCall = vi.mocked(agentStorage.putWorkspaceSkill).mock.calls[0]
+			expect(putCall?.[0]).toBe(workspaceId)
+			expect(putCall?.[1]).toBe(existing.id)
+			expect(putCall?.[2]).toContain('NEW')
+			expect(putCall?.[2]).toContain('name: my-skill')
 		})
 	})
 
