@@ -411,6 +411,9 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	// when the user submits content with a stale or mismatched `name:`.
 	// Invalid content can't be re-serialised safely — store as-is and let the
 	// user fix it via the UI.
+	// NOTE: `serializeSkillMd` only preserves keys in `SkillFrontmatter`
+	// (see `packages/shared/src/schemas/skills.ts`). Any custom/unrecognised
+	// frontmatter keys on the submitted content are dropped on re-serialise.
 	const finalName = body.name ?? existing.name
 	const finalContent = parsed
 		? serializeSkillMd({

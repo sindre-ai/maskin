@@ -416,6 +416,12 @@ function SkillDialog({
 							className="min-h-[280px] font-mono text-sm"
 							disabled={loadingExisting}
 						/>
+						{isEdit && (
+							<p className="mt-1 text-xs text-text-secondary">
+								Only recognised frontmatter keys (name, description, and SKILL.md
+								options) are preserved on save — custom keys are dropped.
+							</p>
+						)}
 					</div>
 					<FormError error={error ?? undefined} />
 				</div>
