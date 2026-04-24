@@ -26,6 +26,7 @@ describe('Workspace Skills Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].name).toBe(skillListRow.name)
+			expect(body[0].isValid).toBe(true)
 			// list response must NOT include content
 			expect(body[0].content).toBeUndefined()
 		})
@@ -96,6 +97,7 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(201)
 			const json = await res.json()
 			expect(json.name).toBe(body.name)
+			expect(json.isValid).toBe(true)
 			// The route generates the skill's UUID via randomUUID() before the
 			// insert and uses the same id for both the DB row and the S3 key.
 			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
@@ -103,6 +105,35 @@ describe('Workspace Skills Routes', () => {
 				expect.stringMatching(/^[0-9a-f-]{36}$/),
 				body.content,
 			)
+		})
+
+		it('stores unparseable content as an invalid skill', async () => {
+			// Drag-and-drop may land files that don't have SKILL.md frontmatter.
+			// We persist them with is_valid=false so users can fix them in-UI.
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const body = {
+				name: 'not-yet-valid',
+				content: 'no frontmatter here, just a plain markdown body',
+			}
+			const inserted = buildWorkspaceSkill({
+				workspaceId,
+				name: body.name,
+				content: body.content,
+				description: null,
+				isValid: false,
+			})
+
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			mockResults.insert = [inserted]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, body),
+			)
+
+			expect(res.status).toBe(201)
+			const json = await res.json()
+			expect(json.isValid).toBe(false)
+			expect(json.description).toBeNull()
 		})
 
 		it('returns 409 when the DB unique index rejects a duplicate name', async () => {
@@ -202,7 +233,11 @@ describe('Workspace Skills Routes', () => {
 				'/api/workspaces',
 			)
 			const existing = buildWorkspaceSkill({ workspaceId, name: 'my-skill' })
-			const body = buildUpdateWorkspaceSkillBody()
+			// Submit content whose frontmatter name diverges from the row name
+			// to confirm the route rewrites it back to match `existing.name`.
+			const body = {
+				content: '---\nname: stale-name\ndescription: Updated\n---\n\nNew body',
+			}
 			const updated = { ...existing, content: body.content }
 
 			// 3 selects: workspace membership, outer existing lookup, inner SELECT FOR UPDATE inside tx
@@ -216,11 +251,12 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(200)
 			const json = await res.json()
 			expect(json.name).toBe('my-skill')
-			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
-				workspaceId,
-				existing.id,
-				body.content,
-			)
+			const putCall = vi.mocked(agentStorage.putWorkspaceSkill).mock.calls[0]
+			expect(putCall?.[0]).toBe(workspaceId)
+			expect(putCall?.[1]).toBe(existing.id)
+			// Frontmatter is rewritten to match the row name even on non-rename updates.
+			expect(putCall?.[2]).toContain('name: my-skill')
+			expect(putCall?.[2]).not.toContain('name: stale-name')
 		})
 
 		it('returns 404 when the skill does not exist', async () => {
@@ -280,6 +316,61 @@ describe('Workspace Skills Routes', () => {
 			expect(res.status).toBe(403)
 		})
 
+		it('renames a skill and rewrites the frontmatter name', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				workspaceSkillsRoutes,
+				'/api/workspaces',
+			)
+			const existing = buildWorkspaceSkill({
+				workspaceId,
+				name: 'old-name',
+				content: '---\nname: old-name\ndescription: existing\n---\n\nBody',
+			})
+			const body = {
+				name: 'new-name',
+				content: '---\nname: old-name\ndescription: existing\n---\n\nBody',
+			}
+			const updated = { ...existing, name: 'new-name' }
+
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PUT', `/api/workspaces/${workspaceId}/skills/old-name`, body),
+			)
+
+			expect(res.status).toBe(200)
+			const json = await res.json()
+			expect(json.name).toBe('new-name')
+			// The storage put should receive content whose frontmatter name has
+			// been rewritten to match the new DB name.
+			const putCall = vi.mocked(agentStorage.putWorkspaceSkill).mock.calls[0]
+			expect(putCall?.[2]).toContain('name: new-name')
+			expect(putCall?.[2]).not.toContain('name: old-name')
+		})
+
+		it('returns 409 when renaming collides with an existing skill', async () => {
+			const { app, mockResults } = createSkillsTestApp(workspaceSkillsRoutes, '/api/workspaces')
+			const existing = buildWorkspaceSkill({ workspaceId, name: 'old-name' })
+			const body = {
+				name: 'taken-name',
+				content: '---\nname: old-name\ndescription: existing\n---\n\nBody',
+			}
+
+			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
+			const uniqueErr = Object.assign(
+				new Error('duplicate key value violates unique constraint "workspace_skills_ws_name_uniq"'),
+				{ code: '23505', constraint_name: 'workspace_skills_ws_name_uniq' },
+			)
+			mockResults.updateError = uniqueErr
+
+			const res = await app.request(
+				jsonRequest('PUT', `/api/workspaces/${workspaceId}/skills/old-name`, body),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
 		it('does not perform a stale-content S3 rollback when the S3 write fails', async () => {
 			// Old behavior re-put existing.content (stale) on DB-update failure,
 			// which could overwrite a concurrent successful update. New behavior:
@@ -294,9 +385,11 @@ describe('Workspace Skills Routes', () => {
 			const existing = buildWorkspaceSkill({
 				workspaceId,
 				name: 'my-skill',
-				content: '---\nname: x\n---\nOLD',
+				content: '---\nname: my-skill\ndescription: existing\n---\nOLD',
 			})
-			const body = buildUpdateWorkspaceSkillBody({ content: '---\nname: x\n---\nNEW' })
+			const body = buildUpdateWorkspaceSkillBody({
+				content: '---\nname: my-skill\ndescription: existing\n---\nNEW',
+			})
 
 			// outer SELECT, inner SELECT FOR UPDATE both return existing
 			mockResults.selectQueue = [[buildWorkspaceMember()], [existing], [existing]]
@@ -309,11 +402,11 @@ describe('Workspace Skills Routes', () => {
 
 			expect(res.status).toBe(500)
 			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledTimes(1)
-			expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
-				workspaceId,
-				existing.id,
-				body.content,
-			)
+			const putCall = vi.mocked(agentStorage.putWorkspaceSkill).mock.calls[0]
+			expect(putCall?.[0]).toBe(workspaceId)
+			expect(putCall?.[1]).toBe(existing.id)
+			expect(putCall?.[2]).toContain('NEW')
+			expect(putCall?.[2]).toContain('name: my-skill')
 		})
 	})
 

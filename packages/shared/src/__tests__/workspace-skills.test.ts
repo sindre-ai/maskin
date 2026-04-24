@@ -99,6 +99,7 @@ describe('workspaceSkillSchema', () => {
 		content: '# SKILL.md\n\nBody',
 		storageKey: 'workspaces/22222222-2222-4222-8222-222222222222/skills/my-skill/SKILL.md',
 		sizeBytes: 17,
+		isValid: true,
 		createdBy: '33333333-3333-4333-8333-333333333333',
 		createdAt: '2026-04-23T08:21:32.362Z',
 		updatedAt: '2026-04-23T08:21:32.362Z',

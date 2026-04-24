@@ -352,7 +352,13 @@ export class AgentStorageManager {
 			})
 			.from(agentSkills)
 			.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
-			.where(and(eq(agentSkills.actorId, actorId), eq(workspaceSkills.workspaceId, workspaceId)))
+			.where(
+				and(
+					eq(agentSkills.actorId, actorId),
+					eq(workspaceSkills.workspaceId, workspaceId),
+					eq(workspaceSkills.isValid, true),
+				),
+			)
 
 		if (rows.length === 0) {
 			logger.info('No workspace skills attached to agent', { actorId, workspaceId })

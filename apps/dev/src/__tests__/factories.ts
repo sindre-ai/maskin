@@ -320,6 +320,7 @@ export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 		content: `---\nname: ${name}\ndescription: Workspace skill ${n}\n---\n\nDo the thing ${n}`,
 		storageKey: `workspaces/${workspaceId}/skills/${id}/SKILL.md`,
 		sizeBytes: 128,
+		isValid: true,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),
