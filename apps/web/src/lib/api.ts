@@ -126,6 +126,12 @@ export const api = {
 		list: () => request<WorkspaceWithRole[]>('/workspaces'),
 		update: (id: string, data: UpdateWorkspaceInput) =>
 			request<WorkspaceResponse>(`/workspaces/${id}`, { method: 'PATCH', body: data }),
+		enableModule: (id: string, moduleId: string) =>
+			request<{
+				workspace: WorkspaceResponse
+				agents_created: number
+				triggers_created: number
+			}>(`/workspaces/${id}/modules/${moduleId}/enable`, { method: 'POST' }),
 		members: {
 			list: (workspaceId: string) =>
 				request<MemberResponse[]>(`/workspaces/${workspaceId}/members`),

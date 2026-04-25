@@ -1,8 +1,17 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
+
+function renderWithClient(ui: ReactNode) {
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+	})
+	return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
+}
 
 const mockMutate = vi.fn()
 
@@ -60,20 +69,20 @@ describe('GeneralPage', () => {
 	})
 
 	it('renders workspace name input with current value', () => {
-		render(<GeneralPage />)
+		renderWithClient(<GeneralPage />)
 		const input = screen.getByDisplayValue('My Workspace')
 		expect(input).toBeInTheDocument()
 	})
 
 	it('disables Save button when name matches current workspace name', () => {
-		render(<GeneralPage />)
+		renderWithClient(<GeneralPage />)
 		const saveButton = screen.getByRole('button', { name: 'Save' })
 		expect(saveButton).toBeDisabled()
 	})
 
 	it('enables Save button when name is changed', async () => {
 		const user = userEvent.setup()
-		render(<GeneralPage />)
+		renderWithClient(<GeneralPage />)
 		const input = screen.getByDisplayValue('My Workspace')
 		await user.clear(input)
 		await user.type(input, 'New Name')
@@ -82,7 +91,7 @@ describe('GeneralPage', () => {
 
 	it('calls updateWorkspace.mutate with new name on save', async () => {
 		const user = userEvent.setup()
-		render(<GeneralPage />)
+		renderWithClient(<GeneralPage />)
 		const input = screen.getByDisplayValue('My Workspace')
 		await user.clear(input)
 		await user.type(input, 'New Name')
@@ -91,14 +100,14 @@ describe('GeneralPage', () => {
 	})
 
 	it('renders theme picker with light/dark/system options', () => {
-		render(<GeneralPage />)
+		renderWithClient(<GeneralPage />)
 		expect(screen.getByText('Light')).toBeInTheDocument()
 		expect(screen.getByText('Dark')).toBeInTheDocument()
 		expect(screen.getByText('System')).toBeInTheDocument()
 	})
 
 	it('renders extensions section', () => {
-		render(<GeneralPage />)
+		renderWithClient(<GeneralPage />)
 		expect(screen.getByText('Extensions')).toBeInTheDocument()
 	})
 })
