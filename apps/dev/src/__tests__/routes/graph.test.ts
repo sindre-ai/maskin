@@ -162,5 +162,41 @@ describe('Graph Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('Invalid status')
 		})
+
+		it('returns 400 when a node is missing a required metadata field', async () => {
+			const ws = buildWorkspace({
+				id: wsId,
+				settings: {
+					enabled_modules: ['work'],
+					display_names: { knowledge: 'Article' },
+					statuses: { knowledge: ['draft'] },
+					field_definitions: {
+						knowledge: [{ name: 'summary', type: 'text', required: true }],
+					},
+					relationship_types: ['informs'],
+					custom_extensions: {
+						knowledge: { name: 'Knowledge', types: ['knowledge'], enabled: true },
+					},
+				},
+			})
+			const { app, mockResults } = createTestApp(graphRoutes, '/api/graph')
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/graph',
+					{
+						nodes: [{ $id: 'k-1', type: 'knowledge', title: 'A', status: 'draft', metadata: {} }],
+						edges: [],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.details[0].field).toBe('nodes[k-1].metadata.summary')
+		})
 	})
 })
