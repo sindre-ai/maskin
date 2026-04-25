@@ -19,6 +19,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
+import { createMetadataValidationError, validateMetadataFields } from '../lib/validate-metadata'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
@@ -144,6 +145,14 @@ app.openapi(createObjectRoute, async (c) => {
 			),
 			400,
 		)
+	}
+
+	const fieldDefs = settings?.field_definitions?.[body.type]
+	const metadataErrors = validateMetadataFields(body.type, body.metadata, fieldDefs, {
+		mode: 'create',
+	})
+	if (metadataErrors.length > 0) {
+		return c.json(createMetadataValidationError(body.type, metadataErrors), 400)
 	}
 
 	const [created] = await db
@@ -433,8 +442,9 @@ app.openapi(updateObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	// If status is being updated, validate against workspace settings
-	if (body.status) {
+	// Fetch workspace settings if status or metadata is being updated
+	const needsSettings = body.status !== undefined || body.metadata !== undefined
+	if (needsSettings) {
 		const [workspace] = await db
 			.select()
 			.from(workspaces)
@@ -443,24 +453,37 @@ app.openapi(updateObjectRoute, async (c) => {
 
 		if (workspace) {
 			const settings = workspace.settings as WorkspaceSettings
-			const validStatuses = settings?.statuses?.[existing.type]
-			if (validStatuses && !validStatuses.includes(body.status)) {
-				return c.json(
-					createApiError(
-						'BAD_REQUEST',
-						`Invalid status '${body.status}' for type '${existing.type}'`,
-						[
-							{
-								field: 'status',
-								message: `'${body.status}' is not a valid status for type '${existing.type}'`,
-								expected: validStatuses.map((s) => `'${s}'`).join(' | '),
-								received: `'${body.status}'`,
-							},
-						],
-						`Valid statuses for '${existing.type}': ${validStatuses.join(', ')}`,
-					),
-					400,
-				)
+
+			if (body.status !== undefined) {
+				const validStatuses = settings?.statuses?.[existing.type]
+				if (validStatuses && !validStatuses.includes(body.status)) {
+					return c.json(
+						createApiError(
+							'BAD_REQUEST',
+							`Invalid status '${body.status}' for type '${existing.type}'`,
+							[
+								{
+									field: 'status',
+									message: `'${body.status}' is not a valid status for type '${existing.type}'`,
+									expected: validStatuses.map((s) => `'${s}'`).join(' | '),
+									received: `'${body.status}'`,
+								},
+							],
+							`Valid statuses for '${existing.type}': ${validStatuses.join(', ')}`,
+						),
+						400,
+					)
+				}
+			}
+
+			if (body.metadata !== undefined) {
+				const fieldDefs = settings?.field_definitions?.[existing.type]
+				const metadataErrors = validateMetadataFields(existing.type, body.metadata, fieldDefs, {
+					mode: 'update',
+				})
+				if (metadataErrors.length > 0) {
+					return c.json(createMetadataValidationError(existing.type, metadataErrors), 400)
+				}
 			}
 		}
 	}

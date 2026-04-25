@@ -235,6 +235,7 @@ describe('Objects Routes', () => {
 			const existing = buildObject({
 				metadata: { linkedin_url: 'https://linkedin.com/in/test', company: 'Acme' },
 			})
+			const ws = buildWorkspace({ id: existing.workspaceId })
 			const merged = {
 				...existing,
 				metadata: {
@@ -244,7 +245,7 @@ describe('Objects Routes', () => {
 				},
 			}
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
 			mockResults.update = [merged]
 			mockResults.insert = [{}] // event insert
 
@@ -430,6 +431,243 @@ describe('Objects Routes', () => {
 
 			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('Metadata field validation (required + enum)', () => {
+		const knowledgeFieldDefs = [
+			{ name: 'summary', type: 'text', required: true },
+			{ name: 'confidence', type: 'enum', required: false, values: ['low', 'medium', 'high'] },
+		]
+
+		function buildKnowledgeWorkspace() {
+			return buildWorkspace({
+				id: wsId,
+				settings: {
+					enabled_modules: ['work'],
+					display_names: { task: 'Task', knowledge: 'Article' },
+					statuses: {
+						task: ['todo', 'in_progress', 'done', 'blocked'],
+						knowledge: ['draft', 'validated'],
+					},
+					field_definitions: { knowledge: knowledgeFieldDefs },
+					relationship_types: ['informs'],
+					custom_extensions: {
+						knowledge: { name: 'Knowledge', types: ['knowledge'], enabled: true },
+					},
+				},
+			})
+		}
+
+		describe('POST /api/objects', () => {
+			it('rejects create with missing required field', async () => {
+				const ws = buildKnowledgeWorkspace()
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({ type: 'knowledge', status: 'draft', metadata: {} }),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.message).toContain('summary')
+				expect(body.error.details[0].field).toBe('metadata.summary')
+			})
+
+			it('rejects create with required field set to null', async () => {
+				const ws = buildKnowledgeWorkspace()
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({
+							type: 'knowledge',
+							status: 'draft',
+							metadata: { summary: null },
+						}),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.details[0].field).toBe('metadata.summary')
+			})
+
+			it('rejects create with invalid enum value', async () => {
+				const ws = buildKnowledgeWorkspace()
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({
+							type: 'knowledge',
+							status: 'draft',
+							metadata: { summary: 'x', confidence: 'banana' },
+						}),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.details[0].field).toBe('metadata.confidence')
+				expect(body.error.details[0].expected).toContain('low')
+			})
+
+			it('accepts create with required field present', async () => {
+				const ws = buildKnowledgeWorkspace()
+				const obj = buildObject({
+					workspaceId: wsId,
+					type: 'knowledge',
+					status: 'draft',
+					metadata: { summary: 'x' },
+				})
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({
+							type: 'knowledge',
+							status: 'draft',
+							metadata: { summary: 'x' },
+						}),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+			})
+
+			it('accepts create with valid enum value', async () => {
+				const ws = buildKnowledgeWorkspace()
+				const obj = buildObject({
+					workspaceId: wsId,
+					type: 'knowledge',
+					status: 'draft',
+					metadata: { summary: 'x', confidence: 'medium' },
+				})
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects',
+						buildCreateObjectBody({
+							type: 'knowledge',
+							status: 'draft',
+							metadata: { summary: 'x', confidence: 'medium' },
+						}),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+			})
+
+			it('does not affect types with no field definitions (work extension)', async () => {
+				const ws = buildKnowledgeWorkspace()
+				const obj = buildObject({ workspaceId: wsId })
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[ws]]
+				mockResults.insert = [obj]
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(201)
+			})
+		})
+
+		describe('PATCH /api/objects/:id', () => {
+			it('rejects clearing a required field via metadata patch', async () => {
+				const existing = buildObject({
+					workspaceId: wsId,
+					type: 'knowledge',
+					metadata: { summary: 'old' },
+				})
+				const ws = buildKnowledgeWorkspace()
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+						metadata: { summary: null },
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.details[0].field).toBe('metadata.summary')
+				expect(body.error.message).toContain('cannot be cleared')
+			})
+
+			it('rejects update with invalid enum value', async () => {
+				const existing = buildObject({
+					workspaceId: wsId,
+					type: 'knowledge',
+					metadata: { summary: 'old' },
+				})
+				const ws = buildKnowledgeWorkspace()
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+						metadata: { confidence: 'banana' },
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.details[0].field).toBe('metadata.confidence')
+			})
+
+			it('accepts partial update that omits required field', async () => {
+				const existing = buildObject({
+					workspaceId: wsId,
+					type: 'knowledge',
+					metadata: { summary: 'old' },
+				})
+				const ws = buildKnowledgeWorkspace()
+				const updated = {
+					...existing,
+					metadata: { summary: 'old', confidence: 'high' },
+				}
+				const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+				mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+				mockResults.update = [updated]
+				mockResults.insert = [{}]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+						metadata: { confidence: 'high' },
+					}),
+				)
+
+				expect(res.status).toBe(200)
+			})
 		})
 	})
 })

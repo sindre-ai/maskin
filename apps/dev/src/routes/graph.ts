@@ -14,6 +14,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
+import { createMetadataValidationError, validateMetadataFields } from '../lib/validate-metadata'
 
 type Env = {
 	Variables: {
@@ -130,6 +131,18 @@ app.openapi(createGraphRoute, async (c) => {
 					400,
 				)
 			}
+		}
+	}
+
+	// Validate metadata against required + enum field definitions for each node
+	for (const node of body.nodes) {
+		const fieldDefs = settings?.field_definitions?.[node.type]
+		const metadataErrors = validateMetadataFields(node.type, node.metadata, fieldDefs, {
+			mode: 'create',
+			fieldPath: `nodes[${node.$id}]`,
+		})
+		if (metadataErrors.length > 0) {
+			return c.json(createMetadataValidationError(node.type, metadataErrors), 400)
 		}
 	}
 
