@@ -367,6 +367,7 @@ pnpm db:seed
 | `S3_ACCESS_KEY` | No | `admin` | S3 access key |
 | `S3_SECRET_KEY` | No | `admin` | S3 secret key |
 | `S3_REGION` | No | `us-east-1` | S3 region |
+| `FRONTEND_URL` | No (Yes for non-local deploys) | `http://localhost:5173` | Public URL of the web app. Used by the MCP server to render deep links back into Maskin object views, and by OAuth callbacks. Set to your externally-reachable frontend URL (e.g. `https://maskin.example.com`) in any deployed environment — otherwise deep links and callbacks resolve to `localhost:5173`. |
 
 ## License
 

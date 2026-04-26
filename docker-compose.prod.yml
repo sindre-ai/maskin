@@ -64,6 +64,11 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      # Public URL of the web app — used by the MCP server for deep links
+      # back into Maskin object views, and by OAuth callbacks. Set this to
+      # the externally-reachable URL of the frontend in deployed environments
+      # (e.g. https://maskin.example.com); falls back to http://localhost:5173.
+      FRONTEND_URL: ${FRONTEND_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
