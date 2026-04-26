@@ -59,6 +59,17 @@ sessionManager.setAgentBaseBuildContext(
 
 const port = Number(process.env.PORT) || 3000
 
+// The HTTP MCP transport (POST /mcp) and the integrations OAuth callback both
+// read FRONTEND_URL to build deep-link / redirect URLs. If unset in a deployed
+// environment those URLs silently fall back to http://localhost:5173 — log a
+// loud warning so operators see the misconfiguration instead of just shipping
+// broken links.
+if (!process.env.FRONTEND_URL && process.env.NODE_ENV === 'production') {
+	logger.warn(
+		'FRONTEND_URL is not set — MCP deep links and OAuth callbacks will fall back to http://localhost:5173. Set FRONTEND_URL to the public URL of the web app.',
+	)
+}
+
 const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
 
 sessionManager.start().then(() => {
