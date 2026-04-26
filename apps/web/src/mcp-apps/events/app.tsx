@@ -2,6 +2,7 @@ import { ActivityFeedView } from '@/components/activity/activity-feed'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { EventResponse } from '../shared/types'
+import { WebAppLink } from '../shared/web-app-link'
 
 function EventsApp() {
 	const toolResult = useToolResult()
@@ -18,7 +19,14 @@ function EventsApp() {
 	const data = JSON.parse(text)
 	const events: EventResponse[] = data.data ?? data
 
-	return <ActivityFeedView events={events} />
+	return (
+		<div>
+			<div className="flex justify-end p-3 pb-0">
+				<WebAppLink target={{ kind: 'activity' }} label="View activity in Maskin" />
+			</div>
+			<ActivityFeedView events={events} />
+		</div>
+	)
 }
 
 renderMcpApp('Events', <EventsApp />)

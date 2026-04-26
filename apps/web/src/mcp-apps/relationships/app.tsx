@@ -2,6 +2,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { RelationshipResponse } from '../shared/types'
+import { useWebAppHref } from '../shared/web-app-link'
 
 function RelationshipsApp() {
 	const toolResult = useToolResult()
@@ -29,6 +30,27 @@ function RelationshipsApp() {
 	}
 }
 
+function ObjectIdLink({ id }: { id: string }) {
+	const href = useWebAppHref({ kind: 'object', id })
+	const short = id.slice(0, 8)
+	if (!href) {
+		return (
+			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">{short}</span>
+		)
+	}
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="text-muted-foreground hover:text-accent font-mono text-xs truncate max-w-24 underline-offset-2 hover:underline"
+			title={id}
+		>
+			{short}
+		</a>
+	)
+}
+
 function RelationshipListView({ relationships }: { relationships: RelationshipResponse[] }) {
 	if (!relationships.length) {
 		return <EmptyState title="No relationships" description="No relationships found" />
@@ -39,18 +61,12 @@ function RelationshipListView({ relationships }: { relationships: RelationshipRe
 			{relationships.map((rel) => (
 				<div
 					key={rel.id}
-					className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors text-sm"
+					className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-bg-hover transition-colors text-sm"
 				>
-					<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
-						{rel.sourceId.slice(0, 8)}
-					</span>
-					<span className="text-accent-foreground font-medium text-xs">
-						{rel.type.replace(/_/g, ' ')}
-					</span>
+					<ObjectIdLink id={rel.sourceId} />
+					<span className="text-accent font-medium text-xs">{rel.type.replace(/_/g, ' ')}</span>
 					<span className="text-muted-foreground">→</span>
-					<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
-						{rel.targetId.slice(0, 8)}
-					</span>
+					<ObjectIdLink id={rel.targetId} />
 				</div>
 			))}
 		</div>

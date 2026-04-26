@@ -10,6 +10,12 @@ interface ToolResultPayload {
 	toolName: string
 	result: ToolResult
 	input: Record<string, unknown> | null
+	/** Public Maskin web app base URL (no trailing slash). Set when the server
+	 * passes `_meta.webAppBaseUrl`; absent in unit tests / when the env var
+	 * isn't configured. Used by `web-app-link` to build deep links. */
+	webAppBaseUrl: string | null
+	/** Workspace the tool ran against. Used by `web-app-link` to scope URLs. */
+	workspaceId: string | null
 }
 
 interface McpAppContextValue {
@@ -19,6 +25,11 @@ interface McpAppContextValue {
 }
 
 const McpAppContext = createContext<McpAppContextValue | null>(null)
+
+function pickString(meta: Record<string, unknown> | undefined, key: string): string | null {
+	const v = meta?.[key]
+	return typeof v === 'string' && v.length > 0 ? v : null
+}
 
 export function McpAppProvider({
 	name,
@@ -43,7 +54,13 @@ export function McpAppProvider({
 				const r = result as Record<string, unknown>
 				const meta = r._meta as Record<string, unknown> | undefined
 				const toolName = (meta?.toolName as string) ?? 'unknown'
-				setToolResult({ toolName, result: r as ToolResult, input: toolInputRef.current })
+				setToolResult({
+					toolName,
+					result: r as ToolResult,
+					input: toolInputRef.current,
+					webAppBaseUrl: pickString(meta, 'webAppBaseUrl'),
+					workspaceId: pickString(meta, 'workspaceId'),
+				})
 			}
 		},
 	})
@@ -78,4 +95,15 @@ export function useToolResult() {
 export function useCallTool() {
 	const { callTool } = useMcpApp()
 	return callTool
+}
+
+/**
+ * Returns the workspace context the current MCP card is rendering in. `null`
+ * when neither the server-supplied `_meta.webAppBaseUrl` nor `_meta.workspaceId`
+ * is available — caller should hide the deep-link affordance in that case.
+ */
+export function useWebAppContext(): { baseUrl: string; workspaceId: string } | null {
+	const tr = useToolResult()
+	if (!tr?.webAppBaseUrl || !tr.workspaceId) return null
+	return { baseUrl: tr.webAppBaseUrl, workspaceId: tr.workspaceId }
 }

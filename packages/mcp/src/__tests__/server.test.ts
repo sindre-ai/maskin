@@ -37,7 +37,7 @@ describe('createMcpServer', () => {
 
 	it('registers a UI resource for every defined resource', () => {
 		createMcpServer(config)
-		// UI_RESOURCES has 7 entries: objects, relationships, actors, workspaces, events, triggers, graph
+		// UI_RESOURCES has 8 entries: objects, relationships, actors, workspaces, events, triggers, graph, notifications
 		const resourceCount = vi.mocked(registerAppResource).mock.calls.length
 		expect(resourceCount).toBeGreaterThan(0)
 		// Verify all expected URIs are present
@@ -50,6 +50,7 @@ describe('createMcpServer', () => {
 			'ui://maskin/triggers',
 			'ui://maskin/relationships',
 			'ui://maskin/graph',
+			'ui://maskin/notifications',
 		]
 		for (const uri of expectedUris) {
 			expect(resourceUris).toContain(uri)
@@ -1111,6 +1112,69 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/claude-oauth',
 				expect.objectContaining({ method: 'DELETE' }),
 			)
+		})
+	})
+
+	describe('deep-link _meta wiring', () => {
+		// Re-build a fresh handler map with webAppBaseUrl set, since the outer
+		// beforeEach uses a config without it.
+		function buildWithBaseUrl(baseUrl: string | undefined) {
+			const localHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				localHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, webAppBaseUrl: baseUrl })
+			return localHandlers
+		}
+
+		it('emits webAppBaseUrl + workspaceId on _meta when baseUrl is configured', async () => {
+			mockFetchSuccess({ id: 't-1', name: 'My trigger' })
+			const handlers = buildWithBaseUrl('https://maskin.example.com')
+			const handler = handlers.get('list_triggers')
+			if (!handler) throw new Error('Handler list_triggers not registered')
+
+			const result = (await handler({})) as { _meta: Record<string, unknown> }
+			expect(result._meta.toolName).toBe('list_triggers')
+			expect(result._meta.webAppBaseUrl).toBe('https://maskin.example.com')
+			expect(result._meta.workspaceId).toBe('ws-default-123')
+		})
+
+		it('strips trailing slash from webAppBaseUrl', async () => {
+			mockFetchSuccess({})
+			const handlers = buildWithBaseUrl('https://maskin.example.com/')
+			const handler = handlers.get('list_triggers')
+			if (!handler) throw new Error('Handler list_triggers not registered')
+
+			const result = (await handler({})) as { _meta: Record<string, unknown> }
+			expect(result._meta.webAppBaseUrl).toBe('https://maskin.example.com')
+		})
+
+		it('uses workspace_id from args over default when caller overrides', async () => {
+			mockFetchSuccess({})
+			const handlers = buildWithBaseUrl('https://maskin.example.com')
+			const handler = handlers.get('list_triggers')
+			if (!handler) throw new Error('Handler list_triggers not registered')
+
+			const result = (await handler({ workspace_id: 'ws-override' })) as {
+				_meta: Record<string, unknown>
+			}
+			expect(result._meta.workspaceId).toBe('ws-override')
+		})
+
+		it('omits webAppBaseUrl when not configured (older / unconfigured server)', async () => {
+			mockFetchSuccess({})
+			const handlers = buildWithBaseUrl(undefined)
+			const handler = handlers.get('list_triggers')
+			if (!handler) throw new Error('Handler list_triggers not registered')
+
+			const result = (await handler({})) as { _meta: Record<string, unknown> }
+			expect(result._meta.toolName).toBe('list_triggers')
+			expect(result._meta.webAppBaseUrl).toBeUndefined()
+			// workspaceId still present (from defaultWorkspaceId)
+			expect(result._meta.workspaceId).toBe('ws-default-123')
 		})
 	})
 })
