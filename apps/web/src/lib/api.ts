@@ -1,4 +1,4 @@
-import type { SafeMetadata } from '@maskin/shared'
+import type { HeadlineResponse, SafeMetadata } from '@maskin/shared'
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -126,6 +126,7 @@ export const api = {
 		list: () => request<WorkspaceWithRole[]>('/workspaces'),
 		update: (id: string, data: UpdateWorkspaceInput) =>
 			request<WorkspaceResponse>(`/workspaces/${id}`, { method: 'PATCH', body: data }),
+		headline: (id: string) => request<HeadlineResponse>(`/workspaces/${id}/headline`),
 		members: {
 			list: (workspaceId: string) =>
 				request<MemberResponse[]>(`/workspaces/${workspaceId}/members`),
