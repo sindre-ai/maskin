@@ -1,40 +1,17 @@
+import { type WebAppTarget, buildWebAppPath } from '@maskin/shared'
 import { ExternalLink } from 'lucide-react'
 import { useWebAppContext } from './mcp-app-provider'
 
-/**
- * Object types we know how to deep-link from MCP cards. Keep aligned with the
- * web app's route tree under `apps/web/src/routes/_authed/$workspaceId/`.
- */
-export type WebAppTarget =
-	| { kind: 'workspace' }
-	| { kind: 'object'; id: string }
-	| { kind: 'trigger'; id?: string }
-	| { kind: 'agent'; id?: string }
-	| { kind: 'activity' }
-	| {
-			kind: 'settings'
-			section?: 'integrations' | 'keys' | 'mcp' | 'members' | 'skills' | 'objects'
-	  }
-	| { kind: 'pulse' }
-
-export function buildWebAppPath(workspaceId: string, target: WebAppTarget): string {
-	const root = `/${workspaceId}`
-	switch (target.kind) {
-		case 'workspace':
-		case 'pulse':
-			return root
-		case 'object':
-			return `${root}/objects/${target.id}`
-		case 'trigger':
-			return target.id ? `${root}/triggers/${target.id}` : `${root}/triggers`
-		case 'agent':
-			return target.id ? `${root}/agents/${target.id}` : `${root}/agents`
-		case 'activity':
-			return `${root}/activity`
-		case 'settings':
-			return target.section ? `${root}/settings/${target.section}` : `${root}/settings`
-	}
-}
+// Re-export the contract so existing consumers keep importing from the
+// `mcp-apps/shared` barrel. The single source of truth lives in
+// `@maskin/shared/web-app-urls` so the MCP server and the web cards build
+// hrefs from the same table.
+export { buildWebAppPath } from '@maskin/shared'
+export type {
+	WebAppObjectType,
+	WebAppSettingsSection,
+	WebAppTarget,
+} from '@maskin/shared'
 
 /**
  * Build a deep link URL into the Maskin web app for the given target. Returns
