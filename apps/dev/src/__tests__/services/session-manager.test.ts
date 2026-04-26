@@ -63,11 +63,49 @@ vi.mock('../../services/workspace-briefing', () => ({
 	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
+import type { Database } from '@maskin/db'
+import { notifications } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
+
+interface InsertCall {
+	table: unknown
+	values: Record<string, unknown>
+}
+
+/**
+ * Wrap a mock-DB context so every `db.insert(table).values(v)` call is
+ * recorded. Use this to assert which tables a service writes to (the base
+ * `createTestContext` proxy ignores the `table` argument).
+ */
+function withInsertTracking(ctx: ReturnType<typeof createTestContext>): {
+	db: Database
+	mockResults: ReturnType<typeof createTestContext>['mockResults']
+	inserts: InsertCall[]
+} {
+	const inserts: InsertCall[] = []
+	const wrapped = new Proxy(ctx.db, {
+		get: (target, prop) => {
+			const original = Reflect.get(target, prop)
+			if (prop !== 'insert' || typeof original !== 'function') {
+				return original
+			}
+			return (table: unknown) => {
+				const chain = (original as (t: unknown) => Record<string, unknown>)(table)
+				const origValues = chain.values as (v: Record<string, unknown>) => unknown
+				chain.values = (v: Record<string, unknown>) => {
+					inserts.push({ table, values: v })
+					return origValues(v)
+				}
+				return chain
+			}
+		},
+	}) as Database
+	return { db: wrapped, mockResults: ctx.mockResults, inserts }
+}
 
 function createMockStorageProvider() {
 	return {
@@ -578,6 +616,187 @@ describe('SessionManager', () => {
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			// Watchdog completes without processing the recent session
+		})
+	})
+
+	describe('handleCompletion() — failure notifications', () => {
+		it('inserts an alert notification when a session exits non-zero', async () => {
+			const ctx = createTestContext()
+			const tracked = withInsertTracking(ctx)
+			const trackedManager = new SessionManager(tracked.db, storageProvider as StorageProvider)
+
+			const session = buildSession({
+				status: 'running',
+				containerId: 'c-1',
+				actorId: 'actor-fail',
+				triggerId: null,
+			})
+			tracked.mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[{ settings: {} }], // drainQueue → hasCapacity workspace
+				[{ count: 0 }], // drainQueue → hasCapacity count
+				[], // drainQueue → nextQueued (empty, break)
+			]
+
+			await (
+				trackedManager as unknown as {
+					handleCompletion(s: string, c: string, e: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'c-1', 7)
+
+			const notifInserts = tracked.inserts.filter((i) => i.table === notifications)
+			expect(notifInserts).toHaveLength(1)
+			const v = notifInserts[0]?.values
+			expect(v?.type).toBe('alert')
+			expect(v?.workspaceId).toBe(session.workspaceId)
+			expect(v?.sourceActorId).toBe(session.actorId)
+			expect(v?.sessionId).toBe(session.id)
+			expect(v?.status).toBe('pending')
+			expect(String(v?.content)).toContain('exit code 7')
+		})
+
+		it('does not insert a notification when a session completes successfully', async () => {
+			const ctx = createTestContext()
+			const tracked = withInsertTracking(ctx)
+			const trackedManager = new SessionManager(tracked.db, storageProvider as StorageProvider)
+
+			const session = buildSession({
+				status: 'running',
+				containerId: 'c-ok',
+				actorId: 'actor-ok',
+			})
+			tracked.mockResults.selectQueue = [[session], [{ settings: {} }], [{ count: 0 }], []]
+
+			await (
+				trackedManager as unknown as {
+					handleCompletion(s: string, c: string, e: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'c-ok', 0)
+
+			const notifInserts = tracked.inserts.filter((i) => i.table === notifications)
+			expect(notifInserts).toHaveLength(0)
+		})
+
+		it('inserts an alert notification when the watchdog times out a session', async () => {
+			const ctx = createTestContext()
+			const tracked = withInsertTracking(ctx)
+			const trackedManager = new SessionManager(tracked.db, storageProvider as StorageProvider)
+
+			const timedOutSession = buildSession({
+				status: 'running',
+				containerId: 'c-timeout',
+				actorId: 'actor-timeout',
+				triggerId: null,
+				timeoutAt: new Date(Date.now() - 60_000),
+			})
+			tracked.mockResults.selectQueue = [
+				[timedOutSession], // 1. timedOut
+				[], // 2. runningSessions
+				[], // 3. expiredPaused
+				[], // 4. stuckPending
+				[], // 5. stuckStarting
+				[{ settings: {} }], // 6. drainQueue → workspace
+				[{ count: 0 }], // 7. drainQueue → count
+				[], // 8. drainQueue → nextQueued
+				[], // 9. final queuedSessions
+			]
+
+			await (trackedManager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			const notifInserts = tracked.inserts.filter((i) => i.table === notifications)
+			expect(notifInserts).toHaveLength(1)
+			const v = notifInserts[0]?.values
+			expect(v?.type).toBe('alert')
+			expect(v?.sourceActorId).toBe(timedOutSession.actorId)
+			expect(v?.sessionId).toBe(timedOutSession.id)
+			expect(String(v?.title)).toContain('timed out')
+		})
+	})
+
+	describe('checkActorHealth()', () => {
+		it('creates a recommendation when failure rate exceeds threshold', async () => {
+			const ctx = createTestContext()
+			const tracked = withInsertTracking(ctx)
+			const trackedManager = new SessionManager(tracked.db, storageProvider as StorageProvider)
+
+			const actorId = 'actor-flaky'
+			const workspaceId = 'ws-1'
+			// 3 failed + 1 timeout + 4 completed = 50% failure rate over 8 sessions
+			const recent = [
+				...Array(3).fill({ actorId, workspaceId, status: 'failed' }),
+				{ actorId, workspaceId, status: 'timeout' },
+				...Array(4).fill({ actorId, workspaceId, status: 'completed' }),
+			]
+			tracked.mockResults.selectQueue = [
+				recent, // checkActorHealth: recent sessions
+				[], // checkActorHealth: existing notification dedup → none
+				[{ name: 'Flaky Agent' }], // checkActorHealth: actor name
+			]
+
+			await (trackedManager as unknown as { checkActorHealth(): Promise<void> }).checkActorHealth()
+
+			const notifInserts = tracked.inserts.filter((i) => i.table === notifications)
+			expect(notifInserts).toHaveLength(1)
+			const v = notifInserts[0]?.values
+			expect(v?.type).toBe('recommendation')
+			expect(v?.workspaceId).toBe(workspaceId)
+			expect(v?.sourceActorId).toBe(actorId)
+			expect(String(v?.content)).toContain('50%')
+			expect(String(v?.content)).toContain('4/8')
+			expect(String(v?.title)).toContain('Flaky Agent')
+		})
+
+		it('skips actors below the minimum sample size', async () => {
+			const ctx = createTestContext()
+			const tracked = withInsertTracking(ctx)
+			const trackedManager = new SessionManager(tracked.db, storageProvider as StorageProvider)
+
+			// 2 sessions both failed → 100% rate but sample too small
+			const recent = [
+				{ actorId: 'a', workspaceId: 'w', status: 'failed' },
+				{ actorId: 'a', workspaceId: 'w', status: 'failed' },
+			]
+			tracked.mockResults.selectQueue = [recent]
+
+			await (trackedManager as unknown as { checkActorHealth(): Promise<void> }).checkActorHealth()
+
+			expect(tracked.inserts.filter((i) => i.table === notifications)).toHaveLength(0)
+		})
+
+		it('skips actors below the failure-rate threshold', async () => {
+			const ctx = createTestContext()
+			const tracked = withInsertTracking(ctx)
+			const trackedManager = new SessionManager(tracked.db, storageProvider as StorageProvider)
+
+			// 1 failed + 9 completed = 10% — below 25% threshold
+			const recent = [
+				{ actorId: 'a', workspaceId: 'w', status: 'failed' },
+				...Array(9).fill({ actorId: 'a', workspaceId: 'w', status: 'completed' }),
+			]
+			tracked.mockResults.selectQueue = [recent]
+
+			await (trackedManager as unknown as { checkActorHealth(): Promise<void> }).checkActorHealth()
+
+			expect(tracked.inserts.filter((i) => i.table === notifications)).toHaveLength(0)
+		})
+
+		it('deduplicates against an existing pending recommendation', async () => {
+			const ctx = createTestContext()
+			const tracked = withInsertTracking(ctx)
+			const trackedManager = new SessionManager(tracked.db, storageProvider as StorageProvider)
+
+			const recent = [
+				...Array(4).fill({ actorId: 'a', workspaceId: 'w', status: 'failed' }),
+				...Array(4).fill({ actorId: 'a', workspaceId: 'w', status: 'completed' }),
+			]
+			tracked.mockResults.selectQueue = [
+				recent,
+				[{ id: 'existing-notif-id' }], // dedup: notification already exists
+			]
+
+			await (trackedManager as unknown as { checkActorHealth(): Promise<void> }).checkActorHealth()
+
+			expect(tracked.inserts.filter((i) => i.table === notifications)).toHaveLength(0)
 		})
 	})
 })
