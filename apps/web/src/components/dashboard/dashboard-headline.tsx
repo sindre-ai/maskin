@@ -10,6 +10,19 @@ import { useMemo } from 'react'
 const RUNNING_SESSION_STATUSES = new Set(['running', 'starting', 'pending'])
 const PENDING_NOTIFICATION_STATUSES = new Set(['pending', 'seen'])
 
+// The CTA href is freeform from the LLM (and from the rule-based fallback in
+// principle) — if the model is ever prompt-injected, an attacker could place a
+// `javascript:` or `data:` URL here that would execute on click. Only allow
+// http(s) absolute URLs and same-origin relative paths.
+function isSafeCtaHref(href: string): boolean {
+	const trimmed = href.trim()
+	if (trimmed === '') return false
+	if (trimmed.startsWith('/') || trimmed.startsWith('?') || trimmed.startsWith('#')) {
+		return !trimmed.startsWith('//')
+	}
+	return /^https?:\/\//i.test(trimmed)
+}
+
 interface PulseDotProps {
 	status: 'connected' | 'connecting' | 'disconnected'
 }
@@ -99,7 +112,7 @@ export function DashboardHeadline() {
 			<div className="flex min-w-0 flex-1 flex-col gap-1">
 				<p className="font-medium text-base text-text leading-snug md:text-lg">
 					{headline.headline}
-					{headline.cta ? (
+					{headline.cta && isSafeCtaHref(headline.cta.href) ? (
 						<>
 							{' '}
 							<a
