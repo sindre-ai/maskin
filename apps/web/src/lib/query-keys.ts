@@ -69,4 +69,7 @@ export const queryKeys = {
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
 	},
+	dashboard: {
+		headline: (workspaceId: string) => ['dashboard', workspaceId, 'headline'] as const,
+	},
 } as const
