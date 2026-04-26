@@ -11,13 +11,14 @@ import {
 	events,
 	actors,
 	integrations,
+	notifications,
 	objects,
 	sessionLogs,
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
+import { and, count as countFn, desc, eq, gte, lt, or } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
@@ -60,6 +61,7 @@ export class SessionManager extends EventEmitter {
 	> = new Map()
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
+	private watchdogCycle = 0
 
 	constructor(
 		private db: Database,
@@ -866,6 +868,18 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		if (status === 'failed') {
+			await this.notifySessionFailed(session, sessionId, {
+				kind: 'failed',
+				detail: `exit code ${exitCode}`,
+			}).catch((err) =>
+				logger.error('Failed to insert failure notification', {
+					sessionId,
+					error: String(err),
+				}),
+			)
+		}
+
 		try {
 			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
 		} catch (err) {
@@ -907,6 +921,7 @@ export class SessionManager extends EventEmitter {
 	}
 
 	private async runWatchdog(): Promise<void> {
+		this.watchdogCycle++
 		const now = new Date()
 		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
 
@@ -970,6 +985,13 @@ export class SessionManager extends EventEmitter {
 				entityId: session.id,
 				data: {},
 			})
+
+			await this.notifySessionFailed(session, session.id, { kind: 'timeout' }).catch((err) =>
+				logger.error('Failed to insert timeout notification', {
+					sessionId: session.id,
+					error: String(err),
+				}),
+			)
 
 			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
 				logger.warn('Failed to write timeout system log', {
@@ -1119,6 +1141,135 @@ export class SessionManager extends EventEmitter {
 				logger.error('Failed to drain queue in watchdog', { workspaceId, error: String(err) }),
 			)
 		}
+
+		// 8. Aggregate actor health check — runs every Nth cycle to keep cost low.
+		if (this.watchdogCycle % SessionManager.HEALTH_CHECK_EVERY === 0) {
+			await this.checkActorHealth().catch((err) =>
+				logger.error('Actor health check failed', { error: String(err) }),
+			)
+		}
+	}
+
+	private static readonly HEALTH_CHECK_EVERY = 10
+	private static readonly FAILURE_RATE_THRESHOLD = 0.25
+	private static readonly MIN_SESSIONS_FOR_HEALTH_ALERT = 5
+
+	/**
+	 * For each (workspace, actor) pair with sessions in the last 24h, compute
+	 * failure rate and emit a `recommendation` notification when it exceeds
+	 * `FAILURE_RATE_THRESHOLD`. Deduplicates against any pending recommendation
+	 * for the same actor created within the same 24h window so the team isn't
+	 * paged repeatedly for an ongoing condition.
+	 */
+	private async checkActorHealth(): Promise<void> {
+		const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+		const recentSessions = await this.db
+			.select({
+				actorId: sessions.actorId,
+				workspaceId: sessions.workspaceId,
+				status: sessions.status,
+			})
+			.from(sessions)
+			.where(gte(sessions.createdAt, twentyFourHoursAgo))
+
+		const stats = new Map<
+			string,
+			{ actorId: string; workspaceId: string; total: number; failures: number }
+		>()
+		for (const s of recentSessions) {
+			const key = `${s.workspaceId}:${s.actorId}`
+			const cur = stats.get(key) ?? {
+				actorId: s.actorId,
+				workspaceId: s.workspaceId,
+				total: 0,
+				failures: 0,
+			}
+			cur.total++
+			if (s.status === 'failed' || s.status === 'timeout') cur.failures++
+			stats.set(key, cur)
+		}
+
+		for (const stat of stats.values()) {
+			if (stat.total < SessionManager.MIN_SESSIONS_FOR_HEALTH_ALERT) continue
+			const rate = stat.failures / stat.total
+			if (rate <= SessionManager.FAILURE_RATE_THRESHOLD) continue
+
+			const [existing] = await this.db
+				.select({ id: notifications.id })
+				.from(notifications)
+				.where(
+					and(
+						eq(notifications.workspaceId, stat.workspaceId),
+						eq(notifications.sourceActorId, stat.actorId),
+						eq(notifications.type, 'recommendation'),
+						eq(notifications.status, 'pending'),
+						gte(notifications.createdAt, twentyFourHoursAgo),
+					),
+				)
+				.limit(1)
+			if (existing) continue
+
+			const [actor] = await this.db
+				.select({ name: actors.name })
+				.from(actors)
+				.where(eq(actors.id, stat.actorId))
+				.limit(1)
+
+			const ratePct = Math.round(rate * 100)
+			const name = actor?.name ?? stat.actorId.slice(0, 8)
+
+			await this.db
+				.insert(notifications)
+				.values({
+					workspaceId: stat.workspaceId,
+					type: 'recommendation',
+					title: `Agent ${name} has elevated failure rate`,
+					content: `Actor ${name} has a ${ratePct}% failure rate (${stat.failures}/${stat.total} sessions in 24h)`,
+					sourceActorId: stat.actorId,
+					status: 'pending',
+				})
+				.catch((err) =>
+					logger.error('Failed to insert actor health notification', {
+						actorId: stat.actorId,
+						workspaceId: stat.workspaceId,
+						error: String(err),
+					}),
+				)
+		}
+	}
+
+	/**
+	 * Insert a per-session `alert` notification when a session ends in
+	 * `failed` or `timeout`. Errors are logged by the caller — this method
+	 * itself just performs the insert.
+	 */
+	private async notifySessionFailed(
+		session: typeof sessions.$inferSelect,
+		sessionId: string,
+		reason: { kind: 'failed'; detail: string } | { kind: 'timeout' },
+	): Promise<void> {
+		const shortActor = session.actorId.slice(0, 8)
+		const shortSession = sessionId.slice(0, 8)
+		const trigger = session.triggerId ?? 'manual'
+		const title =
+			reason.kind === 'timeout'
+				? `Session timed out for agent ${shortActor}`
+				: `Session failed for agent ${shortActor}`
+		const content =
+			reason.kind === 'timeout'
+				? `Session ${shortSession} timed out. Trigger: ${trigger}.`
+				: `Session ${shortSession} failed with ${reason.detail}. Trigger: ${trigger}.`
+
+		await this.db.insert(notifications).values({
+			workspaceId: session.workspaceId,
+			type: 'alert',
+			title,
+			content,
+			sourceActorId: session.actorId,
+			sessionId,
+			status: 'pending',
+		})
 	}
 
 	private async reportSkillPullFailures(
