@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import {
+	CIRCUIT_BREAKER_THRESHOLD,
 	TriggerRunner,
 	calculateBackoffUntil,
 	evaluateCondition,
@@ -766,6 +767,273 @@ describe('TriggerRunner backoff', () => {
 		// Next cron tick (1 minute later) — should be skipped due to backoff
 		await vi.advanceTimersByTimeAsync(60 * 1000)
 		expect(sessionManager.createSession).not.toHaveBeenCalled()
+	})
+})
+
+describe('TriggerRunner circuit breaker', () => {
+	let runner: TriggerRunner
+	let bridge: EventEmitter & PgNotifyBridge
+	let sessionManager: ReturnType<typeof createMockSessionManager>
+	let mockResults: Record<string, unknown>
+	let dbCalls: {
+		inserts: Array<{ table: unknown; values: unknown }>
+		updates: Array<{ table: unknown; set: unknown }>
+	}
+
+	function wrapDbWithTracking(db: ReturnType<typeof createTestContext>['db']): typeof db {
+		dbCalls = { inserts: [], updates: [] }
+		return new Proxy(db, {
+			get(target, prop) {
+				if (prop === 'insert') {
+					return (table: unknown) => {
+						const chain = (target as unknown as Record<string, (t: unknown) => unknown>).insert(
+							table,
+						) as Record<string, (v: unknown) => unknown>
+						const originalValues = chain.values
+						chain.values = (values: unknown) => {
+							dbCalls.inserts.push({ table, values })
+							return originalValues(values)
+						}
+						return chain
+					}
+				}
+				if (prop === 'update') {
+					return (table: unknown) => {
+						const chain = (target as unknown as Record<string, (t: unknown) => unknown>).update(
+							table,
+						) as Record<string, (v: unknown) => unknown>
+						const originalSet = chain.set
+						chain.set = (set: unknown) => {
+							dbCalls.updates.push({ table, set })
+							return originalSet(set)
+						}
+						return chain
+					}
+				}
+				return (target as unknown as Record<string | symbol, unknown>)[prop]
+			},
+		})
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers()
+		vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+		bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
+		sessionManager = createMockSessionManager()
+		const ctx = createTestContext()
+		mockResults = ctx.mockResults
+		const wrappedDb = wrapDbWithTracking(ctx.db)
+		runner = new TriggerRunner(wrappedDb, bridge, sessionManager)
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'session-x',
+		})
+	})
+
+	afterEach(async () => {
+		await runner.stop()
+		vi.useRealTimers()
+	})
+
+	async function emitFailures(count: number, triggerFixture: ReturnType<typeof buildTrigger>) {
+		for (let i = 1; i <= count; i++) {
+			mockResults.selectQueue = [
+				[], // eventHandler: no triggers match entity_type=session
+				// sessionEventHandler session lookup
+				[{ triggerId: triggerFixture.id, result: { error: `error-${i}` } }],
+				// openCircuit (only consumed on the threshold hit) — safe to leave; extra entries are ignored
+				[triggerFixture],
+			]
+			bridge.emit('event', {
+				workspace_id: triggerFixture.workspaceId,
+				actor_id: 'actor-1',
+				action: 'session_failed',
+				entity_type: 'session',
+				entity_id: `session-${i}`,
+				event_id: `evt-fail-${i}`,
+			} satisfies PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+		}
+	}
+
+	it('disables trigger after threshold consecutive failures', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-cb-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+			enabled: true,
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		await emitFailures(CIRCUIT_BREAKER_THRESHOLD, trigger)
+
+		// An update setting enabled=false should have been issued
+		const triggerDisables = dbCalls.updates.filter(
+			(u) => (u.set as { enabled?: boolean }).enabled === false,
+		)
+		expect(triggerDisables).toHaveLength(1)
+	})
+
+	it('creates an alert notification on circuit break', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-cb-2',
+			workspaceId: 'ws-1',
+			name: 'My Failing Trigger',
+			type: 'event',
+			enabled: true,
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		await emitFailures(CIRCUIT_BREAKER_THRESHOLD, trigger)
+
+		const notificationInserts = dbCalls.inserts.filter(
+			(i) => (i.values as { type?: string }).type === 'alert',
+		)
+		expect(notificationInserts).toHaveLength(1)
+		const notif = notificationInserts[0].values as {
+			title: string
+			content: string
+			workspaceId: string
+			status: string
+		}
+		expect(notif.title).toContain('My Failing Trigger')
+		expect(notif.title).toContain(String(CIRCUIT_BREAKER_THRESHOLD))
+		expect(notif.content).toContain('error-5')
+		expect(notif.workspaceId).toBe('ws-1')
+		expect(notif.status).toBe('pending')
+	})
+
+	it('logs a trigger_circuit_broken audit event', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-cb-3',
+			workspaceId: 'ws-1',
+			type: 'event',
+			enabled: true,
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		await emitFailures(CIRCUIT_BREAKER_THRESHOLD, trigger)
+
+		const auditEvents = dbCalls.inserts.filter(
+			(i) => (i.values as { action?: string }).action === 'trigger_circuit_broken',
+		)
+		expect(auditEvents).toHaveLength(1)
+		const ev = auditEvents[0].values as {
+			entityId: string
+			data: { failure_count: number }
+		}
+		expect(ev.entityId).toBe('trigger-cb-3')
+		expect(ev.data.failure_count).toBe(CIRCUIT_BREAKER_THRESHOLD)
+	})
+
+	it('does not re-open the circuit on further failures', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-cb-4',
+			workspaceId: 'ws-1',
+			type: 'event',
+			enabled: true,
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		await emitFailures(CIRCUIT_BREAKER_THRESHOLD + 2, trigger)
+
+		const notificationInserts = dbCalls.inserts.filter(
+			(i) => (i.values as { type?: string }).type === 'alert',
+		)
+		expect(notificationInserts).toHaveLength(1)
+	})
+
+	it('does not open circuit before threshold is reached', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-cb-5',
+			workspaceId: 'ws-1',
+			type: 'event',
+			enabled: true,
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		await emitFailures(CIRCUIT_BREAKER_THRESHOLD - 1, trigger)
+
+		const notificationInserts = dbCalls.inserts.filter(
+			(i) => (i.values as { type?: string }).type === 'alert',
+		)
+		expect(notificationInserts).toHaveLength(0)
+
+		const triggerDisables = dbCalls.updates.filter(
+			(u) => (u.set as { enabled?: boolean }).enabled === false,
+		)
+		expect(triggerDisables).toHaveLength(0)
+	})
+
+	it('resets failure count when trigger is re-enabled (update event)', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-cb-6',
+			workspaceId: 'ws-1',
+			type: 'event',
+			enabled: true,
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		// Accumulate failures below threshold
+		await emitFailures(CIRCUIT_BREAKER_THRESHOLD - 1, trigger)
+
+		// Trigger update event (e.g., PATCH re-enables or modifies the trigger)
+		mockResults.selectQueue = [[trigger]]
+		bridge.emit('event', {
+			workspace_id: trigger.workspaceId,
+			actor_id: 'actor-1',
+			action: 'updated',
+			entity_type: 'trigger',
+			entity_id: trigger.id,
+			event_id: 'evt-update-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Now emit threshold-1 more failures — should not break the circuit because counter was reset
+		await emitFailures(CIRCUIT_BREAKER_THRESHOLD - 1, trigger)
+
+		const notificationInserts = dbCalls.inserts.filter(
+			(i) => (i.values as { type?: string }).type === 'alert',
+		)
+		expect(notificationInserts).toHaveLength(0)
+	})
+
+	it('skips breaking if the trigger is already disabled externally', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-cb-7',
+			workspaceId: 'ws-1',
+			type: 'event',
+			enabled: false,
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		await emitFailures(CIRCUIT_BREAKER_THRESHOLD, trigger)
+
+		// No disable update should be issued (already disabled)
+		const triggerDisables = dbCalls.updates.filter(
+			(u) => (u.set as { enabled?: boolean }).enabled === false,
+		)
+		expect(triggerDisables).toHaveLength(0)
+
+		// No notification
+		const notificationInserts = dbCalls.inserts.filter(
+			(i) => (i.values as { type?: string }).type === 'alert',
+		)
+		expect(notificationInserts).toHaveLength(0)
 	})
 })
 

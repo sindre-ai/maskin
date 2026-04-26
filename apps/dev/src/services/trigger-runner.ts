@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, objects, sessions, triggers } from '@maskin/db/schema'
+import { events, notifications, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { Cron } from 'croner'
 import { and, eq } from 'drizzle-orm'
@@ -10,12 +10,16 @@ interface TriggerFailureState {
 	count: number
 	lastFailedAt: Date
 	backoffUntil: Date
+	lastError?: string
+	circuitBroken: boolean
 }
 
 /** Maximum backoff duration: 30 minutes */
 const MAX_BACKOFF_MS = 30 * 60_000
 /** Base backoff duration: 1 minute */
 const BASE_BACKOFF_MS = 60_000
+/** Auto-disable a trigger after this many consecutive failures */
+export const CIRCUIT_BREAKER_THRESHOLD = 5
 
 export function calculateBackoffUntil(failureCount: number, now: Date): Date {
 	const delayMs = Math.min(2 ** failureCount * BASE_BACKOFF_MS, MAX_BACKOFF_MS)
@@ -90,33 +94,90 @@ export class TriggerRunner {
 		this.reminderTimeouts.clear()
 	}
 
-	private recordTriggerFailure(triggerId: string): void {
+	private async recordTriggerFailure(triggerId: string, lastError?: string): Promise<void> {
 		const now = new Date()
 		const existing = this.triggerFailures.get(triggerId)
 		const count = (existing?.count ?? 0) + 1
 		const backoffUntil = calculateBackoffUntil(count, now)
+		const circuitBroken = existing?.circuitBroken ?? false
 		this.triggerFailures.set(triggerId, {
 			count,
 			lastFailedAt: now,
 			backoffUntil,
+			lastError,
+			circuitBroken,
 		})
 		logger.warn(
 			`Trigger '${triggerId}' failure #${count}, in backoff until ${backoffUntil.toISOString()}`,
+		)
+
+		if (count >= CIRCUIT_BREAKER_THRESHOLD && !circuitBroken) {
+			await this.openCircuit(triggerId, count, lastError)
+		}
+	}
+
+	private async openCircuit(
+		triggerId: string,
+		count: number,
+		lastError: string | undefined,
+	): Promise<void> {
+		// Mark broken synchronously first to avoid re-opening on concurrent failures
+		const state = this.triggerFailures.get(triggerId)
+		if (state) state.circuitBroken = true
+
+		const [trigger] = await this.db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.id, triggerId))
+			.limit(1)
+
+		if (!trigger || !trigger.enabled) return
+
+		await this.db
+			.update(triggers)
+			.set({ enabled: false, updatedAt: new Date() })
+			.where(eq(triggers.id, triggerId))
+
+		const errorSuffix = lastError ? ` Last error: ${lastError}.` : ''
+		await this.db.insert(notifications).values({
+			workspaceId: trigger.workspaceId,
+			type: 'alert',
+			title: `Trigger '${trigger.name}' disabled after ${count} consecutive failures`,
+			content: `The trigger has been automatically disabled due to repeated session failures.${errorSuffix} Re-enable it manually after investigating.`,
+			sourceActorId: trigger.targetActorId,
+			status: 'pending',
+		})
+
+		await this.db.insert(events).values({
+			workspaceId: trigger.workspaceId,
+			actorId: trigger.targetActorId,
+			action: 'trigger_circuit_broken',
+			entityType: 'trigger',
+			entityId: trigger.id,
+			data: {
+				trigger_name: trigger.name,
+				failure_count: count,
+				last_error: lastError ?? null,
+			},
+		})
+
+		logger.warn(
+			`Circuit broken for trigger '${trigger.name}' (${triggerId}) after ${count} failures — auto-disabled`,
 		)
 	}
 
 	private resetTriggerBackoff(triggerId: string): void {
 		if (this.triggerFailures.has(triggerId)) {
-			logger.info(`Trigger '${triggerId}' backoff reset after successful session`)
+			logger.info(`Trigger '${triggerId}' backoff reset`)
 			this.triggerFailures.delete(triggerId)
 		}
 	}
 
 	private async handleSessionOutcome(event: PgEvent): Promise<void> {
 		const sessionId = event.entity_id
-		// Look up the session to find which trigger spawned it
+		// Look up the session to find which trigger spawned it and the failure reason
 		const [session] = await this.db
-			.select({ triggerId: sessions.triggerId })
+			.select({ triggerId: sessions.triggerId, result: sessions.result })
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
@@ -127,7 +188,8 @@ export class TriggerRunner {
 			this.resetTriggerBackoff(session.triggerId)
 		} else {
 			// session_failed or session_timeout
-			this.recordTriggerFailure(session.triggerId)
+			const result = session.result as { error?: string } | null
+			await this.recordTriggerFailure(session.triggerId, result?.error)
 		}
 	}
 
