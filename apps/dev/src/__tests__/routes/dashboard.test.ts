@@ -1,4 +1,4 @@
-import { buildWorkspace } from '../factories'
+import { buildWorkspace, buildWorkspaceMember } from '../factories'
 import { jsonGet } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -35,7 +35,8 @@ describe('GET /api/workspaces/:id/headline', () => {
 		})
 
 		const { app, mockResults } = createTestApp(dashboardRoutes, '/api/workspaces')
-		mockResults.selectQueue = [[ws], [], [], []]
+		const member = buildWorkspaceMember({ workspaceId: wsId, actorId: 'test-actor-id' })
+		mockResults.selectQueue = [[member], [ws], [], [], []]
 
 		const res = await app.request(jsonGet(`/api/workspaces/${wsId}/headline`))
 
@@ -54,8 +55,9 @@ describe('GET /api/workspaces/:id/headline', () => {
 		chatMock.mockRejectedValue(new Error('Anthropic API error: 500 boom'))
 
 		const { app, mockResults } = createTestApp(dashboardRoutes, '/api/workspaces')
-		// Aggregate inputs: workspace, running sessions, pending notifications, events
-		mockResults.selectQueue = [[ws], [{ id: 'sess-1' }], [], []]
+		const member = buildWorkspaceMember({ workspaceId: wsId, actorId: 'test-actor-id' })
+		// Membership check, then aggregate inputs: workspace, running sessions, pending notifications, events
+		mockResults.selectQueue = [[member], [ws], [{ id: 'sess-1' }], [], []]
 
 		const res = await app.request(jsonGet(`/api/workspaces/${wsId}/headline`))
 
@@ -73,9 +75,22 @@ describe('GET /api/workspaces/:id/headline', () => {
 		expect(res.status).toBe(400)
 	})
 
+	it('returns 404 when the caller is not a member of the workspace', async () => {
+		const { app, mockResults } = createTestApp(dashboardRoutes, '/api/workspaces')
+		// Empty membership lookup → 404, headline build never runs
+		mockResults.selectQueue = [[]]
+
+		const res = await app.request(jsonGet(`/api/workspaces/${wsId}/headline`))
+
+		expect(res.status).toBe(404)
+		expect(chatMock).not.toHaveBeenCalled()
+	})
+
 	it('returns 404 when the workspace is not found', async () => {
 		const { app, mockResults } = createTestApp(dashboardRoutes, '/api/workspaces')
-		mockResults.selectQueue = [[], [], [], []]
+		const member = buildWorkspaceMember({ workspaceId: wsId, actorId: 'test-actor-id' })
+		// Membership exists but workspace lookup is empty (eg. just-deleted workspace)
+		mockResults.selectQueue = [[member], [], [], [], []]
 
 		const res = await app.request(jsonGet(`/api/workspaces/${wsId}/headline`))
 
