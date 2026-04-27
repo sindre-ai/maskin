@@ -1,0 +1,13 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"outDir": "dist",
+		"rootDir": ".",
+		"moduleResolution": "bundler",
+		"declaration": true,
+		"declarationMap": true,
+		"types": ["node"]
+	},
+	"include": ["src", "scripts", "tsup.config.ts"],
+	"exclude": ["dist", "node_modules", "src/__tests__"]
+}

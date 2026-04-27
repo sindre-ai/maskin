@@ -1,0 +1,56 @@
+{
+	"name": "@maskin/sdk",
+	"version": "0.1.0",
+	"description": "Official TypeScript SDK for the Maskin API",
+	"license": "Apache-2.0",
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": ["dist", "README.md", "LICENSE", "openapi.json"],
+	"sideEffects": false,
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/",
+		"provenance": true
+	},
+	"scripts": {
+		"build": "tsup",
+		"dev": "tsup --watch",
+		"generate": "tsx scripts/generate.ts",
+		"type-check": "tsc --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:integration": "vitest run --config vitest.integration.config.ts",
+		"prepublishOnly": "pnpm run generate && pnpm run build && pnpm run test"
+	},
+	"dependencies": {
+		"openapi-fetch": "^0.13.0"
+	},
+	"devDependencies": {
+		"@maskin/dev": "workspace:*",
+		"@maskin/shared": "workspace:*",
+		"@types/node": "^25.6.0",
+		"openapi-typescript": "^7.4.0",
+		"tsup": "^8.3.0",
+		"tsx": "^4.19.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	},
+	"peerDependencies": {
+		"typescript": ">=5.0.0"
+	},
+	"peerDependenciesMeta": {
+		"typescript": { "optional": true }
+	},
+	"engines": { "node": ">=20" },
+	"keywords": ["maskin", "sdk", "api-client", "typescript", "openapi"]
+}
