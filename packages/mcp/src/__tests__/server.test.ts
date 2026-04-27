@@ -15,6 +15,7 @@ vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
 }))
 
+import { clearModules, registerModule } from '@maskin/module-sdk'
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { createMcpServer } from '../server'
 import { tools } from '../tools'
@@ -233,6 +234,60 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/objects/obj-123',
 				expect.objectContaining({ method: 'DELETE' }),
 			)
+		})
+	})
+
+	describe('list_extensions handler', () => {
+		afterEach(() => {
+			clearModules()
+		})
+
+		it('dedupes a stale custom_extensions entry that collides with a code-registered module', async () => {
+			registerModule({
+				id: 'knowledge',
+				name: 'Knowledge',
+				version: '0.1.0',
+				objectTypes: [
+					{
+						type: 'knowledge',
+						label: 'Article',
+						icon: 'book-open',
+						defaultStatuses: ['draft', 'validated', 'deprecated'],
+						defaultRelationshipTypes: ['supersedes', 'contradicts', 'about'],
+					},
+				],
+			})
+
+			mockFetchSuccess([
+				{
+					id: 'ws-default-123',
+					name: 'Dev',
+					settings: {
+						enabled_modules: ['work', 'knowledge'],
+						custom_extensions: {
+							// Stale entry left over from a runtime create_extension call
+							// before the extension was code-registered.
+							knowledge: {
+								name: 'Knowledge',
+								types: ['knowledge'],
+								enabled: false,
+								relationship_types: ['supersedes', 'contradicts', 'about'],
+							},
+						},
+					},
+				},
+			])
+
+			const handler = getHandler('list_extensions')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text) as Array<{
+				id: string
+				enabled: boolean
+			}>
+
+			const knowledgeRows = parsed.filter((r) => r.id === 'knowledge')
+			expect(knowledgeRows).toHaveLength(1)
+			expect(knowledgeRows[0].enabled).toBe(true)
 		})
 	})
 
