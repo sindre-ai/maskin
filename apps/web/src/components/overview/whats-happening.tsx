@@ -12,7 +12,6 @@ import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import type {
 	ActorListItem,
-	ActorResponse,
 	ObjectResponse,
 	RelationshipResponse,
 	SessionResponse,
@@ -170,7 +169,7 @@ function InProgressSection({
 					{workingAgents.map((agent) => (
 						<AgentCard
 							key={agent.id}
-							agent={agent as ActorResponse}
+							agent={agent}
 							status="working"
 							latestSession={
 								getLatestSession(agent.id, sessionsByAgent) as SessionResponse | undefined

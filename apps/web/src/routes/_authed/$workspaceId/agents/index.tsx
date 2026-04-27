@@ -6,7 +6,6 @@ import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
-import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -108,7 +107,7 @@ function AgentsPage() {
 						{filtered.map((agent) => (
 							<AgentCard
 								key={agent.id}
-								agent={agent as ActorResponse}
+								agent={agent}
 								status={agentStatuses.get(agent.id) ?? 'idle'}
 								latestSession={getLatestSession(agent.id, sessionsByAgent)}
 							/>
