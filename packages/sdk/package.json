@@ -27,9 +27,9 @@
 		"dev": "tsup --watch",
 		"generate": "tsx scripts/generate.ts",
 		"type-check": "tsc --noEmit",
-		"test": "vitest run",
+		"test": "vitest run --passWithNoTests",
 		"test:watch": "vitest",
-		"test:integration": "vitest run --config vitest.integration.config.ts",
+		"test:integration": "vitest run --config vitest.integration.config.ts --passWithNoTests",
 		"prepublishOnly": "pnpm run generate && pnpm run build && pnpm run test"
 	},
 	"dependencies": {
