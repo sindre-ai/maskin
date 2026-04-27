@@ -25,7 +25,7 @@
 	},
 	"dependencies": {
 		"postgres": "^3.4.9",
-		"hono": "^4.12.14"
+		"hono": "^4.12.15"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",
