@@ -67,6 +67,7 @@ export const actorListItemSchema = z.object({
 	type: z.string(),
 	name: z.string(),
 	email: z.string().nullable(),
+	systemPrompt: z.string().nullable(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({

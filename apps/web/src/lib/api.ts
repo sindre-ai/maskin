@@ -406,10 +406,10 @@ export interface ActorListItem {
 	type: string
 	name: string
 	email: string | null
+	systemPrompt: string | null
 }
 
 export interface ActorResponse extends ActorListItem {
-	systemPrompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
 	llmProvider: string | null

@@ -1,5 +1,5 @@
 import { useDuration } from '@/hooks/use-duration'
-import type { ActorResponse, SessionResponse } from '@/lib/api'
+import type { ActorListItem, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
@@ -14,7 +14,7 @@ export function AgentCard({
 	status,
 	latestSession,
 }: {
-	agent: ActorResponse
+	agent: ActorListItem
 	status: AgentStatus
 	latestSession?: SessionResponse
 }) {

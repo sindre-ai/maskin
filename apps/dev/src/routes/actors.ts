@@ -229,6 +229,7 @@ app.openapi(listActorsRoute, async (c) => {
 				type: actors.type,
 				name: actors.name,
 				email: actors.email,
+				systemPrompt: actors.systemPrompt,
 				role: workspaceMembers.role,
 			})
 			.from(workspaceMembers)
@@ -257,6 +258,7 @@ app.openapi(listActorsRoute, async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			systemPrompt: actors.systemPrompt,
 		})
 		.from(workspaceMembers)
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
