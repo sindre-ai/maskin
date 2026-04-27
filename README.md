@@ -290,6 +290,8 @@ Agents run as container sessions — ephemeral Docker containers running CLI age
 - **Persistent agent files** -- skills, learnings, and memory stored in S3-compatible storage, pulled into containers on start and pushed back on completion
 - **Configurable** -- custom images, environment variables, timeouts, working directories
 
+> **Authoring an actor?** See [`docs/agent-runtime.md`](docs/agent-runtime.md) for what's pre-installed in the agent container — notably, there's no Python, so prompts that call `pip install …` will time out the session.
+
 ### External Agents (MCP)
 
 External agents connect via the Model Context Protocol (39 tools available), supporting both stdio and HTTP transport.
