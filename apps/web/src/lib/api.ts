@@ -118,6 +118,14 @@ export const api = {
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
 		reset: (id: string, workspaceId: string) =>
 			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<ActorResponse>(`/actors/${id}/pause`, { method: 'POST', workspaceId }),
+		run: (id: string, workspaceId: string, body?: RunAgentInput) =>
+			request<ActorResponse>(`/actors/${id}/run`, {
+				method: 'POST',
+				body: body ?? {},
+				workspaceId,
+			}),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
 	},
@@ -401,11 +409,14 @@ export interface UpdateObjectInput {
 	owner?: string | null
 }
 
+export type AgentState = 'idle' | 'running' | 'paused' | 'failed'
+
 export interface ActorListItem {
 	id: string
 	type: string
 	name: string
 	email: string | null
+	agentState?: AgentState
 }
 
 export interface ActorResponse extends ActorListItem {
@@ -415,6 +426,8 @@ export interface ActorResponse extends ActorListItem {
 	llmProvider: string | null
 	llmConfig: Record<string, unknown> | null
 	isSystem: boolean
+	agentState: AgentState
+	agentStateUpdatedAt: string | null
 	createdAt: string | null
 	updatedAt: string | null
 }
@@ -448,6 +461,10 @@ export interface UpdateActorInput {
 	memory?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+}
+
+export interface RunAgentInput {
+	action_prompt?: string
 }
 
 export interface WorkspaceResponse {

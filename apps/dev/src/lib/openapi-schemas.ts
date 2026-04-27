@@ -42,6 +42,8 @@ export const objectResponseSchema = z.object({
 	updatedAt: z.string().nullable(),
 })
 
+export const agentStateSchema = z.enum(['idle', 'running', 'paused', 'failed'])
+
 export const actorResponseSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),
@@ -53,6 +55,8 @@ export const actorResponseSchema = z.object({
 	llmProvider: z.string().nullable(),
 	llmConfig: jsonbField,
 	isSystem: z.boolean(),
+	agentState: agentStateSchema,
+	agentStateUpdatedAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })
@@ -67,6 +71,7 @@ export const actorListItemSchema = z.object({
 	type: z.string(),
 	name: z.string(),
 	email: z.string().nullable(),
+	agentState: agentStateSchema.optional(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({

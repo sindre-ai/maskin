@@ -33,6 +33,8 @@ export function buildActor(overrides?: Record<string, unknown>) {
 		llmProvider: null,
 		llmConfig: null,
 		isSystem: false,
+		agentState: 'idle' as const,
+		agentStateUpdatedAt: null,
 		createdBy: null,
 		createdAt: new Date(),
 		updatedAt: new Date(),

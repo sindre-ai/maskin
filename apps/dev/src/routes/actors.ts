@@ -21,7 +21,7 @@ import {
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { eq, inArray, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -33,14 +33,21 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		sessionManager: SessionManager
 	}
 }
+
+/** Default prompt used when /run is invoked with no explicit action_prompt. */
+const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
+
+const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
 
 const app = new OpenAPIHono<Env>()
 
@@ -229,6 +236,7 @@ app.openapi(listActorsRoute, async (c) => {
 				type: actors.type,
 				name: actors.name,
 				email: actors.email,
+				agentState: actors.agentState,
 				role: workspaceMembers.role,
 			})
 			.from(workspaceMembers)
@@ -257,6 +265,7 @@ app.openapi(listActorsRoute, async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			agentState: actors.agentState,
 		})
 		.from(workspaceMembers)
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -302,6 +311,8 @@ app.openapi(getActorRoute, (async (c) => {
 			llmProvider: actors.llmProvider,
 			llmConfig: actors.llmConfig,
 			isSystem: actors.isSystem,
+			agentState: actors.agentState,
+			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 		})
@@ -373,6 +384,8 @@ app.openapi(updateActorRoute, (async (c) => {
 			llmProvider: actors.llmProvider,
 			llmConfig: actors.llmConfig,
 			isSystem: actors.isSystem,
+			agentState: actors.agentState,
+			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			updatedAt: actors.updatedAt,
 		})
 
@@ -496,6 +509,8 @@ app.openapi(resetActorRoute, (async (c) => {
 			llmProvider: actors.llmProvider,
 			llmConfig: actors.llmConfig,
 			isSystem: actors.isSystem,
+			agentState: actors.agentState,
+			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			updatedAt: actors.updatedAt,
 		})
 
@@ -624,5 +639,257 @@ app.openapi(deleteActorRoute, (async (c) => {
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteActorRoute, Env>)
+
+// Returning shape used by /pause and /run handlers — full actor row.
+const actorReturningCols = {
+	id: actors.id,
+	type: actors.type,
+	name: actors.name,
+	email: actors.email,
+	systemPrompt: actors.systemPrompt,
+	tools: actors.tools,
+	memory: actors.memory,
+	llmProvider: actors.llmProvider,
+	llmConfig: actors.llmConfig,
+	isSystem: actors.isSystem,
+	agentState: actors.agentState,
+	agentStateUpdatedAt: actors.agentStateUpdatedAt,
+	createdAt: actors.createdAt,
+	updatedAt: actors.updatedAt,
+} as const
+
+// POST /:id/pause - Pause an agent (and any in-flight session for it)
+const pauseAgentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/pause',
+	tags: ['Actors'],
+	summary: 'Pause an agent and any in-flight session',
+	description:
+		'Sets the agent to a paused state. If the agent has a session in `running` state, that session is paused (snapshotted) too.',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Agent paused',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Cannot pause agent',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in workspace',
+		},
+	},
+})
+
+app.openapi(pauseAgentRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	// Pause any currently-running session for this agent. Only `running`
+	// sessions can be snapshotted — sessions in pending/starting/queued are
+	// stopped instead so we don't leave orphaned containers behind.
+	const liveSessions = await db
+		.select()
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.actorId, id),
+				eq(sessions.workspaceId, workspaceId),
+				inArray(sessions.status, RUNNING_SESSION_STATUSES),
+			),
+		)
+		.orderBy(desc(sessions.createdAt))
+
+	for (const s of liveSessions) {
+		try {
+			if (s.status === 'running') {
+				await sessionManager.pauseSession(s.id)
+			} else {
+				await sessionManager.stopSession(s.id)
+			}
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return c.json(createApiError('BAD_REQUEST', message), 400)
+		}
+	}
+
+	const [updated] = await db
+		.update(actors)
+		.set({
+			agentState: 'paused',
+			agentStateUpdatedAt: new Date(),
+			updatedAt: new Date(),
+		})
+		.where(eq(actors.id, id))
+		.returning(actorReturningCols)
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'agent_paused',
+		entityType: 'actor',
+		entityId: id,
+		data: { paused_session_ids: liveSessions.map((s) => s.id) },
+	})
+
+	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+}) as RouteHandler<typeof pauseAgentRoute, Env>)
+
+// POST /:id/run - Resume a paused agent OR start a fresh session
+const runAgentBodySchema = z
+	.object({
+		action_prompt: z.string().min(1).optional(),
+	})
+	.optional()
+
+const runAgentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/run',
+	tags: ['Actors'],
+	summary: 'Run an agent — resume paused session or start a fresh one',
+	description:
+		'If the agent has a paused session, it is resumed. Otherwise a fresh session is started using the provided action_prompt (or a default).',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: runAgentBodySchema } },
+			required: false,
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Agent running',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Cannot run agent',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in workspace',
+		},
+	},
+})
+
+app.openapi(runAgentRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json') ?? {}
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	// If there's already a live session, the agent is effectively running —
+	// no-op the start logic and just sync the state field.
+	const [liveSession] = await db
+		.select()
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.actorId, id),
+				eq(sessions.workspaceId, workspaceId),
+				inArray(sessions.status, RUNNING_SESSION_STATUSES),
+			),
+		)
+		.orderBy(desc(sessions.createdAt))
+		.limit(1)
+
+	if (!liveSession) {
+		// Prefer resuming the most recent paused session over creating a new one,
+		// so users don't lose context that was snapshotted on Pause.
+		const [pausedSession] = await db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.actorId, id),
+					eq(sessions.workspaceId, workspaceId),
+					eq(sessions.status, 'paused'),
+				),
+			)
+			.orderBy(desc(sessions.createdAt))
+			.limit(1)
+
+		try {
+			if (pausedSession) {
+				await sessionManager.resumeSession(pausedSession.id)
+			} else {
+				await sessionManager.createSession(workspaceId, {
+					actorId: id,
+					actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
+					createdBy: actorId,
+				})
+			}
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return c.json(createApiError('BAD_REQUEST', message), 400)
+		}
+	}
+
+	const [updated] = await db
+		.update(actors)
+		.set({
+			agentState: 'running',
+			agentStateUpdatedAt: new Date(),
+			updatedAt: new Date(),
+		})
+		.where(eq(actors.id, id))
+		.returning(actorReturningCols)
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'agent_run',
+		entityType: 'actor',
+		entityId: id,
+		data: {},
+	})
+
+	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+}) as RouteHandler<typeof runAgentRoute, Env>)
 
 export default app
