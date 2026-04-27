@@ -108,8 +108,8 @@ export function AgentCreateForm({
 				</span>
 			</div>
 
-			{/* System Prompt */}
-			<Section title="System Prompt">
+			{/* Instructions */}
+			<Section title="Instructions">
 				<Textarea
 					value={systemPromptDraft}
 					onChange={(e) => setSystemPromptDraft(e.target.value)}
