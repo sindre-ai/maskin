@@ -1,7 +1,7 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaceMembers, workspaces } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import {
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
@@ -70,18 +70,20 @@ app.openapi(disconnectRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	if (!ws) {
+	// Targeted JSONB delete — strips `claude_oauth` without touching siblings,
+	// so concurrent settings writes (e.g. `max_concurrent_sessions`) survive.
+	const result = await db
+		.update(workspaces)
+		.set({
+			settings: sql`coalesce(${workspaces.settings}, '{}'::jsonb) - 'claude_oauth'`,
+			updatedAt: new Date(),
+		})
+		.where(eq(workspaces.id, workspaceId))
+		.returning({ id: workspaces.id })
+
+	if (result.length === 0) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
-
-	const settings = (ws.settings as WorkspaceSettings) ?? {}
-	const { claude_oauth: _, ...rest } = settings
-
-	await db
-		.update(workspaces)
-		.set({ settings: rest, updatedAt: new Date() })
-		.where(eq(workspaces.id, workspaceId))
 
 	logger.info('Claude OAuth disconnected for workspace', { workspaceId })
 	return c.json({ success: true })
@@ -219,19 +221,21 @@ app.openapi(importRoute, (async (c) => {
 
 	const tokens: ClaudeOAuthTokens = c.req.valid('json')
 
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	if (!ws) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
-
-	const settings = (ws.settings as WorkspaceSettings) ?? {}
-	await db
+	// Targeted JSONB update — only `claude_oauth` is set/replaced, so concurrent
+	// settings writes (e.g. `max_concurrent_sessions`) survive.
+	const encrypted = JSON.stringify(encryptOAuthTokens(tokens))
+	const result = await db
 		.update(workspaces)
 		.set({
-			settings: { ...settings, claude_oauth: encryptOAuthTokens(tokens) },
+			settings: sql`jsonb_set(coalesce(${workspaces.settings}, '{}'::jsonb), '{claude_oauth}', ${encrypted}::jsonb)`,
 			updatedAt: new Date(),
 		})
 		.where(eq(workspaces.id, workspaceId))
+		.returning({ id: workspaces.id })
+
+	if (result.length === 0) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
 	logger.info('Claude OAuth tokens imported for workspace', {
 		workspaceId,

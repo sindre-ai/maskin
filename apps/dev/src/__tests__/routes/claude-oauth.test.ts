@@ -34,7 +34,10 @@ describe('Claude OAuth Routes', () => {
 				settings: { claude_oauth: { encrypted: true } },
 			})
 			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			// Disconnect uses a targeted JSONB delete via UPDATE...RETURNING — return
+			// a single row to signal the workspace exists.
+			mockResults.update = [{ id: workspace.id }]
 
 			const res = await app.request(jsonRequest('DELETE', '/api/claude-oauth', undefined, headers))
 
@@ -104,7 +107,10 @@ describe('Claude OAuth Routes', () => {
 		it('returns 200 when tokens imported', async () => {
 			const workspace = buildWorkspace({ id: wsId })
 			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+			mockResults.selectQueue = [[buildWorkspaceMember()]]
+			// Import uses a targeted JSONB set via UPDATE...RETURNING — return a
+			// single row to signal the workspace exists.
+			mockResults.update = [{ id: workspace.id }]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/claude-oauth/import', importBody, headers),
