@@ -90,9 +90,10 @@ serve({ fetch: app.fetch, port }, () => {
 	const apiUrl = `http://localhost:${port}`
 
 	const mcpSetup = bootstrap
-		? `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=${bootstrap.apiKey} -e WORKSPACE_ID=${bootstrap.workspaceId} -- pnpm --filter @maskin/mcp start`
+		? `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=${bootstrap.apiKey} -e WORKSPACE_ID=${bootstrap.workspaceId} -- pnpm --filter @maskin/mcp start
+    (or for a published-package install: replace the trailing command with: npx -y @maskin/mcp)`
 		: `    claude mcp add maskin -e API_BASE_URL=${apiUrl} -e API_KEY=<your_api_key> -e WORKSPACE_ID=<your_workspace_id> -- pnpm --filter @maskin/mcp start
-    (find your key + workspace id in the UI under Settings)`
+    (find your key + workspace id in the UI under Settings; or use \`npx -y @maskin/mcp\` instead of the pnpm command)`
 
 	const accountLine = bootstrap
 		? ` 👤 ${bootstrap.created ? 'Default account' : 'Account'}: ${bootstrap.actorName} · ${bootstrap.actorEmail}  ·  workspace: "${bootstrap.workspaceName}"

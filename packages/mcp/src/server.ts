@@ -14,10 +14,9 @@ import {
 	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { tools } from './tools.js'
 
-interface McpConfig {
+export interface McpConfig {
 	apiBaseUrl: string
 	apiKey: string
 	defaultWorkspaceId: string
@@ -2522,20 +2521,3 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
 
 	return server
 }
-
-// CLI entry point
-async function main() {
-	const config: McpConfig = {
-		apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
-		apiKey: process.env.API_KEY || '',
-		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
-		transport: 'stdio',
-	}
-
-	const server = createMcpServer(config)
-	const transport = new StdioServerTransport()
-	await server.connect(transport)
-	console.error('MCP server started (stdio transport)')
-}
-
-main().catch(console.error)
