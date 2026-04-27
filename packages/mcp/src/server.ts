@@ -1590,6 +1590,7 @@ export function createMcpServer(config: McpConfig) {
 			const moduleTypeKeys = new Set<string>()
 			// Collect all type keys owned by tracked custom extensions
 			const customExtTypeKeys = new Set<string>()
+			const moduleIds = new Set(modules.map((m) => m.id))
 
 			// 1. Registered modules as extensions
 			const moduleExtensions = modules.map((mod) => {
@@ -1609,24 +1610,28 @@ export function createMcpServer(config: McpConfig) {
 				}
 			})
 
-			// 2. Tracked custom extensions
-			const trackedCustomExtensions = Object.entries(customExtensions).map(([extId, ext]) => {
-				for (const t of ext.types) customExtTypeKeys.add(t)
-				return {
-					id: extId,
-					name: ext.name,
-					enabled: ext.enabled !== false,
-					object_types: ext.types
-						.filter((t) => t in statuses)
-						.map((t) => ({
-							type: t,
-							display_name: displayNames[t] ?? t,
-							statuses: statuses[t],
-							fields: fieldDefs[t] ?? [],
-							relationship_types: ext.relationship_types ?? [],
-						})),
-				}
-			})
+			// 2. Tracked custom extensions — code-registered modules win on id collision,
+			// so a stale custom_extensions entry with the same id is silently ignored
+			// (its types are already covered by the module row above).
+			const trackedCustomExtensions = Object.entries(customExtensions)
+				.filter(([extId]) => !moduleIds.has(extId))
+				.map(([extId, ext]) => {
+					for (const t of ext.types) customExtTypeKeys.add(t)
+					return {
+						id: extId,
+						name: ext.name,
+						enabled: ext.enabled !== false,
+						object_types: ext.types
+							.filter((t) => t in statuses)
+							.map((t) => ({
+								type: t,
+								display_name: displayNames[t] ?? t,
+								statuses: statuses[t],
+								fields: fieldDefs[t] ?? [],
+								relationship_types: ext.relationship_types ?? [],
+							})),
+					}
+				})
 
 			// 3. Untracked custom types (not owned by any module or tracked extension)
 			const untrackedTypes = Object.keys(statuses).filter(
