@@ -47,7 +47,7 @@ If your actor's prompt instructs the model to run `pip install <pkg>` or `python
 
 ## Why these constraints
 
-The base image is intentionally small to keep cold starts fast and the attack surface narrow. Adding language runtimes would slow every session start for every actor — the cost is paid by all sessions, not just the ones that need Python. If an actor genuinely needs a different runtime, the better path is a custom Docker image (see `AGENT_RUNTIME=custom` in `agent-run.sh`) rather than fattening the base.
+The base image is intentionally small to keep cold starts fast and the attack surface narrow. Adding language runtimes would slow every session start for every actor — the cost is paid by all sessions, not just the ones that need Python. If an actor genuinely needs a different runtime, the better path is a separate Docker image: pass a `base_image` in the session config (see `apps/dev/src/services/session-manager.ts`) rather than fattening the shared base. Note that `AGENT_RUNTIME=custom` only swaps the CLI binary that runs inside the container — it still uses the same `node:20-slim` agent-base image, so it does not provide Python either.
 
 ## Reference
 
