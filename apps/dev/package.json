@@ -32,7 +32,7 @@
 		"bcryptjs": "^3.0.3",
 		"croner": "^10.0.1",
 		"csv-parse": "^6.2.1",
-		"dockerode": "^4.0.0",
+		"dockerode": "^5.0.0",
 		"drizzle-orm": "^0.45.2",
 		"hono": "^4.12.14",
 		"postgres": "^3.4.9",
