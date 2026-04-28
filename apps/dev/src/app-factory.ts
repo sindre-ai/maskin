@@ -17,6 +17,7 @@ import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
+import dashboardRoutes from './routes/dashboard'
 import eventsRoutes from './routes/events'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
@@ -165,6 +166,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
 	app.route('/api/workspaces', workspaceSkillsRoutes)
+	app.route('/api/workspaces', dashboardRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/integrations', integrationsRoutes)
