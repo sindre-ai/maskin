@@ -14,6 +14,7 @@ import type {
 
 export class DockerBackend implements RuntimeBackend {
 	private docker: Docker
+	private attachStreams = new Map<string, NodeJS.ReadWriteStream>()
 
 	constructor() {
 		this.docker = new Docker()
@@ -87,6 +88,8 @@ export class DockerBackend implements RuntimeBackend {
 			Image: options.image,
 			name: options.name,
 			Env: env,
+			OpenStdin: true,
+			StdinOnce: false,
 			HostConfig: {
 				Memory: options.memoryMb * 1024 * 1024,
 				CpuShares: options.cpuShares,
@@ -107,6 +110,7 @@ export class DockerBackend implements RuntimeBackend {
 	}
 
 	async stop(sandboxId: string): Promise<void> {
+		this.closeAttachStream(sandboxId)
 		const container = this.docker.getContainer(sandboxId)
 		try {
 			await container.stop({ t: 10 })
@@ -119,6 +123,7 @@ export class DockerBackend implements RuntimeBackend {
 	}
 
 	async remove(sandboxId: string): Promise<void> {
+		this.closeAttachStream(sandboxId)
 		const container = this.docker.getContainer(sandboxId)
 		try {
 			await container.remove({ force: true })
@@ -195,6 +200,67 @@ export class DockerBackend implements RuntimeBackend {
 		return {
 			exitCode: inspectResult.ExitCode ?? 1,
 			output: Buffer.concat(chunks).toString('utf-8'),
+		}
+	}
+
+	async writeStdin(sandboxId: string, data: string): Promise<void> {
+		const stream = await this.getOrOpenAttachStream(sandboxId)
+		try {
+			await new Promise<void>((resolve, reject) => {
+				const ok = stream.write(data, 'utf-8', (err) => {
+					if (err) reject(err)
+					else resolve()
+				})
+				if (ok === false) {
+					stream.once('drain', () => resolve())
+				}
+			})
+		} catch (err) {
+			this.closeAttachStream(sandboxId)
+			const message = err instanceof Error ? err.message : String(err)
+			throw new Error(`writeStdin failed: ${message}`)
+		}
+	}
+
+	private async getOrOpenAttachStream(sandboxId: string): Promise<NodeJS.ReadWriteStream> {
+		const cached = this.attachStreams.get(sandboxId)
+		if (cached && !this.isStreamClosed(cached)) return cached
+
+		const container = this.docker.getContainer(sandboxId)
+		const stream = await container.attach({
+			stream: true,
+			stdin: true,
+			stdout: false,
+			stderr: false,
+			hijack: true,
+		})
+
+		const drop = () => {
+			if (this.attachStreams.get(sandboxId) === stream) {
+				this.attachStreams.delete(sandboxId)
+			}
+		}
+		stream.on('close', drop)
+		stream.on('error', drop)
+		stream.on('end', drop)
+
+		this.attachStreams.set(sandboxId, stream)
+		return stream
+	}
+
+	private isStreamClosed(stream: NodeJS.ReadWriteStream): boolean {
+		const s = stream as NodeJS.ReadWriteStream & { destroyed?: boolean; writable?: boolean }
+		return s.destroyed === true || s.writable === false
+	}
+
+	private closeAttachStream(sandboxId: string): void {
+		const stream = this.attachStreams.get(sandboxId)
+		if (!stream) return
+		this.attachStreams.delete(sandboxId)
+		try {
+			;(stream as NodeJS.ReadWriteStream & { destroy?: () => void }).destroy?.()
+		} catch {
+			// ignore
 		}
 	}
 

@@ -131,17 +131,12 @@ export class SessionManager extends EventEmitter {
 		this.subscribeToLogs(sessionId)
 	}
 
-	// TODO(microsandbox): port interactive-session input from the old Docker
-	// SessionManager (writeInput → container stdin via stream). This needs:
-	//   1. agent-server route (POST /sessions/:id/input) that writes to the
-	//      sandbox's stdin while it's running.
-	//   2. RuntimeBackend.writeStdin(sandboxId, data) on both DockerBackend
-	//      (existing pattern from container-manager) and MicrosandboxBackend
-	//      (verify microsandbox SDK supports stdin to a running sandbox).
-	//   3. Replace this stub with the HTTP proxy: this.request('POST', `/sessions/${id}/input`, payload).
-	// Until that's done, the /api/sessions/:id/input endpoint will throw 400.
-	async writeInput(_sessionId: string, _payload: StreamJsonUserMessage): Promise<void> {
-		throw new Error('Interactive session input is not yet supported by the agent-server runtime')
+	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+		const res = await this.request('POST', `/sessions/${sessionId}/input`, payload)
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({ error: res.statusText }))
+			throw new Error(body.error || `Failed to write input: ${res.status}`)
+		}
 	}
 
 	private async request(method: string, path: string, body?: unknown): Promise<Response> {

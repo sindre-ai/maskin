@@ -132,6 +132,52 @@ app.post('/:id/resume', async (c) => {
 	}
 })
 
+// POST /:id/input — send a user turn to an interactive session's stdin
+app.post('/:id/input', async (c) => {
+	const sessionManager = c.get('sessionManager')
+	const db = c.get('db')
+	const { id } = c.req.param()
+
+	let body: { type?: string; message?: { role?: string; content?: string } }
+	try {
+		body = await c.req.json()
+	} catch {
+		return c.json({ error: 'Invalid JSON body' }, 400)
+	}
+
+	if (
+		body?.type !== 'user' ||
+		body?.message?.role !== 'user' ||
+		typeof body?.message?.content !== 'string'
+	) {
+		return c.json(
+			{
+				error:
+					'Invalid payload: expected { type: "user", message: { role: "user", content: string } }',
+			},
+			400,
+		)
+	}
+
+	const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
+	if (!session) return c.json({ error: 'Session not found' }, 404)
+	if (!session.interactive) return c.json({ error: 'Session is not interactive' }, 409)
+	if (session.status !== 'running') {
+		return c.json({ error: `Session is not running (status: ${session.status})` }, 409)
+	}
+
+	try {
+		await sessionManager.writeInput(id, {
+			type: 'user',
+			message: { role: 'user', content: body.message.content },
+		})
+		return c.json({ ok: true as const })
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		return c.json({ error: message }, 400)
+	}
+})
+
 // GET /:id/status — get session status
 app.get('/:id/status', async (c) => {
 	const db = c.get('db')

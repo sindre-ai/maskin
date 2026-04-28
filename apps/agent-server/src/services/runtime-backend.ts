@@ -59,6 +59,9 @@ export interface RuntimeBackend {
 	/** Execute a command inside the sandbox. */
 	exec(sandboxId: string, cmd: string[]): Promise<ExecResult>
 
+	/** Write data to the running sandbox's primary process stdin. */
+	writeStdin(sandboxId: string, data: string): Promise<void>
+
 	/** Copy a file from the sandbox to the host. */
 	copyFileOut(sandboxId: string, guestPath: string, hostPath: string): Promise<void>
 

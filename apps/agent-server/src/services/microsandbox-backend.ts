@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
-import { type ExecEvent, Sandbox } from 'microsandbox'
+import { type ExecEvent, type ExecHandle, type ExecSink, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
 import type {
 	ExecResult,
@@ -114,6 +114,9 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	private startTimes = new Map<string, string>()
 	private finishTimes = new Map<string, string>()
 	private createOptions = new Map<string, SandboxCreateOptions>()
+	private handles = new Map<string, ExecHandle>()
+	private stdinSinks = new Map<string, ExecSink | null>()
+	private logsStarted = new Set<string>()
 
 	async ensureImage(_image: string, _buildContext?: string): Promise<void> {
 		// Microsandbox pulls OCI images automatically on create.
@@ -220,11 +223,32 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		}
 
 		// Reconnect via the SDK to get a handle for exec/fs/shellStream
-		const handle = await Sandbox.get(options.name)
-		const sandbox = await handle.connect()
+		const sandboxHandle = await Sandbox.get(options.name)
+		const sandbox = await sandboxHandle.connect()
 
 		this.sandboxes.set(sandboxId, sandbox)
 		this.startTimes.set(sandboxId, new Date().toISOString())
+
+		// Eagerly start the entrypoint and capture its stdin sink so writeStdin
+		// can deliver user turns to the running agent. Both logs() and
+		// writeStdin() share this single ExecHandle — calling shellStream a
+		// second time would spawn a new process, not feed the existing one.
+		try {
+			const execHandle = await sandbox.shellStream('/entrypoint.sh')
+			this.handles.set(sandboxId, execHandle)
+			const sink = await execHandle.takeStdin().catch(() => null)
+			this.stdinSinks.set(sandboxId, sink)
+		} catch (err) {
+			// shellStream/takeStdin failed: the VM is up but unusable. Kill it
+			// before rethrowing so we don't leak a microVM the caller can't see.
+			await sandbox.kill().catch(() => {
+				// already gone
+			})
+			this.sandboxes.delete(sandboxId)
+			this.startTimes.delete(sandboxId)
+			throw err
+		}
+
 		logger.info(`Microsandbox started: ${sandboxId}`)
 	}
 
@@ -236,11 +260,16 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	}
 
 	async *logs(sandboxId: string): AsyncGenerator<LogChunk> {
-		const sandbox = this.sandboxes.get(sandboxId)
-		if (!sandbox) return
+		const handle = this.handles.get(sandboxId)
+		if (!handle) return
+
+		// Single-consumer guard: two concurrent iterators of the same handle
+		// would race-consume events from the underlying channel and each
+		// would only see a fraction of the output.
+		if (this.logsStarted.has(sandboxId)) return
+		this.logsStarted.add(sandboxId)
 
 		try {
-			const handle = await sandbox.shellStream('/entrypoint.sh')
 			let event: ExecEvent | null = await handle.recv()
 			while (event !== null) {
 				if (event.eventType === 'stdout' && event.data) {
@@ -282,7 +311,12 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		if (!sandbox) {
 			throw new Error(`Sandbox not found: ${sandboxId}`)
 		}
+		// Kill first; do not close the stdin sink. Closing it sends EOF, which
+		// can race with kill() and hang on the underlying channel teardown.
 		await sandbox.kill()
+		this.handles.delete(sandboxId)
+		this.stdinSinks.delete(sandboxId)
+		this.logsStarted.delete(sandboxId)
 		this.resolveExit(sandboxId, 137)
 		logger.info(`Microsandbox stopped: ${sandboxId}`)
 	}
@@ -312,6 +346,9 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		this.startTimes.delete(sandboxId)
 		this.finishTimes.delete(sandboxId)
 		this.createOptions.delete(sandboxId)
+		this.handles.delete(sandboxId)
+		this.stdinSinks.delete(sandboxId)
+		this.logsStarted.delete(sandboxId)
 		logger.info(`Microsandbox removed: ${sandboxId}`)
 	}
 
@@ -337,6 +374,19 @@ export class MicrosandboxBackend implements RuntimeBackend {
 		return {
 			exitCode: result.code,
 			output: result.stdout() + result.stderr(),
+		}
+	}
+
+	async writeStdin(sandboxId: string, data: string): Promise<void> {
+		const sink = this.stdinSinks.get(sandboxId)
+		if (!sink) {
+			throw new Error(`Sandbox ${sandboxId} has no stdin sink`)
+		}
+		try {
+			await sink.write(Buffer.from(data, 'utf-8'))
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			throw new Error(`writeStdin failed: ${message}`)
 		}
 	}
 

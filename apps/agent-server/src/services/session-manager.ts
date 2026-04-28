@@ -36,6 +36,14 @@ export interface CreateSessionParams {
 	autoStart?: boolean
 }
 
+export interface StreamJsonUserMessage {
+	type: 'user'
+	message: {
+		role: 'user'
+		content: string
+	}
+}
+
 export interface SessionLogEvent extends LogChunk {
 	sessionId: string
 	logId: number
@@ -407,6 +415,26 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+
+		if (!session || !session.containerId) {
+			throw new Error(`Session ${sessionId} not found or has no container`)
+		}
+		if (!session.interactive) {
+			throw new Error('Session is not interactive')
+		}
+		if (session.status !== 'running') {
+			throw new Error(`Session not in running state (status: ${session.status})`)
+		}
+
+		await this.backend.writeStdin(session.containerId, `${JSON.stringify(payload)}\n`)
+	}
+
 	private async hasCapacity(workspaceId: string): Promise<boolean> {
 		const [workspace] = await this.db
 			.select()
@@ -500,6 +528,10 @@ export class SessionManager extends EventEmitter {
 				process.env.MASKIN_API_URL ??
 				`http://${this.backend.getHostAddress()}:${process.env.PORT ?? 3000}`,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
+		}
+
+		if (session.interactive) {
+			envVars.INTERACTIVE = '1'
 		}
 
 		// Inject LLM API key: agent-level first, then workspace-level fallback
@@ -600,6 +632,7 @@ export class SessionManager extends EventEmitter {
 			'ACTION_PROMPT',
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
+			'INTERACTIVE',
 			'ANTHROPIC_API_KEY',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
@@ -929,6 +962,10 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.status, 'running'))
 
 		for (const session of runningSessions) {
+			// Interactive sessions are designed to sit idle waiting for the next
+			// user turn — auto-pausing them defeats the purpose.
+			if (session.interactive) continue
+
 			const [lastLog] = await this.db
 				.select()
 				.from(sessionLogs)
