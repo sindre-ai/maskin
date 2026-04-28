@@ -1,161 +1,41 @@
-import { WhatsHappening } from '@/components/overview/whats-happening'
-import { PulseCard } from '@/components/pulse/pulse-card'
-import { PulseFilters } from '@/components/pulse/pulse-filters'
-import { EmptyState } from '@/components/shared/empty-state'
-import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { DashboardHeadline } from '@/components/dashboard/dashboard-headline'
+import { DecisionsPanel } from '@/components/dashboard/decisions-panel'
+import { LiveFeedCaptions } from '@/components/dashboard/live-feed-captions'
+import { NowHappeningHero } from '@/components/dashboard/now-happening-hero'
+import { PipelineFlow } from '@/components/dashboard/pipeline-flow'
+import { TeamRoster } from '@/components/dashboard/team-roster'
+import { VitalsStrip } from '@/components/dashboard/vitals-strip'
 import { RouteError } from '@/components/shared/route-error'
 import { SindrePulseBar } from '@/components/sindre/sindre-pulse-bar'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
-import {
-	useNotifications,
-	useRespondNotification,
-	useUpdateNotification,
-} from '@/hooks/use-notifications'
-import type { ActorListItem, NotificationResponse } from '@/lib/api'
-import { resolveNavigationTarget } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
-import { toast } from 'sonner'
+import { createFileRoute } from '@tanstack/react-router'
+import { useMemo } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
-	component: PulseDashboard,
+	component: BridgeDashboard,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function PulseDashboard() {
+function BridgeDashboard() {
 	const { workspaceId } = useWorkspace()
-	const { data: notifications, isLoading } = useNotifications(workspaceId, {
-		status: 'pending,seen',
-	})
 	const { data: actors } = useActors(workspaceId)
-	const updateNotification = useUpdateNotification(workspaceId)
-	const respondNotification = useRespondNotification(workspaceId)
-	const navigate = useNavigate()
-	const [activeFilter, setActiveFilter] = useState('all')
 
-	const actorsById = useMemo(() => {
-		const map = new Map<string, ActorListItem>()
-		for (const actor of actors ?? []) {
-			map.set(actor.id, actor)
-		}
-		return map
-	}, [actors])
-
-	// Resolve the per-workspace Sindre meta-agent so the Pulse input bar can
-	// forward to the same session the workspace-layout sheet is bound to.
 	const sindreActorId = useMemo(
 		() => actors?.find((a) => a.type === 'agent' && a.name === 'Sindre')?.id ?? null,
 		[actors],
 	)
 
-	const activeNotifications = notifications ?? []
-
-	const filtered = useMemo(() => {
-		if (activeFilter === 'all') return activeNotifications
-		return activeNotifications.filter((n) => n.type === activeFilter)
-	}, [activeNotifications, activeFilter])
-
-	const counts = useMemo(() => {
-		const c: Record<string, number> = { all: activeNotifications.length }
-		for (const n of activeNotifications) {
-			c[n.type] = (c[n.type] ?? 0) + 1
-		}
-		return c
-	}, [activeNotifications])
-
-	const handleAction = (
-		notification: NotificationResponse,
-		response: unknown,
-		nav?: { to: string; id?: string },
-	) => {
-		respondNotification.mutate(
-			{ id: notification.id, response },
-			{
-				onSuccess: () => {
-					if (nav) {
-						const target = resolveNavigationTarget(workspaceId, nav, notification)
-						if (target) navigate({ to: target.path, search: target.search })
-						else toast.warning('Could not navigate to the requested page.')
-					}
-				},
-				onError: () => {
-					toast.error('Failed to respond. Please try again.')
-				},
-			},
-		)
-	}
-
-	const handleDismiss = (id: string) => {
-		updateNotification.mutate(
-			{ id, data: { status: 'dismissed' } },
-			{
-				onError: () => {
-					toast.error('Failed to dismiss. Please try again.')
-				},
-			},
-		)
-	}
-
-	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length
-
 	return (
-		<Tabs defaultValue="overview">
-			<SindrePulseBar workspaceId={workspaceId} sindreActorId={sindreActorId} className="mb-6" />
-			<TabsList>
-				<TabsTrigger value="overview">Overview</TabsTrigger>
-				<TabsTrigger value="notifications">
-					Notifications{pendingCount > 0 && ` (${pendingCount})`}
-				</TabsTrigger>
-			</TabsList>
-
-			<TabsContent value="overview">
-				<WhatsHappening />
-			</TabsContent>
-
-			<TabsContent value="notifications">
-				<div>
-					<p className="text-sm text-muted-foreground pb-6">
-						{pendingCount > 0
-							? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
-							: ''}
-					</p>
-
-					{isLoading ? (
-						<div className="space-y-4">
-							<CardSkeleton />
-							<CardSkeleton />
-							<CardSkeleton />
-						</div>
-					) : activeNotifications.length === 0 ? (
-						<EmptyState
-							title="No notifications yet"
-							description="Agents will notify you here when they need your input or have recommendations."
-						/>
-					) : (
-						<>
-							<PulseFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
-							<div className="space-y-4">
-								{filtered.map((notification) => (
-									<PulseCard
-										key={notification.id}
-										notification={notification}
-										actorsById={actorsById}
-										onAction={handleAction}
-										onDismiss={handleDismiss}
-									/>
-								))}
-							</div>
-							{filtered.length === 0 && (
-								<p className="text-sm text-muted-foreground text-center py-8">
-									No {activeFilter.replace('_', ' ')} notifications
-								</p>
-							)}
-						</>
-					)}
-				</div>
-			</TabsContent>
-		</Tabs>
+		<div className="space-y-8 pb-8">
+			<DashboardHeadline />
+			<SindrePulseBar workspaceId={workspaceId} sindreActorId={sindreActorId} />
+			<NowHappeningHero />
+			<DecisionsPanel />
+			<TeamRoster />
+			<PipelineFlow />
+			<LiveFeedCaptions />
+			<VitalsStrip workspaceId={workspaceId} />
+		</div>
 	)
 }
