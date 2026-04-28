@@ -29,14 +29,7 @@ interface ToolContent {
 	text?: string
 }
 
-const KNOWN_FIELD_TYPES: SchemaFieldType[] = [
-	'text',
-	'number',
-	'date',
-	'enum',
-	'boolean',
-	'json',
-]
+const KNOWN_FIELD_TYPES: SchemaFieldType[] = ['text', 'number', 'date', 'enum', 'boolean', 'json']
 
 function isFieldType(t: unknown): t is SchemaFieldType {
 	return typeof t === 'string' && (KNOWN_FIELD_TYPES as string[]).includes(t)

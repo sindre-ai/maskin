@@ -170,11 +170,7 @@ export function SchemaForm({
 		return <p className={className ?? 'text-xs text-muted-foreground'}>Loading schema…</p>
 	}
 	if (error) {
-		return (
-			<p className={className ?? 'text-xs text-destructive'}>
-				Failed to load schema: {error}
-			</p>
-		)
+		return <p className={className ?? 'text-xs text-destructive'}>Failed to load schema: {error}</p>
 	}
 	if (!schema?.types[objectType]) {
 		return (
@@ -233,10 +229,7 @@ export function SchemaForm({
 						) : f.type === 'json' ? (
 							<Textarea
 								id={inputId}
-								value={
-									jsonDrafts[f.name] ??
-									(isJsonObject(v) ? JSON.stringify(v, null, 2) : '')
-								}
+								value={jsonDrafts[f.name] ?? (isJsonObject(v) ? JSON.stringify(v, null, 2) : '')}
 								onChange={(e) => {
 									const draft = e.target.value
 									setJsonDrafts((cur) => ({ ...cur, [f.name]: draft }))

@@ -7,6 +7,7 @@ import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { ObjectResponse } from '../shared/types'
+import { useWorkspaceSchema } from '../shared/use-workspace-schema'
 import { WebAppLink } from '../shared/web-app-link'
 import {
 	extractCreateObjectsList,
@@ -135,6 +136,8 @@ function ObjectDocument({
 		onDelete: () => Promise<void>
 	}
 }) {
+	const { schema } = useWorkspaceSchema(obj.workspaceId ?? undefined)
+	const statuses = schema?.types[obj.type]?.statuses ?? []
 	return (
 		<div className="p-4">
 			<div className="flex justify-end mb-2">
@@ -143,7 +146,7 @@ function ObjectDocument({
 			<ObjectDocumentView
 				object={obj}
 				workspaceId={obj.workspaceId ?? ''}
-				statuses={[]}
+				statuses={statuses}
 				onUpdateTitle={handlers.onUpdateTitle}
 				onUpdateContent={handlers.onUpdateContent}
 				onUpdateStatus={handlers.onUpdateStatus}
