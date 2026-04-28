@@ -18,7 +18,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
+import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
@@ -57,6 +57,18 @@ export class SessionManager extends EventEmitter {
 	}
 
 	async start() {
+		// Reconcile state left behind by a prior crash before we accept new work:
+		// 1. Remove any sandboxes the backend still has on the host (it has no
+		//    in-memory record of them after a restart).
+		// 2. Fail any DB sessions stuck in non-terminal in-flight states — their
+		//    sandboxes are gone and they would otherwise block workspace capacity.
+		if (this.backend.cleanupZombieSandboxes) {
+			await this.backend
+				.cleanupZombieSandboxes()
+				.catch((err) => logger.warn('Zombie sandbox cleanup failed', { error: String(err) }))
+		}
+		await this.reconcileStaleSessions()
+
 		// Pre-build agent-base image so sessions don't block on first launch
 		try {
 			const buildContext = join(
@@ -796,6 +808,45 @@ export class SessionManager extends EventEmitter {
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after completion', { error: String(err) }),
 		)
+	}
+
+	private async reconcileStaleSessions(): Promise<void> {
+		const stuckStatuses = ['running', 'starting', 'pending', 'snapshotting'] as const
+		const stale = await this.db
+			.select()
+			.from(sessions)
+			.where(inArray(sessions.status, stuckStatuses as unknown as string[]))
+
+		if (stale.length === 0) return
+
+		const now = new Date()
+		const reason = 'Agent-server restarted while session was in-flight'
+		await this.db
+			.update(sessions)
+			.set({
+				status: 'failed',
+				result: { error: reason },
+				containerId: null,
+				completedAt: now,
+				updatedAt: now,
+			})
+			.where(inArray(sessions.status, stuckStatuses as unknown as string[]))
+
+		for (const session of stale) {
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_failed',
+				entityType: 'session',
+				entityId: session.id,
+				data: { error: reason, previousStatus: session.status },
+			})
+			await this.clearActiveSession(session.id)
+		}
+
+		logger.info(`Reconciled ${stale.length} stale session(s) at startup`, {
+			ids: stale.map((s) => s.id),
+		})
 	}
 
 	private async runWatchdog(): Promise<void> {

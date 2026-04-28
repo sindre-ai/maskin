@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { type ExecEvent, Sandbox } from 'microsandbox'
 import { logger } from '../lib/logger'
@@ -11,7 +12,14 @@ import type {
 	SandboxStatus as SandboxStatusType,
 } from './runtime-backend'
 
-const MSB_BIN = '/root/.microsandbox/bin/msb'
+const MSB_BIN = process.env.MSB_BIN ?? '/root/.microsandbox/bin/msb'
+
+// Extra flags passed verbatim to `msb create`. Generic escape hatch for
+// per-deploy tuning (e.g. `--idle-timeout 1h`, `--no-dns-rebind-protection`).
+// Note: msb v0.3.12 has no CLI flag to switch from the default publicOnly
+// network policy — the microVM cannot reach RFC1918 addresses, so the
+// agent-server must be reachable on a public IP (see getHostAddress).
+const MSB_EXTRA_ARGS = (process.env.MSB_EXTRA_ARGS ?? '').trim()
 
 /**
  * Boot a sandbox via the `msb create` CLI.
@@ -53,25 +61,21 @@ function msbCreate(config: {
 	if (config.maxDurationSecs !== undefined) {
 		args.push('--max-duration', `${config.maxDurationSecs}s`)
 	}
+	if (MSB_EXTRA_ARGS) {
+		args.push(...MSB_EXTRA_ARGS.split(/\s+/))
+	}
 	args.push(config.image)
 
-	// Run msb as a transient systemd service (not --scope). --scope keeps
-	// the process as a descendant of the caller; a plain transient service
-	// is reparented to systemd PID 1. Confirmed: msb fails only when it's
-	// a descendant of the agent-server process tree, and this fully detaches.
-	// Detach msb from agent-server's process tree via a transient systemd
-	// unit (not --scope, so it reparents to systemd PID 1). Pass
-	// KillMode=process so systemd tracks the service but does not cgroup-kill
-	// the msb subprocesses that own the VM when the main PID exits.
+	// Boot msb as a transient systemd service (NOT systemd-run --scope, which
+	// would keep the process as a descendant of the caller). The transient
+	// service reparents to systemd PID 1 and detaches from agent-server's
+	// process tree — required because msb's VMM handshake fails when it's a
+	// descendant of the agent-server. KillMode=process tells systemd to track
+	// only the main PID for liveness, so the subprocess that owns the VM
+	// survives when the short-lived `msb create` parent exits.
 	execFileSync(
 		'/usr/bin/systemd-run',
-		[
-			'--quiet',
-			'--property=KillMode=process',
-			'--property=ExecStopPost=',
-			MSB_BIN,
-			...args,
-		],
+		['--quiet', '--property=KillMode=process', '--property=ExecStopPost=', MSB_BIN, ...args],
 		{
 			timeout: 30_000,
 			stdio: ['ignore', 'pipe', 'pipe'],
@@ -83,11 +87,10 @@ function msbCreate(config: {
 	let lastStatus = ''
 	while (Date.now() < deadline) {
 		try {
-			const out = execFileSync(
-				MSB_BIN,
-				['list', '--format', 'json'],
-				{ timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] },
-			).toString()
+			const out = execFileSync(MSB_BIN, ['list', '--format', 'json'], {
+				timeout: 5_000,
+				stdio: ['ignore', 'pipe', 'ignore'],
+			}).toString()
 			const list = JSON.parse(out) as Array<{ name: string; status: string }>
 			const entry = list.find((s) => s.name === config.name)
 			if (entry?.status?.toLowerCase() === 'running') return
@@ -117,10 +120,9 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	}
 
 	async create(options: SandboxCreateOptions): Promise<string> {
-		// Store options — `msb create` both creates and boots the VM,
-		// so actual creation is deferred to start().
+		// `msb create` both creates and boots the VM, so actual creation is
+		// deferred to start(). Just stash the options for the start call.
 		this.createOptions.set(options.name, options)
-		logger.info(`Microsandbox config stored: ${options.name}`, { image: options.image })
 		return options.name
 	}
 
@@ -183,9 +185,8 @@ export class MicrosandboxBackend implements RuntimeBackend {
 			})
 		}
 
-		// Boot the sandbox via the msb CLI. The SDK's Sandbox.create() fails
-		// the VMM handshake when called from the agent-server's event loop;
-		// shelling out to the binary avoids that NAPI interaction entirely.
+		// Boot via the msb CLI: SDK's Sandbox.create() fails the VMM handshake
+		// when called from agent-server's event loop, so we shell out instead.
 		try {
 			msbCreate({
 				name: options.name,
@@ -356,6 +357,51 @@ export class MicrosandboxBackend implements RuntimeBackend {
 	}
 
 	getHostAddress(): string {
-		return '172.17.0.1'
+		const override = process.env.MASKIN_HOST_ADDRESS
+		if (override) return override
+
+		// Pick the first non-internal, non-RFC1918 IPv4. The microVM's default
+		// publicOnly policy drops connections to private ranges (10/8, 172.16/12,
+		// 192.168/16, 169.254/16), so docker0 / bridge gateways are useless here
+		// — only the host's public IP works (verified empirically: hairpin NAT
+		// via krun routes microVM → host's own public IP). Falls back to the
+		// first non-internal address if no public address is found.
+		const ifaces = Object.values(networkInterfaces()).flatMap((arr) => arr ?? [])
+		const candidates = ifaces.filter((i) => i.family === 'IPv4' && !i.internal)
+		const isPrivate = (ip: string) =>
+			/^10\./.test(ip) ||
+			/^192\.168\./.test(ip) ||
+			/^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+			/^169\.254\./.test(ip)
+		const publicCandidate = candidates.find((i) => !isPrivate(i.address))
+		return publicCandidate?.address ?? candidates[0]?.address ?? '127.0.0.1'
+	}
+
+	async cleanupZombieSandboxes(): Promise<void> {
+		let names: string[] = []
+		try {
+			const out = execFileSync(MSB_BIN, ['list', '--format', 'json'], {
+				timeout: 10_000,
+				stdio: ['ignore', 'pipe', 'ignore'],
+			}).toString()
+			const list = JSON.parse(out) as Array<{ name: string }>
+			names = list.map((s) => s.name).filter(Boolean)
+		} catch (err) {
+			logger.warn('Could not list sandboxes for cleanup', { error: String(err) })
+			return
+		}
+
+		if (names.length === 0) return
+		logger.info(`Removing ${names.length} leftover sandbox(es) at startup`, { names })
+		for (const name of names) {
+			try {
+				execFileSync(MSB_BIN, ['remove', '-f', '--quiet', name], {
+					timeout: 30_000,
+					stdio: ['ignore', 'ignore', 'ignore'],
+				})
+			} catch (err) {
+				logger.warn(`Failed to remove leftover sandbox ${name}`, { error: String(err) })
+			}
+		}
 	}
 }

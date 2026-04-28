@@ -70,6 +70,9 @@ export interface RuntimeBackend {
 
 	/** Optional event-driven exit detection. Resolves when the sandbox process exits. */
 	onExit?(sandboxId: string): Promise<{ exitCode: number }>
+
+	/** Optional: remove all sandboxes on the host that the backend doesn't own. */
+	cleanupZombieSandboxes?(): Promise<void>
 }
 
 /**
