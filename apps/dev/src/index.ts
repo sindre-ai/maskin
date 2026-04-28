@@ -1,5 +1,4 @@
 import './extensions'
-import path from 'node:path'
 import { serve } from '@hono/node-server'
 import { createDb } from '@maskin/db'
 import { PgNotifyBridge } from '@maskin/realtime'
@@ -8,7 +7,6 @@ import { createApp } from './app-factory'
 import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
-import { ContainerManager } from './services/container-manager'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
 
@@ -38,24 +36,17 @@ const storageProvider = new S3StorageProvider({
 
 await storageProvider.ensureBucket()
 
-const containers = new ContainerManager()
-try {
-	await containers.ensureImage(
-		'agent-base:latest',
-		path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
-	)
-} catch (err) {
-	logger.error('Failed to build agent-base image — sessions will fail until image is available', {
-		error: err instanceof Error ? err.message : String(err),
-	})
+// Agent-server connection for delegating session execution
+const agentServerUrl = process.env.AGENT_SERVER_URL ?? 'http://localhost:3001'
+const agentServerSecret = process.env.AGENT_SERVER_SECRET
+if (!agentServerSecret) {
+	throw new Error('AGENT_SERVER_SECRET environment variable is required')
 }
 
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
-const sessionManager = new SessionManager(db, storageProvider)
-sessionManager.setAgentBaseBuildContext(
-	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
-)
+// Session manager — thin client that delegates execution to agent-server
+const sessionManager = new SessionManager(db, agentServerUrl, agentServerSecret)
 
 const port = Number(process.env.PORT) || 3000
 

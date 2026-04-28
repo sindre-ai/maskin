@@ -1,6 +1,7 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
+import type { PgNotifyBridge, PgSessionLogEvent } from '@maskin/realtime'
 import {
 	createSessionSchema,
 	sessionInputSchema,
@@ -19,7 +20,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import type { SessionLogEvent, SessionManager } from '../services/session-manager'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -27,6 +28,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		sessionManager: SessionManager
+		notifyBridge: PgNotifyBridge
 	}
 }
 
@@ -425,10 +427,10 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
 
-// GET /:id/logs/stream - SSE stream of live logs
+// GET /:id/logs/stream - SSE stream of live logs (via DB + PG NOTIFY)
 app.get('/:id/logs/stream', async (c) => {
 	const db = c.get('db')
-	const sessionManager = c.get('sessionManager')
+	const notifyBridge = c.get('notifyBridge')
 	const rawSessionId = c.req.param('id')
 	const workspaceId = c.req.header('x-workspace-id')
 	const lastLogId = c.req.header('Last-Event-ID')
@@ -508,7 +510,7 @@ app.get('/:id/logs/stream', async (c) => {
 			}
 		}
 
-		// Subscribe to live log stream
+		// Subscribe to live log stream via PG NOTIFY
 		let closed = false
 		// Maps a system-log prefix to the `done` payload to emit when a session
 		// reaches that terminal state. Using prefix matching because log content
@@ -519,8 +521,8 @@ app.get('/:id/logs/stream', async (c) => {
 			{ prefix: 'Session timed out', done: 'timeout' },
 			{ prefix: 'Session paused', done: 'paused' },
 		]
-		const handler = (event: SessionLogEvent) => {
-			if (event.sessionId !== sessionId) return
+		const handler = (event: PgSessionLogEvent) => {
+			if (event.session_id !== sessionId) return
 			// writeSSE returns a Promise. We're in an event listener (sync) so
 			// we can't await it — but we must attach an error handler to avoid
 			// unhandled rejections when the client disconnects mid-write or
@@ -528,12 +530,12 @@ app.get('/:id/logs/stream', async (c) => {
 			// recoverable here; just log and detach so we stop trying.
 			const emit = async () => {
 				await stream.writeSSE({
-					id: String(event.logId),
+					id: String(event.id),
 					event: event.stream,
-					data: event.data,
+					data: event.content,
 				})
 				if (event.stream === 'system') {
-					const terminal = TERMINAL_SYSTEM_LOGS.find((t) => event.data.startsWith(t.prefix))
+					const terminal = TERMINAL_SYSTEM_LOGS.find((t) => event.content.startsWith(t.prefix))
 					if (terminal) {
 						closed = true
 						await stream.writeSSE({ event: 'done', data: terminal.done })
@@ -542,7 +544,7 @@ app.get('/:id/logs/stream', async (c) => {
 			}
 			emit().catch((err) => {
 				closed = true
-				sessionManager.off('log', handler)
+				notifyBridge.off('session_log', handler)
 				logger.warn('SSE log write failed; detaching listener', {
 					err: err instanceof Error ? err.message : String(err),
 					sessionId,
@@ -550,9 +552,9 @@ app.get('/:id/logs/stream', async (c) => {
 			})
 		}
 
-		sessionManager.on('log', handler)
+		notifyBridge.on('session_log', handler)
 		stream.onAbort(() => {
-			sessionManager.off('log', handler)
+			notifyBridge.off('session_log', handler)
 		})
 
 		// Keep connection alive, but stop if session reached terminal state

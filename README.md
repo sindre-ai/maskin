@@ -90,7 +90,8 @@ maskin/
 │   │   │   ├── services/
 │   │   │   │   ├── trigger-runner.ts     # Cron + event-based automation
 │   │   │   │   ├── session-manager.ts    # Container-based agent sessions
-│   │   │   │   ├── container-manager.ts  # Docker container lifecycle
+│   │   │   │   ├── runtime-backend.ts    # RuntimeBackend interface + factory
+│   │   │   │   ├── docker-backend.ts    # Docker RuntimeBackend implementation
 │   │   │   │   └── agent-storage.ts      # S3 agent file pull/push
 │   │   │   └── lib/
 │   │   │       └── llm/        # LLM provider adapters

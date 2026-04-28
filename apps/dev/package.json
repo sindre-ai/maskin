@@ -13,9 +13,11 @@
 		"start": "node dist/index.js",
 		"test": "vitest",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
+		"test:microsandbox": "vitest run --config vitest.microsandbox.config.ts",
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@maskin/agent-server": "workspace:*",
 		"@maskin/auth": "workspace:*",
 		"@maskin/db": "workspace:*",
 		"@maskin/ext-knowledge": "workspace:*",
@@ -38,6 +40,9 @@
 		"postgres": "^3.4.9",
 		"tar-stream": "^3.1.0",
 		"zod": "^3.24.0"
+	},
+	"optionalDependencies": {
+		"microsandbox": "^0.3.12"
 	},
 	"devDependencies": {
 		"@types/bcryptjs": "^3.0.0",

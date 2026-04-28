@@ -12,6 +12,13 @@ export interface PgEvent {
 	data?: Record<string, unknown> | null
 }
 
+export interface PgSessionLogEvent {
+	id: number
+	session_id: string
+	stream: 'stdout' | 'stderr' | 'system'
+	content: string
+}
+
 export class PgNotifyBridge extends EventEmitter {
 	private sql: postgres.Sql
 
@@ -27,6 +34,15 @@ export class PgNotifyBridge extends EventEmitter {
 			try {
 				const event = JSON.parse(payload) as PgEvent
 				this.emit('event', event)
+			} catch {
+				// ignore malformed payloads
+			}
+		})
+
+		await this.sql.listen('session_logs', (payload) => {
+			try {
+				const log = JSON.parse(payload) as PgSessionLogEvent
+				this.emit('session_log', log)
 			} catch {
 				// ignore malformed payloads
 			}
