@@ -7,6 +7,7 @@ import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { ActorResponse, ActorWithKey, SessionResponse } from '../shared/types'
+import { WebAppLink } from '../shared/web-app-link'
 
 function ActorsApp() {
 	const toolResult = useToolResult()
@@ -120,14 +121,18 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 }
 
 function ActorDetailView({ actor }: { actor: ActorResponse }) {
+	const isAgent = actor.type === 'agent'
 	return (
 		<div className="p-4 max-w-2xl">
-			<div className="flex items-center gap-3 mb-4">
-				<ActorAvatar name={actor.name} type={actor.type} />
-				<div>
-					<h1 className="text-lg font-semibold text-foreground">{actor.name}</h1>
-					<span className="text-xs text-muted-foreground capitalize">{actor.type}</span>
+			<div className="flex items-start justify-between mb-4">
+				<div className="flex items-center gap-3">
+					<ActorAvatar name={actor.name} type={actor.type} />
+					<div>
+						<h1 className="text-lg font-semibold text-foreground">{actor.name}</h1>
+						<span className="text-xs text-muted-foreground capitalize">{actor.type}</span>
+					</div>
 				</div>
+				{isAgent && <WebAppLink target={{ kind: 'agent', id: actor.id }} label="Open in Maskin" />}
 			</div>
 			{actor.email && (
 				<div className="text-sm text-muted-foreground mb-2">

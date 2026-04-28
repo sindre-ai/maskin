@@ -7,6 +7,7 @@ import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { ObjectResponse } from '../shared/types'
+import { WebAppLink } from '../shared/web-app-link'
 import {
 	extractCreateObjectsList,
 	extractFirstUpdatedObject,
@@ -136,6 +137,9 @@ function ObjectDocument({
 }) {
 	return (
 		<div className="p-4">
+			<div className="flex justify-end mb-2">
+				<WebAppLink target={{ kind: 'object', id: obj.id }} label="Open in Maskin" />
+			</div>
 			<ObjectDocumentView
 				object={obj}
 				workspaceId={obj.workspaceId ?? ''}
@@ -165,6 +169,7 @@ function ObjectListView({ objects }: { objects: ObjectResponse[] }) {
 					<TypeBadge type={obj.type} />
 					<span className="flex-1 text-sm text-foreground truncate">{obj.title || 'Untitled'}</span>
 					<StatusBadge status={obj.status} />
+					<WebAppLink target={{ kind: 'object', id: obj.id }} label="Open" />
 				</div>
 			))}
 		</div>
