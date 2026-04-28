@@ -94,10 +94,7 @@ describe('BridgeDashboard', () => {
 			],
 		})
 		render(<BridgeDashboard />)
-		expect(screen.getByTestId('sindre-pulse-bar')).toHaveAttribute(
-			'data-sindre-actor-id',
-			'a-2',
-		)
+		expect(screen.getByTestId('sindre-pulse-bar')).toHaveAttribute('data-sindre-actor-id', 'a-2')
 	})
 
 	it('passes a null Sindre actor id when no Sindre agent exists', () => {
