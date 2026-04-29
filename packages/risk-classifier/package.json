@@ -1,0 +1,31 @@
+{
+	"name": "@maskin/risk-classifier",
+	"version": "0.1.0",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"description": "Deterministic 0–100 risk score over a PR diff. Adapter binary for the maskin/risk-classifier skill.",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"bin": {
+		"risk-classifier": "./bin/risk-classifier.mjs"
+	},
+	"scripts": {
+		"build": "tsc",
+		"type-check": "tsc --noEmit",
+		"test": "vitest"
+	},
+	"dependencies": {
+		"yaml": "^2.6.0",
+		"zod": "^3.24.0"
+	},
+	"devDependencies": {
+		"@types/node": "^25.6.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}
