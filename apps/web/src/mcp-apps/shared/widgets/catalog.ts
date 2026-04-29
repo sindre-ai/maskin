@@ -29,8 +29,7 @@ export const WIDGET_CATALOG: WidgetCatalogEntry[] = [
 		kind: 'activity_feed',
 		displayName: 'Activity feed',
 		description: 'Stream of events. Used by `get_events` and entity activity tools.',
-		matches: ({ toolName, data }) =>
-			toolName === 'get_events' || isActivityPayload(data),
+		matches: ({ toolName, data }) => toolName === 'get_events' || isActivityPayload(data),
 	},
 	{
 		kind: 'object_card',
@@ -60,8 +59,7 @@ export const WIDGET_CATALOG: WidgetCatalogEntry[] = [
 	{
 		kind: 'object_list_table',
 		displayName: 'Object list table',
-		description:
-			'Default fallback for any list of objects (search, list, multi-update results).',
+		description: 'Default fallback for any list of objects (search, list, multi-update results).',
 		matches: ({ data }) => extractObjects(data).length > 0,
 	},
 ]

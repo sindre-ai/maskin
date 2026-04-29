@@ -14,12 +14,7 @@ import type { RelationshipGraphProps } from './types'
  * custom relationship vocabularies render correctly. When the schema is
  * absent, we fall back to the raw edge type from the payload.
  */
-export function RelationshipGraph({
-	nodes,
-	edges,
-	schema,
-	className,
-}: RelationshipGraphProps) {
+export function RelationshipGraph({ nodes, edges, schema, className }: RelationshipGraphProps) {
 	const knownTypes = new Set(schema?.relationship_types ?? [])
 
 	return (
@@ -49,10 +44,7 @@ export function RelationshipGraph({
 						{edges.map((edge) => {
 							const known = knownTypes.size === 0 || knownTypes.has(edge.type)
 							return (
-								<Card
-									key={edge.id}
-									className="flex items-center gap-2 px-3 py-2 text-sm"
-								>
+								<Card key={edge.id} className="flex items-center gap-2 px-3 py-2 text-sm">
 									<NodeIdLink id={edge.source} />
 									<span
 										className={cn(

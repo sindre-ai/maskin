@@ -18,13 +18,13 @@ interface ToolResultPayload {
 	workspaceId: string | null
 }
 
-interface McpAppContextValue {
+export interface McpAppContextValue {
 	isConnected: boolean
 	toolResult: ToolResultPayload | null
 	callTool: (name: string, args: Record<string, unknown>) => Promise<ToolResult>
 }
 
-const McpAppContext = createContext<McpAppContextValue | null>(null)
+export const McpAppContext = createContext<McpAppContextValue | null>(null)
 
 function pickString(meta: Record<string, unknown> | undefined, key: string): string | null {
 	const v = meta?.[key]

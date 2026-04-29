@@ -7,11 +7,7 @@
  * surface that drives which widget to mount.
  */
 
-import type {
-	EventResponse,
-	ObjectResponse,
-	RelationshipResponse,
-} from '../types'
+import type { EventResponse, ObjectResponse, RelationshipResponse } from '../types'
 
 /**
  * Shape of `get_workspace_schema` tool responses (server-side this is built
@@ -140,8 +136,4 @@ export interface WidgetMatchContext {
 	data: unknown
 }
 
-export type {
-	EventResponse,
-	ObjectResponse,
-	RelationshipResponse,
-}
+export type { EventResponse, ObjectResponse, RelationshipResponse }
