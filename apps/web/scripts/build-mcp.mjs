@@ -22,6 +22,7 @@ const apps = [
 	'llm-keys',
 	'members',
 	'extensions',
+	'schema',
 ]
 
 // Clean output dirs

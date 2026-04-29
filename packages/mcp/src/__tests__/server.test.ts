@@ -67,6 +67,7 @@ describe('createMcpServer', () => {
 			'ui://maskin/llm-keys',
 			'ui://maskin/members',
 			'ui://maskin/extensions',
+			'ui://maskin/schema',
 		]
 		for (const uri of expectedUris) {
 			expect(resourceUris).toContain(uri)
@@ -1191,6 +1192,261 @@ describe('tool handlers', () => {
 			expect(result._meta.webAppBaseUrl).toBeUndefined()
 			// workspaceId still present (from defaultWorkspaceId)
 			expect(result._meta.workspaceId).toBe('ws-default-123')
+		})
+	})
+
+	describe('workspace schema editing handlers (W1)', () => {
+		// Mocks GET /api/workspaces (used by getWorkspace) + PATCH /api/workspaces/:id
+		// so each schema-mutating tool can read-modify-write field_definitions.
+		function mockSchemaBackend(initial: {
+			id: string
+			fieldDefs: Record<string, Array<Record<string, unknown>>>
+		}) {
+			let current = { ...initial.fieldDefs }
+			let lastPatchUrl: string | null = null
+			let lastPatchBody: Record<string, unknown> | null = null
+
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+				const url = input as string
+				const method = init?.method ?? 'GET'
+				if (method === 'GET' && url.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: initial.id,
+									name: 'Test',
+									settings: { field_definitions: current },
+								},
+							]),
+					} as Response
+				}
+				if (method === 'PATCH' && url.includes(`/api/workspaces/${initial.id}`)) {
+					lastPatchUrl = url
+					lastPatchBody = init?.body ? JSON.parse(init.body as string) : null
+					const settings = (lastPatchBody?.settings as Record<string, unknown>) ?? {}
+					if (settings.field_definitions) {
+						current = settings.field_definitions as Record<string, Array<Record<string, unknown>>>
+					}
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								id: initial.id,
+								name: 'Test',
+								settings: { field_definitions: current },
+							}),
+					} as Response
+				}
+				throw new Error(`Unhandled fake fetch: ${method} ${url}`)
+			})
+
+			return {
+				get current() {
+					return current
+				},
+				get lastPatchUrl() {
+					return lastPatchUrl
+				},
+				get lastPatchBody() {
+					return lastPatchBody
+				},
+			}
+		}
+
+		it('create_workspace_field appends a new field for the calling workspace', async () => {
+			const fake = mockSchemaBackend({
+				id: 'ws-default-123',
+				fieldDefs: { task: [] },
+			})
+
+			const handler = getHandler('create_workspace_field')
+			const res = (await handler({
+				type: 'task',
+				name: 'priority',
+				field_type: 'enum',
+				values: ['low', 'high'],
+			})) as { content: Array<{ text: string }> }
+
+			expect(fake.lastPatchUrl).toContain('/api/workspaces/ws-default-123')
+			expect(fake.current.task).toEqual([
+				{ name: 'priority', type: 'enum', values: ['low', 'high'] },
+			])
+			const parsed = JSON.parse(res.content[0].text)
+			expect(parsed.field).toMatchObject({ name: 'priority', type: 'enum' })
+		})
+
+		it('create_workspace_field rejects duplicate field names', async () => {
+			mockSchemaBackend({
+				id: 'ws-default-123',
+				fieldDefs: { task: [{ name: 'priority', type: 'text' }] },
+			})
+			const handler = getHandler('create_workspace_field')
+			await expect(handler({ type: 'task', name: 'priority', field_type: 'text' })).rejects.toThrow(
+				/already exists/,
+			)
+		})
+
+		it('create_workspace_field rejects enum without values', async () => {
+			mockSchemaBackend({ id: 'ws-default-123', fieldDefs: { task: [] } })
+			const handler = getHandler('create_workspace_field')
+			await expect(handler({ type: 'task', name: 'risk', field_type: 'enum' })).rejects.toThrow(
+				/at least one value/,
+			)
+		})
+
+		it('update_workspace_field renames a field while preserving other fields', async () => {
+			const fake = mockSchemaBackend({
+				id: 'ws-default-123',
+				fieldDefs: {
+					task: [
+						{ name: 'priority', type: 'text' },
+						{ name: 'due', type: 'date' },
+					],
+				},
+			})
+			const handler = getHandler('update_workspace_field')
+			await handler({ type: 'task', name: 'priority', new_name: 'urgency' })
+			expect(fake.current.task).toEqual([
+				{ name: 'urgency', type: 'text' },
+				{ name: 'due', type: 'date' },
+			])
+		})
+
+		it('update_workspace_field rejects renaming to an existing name', async () => {
+			mockSchemaBackend({
+				id: 'ws-default-123',
+				fieldDefs: {
+					task: [
+						{ name: 'a', type: 'text' },
+						{ name: 'b', type: 'text' },
+					],
+				},
+			})
+			const handler = getHandler('update_workspace_field')
+			await expect(handler({ type: 'task', name: 'a', new_name: 'b' })).rejects.toThrow(
+				/already exists/,
+			)
+		})
+
+		it('delete_workspace_field removes the field and is idempotent', async () => {
+			const fake = mockSchemaBackend({
+				id: 'ws-default-123',
+				fieldDefs: {
+					task: [
+						{ name: 'a', type: 'text' },
+						{ name: 'b', type: 'text' },
+					],
+				},
+			})
+			const handler = getHandler('delete_workspace_field')
+			await handler({ type: 'task', name: 'a' })
+			expect(fake.current.task).toEqual([{ name: 'b', type: 'text' }])
+			// idempotent: delete same name again
+			await handler({ type: 'task', name: 'a' })
+			expect(fake.current.task).toEqual([{ name: 'b', type: 'text' }])
+		})
+
+		it('add_workspace_enum_value appends a value', async () => {
+			const fake = mockSchemaBackend({
+				id: 'ws-default-123',
+				fieldDefs: {
+					bet: [{ name: 'risk', type: 'enum', values: ['low'] }],
+				},
+			})
+			const handler = getHandler('add_workspace_enum_value')
+			await handler({ type: 'bet', name: 'risk', value: 'high' })
+			expect(fake.current.bet).toEqual([{ name: 'risk', type: 'enum', values: ['low', 'high'] }])
+		})
+
+		it('add_workspace_enum_value rejects on non-enum field', async () => {
+			mockSchemaBackend({
+				id: 'ws-default-123',
+				fieldDefs: { bet: [{ name: 'priority', type: 'text' }] },
+			})
+			const handler = getHandler('add_workspace_enum_value')
+			await expect(handler({ type: 'bet', name: 'priority', value: 'high' })).rejects.toThrow(
+				/not "enum"/,
+			)
+		})
+
+		it('remove_workspace_enum_value drops a value', async () => {
+			const fake = mockSchemaBackend({
+				id: 'ws-default-123',
+				fieldDefs: {
+					bet: [{ name: 'risk', type: 'enum', values: ['low', 'high'] }],
+				},
+			})
+			const handler = getHandler('remove_workspace_enum_value')
+			await handler({ type: 'bet', name: 'risk', value: 'low' })
+			expect(fake.current.bet).toEqual([{ name: 'risk', type: 'enum', values: ['high'] }])
+		})
+
+		it('honours workspace_id arg over the default workspace (cross-workspace isolation)', async () => {
+			// Two workspaces; the call targets ws-other so default ws-default-123
+			// must remain untouched.
+			let otherFieldDefs: Record<string, Array<Record<string, unknown>>> = { task: [] }
+			const defaultFieldDefs: Record<string, Array<Record<string, unknown>>> = {
+				task: [{ name: 'unrelated', type: 'text' }],
+			}
+			let lastPatchUrl: string | null = null
+
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+				const url = input as string
+				const method = init?.method ?? 'GET'
+				if (method === 'GET' && url.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'ws-default-123',
+									name: 'Default',
+									settings: { field_definitions: defaultFieldDefs },
+								},
+								{
+									id: 'ws-other',
+									name: 'Other',
+									settings: { field_definitions: otherFieldDefs },
+								},
+							]),
+					} as Response
+				}
+				if (method === 'PATCH' && url.includes('/api/workspaces/ws-other')) {
+					lastPatchUrl = url
+					const body = init?.body ? JSON.parse(init.body as string) : null
+					const settings = (body?.settings as Record<string, unknown>) ?? {}
+					if (settings.field_definitions) {
+						otherFieldDefs = settings.field_definitions as typeof otherFieldDefs
+					}
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								id: 'ws-other',
+								name: 'Other',
+								settings: { field_definitions: otherFieldDefs },
+							}),
+					} as Response
+				}
+				if (method === 'PATCH' && url.includes('/api/workspaces/ws-default-123')) {
+					throw new Error('Default workspace was patched — cross-workspace isolation is broken')
+				}
+				throw new Error(`Unhandled fake fetch: ${method} ${url}`)
+			})
+
+			const handler = getHandler('create_workspace_field')
+			await handler({
+				workspace_id: 'ws-other',
+				type: 'task',
+				name: 'priority',
+				field_type: 'text',
+			})
+
+			expect(lastPatchUrl).toContain('/api/workspaces/ws-other')
+			expect(otherFieldDefs.task).toEqual([{ name: 'priority', type: 'text' }])
+			expect(defaultFieldDefs.task).toEqual([{ name: 'unrelated', type: 'text' }])
 		})
 	})
 })
