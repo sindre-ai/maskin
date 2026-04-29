@@ -31,6 +31,8 @@ function ExtensionsApp() {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
 
+	const workspaceId = toolResult.workspaceId
+
 	const text = toolResult.result.content?.find(
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
@@ -42,7 +44,7 @@ function ExtensionsApp() {
 	const unwrapped = unwrapEnvelope(data)
 
 	if (isArray(unwrapped)) {
-		return <ExtensionListView extensions={unwrapped as ExtensionRow[]} />
+		return <ExtensionListView extensions={unwrapped as ExtensionRow[]} workspaceId={workspaceId} />
 	}
 	if (toolResult.toolName === 'create_extension' || toolResult.toolName === 'update_extension') {
 		return <ExtensionMutationView label="Updated" data={data} />
@@ -57,7 +59,13 @@ function ExtensionsApp() {
 	return <div className="p-4 text-sm text-foreground">{text}</div>
 }
 
-function ExtensionListView({ extensions }: { extensions: ExtensionRow[] }) {
+function ExtensionListView({
+	extensions,
+	workspaceId,
+}: {
+	extensions: ExtensionRow[]
+	workspaceId: string | null
+}) {
 	const callTool = useCallTool()
 	const [local, setLocal] = useState<ExtensionRow[]>(extensions)
 	const [busyId, setBusyId] = useState<string | null>(null)
@@ -68,12 +76,20 @@ function ExtensionListView({ extensions }: { extensions: ExtensionRow[] }) {
 	}, [extensions])
 
 	const onToggle = async (ext: ExtensionRow) => {
+		if (!workspaceId) {
+			setError('Workspace context unavailable — open in Maskin to manage extensions')
+			return
+		}
 		setBusyId(ext.id)
 		setError(null)
 		const next = !ext.enabled
 		setLocal((cur) => cur.map((e) => (e.id === ext.id ? { ...e, enabled: next } : e)))
 		try {
-			await callTool('update_extension', { id: ext.id, enabled: next })
+			await callTool('update_extension', {
+				workspace_id: workspaceId,
+				id: ext.id,
+				enabled: next,
+			})
 		} catch (err) {
 			setLocal((cur) => cur.map((e) => (e.id === ext.id ? { ...e, enabled: ext.enabled } : e)))
 			setError(err instanceof Error ? err.message : String(err))
@@ -83,12 +99,16 @@ function ExtensionListView({ extensions }: { extensions: ExtensionRow[] }) {
 	}
 
 	const onDelete = async (ext: ExtensionRow) => {
+		if (!workspaceId) {
+			setError('Workspace context unavailable — open in Maskin to manage extensions')
+			return
+		}
 		setBusyId(ext.id)
 		setError(null)
 		const previous = local
 		setLocal((cur) => cur.filter((e) => e.id !== ext.id))
 		try {
-			await callTool('delete_extension', { id: ext.id })
+			await callTool('delete_extension', { workspace_id: workspaceId, id: ext.id })
 		} catch (err) {
 			setLocal(previous)
 			setError(err instanceof Error ? err.message : String(err))

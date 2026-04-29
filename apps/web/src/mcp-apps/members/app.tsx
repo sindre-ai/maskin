@@ -33,6 +33,8 @@ function MembersApp() {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
 
+	const workspaceId = toolResult.workspaceId
+
 	const text = toolResult.result.content?.find(
 		(c: { type: string; text?: string }) => c.type === 'text',
 	)?.text
@@ -47,20 +49,26 @@ function MembersApp() {
 		toolResult.toolName === 'add_workspace_member' &&
 		isObject<AddMemberSuccess>(data, 'actorId', 'role')
 	) {
-		return <MembersAddedView added={data} />
+		return <MembersAddedView added={data} workspaceId={workspaceId} />
 	}
 	if (isArray(unwrapped)) {
-		return <MembersListView members={unwrapped as MemberResponse[]} />
+		return <MembersListView members={unwrapped as MemberResponse[]} workspaceId={workspaceId} />
 	}
-	return <MembersAddedView added={null} />
+	return <MembersAddedView added={null} workspaceId={workspaceId} />
 }
 
-function MembersListView({ members }: { members: MemberResponse[] }) {
+function MembersListView({
+	members,
+	workspaceId,
+}: {
+	members: MemberResponse[]
+	workspaceId: string | null
+}) {
 	if (!members.length) {
 		return (
 			<div className="p-4 space-y-3">
 				<EmptyState title="No members" description="No members in this workspace yet" />
-				<AddMemberForm />
+				<AddMemberForm workspaceId={workspaceId} />
 			</div>
 		)
 	}
@@ -85,12 +93,18 @@ function MembersListView({ members }: { members: MemberResponse[] }) {
 					</li>
 				))}
 			</ul>
-			<AddMemberForm />
+			<AddMemberForm workspaceId={workspaceId} />
 		</div>
 	)
 }
 
-function MembersAddedView({ added }: { added: AddMemberSuccess | null }) {
+function MembersAddedView({
+	added,
+	workspaceId,
+}: {
+	added: AddMemberSuccess | null
+	workspaceId: string | null
+}) {
 	return (
 		<div className="p-4 space-y-3 max-w-3xl">
 			<div className="flex items-center justify-between">
@@ -105,12 +119,12 @@ function MembersAddedView({ added }: { added: AddMemberSuccess | null }) {
 					</p>
 				</div>
 			)}
-			<AddMemberForm />
+			<AddMemberForm workspaceId={workspaceId} />
 		</div>
 	)
 }
 
-function AddMemberForm() {
+function AddMemberForm({ workspaceId }: { workspaceId: string | null }) {
 	const callTool = useCallTool()
 	const [actors, setActors] = useState<ActorResponse[]>([])
 	const [actorId, setActorId] = useState('')
@@ -137,11 +151,19 @@ function AddMemberForm() {
 			setError('Actor ID is required')
 			return
 		}
+		if (!workspaceId) {
+			setError('Workspace context unavailable — open in Maskin to add members')
+			return
+		}
 		setBusy(true)
 		setError(null)
 		setSuccess(null)
 		try {
-			const result = await callTool('add_workspace_member', { actor_id: actorId, role })
+			const result = await callTool('add_workspace_member', {
+				workspace_id: workspaceId,
+				actor_id: actorId,
+				role,
+			})
 			const text = result.content?.find(
 				(c: { type: string; text?: string }) => c.type === 'text',
 			)?.text
