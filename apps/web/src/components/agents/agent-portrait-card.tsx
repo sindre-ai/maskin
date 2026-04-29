@@ -294,9 +294,7 @@ export function getPortraitStatus(
 }
 
 /** Maps a portrait status to the existing All / Working / Idle / Failed filter buckets. */
-export function portraitStatusToFilter(
-	status: PortraitStatus,
-): 'working' | 'idle' | 'failed' {
+export function portraitStatusToFilter(status: PortraitStatus): 'working' | 'idle' | 'failed' {
 	if (status === 'running') return 'working'
 	if (status === 'failed') return 'failed'
 	return 'idle'

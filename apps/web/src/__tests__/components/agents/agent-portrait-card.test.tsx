@@ -29,39 +29,26 @@ describe('AgentPortraitCard', () => {
 			type: 'agent',
 			systemPrompt: 'Monitors production alerts\nDoes other things',
 		})
-		render(
-			<AgentPortraitCard
-				agent={agent}
-				status="idle"
-				onRun={noop}
-				onPause={noop}
-			/>,
-		)
+		render(<AgentPortraitCard agent={agent} status="idle" onRun={noop} onPause={noop} />)
 		expect(screen.getByText('Scout')).toBeInTheDocument()
 		expect(screen.getByText('Monitors production alerts')).toBeInTheDocument()
 	})
 
 	it('shows Run button when status is idle', () => {
 		const agent = buildActorResponse({ type: 'agent' })
-		render(
-			<AgentPortraitCard agent={agent} status="idle" onRun={noop} onPause={noop} />,
-		)
+		render(<AgentPortraitCard agent={agent} status="idle" onRun={noop} onPause={noop} />)
 		expect(screen.getByRole('button', { name: /Run/ })).toBeInTheDocument()
 	})
 
 	it('shows Resume button when status is paused', () => {
 		const agent = buildActorResponse({ type: 'agent' })
-		render(
-			<AgentPortraitCard agent={agent} status="paused" onRun={noop} onPause={noop} />,
-		)
+		render(<AgentPortraitCard agent={agent} status="paused" onRun={noop} onPause={noop} />)
 		expect(screen.getByRole('button', { name: /Resume/ })).toBeInTheDocument()
 	})
 
 	it('shows Pause button when status is running', () => {
 		const agent = buildActorResponse({ type: 'agent' })
-		render(
-			<AgentPortraitCard agent={agent} status="running" onRun={noop} onPause={noop} />,
-		)
+		render(<AgentPortraitCard agent={agent} status="running" onRun={noop} onPause={noop} />)
 		expect(screen.getByRole('button', { name: /Pause/ })).toBeInTheDocument()
 	})
 
@@ -69,9 +56,7 @@ describe('AgentPortraitCard', () => {
 		const agent = buildActorResponse({ type: 'agent' })
 		const onRun = vi.fn()
 		const user = userEvent.setup()
-		render(
-			<AgentPortraitCard agent={agent} status="idle" onRun={onRun} onPause={noop} />,
-		)
+		render(<AgentPortraitCard agent={agent} status="idle" onRun={onRun} onPause={noop} />)
 		await user.click(screen.getByRole('button', { name: /Run/ }))
 		expect(onRun).toHaveBeenCalledTimes(1)
 	})
@@ -80,14 +65,7 @@ describe('AgentPortraitCard', () => {
 		const agent = buildActorResponse({ type: 'agent' })
 		const onPause = vi.fn()
 		const user = userEvent.setup()
-		render(
-			<AgentPortraitCard
-				agent={agent}
-				status="running"
-				onRun={noop}
-				onPause={onPause}
-			/>,
-		)
+		render(<AgentPortraitCard agent={agent} status="running" onRun={noop} onPause={onPause} />)
 		await user.click(screen.getByRole('button', { name: /Pause/ }))
 		expect(onPause).toHaveBeenCalledTimes(1)
 	})
@@ -95,13 +73,7 @@ describe('AgentPortraitCard', () => {
 	it('disables the action button while pending', () => {
 		const agent = buildActorResponse({ type: 'agent' })
 		render(
-			<AgentPortraitCard
-				agent={agent}
-				status="idle"
-				onRun={noop}
-				onPause={noop}
-				isRunPending
-			/>,
+			<AgentPortraitCard agent={agent} status="idle" onRun={noop} onPause={noop} isRunPending />,
 		)
 		const button = screen.getByRole('button', { name: /Starting/ })
 		expect(button).toBeDisabled()
@@ -142,9 +114,7 @@ describe('AgentPortraitCard', () => {
 
 	it('renders a touch-friendly action button (≥44px)', () => {
 		const agent = buildActorResponse({ type: 'agent' })
-		render(
-			<AgentPortraitCard agent={agent} status="idle" onRun={noop} onPause={noop} />,
-		)
+		render(<AgentPortraitCard agent={agent} status="idle" onRun={noop} onPause={noop} />)
 		const button = screen.getByRole('button', { name: /Run/ })
 		expect(button.className).toContain('min-h-[44px]')
 	})

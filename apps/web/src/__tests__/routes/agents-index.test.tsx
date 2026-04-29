@@ -44,10 +44,9 @@ vi.mock('@/lib/agent-status', () => ({
 }))
 
 vi.mock('@/components/agents/agent-portrait-card', async () => {
-	const actual =
-		await vi.importActual<typeof import('@/components/agents/agent-portrait-card')>(
-			'@/components/agents/agent-portrait-card',
-		)
+	const actual = await vi.importActual<typeof import('@/components/agents/agent-portrait-card')>(
+		'@/components/agents/agent-portrait-card',
+	)
 	return {
 		...actual,
 		AgentPortraitCard: ({
@@ -192,9 +191,7 @@ describe('AgentsPage', () => {
 
 	it('counts a paused agent under the Idle tab (no Paused tab)', () => {
 		mockUseActors.mockReturnValue({
-			data: [
-				{ id: 'a1', name: 'Agent One', type: 'agent', email: null, agentState: 'paused' },
-			],
+			data: [{ id: 'a1', name: 'Agent One', type: 'agent', email: null, agentState: 'paused' }],
 			isLoading: false,
 		})
 		render(<AgentsPage />)
