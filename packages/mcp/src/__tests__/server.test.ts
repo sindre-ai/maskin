@@ -33,6 +33,9 @@ const config = {
 	apiBaseUrl: 'http://localhost:3000',
 	apiKey: 'ank_testkey123',
 	defaultWorkspaceId: 'ws-default-123',
+	// Disable telemetry so existing fetch-call-count assertions stay accurate.
+	// The wrapper itself is exercised in src/__tests__/telemetry.test.ts.
+	telemetrySink: () => {},
 }
 
 describe('createMcpServer', () => {

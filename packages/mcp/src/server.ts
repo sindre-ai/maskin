@@ -11,11 +11,18 @@ import {
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
+	registerAppTool as _registerAppTool,
 	registerAppResource,
-	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import {
+	MUTATION_TOOL_KINDS,
+	type TelemetrySink,
+	createDefaultSink,
+	recordMutation,
+	recordToolCall,
+} from './telemetry.js'
 import { tools } from './tools.js'
 
 interface McpConfig {
@@ -33,6 +40,13 @@ interface McpConfig {
 	 * tool response so each rendered card can produce stable object URLs.
 	 */
 	webAppBaseUrl?: string
+	/**
+	 * Telemetry sink for `tool_call` and `mutation` events emitted on every
+	 * tool response. Defaults to a fire-and-forget POST to /api/telemetry/mcp;
+	 * tests inject capturing sinks and deployments without telemetry can pass
+	 * a noop. The default never throws and never blocks tool calls.
+	 */
+	telemetrySink?: TelemetrySink
 }
 
 /**
@@ -503,6 +517,64 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 	)
 }
 
+/** Extracts a workspace_id from tool args without coupling the wrapper to the schemas. */
+function extractWorkspaceId(args: unknown): string | undefined {
+	if (!args || typeof args !== 'object') return undefined
+	const ws = (args as { workspace_id?: unknown }).workspace_id
+	return typeof ws === 'string' ? ws : undefined
+}
+
+/**
+ * Inspects a mutation tool response to decide whether it actually mutated
+ * something. Tools like `update_objects` aggregate per-target outcomes, so we
+ * count one mutation event per call when at least one inner item succeeded —
+ * matches how the bet's "20% of sessions include at least one mutation" metric
+ * is meant to be read (a session that *attempted* and partially succeeded
+ * counts).
+ */
+function isSuccessfulMutationResponse(response: unknown): boolean {
+	if (!response || typeof response !== 'object') return false
+	const content = (response as { content?: unknown }).content
+	if (!Array.isArray(content) || content.length === 0) return false
+	const first = content[0] as { type?: string; text?: string } | undefined
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return true
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(first.text)
+	} catch {
+		return true
+	}
+	if (Array.isArray(parsed)) {
+		return parsed.some((entry) => {
+			if (!entry || typeof entry !== 'object') return false
+			const success = (entry as { success?: unknown }).success
+			return success === true || success === undefined
+		})
+	}
+	if (parsed && typeof parsed === 'object') {
+		const errored = (parsed as { error?: unknown }).error
+		return errored === undefined || errored === null
+	}
+	return true
+}
+
+/** Best-effort object_type label for the mutation event. */
+function extractObjectType(toolName: string, args: unknown): string | undefined {
+	if (toolName === 'update_objects' || toolName === 'create_objects') return 'object'
+	if (toolName === 'delete_object') return 'object'
+	if (toolName === 'create_relationship' || toolName === 'delete_relationship')
+		return 'relationship'
+	if (toolName.startsWith('create_') || toolName.startsWith('update_')) {
+		const kind = toolName.split('_')[1]
+		if (kind) return kind
+	}
+	if (args && typeof args === 'object') {
+		const ot = (args as { object_type?: unknown; type?: unknown }).object_type
+		if (typeof ot === 'string') return ot
+	}
+	return undefined
+}
+
 function loadHtml(config: McpConfig, filename: string): string {
 	const basePath = config.htmlBasePath ?? resolve(__dirname, '../../../apps/web/dist-mcp')
 	const fullPath = resolve(basePath, filename)
@@ -521,6 +593,71 @@ export function createMcpServer(config: McpConfig) {
 		name: 'maskin',
 		version: '0.1.0',
 	})
+
+	const telemetrySink: TelemetrySink = config.telemetrySink ?? createDefaultSink()
+	const telemetryTarget = {
+		apiBaseUrl: config.apiBaseUrl,
+		apiKey: config.apiKey,
+		workspaceId: config.defaultWorkspaceId,
+	}
+
+	// Telemetry-instrumented tool registration. Wraps the upstream
+	// `registerAppTool` so every tool response emits a `tool_call` telemetry
+	// event (rich-render % numerator/denominator) and successful mutations
+	// emit an additional `mutation` event. Failures inside the original
+	// handler are re-thrown unchanged so MCP error semantics are preserved.
+	//
+	// We deliberately type as `any` at the boundary because ext-apps' generic
+	// tool signature can't be re-introduced through a higher-order wrapper
+	// without losing the per-tool input schema inference; the wrapper is purely
+	// pass-through so giving up the wrapper's signature is safe.
+	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
+		const defHasRichRender = Boolean(definition?._meta?.ui)
+		const mutationKind = MUTATION_TOOL_KINDS[name]
+
+		const wrappedHandler = async (args: unknown, extra: unknown) => {
+			const start = Date.now()
+			let response: unknown
+			try {
+				response = await handler(args, extra)
+			} catch (err) {
+				recordToolCall(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					has_rich_render: defHasRichRender,
+					duration_ms: Date.now() - start,
+					workspace_id: extractWorkspaceId(args),
+				})
+				throw err
+			}
+
+			const responseMeta = (response as { _meta?: { ui?: unknown } } | undefined)?._meta
+			const responseHasRichRender =
+				defHasRichRender || Boolean(responseMeta && 'ui' in responseMeta)
+
+			recordToolCall(telemetrySink, telemetryTarget, {
+				tool_name: name,
+				has_rich_render: responseHasRichRender,
+				duration_ms: Date.now() - start,
+				workspace_id: extractWorkspaceId(args),
+			})
+
+			if (mutationKind && isSuccessfulMutationResponse(response)) {
+				recordMutation(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					mutation_kind: mutationKind,
+					object_type: extractObjectType(name, args),
+					workspace_id: extractWorkspaceId(args),
+				})
+			}
+
+			return response
+		}
+
+		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
+		return _registerAppTool(s, name, definition, wrappedHandler as any)
+		// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+	}) as any as typeof _registerAppTool
 
 	// ─── Register UI resources ─────────────────────────────────
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {

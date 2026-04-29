@@ -951,6 +951,9 @@ describe('workspace skill tools — end-to-end round-trip', () => {
 			apiBaseUrl: 'http://localhost:3000',
 			apiKey: 'ank_testkey123',
 			defaultWorkspaceId: 'ws-e2e-123',
+			// Suppress telemetry so the round-trip's fetch spy only sees skill
+			// API calls, not the wrapper's instrumentation pings.
+			telemetrySink: () => {},
 		})
 	})
 
