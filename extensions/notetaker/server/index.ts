@@ -15,6 +15,7 @@ import { createNotetakerRoutes } from './routes.js'
 // ── Deterministic names — used for idempotent lookup/creation ────────────────
 const SUMMARIZER_AGENT_NAME = 'Meeting Summarizer'
 const DISPATCHER_AGENT_NAME = 'Skjald Dispatcher'
+const CALENDAR_SYNCER_AGENT_NAME = 'Calendar Syncer'
 const TRIGGER_MEETING_CREATED = 'meeting.created'
 const TRIGGER_TRANSCRIPT_ATTACHED = 'transcript.attached'
 const TRIGGER_CALENDAR_SYNC = 'calendar.sync'
@@ -36,6 +37,15 @@ const DISPATCHER_SYSTEM_PROMPT = [
 	'bot name, language, and meeting id so Skjald can join and record the meeting.',
 ].join(' ')
 
+const CALENDAR_SYNCER_SYSTEM_PROMPT = [
+	'You are the Calendar Syncer for the Maskin notetaker extension.',
+	'When this trigger fires, call the `notetaker_sync_calendars` MCP tool to pull the',
+	'latest events from every connected calendar integration (Google Calendar, Microsoft Outlook)',
+	'and upsert them as `meeting` objects in the workspace.',
+	'You do not need to do anything else — the tool performs the full sync in one call.',
+	'Report the summary it returns (counts and per-provider results) and stop.',
+].join(' ')
+
 const SUMMARIZER_PROMPT = [
 	'A meeting transcript was just attached. Summarize the transcript at metadata.transcriptUrl,',
 	'extract action items and open questions, and create linked `insight` and `task` objects.',
@@ -46,6 +56,11 @@ const DISPATCHER_PROMPT = [
 	'the meetingUrl, botName, language, and meeting id from the triggering event.',
 ].join(' ')
 
+const CALENDAR_SYNC_PROMPT = [
+	'Sync calendar events from connected integrations into meeting objects by calling the',
+	'`notetaker_sync_calendars` MCP tool, then report the result.',
+].join(' ')
+
 interface NotetakerConfig {
 	autoJoin: boolean
 	defaultLanguage: string
@@ -53,6 +68,7 @@ interface NotetakerConfig {
 	syncIntervalMinutes: number
 	summarizerActorId?: string
 	dispatcherActorId?: string
+	calendarSyncerActorId?: string
 	meetingCreatedTriggerId?: string
 	transcriptReadyTriggerId?: string
 	calendarSyncTriggerId?: string
@@ -235,6 +251,14 @@ async function onEnable(env: ModuleEnv, ctx: ModuleLifecycleContext): Promise<vo
 		DISPATCHER_SYSTEM_PROMPT,
 		config.dispatcherActorId,
 	)
+	const calendarSyncerActorId = await ensureAgent(
+		db,
+		workspaceId,
+		actorId,
+		CALENDAR_SYNCER_AGENT_NAME,
+		CALENDAR_SYNCER_SYSTEM_PROMPT,
+		config.calendarSyncerActorId,
+	)
 
 	const meetingCreatedTriggerId = await ensureTrigger(
 		db,
@@ -278,8 +302,8 @@ async function onEnable(env: ModuleEnv, ctx: ModuleLifecycleContext): Promise<vo
 			name: TRIGGER_CALENDAR_SYNC,
 			type: 'cron',
 			config: { expression: cronExpressionFor(config.syncIntervalMinutes) },
-			actionPrompt: 'Sync calendar events into meeting objects.',
-			targetActorId: dispatcherActorId,
+			actionPrompt: CALENDAR_SYNC_PROMPT,
+			targetActorId: calendarSyncerActorId,
 		},
 		config.calendarSyncTriggerId,
 	)
@@ -288,6 +312,7 @@ async function onEnable(env: ModuleEnv, ctx: ModuleLifecycleContext): Promise<vo
 		...config,
 		summarizerActorId,
 		dispatcherActorId,
+		calendarSyncerActorId,
 		meetingCreatedTriggerId,
 		transcriptReadyTriggerId,
 		calendarSyncTriggerId,
@@ -305,10 +330,12 @@ async function onDisable(env: ModuleEnv, ctx: ModuleLifecycleContext): Promise<v
 	await deleteTriggerIfExists(db, config.calendarSyncTriggerId)
 	await deleteAgentIfExists(db, config.summarizerActorId)
 	await deleteAgentIfExists(db, config.dispatcherActorId)
+	await deleteAgentIfExists(db, config.calendarSyncerActorId)
 
 	const {
 		summarizerActorId: _a,
 		dispatcherActorId: _b,
+		calendarSyncerActorId: _f,
 		meetingCreatedTriggerId: _c,
 		transcriptReadyTriggerId: _d,
 		calendarSyncTriggerId: _e,
@@ -347,6 +374,8 @@ const updateMeetingInputSchema = z.object({
 	patch: z.record(z.unknown()).optional(),
 	status: z.enum(MEETING_STATUSES).optional(),
 })
+
+const syncCalendarsInputSchema = z.object({})
 
 function jsonText(value: unknown) {
 	return {
@@ -400,6 +429,16 @@ const mcpTools: McpToolDefinition[] = [
 			if (args.patch) body.metadata = args.patch
 			if (args.status) body.status = args.status
 			const result = await apiCall('PATCH', `/api/objects/${args.meetingId}`, body)
+			return jsonText(result)
+		},
+	},
+	{
+		name: 'sync_calendars',
+		description:
+			'Pull events from every connected calendar integration (Google Calendar, Microsoft Outlook) and upsert them as `meeting` objects in the workspace. Returns counts of created/updated meetings and per-provider results.',
+		inputSchema: syncCalendarsInputSchema,
+		handler: async (_rawArgs, apiCall) => {
+			const result = await apiCall('POST', '/sync-calendars')
 			return jsonText(result)
 		},
 	},

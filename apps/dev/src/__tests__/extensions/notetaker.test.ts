@@ -80,7 +80,7 @@ describe('notetaker extension', () => {
 	})
 
 	describe('onEnable (fresh install — no existing ids)', () => {
-		it('creates two agents and three triggers and persists ids to custom_extensions.notetaker.config', async () => {
+		it('creates three agents and three triggers and persists ids to custom_extensions.notetaker.config', async () => {
 			const ctx = buildCtx()
 			const workspace = buildWorkspace({
 				id: ctx.workspaceId,
@@ -88,6 +88,7 @@ describe('notetaker extension', () => {
 			})
 			const summarizerId = randomUUID()
 			const dispatcherId = randomUUID()
+			const calendarSyncerId = randomUUID()
 			const mcTriggerId = randomUUID()
 			const trTriggerId = randomUUID()
 			const csTriggerId = randomUUID()
@@ -95,11 +96,14 @@ describe('notetaker extension', () => {
 			const { db: rawDb, mockResults } = createTestContext()
 			mockResults.selectQueue = [[workspace]]
 			// Order matches onEnable: summarizer actor, member, dispatcher actor, member,
-			// meeting.created trigger, transcript.attached trigger, calendar.sync trigger.
+			// calendar syncer actor, member, meeting.created trigger, transcript.attached
+			// trigger, calendar.sync trigger.
 			mockResults.insertQueue = [
 				[{ id: summarizerId }],
 				[],
 				[{ id: dispatcherId }],
+				[],
+				[{ id: calendarSyncerId }],
 				[],
 				[{ id: mcTriggerId }],
 				[{ id: trTriggerId }],
@@ -109,8 +113,8 @@ describe('notetaker extension', () => {
 
 			await notetakerExtension.onEnable?.(buildEnv(db), ctx)
 
-			// 2 agents + 2 workspace_members + 3 triggers = 7 inserts
-			expect(calls.insert).toBe(7)
+			// 3 agents + 3 workspace_members + 3 triggers = 9 inserts
+			expect(calls.insert).toBe(9)
 			// Single update for the workspace settings merge.
 			expect(calls.update).toBe(1)
 
@@ -122,6 +126,7 @@ describe('notetaker extension', () => {
 			expect(custom.notetaker.config).toMatchObject({
 				summarizerActorId: summarizerId,
 				dispatcherActorId: dispatcherId,
+				calendarSyncerActorId: calendarSyncerId,
 				meetingCreatedTriggerId: mcTriggerId,
 				transcriptReadyTriggerId: trTriggerId,
 				calendarSyncTriggerId: csTriggerId,
@@ -131,6 +136,57 @@ describe('notetaker extension', () => {
 				syncIntervalMinutes: 10,
 			})
 		})
+
+		it('targets the calendar.sync cron trigger at the calendar syncer agent (not the dispatcher)', async () => {
+			const ctx = buildCtx()
+			const workspace = buildWorkspace({
+				id: ctx.workspaceId,
+				settings: { enabled_modules: ['work', 'notetaker'] },
+			})
+			const summarizerId = randomUUID()
+			const dispatcherId = randomUUID()
+			const calendarSyncerId = randomUUID()
+
+			const { db: rawDb, mockResults } = createTestContext()
+			mockResults.selectQueue = [[workspace]]
+			mockResults.insertQueue = [
+				[{ id: summarizerId }],
+				[],
+				[{ id: dispatcherId }],
+				[],
+				[{ id: calendarSyncerId }],
+				[],
+				[{ id: randomUUID() }],
+				[{ id: randomUUID() }],
+				[{ id: randomUUID() }],
+			]
+			const triggerInserts: Record<string, unknown>[] = []
+			const wrapped = new Proxy(rawDb, {
+				get(target, prop, receiver) {
+					if (prop === 'insert') {
+						return (t: unknown) => {
+							const chain = Reflect.get(target, prop, receiver)(t) as Record<string, unknown>
+							const originalValues = chain.values as (v: Record<string, unknown>) => unknown
+							chain.values = (vals: Record<string, unknown>) => {
+								if (vals && typeof vals === 'object' && 'targetActorId' in vals) {
+									triggerInserts.push(vals)
+								}
+								return originalValues.call(chain, vals)
+							}
+							return chain
+						}
+					}
+					return Reflect.get(target, prop, receiver)
+				},
+			})
+
+			await notetakerExtension.onEnable?.(buildEnv(wrapped), ctx)
+
+			const cronTrigger = triggerInserts.find((t) => t.name === 'calendar.sync')
+			expect(cronTrigger).toBeDefined()
+			expect(cronTrigger?.targetActorId).toBe(calendarSyncerId)
+			expect(cronTrigger?.targetActorId).not.toBe(dispatcherId)
+		})
 	})
 
 	describe('onEnable (idempotent re-enable — all ids already stored)', () => {
@@ -139,6 +195,7 @@ describe('notetaker extension', () => {
 			const ids = {
 				summarizerActorId: randomUUID(),
 				dispatcherActorId: randomUUID(),
+				calendarSyncerActorId: randomUUID(),
 				meetingCreatedTriggerId: randomUUID(),
 				transcriptReadyTriggerId: randomUUID(),
 				calendarSyncTriggerId: randomUUID(),
@@ -164,6 +221,7 @@ describe('notetaker extension', () => {
 				[workspace],
 				[buildActor({ id: ids.summarizerActorId, type: 'agent' })],
 				[buildActor({ id: ids.dispatcherActorId, type: 'agent' })],
+				[buildActor({ id: ids.calendarSyncerActorId, type: 'agent' })],
 				[buildTrigger({ id: ids.meetingCreatedTriggerId, workspaceId: ctx.workspaceId })],
 				[buildTrigger({ id: ids.transcriptReadyTriggerId, workspaceId: ctx.workspaceId })],
 				[buildTrigger({ id: ids.calendarSyncTriggerId, workspaceId: ctx.workspaceId })],
@@ -185,6 +243,7 @@ describe('notetaker extension', () => {
 			const ids = {
 				summarizerActorId: randomUUID(),
 				dispatcherActorId: randomUUID(),
+				calendarSyncerActorId: randomUUID(),
 				meetingCreatedTriggerId: randomUUID(),
 				transcriptReadyTriggerId: randomUUID(),
 				calendarSyncTriggerId: randomUUID(),
@@ -210,8 +269,8 @@ describe('notetaker extension', () => {
 
 			await notetakerExtension.onDisable?.(buildEnv(db), ctx)
 
-			// 3 trigger deletes + 2 * (workspace_members + actors) = 7 deletes.
-			expect(calls.delete).toBe(7)
+			// 3 trigger deletes + 3 * (workspace_members + actors) = 9 deletes.
+			expect(calls.delete).toBe(9)
 			expect(calls.update).toBe(1)
 
 			const settings = capturedUpdateSets[0].settings as Record<string, unknown>
@@ -221,9 +280,26 @@ describe('notetaker extension', () => {
 			>
 			expect(custom.notetaker.config.summarizerActorId).toBeUndefined()
 			expect(custom.notetaker.config.dispatcherActorId).toBeUndefined()
+			expect(custom.notetaker.config.calendarSyncerActorId).toBeUndefined()
 			expect(custom.notetaker.config.meetingCreatedTriggerId).toBeUndefined()
 			expect(custom.notetaker.config.transcriptReadyTriggerId).toBeUndefined()
 			expect(custom.notetaker.config.calendarSyncTriggerId).toBeUndefined()
+		})
+	})
+
+	describe('mcpTools', () => {
+		it('exposes a sync_calendars tool that POSTs the extension sync-calendars route', async () => {
+			const tool = notetakerExtension.mcpTools?.find((t) => t.name === 'sync_calendars')
+			if (!tool) throw new Error('sync_calendars tool not registered')
+
+			const calls: { method: string; path: string; body?: unknown }[] = []
+			const result = await tool.handler({}, async (method, path, body) => {
+				calls.push({ method, path, body })
+				return { synced: 0, created: 0, updated: 0, providers: [] }
+			})
+
+			expect(calls).toEqual([{ method: 'POST', path: '/sync-calendars', body: undefined }])
+			expect(result.content[0].text).toContain('synced')
 		})
 	})
 })
