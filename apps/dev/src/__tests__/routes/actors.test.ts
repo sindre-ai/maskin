@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { SINDRE_DEFAULT } from '@maskin/shared'
+import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
 import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -43,6 +43,58 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(201)
 			const body = await res.json()
 			expect(body.type).toBe('agent')
+		})
+
+		it('defaults the Maskin MCP into tools when creating an agent without tools', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'agent' })),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { tools?: { mcpServers: Record<string, unknown> } }
+			expect(inserted.tools?.mcpServers.maskin).toEqual(PLATFORM_MCP_PRESET)
+		})
+
+		it('preserves a caller-provided maskin MCP entry over the default', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+			const custom = { type: 'http' as const, url: 'https://custom/mcp', headers: {} }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/actors',
+					buildCreateActorBody({
+						type: 'agent',
+						tools: { mcpServers: { maskin: custom } },
+					}),
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as {
+				tools?: { mcpServers: { maskin: { url: string } } }
+			}
+			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
+		})
+
+		it('does not default tools when creating a human actor', async () => {
+			const actor = buildActor({ type: 'human' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'human' })),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { tools?: unknown }
+			expect(inserted.tools).toBeUndefined()
 		})
 	})
 
