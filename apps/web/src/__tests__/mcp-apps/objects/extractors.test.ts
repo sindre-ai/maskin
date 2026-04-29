@@ -1,11 +1,12 @@
 import {
 	extractCreateObjectsList,
 	extractFirstUpdatedObject,
+	extractGetObjectsBundles,
 	extractGetObjectsList,
 	extractUpdateObjectsList,
 	summarizeUpdateResults,
 } from '@/mcp-apps/objects/extractors'
-import type { ObjectResponse } from '@/mcp-apps/shared/types'
+import type { ObjectResponse, RelationshipResponse } from '@/mcp-apps/shared/types'
 import { describe, expect, it } from 'vitest'
 
 const obj = (overrides: Partial<ObjectResponse> = {}): ObjectResponse => ({
@@ -83,6 +84,53 @@ describe('extractFirstUpdatedObject', () => {
 			textEnvelope([{ type: 'relationship', id: 'r', success: true, result: {} }]),
 		)
 		expect(result).toBeNull()
+	})
+})
+
+const rel = (overrides: Partial<RelationshipResponse> = {}): RelationshipResponse => ({
+	id: 'rel-1',
+	sourceType: 'object',
+	sourceId: 'obj-1',
+	targetType: 'object',
+	targetId: 'obj-2',
+	type: 'relates_to',
+	createdBy: 'actor-1',
+	createdAt: '2026-04-22T00:00:00.000Z',
+	...overrides,
+})
+
+describe('extractGetObjectsBundles', () => {
+	it('keeps object + relationships + connected_objects together', () => {
+		const a = obj({ id: 'a' })
+		const b = obj({ id: 'b' })
+		const r = rel({ sourceId: 'a', targetId: 'b' })
+		expect(
+			extractGetObjectsBundles([
+				{ success: true, result: { object: a, relationships: [r], connected_objects: [b] } },
+			]),
+		).toEqual([{ object: a, relationships: [r], connected_objects: [b] }])
+	})
+
+	it('defaults relationships and connected_objects to empty arrays when missing', () => {
+		const a = obj({ id: 'a' })
+		expect(extractGetObjectsBundles([{ success: true, result: { object: a } }])).toEqual([
+			{ object: a, relationships: [], connected_objects: [] },
+		])
+	})
+
+	it('skips failed entries', () => {
+		const a = obj({ id: 'a' })
+		expect(
+			extractGetObjectsBundles([
+				{ success: false },
+				{ success: true, result: { object: a, relationships: [] } },
+			]),
+		).toEqual([{ object: a, relationships: [], connected_objects: [] }])
+	})
+
+	it('returns [] for non-array input', () => {
+		expect(extractGetObjectsBundles(null as unknown as never)).toEqual([])
+		expect(extractGetObjectsBundles({} as unknown as never)).toEqual([])
 	})
 })
 
