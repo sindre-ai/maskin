@@ -28,6 +28,7 @@ import { Route as AuthedWorkspaceIdSettingsMcpRouteImport } from './routes/_auth
 import { Route as AuthedWorkspaceIdSettingsKeysRouteImport } from './routes/_authed/$workspaceId/settings/keys'
 import { Route as AuthedWorkspaceIdSettingsIntegrationsRouteImport } from './routes/_authed/$workspaceId/settings/integrations'
 import { Route as AuthedWorkspaceIdObjectsObjectIdRouteImport } from './routes/_authed/$workspaceId/objects/$objectId'
+import { Route as AuthedWorkspaceIdDevMcpWidgetsRouteImport } from './routes/_authed/$workspaceId/dev/mcp-widgets'
 import { Route as AuthedWorkspaceIdAgentsAgentIdRouteImport } from './routes/_authed/$workspaceId/agents/$agentId'
 import { Route as AuthedWorkspaceIdSettingsObjectsIndexRouteImport } from './routes/_authed/$workspaceId/settings/objects/index'
 import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from './routes/_authed/$workspaceId/settings/objects/$propertyName'
@@ -139,6 +140,12 @@ const AuthedWorkspaceIdObjectsObjectIdRoute =
     path: '/objects/$objectId',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
+const AuthedWorkspaceIdDevMcpWidgetsRoute =
+  AuthedWorkspaceIdDevMcpWidgetsRouteImport.update({
+    id: '/dev/mcp-widgets',
+    path: '/dev/mcp-widgets',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
 const AuthedWorkspaceIdAgentsAgentIdRoute =
   AuthedWorkspaceIdAgentsAgentIdRouteImport.update({
     id: '/agents/$agentId',
@@ -167,6 +174,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/$workspaceId/dev/mcp-widgets': typeof AuthedWorkspaceIdDevMcpWidgetsRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -188,6 +196,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/$workspaceId/dev/mcp-widgets': typeof AuthedWorkspaceIdDevMcpWidgetsRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -213,6 +222,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/_authed/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/_authed/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/_authed/$workspaceId/dev/mcp-widgets': typeof AuthedWorkspaceIdDevMcpWidgetsRoute
   '/_authed/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/_authed/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/_authed/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -238,6 +248,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings'
     | '/$workspaceId/'
     | '/$workspaceId/agents/$agentId'
+    | '/$workspaceId/dev/mcp-widgets'
     | '/$workspaceId/objects/$objectId'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/keys'
@@ -259,6 +270,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/activity'
     | '/$workspaceId'
     | '/$workspaceId/agents/$agentId'
+    | '/$workspaceId/dev/mcp-widgets'
     | '/$workspaceId/objects/$objectId'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/keys'
@@ -283,6 +295,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings'
     | '/_authed/$workspaceId/'
     | '/_authed/$workspaceId/agents/$agentId'
+    | '/_authed/$workspaceId/dev/mcp-widgets'
     | '/_authed/$workspaceId/objects/$objectId'
     | '/_authed/$workspaceId/settings/integrations'
     | '/_authed/$workspaceId/settings/keys'
@@ -439,6 +452,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdObjectsObjectIdRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
+    '/_authed/$workspaceId/dev/mcp-widgets': {
+      id: '/_authed/$workspaceId/dev/mcp-widgets'
+      path: '/dev/mcp-widgets'
+      fullPath: '/$workspaceId/dev/mcp-widgets'
+      preLoaderRoute: typeof AuthedWorkspaceIdDevMcpWidgetsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
     '/_authed/$workspaceId/agents/$agentId': {
       id: '/_authed/$workspaceId/agents/$agentId'
       path: '/agents/$agentId'
@@ -500,6 +520,7 @@ interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdSettingsRoute: typeof AuthedWorkspaceIdSettingsRouteWithChildren
   AuthedWorkspaceIdIndexRoute: typeof AuthedWorkspaceIdIndexRoute
   AuthedWorkspaceIdAgentsAgentIdRoute: typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  AuthedWorkspaceIdDevMcpWidgetsRoute: typeof AuthedWorkspaceIdDevMcpWidgetsRoute
   AuthedWorkspaceIdObjectsObjectIdRoute: typeof AuthedWorkspaceIdObjectsObjectIdRoute
   AuthedWorkspaceIdTriggersTriggerIdRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   AuthedWorkspaceIdAgentsIndexRoute: typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -512,6 +533,7 @@ const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
   AuthedWorkspaceIdSettingsRoute: AuthedWorkspaceIdSettingsRouteWithChildren,
   AuthedWorkspaceIdIndexRoute: AuthedWorkspaceIdIndexRoute,
   AuthedWorkspaceIdAgentsAgentIdRoute: AuthedWorkspaceIdAgentsAgentIdRoute,
+  AuthedWorkspaceIdDevMcpWidgetsRoute: AuthedWorkspaceIdDevMcpWidgetsRoute,
   AuthedWorkspaceIdObjectsObjectIdRoute: AuthedWorkspaceIdObjectsObjectIdRoute,
   AuthedWorkspaceIdTriggersTriggerIdRoute:
     AuthedWorkspaceIdTriggersTriggerIdRoute,
