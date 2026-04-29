@@ -16,6 +16,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	PLATFORM_MCP_PRESET,
 	SINDRE_DEFAULT,
 	createActorSchema,
 	updateActorSchema,
@@ -109,6 +110,17 @@ app.openapi(createActorRoute, async (c) => {
 	// Hash password if provided
 	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
+	// Agents get the Maskin MCP by default — caller-provided servers win on conflict.
+	const tools =
+		body.type === 'agent'
+			? {
+					mcpServers: {
+						maskin: PLATFORM_MCP_PRESET,
+						...(body.tools?.mcpServers ?? {}),
+					},
+				}
+			: body.tools
+
 	const [actor] = await db
 		.insert(actors)
 		.values({
@@ -119,7 +131,7 @@ app.openapi(createActorRoute, async (c) => {
 			apiKey: key,
 			passwordHash,
 			systemPrompt: body.system_prompt,
-			tools: body.tools,
+			tools,
 			llmProvider: body.llm_provider,
 			llmConfig: body.llm_config,
 		})
