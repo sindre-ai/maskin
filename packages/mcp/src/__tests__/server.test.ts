@@ -37,10 +37,11 @@ describe('createMcpServer', () => {
 
 	it('registers a UI resource for every defined resource', () => {
 		createMcpServer(config)
-		// UI_RESOURCES has 8 entries: objects, relationships, actors, workspaces, events, triggers, graph, notifications
 		const resourceCount = vi.mocked(registerAppResource).mock.calls.length
 		expect(resourceCount).toBeGreaterThan(0)
-		// Verify all expected URIs are present
+		// Verify all expected URIs are present. Wave 2 (F7) added the sessions,
+		// skills, llm-keys, members, and extensions cards on top of the original
+		// 8 surfaces.
 		const resourceUris = vi.mocked(registerAppResource).mock.calls.map((call) => call[2])
 		const expectedUris = [
 			'ui://maskin/objects',
@@ -51,6 +52,11 @@ describe('createMcpServer', () => {
 			'ui://maskin/relationships',
 			'ui://maskin/graph',
 			'ui://maskin/notifications',
+			'ui://maskin/sessions',
+			'ui://maskin/skills',
+			'ui://maskin/llm-keys',
+			'ui://maskin/members',
+			'ui://maskin/extensions',
 		]
 		for (const uri of expectedUris) {
 			expect(resourceUris).toContain(uri)
