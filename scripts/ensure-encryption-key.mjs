@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 const ENV_PATH = '.env'
 const KEY_NAME = 'INTEGRATION_ENCRYPTION_KEY'
@@ -38,5 +38,13 @@ if (withValueRe.test(next)) {
 	next += `${KEY_NAME}=${key}\n`
 }
 
-writeFileSync(ENV_PATH, next)
+writeFileSync(ENV_PATH, next, { mode: 0o600 })
+// If .env already existed with looser permissions, tighten it — writeFileSync's
+// mode option only applies when creating the file.
+try {
+	chmodSync(ENV_PATH, 0o600)
+} catch {
+	// Filesystems without POSIX permissions (e.g. Windows) will reject chmod;
+	// the encryption key still lives in a file, just without the extra guard.
+}
 console.log(`Generated ${KEY_NAME} (written to ${ENV_PATH})`)
