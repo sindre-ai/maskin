@@ -240,12 +240,6 @@ const growthTemplate: WorkspaceTemplate = {
 			],
 		},
 		custom_extensions: {
-			crm: {
-				name: 'CRM',
-				types: ['contact', 'company'],
-				relationship_types: ['relates_to', 'works_at', 'decision_maker_at'],
-				enabled: true,
-			},
 			linkedin_content: {
 				name: 'LinkedIn Content',
 				types: ['linkedin_post'],
@@ -263,7 +257,7 @@ const growthTemplate: WorkspaceTemplate = {
 			'decision_maker_at',
 			'derived_from',
 		],
-		enabled_modules: ['work'],
+		enabled_modules: ['work', 'crm'],
 	},
 	seedNodes: [
 		{
