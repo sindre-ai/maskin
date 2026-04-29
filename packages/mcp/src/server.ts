@@ -7,13 +7,14 @@ import {
 	WORKSPACE_TEMPLATES,
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
+	buildWebAppHref,
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
 	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { tools } from './tools.js'
 
@@ -255,6 +256,246 @@ function collectActiveRelTypes(
 	return [...active]
 }
 
+/**
+ * Trim a string to a max length without slicing mid-codepoint, returning a
+ * preview suitable for `resources/list` descriptions. Returns the empty
+ * string when no input is provided.
+ */
+function makePreview(text: string | null | undefined, maxLen = 200): string {
+	if (!text) return ''
+	const trimmed = text.trim()
+	if (trimmed.length <= maxLen) return trimmed
+	// Slice on a UTF-16 boundary; trailing whitespace from a mid-word slice
+	// is removed so the ellipsis sits flush with the last character.
+	return `${trimmed.slice(0, maxLen).trimEnd()}…`
+}
+
+interface ObjectRow {
+	id: string
+	workspaceId: string
+	type: string
+	title: string | null
+	content: string | null
+	status: string
+	updatedAt?: string
+}
+
+interface ActorRow {
+	id: string
+	type: 'human' | 'agent'
+	name: string
+	email?: string | null
+	role?: string
+}
+
+interface TriggerRow {
+	id: string
+	workspaceId: string
+	name: string
+	type: string
+	enabled: boolean
+}
+
+/**
+ * Register MCP resources so the host (Claude Desktop / Claude.ai paperclip
+ * picker, Cursor, etc.) can list and read Maskin objects. Resource URIs are
+ * the same deep-link URLs the chat card and web app use, so the picker, the
+ * card, and the workspace all agree on object identity.
+ *
+ * Without `webAppBaseUrl` we cannot form deep links — the registration is
+ * skipped and `resources/list` returns nothing rather than emitting URIs that
+ * don't resolve in the web app.
+ */
+function registerObjectResources(server: McpServer, config: McpConfig) {
+	const baseUrl = config.webAppBaseUrl?.replace(/\/$/, '')
+	if (!baseUrl) return
+
+	// ─── Unified objects (insight / bet / task / meeting / ...) ───
+	const objectsTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/objects/{objectId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const objs = (await apiCall(config, 'GET', '/api/objects?limit=100', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as ObjectRow[]
+				return {
+					resources: objs.map((o) => ({
+						uri: buildWebAppHref(baseUrl, o.workspaceId, { kind: 'object', id: o.id }),
+						name: o.title?.trim() || `Untitled ${o.type}`,
+						description: `[${o.type} · ${o.status}] ${makePreview(o.content)}`.trim(),
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (objects) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-object',
+		objectsTemplate,
+		{
+			title: 'Maskin object',
+			description:
+				'Workspace objects (insight, bet, task, meeting, decision, document, …). Filter by type or status when listing — the picker can ask for "all bets" or "all open insights".',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const objectId = String(vars.objectId)
+			const obj = (await apiCall(config, 'GET', `/api/objects/${objectId}`, undefined, {
+				workspaceId,
+			})) as ObjectRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'object',
+				id: obj.id,
+			})
+			const payload = {
+				id: obj.id,
+				type: obj.type,
+				title: obj.title ?? null,
+				status: obj.status,
+				preview: makePreview(obj.content),
+				deepLink,
+				workspaceId: obj.workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	// ─── Actors (humans + agents) ──────────────────────────────────
+	const actorsTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/agents/{actorId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const actors = (await apiCall(config, 'GET', '/api/actors', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as ActorRow[]
+				return {
+					resources: actors.map((a) => ({
+						uri: buildWebAppHref(baseUrl, config.defaultWorkspaceId, {
+							kind: 'actor',
+							id: a.id,
+						}),
+						name: a.name || `${a.type}-${a.id.slice(0, 8)}`,
+						description: `[${a.type}]${a.email ? ` ${a.email}` : ''}`,
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (actors) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-actor',
+		actorsTemplate,
+		{
+			title: 'Maskin actor',
+			description: 'Workspace members and agents (humans + AI).',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const actorId = String(vars.actorId)
+			const actor = (await apiCall(config, 'GET', `/api/actors/${actorId}`, undefined, {
+				workspaceId,
+			})) as ActorRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'actor',
+				id: actor.id,
+			})
+			const payload = {
+				id: actor.id,
+				type: actor.type,
+				name: actor.name,
+				email: actor.email ?? null,
+				deepLink,
+				workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	// ─── Triggers ──────────────────────────────────────────────────
+	const triggersTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/triggers/{triggerId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const triggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as TriggerRow[]
+				return {
+					resources: triggers.map((t) => ({
+						uri: buildWebAppHref(baseUrl, t.workspaceId, { kind: 'trigger', id: t.id }),
+						name: t.name || `Trigger ${t.id.slice(0, 8)}`,
+						description: `[${t.type} · ${t.enabled ? 'enabled' : 'disabled'}]`,
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (triggers) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-trigger',
+		triggersTemplate,
+		{
+			title: 'Maskin trigger',
+			description: 'Cron / event-based automations that run agents.',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const triggerId = String(vars.triggerId)
+			const trigger = (await apiCall(config, 'GET', `/api/triggers/${triggerId}`, undefined, {
+				workspaceId,
+			})) as TriggerRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'trigger',
+				id: trigger.id,
+			})
+			const payload = {
+				id: trigger.id,
+				name: trigger.name,
+				type: trigger.type,
+				enabled: trigger.enabled,
+				deepLink,
+				workspaceId: trigger.workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+}
+
 function loadHtml(config: McpConfig, filename: string): string {
 	const basePath = config.htmlBasePath ?? resolve(__dirname, '../../../apps/web/dist-mcp')
 	const fullPath = resolve(basePath, filename)
@@ -283,6 +524,9 @@ export function createMcpServer(config: McpConfig) {
 			}
 		})
 	}
+
+	// ─── Register data resources for the picker ────────────────
+	registerObjectResources(server, config)
 
 	// ─── Objects ───────────────────────────────────────────────
 	registerAppTool(
