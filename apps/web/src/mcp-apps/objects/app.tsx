@@ -6,21 +6,25 @@ import { useCallback, useState } from 'react'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
-import type { ObjectResponse } from '../shared/types'
+import type { ObjectResponse, RelationshipResponse } from '../shared/types'
 import { useWorkspaceSchema } from '../shared/use-workspace-schema'
 import { WebAppLink } from '../shared/web-app-link'
 import {
 	extractCreateObjectsList,
 	extractFirstUpdatedObject,
-	extractGetObjectsList,
+	extractGetObjectsBundles,
 	extractUpdateObjectsList,
 	summarizeUpdateResults,
 } from './extractors'
+import { MetadataEditor } from './metadata-editor'
+import { RelationshipsEditor, type V1RelationshipType } from './relationships-editor'
 
 function ObjectsApp() {
 	const toolResult = useToolResult()
 	const callTool = useCallTool()
 	const [localObject, setLocalObject] = useState<ObjectResponse | null>(null)
+	const [localRelationships, setLocalRelationships] = useState<RelationshipResponse[] | null>(null)
+	const [localConnected, setLocalConnected] = useState<ObjectResponse[] | null>(null)
 
 	const handleUpdateTitle = useCallback(
 		(obj: ObjectResponse) => async (title: string) => {
@@ -70,6 +74,65 @@ function ObjectsApp() {
 		[callTool],
 	)
 
+	const handleUpdateMetadata = useCallback(
+		(obj: ObjectResponse) => async (metadata: Record<string, unknown>) => {
+			// Server-side metadata is constrained to SafeMetadata (primitives + flat
+			// arrays of primitives). The schema-form's broader value domain — which
+			// includes arbitrary JSON objects — is forwarded as-is and validated by
+			// the API; we cast on the optimistic local-object echo so the local
+			// state doesn't reject schema-form payloads it can't statically verify.
+			setLocalObject({
+				...obj,
+				metadata: metadata as unknown as ObjectResponse['metadata'],
+			})
+			const result = await callTool('update_objects', {
+				updates: [{ id: obj.id, metadata }],
+			})
+			const updated = extractFirstUpdatedObject(result)
+			if (updated) setLocalObject(updated)
+		},
+		[callTool],
+	)
+
+	const applyRefreshedBundle = useCallback((rawResult: { content?: unknown }) => {
+		const content = rawResult?.content as Array<{ type: string; text?: string }> | undefined
+		const text = content?.find((c) => c.type === 'text')?.text
+		if (!text) return
+		const parsed = safeParseJson(text)
+		const bundles = extractGetObjectsBundles(parsed)
+		const first = bundles[0]
+		if (!first) return
+		setLocalObject(first.object)
+		setLocalRelationships(first.relationships)
+		setLocalConnected(first.connected_objects)
+	}, [])
+
+	const handleAddRelationship = useCallback(
+		(obj: ObjectResponse) =>
+			async (input: { source_id: string; target_id: string; type: V1RelationshipType }) => {
+				await callTool('update_objects', {
+					updates: [],
+					edges: [input],
+				})
+				// Re-fetch the object's graph so the relationships list reflects the new
+				// edge (and the connected_objects map gets the target object's title +
+				// status). Fabricating a synthetic relationship row without an
+				// authoritative id breaks the remove affordance, so we round-trip.
+				const refreshed = await callTool('get_objects', { ids: [obj.id] })
+				applyRefreshedBundle(refreshed)
+			},
+		[callTool, applyRefreshedBundle],
+	)
+
+	const handleRemoveRelationship = useCallback(
+		(obj: ObjectResponse) => async (relationshipId: string) => {
+			await callTool('delete_relationship', { id: relationshipId })
+			const refreshed = await callTool('get_objects', { ids: [obj.id] })
+			applyRefreshedBundle(refreshed)
+		},
+		[callTool, applyRefreshedBundle],
+	)
+
 	if (!toolResult) {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
@@ -84,11 +147,33 @@ function ObjectsApp() {
 	const data = safeParseJson(text)
 	if (!data) return <div className="p-4 text-sm text-foreground">{text}</div>
 
-	const renderDocumentOrList = (objects: ObjectResponse[]) => {
+	const renderDocumentOrList = (
+		objects: ObjectResponse[],
+		bundle?: { relationships: RelationshipResponse[]; connected_objects: ObjectResponse[] },
+	) => {
 		if (objects.length === 1) {
 			const base = objects[0]
 			const obj = localObject?.id === base.id ? localObject : base
-			return <ObjectDocument obj={obj} handlers={editHandlers(obj)} />
+			const relationships =
+				localObject?.id === base.id && localRelationships !== null
+					? localRelationships
+					: (bundle?.relationships ?? [])
+			const connected =
+				localObject?.id === base.id && localConnected !== null
+					? localConnected
+					: (bundle?.connected_objects ?? [])
+			return (
+				<ObjectDocument
+					obj={obj}
+					handlers={editHandlers(obj)}
+					relationships={relationships}
+					connectedObjects={connected}
+					relationshipHandlers={{
+						onAdd: handleAddRelationship(obj),
+						onRemove: handleRemoveRelationship(obj),
+					}}
+				/>
+			)
 		}
 		return <ObjectListView objects={objects} />
 	}
@@ -99,6 +184,7 @@ function ObjectsApp() {
 		onUpdateStatus: handleUpdateStatus(obj),
 		onUpdateOwner: handleUpdateOwner(obj),
 		onDelete: handleDelete(obj),
+		onUpdateMetadata: handleUpdateMetadata(obj),
 	})
 
 	switch (toolResult.toolName) {
@@ -107,8 +193,11 @@ function ObjectsApp() {
 			const unwrapped = unwrapEnvelope(data)
 			return <ObjectListView objects={isArray(unwrapped) ? (unwrapped as ObjectResponse[]) : []} />
 		}
-		case 'get_objects':
-			return renderDocumentOrList(extractGetObjectsList(data))
+		case 'get_objects': {
+			const bundles = extractGetObjectsBundles(data)
+			const objects = bundles.map((b) => b.object)
+			return renderDocumentOrList(objects, bundles[0])
+		}
 		case 'update_objects': {
 			const updated = extractUpdateObjectsList(data)
 			if (updated.length > 0) return renderDocumentOrList(updated)
@@ -126,6 +215,9 @@ function ObjectsApp() {
 function ObjectDocument({
 	obj,
 	handlers,
+	relationships,
+	connectedObjects,
+	relationshipHandlers,
 }: {
 	obj: ObjectResponse
 	handlers: {
@@ -134,13 +226,24 @@ function ObjectDocument({
 		onUpdateStatus: (status: string) => Promise<void>
 		onUpdateOwner: (owner: string | null) => Promise<void>
 		onDelete: () => Promise<void>
+		onUpdateMetadata: (metadata: Record<string, unknown>) => Promise<void>
+	}
+	relationships: RelationshipResponse[]
+	connectedObjects: ObjectResponse[]
+	relationshipHandlers: {
+		onAdd: (input: {
+			source_id: string
+			target_id: string
+			type: V1RelationshipType
+		}) => Promise<void>
+		onRemove: (relationshipId: string) => Promise<void>
 	}
 }) {
 	const { schema } = useWorkspaceSchema(obj.workspaceId ?? undefined)
 	const statuses = schema?.types[obj.type]?.statuses ?? []
 	return (
-		<div className="p-4">
-			<div className="flex justify-end mb-2">
+		<div className="p-4 space-y-6">
+			<div className="flex justify-end">
 				<WebAppLink target={{ kind: 'object', id: obj.id }} label="Open in Maskin" />
 			</div>
 			<ObjectDocumentView
@@ -153,6 +256,28 @@ function ObjectDocument({
 				onUpdateOwner={handlers.onUpdateOwner}
 				onDelete={handlers.onDelete}
 			/>
+			<section className="border-t border-border pt-4">
+				<h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					Metadata
+				</h3>
+				<MetadataEditor
+					objectId={obj.id}
+					objectType={obj.type}
+					workspaceId={obj.workspaceId ?? undefined}
+					metadata={(obj.metadata as Record<string, unknown> | null) ?? null}
+					onSubmit={handlers.onUpdateMetadata}
+				/>
+			</section>
+			<section className="border-t border-border pt-4">
+				<RelationshipsEditor
+					objectId={obj.id}
+					objectType={obj.type}
+					relationships={relationships}
+					connectedObjects={connectedObjects}
+					onAdd={relationshipHandlers.onAdd}
+					onRemove={relationshipHandlers.onRemove}
+				/>
+			</section>
 		</div>
 	)
 }
