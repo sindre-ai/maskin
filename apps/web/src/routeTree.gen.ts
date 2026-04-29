@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as OauthReturnRouteImport } from './routes/oauth-return'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
@@ -36,6 +37,11 @@ import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OauthReturnRoute = OauthReturnRouteImport.update({
+  id: '/oauth-return',
+  path: '/oauth-return',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -168,6 +174,7 @@ const AuthedWorkspaceIdSettingsObjectsPropertyNameRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
+  '/oauth-return': typeof OauthReturnRoute
   '/signup': typeof SignupRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
@@ -191,6 +198,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/oauth-return': typeof OauthReturnRoute
   '/signup': typeof SignupRoute
   '/': typeof AuthedIndexRoute
   '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
@@ -215,6 +223,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
+  '/oauth-return': typeof OauthReturnRoute
   '/signup': typeof SignupRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/': typeof AuthedIndexRoute
@@ -242,6 +251,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/oauth-return'
     | '/signup'
     | '/$workspaceId'
     | '/$workspaceId/activity'
@@ -265,6 +275,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/oauth-return'
     | '/signup'
     | '/'
     | '/$workspaceId/activity'
@@ -288,6 +299,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authed'
     | '/login'
+    | '/oauth-return'
     | '/signup'
     | '/_authed/$workspaceId'
     | '/_authed/'
@@ -314,6 +326,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  OauthReturnRoute: typeof OauthReturnRoute
   SignupRoute: typeof SignupRoute
 }
 
@@ -324,6 +337,13 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/oauth-return': {
+      id: '/oauth-return'
+      path: '/oauth-return'
+      fullPath: '/oauth-return'
+      preLoaderRoute: typeof OauthReturnRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -561,6 +581,7 @@ const AuthedRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
+  OauthReturnRoute: OauthReturnRoute,
   SignupRoute: SignupRoute,
 }
 export const routeTree = rootRouteImport
