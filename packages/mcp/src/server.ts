@@ -201,6 +201,57 @@ function buildEnableModuleSettings(
 	return updatedSettings
 }
 
+/**
+ * Merge default settings from all enabled modules into the given settings.
+ * Existing keys win — module defaults only fill in types not already specified.
+ * Used when applying a template so that module-provided types (e.g. CRM contact/company)
+ * pick up their statuses/display_names/field_definitions without inline duplication.
+ */
+function mergeEnabledModuleDefaults(settings: Record<string, unknown>): Record<string, unknown> {
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? (settings.enabled_modules as string[])
+		: ['work']
+
+	const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
+	const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
+	const fieldDefs = { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) }
+	const relTypes = new Set<string>(
+		Array.isArray(settings.relationship_types) ? (settings.relationship_types as string[]) : [],
+	)
+
+	for (const moduleId of enabledModules) {
+		const defaults = getModuleDefaultSettings(moduleId)
+		if (!defaults) continue
+
+		if (defaults.display_names) {
+			for (const [type, name] of Object.entries(defaults.display_names)) {
+				if (!(type in displayNames)) displayNames[type] = name
+			}
+		}
+		if (defaults.statuses) {
+			for (const [type, sts] of Object.entries(defaults.statuses)) {
+				if (!(type in statuses)) statuses[type] = sts
+			}
+		}
+		if (defaults.field_definitions) {
+			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
+				if (!(type in fieldDefs)) fieldDefs[type] = fields
+			}
+		}
+		if (defaults.relationship_types) {
+			for (const rt of defaults.relationship_types) relTypes.add(rt)
+		}
+	}
+
+	return {
+		...settings,
+		display_names: displayNames,
+		statuses: statuses,
+		field_definitions: fieldDefs,
+		relationship_types: [...relTypes],
+	}
+}
+
 /** Compute the set of relationship types still referenced by remaining extensions. */
 function collectActiveRelTypes(
 	settings: Record<string, unknown>,
@@ -2271,11 +2322,14 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			}
 
 			try {
+				const mergedSettings = mergeEnabledModuleDefaults(
+					template.settings as Record<string, unknown>,
+				)
 				await apiCall(
 					config,
 					'PATCH',
 					`/api/workspaces/${workspace.id}`,
-					{ settings: template.settings },
+					{ settings: mergedSettings },
 					{ workspaceId: workspace.id },
 				)
 			} catch (err) {
