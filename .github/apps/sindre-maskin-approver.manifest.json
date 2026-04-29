@@ -1,0 +1,22 @@
+{
+  "name": "sindre-maskin-approver",
+  "url": "https://maskin.sindre.ai",
+  "description": "Author-cannot-approve gate for the Maskin auto-merge pipeline. Owns review-submission, never authors code. Accountable owner: Sebk.",
+  "public": false,
+  "redirect_url": "https://maskin.sindre.ai/api/github/apps/manifest/callback",
+  "hook_attributes": {
+    "url": "https://maskin.sindre.ai/api/webhooks/github",
+    "active": true
+  },
+  "default_events": [
+    "pull_request",
+    "pull_request_review",
+    "check_run"
+  ],
+  "default_permissions": {
+    "pull_requests": "write",
+    "checks": "write",
+    "contents": "read",
+    "metadata": "read"
+  }
+}
