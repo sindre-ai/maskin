@@ -23,6 +23,7 @@ const apps = [
 	'members',
 	'extensions',
 	'schema',
+	'integrations',
 ]
 
 // Clean output dirs
