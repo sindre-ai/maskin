@@ -43,6 +43,22 @@ export const gmailWebhookVerifier = async (
 			logger.warn(`Gmail webhook JWT has unexpected issuer: ${payload.iss}`)
 			return false
 		}
+		// Audience alone isn't enough: any Google service account can mint an OIDC token
+		// for an arbitrary audience. Pin the caller to the push service account configured
+		// on the subscription. Without this, anyone who knows the push endpoint URL could
+		// forge webhooks.
+		const expectedEmail = process.env.GMAIL_PUBSUB_SERVICE_ACCOUNT
+		if (!expectedEmail) {
+			logger.error('GMAIL_PUBSUB_SERVICE_ACCOUNT not configured — cannot verify Gmail push caller')
+			return false
+		}
+		if (payload.email !== expectedEmail || payload.email_verified !== true) {
+			logger.warn('Gmail webhook JWT email claim mismatch', {
+				received: payload.email,
+				verified: payload.email_verified,
+			})
+			return false
+		}
 		return true
 	} catch (err) {
 		logger.warn('Gmail webhook JWT verification failed', {

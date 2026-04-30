@@ -149,29 +149,51 @@ export async function renewGmailWatch(db: Database, integrationId: string): Prom
 	})
 }
 
-async function fetchHistory(
+async function fetchHistoryPage(
 	accessToken: string,
 	startHistoryId: string,
-): Promise<HistoryListResponse> {
+	pageToken?: string,
+): Promise<HistoryListResponse | null> {
 	const url = new URL(`${GMAIL_API_BASE}/history`)
 	url.searchParams.set('startHistoryId', startHistoryId)
 	url.searchParams.set('historyTypes', 'messageAdded')
 	url.searchParams.append('historyTypes', 'messageDeleted')
 	url.searchParams.append('historyTypes', 'labelAdded')
 	url.searchParams.append('historyTypes', 'labelRemoved')
+	if (pageToken) url.searchParams.set('pageToken', pageToken)
 
 	const res = await fetch(url.toString(), {
 		headers: { Authorization: `Bearer ${accessToken}` },
 	})
 	if (res.status === 404) {
 		// Gmail returns 404 when startHistoryId is too old (>~7 days). Caller resets.
-		return {}
+		return null
 	}
 	if (!res.ok) {
 		const text = await res.text()
 		throw new Error(`Gmail history.list failed: HTTP ${res.status} ${text}`)
 	}
 	return (await res.json()) as HistoryListResponse
+}
+
+async function fetchAllHistory(
+	accessToken: string,
+	startHistoryId: string,
+): Promise<{ records: HistoryRecord[]; latestHistoryId?: string } | null> {
+	const records: HistoryRecord[] = []
+	let pageToken: string | undefined
+	let latestHistoryId: string | undefined
+	// Bound the loop to protect against pathological pagination / API regressions.
+	for (let i = 0; i < 50; i++) {
+		const page = await fetchHistoryPage(accessToken, startHistoryId, pageToken)
+		if (page === null) return null // 404 — caller resets cursor
+		if (page.history) records.push(...page.history)
+		if (page.historyId) latestHistoryId = page.historyId
+		if (!page.nextPageToken) return { records, latestHistoryId }
+		pageToken = page.nextPageToken
+	}
+	logger.warn('Gmail history.list pagination exceeded safety bound', { startHistoryId })
+	return { records, latestHistoryId }
 }
 
 /**
@@ -201,11 +223,18 @@ export async function fanOutGmailHistory(ctx: WebhookFanOutContext): Promise<Nor
 		return []
 	}
 
-	const result = await fetchHistory(accessToken, startHistoryId)
+	const result = await fetchAllHistory(accessToken, startHistoryId)
 	const events: NormalizedEvent[] = []
 	const emailAddress = String(ctx.normalized.data.emailAddress ?? '')
 
-	for (const record of result.history ?? []) {
+	if (result === null) {
+		// 404 — startHistoryId too old. Reset cursor to incoming push so the next
+		// push picks up from current state rather than re-failing forever.
+		await persistHistoryCursor(db, ctx.integrationId, config, incomingHistoryId)
+		return []
+	}
+
+	for (const record of result.records) {
 		for (const m of record.messagesAdded ?? []) {
 			events.push(
 				makeMessageEvent('received', emailAddress, m.message, { historyEntryId: record.id }),
@@ -234,7 +263,7 @@ export async function fanOutGmailHistory(ctx: WebhookFanOutContext): Promise<Nor
 		}
 	}
 
-	const newCursor = result.historyId ?? incomingHistoryId
+	const newCursor = result.latestHistoryId ?? incomingHistoryId
 	await persistHistoryCursor(db, ctx.integrationId, config, newCursor)
 
 	return events
