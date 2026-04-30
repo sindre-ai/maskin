@@ -46,10 +46,9 @@ export const config: ProviderConfig = {
 		definitions: [
 			{
 				entityType: 'gmail.message',
-				actions: ['received', 'sent', 'labeled', 'unlabeled', 'trashed', 'untrashed'],
+				actions: ['received', 'sent', 'drafted', 'labeled', 'unlabeled', 'trashed', 'untrashed'],
 				label: 'Message',
 			},
-			{ entityType: 'gmail.thread', actions: ['updated'], label: 'Thread' },
 		],
 	},
 

@@ -380,9 +380,15 @@ export async function fanOutGmailHistory(ctx: WebhookFanOutContext): Promise<Nor
 	return events
 }
 
-/** Gmail's messagesAdded covers both inbound and outbound mail; SENT label disambiguates. */
+/**
+ * Gmail's messagesAdded covers inbound mail, outbound mail, and saved drafts.
+ * Labels disambiguate: SENT → sent, DRAFT → drafted, otherwise received.
+ */
 function messageAddedAction(message: HistoryMessage): string {
-	return message.labelIds?.includes('SENT') ? 'sent' : 'received'
+	const labels = message.labelIds ?? []
+	if (labels.includes('SENT')) return 'sent'
+	if (labels.includes('DRAFT')) return 'drafted'
+	return 'received'
 }
 
 function makeMessageEvent(

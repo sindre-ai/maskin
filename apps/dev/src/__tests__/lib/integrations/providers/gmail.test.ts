@@ -41,10 +41,14 @@ describe('Gmail provider config', () => {
 		expect(config.mcp?.envKey).toBe('GMAIL_TOKEN')
 	})
 
-	it('defines gmail.message and gmail.thread events', () => {
+	it('defines gmail.message events with sent/received/drafted actions', () => {
 		const types = config.events?.definitions.map((d) => d.entityType)
 		expect(types).toContain('gmail.message')
-		expect(types).toContain('gmail.thread')
+		expect(types).not.toContain('gmail.thread')
+		const messageDef = config.events?.definitions.find((d) => d.entityType === 'gmail.message')
+		expect(messageDef?.actions).toEqual(
+			expect.arrayContaining(['received', 'sent', 'drafted', 'labeled', 'unlabeled']),
+		)
 	})
 })
 
