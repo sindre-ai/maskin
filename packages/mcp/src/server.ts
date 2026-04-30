@@ -2250,15 +2250,18 @@ export function createMcpServer(config: McpConfig) {
 
 			// dev or growth template
 			const template: WorkspaceTemplate = WORKSPACE_TEMPLATES[chosen]
+			const mergedSettings = mergeEnabledModuleDefaults(
+				template.settings as Record<string, unknown>,
+			)
 
 			if (!args.confirm) {
 				const previewLines: string[] = []
-				const statuses = (template.settings.statuses ?? {}) as Record<string, string[]>
-				const fields = (template.settings.field_definitions ?? {}) as Record<
+				const statuses = (mergedSettings.statuses ?? {}) as Record<string, string[]>
+				const fields = (mergedSettings.field_definitions ?? {}) as Record<
 					string,
 					Array<{ name: string; type: string; values?: string[] }>
 				>
-				const displayNames = (template.settings.display_names ?? {}) as Record<string, string>
+				const displayNames = (mergedSettings.display_names ?? {}) as Record<string, string>
 				for (const [type, typeStatuses] of Object.entries(statuses)) {
 					const name = displayNames[type] ?? type
 					const line = `  • ${name} (${type}): ${typeStatuses.join(' → ')}`
@@ -2322,9 +2325,6 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			}
 
 			try {
-				const mergedSettings = mergeEnabledModuleDefaults(
-					template.settings as Record<string, unknown>,
-				)
 				await apiCall(
 					config,
 					'PATCH',
