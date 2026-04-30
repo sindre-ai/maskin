@@ -240,6 +240,35 @@ describe('gmailWebhookVerifier', () => {
 
 // ── Watch lifecycle (renew + stop) ────────────────────────────────────────────
 
+/** Recursively flatten a drizzle SQL fragment (or any value) into a single string for inspection. */
+function sqlToString(value: unknown): string {
+	if (value == null) return ''
+	if (typeof value === 'string') return value
+	if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint')
+		return String(value)
+	if (Array.isArray(value)) return value.map(sqlToString).join(' ')
+	if (typeof value === 'object') {
+		const obj = value as Record<string, unknown>
+		// drizzle SQL fragment
+		if ('queryChunks' in obj) return sqlToString(obj.queryChunks)
+		// drizzle Param wrapper
+		if ('value' in obj && Object.keys(obj).length <= 3) return sqlToString(obj.value)
+		// drizzle Column reference — emit its name so tests can grep for it without
+		// recursing into PgTable's circular column graph.
+		const ctorName = obj.constructor?.name ?? ''
+		if (ctorName.startsWith('Pg') || 'table' in obj) {
+			const name = (obj as { name?: string }).name
+			return name ? `<col:${name}>` : `<${ctorName}>`
+		}
+		try {
+			return JSON.stringify(obj)
+		} catch {
+			return `<${ctorName}>`
+		}
+	}
+	return String(value)
+}
+
 const getValidTokenMock = vi.hoisted(() => vi.fn())
 vi.mock('../../../../lib/integrations/oauth/token-manager', () => ({
 	TokenManager: class {
@@ -323,12 +352,20 @@ describe('renewGmailWatch', () => {
 			expect.objectContaining({ method: 'POST' }),
 		)
 		expect(updateCalls).toHaveLength(1)
-		const merged = (updateCalls[0]?.values as { config: { gmail: { historyId: string } } }).config
-		expect(merged.gmail.historyId).toBe('12345') // preserved, NOT overwritten with 99999
-		expect(merged.gmail).toMatchObject({
-			watchExpiresAt: 1800000000000,
-			topicName: 'projects/sindre-430307/topics/gmail-push',
-		})
+		// Renewer writes a jsonb_set SQL fragment that only touches watchExpiresAt and
+		// topicName — never historyId — so a concurrent fan-out advancing the cursor
+		// is not clobbered. Inspect the SQL chunks rather than a plain merged object.
+		const config = (updateCalls[0]?.values as { config: unknown }).config
+		const flat = sqlToString(config)
+		expect(flat).toContain('jsonb_set')
+		expect(flat).toContain('watchExpiresAt')
+		expect(flat).toContain('topicName')
+		expect(flat).toContain('1800000000000') // new expiration bound as param
+		expect(flat).toContain('projects/sindre-430307/topics/gmail-push')
+		// Critical: the SQL fragment must NOT write a historyId path.
+		expect(flat).not.toContain('historyId')
+		// And must NOT carry the new historyId returned by users.watch.
+		expect(flat).not.toContain('99999')
 	})
 
 	it('falls back to initial setup when no prior cursor exists', async () => {
@@ -350,9 +387,40 @@ describe('renewGmailWatch', () => {
 		// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
 		await renewGmailWatch(db as any, 'int-2')
 
-		// Initial setup writes the watch's returned historyId as the cursor.
-		const merged = (updateCalls[0]?.values as { config: { gmail: { historyId: string } } }).config
-		expect(merged.gmail.historyId).toBe('50000')
+		// Initial setup writes the watch's returned historyId as the cursor via jsonb_set.
+		const config = (updateCalls[0]?.values as { config: unknown }).config
+		const flat = sqlToString(config)
+		expect(flat).toContain('jsonb_set')
+		expect(flat).toContain('"historyId":"50000"')
+		expect(flat).toContain('"watchExpiresAt":1800000000000')
+	})
+
+	it('throws if users.watch returns a non-finite expiration (NaN guard)', async () => {
+		const { renewGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			// Malformed expiration that would silently coerce to NaN under Number(...)
+			json: () => Promise.resolve({ historyId: '99999', expiration: 'not-a-number' }),
+		} as Response)
+
+		const { db, updateCalls } = makeFakeDb({
+			id: 'int-bad',
+			provider: 'gmail',
+			workspaceId: 'ws-1',
+			config: {
+				gmail: { historyId: '12345', watchExpiresAt: 1700000000000, topicName: 't' },
+			},
+		})
+
+		await expect(
+			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+			renewGmailWatch(db as any, 'int-bad'),
+		).rejects.toThrow(/invalid expiration/)
+
+		// Critically: nothing was written, so a stale NaN can't poison the row.
+		expect(updateCalls).toHaveLength(0)
 	})
 })
 

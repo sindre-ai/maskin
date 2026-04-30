@@ -30,6 +30,11 @@ interface WatchResponse {
 	expiration: string
 }
 
+interface ParsedWatchResponse {
+	historyId: string
+	watchExpiresAt: number
+}
+
 interface HistoryListResponse {
 	history?: HistoryRecord[]
 	historyId?: string
@@ -63,7 +68,7 @@ function getTopicName(): string {
 	return topic
 }
 
-async function callWatch(accessToken: string, topicName: string): Promise<WatchResponse> {
+async function callWatch(accessToken: string, topicName: string): Promise<ParsedWatchResponse> {
 	const res = await fetch(`${GMAIL_API_BASE}/watch`, {
 		method: 'POST',
 		headers: {
@@ -76,7 +81,15 @@ async function callWatch(accessToken: string, topicName: string): Promise<WatchR
 		const text = await res.text()
 		throw new Error(`Gmail users.watch failed: HTTP ${res.status} ${text}`)
 	}
-	return (await res.json()) as WatchResponse
+	const raw = (await res.json()) as WatchResponse
+	if (!raw.historyId) {
+		throw new Error('Gmail users.watch response missing historyId')
+	}
+	const watchExpiresAt = Number(raw.expiration)
+	if (!Number.isFinite(watchExpiresAt) || watchExpiresAt <= 0) {
+		throw new Error(`Gmail users.watch returned invalid expiration: ${raw.expiration}`)
+	}
+	return { historyId: raw.historyId, watchExpiresAt }
 }
 
 async function callStop(accessToken: string): Promise<void> {
@@ -110,31 +123,25 @@ export async function setupGmailWatch(ctx: PostInstallContext): Promise<void> {
 
 	const watch = await callWatch(accessToken, topicName)
 
-	const [row] = await db
-		.select({ config: integrations.config })
-		.from(integrations)
-		.where(eq(integrations.id, ctx.integrationId))
-		.limit(1)
-
-	const existing = (row?.config as GmailIntegrationConfig | undefined) ?? {}
-	const merged: GmailIntegrationConfig = {
-		...existing,
-		gmail: {
-			historyId: watch.historyId,
-			watchExpiresAt: Number(watch.expiration),
-			topicName,
-		},
-	}
-
+	// Atomic field-level merge via jsonb_set so we don't clobber siblings
+	// (e.g. system_actor_id, or a concurrent renewer's watchExpiresAt update).
+	const gmailSubobject = JSON.stringify({
+		historyId: watch.historyId,
+		watchExpiresAt: watch.watchExpiresAt,
+		topicName,
+	})
 	await db
 		.update(integrations)
-		.set({ config: merged, updatedAt: new Date() })
+		.set({
+			config: sql`jsonb_set(COALESCE(${integrations.config}, '{}'::jsonb), '{gmail}', ${gmailSubobject}::jsonb, true)`,
+			updatedAt: new Date(),
+		})
 		.where(eq(integrations.id, ctx.integrationId))
 
 	logger.info('Gmail watch registered', {
 		integrationId: ctx.integrationId,
 		historyId: watch.historyId,
-		expiresAt: watch.expiration,
+		expiresAt: watch.watchExpiresAt,
 	})
 }
 
@@ -177,24 +184,29 @@ export async function renewGmailWatch(db: Database, integrationId: string): Prom
 	const topicName = getTopicName()
 	const watch = await callWatch(accessToken, topicName)
 
-	const merged: GmailIntegrationConfig = {
-		...existing,
-		gmail: {
-			...existing.gmail,
-			watchExpiresAt: Number(watch.expiration),
-			topicName,
-		},
-	}
-
+	// Field-level updates so a concurrent fan-out advancing historyId is not clobbered.
 	await db
 		.update(integrations)
-		.set({ config: merged, updatedAt: new Date() })
+		.set({
+			config: sql`jsonb_set(
+				jsonb_set(
+					COALESCE(${integrations.config}, '{}'::jsonb),
+					'{gmail,watchExpiresAt}',
+					to_jsonb(${watch.watchExpiresAt}::bigint),
+					true
+				),
+				'{gmail,topicName}',
+				to_jsonb(${topicName}::text),
+				true
+			)`,
+			updatedAt: new Date(),
+		})
 		.where(eq(integrations.id, integrationId))
 
 	logger.info('Gmail watch renewed', {
 		integrationId,
 		preservedHistoryId: existing.gmail.historyId,
-		expiresAt: watch.expiration,
+		expiresAt: watch.watchExpiresAt,
 	})
 }
 
@@ -404,24 +416,34 @@ function makeMessageEvent(
 async function casHistoryCursor(
 	db: Database,
 	integrationId: string,
-	existing: GmailIntegrationConfig,
+	_existing: GmailIntegrationConfig,
 	expected: string | undefined,
 	historyId: string,
 ): Promise<boolean> {
-	const merged: GmailIntegrationConfig = {
-		...existing,
-		gmail: existing.gmail
-			? { ...existing.gmail, historyId }
-			: { historyId, watchExpiresAt: 0, topicName: process.env.GMAIL_PUBSUB_TOPIC ?? '' },
-	}
 	const cursorMatches =
 		expected === undefined
 			? sql`(${integrations.config}->'gmail'->>'historyId') IS NULL`
 			: sql`(${integrations.config}->'gmail'->>'historyId') = ${expected}`
 
+	// Field-level update so concurrent renewer writes to watchExpiresAt/topicName survive.
+	// If `gmail` doesn't exist yet (first push, no setup yet), seed the full subobject.
+	const seedSubobject = JSON.stringify({
+		historyId,
+		watchExpiresAt: 0,
+		topicName: process.env.GMAIL_PUBSUB_TOPIC ?? '',
+	})
 	const updated = await db
 		.update(integrations)
-		.set({ config: merged, updatedAt: new Date() })
+		.set({
+			config: sql`
+				CASE
+					WHEN ${integrations.config} ? 'gmail'
+					THEN jsonb_set(${integrations.config}, '{gmail,historyId}', to_jsonb(${historyId}::text), true)
+					ELSE jsonb_set(COALESCE(${integrations.config}, '{}'::jsonb), '{gmail}', ${seedSubobject}::jsonb, true)
+				END
+			`,
+			updatedAt: new Date(),
+		})
 		.where(and(eq(integrations.id, integrationId), cursorMatches))
 		.returning({ id: integrations.id })
 
