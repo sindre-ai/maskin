@@ -340,6 +340,42 @@ export const imports = pgTable(
 	],
 )
 
+// ── MCP Telemetry ─────────────────────────────────────────────────────────
+//
+// Records the two events the MCP server emits on every response:
+//   - event_type='tool_call'  — per tool response, with hasRichRender + durationMs.
+//                                Powers the bet's "50%+ of MCP tool calls render
+//                                a rich card" success metric.
+//   - event_type='mutation'   — per successful update_objects / delete_object
+//                                call. Powers the "20%+ of MCP sessions include
+//                                at least one in-chat object mutation" metric.
+//
+// `session_id` is whatever stable identifier the MCP transport surfaces (the
+// MCP session id when present, else a per-process correlation id) and is text,
+// not uuid, because we do not control the upstream id format.
+export const mcpTelemetry = pgTable(
+	'mcp_telemetry',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		eventType: text('event_type').notNull(),
+		toolName: text('tool_name').notNull(),
+		sessionId: text('session_id'),
+		hasRichRender: boolean('has_rich_render'),
+		durationMs: integer('duration_ms'),
+		objectType: text('object_type'),
+		mutationKind: text('mutation_kind'),
+		data: jsonb('data'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('mcp_telemetry_ws_created_at_idx').on(t.workspaceId, t.createdAt),
+		index('mcp_telemetry_ws_event_type_idx').on(t.workspaceId, t.eventType, t.createdAt),
+	],
+)
+
 // ── Notifications ─────────────────────────────────────────────────────────
 
 export const notifications = pgTable(
