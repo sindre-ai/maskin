@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
@@ -243,6 +244,59 @@ function buildEnableModuleSettings(
 	}
 
 	return updatedSettings
+}
+
+/**
+ * Merge default settings from all enabled modules into the given settings.
+ * Existing keys win — module defaults only fill in types not already specified.
+ * Used when applying a template so that module-provided types (e.g. CRM contact/company)
+ * pick up their statuses/display_names/field_definitions without inline duplication.
+ */
+export function mergeEnabledModuleDefaults(
+	settings: Record<string, unknown>,
+): Record<string, unknown> {
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? (settings.enabled_modules as string[])
+		: ['work']
+
+	const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
+	const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
+	const fieldDefs = { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) }
+	const relTypes = new Set<string>(
+		Array.isArray(settings.relationship_types) ? (settings.relationship_types as string[]) : [],
+	)
+
+	for (const moduleId of enabledModules) {
+		const defaults = getModuleDefaultSettings(moduleId)
+		if (!defaults) continue
+
+		if (defaults.display_names) {
+			for (const [type, name] of Object.entries(defaults.display_names)) {
+				if (!(type in displayNames)) displayNames[type] = name
+			}
+		}
+		if (defaults.statuses) {
+			for (const [type, sts] of Object.entries(defaults.statuses)) {
+				if (!(type in statuses)) statuses[type] = sts
+			}
+		}
+		if (defaults.field_definitions) {
+			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
+				if (!(type in fieldDefs)) fieldDefs[type] = fields
+			}
+		}
+		if (defaults.relationship_types) {
+			for (const rt of defaults.relationship_types) relTypes.add(rt)
+		}
+	}
+
+	return {
+		...settings,
+		display_names: displayNames,
+		statuses: statuses,
+		field_definitions: fieldDefs,
+		relationship_types: [...relTypes],
+	}
 }
 
 /** Compute the set of relationship types still referenced by remaining extensions. */
@@ -961,10 +1015,12 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_actors.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
-		async () => {
-			const result = await apiCall(config, 'GET', '/api/actors', undefined, {
-				skipWorkspace: true,
-			})
+		async (args) => {
+			const result = args.workspace_id
+				? await apiCall(config, 'GET', '/api/actors', undefined, {
+						workspaceId: args.workspace_id,
+					})
+				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
 			return {
 				_meta: meta('list_actors', config),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -2929,15 +2985,18 @@ export function createMcpServer(config: McpConfig) {
 
 			// dev or growth template
 			const template: WorkspaceTemplate = WORKSPACE_TEMPLATES[chosen]
+			const mergedSettings = mergeEnabledModuleDefaults(
+				template.settings as Record<string, unknown>,
+			)
 
 			if (!args.confirm) {
 				const previewLines: string[] = []
-				const statuses = (template.settings.statuses ?? {}) as Record<string, string[]>
-				const fields = (template.settings.field_definitions ?? {}) as Record<
+				const statuses = (mergedSettings.statuses ?? {}) as Record<string, string[]>
+				const fields = (mergedSettings.field_definitions ?? {}) as Record<
 					string,
 					Array<{ name: string; type: string; values?: string[] }>
 				>
-				const displayNames = (template.settings.display_names ?? {}) as Record<string, string>
+				const displayNames = (mergedSettings.display_names ?? {}) as Record<string, string>
 				for (const [type, typeStatuses] of Object.entries(statuses)) {
 					const name = displayNames[type] ?? type
 					const line = `  • ${name} (${type}): ${typeStatuses.join(' → ')}`
@@ -3005,7 +3064,7 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 					config,
 					'PATCH',
 					`/api/workspaces/${workspace.id}`,
-					{ settings: template.settings },
+					{ settings: mergedSettings },
 					{ workspaceId: workspace.id },
 				)
 			} catch (err) {
@@ -3063,6 +3122,22 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 							{ workspaceId: workspace.id },
 						)) as { id: string }
 						actorIdMap[agent.$id] = created.id
+						// Add the agent to the workspace so it shows up in the UI's
+						// agents page (which inner-joins workspace_members) and can be
+						// invoked as a workspace member by triggers and humans.
+						// Non-fatal: if this fails, the agent still exists and triggers
+						// (which FK to actors only) can still fire it.
+						try {
+							await apiCall(
+								config,
+								'POST',
+								`/api/workspaces/${workspace.id}/members`,
+								{ actor_id: created.id, role: 'member' },
+								{ workspaceId: workspace.id },
+							)
+						} catch (err) {
+							seedSummary += ` Failed to add agent "${agent.name}" to workspace members: ${String(err)}.`
+						}
 						// Second pass: substitute {{self_id}} in the system prompt.
 						if (agent.systemPrompt.includes('{{self_id}}')) {
 							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)

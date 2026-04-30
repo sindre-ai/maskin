@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { SINDRE_DEFAULT } from '@maskin/shared'
+import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
 import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -44,18 +44,90 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.type).toBe('agent')
 		})
+
+		it('defaults the Maskin MCP into tools when creating an agent without tools', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'agent' })),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { tools?: { mcpServers: Record<string, unknown> } }
+			expect(inserted.tools?.mcpServers.maskin).toEqual(PLATFORM_MCP_PRESET)
+		})
+
+		it('preserves a caller-provided maskin MCP entry over the default', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+			const custom = { type: 'http' as const, url: 'https://custom/mcp', headers: {} }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/actors',
+					buildCreateActorBody({
+						type: 'agent',
+						tools: { mcpServers: { maskin: custom } },
+					}),
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as {
+				tools?: { mcpServers: { maskin: { url: string } } }
+			}
+			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
+		})
+
+		it('does not default tools when creating a human actor', async () => {
+			const actor = buildActor({ type: 'human' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'human' })),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { tools?: unknown }
+			expect(inserted.tools).toBeUndefined()
+		})
 	})
 
 	describe('GET /api/actors', () => {
-		it('returns 200 with list of actors scoped to shared workspaces', async () => {
-			const a1 = { id: buildActor().id, type: 'human', name: 'Alice', email: 'a@test.com' }
-			const a2 = { id: buildActor().id, type: 'agent', name: 'Bot', email: null }
+		it('returns 200 with list of actors annotated with workspace memberships', async () => {
+			const a1 = buildActor({ type: 'human', name: 'Alice', email: 'a@test.com' })
+			const a2 = buildActor({ type: 'agent', name: 'Bot', email: null })
+			const wsId = '00000000-0000-0000-0000-000000000001'
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			// First select: get workspaces the actor belongs to
-			// Second select: get actors in those workspaces
+			// Second select: get (actor, workspace, role) rows
 			mockResults.selectQueue = [
-				[{ workspaceId: '00000000-0000-0000-0000-000000000001' }],
-				[a1, a2],
+				[{ workspaceId: wsId }],
+				[
+					{
+						id: a1.id,
+						type: a1.type,
+						name: a1.name,
+						email: a1.email,
+						workspaceId: wsId,
+						workspaceName: 'Acme',
+						role: 'owner',
+					},
+					{
+						id: a2.id,
+						type: a2.type,
+						name: a2.name,
+						email: a2.email,
+						workspaceId: wsId,
+						workspaceName: 'Acme',
+						role: 'member',
+					},
+				],
 			]
 
 			const res = await app.request(jsonGet('/api/actors'))
@@ -63,6 +135,48 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+			expect(body[0].workspaces).toEqual([{ id: wsId, name: 'Acme', role: 'owner' }])
+			expect(body[1].workspaces).toEqual([{ id: wsId, name: 'Acme', role: 'member' }])
+		})
+
+		it('groups workspace memberships per actor when an actor belongs to multiple workspaces', async () => {
+			const actor = buildActor({ type: 'agent', name: 'Bot', email: null })
+			const ws1 = '00000000-0000-0000-0000-000000000001'
+			const ws2 = '00000000-0000-0000-0000-000000000002'
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[{ workspaceId: ws1 }, { workspaceId: ws2 }],
+				[
+					{
+						id: actor.id,
+						type: actor.type,
+						name: actor.name,
+						email: actor.email,
+						workspaceId: ws1,
+						workspaceName: 'Acme',
+						role: 'member',
+					},
+					{
+						id: actor.id,
+						type: actor.type,
+						name: actor.name,
+						email: actor.email,
+						workspaceId: ws2,
+						workspaceName: 'Beta',
+						role: 'owner',
+					},
+				],
+			]
+
+			const res = await app.request(jsonGet('/api/actors'))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].workspaces).toEqual([
+				{ id: ws1, name: 'Acme', role: 'member' },
+				{ id: ws2, name: 'Beta', role: 'owner' },
+			])
 		})
 
 		it('returns empty list when actor has no workspaces', async () => {

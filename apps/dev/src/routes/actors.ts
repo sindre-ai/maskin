@@ -16,12 +16,13 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	PLATFORM_MCP_PRESET,
 	SINDRE_DEFAULT,
 	createActorSchema,
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { eq, inArray, or } from 'drizzle-orm'
+import { asc, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -109,6 +110,17 @@ app.openapi(createActorRoute, async (c) => {
 	// Hash password if provided
 	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
+	// Agents get the Maskin MCP by default — caller-provided servers win on conflict.
+	const tools =
+		body.type === 'agent'
+			? {
+					mcpServers: {
+						maskin: PLATFORM_MCP_PRESET,
+						...(body.tools?.mcpServers ?? {}),
+					},
+				}
+			: body.tools
+
 	const [actor] = await db
 		.insert(actors)
 		.values({
@@ -119,7 +131,7 @@ app.openapi(createActorRoute, async (c) => {
 			apiKey: key,
 			passwordHash,
 			systemPrompt: body.system_prompt,
-			tools: body.tools,
+			tools,
 			llmProvider: body.llm_provider,
 			llmConfig: body.llm_config,
 		})
@@ -251,18 +263,49 @@ app.openapi(listActorsRoute, async (c) => {
 		return c.json([] as z.infer<typeof actorListItemSchema>[])
 	}
 
-	const members = await db
-		.selectDistinct({
+	const rows = await db
+		.select({
 			id: actors.id,
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			workspaceId: workspaces.id,
+			workspaceName: workspaces.name,
+			role: workspaceMembers.role,
 		})
 		.from(workspaceMembers)
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
 		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
+		.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
 
-	return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+	const byActor = new Map<
+		string,
+		{
+			id: string
+			type: string
+			name: string
+			email: string | null
+			workspaces: { id: string; name: string; role: string }[]
+		}
+	>()
+	for (const r of rows) {
+		const membership = { id: r.workspaceId, name: r.workspaceName, role: r.role }
+		const existing = byActor.get(r.id)
+		if (existing) {
+			existing.workspaces.push(membership)
+		} else {
+			byActor.set(r.id, {
+				id: r.id,
+				type: r.type,
+				name: r.name,
+				email: r.email,
+				workspaces: [membership],
+			})
+		}
+	}
+
+	return c.json(serializeArray([...byActor.values()]) as z.infer<typeof actorListItemSchema>[])
 })
 
 // GET /:id - Get actor by ID

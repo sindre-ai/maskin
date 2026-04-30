@@ -702,11 +702,25 @@ describe('list_extensions schema', () => {
 	})
 })
 
-describe('empty input schema tools', () => {
-	it('list_actors accepts empty object', () => {
-		expect(tools.list_actors.inputSchema.parse({})).toEqual({})
+describe('list_actors schema', () => {
+	const schema = tools.list_actors.inputSchema
+
+	it('accepts empty object', () => {
+		const result = schema.parse({})
+		expect(result.workspace_id).toBeUndefined()
 	})
 
+	it('accepts optional workspace_id', () => {
+		const result = schema.parse({ workspace_id: uuid })
+		expect(result.workspace_id).toBe(uuid)
+	})
+
+	it('rejects invalid workspace_id', () => {
+		expect(() => schema.parse({ workspace_id: 'not-a-uuid' })).toThrow()
+	})
+})
+
+describe('empty input schema tools', () => {
 	it('list_workspaces accepts empty object', () => {
 		expect(tools.list_workspaces.inputSchema.parse({})).toEqual({})
 	})

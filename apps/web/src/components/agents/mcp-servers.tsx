@@ -58,6 +58,11 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		args: ['-y', '@modelcontextprotocol/server-slack'],
 		env: { SLACK_BOT_TOKEN: '${SLACK_TOKEN}' },
 	},
+	gmail: {
+		type: 'http',
+		url: 'https://gmailmcp.googleapis.com/mcp/v1',
+		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
+	},
 }
 
 const PLATFORM_MCP_PRESET: McpServer = {
