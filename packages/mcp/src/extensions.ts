@@ -4,9 +4,11 @@ import notetakerExtension from '@maskin/ext-notetaker/server'
 import workExtension from '@maskin/ext-work/server'
 import { registerModule } from '@maskin/module-sdk'
 
-// Register all extensions — this is the single source of truth for which
-// extensions are available in the platform. Each extension's object types,
-// routes, and MCP tools become accessible through the module registry.
+// Mirrors apps/dev/src/extensions.ts so the standalone MCP process
+// (`pnpm --filter @maskin/mcp start`) can resolve module defaults via
+// getModuleDefaultSettings. Without this, get_started's template-apply
+// merge no-ops and module-provided types (e.g. CRM contact/company)
+// arrive at the workspace without statuses/display_names/field_definitions.
 registerModule(workExtension)
 registerModule(knowledgeExtension)
 registerModule(notetakerExtension)
