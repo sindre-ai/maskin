@@ -41,6 +41,7 @@
 			"outputs": ["dist-mcp/**"]
 		},
 		"dev": {
+			"dependsOn": ["^build"],
 			"cache": false,
 			"persistent": true
 		},
