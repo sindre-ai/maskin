@@ -601,10 +601,12 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_actors.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
-		async () => {
-			const result = await apiCall(config, 'GET', '/api/actors', undefined, {
-				skipWorkspace: true,
-			})
+		async (args) => {
+			const result = args.workspace_id
+				? await apiCall(config, 'GET', '/api/actors', undefined, {
+						workspaceId: args.workspace_id,
+					})
+				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
 			return {
 				_meta: { toolName: 'list_actors' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -2390,6 +2392,22 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 							{ workspaceId: workspace.id },
 						)) as { id: string }
 						actorIdMap[agent.$id] = created.id
+						// Add the agent to the workspace so it shows up in the UI's
+						// agents page (which inner-joins workspace_members) and can be
+						// invoked as a workspace member by triggers and humans.
+						// Non-fatal: if this fails, the agent still exists and triggers
+						// (which FK to actors only) can still fire it.
+						try {
+							await apiCall(
+								config,
+								'POST',
+								`/api/workspaces/${workspace.id}/members`,
+								{ actor_id: created.id, role: 'member' },
+								{ workspaceId: workspace.id },
+							)
+						} catch (err) {
+							seedSummary += ` Failed to add agent "${agent.name}" to workspace members: ${String(err)}.`
+						}
 						// Second pass: substitute {{self_id}} in the system prompt.
 						if (agent.systemPrompt.includes('{{self_id}}')) {
 							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)

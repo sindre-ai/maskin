@@ -67,6 +67,10 @@ export const actorListItemSchema = z.object({
 	type: z.string(),
 	name: z.string(),
 	email: z.string().nullable(),
+	role: z.string().optional(),
+	workspaces: z
+		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
+		.optional(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({
