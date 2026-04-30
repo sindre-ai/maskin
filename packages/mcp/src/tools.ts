@@ -163,6 +163,12 @@ export const tools = {
 						title: z.string().optional(),
 						content: z.string().optional(),
 						status: z.string().optional(),
+						owner: z
+							.string()
+							.uuid()
+							.nullable()
+							.optional()
+							.describe('Actor ID to assign as owner. Pass null to clear the owner.'),
 						metadata: z
 							.record(z.unknown())
 							.optional()
