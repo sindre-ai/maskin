@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream'
 import {
 	CreateBucketCommand,
 	DeleteObjectCommand,
@@ -8,6 +9,7 @@ import {
 	PutObjectCommand,
 	S3Client,
 } from '@aws-sdk/client-s3'
+import { Upload } from '@aws-sdk/lib-storage'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { S3StorageProvider } from '../s3'
 
@@ -20,6 +22,12 @@ vi.mock('@aws-sdk/client-s3', async () => {
 		})),
 	}
 })
+
+vi.mock('@aws-sdk/lib-storage', () => ({
+	Upload: vi.fn().mockImplementation(() => ({
+		done: vi.fn().mockResolvedValue({}),
+	})),
+}))
 
 function getProvider() {
 	const provider = new S3StorageProvider({
@@ -124,6 +132,20 @@ describe('S3StorageProvider', () => {
 			await provider.put('my-key', data)
 
 			expect(getCommand(0).input.Body).toBe(data)
+		})
+
+		it('uses lib-storage Upload for Readable streams', async () => {
+			const { provider, send } = getProvider()
+			const stream = Readable.from([Buffer.from('chunk-a'), Buffer.from('chunk-b')])
+
+			await provider.put('stream-key', stream)
+
+			expect(Upload).toHaveBeenCalledWith(
+				expect.objectContaining({
+					params: { Bucket: 'test-bucket', Key: 'stream-key', Body: stream },
+				}),
+			)
+			expect(send).not.toHaveBeenCalled()
 		})
 	})
 
