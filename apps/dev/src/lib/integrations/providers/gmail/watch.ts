@@ -8,6 +8,7 @@ import { getProvider } from '../../registry'
 import type {
 	NormalizedEvent,
 	PostInstallContext,
+	PreDisconnectContext,
 	StoredCredentials,
 	WebhookFanOutContext,
 } from '../../types'
@@ -78,10 +79,26 @@ async function callWatch(accessToken: string, topicName: string): Promise<WatchR
 	return (await res.json()) as WatchResponse
 }
 
+async function callStop(accessToken: string): Promise<void> {
+	const res = await fetch(`${GMAIL_API_BASE}/stop`, {
+		method: 'POST',
+		headers: { Authorization: `Bearer ${accessToken}` },
+	})
+	// 204 = stopped; 404 = no active watch (already stopped or expired) — both acceptable.
+	if (!res.ok && res.status !== 404) {
+		const text = await res.text()
+		throw new Error(`Gmail users.stop failed: HTTP ${res.status} ${text}`)
+	}
+}
+
 /**
- * Initial setup AND renewal share this path: fetch a valid token, call users.watch,
- * persist historyId + watchExpiresAt to integrations.config (preserving existing keys
- * such as system_actor_id).
+ * Initial setup: call users.watch and persist historyId + watchExpiresAt.
+ * The returned historyId becomes the starting cursor for fan-out.
+ *
+ * NOTE: do not reuse this for renewal — users.watch returns the *current*
+ * mailbox historyId, which would skip any unprocessed history if the existing
+ * cursor is older. Renewal goes through `renewGmailWatch`, which only refreshes
+ * the expiration timestamp.
  */
 export async function setupGmailWatch(ctx: PostInstallContext): Promise<void> {
 	const db = ctx.db as Database
@@ -122,8 +139,16 @@ export async function setupGmailWatch(ctx: PostInstallContext): Promise<void> {
 }
 
 /**
- * Re-register an existing watch using a freshly-resolved access token.
+ * Re-register an existing watch with a freshly-resolved access token.
  * Used by gmail-watch-renewer.ts on its 12h cadence.
+ *
+ * Preserves the existing `historyId` cursor — only `watchExpiresAt` and
+ * `topicName` are updated. Calling users.watch returns the *current* mailbox
+ * historyId, which would skip unprocessed pushes if we wrote it back as the
+ * cursor. Fan-out advances the cursor on its own.
+ *
+ * If no prior gmail config exists (e.g. postInstall failed and we're recovering),
+ * fall back to initial setup so the cursor gets seeded.
  */
 export async function renewGmailWatch(db: Database, integrationId: string): Promise<void> {
 	const [integration] = await db
@@ -137,12 +162,71 @@ export async function renewGmailWatch(db: Database, integrationId: string): Prom
 	const tokenManager = new TokenManager()
 	const accessToken = await tokenManager.getValidToken(db, integrationId, provider)
 
-	await setupGmailWatch({
-		db,
+	const existing = (integration.config as GmailIntegrationConfig | undefined) ?? {}
+	if (!existing.gmail?.historyId) {
+		// No cursor yet — treat as initial setup so the cursor gets seeded.
+		await setupGmailWatch({
+			db,
+			integrationId,
+			workspaceId: integration.workspaceId,
+			credentials: { accessToken } as StoredCredentials,
+		})
+		return
+	}
+
+	const topicName = getTopicName()
+	const watch = await callWatch(accessToken, topicName)
+
+	const merged: GmailIntegrationConfig = {
+		...existing,
+		gmail: {
+			...existing.gmail,
+			watchExpiresAt: Number(watch.expiration),
+			topicName,
+		},
+	}
+
+	await db
+		.update(integrations)
+		.set({ config: merged, updatedAt: new Date() })
+		.where(eq(integrations.id, integrationId))
+
+	logger.info('Gmail watch renewed', {
 		integrationId,
-		workspaceId: integration.workspaceId,
-		credentials: { accessToken } as StoredCredentials,
+		preservedHistoryId: existing.gmail.historyId,
+		expiresAt: watch.expiration,
 	})
+}
+
+/**
+ * Stop the Gmail push watch. Wired via the `preDisconnect` provider hook so
+ * Google stops sending pushes immediately rather than letting the watch run
+ * for up to 7 days.
+ *
+ * Best-effort: all errors are caught and logged — the disconnect flow must
+ * always succeed even if Google or the token refresh is unreachable.
+ */
+export async function stopGmailWatch(ctx: PreDisconnectContext): Promise<void> {
+	const db = ctx.db as Database
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(eq(integrations.id, ctx.integrationId))
+		.limit(1)
+	if (!integration) return
+
+	try {
+		const provider = getProvider(integration.provider)
+		const tokenManager = new TokenManager()
+		const accessToken = await tokenManager.getValidToken(db, ctx.integrationId, provider)
+		await callStop(accessToken)
+		logger.info('Gmail watch stopped', { integrationId: ctx.integrationId })
+	} catch (err) {
+		logger.warn('Gmail watch stop failed (continuing with disconnect)', {
+			integrationId: ctx.integrationId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
 }
 
 async function fetchHistoryPage(

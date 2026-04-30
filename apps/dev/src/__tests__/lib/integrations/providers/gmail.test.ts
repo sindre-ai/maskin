@@ -237,3 +237,231 @@ describe('gmailWebhookVerifier', () => {
 		expect(result).toBe(true)
 	})
 })
+
+// ── Watch lifecycle (renew + stop) ────────────────────────────────────────────
+
+const getValidTokenMock = vi.hoisted(() => vi.fn())
+vi.mock('../../../../lib/integrations/oauth/token-manager', () => ({
+	TokenManager: class {
+		getValidToken = getValidTokenMock
+	},
+}))
+
+vi.mock('../../../../lib/integrations/registry', () => ({
+	getProvider: vi.fn(() => ({ config: { name: 'gmail' } })),
+}))
+
+interface FakeIntegrationRow {
+	id: string
+	provider: string
+	workspaceId: string
+	config: { gmail?: { historyId: string; watchExpiresAt: number; topicName: string } } | null
+}
+
+function makeFakeDb(row: FakeIntegrationRow | null) {
+	const updateCalls: Array<{ values: unknown }> = []
+	const db = {
+		select: () => ({
+			from: () => ({
+				where: () => ({
+					limit: () => Promise.resolve(row ? [row] : []),
+				}),
+			}),
+		}),
+		update: () => ({
+			set: (values: unknown) => {
+				updateCalls.push({ values })
+				return {
+					where: () => Promise.resolve(),
+				}
+			},
+		}),
+	}
+	return { db, updateCalls }
+}
+
+describe('renewGmailWatch', () => {
+	const ORIGINAL_TOPIC = process.env.GMAIL_PUBSUB_TOPIC
+
+	beforeEach(() => {
+		process.env.GMAIL_PUBSUB_TOPIC = 'projects/sindre-430307/topics/gmail-push'
+		getValidTokenMock.mockReset().mockResolvedValue('ya29.access')
+	})
+
+	afterEach(() => {
+		process.env.GMAIL_PUBSUB_TOPIC = ORIGINAL_TOPIC
+		vi.restoreAllMocks()
+	})
+
+	it('preserves the existing historyId cursor when renewing', async () => {
+		const { renewGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			json: () => Promise.resolve({ historyId: '99999', expiration: '1800000000000' }),
+		} as Response)
+
+		const { db, updateCalls } = makeFakeDb({
+			id: 'int-1',
+			provider: 'gmail',
+			workspaceId: 'ws-1',
+			config: {
+				gmail: {
+					historyId: '12345',
+					watchExpiresAt: 1700000000000,
+					topicName: 'projects/sindre-430307/topics/gmail-push',
+				},
+			},
+		})
+
+		// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+		await renewGmailWatch(db as any, 'int-1')
+
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'https://gmail.googleapis.com/gmail/v1/users/me/watch',
+			expect.objectContaining({ method: 'POST' }),
+		)
+		expect(updateCalls).toHaveLength(1)
+		const merged = (updateCalls[0]?.values as { config: { gmail: { historyId: string } } }).config
+		expect(merged.gmail.historyId).toBe('12345') // preserved, NOT overwritten with 99999
+		expect(merged.gmail).toMatchObject({
+			watchExpiresAt: 1800000000000,
+			topicName: 'projects/sindre-430307/topics/gmail-push',
+		})
+	})
+
+	it('falls back to initial setup when no prior cursor exists', async () => {
+		const { renewGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			json: () => Promise.resolve({ historyId: '50000', expiration: '1800000000000' }),
+		} as Response)
+
+		const { db, updateCalls } = makeFakeDb({
+			id: 'int-2',
+			provider: 'gmail',
+			workspaceId: 'ws-1',
+			config: null,
+		})
+
+		// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+		await renewGmailWatch(db as any, 'int-2')
+
+		// Initial setup writes the watch's returned historyId as the cursor.
+		const merged = (updateCalls[0]?.values as { config: { gmail: { historyId: string } } }).config
+		expect(merged.gmail.historyId).toBe('50000')
+	})
+})
+
+describe('stopGmailWatch', () => {
+	beforeEach(() => {
+		getValidTokenMock.mockReset().mockResolvedValue('ya29.access')
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('calls users.stop with a valid bearer token', async () => {
+		const { stopGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 204,
+			text: () => Promise.resolve(''),
+		} as Response)
+
+		const { db } = makeFakeDb({
+			id: 'int-3',
+			provider: 'gmail',
+			workspaceId: 'ws-1',
+			config: { gmail: { historyId: '1', watchExpiresAt: 0, topicName: 't' } },
+		})
+
+		await stopGmailWatch({
+			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+			db: db as any,
+			integrationId: 'int-3',
+			workspaceId: 'ws-1',
+		})
+
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'https://gmail.googleapis.com/gmail/v1/users/me/stop',
+			expect.objectContaining({
+				method: 'POST',
+				headers: { Authorization: 'Bearer ya29.access' },
+			}),
+		)
+	})
+
+	it('treats 404 (no active watch) as success and does not throw', async () => {
+		const { stopGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: false,
+			status: 404,
+			text: () => Promise.resolve('Not Found'),
+		} as Response)
+
+		const { db } = makeFakeDb({
+			id: 'int-4',
+			provider: 'gmail',
+			workspaceId: 'ws-1',
+			config: null,
+		})
+
+		await expect(
+			stopGmailWatch({
+				// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+				db: db as any,
+				integrationId: 'int-4',
+				workspaceId: 'ws-1',
+			}),
+		).resolves.toBeUndefined()
+	})
+
+	it('swallows non-404 errors so disconnect can proceed', async () => {
+		const { stopGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: false,
+			status: 500,
+			text: () => Promise.resolve('boom'),
+		} as Response)
+
+		const { db } = makeFakeDb({
+			id: 'int-5',
+			provider: 'gmail',
+			workspaceId: 'ws-1',
+			config: null,
+		})
+
+		await expect(
+			stopGmailWatch({
+				// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+				db: db as any,
+				integrationId: 'int-5',
+				workspaceId: 'ws-1',
+			}),
+		).resolves.toBeUndefined()
+	})
+
+	it('is a no-op when the integration row is missing', async () => {
+		const { stopGmailWatch } = await import('../../../../lib/integrations/providers/gmail/watch')
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+		const { db } = makeFakeDb(null)
+
+		await stopGmailWatch({
+			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need full Database type
+			db: db as any,
+			integrationId: 'missing',
+			workspaceId: 'ws-1',
+		})
+
+		expect(fetchSpy).not.toHaveBeenCalled()
+	})
+})

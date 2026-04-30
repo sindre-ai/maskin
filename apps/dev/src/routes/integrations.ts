@@ -482,6 +482,26 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
+	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
+	// credentials are still readable so the provider can call its remote API
+	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
+	// are responsible for swallowing errors so disconnect always proceeds.
+	try {
+		const resolved = getProvider(existing.provider)
+		if (resolved.preDisconnect) {
+			await resolved.preDisconnect({
+				db,
+				integrationId: existing.id,
+				workspaceId: existing.workspaceId,
+			})
+		}
+	} catch (err) {
+		logger.warn(`preDisconnect failed for provider ${existing.provider}`, {
+			integrationId: existing.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+
 	await db
 		.update(integrations)
 		.set({ status: 'revoked', updatedAt: new Date() })

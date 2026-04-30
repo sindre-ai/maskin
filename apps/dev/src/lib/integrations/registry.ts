@@ -6,7 +6,7 @@ import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
 import { config as gmailConfig } from './providers/gmail/config'
 import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/resolve-id'
-import { fanOutGmailHistory, setupGmailWatch } from './providers/gmail/watch'
+import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
 import {
 	config as linearConfig,
@@ -52,6 +52,7 @@ providers.set('gmail', {
 	resolveExternalId: gmailResolveExternalId,
 	postInstall: setupGmailWatch,
 	webhookFanOut: fanOutGmailHistory,
+	preDisconnect: stopGmailWatch,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

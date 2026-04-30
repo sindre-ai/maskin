@@ -172,6 +172,14 @@ export interface ResolvedProvider {
 	 * inserts the single normalized event as-is.
 	 */
 	webhookFanOut?: (ctx: WebhookFanOutContext) => Promise<NormalizedEvent[]>
+	/**
+	 * Run provider-specific cleanup before the integration is marked as revoked
+	 * (e.g. Gmail's users.stop call so Google stops sending pushes immediately
+	 * instead of waiting up to 7 days for the watch to expire). Implementations
+	 * should be best-effort: errors must be caught internally so disconnect can
+	 * always succeed.
+	 */
+	preDisconnect?: (ctx: PreDisconnectContext) => Promise<void>
 }
 
 export interface PostInstallContext {
@@ -187,4 +195,10 @@ export interface WebhookFanOutContext {
 	integrationId: string
 	workspaceId: string
 	normalized: NormalizedEvent
+}
+
+export interface PreDisconnectContext {
+	db: unknown
+	integrationId: string
+	workspaceId: string
 }
