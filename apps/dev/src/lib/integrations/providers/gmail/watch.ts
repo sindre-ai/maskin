@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
 import { TokenManager } from '../../oauth/token-manager'
@@ -200,6 +200,11 @@ async function fetchAllHistory(
  * Expand one Pub/Sub push (a `gmail.history.updated` placeholder event) into
  * concrete per-message events. Persists the new historyId on success so the next
  * push picks up where this one left off.
+ *
+ * Concurrency: two pushes for the same mailbox can arrive in parallel and both
+ * read the same starting cursor. We guard against double-emit with a
+ * compare-and-swap on `config->'gmail'->>'historyId'` — only the first writer
+ * wins, the loser drops its events.
  */
 export async function fanOutGmailHistory(ctx: WebhookFanOutContext): Promise<NormalizedEvent[]> {
 	const db = ctx.db as Database
@@ -219,7 +224,9 @@ export async function fanOutGmailHistory(ctx: WebhookFanOutContext): Promise<Nor
 	const incomingHistoryId = String(ctx.normalized.data.historyId ?? '')
 	if (!startHistoryId) {
 		// First push after install: nothing to fan out yet, just record the cursor.
-		await persistHistoryCursor(db, ctx.integrationId, config, incomingHistoryId)
+		// Best-effort CAS from "no cursor" → incomingHistoryId; loser is a concurrent
+		// push that already advanced the cursor.
+		await casHistoryCursor(db, ctx.integrationId, config, undefined, incomingHistoryId)
 		return []
 	}
 
@@ -229,15 +236,18 @@ export async function fanOutGmailHistory(ctx: WebhookFanOutContext): Promise<Nor
 
 	if (result === null) {
 		// 404 — startHistoryId too old. Reset cursor to incoming push so the next
-		// push picks up from current state rather than re-failing forever.
-		await persistHistoryCursor(db, ctx.integrationId, config, incomingHistoryId)
+		// push picks up from current state rather than re-failing forever. Use CAS
+		// so we don't clobber a concurrent fan-out that already advanced past us.
+		await casHistoryCursor(db, ctx.integrationId, config, startHistoryId, incomingHistoryId)
 		return []
 	}
 
 	for (const record of result.records) {
 		for (const m of record.messagesAdded ?? []) {
 			events.push(
-				makeMessageEvent('received', emailAddress, m.message, { historyEntryId: record.id }),
+				makeMessageEvent(messageAddedAction(m.message), emailAddress, m.message, {
+					historyEntryId: record.id,
+				}),
 			)
 		}
 		for (const m of record.messagesDeleted ?? []) {
@@ -264,9 +274,23 @@ export async function fanOutGmailHistory(ctx: WebhookFanOutContext): Promise<Nor
 	}
 
 	const newCursor = result.latestHistoryId ?? incomingHistoryId
-	await persistHistoryCursor(db, ctx.integrationId, config, newCursor)
+	const advanced = await casHistoryCursor(db, ctx.integrationId, config, startHistoryId, newCursor)
+	if (!advanced) {
+		// Another concurrent fan-out already advanced the cursor past startHistoryId.
+		// Drop our events — the winner emitted (or will emit) the same delta.
+		logger.info('Gmail fan-out lost cursor race; dropping events', {
+			integrationId: ctx.integrationId,
+			startHistoryId,
+		})
+		return []
+	}
 
 	return events
+}
+
+/** Gmail's messagesAdded covers both inbound and outbound mail; SENT label disambiguates. */
+function messageAddedAction(message: HistoryMessage): string {
+	return message.labelIds?.includes('SENT') ? 'sent' : 'received'
 }
 
 function makeMessageEvent(
@@ -289,20 +313,37 @@ function makeMessageEvent(
 	}
 }
 
-async function persistHistoryCursor(
+/**
+ * Atomic compare-and-swap on the stored historyId. Returns true if this writer
+ * advanced the cursor; false if the row's cursor no longer matches `expected`
+ * (concurrent fan-out won the race) or the row vanished.
+ *
+ * `expected === undefined` matches the "no cursor yet" state: we only want to
+ * succeed when nobody has populated `gmail.historyId` yet.
+ */
+async function casHistoryCursor(
 	db: Database,
 	integrationId: string,
 	existing: GmailIntegrationConfig,
+	expected: string | undefined,
 	historyId: string,
-): Promise<void> {
+): Promise<boolean> {
 	const merged: GmailIntegrationConfig = {
 		...existing,
 		gmail: existing.gmail
 			? { ...existing.gmail, historyId }
 			: { historyId, watchExpiresAt: 0, topicName: process.env.GMAIL_PUBSUB_TOPIC ?? '' },
 	}
-	await db
+	const cursorMatches =
+		expected === undefined
+			? sql`(${integrations.config}->'gmail'->>'historyId') IS NULL`
+			: sql`(${integrations.config}->'gmail'->>'historyId') = ${expected}`
+
+	const updated = await db
 		.update(integrations)
 		.set({ config: merged, updatedAt: new Date() })
-		.where(eq(integrations.id, integrationId))
+		.where(and(eq(integrations.id, integrationId), cursorMatches))
+		.returning({ id: integrations.id })
+
+	return updated.length > 0
 }

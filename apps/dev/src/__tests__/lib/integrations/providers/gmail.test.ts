@@ -175,6 +175,11 @@ describe('gmailWebhookVerifier', () => {
 		expect(await gmailWebhookVerifier('{}', { authorization: 'Bearer fake.jwt.token' })).toBe(false)
 	})
 
+	it('rejects requests when GMAIL_PUBSUB_SERVICE_ACCOUNT is not configured', async () => {
+		process.env.GMAIL_PUBSUB_SERVICE_ACCOUNT = ''
+		expect(await gmailWebhookVerifier('{}', { authorization: 'Bearer fake.jwt.token' })).toBe(false)
+	})
+
 	it('rejects requests with an invalid JWT', async () => {
 		// google-auth-library will fail to verify a fake token
 		const result = await gmailWebhookVerifier('{}', {
@@ -184,7 +189,6 @@ describe('gmailWebhookVerifier', () => {
 	})
 
 	it('rejects when JWT email claim does not match configured push service account', async () => {
-		// Stub verifyIdToken to return a payload from a different service account.
 		const oauth2 = await import('google-auth-library')
 		vi.spyOn(oauth2.OAuth2Client.prototype, 'verifyIdToken').mockResolvedValueOnce({
 			getPayload: () => ({
@@ -198,6 +202,21 @@ describe('gmailWebhookVerifier', () => {
 		const result = await gmailWebhookVerifier('{}', {
 			authorization: 'Bearer signed.but.wrong.caller',
 		})
+		expect(result).toBe(false)
+	})
+
+	it('rejects when email_verified is not true', async () => {
+		const oauth2 = await import('google-auth-library')
+		vi.spyOn(oauth2.OAuth2Client.prototype, 'verifyIdToken').mockResolvedValueOnce({
+			getPayload: () => ({
+				iss: 'https://accounts.google.com',
+				aud: 'https://maskin.example/api/webhooks/gmail',
+				email: 'gmail-push@sindre-430307.iam.gserviceaccount.com',
+				email_verified: false,
+			}),
+		} as unknown as Awaited<ReturnType<typeof oauth2.OAuth2Client.prototype.verifyIdToken>>)
+
+		const result = await gmailWebhookVerifier('{}', { authorization: 'Bearer x.y.z' })
 		expect(result).toBe(false)
 	})
 
@@ -216,23 +235,5 @@ describe('gmailWebhookVerifier', () => {
 			authorization: 'Bearer signed.legit.token',
 		})
 		expect(result).toBe(true)
-	})
-
-	it('rejects when GMAIL_PUBSUB_SERVICE_ACCOUNT is not configured', async () => {
-		process.env.GMAIL_PUBSUB_SERVICE_ACCOUNT = ''
-		const oauth2 = await import('google-auth-library')
-		vi.spyOn(oauth2.OAuth2Client.prototype, 'verifyIdToken').mockResolvedValueOnce({
-			getPayload: () => ({
-				iss: 'https://accounts.google.com',
-				email: 'gmail-push@sindre-430307.iam.gserviceaccount.com',
-				email_verified: true,
-				aud: 'https://maskin.example/api/webhooks/gmail',
-			}),
-		} as unknown as Awaited<ReturnType<typeof oauth2.OAuth2Client.prototype.verifyIdToken>>)
-
-		const result = await gmailWebhookVerifier('{}', {
-			authorization: 'Bearer signed.legit.token',
-		})
-		expect(result).toBe(false)
 	})
 })
