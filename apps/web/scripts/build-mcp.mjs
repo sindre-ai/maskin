@@ -17,6 +17,13 @@ const apps = [
 	'triggers',
 	'graph',
 	'notifications',
+	'sessions',
+	'skills',
+	'llm-keys',
+	'members',
+	'extensions',
+	'schema',
+	'integrations',
 ]
 
 // Clean output dirs

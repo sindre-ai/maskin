@@ -9,6 +9,7 @@ import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
+import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
 
@@ -70,6 +71,10 @@ triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
 })
 
+const gmailWatchRenewer = new GmailWatchRenewer(db)
+gmailWatchRenewer.start()
+logger.info('Gmail watch renewer started')
+
 logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null
@@ -83,6 +88,18 @@ try {
 	}
 } catch (err) {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
+}
+
+// FRONTEND_URL is required for OAuth flows: `/api/integrations/:provider/callback`
+// redirects through `${FRONTEND_URL}/oauth-return` so the rich-app integrations
+// card can postMessage back to the chat surface (see I2 in the parity gap list).
+// Without it, OAuth callbacks fall back to `http://localhost:5173`, which works
+// in dev but breaks any deployed environment. Mirrors the convention from the
+// FRONTEND_URL plumbing (insight 611c6d04).
+if (!process.env.FRONTEND_URL) {
+	logger.warn(
+		'FRONTEND_URL is not set — OAuth integration callbacks will redirect to http://localhost:5173. Set FRONTEND_URL to your deployed web app origin in production.',
+	)
 }
 
 serve({ fetch: app.fetch, port }, () => {

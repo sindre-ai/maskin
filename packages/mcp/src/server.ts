@@ -1,20 +1,29 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
 	WORKSPACE_TEMPLATES,
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
+	buildWebAppHref,
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
+	registerAppTool as _registerAppTool,
 	registerAppResource,
-	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import {
+	MUTATION_TOOL_KINDS,
+	type TelemetrySink,
+	createDefaultSink,
+	recordMutation,
+	recordToolCall,
+} from './telemetry.js'
 import { tools } from './tools.js'
 
 interface McpConfig {
@@ -32,6 +41,13 @@ interface McpConfig {
 	 * tool response so each rendered card can produce stable object URLs.
 	 */
 	webAppBaseUrl?: string
+	/**
+	 * Telemetry sink for `tool_call` and `mutation` events emitted on every
+	 * tool response. Defaults to a fire-and-forget POST to /api/telemetry/mcp;
+	 * tests inject capturing sinks and deployments without telemetry can pass
+	 * a noop. The default never throws and never blocks tool calls.
+	 */
+	telemetrySink?: TelemetrySink
 }
 
 /**
@@ -72,6 +88,13 @@ const UI_RESOURCES = {
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
 	notifications: 'ui://maskin/notifications',
+	sessions: 'ui://maskin/sessions',
+	skills: 'ui://maskin/skills',
+	'llm-keys': 'ui://maskin/llm-keys',
+	members: 'ui://maskin/members',
+	extensions: 'ui://maskin/extensions',
+	schema: 'ui://maskin/schema',
+	integrations: 'ui://maskin/integrations',
 } as const
 
 const CSP = {
@@ -223,6 +246,59 @@ function buildEnableModuleSettings(
 	return updatedSettings
 }
 
+/**
+ * Merge default settings from all enabled modules into the given settings.
+ * Existing keys win — module defaults only fill in types not already specified.
+ * Used when applying a template so that module-provided types (e.g. CRM contact/company)
+ * pick up their statuses/display_names/field_definitions without inline duplication.
+ */
+export function mergeEnabledModuleDefaults(
+	settings: Record<string, unknown>,
+): Record<string, unknown> {
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? (settings.enabled_modules as string[])
+		: ['work']
+
+	const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
+	const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
+	const fieldDefs = { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) }
+	const relTypes = new Set<string>(
+		Array.isArray(settings.relationship_types) ? (settings.relationship_types as string[]) : [],
+	)
+
+	for (const moduleId of enabledModules) {
+		const defaults = getModuleDefaultSettings(moduleId)
+		if (!defaults) continue
+
+		if (defaults.display_names) {
+			for (const [type, name] of Object.entries(defaults.display_names)) {
+				if (!(type in displayNames)) displayNames[type] = name
+			}
+		}
+		if (defaults.statuses) {
+			for (const [type, sts] of Object.entries(defaults.statuses)) {
+				if (!(type in statuses)) statuses[type] = sts
+			}
+		}
+		if (defaults.field_definitions) {
+			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
+				if (!(type in fieldDefs)) fieldDefs[type] = fields
+			}
+		}
+		if (defaults.relationship_types) {
+			for (const rt of defaults.relationship_types) relTypes.add(rt)
+		}
+	}
+
+	return {
+		...settings,
+		display_names: displayNames,
+		statuses: statuses,
+		field_definitions: fieldDefs,
+		relationship_types: [...relTypes],
+	}
+}
+
 /** Compute the set of relationship types still referenced by remaining extensions. */
 function collectActiveRelTypes(
 	settings: Record<string, unknown>,
@@ -255,6 +331,304 @@ function collectActiveRelTypes(
 	return [...active]
 }
 
+/**
+ * Trim a string to a max length without slicing mid-codepoint, returning a
+ * preview suitable for `resources/list` descriptions. Returns the empty
+ * string when no input is provided.
+ */
+function makePreview(text: string | null | undefined, maxLen = 200): string {
+	if (!text) return ''
+	const trimmed = text.trim()
+	if (trimmed.length <= maxLen) return trimmed
+	// Slice on a UTF-16 boundary; trailing whitespace from a mid-word slice
+	// is removed so the ellipsis sits flush with the last character.
+	return `${trimmed.slice(0, maxLen).trimEnd()}…`
+}
+
+interface ObjectRow {
+	id: string
+	workspaceId: string
+	type: string
+	title: string | null
+	content: string | null
+	status: string
+	updatedAt?: string
+}
+
+interface ActorRow {
+	id: string
+	type: 'human' | 'agent'
+	name: string
+	email?: string | null
+	role?: string
+}
+
+interface TriggerRow {
+	id: string
+	workspaceId: string
+	name: string
+	type: string
+	enabled: boolean
+}
+
+/**
+ * Register MCP resources so the host (Claude Desktop / Claude.ai paperclip
+ * picker, Cursor, etc.) can list and read Maskin objects. Resource URIs are
+ * the same deep-link URLs the chat card and web app use, so the picker, the
+ * card, and the workspace all agree on object identity.
+ *
+ * Without `webAppBaseUrl` we cannot form deep links — the registration is
+ * skipped and `resources/list` returns nothing rather than emitting URIs that
+ * don't resolve in the web app.
+ */
+function registerObjectResources(server: McpServer, config: McpConfig) {
+	const baseUrl = config.webAppBaseUrl?.replace(/\/$/, '')
+	if (!baseUrl) return
+
+	// ─── Unified objects (insight / bet / task / meeting / ...) ───
+	const objectsTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/objects/{objectId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const objs = (await apiCall(config, 'GET', '/api/objects?limit=100', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as ObjectRow[]
+				return {
+					resources: objs.map((o) => ({
+						uri: buildWebAppHref(baseUrl, o.workspaceId, { kind: 'object', id: o.id }),
+						name: o.title?.trim() || `Untitled ${o.type}`,
+						description: `[${o.type} · ${o.status}] ${makePreview(o.content)}`.trim(),
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (objects) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-object',
+		objectsTemplate,
+		{
+			title: 'Maskin object',
+			description:
+				'Workspace objects (insight, bet, task, meeting, decision, document, …). Filter by type or status when listing — the picker can ask for "all bets" or "all open insights".',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const objectId = String(vars.objectId)
+			const obj = (await apiCall(config, 'GET', `/api/objects/${objectId}`, undefined, {
+				workspaceId,
+			})) as ObjectRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'object',
+				id: obj.id,
+			})
+			const payload = {
+				id: obj.id,
+				type: obj.type,
+				title: obj.title ?? null,
+				status: obj.status,
+				preview: makePreview(obj.content),
+				deepLink,
+				workspaceId: obj.workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	// ─── Actors (humans + agents) ──────────────────────────────────
+	const actorsTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/agents/{actorId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const actors = (await apiCall(config, 'GET', '/api/actors', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as ActorRow[]
+				return {
+					resources: actors.map((a) => ({
+						uri: buildWebAppHref(baseUrl, config.defaultWorkspaceId, {
+							kind: 'actor',
+							id: a.id,
+						}),
+						name: a.name || `${a.type}-${a.id.slice(0, 8)}`,
+						description: `[${a.type}]${a.email ? ` ${a.email}` : ''}`,
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (actors) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-actor',
+		actorsTemplate,
+		{
+			title: 'Maskin actor',
+			description: 'Workspace members and agents (humans + AI).',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const actorId = String(vars.actorId)
+			const actor = (await apiCall(config, 'GET', `/api/actors/${actorId}`, undefined, {
+				workspaceId,
+			})) as ActorRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'actor',
+				id: actor.id,
+			})
+			const payload = {
+				id: actor.id,
+				type: actor.type,
+				name: actor.name,
+				email: actor.email ?? null,
+				deepLink,
+				workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	// ─── Triggers ──────────────────────────────────────────────────
+	const triggersTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/triggers/{triggerId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const triggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as TriggerRow[]
+				return {
+					resources: triggers.map((t) => ({
+						uri: buildWebAppHref(baseUrl, t.workspaceId, { kind: 'trigger', id: t.id }),
+						name: t.name || `Trigger ${t.id.slice(0, 8)}`,
+						description: `[${t.type} · ${t.enabled ? 'enabled' : 'disabled'}]`,
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (triggers) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-trigger',
+		triggersTemplate,
+		{
+			title: 'Maskin trigger',
+			description: 'Cron / event-based automations that run agents.',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const triggerId = String(vars.triggerId)
+			const trigger = (await apiCall(config, 'GET', `/api/triggers/${triggerId}`, undefined, {
+				workspaceId,
+			})) as TriggerRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'trigger',
+				id: trigger.id,
+			})
+			const payload = {
+				id: trigger.id,
+				name: trigger.name,
+				type: trigger.type,
+				enabled: trigger.enabled,
+				deepLink,
+				workspaceId: trigger.workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+}
+
+/** Extracts a workspace_id from tool args without coupling the wrapper to the schemas. */
+function extractWorkspaceId(args: unknown): string | undefined {
+	if (!args || typeof args !== 'object') return undefined
+	const ws = (args as { workspace_id?: unknown }).workspace_id
+	return typeof ws === 'string' ? ws : undefined
+}
+
+/**
+ * Inspects a mutation tool response to decide whether it actually mutated
+ * something. Tools like `update_objects` aggregate per-target outcomes, so we
+ * count one mutation event per call when at least one inner item succeeded —
+ * matches how the bet's "20% of sessions include at least one mutation" metric
+ * is meant to be read (a session that *attempted* and partially succeeded
+ * counts).
+ */
+function isSuccessfulMutationResponse(response: unknown): boolean {
+	if (!response || typeof response !== 'object') return false
+	const content = (response as { content?: unknown }).content
+	if (!Array.isArray(content) || content.length === 0) return false
+	const first = content[0] as { type?: string; text?: string } | undefined
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return true
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(first.text)
+	} catch {
+		return true
+	}
+	if (Array.isArray(parsed)) {
+		return parsed.some((entry) => {
+			if (!entry || typeof entry !== 'object') return false
+			const success = (entry as { success?: unknown }).success
+			return success === true || success === undefined
+		})
+	}
+	if (parsed && typeof parsed === 'object') {
+		const errored = (parsed as { error?: unknown }).error
+		return errored === undefined || errored === null
+	}
+	return true
+}
+
+/** Best-effort object_type label for the mutation event. */
+function extractObjectType(toolName: string, args: unknown): string | undefined {
+	if (toolName === 'update_objects' || toolName === 'create_objects') return 'object'
+	if (toolName === 'delete_object') return 'object'
+	if (toolName === 'create_relationship' || toolName === 'delete_relationship')
+		return 'relationship'
+	if (toolName.startsWith('create_') || toolName.startsWith('update_')) {
+		const kind = toolName.split('_')[1]
+		if (kind) return kind
+	}
+	if (args && typeof args === 'object') {
+		const ot = (args as { object_type?: unknown; type?: unknown }).object_type
+		if (typeof ot === 'string') return ot
+	}
+	return undefined
+}
+
 function loadHtml(config: McpConfig, filename: string): string {
 	const basePath = config.htmlBasePath ?? resolve(__dirname, '../../../apps/web/dist-mcp')
 	const fullPath = resolve(basePath, filename)
@@ -274,6 +648,71 @@ export function createMcpServer(config: McpConfig) {
 		version: '0.1.0',
 	})
 
+	const telemetrySink: TelemetrySink = config.telemetrySink ?? createDefaultSink()
+	const telemetryTarget = {
+		apiBaseUrl: config.apiBaseUrl,
+		apiKey: config.apiKey,
+		workspaceId: config.defaultWorkspaceId,
+	}
+
+	// Telemetry-instrumented tool registration. Wraps the upstream
+	// `registerAppTool` so every tool response emits a `tool_call` telemetry
+	// event (rich-render % numerator/denominator) and successful mutations
+	// emit an additional `mutation` event. Failures inside the original
+	// handler are re-thrown unchanged so MCP error semantics are preserved.
+	//
+	// We deliberately type as `any` at the boundary because ext-apps' generic
+	// tool signature can't be re-introduced through a higher-order wrapper
+	// without losing the per-tool input schema inference; the wrapper is purely
+	// pass-through so giving up the wrapper's signature is safe.
+	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
+		const defHasRichRender = Boolean(definition?._meta?.ui)
+		const mutationKind = MUTATION_TOOL_KINDS[name]
+
+		const wrappedHandler = async (args: unknown, extra: unknown) => {
+			const start = Date.now()
+			let response: unknown
+			try {
+				response = await handler(args, extra)
+			} catch (err) {
+				recordToolCall(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					has_rich_render: defHasRichRender,
+					duration_ms: Date.now() - start,
+					workspace_id: extractWorkspaceId(args),
+				})
+				throw err
+			}
+
+			const responseMeta = (response as { _meta?: { ui?: unknown } } | undefined)?._meta
+			const responseHasRichRender =
+				defHasRichRender || Boolean(responseMeta && 'ui' in responseMeta)
+
+			recordToolCall(telemetrySink, telemetryTarget, {
+				tool_name: name,
+				has_rich_render: responseHasRichRender,
+				duration_ms: Date.now() - start,
+				workspace_id: extractWorkspaceId(args),
+			})
+
+			if (mutationKind && isSuccessfulMutationResponse(response)) {
+				recordMutation(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					mutation_kind: mutationKind,
+					object_type: extractObjectType(name, args),
+					workspace_id: extractWorkspaceId(args),
+				})
+			}
+
+			return response
+		}
+
+		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
+		return _registerAppTool(s, name, definition, wrappedHandler as any)
+		// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+	}) as any as typeof _registerAppTool
+
 	// ─── Register UI resources ─────────────────────────────────
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
 		registerAppResource(server, `${name}-ui`, uri, { mimeType: RESOURCE_MIME_TYPE }, async () => {
@@ -283,6 +722,9 @@ export function createMcpServer(config: McpConfig) {
 			}
 		})
 	}
+
+	// ─── Register data resources for the picker ────────────────
+	registerObjectResources(server, config)
 
 	// ─── Objects ───────────────────────────────────────────────
 	registerAppTool(
@@ -573,10 +1015,12 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_actors.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
-		async () => {
-			const result = await apiCall(config, 'GET', '/api/actors', undefined, {
-				skipWorkspace: true,
-			})
+		async (args) => {
+			const result = args.workspace_id
+				? await apiCall(config, 'GET', '/api/actors', undefined, {
+						workspaceId: args.workspace_id,
+					})
+				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
 			return {
 				_meta: meta('list_actors', config),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -773,7 +1217,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.add_workspace_member.description,
 			inputSchema: tools.add_workspace_member.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.members, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(
@@ -790,6 +1234,242 @@ export function createMcpServer(config: McpConfig) {
 					(args as { workspace_id?: string }).workspace_id,
 				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Workspace Schema Editing (W1) ───────────────────────
+	// Mirrors the web schema editor at
+	// apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx —
+	// each tool does read-modify-write on settings.field_definitions because the
+	// workspace PATCH endpoint shallow-merges `settings`. Auth flows through the
+	// same Bearer token used by every other tool, so changes are attributed to
+	// the calling end-user (per F4 calling-user auth model).
+	type FieldDef = {
+		name: string
+		type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
+		required?: boolean
+		values?: string[]
+	}
+	const FIELD_TYPES = ['text', 'number', 'date', 'enum', 'boolean'] as const
+
+	async function patchFieldDefinitions(
+		args: { workspace_id?: string; type: string },
+		transform: (current: FieldDef[]) => FieldDef[],
+	): Promise<{ wsId: string; updatedFields: FieldDef[] }> {
+		const wsId = args.workspace_id ?? config.defaultWorkspaceId
+		if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+		const workspace = await getWorkspace(config, wsId)
+		const fieldDefs = {
+			...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
+		}
+		const current = (fieldDefs[args.type] ?? []) as FieldDef[]
+		const updated = transform(current)
+		fieldDefs[args.type] = updated
+		await apiCall(
+			config,
+			'PATCH',
+			`/api/workspaces/${wsId}`,
+			{ settings: { field_definitions: fieldDefs } },
+			{ workspaceId: wsId },
+		)
+		return { wsId, updatedFields: updated }
+	}
+
+	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {
+		if (field.type !== 'enum') {
+			throw new Error(`Field "${field.name}" is type "${field.type}", not "enum"`)
+		}
+	}
+
+	registerAppTool(
+		server,
+		'create_workspace_field',
+		{
+			description: tools.create_workspace_field.description,
+			inputSchema: tools.create_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			if (args.field_type === 'enum' && (!args.values || args.values.length === 0)) {
+				throw new Error('Enum fields require at least one value in `values`.')
+			}
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				if (current.some((f) => f.name === args.name)) {
+					throw new Error(
+						`Field "${args.name}" already exists on type "${args.type}". Use update_workspace_field to modify it.`,
+					)
+				}
+				const next: FieldDef = {
+					name: args.name,
+					type: args.field_type,
+					...(args.required ? { required: true } : {}),
+					...(args.field_type === 'enum' && args.values ? { values: args.values } : {}),
+				}
+				return [...current, next]
+			})
+			const created = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('create_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: created }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_workspace_field',
+		{
+			description: tools.update_workspace_field.description,
+			inputSchema: tools.update_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			if (args.field_type && !FIELD_TYPES.includes(args.field_type)) {
+				throw new Error(`Unsupported field_type: ${args.field_type}`)
+			}
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const existing = current[idx] as FieldDef
+				const nextName = args.new_name ?? existing.name
+				if (
+					nextName !== existing.name &&
+					current.some((f, i) => i !== idx && f.name === nextName)
+				) {
+					throw new Error(
+						`Field "${nextName}" already exists on type "${args.type}". Choose a different name.`,
+					)
+				}
+				const nextType = args.field_type ?? existing.type
+				const nextRequired = args.required ?? existing.required ?? false
+				let nextValues: string[] | undefined
+				if (nextType === 'enum') {
+					nextValues = args.values ?? existing.values ?? []
+				}
+				const next: FieldDef = {
+					name: nextName,
+					type: nextType,
+					...(nextRequired ? { required: true } : {}),
+					...(nextType === 'enum' && nextValues ? { values: nextValues } : {}),
+				}
+				const copy = [...current]
+				copy[idx] = next
+				return copy
+			})
+			const renamed = args.new_name ?? args.name
+			const updated = updatedFields.find((f) => f.name === renamed)
+			return {
+				_meta: meta('update_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_workspace_field',
+		{
+			description: tools.delete_workspace_field.description,
+			inputSchema: tools.delete_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId } = await patchFieldDefinitions(args, (current) =>
+				current.filter((f) => f.name !== args.name),
+			)
+			return {
+				_meta: meta('delete_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{ workspace_id: wsId, type: args.type, deleted: args.name, success: true },
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_workspace_enum_value',
+		{
+			description: tools.add_workspace_enum_value.description,
+			inputSchema: tools.add_workspace_enum_value.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const field = current[idx] as FieldDef
+				ensureEnumField(field)
+				if (field.values.includes(args.value)) return current
+				const copy = [...current]
+				copy[idx] = { ...field, values: [...field.values, args.value] }
+				return copy
+			})
+			const updated = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('add_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'remove_workspace_enum_value',
+		{
+			description: tools.remove_workspace_enum_value.description,
+			inputSchema: tools.remove_workspace_enum_value.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const field = current[idx] as FieldDef
+				ensureEnumField(field)
+				if (!field.values.includes(args.value)) return current
+				const copy = [...current]
+				copy[idx] = { ...field, values: field.values.filter((v) => v !== args.value) }
+				return copy
+			})
+			const updated = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('remove_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
 			}
 		},
 	)
@@ -811,7 +1491,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_workspace_skills.description,
 			inputSchema: tools.list_workspace_skills.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -835,7 +1515,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_workspace_skill.description,
 			inputSchema: tools.get_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -863,7 +1543,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_workspace_skill.description,
 			inputSchema: tools.create_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -891,7 +1571,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.update_workspace_skill.description,
 			inputSchema: tools.update_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -919,7 +1599,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_workspace_skill.description,
 			inputSchema: tools.delete_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -1188,7 +1868,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_session.description,
 			inputSchema: tools.create_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
@@ -1208,7 +1888,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_sessions.description,
 			inputSchema: tools.list_sessions.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const params = new URLSearchParams()
@@ -1232,7 +1912,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_session.description,
 			inputSchema: tools.get_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
@@ -1267,7 +1947,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.stop_session.description,
 			inputSchema: tools.stop_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
@@ -1286,7 +1966,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.pause_session.description,
 			inputSchema: tools.pause_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
@@ -1305,7 +1985,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.resume_session.description,
 			inputSchema: tools.resume_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
@@ -1324,7 +2004,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.run_agent.description,
 			inputSchema: tools.run_agent.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id } = args
@@ -1389,7 +2069,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_integrations.description,
 			inputSchema: tools.list_integrations.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'GET', '/api/integrations', undefined, {
@@ -1408,7 +2088,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_integration_providers.description,
 			inputSchema: tools.list_integration_providers.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async () => {
 			const result = await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
@@ -1427,7 +2107,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.connect_integration.description,
 			inputSchema: tools.connect_integration.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = (await apiCall(
@@ -1461,7 +2141,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.disconnect_integration.description,
 			inputSchema: tools.disconnect_integration.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'DELETE', `/api/integrations/${args.id}`, undefined, {
@@ -1490,7 +2170,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.set_llm_api_key.description,
 			inputSchema: tools.set_llm_api_key.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			await apiCall(
@@ -1514,7 +2194,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_llm_api_keys.description,
 			inputSchema: tools.get_llm_api_keys.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
@@ -1540,7 +2220,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_llm_api_key.description,
 			inputSchema: tools.delete_llm_api_key.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			await apiCall(
@@ -1645,7 +2325,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_extensions.description,
 			inputSchema: tools.list_extensions.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			const modules = getAllModules()
@@ -1751,7 +2431,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_extension.description,
 			inputSchema: tools.create_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			// Check if this is a known module
@@ -1880,7 +2560,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.update_extension.description,
 			inputSchema: tools.update_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			const workspace = await getWorkspace(config, args.workspace_id)
@@ -2097,7 +2777,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_extension.description,
 			inputSchema: tools.delete_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			// Check if the extension is a registered module
@@ -2305,15 +2985,18 @@ export function createMcpServer(config: McpConfig) {
 
 			// dev or growth template
 			const template: WorkspaceTemplate = WORKSPACE_TEMPLATES[chosen]
+			const mergedSettings = mergeEnabledModuleDefaults(
+				template.settings as Record<string, unknown>,
+			)
 
 			if (!args.confirm) {
 				const previewLines: string[] = []
-				const statuses = (template.settings.statuses ?? {}) as Record<string, string[]>
-				const fields = (template.settings.field_definitions ?? {}) as Record<
+				const statuses = (mergedSettings.statuses ?? {}) as Record<string, string[]>
+				const fields = (mergedSettings.field_definitions ?? {}) as Record<
 					string,
 					Array<{ name: string; type: string; values?: string[] }>
 				>
-				const displayNames = (template.settings.display_names ?? {}) as Record<string, string>
+				const displayNames = (mergedSettings.display_names ?? {}) as Record<string, string>
 				for (const [type, typeStatuses] of Object.entries(statuses)) {
 					const name = displayNames[type] ?? type
 					const line = `  • ${name} (${type}): ${typeStatuses.join(' → ')}`
@@ -2381,7 +3064,7 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 					config,
 					'PATCH',
 					`/api/workspaces/${workspace.id}`,
-					{ settings: template.settings },
+					{ settings: mergedSettings },
 					{ workspaceId: workspace.id },
 				)
 			} catch (err) {
@@ -2439,6 +3122,22 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 							{ workspaceId: workspace.id },
 						)) as { id: string }
 						actorIdMap[agent.$id] = created.id
+						// Add the agent to the workspace so it shows up in the UI's
+						// agents page (which inner-joins workspace_members) and can be
+						// invoked as a workspace member by triggers and humans.
+						// Non-fatal: if this fails, the agent still exists and triggers
+						// (which FK to actors only) can still fire it.
+						try {
+							await apiCall(
+								config,
+								'POST',
+								`/api/workspaces/${workspace.id}/members`,
+								{ actor_id: created.id, role: 'member' },
+								{ workspaceId: workspace.id },
+							)
+						} catch (err) {
+							seedSummary += ` Failed to add agent "${agent.name}" to workspace members: ${String(err)}.`
+						}
 						// Second pass: substitute {{self_id}} in the system prompt.
 						if (agent.systemPrompt.includes('{{self_id}}')) {
 							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)

@@ -314,9 +314,13 @@ app.openapi(callbackRoute, (async (c) => {
 			workspaceId: stateData.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
 		})
-		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.redirect(
-			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=token_exchange_failed`,
+			buildOauthReturnUrl({
+				workspaceId: stateData.workspaceId,
+				provider: providerName,
+				status: 'error',
+				errorCode: 'token_exchange_failed',
+			}),
 		)
 	}
 
@@ -403,6 +407,34 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 		.where(eq(integrations.id, integrationId))
 
+	// Provider-specific post-install work (e.g. Gmail's users.watch). Runs after the
+	// row is active so postInstall can read the persisted config and append to it.
+	if (resolved.postInstall) {
+		try {
+			await resolved.postInstall({
+				db,
+				integrationId,
+				workspaceId: stateData.workspaceId,
+				credentials,
+			})
+		} catch (err) {
+			logger.error(`postInstall failed for provider ${providerName}`, {
+				integrationId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			// Mark the integration as failed so the user can retry. Don't 500 — let them
+			// see the error in the UI redirect query string.
+			await db
+				.update(integrations)
+				.set({ status: 'error', updatedAt: new Date() })
+				.where(eq(integrations.id, integrationId))
+			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+			return c.redirect(
+				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=post_install_failed`,
+			)
+		}
+	}
+
 	// Log event
 	await db.insert(events).values({
 		workspaceId: stateData.workspaceId,
@@ -413,9 +445,17 @@ app.openapi(callbackRoute, (async (c) => {
 		data: { provider: providerName, external_id: externalId },
 	})
 
-	// Redirect to frontend settings/integrations page
-	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
+	// Redirect through the public /oauth-return shim. From the settings page
+	// (full-page redirect) it bounces to /:workspaceId/settings/integrations so
+	// the existing UX is preserved; from an MCP-card popup it postMessages the
+	// opener and closes itself so chat resumes seamlessly.
+	return c.redirect(
+		buildOauthReturnUrl({
+			workspaceId: stateData.workspaceId,
+			provider: providerName,
+			status: 'success',
+		}),
+	)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
 // ── DELETE /api/integrations/:id ───────────────────────────────────────────
@@ -453,6 +493,26 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
+	// credentials are still readable so the provider can call its remote API
+	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
+	// are responsible for swallowing errors so disconnect always proceeds.
+	try {
+		const resolved = getProvider(existing.provider)
+		if (resolved.preDisconnect) {
+			await resolved.preDisconnect({
+				db,
+				integrationId: existing.id,
+				workspaceId: existing.workspaceId,
+			})
+		}
+	} catch (err) {
+		logger.warn(`preDisconnect failed for provider ${existing.provider}`, {
+			integrationId: existing.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
 
 	await db
 		.update(integrations)
@@ -501,7 +561,8 @@ webhookApp.post('/:provider', async (c) => {
 			logger.error(`Provider ${providerName} uses custom webhook but has no customWebhookVerifier`)
 			return c.json(createApiError('INTERNAL_ERROR', 'Webhook verification not configured'), 500)
 		}
-		if (!resolved.customWebhookVerifier(body, headers)) {
+		const verified = await resolved.customWebhookVerifier(body, headers)
+		if (!verified) {
 			logger.warn(`Custom webhook verification failed for ${providerName}`)
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}
@@ -558,24 +619,72 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
-	// Insert into events table — PG NOTIFY fires automatically
-	await db.insert(events).values({
-		workspaceId: integration.workspaceId,
-		actorId: systemActorId,
-		action: normalized.action,
-		entityType: normalized.entityType,
-		entityId: integration.id,
-		data: normalized.data,
-	})
+	// Some providers (Gmail) deliver pointer-style webhooks where one push expands
+	// into N concrete events. webhookFanOut returns the list to insert; if absent
+	// we insert the single normalized event as-is.
+	let toInsert = [normalized]
+	if (resolved.webhookFanOut) {
+		try {
+			toInsert = await resolved.webhookFanOut({
+				db,
+				integrationId: integration.id,
+				workspaceId: integration.workspaceId,
+				normalized,
+			})
+		} catch (err) {
+			logger.error(`webhookFanOut failed for ${providerName}`, {
+				integrationId: integration.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+	}
 
-	logger.info(
-		`Webhook processed: ${normalized.entityType}.${normalized.action} for workspace ${integration.workspaceId}`,
+	if (toInsert.length === 0) {
+		return c.json({ ok: true, skipped: true })
+	}
+
+	await db.insert(events).values(
+		toInsert.map((e) => ({
+			workspaceId: integration.workspaceId,
+			actorId: systemActorId,
+			action: e.action,
+			entityType: e.entityType,
+			entityId: integration.id,
+			data: e.data,
+		})),
 	)
 
-	return c.json({ ok: true })
+	logger.info(
+		`Webhook processed: ${toInsert.length} event(s) for ${providerName} workspace ${integration.workspaceId}`,
+	)
+
+	return c.json({ ok: true, count: toInsert.length })
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Build the user-facing redirect URL we send the browser to after the OAuth
+ * code exchange settles. Always points at the public `/oauth-return` shim —
+ * see `apps/web/src/routes/oauth-return.tsx` for the dual-path behaviour
+ * (popup postMessage vs settings full-page redirect).
+ */
+export function buildOauthReturnUrl(params: {
+	workspaceId: string
+	provider: string
+	status: 'success' | 'error'
+	errorCode?: string
+}): string {
+	const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
+	const qs = new URLSearchParams({
+		provider: params.provider,
+		workspace_id: params.workspaceId,
+		status: params.status,
+	})
+	if (params.errorCode) qs.set('error_code', params.errorCode)
+	return `${frontendUrl}/oauth-return?${qs.toString()}`
+}
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 function buildRedirectUri(
