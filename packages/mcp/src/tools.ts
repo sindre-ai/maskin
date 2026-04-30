@@ -283,7 +283,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			'List all actors (humans and agents) in the workspace, including their roles (owner, member, viewer).',
+			'List all actors (agents and humans) across all workspaces the caller belongs to.',
 		inputSchema: z.object({}),
 	},
 	get_actor: {

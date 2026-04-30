@@ -3,6 +3,7 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ContentFold } from '../shared/content-fold'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
@@ -144,7 +145,14 @@ function ActorDetailView({ actor }: { actor: ActorResponse }) {
 					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
 						System Prompt
 					</h3>
-					<p className="text-sm text-muted-foreground whitespace-pre-wrap">{actor.systemPrompt}</p>
+					<ContentFold
+						lineCount={actor.systemPrompt.split('\n').length}
+						byteCount={`${(new TextEncoder().encode(actor.systemPrompt).length / 1024).toFixed(1)}KB`}
+					>
+						<p className="text-sm text-muted-foreground whitespace-pre-wrap font-mono">
+							{actor.systemPrompt}
+						</p>
+					</ContentFold>
 				</div>
 			)}
 			{actor.llmProvider && (

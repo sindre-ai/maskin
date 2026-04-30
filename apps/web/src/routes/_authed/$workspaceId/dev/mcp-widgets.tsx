@@ -145,6 +145,7 @@ function McpWidgetsSandbox() {
 					webAppBaseUrl: window.location.origin,
 					workspaceId: 'demo',
 				},
+				toolHistory: [],
 				callTool: async () => ({ content: [] }),
 			}}
 		>

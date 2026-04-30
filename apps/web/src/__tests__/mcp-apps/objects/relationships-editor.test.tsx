@@ -54,6 +54,7 @@ function Wrapper({ children }: { children: ReactNode }) {
 			webAppBaseUrl: 'https://app.maskin.dev',
 			workspaceId: 'ws-1',
 		} as unknown as McpAppContextValue['toolResult'],
+		toolHistory: [],
 		callTool: vi.fn(),
 	}
 	return <McpAppContext.Provider value={value}>{children}</McpAppContext.Provider>

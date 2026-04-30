@@ -18,9 +18,18 @@ interface ToolResultPayload {
 	workspaceId: string | null
 }
 
+export interface HistoryEntry {
+	id: number
+	toolName: string
+	input: Record<string, unknown> | null
+	resultCount: number
+	timestamp: number
+}
+
 export interface McpAppContextValue {
 	isConnected: boolean
 	toolResult: ToolResultPayload | null
+	toolHistory: HistoryEntry[]
 	callTool: (name: string, args: Record<string, unknown>) => Promise<ToolResult>
 }
 
@@ -30,6 +39,26 @@ function pickString(meta: Record<string, unknown> | undefined, key: string): str
 	const v = meta?.[key]
 	return typeof v === 'string' && v.length > 0 ? v : null
 }
+
+function countResultItems(result: ToolResult): number {
+	if ((result as Record<string, unknown>).isError === true) return 0
+	const content = result.content
+	if (!Array.isArray(content)) return 0
+	for (const item of content) {
+		if (item.type === 'text' && typeof item.text === 'string') {
+			try {
+				const parsed: unknown = JSON.parse(item.text)
+				if (Array.isArray(parsed)) return parsed.length
+				if (parsed !== null && typeof parsed === 'object') return 1
+			} catch {
+				// not JSON — skip and continue scanning
+			}
+		}
+	}
+	return 0
+}
+
+const MAX_HISTORY = 20
 
 export function McpAppProvider({
 	name,
@@ -41,26 +70,46 @@ export function McpAppProvider({
 	children: ReactNode
 }) {
 	const [toolResult, setToolResult] = useState<ToolResultPayload | null>(null)
-	const toolInputRef = useRef<Record<string, unknown> | null>(null)
+	const [toolHistory, setToolHistory] = useState<HistoryEntry[]>([])
+	const callCounterRef = useRef(0)
+	const pendingInputsRef = useRef<Map<number, Record<string, unknown> | null>>(new Map())
+	const entryIdRef = useRef(0)
 
 	const { app, isConnected } = useApp({
 		appInfo: { name, version },
 		capabilities: {},
 		onAppCreated: (createdApp: App) => {
 			createdApp.ontoolinput = (params: { arguments?: Record<string, unknown> }) => {
-				toolInputRef.current = params.arguments ?? null
+				const id = ++callCounterRef.current
+				pendingInputsRef.current.set(id, params.arguments ?? null)
 			}
 			createdApp.ontoolresult = (result: unknown) => {
+				const inputKeys = [...pendingInputsRef.current.keys()].sort((a, b) => b - a)
+				const latestKey = inputKeys[0]
+				const input = latestKey != null ? (pendingInputsRef.current.get(latestKey) ?? null) : null
+				for (const k of inputKeys) pendingInputsRef.current.delete(k)
+
 				const r = result as Record<string, unknown>
 				const meta = r._meta as Record<string, unknown> | undefined
 				const toolName = (meta?.toolName as string) ?? 'unknown'
-				setToolResult({
+				const toolResultPayload: ToolResultPayload = {
 					toolName,
 					result: r as ToolResult,
-					input: toolInputRef.current,
+					input,
 					webAppBaseUrl: pickString(meta, 'webAppBaseUrl'),
 					workspaceId: pickString(meta, 'workspaceId'),
-				})
+				}
+				setToolResult(toolResultPayload)
+
+				const resultCount = countResultItems(r as ToolResult)
+				const entry: HistoryEntry = {
+					id: ++entryIdRef.current,
+					toolName,
+					input,
+					resultCount,
+					timestamp: Date.now(),
+				}
+				setToolHistory((prev) => [...prev, entry].slice(-MAX_HISTORY))
 			}
 		},
 	})
@@ -75,7 +124,7 @@ export function McpAppProvider({
 	)
 
 	return (
-		<McpAppContext.Provider value={{ isConnected, toolResult, callTool }}>
+		<McpAppContext.Provider value={{ isConnected, toolResult, toolHistory, callTool }}>
 			{children}
 		</McpAppContext.Provider>
 	)
@@ -95,6 +144,11 @@ export function useToolResult() {
 export function useCallTool() {
 	const { callTool } = useMcpApp()
 	return callTool
+}
+
+export function useToolHistory() {
+	const { toolHistory } = useMcpApp()
+	return toolHistory
 }
 
 /**

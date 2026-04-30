@@ -1,11 +1,12 @@
 import { ObjectDocumentView } from '@/components/objects/object-document'
-import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useCallback, useState } from 'react'
+import { CompactEmpty } from '../shared/compact-empty'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
+import { ToolHistoryBreadcrumb } from '../shared/tool-history'
 import type { ObjectResponse, RelationshipResponse } from '../shared/types'
 import { useWorkspaceSchema } from '../shared/use-workspace-schema'
 import { WebAppLink } from '../shared/web-app-link'
@@ -191,7 +192,14 @@ function ObjectsApp() {
 		case 'list_objects':
 		case 'search_objects': {
 			const unwrapped = unwrapEnvelope(data)
-			return <ObjectListView objects={isArray(unwrapped) ? (unwrapped as ObjectResponse[]) : []} />
+			const objects = isArray(unwrapped) ? (unwrapped as ObjectResponse[]) : []
+			const query = toolResult.input?.query as string | undefined
+			return (
+				<div>
+					<ToolHistoryBreadcrumb toolName={toolResult.toolName} queryKey="query" />
+					<ObjectListView objects={objects} toolName={toolResult.toolName} query={query} />
+				</div>
+			)
 		}
 		case 'get_objects': {
 			const bundles = extractGetObjectsBundles(data)
@@ -282,9 +290,13 @@ function ObjectDocument({
 	)
 }
 
-function ObjectListView({ objects }: { objects: ObjectResponse[] }) {
+function ObjectListView({
+	objects,
+	toolName,
+	query,
+}: { objects: ObjectResponse[]; toolName?: string; query?: string }) {
 	if (!objects.length) {
-		return <EmptyState title="No objects" description="No objects found matching the criteria" />
+		return <CompactEmpty toolName={toolName ?? 'list_objects'} query={query} />
 	}
 
 	return (
