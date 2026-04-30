@@ -314,9 +314,13 @@ app.openapi(callbackRoute, (async (c) => {
 			workspaceId: stateData.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
 		})
-		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.redirect(
-			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=token_exchange_failed`,
+			buildOauthReturnUrl({
+				workspaceId: stateData.workspaceId,
+				provider: providerName,
+				status: 'error',
+				errorCode: 'token_exchange_failed',
+			}),
 		)
 	}
 
@@ -441,9 +445,17 @@ app.openapi(callbackRoute, (async (c) => {
 		data: { provider: providerName, external_id: externalId },
 	})
 
-	// Redirect to frontend settings/integrations page
-	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
+	// Redirect through the public /oauth-return shim. From the settings page
+	// (full-page redirect) it bounces to /:workspaceId/settings/integrations so
+	// the existing UX is preserved; from an MCP-card popup it postMessages the
+	// opener and closes itself so chat resumes seamlessly.
+	return c.redirect(
+		buildOauthReturnUrl({
+			workspaceId: stateData.workspaceId,
+			provider: providerName,
+			status: 'success',
+		}),
+	)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
 // ── DELETE /api/integrations/:id ───────────────────────────────────────────
@@ -651,6 +663,28 @@ webhookApp.post('/:provider', async (c) => {
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Build the user-facing redirect URL we send the browser to after the OAuth
+ * code exchange settles. Always points at the public `/oauth-return` shim —
+ * see `apps/web/src/routes/oauth-return.tsx` for the dual-path behaviour
+ * (popup postMessage vs settings full-page redirect).
+ */
+export function buildOauthReturnUrl(params: {
+	workspaceId: string
+	provider: string
+	status: 'success' | 'error'
+	errorCode?: string
+}): string {
+	const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
+	const qs = new URLSearchParams({
+		provider: params.provider,
+		workspace_id: params.workspaceId,
+		status: params.status,
+	})
+	if (params.errorCode) qs.set('error_code', params.errorCode)
+	return `${frontendUrl}/oauth-return?${qs.toString()}`
+}
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 function buildRedirectUri(

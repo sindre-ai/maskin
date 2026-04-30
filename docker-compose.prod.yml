@@ -64,6 +64,12 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      # Public web-app base URL — used by the OAuth-from-chat shim
+      # (`apps/web/src/routes/oauth-return.tsx`) and the MCP `_meta.webAppBaseUrl`
+      # deep-link contract. Falls back to http://localhost:5173 in code if unset,
+      # which only works for local dev.
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
     depends_on:
       postgres:
         condition: service_healthy

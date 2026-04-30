@@ -13,6 +13,7 @@ app.post('/', async (c) => {
 			c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? '',
 		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
 		transport: 'http' as const,
+		webAppBaseUrl: process.env.FRONTEND_URL ?? 'http://localhost:5173',
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
