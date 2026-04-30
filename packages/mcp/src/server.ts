@@ -208,7 +208,9 @@ function buildEnableModuleSettings(
  * Used when applying a template so that module-provided types (e.g. CRM contact/company)
  * pick up their statuses/display_names/field_definitions without inline duplication.
  */
-function mergeEnabledModuleDefaults(settings: Record<string, unknown>): Record<string, unknown> {
+export function mergeEnabledModuleDefaults(
+	settings: Record<string, unknown>,
+): Record<string, unknown> {
 	const enabledModules = Array.isArray(settings.enabled_modules)
 		? (settings.enabled_modules as string[])
 		: ['work']
