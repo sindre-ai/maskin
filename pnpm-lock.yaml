@@ -391,6 +391,18 @@ importers:
 
   packages/mcp:
     dependencies:
+      '@maskin/ext-crm':
+        specifier: workspace:*
+        version: link:../../extensions/crm
+      '@maskin/ext-knowledge':
+        specifier: workspace:*
+        version: link:../../extensions/knowledge
+      '@maskin/ext-notetaker':
+        specifier: workspace:*
+        version: link:../../extensions/notetaker
+      '@maskin/ext-work':
+        specifier: workspace:*
+        version: link:../../extensions/work
       '@maskin/module-sdk':
         specifier: workspace:*
         version: link:../module-sdk
