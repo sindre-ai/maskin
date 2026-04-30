@@ -72,6 +72,11 @@ const UI_RESOURCES = {
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
 	notifications: 'ui://maskin/notifications',
+	sessions: 'ui://maskin/sessions',
+	skills: 'ui://maskin/skills',
+	'llm-keys': 'ui://maskin/llm-keys',
+	members: 'ui://maskin/members',
+	extensions: 'ui://maskin/extensions',
 } as const
 
 const CSP = {
@@ -773,7 +778,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.add_workspace_member.description,
 			inputSchema: tools.add_workspace_member.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.members, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(
@@ -811,7 +816,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_workspace_skills.description,
 			inputSchema: tools.list_workspace_skills.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -835,7 +840,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_workspace_skill.description,
 			inputSchema: tools.get_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -863,7 +868,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_workspace_skill.description,
 			inputSchema: tools.create_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -891,7 +896,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.update_workspace_skill.description,
 			inputSchema: tools.update_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -919,7 +924,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_workspace_skill.description,
 			inputSchema: tools.delete_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -1188,7 +1193,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_session.description,
 			inputSchema: tools.create_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
@@ -1208,7 +1213,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_sessions.description,
 			inputSchema: tools.list_sessions.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const params = new URLSearchParams()
@@ -1232,7 +1237,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_session.description,
 			inputSchema: tools.get_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
@@ -1267,7 +1272,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.stop_session.description,
 			inputSchema: tools.stop_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
@@ -1286,7 +1291,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.pause_session.description,
 			inputSchema: tools.pause_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
@@ -1305,7 +1310,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.resume_session.description,
 			inputSchema: tools.resume_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
@@ -1324,7 +1329,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.run_agent.description,
 			inputSchema: tools.run_agent.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id } = args
@@ -1490,7 +1495,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.set_llm_api_key.description,
 			inputSchema: tools.set_llm_api_key.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			await apiCall(
@@ -1514,7 +1519,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_llm_api_keys.description,
 			inputSchema: tools.get_llm_api_keys.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
@@ -1540,7 +1545,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_llm_api_key.description,
 			inputSchema: tools.delete_llm_api_key.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			await apiCall(
@@ -1645,7 +1650,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_extensions.description,
 			inputSchema: tools.list_extensions.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			const modules = getAllModules()
@@ -1751,7 +1756,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_extension.description,
 			inputSchema: tools.create_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			// Check if this is a known module
@@ -1880,7 +1885,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.update_extension.description,
 			inputSchema: tools.update_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			const workspace = await getWorkspace(config, args.workspace_id)
@@ -2097,7 +2102,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_extension.description,
 			inputSchema: tools.delete_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			// Check if the extension is a registered module
