@@ -47,7 +47,7 @@ export const config: ProviderConfig = {
 			{
 				entityType: 'gmail.message',
 				actions: ['received', 'sent', 'drafted', 'labeled', 'unlabeled', 'trashed', 'untrashed'],
-				label: 'Message',
+				label: 'Email',
 			},
 		],
 	},
