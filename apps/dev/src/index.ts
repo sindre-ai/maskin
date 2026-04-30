@@ -9,6 +9,7 @@ import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
+import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
 
@@ -69,6 +70,10 @@ const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
 triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
 })
+
+const gmailWatchRenewer = new GmailWatchRenewer(db)
+gmailWatchRenewer.start()
+logger.info('Gmail watch renewer started')
 
 logger.info(`Starting server on port ${port}`)
 

@@ -4,6 +4,10 @@ import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
+import { config as gmailConfig } from './providers/gmail/config'
+import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/resolve-id'
+import { fanOutGmailHistory, setupGmailWatch } from './providers/gmail/watch'
+import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -39,6 +43,15 @@ providers.set('slack', {
 	resolveExternalId: slackResolveExternalId,
 	customNormalizer: slackEventNormalizer,
 	webhookPreHandler: slackWebhookPreHandler,
+})
+
+providers.set('gmail', {
+	config: gmailConfig,
+	customWebhookVerifier: gmailWebhookVerifier,
+	customNormalizer: gmailEventNormalizer,
+	resolveExternalId: gmailResolveExternalId,
+	postInstall: setupGmailWatch,
+	webhookFanOut: fanOutGmailHistory,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

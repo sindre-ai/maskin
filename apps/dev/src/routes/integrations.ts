@@ -403,6 +403,34 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 		.where(eq(integrations.id, integrationId))
 
+	// Provider-specific post-install work (e.g. Gmail's users.watch). Runs after the
+	// row is active so postInstall can read the persisted config and append to it.
+	if (resolved.postInstall) {
+		try {
+			await resolved.postInstall({
+				db,
+				integrationId,
+				workspaceId: stateData.workspaceId,
+				credentials,
+			})
+		} catch (err) {
+			logger.error(`postInstall failed for provider ${providerName}`, {
+				integrationId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			// Mark the integration as failed so the user can retry. Don't 500 — let them
+			// see the error in the UI redirect query string.
+			await db
+				.update(integrations)
+				.set({ status: 'error', updatedAt: new Date() })
+				.where(eq(integrations.id, integrationId))
+			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+			return c.redirect(
+				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=post_install_failed`,
+			)
+		}
+	}
+
 	// Log event
 	await db.insert(events).values({
 		workspaceId: stateData.workspaceId,
@@ -501,7 +529,8 @@ webhookApp.post('/:provider', async (c) => {
 			logger.error(`Provider ${providerName} uses custom webhook but has no customWebhookVerifier`)
 			return c.json(createApiError('INTERNAL_ERROR', 'Webhook verification not configured'), 500)
 		}
-		if (!resolved.customWebhookVerifier(body, headers)) {
+		const verified = await resolved.customWebhookVerifier(body, headers)
+		if (!verified) {
 			logger.warn(`Custom webhook verification failed for ${providerName}`)
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}
@@ -558,21 +587,47 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
-	// Insert into events table — PG NOTIFY fires automatically
-	await db.insert(events).values({
-		workspaceId: integration.workspaceId,
-		actorId: systemActorId,
-		action: normalized.action,
-		entityType: normalized.entityType,
-		entityId: integration.id,
-		data: normalized.data,
-	})
+	// Some providers (Gmail) deliver pointer-style webhooks where one push expands
+	// into N concrete events. webhookFanOut returns the list to insert; if absent
+	// we insert the single normalized event as-is.
+	let toInsert = [normalized]
+	if (resolved.webhookFanOut) {
+		try {
+			toInsert = await resolved.webhookFanOut({
+				db,
+				integrationId: integration.id,
+				workspaceId: integration.workspaceId,
+				normalized,
+			})
+		} catch (err) {
+			logger.error(`webhookFanOut failed for ${providerName}`, {
+				integrationId: integration.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+	}
 
-	logger.info(
-		`Webhook processed: ${normalized.entityType}.${normalized.action} for workspace ${integration.workspaceId}`,
+	if (toInsert.length === 0) {
+		return c.json({ ok: true, skipped: true })
+	}
+
+	await db.insert(events).values(
+		toInsert.map((e) => ({
+			workspaceId: integration.workspaceId,
+			actorId: systemActorId,
+			action: e.action,
+			entityType: e.entityType,
+			entityId: integration.id,
+			data: e.data,
+		})),
 	)
 
-	return c.json({ ok: true })
+	logger.info(
+		`Webhook processed: ${toInsert.length} event(s) for ${providerName} workspace ${integration.workspaceId}`,
+	)
+
+	return c.json({ ok: true, count: toInsert.length })
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────

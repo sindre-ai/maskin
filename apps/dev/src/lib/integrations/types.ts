@@ -140,7 +140,10 @@ export interface ResolvedProvider {
 	/** Override token response parsing for providers with non-standard format */
 	parseTokenResponse?: (raw: unknown) => Partial<StoredCredentials>
 	/** Custom webhook signature verification. Required when webhook type is 'custom'. */
-	customWebhookVerifier?: (body: string, headers: Record<string, string>) => boolean
+	customWebhookVerifier?: (
+		body: string,
+		headers: Record<string, string>,
+	) => boolean | Promise<boolean>
 	/**
 	 * Resolve a stable external ID after OAuth2 token exchange.
 	 * Must return the same ID that extractInstallationId() will find in webhook payloads.
@@ -155,4 +158,33 @@ export interface ResolvedProvider {
 		payload: unknown,
 		headers: Record<string, string>,
 	) => { body: unknown; status?: number } | null
+	/**
+	 * Run provider-specific work immediately after OAuth credentials are stored and the
+	 * integration is activated (e.g. Gmail's users.watch call). Failures should be logged
+	 * by the provider; the route catches and surfaces them as a redirect with an error param.
+	 */
+	postInstall?: (ctx: PostInstallContext) => Promise<void>
+	/**
+	 * Expand a single normalized webhook event into multiple events.
+	 * Used when a provider's webhook is a notification pointer (e.g. Gmail Pub/Sub push
+	 * → users.history.list returns N changes). Called once after normalization with the
+	 * matching active integration; returns the events to insert. If absent, the route
+	 * inserts the single normalized event as-is.
+	 */
+	webhookFanOut?: (ctx: WebhookFanOutContext) => Promise<NormalizedEvent[]>
+}
+
+export interface PostInstallContext {
+	/** Drizzle Database instance — typed loosely to avoid circular deps with @maskin/db */
+	db: unknown
+	integrationId: string
+	workspaceId: string
+	credentials: StoredCredentials
+}
+
+export interface WebhookFanOutContext {
+	db: unknown
+	integrationId: string
+	workspaceId: string
+	normalized: NormalizedEvent
 }
