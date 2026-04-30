@@ -142,6 +142,7 @@ describe('S3StorageProvider', () => {
 
 			expect(Upload).toHaveBeenCalledWith(
 				expect.objectContaining({
+					client: expect.anything(),
 					params: { Bucket: 'test-bucket', Key: 'stream-key', Body: stream },
 				}),
 			)
