@@ -22,7 +22,7 @@ import {
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { eq, inArray, or } from 'drizzle-orm'
+import { asc, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -277,6 +277,7 @@ app.openapi(listActorsRoute, async (c) => {
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
 		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
+		.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
 
 	const byActor = new Map<
 		string,
