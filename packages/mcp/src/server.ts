@@ -547,10 +547,12 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_actors.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
-		async () => {
-			const result = await apiCall(config, 'GET', '/api/actors', undefined, {
-				skipWorkspace: true,
-			})
+		async (args) => {
+			const result = args.workspace_id
+				? await apiCall(config, 'GET', '/api/actors', undefined, {
+						workspaceId: args.workspace_id,
+					})
+				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
 			return {
 				_meta: { toolName: 'list_actors' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
