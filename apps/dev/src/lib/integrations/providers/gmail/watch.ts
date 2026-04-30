@@ -69,11 +69,7 @@ async function callWatch(accessToken: string, topicName: string): Promise<WatchR
 			Authorization: `Bearer ${accessToken}`,
 			'Content-Type': 'application/json',
 		},
-		body: JSON.stringify({
-			topicName,
-			labelIds: ['INBOX'],
-			labelFilterBehavior: 'INCLUDE',
-		}),
+		body: JSON.stringify({ topicName }),
 	})
 	if (!res.ok) {
 		const text = await res.text()
