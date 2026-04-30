@@ -39,6 +39,11 @@ const ALL_TOOL_NAMES = [
 	'list_workspaces',
 	'get_workspace_schema',
 	'add_workspace_member',
+	'create_workspace_field',
+	'update_workspace_field',
+	'delete_workspace_field',
+	'add_workspace_enum_value',
+	'remove_workspace_enum_value',
 	'list_workspace_skills',
 	'get_workspace_skill',
 	'create_workspace_skill',
@@ -805,6 +810,83 @@ describe('disconnect_claude_subscription schema', () => {
 	})
 })
 
+describe('create_workspace_field schema', () => {
+	const schema = tools.create_workspace_field.inputSchema
+
+	it('accepts text field', () => {
+		const result = schema.parse({ type: 'task', name: 'priority', field_type: 'text' })
+		expect(result.name).toBe('priority')
+		expect(result.field_type).toBe('text')
+	})
+
+	it('accepts enum field with values', () => {
+		const result = schema.parse({
+			type: 'bet',
+			name: 'risk',
+			field_type: 'enum',
+			values: ['low', 'high'],
+		})
+		expect(result.values).toEqual(['low', 'high'])
+	})
+
+	it('accepts optional workspace_id and required flag', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			type: 'task',
+			name: 'due_date',
+			field_type: 'date',
+			required: true,
+		})
+		expect(result.required).toBe(true)
+		expect(result.workspace_id).toBe(uuid)
+	})
+
+	it('rejects unknown field_type', () => {
+		expect(() => schema.parse({ type: 'task', name: 'x', field_type: 'json' })).toThrow()
+	})
+
+	it('rejects empty name', () => {
+		expect(() => schema.parse({ type: 'task', name: '', field_type: 'text' })).toThrow()
+	})
+})
+
+describe('update_workspace_field schema', () => {
+	const schema = tools.update_workspace_field.inputSchema
+
+	it('requires type and name', () => {
+		const result = schema.parse({ type: 'task', name: 'priority' })
+		expect(result.type).toBe('task')
+		expect(result.name).toBe('priority')
+	})
+
+	it('accepts new_name and required toggle', () => {
+		const result = schema.parse({
+			type: 'task',
+			name: 'priority',
+			new_name: 'urgency',
+			required: true,
+		})
+		expect(result.new_name).toBe('urgency')
+	})
+
+	it('rejects empty new_name', () => {
+		expect(() => schema.parse({ type: 'task', name: 'x', new_name: '' })).toThrow()
+	})
+})
+
+describe('add_workspace_enum_value schema', () => {
+	const schema = tools.add_workspace_enum_value.inputSchema
+
+	it('requires type, name, value', () => {
+		const result = schema.parse({ type: 'bet', name: 'risk', value: 'medium' })
+		expect(result.value).toBe('medium')
+	})
+
+	it('rejects empty value', () => {
+		expect(() => schema.parse({ type: 'bet', name: 'risk', value: '' })).toThrow()
+	})
+})
+
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
 		'create_objects',
@@ -815,6 +897,11 @@ describe('workspace_id optional on most tools', () => {
 		'search_objects',
 		'list_relationships',
 		'delete_relationship',
+		'create_workspace_field',
+		'update_workspace_field',
+		'delete_workspace_field',
+		'add_workspace_enum_value',
+		'remove_workspace_enum_value',
 		'list_workspace_skills',
 		'get_workspace_skill',
 		'create_workspace_skill',
