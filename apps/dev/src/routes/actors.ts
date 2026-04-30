@@ -263,18 +263,48 @@ app.openapi(listActorsRoute, async (c) => {
 		return c.json([] as z.infer<typeof actorListItemSchema>[])
 	}
 
-	const members = await db
-		.selectDistinct({
+	const rows = await db
+		.select({
 			id: actors.id,
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			workspaceId: workspaces.id,
+			workspaceName: workspaces.name,
+			role: workspaceMembers.role,
 		})
 		.from(workspaceMembers)
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
 		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
 
-	return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+	const byActor = new Map<
+		string,
+		{
+			id: string
+			type: string
+			name: string
+			email: string | null
+			workspaces: { id: string; name: string; role: string }[]
+		}
+	>()
+	for (const r of rows) {
+		const membership = { id: r.workspaceId, name: r.workspaceName, role: r.role }
+		const existing = byActor.get(r.id)
+		if (existing) {
+			existing.workspaces.push(membership)
+		} else {
+			byActor.set(r.id, {
+				id: r.id,
+				type: r.type,
+				name: r.name,
+				email: r.email,
+				workspaces: [membership],
+			})
+		}
+	}
+
+	return c.json(serializeArray([...byActor.values()]) as z.infer<typeof actorListItemSchema>[])
 })
 
 // GET /:id - Get actor by ID

@@ -283,8 +283,16 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			'List all actors (humans and agents) in the workspace, including their roles (owner, member, viewer).',
-		inputSchema: z.object({}),
+			'List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships.',
+		inputSchema: z.object({
+			workspace_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Optional workspace ID to scope the listing to. If omitted, returns actors across all workspaces the caller belongs to (each with their workspace memberships).',
+				),
+		}),
 	},
 	get_actor: {
 		description: 'Get actor details by ID',
