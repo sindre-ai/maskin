@@ -7,8 +7,17 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 	RESOURCE_MIME_TYPE: 'text/html',
 }))
 
+// Use the constructor argument form (vi.fn(impl), not vi.fn().mockImplementation)
+// so the implementation survives `vi.restoreAllMocks()` calls in nested afterEach
+// hooks. Without this, later tests see `new McpServer()` return undefined.
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn(() => ({
+		registerResource: vi.fn(),
+	})),
+	ResourceTemplate: vi.fn((template, callbacks) => ({
+		template,
+		listCallback: callbacks?.list,
+	})),
 }))
 
 vi.mock('node:fs', () => ({
@@ -16,6 +25,7 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { createMcpServer } from '../server'
 import { tools } from '../tools'
 
@@ -1181,6 +1191,282 @@ describe('tool handlers', () => {
 			expect(result._meta.webAppBaseUrl).toBeUndefined()
 			// workspaceId still present (from defaultWorkspaceId)
 			expect(result._meta.workspaceId).toBe('ws-default-123')
+		})
+	})
+})
+
+describe('object resources for the MCP picker', () => {
+	type ListCallback = () => Promise<{
+		resources: Array<{ uri: string; name: string; description?: string; mimeType?: string }>
+	}>
+	type ReadCallback = (
+		uri: URL,
+		vars: Record<string, string>,
+	) => Promise<{ contents: Array<{ uri: string; mimeType?: string; text: string }> }>
+
+	interface ResourceRegistration {
+		name: string
+		template: { template: string; listCallback?: ListCallback }
+		metadata: Record<string, unknown>
+		read: ReadCallback
+	}
+
+	function buildServerWith(overrides: Partial<typeof config>) {
+		vi.clearAllMocks()
+		const registered: ResourceRegistration[] = []
+		const fakeServer = { registerResource: vi.fn() }
+
+		const mockedMcpServer = vi.mocked(McpServer) as unknown as {
+			mockImplementation: (fn: () => unknown) => void
+		}
+		mockedMcpServer.mockImplementation(() => fakeServer)
+
+		// vi.restoreAllMocks (run by earlier describes' afterEach) wipes the
+		// implementation on every vi.fn() set in the module-mock factory, so
+		// re-attach the ResourceTemplate stub each call.
+		const mockedTemplate = vi.mocked(ResourceTemplate) as unknown as {
+			mockImplementation: (
+				fn: (template: string, callbacks?: { list?: ListCallback }) => unknown,
+			) => void
+		}
+		mockedTemplate.mockImplementation((template, callbacks) => ({
+			template,
+			listCallback: callbacks?.list,
+		}))
+
+		vi.mocked(fakeServer.registerResource).mockImplementation((...args: unknown[]) => {
+			const [name, template, metadata, read] = args as [
+				string,
+				{ template: string; listCallback?: ListCallback },
+				Record<string, unknown>,
+				ReadCallback,
+			]
+			registered.push({ name, template, metadata, read })
+		})
+
+		createMcpServer({ ...config, ...overrides })
+		return registered
+	}
+
+	function findRegistration(registrations: ResourceRegistration[], name: string) {
+		const r = registrations.find((x) => x.name === name)
+		if (!r) throw new Error(`Registration ${name} not found`)
+		return r
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('does not register data resources when webAppBaseUrl is missing', () => {
+		const registered = buildServerWith({ webAppBaseUrl: undefined })
+		expect(registered).toEqual([])
+	})
+
+	it('registers object, actor, and trigger resource templates when baseUrl is set', () => {
+		const registered = buildServerWith({ webAppBaseUrl: 'https://maskin.example.com' })
+		const names = registered.map((r) => r.name).sort()
+		expect(names).toEqual(['maskin-actor', 'maskin-object', 'maskin-trigger'])
+	})
+
+	it('object template URI matches the F2 deep-link pattern (/objects/{id})', () => {
+		const registered = buildServerWith({ webAppBaseUrl: 'https://maskin.example.com/' })
+		const obj = findRegistration(registered, 'maskin-object')
+		expect(obj.template.template).toBe(
+			'https://maskin.example.com/{workspaceId}/objects/{objectId}',
+		)
+		expect(ResourceTemplate).toHaveBeenCalledWith(
+			'https://maskin.example.com/{workspaceId}/objects/{objectId}',
+			expect.objectContaining({ list: expect.any(Function) }),
+		)
+	})
+
+	describe('list callback (objects)', () => {
+		it('returns deep-link URIs and a 200-char preview for every object', async () => {
+			const registered = buildServerWith({ webAppBaseUrl: 'https://maskin.example.com' })
+			const obj = findRegistration(registered, 'maskin-object')
+
+			const longContent = 'a'.repeat(500)
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([
+						{
+							id: 'obj-1',
+							workspaceId: 'ws-default-123',
+							type: 'bet',
+							title: 'Ship MCP rich app',
+							content: longContent,
+							status: 'active',
+						},
+						{
+							id: 'obj-2',
+							workspaceId: 'ws-default-123',
+							type: 'task',
+							title: '',
+							content: 'Short content',
+							status: 'todo',
+						},
+					]),
+			} as Response)
+
+			const list = obj.template.listCallback
+			if (!list) throw new Error('List callback missing')
+			const result = await list()
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/objects?limit=100',
+				expect.objectContaining({
+					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-default-123' }),
+				}),
+			)
+
+			expect(result.resources).toHaveLength(2)
+			expect(result.resources[0].uri).toBe(
+				'https://maskin.example.com/ws-default-123/objects/obj-1',
+			)
+			expect(result.resources[0].name).toBe('Ship MCP rich app')
+			expect(result.resources[0].description).toContain('[bet · active]')
+			// 200-char preview, no raw 500-char content leak
+			expect(result.resources[0].description?.length ?? 0).toBeLessThan(260)
+			expect(result.resources[0].mimeType).toBe('application/json')
+
+			// Empty title falls back to "Untitled <type>"
+			expect(result.resources[1].name).toBe('Untitled task')
+		})
+
+		it('returns an empty list (no throw) when the API call fails', async () => {
+			const registered = buildServerWith({ webAppBaseUrl: 'https://maskin.example.com' })
+			const obj = findRegistration(registered, 'maskin-object')
+
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: false,
+				status: 500,
+				text: () => Promise.resolve('boom'),
+			} as Response)
+			vi.spyOn(console, 'error').mockImplementation(() => {})
+
+			const list = obj.template.listCallback
+			if (!list) throw new Error('List callback missing')
+			const result = await list()
+			expect(result.resources).toEqual([])
+		})
+
+		it('returns empty when no API key or default workspace is configured', async () => {
+			const registered = buildServerWith({
+				webAppBaseUrl: 'https://maskin.example.com',
+				apiKey: '',
+			})
+			const obj = findRegistration(registered, 'maskin-object')
+			const list = obj.template.listCallback
+			if (!list) throw new Error('List callback missing')
+			const result = await list()
+			expect(result.resources).toEqual([])
+		})
+	})
+
+	describe('read callback (objects)', () => {
+		it('returns title, status, 200-char preview, and deep link', async () => {
+			const registered = buildServerWith({ webAppBaseUrl: 'https://maskin.example.com' })
+			const obj = findRegistration(registered, 'maskin-object')
+
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						id: 'obj-1',
+						workspaceId: 'ws-default-123',
+						type: 'bet',
+						title: 'Ship MCP rich app',
+						content: 'b'.repeat(500),
+						status: 'active',
+					}),
+			} as Response)
+
+			const uri = new URL('https://maskin.example.com/ws-default-123/objects/obj-1')
+			const result = await obj.read(uri, { workspaceId: 'ws-default-123', objectId: 'obj-1' })
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/objects/obj-1',
+				expect.objectContaining({
+					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-default-123' }),
+				}),
+			)
+			expect(result.contents).toHaveLength(1)
+			expect(result.contents[0].mimeType).toBe('application/json')
+			const payload = JSON.parse(result.contents[0].text)
+			expect(payload).toEqual({
+				id: 'obj-1',
+				type: 'bet',
+				title: 'Ship MCP rich app',
+				status: 'active',
+				preview: expect.stringMatching(/^b{200}…$/),
+				deepLink: 'https://maskin.example.com/ws-default-123/objects/obj-1',
+				workspaceId: 'ws-default-123',
+			})
+		})
+	})
+
+	describe('actor template', () => {
+		it('lists actors with the agents deep-link pattern', async () => {
+			const registered = buildServerWith({ webAppBaseUrl: 'https://maskin.example.com' })
+			const actor = findRegistration(registered, 'maskin-actor')
+
+			expect(actor.template.template).toBe(
+				'https://maskin.example.com/{workspaceId}/agents/{actorId}',
+			)
+
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([
+						{ id: 'a-1', type: 'agent', name: 'Code Reviewer', email: null },
+						{ id: 'a-2', type: 'human', name: 'Sindre', email: 'sindre@example.com' },
+					]),
+			} as Response)
+
+			const list = actor.template.listCallback
+			if (!list) throw new Error('List callback missing')
+			const result = await list()
+
+			expect(result.resources[0].uri).toBe('https://maskin.example.com/ws-default-123/agents/a-1')
+			expect(result.resources[0].description).toBe('[agent]')
+			expect(result.resources[1].description).toBe('[human] sindre@example.com')
+		})
+	})
+
+	describe('trigger template', () => {
+		it('lists triggers with the triggers deep-link pattern', async () => {
+			const registered = buildServerWith({ webAppBaseUrl: 'https://maskin.example.com' })
+			const trigger = findRegistration(registered, 'maskin-trigger')
+
+			expect(trigger.template.template).toBe(
+				'https://maskin.example.com/{workspaceId}/triggers/{triggerId}',
+			)
+
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([
+						{
+							id: 't-1',
+							workspaceId: 'ws-default-123',
+							name: 'Daily standup',
+							type: 'cron',
+							enabled: true,
+						},
+					]),
+			} as Response)
+
+			const list = trigger.template.listCallback
+			if (!list) throw new Error('List callback missing')
+			const result = await list()
+			expect(result.resources[0].uri).toBe('https://maskin.example.com/ws-default-123/triggers/t-1')
+			expect(result.resources[0].description).toBe('[cron · enabled]')
 		})
 	})
 })
