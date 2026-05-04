@@ -389,6 +389,7 @@ export class SessionManager extends EventEmitter {
 			}),
 		)
 
+		this.containers.detachStdin(sessionId)
 		await this.cleanupBrowserSidecar(sessionId).catch(() => {})
 		await this.cleanupSession(sessionId).catch(() => {})
 
