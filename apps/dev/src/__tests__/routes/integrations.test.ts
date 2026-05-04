@@ -259,10 +259,15 @@ describe('Integrations Routes', () => {
 				),
 			)
 
-			// Should redirect to frontend
+			// Should redirect through the public oauth-return shim with the
+			// success status. The shim either postMessages an MCP-card popup or
+			// bounces the user to /:workspaceId/settings/integrations.
 			expect(res.status).toBe(302)
 			const location = res.headers.get('Location')
-			expect(location).toContain('/settings/integrations')
+			expect(location).toContain('/oauth-return')
+			expect(location).toContain('status=success')
+			expect(location).toContain('provider=github')
+			expect(location).toContain(`workspace_id=${wsId}`)
 		})
 
 		it('creates system actor when none exists and adds as workspace member', async () => {
@@ -300,7 +305,8 @@ describe('Integrations Routes', () => {
 
 			expect(res.status).toBe(302)
 			const location = res.headers.get('Location')
-			expect(location).toContain('/settings/integrations')
+			expect(location).toContain('/oauth-return')
+			expect(location).toContain('status=success')
 		})
 
 		it('returns 400 when missing authorization code for oauth2 provider (slack)', async () => {
@@ -374,10 +380,14 @@ describe('Integrations Routes', () => {
 					),
 				)
 
-				// Should redirect with error param
+				// Should redirect through oauth-return shim with status=error +
+				// the structured error_code so the popup/settings page can
+				// display a meaningful message.
 				expect(res.status).toBe(302)
 				const location = res.headers.get('Location')
-				expect(location).toContain('error=token_exchange_failed')
+				expect(location).toContain('/oauth-return')
+				expect(location).toContain('status=error')
+				expect(location).toContain('error_code=token_exchange_failed')
 			} finally {
 				if (originalClientId === undefined) {
 					Reflect.deleteProperty(process.env, 'SLACK_CLIENT_ID')
@@ -471,6 +481,54 @@ describe('Integrations Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('buildOauthReturnUrl', () => {
+		it('builds a success URL with all required params', async () => {
+			const { buildOauthReturnUrl } = await import('../../routes/integrations')
+			const url = buildOauthReturnUrl({
+				workspaceId: 'ws-1',
+				provider: 'github',
+				status: 'success',
+			})
+			expect(url).toContain('/oauth-return?')
+			expect(url).toContain('provider=github')
+			expect(url).toContain('workspace_id=ws-1')
+			expect(url).toContain('status=success')
+			expect(url).not.toContain('error_code=')
+		})
+
+		it('appends error_code when provided', async () => {
+			const { buildOauthReturnUrl } = await import('../../routes/integrations')
+			const url = buildOauthReturnUrl({
+				workspaceId: 'ws-1',
+				provider: 'slack',
+				status: 'error',
+				errorCode: 'token_exchange_failed',
+			})
+			expect(url).toContain('status=error')
+			expect(url).toContain('error_code=token_exchange_failed')
+		})
+
+		it('respects FRONTEND_URL and strips trailing slash', async () => {
+			const original = process.env.FRONTEND_URL
+			try {
+				process.env.FRONTEND_URL = 'https://app.maskin.example.com/'
+				const { buildOauthReturnUrl } = await import('../../routes/integrations')
+				const url = buildOauthReturnUrl({
+					workspaceId: 'ws-1',
+					provider: 'github',
+					status: 'success',
+				})
+				expect(url.startsWith('https://app.maskin.example.com/oauth-return?')).toBe(true)
+			} finally {
+				if (original === undefined) {
+					Reflect.deleteProperty(process.env, 'FRONTEND_URL')
+				} else {
+					process.env.FRONTEND_URL = original
+				}
+			}
 		})
 	})
 })

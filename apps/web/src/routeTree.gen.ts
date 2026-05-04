@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as OauthReturnRouteImport } from './routes/oauth-return'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
@@ -28,6 +29,7 @@ import { Route as AuthedWorkspaceIdSettingsMcpRouteImport } from './routes/_auth
 import { Route as AuthedWorkspaceIdSettingsKeysRouteImport } from './routes/_authed/$workspaceId/settings/keys'
 import { Route as AuthedWorkspaceIdSettingsIntegrationsRouteImport } from './routes/_authed/$workspaceId/settings/integrations'
 import { Route as AuthedWorkspaceIdObjectsObjectIdRouteImport } from './routes/_authed/$workspaceId/objects/$objectId'
+import { Route as AuthedWorkspaceIdDevMcpWidgetsRouteImport } from './routes/_authed/$workspaceId/dev/mcp-widgets'
 import { Route as AuthedWorkspaceIdAgentsAgentIdRouteImport } from './routes/_authed/$workspaceId/agents/$agentId'
 import { Route as AuthedWorkspaceIdSettingsObjectsIndexRouteImport } from './routes/_authed/$workspaceId/settings/objects/index'
 import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from './routes/_authed/$workspaceId/settings/objects/$propertyName'
@@ -35,6 +37,11 @@ import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OauthReturnRoute = OauthReturnRouteImport.update({
+  id: '/oauth-return',
+  path: '/oauth-return',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -139,6 +146,12 @@ const AuthedWorkspaceIdObjectsObjectIdRoute =
     path: '/objects/$objectId',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
+const AuthedWorkspaceIdDevMcpWidgetsRoute =
+  AuthedWorkspaceIdDevMcpWidgetsRouteImport.update({
+    id: '/dev/mcp-widgets',
+    path: '/dev/mcp-widgets',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
 const AuthedWorkspaceIdAgentsAgentIdRoute =
   AuthedWorkspaceIdAgentsAgentIdRouteImport.update({
     id: '/agents/$agentId',
@@ -161,12 +174,14 @@ const AuthedWorkspaceIdSettingsObjectsPropertyNameRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
+  '/oauth-return': typeof OauthReturnRoute
   '/signup': typeof SignupRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/$workspaceId/dev/mcp-widgets': typeof AuthedWorkspaceIdDevMcpWidgetsRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -183,11 +198,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/oauth-return': typeof OauthReturnRoute
   '/signup': typeof SignupRoute
   '/': typeof AuthedIndexRoute
   '/$workspaceId/activity': typeof AuthedWorkspaceIdActivityRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/$workspaceId/dev/mcp-widgets': typeof AuthedWorkspaceIdDevMcpWidgetsRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -206,6 +223,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
+  '/oauth-return': typeof OauthReturnRoute
   '/signup': typeof SignupRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/': typeof AuthedIndexRoute
@@ -213,6 +231,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/_authed/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/_authed/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/_authed/$workspaceId/dev/mcp-widgets': typeof AuthedWorkspaceIdDevMcpWidgetsRoute
   '/_authed/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
   '/_authed/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/_authed/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
@@ -232,12 +251,14 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/oauth-return'
     | '/signup'
     | '/$workspaceId'
     | '/$workspaceId/activity'
     | '/$workspaceId/settings'
     | '/$workspaceId/'
     | '/$workspaceId/agents/$agentId'
+    | '/$workspaceId/dev/mcp-widgets'
     | '/$workspaceId/objects/$objectId'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/keys'
@@ -254,11 +275,13 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/oauth-return'
     | '/signup'
     | '/'
     | '/$workspaceId/activity'
     | '/$workspaceId'
     | '/$workspaceId/agents/$agentId'
+    | '/$workspaceId/dev/mcp-widgets'
     | '/$workspaceId/objects/$objectId'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/keys'
@@ -276,6 +299,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authed'
     | '/login'
+    | '/oauth-return'
     | '/signup'
     | '/_authed/$workspaceId'
     | '/_authed/'
@@ -283,6 +307,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings'
     | '/_authed/$workspaceId/'
     | '/_authed/$workspaceId/agents/$agentId'
+    | '/_authed/$workspaceId/dev/mcp-widgets'
     | '/_authed/$workspaceId/objects/$objectId'
     | '/_authed/$workspaceId/settings/integrations'
     | '/_authed/$workspaceId/settings/keys'
@@ -301,6 +326,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  OauthReturnRoute: typeof OauthReturnRoute
   SignupRoute: typeof SignupRoute
 }
 
@@ -311,6 +337,13 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/oauth-return': {
+      id: '/oauth-return'
+      path: '/oauth-return'
+      fullPath: '/oauth-return'
+      preLoaderRoute: typeof OauthReturnRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -439,6 +472,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdObjectsObjectIdRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
+    '/_authed/$workspaceId/dev/mcp-widgets': {
+      id: '/_authed/$workspaceId/dev/mcp-widgets'
+      path: '/dev/mcp-widgets'
+      fullPath: '/$workspaceId/dev/mcp-widgets'
+      preLoaderRoute: typeof AuthedWorkspaceIdDevMcpWidgetsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
     '/_authed/$workspaceId/agents/$agentId': {
       id: '/_authed/$workspaceId/agents/$agentId'
       path: '/agents/$agentId'
@@ -500,6 +540,7 @@ interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdSettingsRoute: typeof AuthedWorkspaceIdSettingsRouteWithChildren
   AuthedWorkspaceIdIndexRoute: typeof AuthedWorkspaceIdIndexRoute
   AuthedWorkspaceIdAgentsAgentIdRoute: typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  AuthedWorkspaceIdDevMcpWidgetsRoute: typeof AuthedWorkspaceIdDevMcpWidgetsRoute
   AuthedWorkspaceIdObjectsObjectIdRoute: typeof AuthedWorkspaceIdObjectsObjectIdRoute
   AuthedWorkspaceIdTriggersTriggerIdRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   AuthedWorkspaceIdAgentsIndexRoute: typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -512,6 +553,7 @@ const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
   AuthedWorkspaceIdSettingsRoute: AuthedWorkspaceIdSettingsRouteWithChildren,
   AuthedWorkspaceIdIndexRoute: AuthedWorkspaceIdIndexRoute,
   AuthedWorkspaceIdAgentsAgentIdRoute: AuthedWorkspaceIdAgentsAgentIdRoute,
+  AuthedWorkspaceIdDevMcpWidgetsRoute: AuthedWorkspaceIdDevMcpWidgetsRoute,
   AuthedWorkspaceIdObjectsObjectIdRoute: AuthedWorkspaceIdObjectsObjectIdRoute,
   AuthedWorkspaceIdTriggersTriggerIdRoute:
     AuthedWorkspaceIdTriggersTriggerIdRoute,
@@ -539,6 +581,7 @@ const AuthedRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
+  OauthReturnRoute: OauthReturnRoute,
   SignupRoute: SignupRoute,
 }
 export const routeTree = rootRouteImport

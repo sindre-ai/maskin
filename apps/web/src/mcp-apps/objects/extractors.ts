@@ -1,10 +1,16 @@
-import type { ObjectResponse } from '../shared/types'
+import type { ObjectResponse, RelationshipResponse } from '../shared/types'
 
 export interface UpdateObjectsResultItem {
 	type?: string
 	id?: string
 	success?: boolean
 	result?: ObjectResponse
+}
+
+export interface ObjectGraphBundle {
+	object: ObjectResponse
+	relationships: RelationshipResponse[]
+	connected_objects: ObjectResponse[]
 }
 
 /** Pull the first successfully updated object out of an `update_objects` tool result envelope. */
@@ -32,6 +38,35 @@ export function extractGetObjectsList(data: unknown): ObjectResponse[] {
 	for (const r of data as Array<{ success?: boolean; result?: { object?: ObjectResponse } }>) {
 		const obj = r?.success ? r.result?.object : undefined
 		if (obj) out.push(obj)
+	}
+	return out
+}
+
+/**
+ * Flatten the `get_objects` response keeping the relationships and
+ * connected_objects sub-document alongside each object. Used by the Objects
+ * card to render the relationship-edit affordance — `extractGetObjectsList`
+ * throws away those edges.
+ */
+export function extractGetObjectsBundles(data: unknown): ObjectGraphBundle[] {
+	if (!Array.isArray(data)) return []
+	const out: ObjectGraphBundle[] = []
+	for (const r of data as Array<{
+		success?: boolean
+		result?: {
+			object?: ObjectResponse
+			relationships?: RelationshipResponse[]
+			connected_objects?: ObjectResponse[]
+		}
+	}>) {
+		if (!r?.success || !r.result?.object) continue
+		out.push({
+			object: r.result.object,
+			relationships: Array.isArray(r.result.relationships) ? r.result.relationships : [],
+			connected_objects: Array.isArray(r.result.connected_objects)
+				? r.result.connected_objects
+				: [],
+		})
 	}
 	return out
 }

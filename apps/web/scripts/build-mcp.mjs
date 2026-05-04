@@ -8,7 +8,23 @@ const webRoot = resolve(__dirname, '..')
 const outDir = resolve(webRoot, 'dist-mcp')
 const tmpDir = resolve(webRoot, '.dist-mcp-tmp')
 
-const apps = ['objects', 'relationships', 'actors', 'workspaces', 'events', 'triggers', 'graph']
+const apps = [
+	'objects',
+	'relationships',
+	'actors',
+	'workspaces',
+	'events',
+	'triggers',
+	'graph',
+	'notifications',
+	'sessions',
+	'skills',
+	'llm-keys',
+	'members',
+	'extensions',
+	'schema',
+	'integrations',
+]
 
 // Clean output dirs
 rmSync(outDir, { recursive: true, force: true })
