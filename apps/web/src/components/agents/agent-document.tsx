@@ -400,7 +400,7 @@ function ActiveSessionCard({
 			<Spinner />
 			<span className="text-sm truncate flex-1 min-w-0">{session.actionPrompt}</span>
 			{latestLog && (
-				<span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[200px] hidden sm:inline">
+				<span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[200px]">
 					{latestLog.content}
 				</span>
 			)}

@@ -29,8 +29,8 @@ export function AgentWorkingBadge({
 				<span className="text-sm font-medium truncate">{actor?.name ?? 'Agent working'}</span>
 				{latestLog && (
 					<>
-						<span className="text-muted-foreground hidden sm:inline">·</span>
-						<span className="text-sm text-muted-foreground truncate hidden sm:inline">
+						<span className="text-muted-foreground">·</span>
+						<span className="text-sm text-muted-foreground truncate min-w-0">
 							{latestLog.content}
 						</span>
 					</>
