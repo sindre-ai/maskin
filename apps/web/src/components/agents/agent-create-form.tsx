@@ -121,7 +121,7 @@ export function AgentCreateForm({
 
 			{/* LLM Configuration */}
 			<Section title="LLM Configuration">
-				<div className="flex gap-3">
+				<div className="flex flex-col sm:flex-row gap-3">
 					<div className="flex-1">
 						<Label>Provider</Label>
 						<Select value={llmProvider} onValueChange={handleProviderChange}>

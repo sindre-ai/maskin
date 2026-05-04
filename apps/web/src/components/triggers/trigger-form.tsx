@@ -596,7 +596,7 @@ export function TriggerForm({
 			) : type === 'reminder' ? (
 				<div className="space-y-2">
 					<p className="text-xs font-medium text-muted-foreground">When to fire</p>
-					<div className="flex gap-2">
+					<div className="flex flex-col sm:flex-row gap-2">
 						<Input
 							type="date"
 							value={scheduledDate}
@@ -608,7 +608,7 @@ export function TriggerForm({
 							type="time"
 							value={scheduledTime}
 							onChange={(e) => setScheduledTime(e.target.value)}
-							className="w-[130px]"
+							className="w-full sm:w-[130px]"
 						/>
 					</div>
 					{!scheduledDate && (
@@ -621,7 +621,7 @@ export function TriggerForm({
 				<>
 					<div className="space-y-2">
 						<p className="text-xs font-medium text-muted-foreground">When this happens</p>
-						<div className="flex gap-2">
+						<div className="flex flex-col sm:flex-row gap-2">
 							<Select value={entityType} onValueChange={handleEntityTypeChange}>
 								<SelectTrigger className="flex-1">
 									<SelectValue placeholder="Select an entity type" />
@@ -835,7 +835,7 @@ function ConditionEditor({
 	}
 
 	return (
-		<div className="flex items-center gap-1.5">
+		<div className="flex flex-wrap items-center gap-1.5">
 			<Select value={condition.field} onValueChange={handleFieldChange}>
 				<SelectTrigger>
 					<SelectValue />

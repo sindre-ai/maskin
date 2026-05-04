@@ -269,7 +269,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 
 				{/* Action buttons */}
 				{!isResolved && (
-					<div className="flex items-center gap-2">
+					<div className="flex flex-wrap items-center gap-2">
 						{actions.map((action, i) => (
 							<Button
 								key={action.label}

@@ -199,7 +199,7 @@ function PropertyRow({
 
 	return (
 		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-accent/50 hover:text-accent-foreground group">
-			<span className="w-28 shrink-0 text-xs text-muted-foreground truncate" title={name}>
+			<span className="w-20 sm:w-28 shrink-0 text-xs text-muted-foreground truncate" title={name}>
 				{name}
 			</span>
 			<div className="flex-1 min-w-0">
@@ -310,7 +310,7 @@ function PropertyEditor({
 						setDraft(e.target.value)
 						onSave(e.target.value)
 					}}
-					className={`${inputClass} w-32`}
+					className={`${inputClass} w-full sm:w-32`}
 					autoFocus
 					onBlur={onCancel}
 				/>
@@ -348,7 +348,7 @@ function PropertyEditor({
 					onChange={(e) => setDraft(e.target.value)}
 					onBlur={handleSave}
 					onKeyDown={handleKeyDown}
-					className={`${inputClass} w-24`}
+					className={`${inputClass} w-full sm:w-24`}
 					autoFocus
 				/>
 			)

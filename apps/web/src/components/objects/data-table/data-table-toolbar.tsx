@@ -84,15 +84,15 @@ export function DataTableToolbar({
 	}
 
 	return (
-		<div className="flex items-center gap-3 mb-4 flex-wrap">
+		<div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
 			{/* Type tabs */}
-			<div className="flex gap-1">
+			<div className="flex gap-1 overflow-x-auto">
 				{tabs.map((tab) => (
 					<button
 						key={tab.label}
 						type="button"
 						className={cn(
-							'rounded px-3 py-1 text-sm transition-colors',
+							'rounded px-3 py-1 text-sm whitespace-nowrap transition-colors',
 							typeFilter === tab.value
 								? 'bg-muted text-foreground font-medium'
 								: 'text-muted-foreground hover:text-foreground',
@@ -105,7 +105,7 @@ export function DataTableToolbar({
 			</div>
 
 			{/* Search */}
-			<div className="relative flex-1 max-w-xs">
+			<div className="relative flex-1 min-w-0 max-w-full sm:max-w-xs">
 				<Search
 					size={14}
 					className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"

@@ -110,7 +110,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId: row.original.id }}
-						className="font-medium truncate max-w-[300px] text-foreground hover:underline"
+						className="font-medium truncate max-w-[150px] sm:max-w-[300px] text-foreground hover:underline"
 						onClick={(e) => e.stopPropagation()}
 					>
 						{row.getValue('title') || 'Untitled'}

@@ -67,7 +67,7 @@ export function DataTableControls({
 					)}
 				</Button>
 			</PopoverTrigger>
-			<PopoverContent align="end" className="w-64 p-0">
+			<PopoverContent align="end" className="w-[calc(100vw-2rem)] sm:w-64 p-0">
 				<div className="max-h-[420px] overflow-y-auto">
 					{/* Filter by Status */}
 					{Object.keys(statusesByType).length > 0 && (

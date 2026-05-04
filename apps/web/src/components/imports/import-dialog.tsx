@@ -552,8 +552,11 @@ function MappingStep({
 				{relSectionOpen && localRelationships.length > 0 && (
 					<div className="border-t px-3 py-2 space-y-2">
 						{localRelationships.map((rel, idx) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: relationships have no stable ID
-							<div key={idx} className="flex items-center gap-2 text-sm">
+							<div
+								// biome-ignore lint/suspicious/noArrayIndexKey: relationships have no stable ID
+								key={idx}
+								className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-sm"
+							>
 								<Select
 									value={rel.sourceType}
 									onValueChange={(v) => handleUpdateRelationship(idx, 'sourceType', v)}
@@ -611,7 +614,7 @@ function MappingStep({
 								<Button
 									variant="ghost"
 									size="sm"
-									className="h-7 w-7 p-0 shrink-0"
+									className="h-7 w-7 p-0 shrink-0 self-end sm:self-center"
 									onClick={() => handleRemoveRelationship(idx)}
 								>
 									<X size={14} />
@@ -675,7 +678,7 @@ function TypeMappingSection({
 	onRemove: (index: number) => void
 }) {
 	return (
-		<div className="border rounded-lg overflow-hidden">
+		<div className="border rounded-lg overflow-x-auto">
 			{/* Type header */}
 			<div className="flex items-center gap-2 px-3 py-2 bg-muted/50">
 				<Select
@@ -708,7 +711,7 @@ function TypeMappingSection({
 			</div>
 
 			{/* Column mapping table */}
-			<table className="w-full text-sm">
+			<table className="w-full text-sm min-w-[400px]">
 				<thead>
 					<tr className="bg-muted/30">
 						<th className="text-left px-3 py-2 font-medium">Source Column</th>
