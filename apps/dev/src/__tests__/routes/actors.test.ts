@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
 import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -43,18 +44,90 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.type).toBe('agent')
 		})
+
+		it('defaults the Maskin MCP into tools when creating an agent without tools', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'agent' })),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { tools?: { mcpServers: Record<string, unknown> } }
+			expect(inserted.tools?.mcpServers.maskin).toEqual(PLATFORM_MCP_PRESET)
+		})
+
+		it('preserves a caller-provided maskin MCP entry over the default', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+			const custom = { type: 'http' as const, url: 'https://custom/mcp', headers: {} }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/actors',
+					buildCreateActorBody({
+						type: 'agent',
+						tools: { mcpServers: { maskin: custom } },
+					}),
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as {
+				tools?: { mcpServers: { maskin: { url: string } } }
+			}
+			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
+		})
+
+		it('does not default tools when creating a human actor', async () => {
+			const actor = buildActor({ type: 'human' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'human' })),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { tools?: unknown }
+			expect(inserted.tools).toBeUndefined()
+		})
 	})
 
 	describe('GET /api/actors', () => {
-		it('returns 200 with list of actors scoped to shared workspaces', async () => {
-			const a1 = { id: buildActor().id, type: 'human', name: 'Alice', email: 'a@test.com' }
-			const a2 = { id: buildActor().id, type: 'agent', name: 'Bot', email: null }
+		it('returns 200 with list of actors annotated with workspace memberships', async () => {
+			const a1 = buildActor({ type: 'human', name: 'Alice', email: 'a@test.com' })
+			const a2 = buildActor({ type: 'agent', name: 'Bot', email: null })
+			const wsId = '00000000-0000-0000-0000-000000000001'
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			// First select: get workspaces the actor belongs to
-			// Second select: get actors in those workspaces
+			// Second select: get (actor, workspace, role) rows
 			mockResults.selectQueue = [
-				[{ workspaceId: '00000000-0000-0000-0000-000000000001' }],
-				[a1, a2],
+				[{ workspaceId: wsId }],
+				[
+					{
+						id: a1.id,
+						type: a1.type,
+						name: a1.name,
+						email: a1.email,
+						workspaceId: wsId,
+						workspaceName: 'Acme',
+						role: 'owner',
+					},
+					{
+						id: a2.id,
+						type: a2.type,
+						name: a2.name,
+						email: a2.email,
+						workspaceId: wsId,
+						workspaceName: 'Acme',
+						role: 'member',
+					},
+				],
 			]
 
 			const res = await app.request(jsonGet('/api/actors'))
@@ -62,6 +135,48 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+			expect(body[0].workspaces).toEqual([{ id: wsId, name: 'Acme', role: 'owner' }])
+			expect(body[1].workspaces).toEqual([{ id: wsId, name: 'Acme', role: 'member' }])
+		})
+
+		it('groups workspace memberships per actor when an actor belongs to multiple workspaces', async () => {
+			const actor = buildActor({ type: 'agent', name: 'Bot', email: null })
+			const ws1 = '00000000-0000-0000-0000-000000000001'
+			const ws2 = '00000000-0000-0000-0000-000000000002'
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[{ workspaceId: ws1 }, { workspaceId: ws2 }],
+				[
+					{
+						id: actor.id,
+						type: actor.type,
+						name: actor.name,
+						email: actor.email,
+						workspaceId: ws1,
+						workspaceName: 'Acme',
+						role: 'member',
+					},
+					{
+						id: actor.id,
+						type: actor.type,
+						name: actor.name,
+						email: actor.email,
+						workspaceId: ws2,
+						workspaceName: 'Beta',
+						role: 'owner',
+					},
+				],
+			]
+
+			const res = await app.request(jsonGet('/api/actors'))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].workspaces).toEqual([
+				{ id: ws1, name: 'Acme', role: 'member' },
+				{ id: ws2, name: 'Beta', role: 'owner' },
+			])
 		})
 
 		it('returns empty list when actor has no workspaces', async () => {
@@ -95,6 +210,30 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors/00000000-0000-0000-0000-000000000099'))
 
 			expect(res.status).toBe(404)
+		})
+
+		it('exposes is_system field on the response', async () => {
+			const systemActor = buildActor({ isSystem: true, type: 'agent', name: 'Sindre' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [systemActor]
+
+			const res = await app.request(jsonGet(`/api/actors/${systemActor.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.isSystem).toBe(true)
+		})
+
+		it('exposes isSystem=false for non-system actors', async () => {
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [actor]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.isSystem).toBe(false)
 		})
 	})
 
@@ -274,6 +413,33 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
+		it('returns 403 when trying to delete a system actor and leaves the actor intact', async () => {
+			const systemActor = buildActor({ type: 'agent', isSystem: true })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			// DELETE: requester member, target actor, target member.
+			// Follow-up GET: same actor row — proves the record was not removed.
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+				[systemActor],
+			]
+
+			const deleteRes = await app.request(
+				jsonDelete(`/api/actors/${systemActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(deleteRes.status).toBe(403)
+			const deleteBody = await deleteRes.json()
+			expect(deleteBody.error.message).toContain('System agents cannot be deleted')
+
+			const getRes = await app.request(jsonGet(`/api/actors/${systemActor.id}`))
+
+			expect(getRes.status).toBe(200)
+			const getBody = await getRes.json()
+			expect(getBody.id).toBe(systemActor.id)
+		})
+
 		it('returns 403 when trying to delete a human actor', async () => {
 			const humanActor = buildActor({ type: 'human' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
@@ -290,6 +456,158 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(403)
 			const body = await res.json()
 			expect(body.error.message).toContain('Only agent actors can be deleted')
+		})
+	})
+
+	describe('POST /api/actors/:id/reset', () => {
+		const wsId = randomUUID()
+
+		it('returns 200 and restores systemPrompt, llmProvider, llmConfig, tools for a system actor', async () => {
+			const systemActor = buildActor({
+				type: 'agent',
+				isSystem: true,
+				systemPrompt: 'edited prompt',
+				llmProvider: 'openai',
+				llmConfig: { model: 'gpt-4' },
+				tools: { mcpServers: {} },
+			})
+			const resetActor = {
+				...systemActor,
+				systemPrompt: SINDRE_DEFAULT.systemPrompt,
+				llmProvider: SINDRE_DEFAULT.llmProvider,
+				llmConfig: SINDRE_DEFAULT.llmConfig,
+				tools: SINDRE_DEFAULT.tools,
+			}
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+			]
+			mockResults.update = [resetActor]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${systemActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.systemPrompt).toBe(SINDRE_DEFAULT.systemPrompt)
+			expect(body.llmProvider).toBe(SINDRE_DEFAULT.llmProvider)
+			expect(body.llmConfig).toEqual(SINDRE_DEFAULT.llmConfig)
+			expect(body.tools).toEqual(SINDRE_DEFAULT.tools)
+		})
+
+		it('returns 403 when the actor is not a system actor', async () => {
+			const regularActor = buildActor({ type: 'agent', isSystem: false })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[regularActor],
+				[buildWorkspaceMember({ actorId: regularActor.id, workspaceId: wsId })],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${regularActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.message).toContain('Only system actors can be reset')
+		})
+
+		it('returns 404 when actor does not exist', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[], // actor not found
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${randomUUID()}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when requesting actor is not a workspace member', async () => {
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
+			// isWorkspaceMember returns empty — requester not a member
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${randomUUID()}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the target actor is not in the workspace', async () => {
+			const systemActor = buildActor({ type: 'agent', isSystem: true })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[], // target not a workspace member
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${systemActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns the full updated actor row with identity and memory fields preserved', async () => {
+			const systemActor = buildActor({
+				type: 'agent',
+				name: 'Sindre',
+				email: 'sindre@maskin',
+				isSystem: true,
+				systemPrompt: 'edited prompt',
+				llmProvider: 'openai',
+				llmConfig: { model: 'gpt-4' },
+				tools: { mcpServers: {} },
+				memory: { notes: 'user preference: concise replies' },
+			})
+			// Drizzle returns the post-update row; memory and identity must be preserved.
+			const resetActor = {
+				...systemActor,
+				systemPrompt: SINDRE_DEFAULT.systemPrompt,
+				llmProvider: SINDRE_DEFAULT.llmProvider,
+				llmConfig: SINDRE_DEFAULT.llmConfig,
+				tools: SINDRE_DEFAULT.tools,
+			}
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+			]
+			mockResults.update = [resetActor]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${systemActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.id).toBe(systemActor.id)
+			expect(body.type).toBe('agent')
+			expect(body.name).toBe('Sindre')
+			expect(body.email).toBe('sindre@maskin')
+			expect(body.memory).toEqual({ notes: 'user preference: concise replies' })
 		})
 	})
 })

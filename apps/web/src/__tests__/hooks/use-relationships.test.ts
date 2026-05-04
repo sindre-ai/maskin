@@ -18,7 +18,6 @@ vi.mock('sonner', () => ({
 import {
 	useCreateRelationship,
 	useDeleteRelationship,
-	useObjectRelationships,
 	useRelationships,
 } from '@/hooks/use-relationships'
 import type { RelationshipResponse } from '@/lib/api'
@@ -78,47 +77,6 @@ describe('useRelationships', () => {
 
 			await waitFor(() => expect(result.current.isError).toBe(true))
 			expect(result.current.error?.message).toBe('Failed to fetch')
-		})
-	})
-
-	describe('useObjectRelationships', () => {
-		it('returns relationships as source and target', async () => {
-			const asSource = [buildRelationship({ id: 'r1', sourceId: 'o1', targetId: 'o2' })]
-			const asTarget = [
-				buildRelationship({ id: 'r2', sourceId: 'o3', targetId: 'o1', type: 'blocks' }),
-			]
-			vi.mocked(api.relationships.list)
-				.mockResolvedValueOnce(asSource)
-				.mockResolvedValueOnce(asTarget)
-
-			const { result } = renderHook(() => useObjectRelationships('ws-1', 'o1'), {
-				wrapper: TestWrapper,
-			})
-
-			await waitFor(() => expect(result.current.isSuccess).toBe(true))
-			expect(result.current.data).toEqual({ asSource, asTarget })
-			expect(api.relationships.list).toHaveBeenCalledWith('ws-1', { source_id: 'o1' })
-			expect(api.relationships.list).toHaveBeenCalledWith('ws-1', { target_id: 'o1' })
-		})
-
-		it('is disabled when objectId is falsy', () => {
-			const { result } = renderHook(() => useObjectRelationships('ws-1', ''), {
-				wrapper: TestWrapper,
-			})
-
-			expect(result.current.isFetching).toBe(false)
-			expect(api.relationships.list).not.toHaveBeenCalled()
-		})
-
-		it('handles error', async () => {
-			vi.mocked(api.relationships.list).mockRejectedValue(new Error('Fetch failed'))
-
-			const { result } = renderHook(() => useObjectRelationships('ws-1', 'o1'), {
-				wrapper: TestWrapper,
-			})
-
-			await waitFor(() => expect(result.current.isError).toBe(true))
-			expect(result.current.error?.message).toBe('Fetch failed')
 		})
 	})
 

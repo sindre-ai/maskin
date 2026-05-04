@@ -1,0 +1,23 @@
+{
+	"type": "assistant",
+	"message": {
+		"id": "msg_01MULTI",
+		"type": "message",
+		"role": "assistant",
+		"content": [
+			{ "type": "thinking", "thinking": "Let me check the workspace first." },
+			{ "type": "text", "text": "One sec — checking." },
+			{
+				"type": "tool_use",
+				"id": "toolu_01multi",
+				"name": "search_objects",
+				"input": { "query": "sindre" }
+			}
+		],
+		"model": "claude-sonnet-4-5",
+		"stop_reason": "tool_use",
+		"usage": { "input_tokens": 100, "output_tokens": 40 }
+	},
+	"parent_tool_use_id": null,
+	"session_id": "sess-sindre-123"
+}

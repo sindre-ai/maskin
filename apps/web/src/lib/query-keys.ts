@@ -6,6 +6,7 @@ export const queryKeys = {
 		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'listInfinite', filters] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
+		graph: (id: string) => ['objects', 'graph', id] as const,
 	},
 	bets: {
 		all: (workspaceId: string) => ['bets', workspaceId] as const,
@@ -21,7 +22,6 @@ export const queryKeys = {
 	},
 	relationships: {
 		all: (workspaceId: string) => ['relationships', workspaceId] as const,
-		byObject: (objectId: string) => ['relationships', 'object', objectId] as const,
 	},
 	triggers: {
 		all: (workspaceId: string) => ['triggers', workspaceId] as const,
@@ -40,6 +40,13 @@ export const queryKeys = {
 	skills: {
 		all: (actorId: string) => ['skills', actorId] as const,
 		detail: (actorId: string, skillName: string) => ['skills', actorId, skillName] as const,
+	},
+	workspaceSkills: {
+		all: (workspaceId: string) => ['workspace-skills', workspaceId] as const,
+		detail: (workspaceId: string, name: string) => ['workspace-skills', workspaceId, name] as const,
+	},
+	agentSkillAttachments: {
+		all: (actorId: string) => ['agent-skill-attachments', actorId] as const,
 	},
 	sessions: {
 		all: (workspaceId: string) => ['sessions', workspaceId] as const,

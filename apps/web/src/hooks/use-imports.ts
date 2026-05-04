@@ -30,9 +30,14 @@ export function useCreateImport(workspaceId: string) {
 }
 
 export function useUpdateImportMapping(workspaceId: string) {
+	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: ({ id, mapping }: { id: string; mapping: ImportMappingInput }) =>
 			api.imports.updateMapping(id, mapping, workspaceId),
+		onSuccess: (data) => {
+			// Update the cache directly so MappingStep sees fresh preview/mapping after re-parse
+			queryClient.setQueryData(queryKeys.imports.detail(data.id), data)
+		},
 	})
 }
 

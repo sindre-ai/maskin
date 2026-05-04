@@ -11,6 +11,7 @@ import {
 	text,
 	timestamp,
 	unique,
+	uniqueIndex,
 	uuid,
 } from 'drizzle-orm/pg-core'
 
@@ -28,6 +29,7 @@ export const actors = pgTable('actors', {
 	memory: jsonb('memory'),
 	llmProvider: text('llm_provider'),
 	llmConfig: jsonb('llm_config'),
+	isSystem: boolean('is_system').notNull().default(false),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -189,6 +191,7 @@ export const sessions = pgTable(
 		containerId: text('container_id'),
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
+		interactive: boolean('interactive').notNull().default(false),
 		result: jsonb('result'),
 		snapshotPath: text('snapshot_path'),
 		startedAt: timestamp('started_at', { withTimezone: true }),
@@ -247,6 +250,56 @@ export const agentFiles = pgTable(
 		unique('agent_files_actor_path_uniq').on(t.actorId, t.workspaceId, t.path),
 	],
 )
+
+// ── Workspace Skills ───────────────────────────────────────────────────────
+
+export const workspaceSkills = pgTable(
+	'workspace_skills',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		description: text('description'),
+		content: text('content').notNull(),
+		storageKey: text('storage_key').notNull(),
+		sizeBytes: integer('size_bytes').notNull(),
+		isValid: boolean('is_valid').notNull().default(true),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('workspace_skills_ws_name_uniq').on(t.workspaceId, t.name),
+		check('workspace_skills_name_format', sql`${t.name} ~ '^[a-z0-9-]{1,64}$'`),
+	],
+)
+
+export type WorkspaceSkill = typeof workspaceSkills.$inferSelect
+export type NewWorkspaceSkill = typeof workspaceSkills.$inferInsert
+
+// ── Agent Skills ───────────────────────────────────────────────────────────
+
+export const agentSkills = pgTable(
+	'agent_skills',
+	{
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		workspaceSkillId: uuid('workspace_skill_id')
+			.notNull()
+			.references(() => workspaceSkills.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.workspaceSkillId] }),
+		index('agent_skills_actor_idx').on(t.actorId),
+	],
+)
+
+export type AgentSkill = typeof agentSkills.$inferSelect
+export type NewAgentSkill = typeof agentSkills.$inferInsert
 
 // ── Imports ───────────────────────────────────────────────────────────
 

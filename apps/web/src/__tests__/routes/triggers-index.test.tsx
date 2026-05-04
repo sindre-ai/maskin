@@ -61,7 +61,7 @@ describe('TriggersPage', () => {
 	it('shows empty state when no triggers', () => {
 		mockUseTriggers.mockReturnValue({ data: [], isLoading: false })
 		render(<TriggersPage />)
-		expect(screen.getByText('No triggers')).toBeInTheDocument()
+		expect(screen.getByText('No triggers yet')).toBeInTheDocument()
 	})
 
 	it('renders trigger rows with name, type, and agent name', () => {
@@ -75,7 +75,8 @@ describe('TriggersPage', () => {
 		mockUseActors.mockReturnValue({ data: [agent] })
 		render(<TriggersPage />)
 		expect(screen.getByText('Daily Sync')).toBeInTheDocument()
-		expect(screen.getByText(/cron → My Agent/)).toBeInTheDocument()
+		expect(screen.getByText(/Runs on schedule/)).toBeInTheDocument()
+		expect(screen.getByText(/My Agent/)).toBeInTheDocument()
 	})
 
 	it('shows "Unknown" when agent is not found', () => {

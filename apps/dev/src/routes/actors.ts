@@ -15,8 +15,14 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { createActorSchema, updateActorSchema, workspaceSettingsSchema } from '@maskin/shared'
-import { eq, inArray, or } from 'drizzle-orm'
+import {
+	PLATFORM_MCP_PRESET,
+	SINDRE_DEFAULT,
+	createActorSchema,
+	updateActorSchema,
+	workspaceSettingsSchema,
+} from '@maskin/shared'
+import { asc, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -104,6 +110,17 @@ app.openapi(createActorRoute, async (c) => {
 	// Hash password if provided
 	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
+	// Agents get the Maskin MCP by default — caller-provided servers win on conflict.
+	const tools =
+		body.type === 'agent'
+			? {
+					mcpServers: {
+						maskin: PLATFORM_MCP_PRESET,
+						...(body.tools?.mcpServers ?? {}),
+					},
+				}
+			: body.tools
+
 	const [actor] = await db
 		.insert(actors)
 		.values({
@@ -114,7 +131,7 @@ app.openapi(createActorRoute, async (c) => {
 			apiKey: key,
 			passwordHash,
 			systemPrompt: body.system_prompt,
-			tools: body.tools,
+			tools,
 			llmProvider: body.llm_provider,
 			llmConfig: body.llm_config,
 		})
@@ -134,24 +151,51 @@ app.openapi(createActorRoute, async (c) => {
 
 	if (shouldCreateWorkspace) {
 		const defaultSettings = workspaceSettingsSchema.parse({})
-		const [workspace] = await db
-			.insert(workspaces)
-			.values({
-				name: `${body.name}'s Workspace`,
-				settings: defaultSettings,
-				createdBy: actor.id,
-			})
-			.returning()
+		const created = await db.transaction(async (tx) => {
+			const [workspace] = await tx
+				.insert(workspaces)
+				.values({
+					name: `${body.name}'s Workspace`,
+					settings: defaultSettings,
+					createdBy: actor.id,
+				})
+				.returning()
 
-		if (workspace) {
-			await db.insert(workspaceMembers).values({
+			if (!workspace) return null
+
+			await tx.insert(workspaceMembers).values({
 				workspaceId: workspace.id,
 				actorId: actor.id,
 				role: 'owner',
 			})
 
-			workspaceId = workspace.id
-		}
+			// Seed Sindre — the built-in meta-agent shipped with every workspace.
+			const [sindre] = await tx
+				.insert(actors)
+				.values({
+					type: SINDRE_DEFAULT.type,
+					name: SINDRE_DEFAULT.name,
+					isSystem: SINDRE_DEFAULT.isSystem,
+					systemPrompt: SINDRE_DEFAULT.systemPrompt,
+					llmProvider: SINDRE_DEFAULT.llmProvider,
+					llmConfig: SINDRE_DEFAULT.llmConfig,
+					tools: SINDRE_DEFAULT.tools,
+					createdBy: actor.id,
+				})
+				.returning()
+
+			if (!sindre) throw new Error('Failed to seed Sindre actor')
+
+			await tx.insert(workspaceMembers).values({
+				workspaceId: workspace.id,
+				actorId: sindre.id,
+				role: 'member',
+			})
+
+			return workspace
+		})
+
+		if (created) workspaceId = created.id
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field
@@ -219,18 +263,49 @@ app.openapi(listActorsRoute, async (c) => {
 		return c.json([] as z.infer<typeof actorListItemSchema>[])
 	}
 
-	const members = await db
-		.selectDistinct({
+	const rows = await db
+		.select({
 			id: actors.id,
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			workspaceId: workspaces.id,
+			workspaceName: workspaces.name,
+			role: workspaceMembers.role,
 		})
 		.from(workspaceMembers)
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
 		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
+		.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
 
-	return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+	const byActor = new Map<
+		string,
+		{
+			id: string
+			type: string
+			name: string
+			email: string | null
+			workspaces: { id: string; name: string; role: string }[]
+		}
+	>()
+	for (const r of rows) {
+		const membership = { id: r.workspaceId, name: r.workspaceName, role: r.role }
+		const existing = byActor.get(r.id)
+		if (existing) {
+			existing.workspaces.push(membership)
+		} else {
+			byActor.set(r.id, {
+				id: r.id,
+				type: r.type,
+				name: r.name,
+				email: r.email,
+				workspaces: [membership],
+			})
+		}
+	}
+
+	return c.json(serializeArray([...byActor.values()]) as z.infer<typeof actorListItemSchema>[])
 })
 
 // GET /:id - Get actor by ID
@@ -269,6 +344,7 @@ app.openapi(getActorRoute, (async (c) => {
 			memory: actors.memory,
 			llmProvider: actors.llmProvider,
 			llmConfig: actors.llmConfig,
+			isSystem: actors.isSystem,
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 		})
@@ -339,6 +415,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			memory: actors.memory,
 			llmProvider: actors.llmProvider,
 			llmConfig: actors.llmConfig,
+			isSystem: actors.isSystem,
 			updatedAt: actors.updatedAt,
 		})
 
@@ -389,6 +466,98 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
 
+// POST /:id/reset - Reset system actor to factory defaults (Sindre)
+const resetActorRoute = createRoute({
+	method: 'post',
+	path: '/{id}/reset',
+	tags: ['Actors'],
+	summary: 'Reset system actor to factory defaults',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Actor reset to defaults',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor is not a system actor',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found',
+		},
+	},
+})
+
+app.openapi(resetActorRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (!existing.isSystem) {
+		return c.json(createApiError('FORBIDDEN', 'Only system actors can be reset to defaults'), 403)
+	}
+
+	const [updated] = await db
+		.update(actors)
+		.set({
+			name: SINDRE_DEFAULT.name,
+			systemPrompt: SINDRE_DEFAULT.systemPrompt,
+			llmProvider: SINDRE_DEFAULT.llmProvider,
+			llmConfig: SINDRE_DEFAULT.llmConfig,
+			tools: SINDRE_DEFAULT.tools,
+			memory: null,
+			updatedAt: new Date(),
+		})
+		.where(eq(actors.id, id))
+		.returning({
+			id: actors.id,
+			type: actors.type,
+			name: actors.name,
+			email: actors.email,
+			systemPrompt: actors.systemPrompt,
+			tools: actors.tools,
+			memory: actors.memory,
+			llmProvider: actors.llmProvider,
+			llmConfig: actors.llmConfig,
+			isSystem: actors.isSystem,
+			updatedAt: actors.updatedAt,
+		})
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'reset',
+		entityType: 'actor',
+		entityId: id,
+		data: updated,
+	})
+
+	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+}) as RouteHandler<typeof resetActorRoute, Env>)
+
 // DELETE /:id - Delete actor (agents only)
 const deleteActorRoute = createRoute({
 	method: 'delete',
@@ -433,6 +602,10 @@ app.openapi(deleteActorRoute, (async (c) => {
 
 	if (!(await isWorkspaceMember(db, id, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.isSystem) {
+		return c.json(createApiError('FORBIDDEN', 'System agents cannot be deleted'), 403)
 	}
 
 	if (existing.type !== 'agent') {

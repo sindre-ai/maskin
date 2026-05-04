@@ -1,4 +1,40 @@
+import { notificationActionSchema, notificationOptionSchema, skillNameSchema } from '@maskin/shared'
 import { z } from 'zod'
+
+// Keep field list in sync with `notificationMetadataSchema` in
+// packages/shared/src/schemas/notifications.ts — that schema is the canonical
+// server-side source of truth. This MCP-facing schema is intentionally stricter
+// (native arrays only, no JSON-string coercion) so agents are pushed toward the
+// correct shape; legacy stringified payloads are only tolerated at the HTTP layer.
+const notificationMetadataInput = z
+	.object({
+		actions: z
+			.array(notificationActionSchema)
+			.optional()
+			.describe(
+				'Clickable buttons rendered on the notification card. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Merged, continue", "response": "merged_continue" }, { "label": "Not ready yet", "response": "not_ready" }].',
+			),
+		input_type: z
+			.enum(['confirmation', 'single_choice', 'multiple_choice', 'text'])
+			.optional()
+			.describe(
+				'Renders a structured picker instead of action buttons. Pair with options (for single/multiple_choice) or placeholder/multiline (for text). NOTE: setting input_type disables the free-text "Reply to agent" input — only set it when you want a structured picker.',
+			),
+		options: z
+			.array(notificationOptionSchema)
+			.optional()
+			.describe(
+				'Options for single_choice / multiple_choice input_type. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Yes", "value": "yes" }, { "label": "No", "value": "no" }].',
+			),
+		question: z.string().optional(),
+		placeholder: z.string().optional(),
+		multiline: z.boolean().optional(),
+		suggestion: z.string().optional(),
+		urgency_label: z.string().optional(),
+		meta_text: z.string().optional(),
+		tags: z.array(z.string()).optional(),
+	})
+	.passthrough()
 
 const optionalWorkspaceId = z
 	.string()
@@ -9,12 +45,58 @@ const optionalWorkspaceId = z
 	)
 
 export const tools = {
-	// ─── Welcome ─────────────────────────────────────────────
-	hello: {
+	// ─── Get Started ─────────────────────────────────────────
+	get_started: {
 		description:
-			'👋 Welcome! Start here. Get a friendly overview of what Maskin is, what you can do, and how this workspace is set up — including object types, statuses, custom fields, team members, and available tools. Think of it as your agent landing page.',
+			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace — including prompts like "configure my Maskin workspace with the X template", "set up Maskin", "onboard me to Maskin", "get me started in Maskin". It does NOT set up a development environment, run servers, or install dependencies — it configures a Maskin workspace over the MCP API (settings, statuses, fields, seed objects). Flow: (1) call with just { template } to get a PREVIEW — the tool returns the template summary plus a few light tailoring questions for you to ask the user (workspace name, what they\'re building, near-term goal). (2) Ask the user those questions in one message. (3) Call again with { template, confirm: true, workspace_name?, seed_overrides? } using whatever the user told you. If the user said nothing, just call with { template, confirm: true } — defaults are fine.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			use_case: z
+				.string()
+				.optional()
+				.describe(
+					"What the user wants Maskin for, in their own words. E.g. 'product development', 'growth/launch', or a freeform description.",
+				),
+			template: z
+				.enum(['development', 'growth', 'custom'])
+				.optional()
+				.describe(
+					"Pick a starting template. 'development' = product team shipping software. 'growth' = founder running a pipeline with CRM. 'custom' = walk through a questionnaire. Omit to let the tool decide from use_case.",
+				),
+			team_type: z
+				.string()
+				.optional()
+				.describe('Optional hint about the team, e.g. "solo founder", "2-person product team".'),
+			workspace_name: z
+				.string()
+				.optional()
+				.describe(
+					'Rename the workspace on confirm. Use whatever the user told you — a product name, a team name, anything. Only applied when confirm is true.',
+				),
+			seed_overrides: z
+				.record(
+					z.object({
+						title: z.string().optional(),
+						content: z.string().optional(),
+						metadata: z.record(z.unknown()).optional(),
+					}),
+				)
+				.optional()
+				.describe(
+					'Optional per-node overrides for the template seed objects, keyed by the $id shown in the preview (e.g. "bet1", "task1"). Use this to tailor the example bet/task titles and content to what the user is actually building or their stated goals. Leave any $id out to keep the default.',
+				),
+			custom_settings: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					"When template is 'custom', pass the tailored workspace settings object here (display_names, statuses, field_definitions, custom_extensions, relationship_types).",
+				),
+			confirm: z
+				.boolean()
+				.optional()
+				.describe(
+					'Set true to actually apply the chosen template. Without this, the tool returns a preview plus tailoring questions you should ask the user.',
+				),
 		}),
 	},
 
@@ -201,8 +283,16 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			'List all actors (humans and agents) in the workspace, including their roles (owner, member, viewer).',
-		inputSchema: z.object({}),
+			'List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships.',
+		inputSchema: z.object({
+			workspace_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Optional workspace ID to scope the listing to. If omitted, returns actors across all workspaces the caller belongs to (each with their workspace memberships).',
+				),
+		}),
 	},
 	get_actor: {
 		description: 'Get actor details by ID',
@@ -253,6 +343,62 @@ export const tools = {
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe('Role: owner (full control), admin (manage members), member (read/write)'),
+		}),
+	},
+	// ─── Workspace Skills ─────────────────────────────────────
+	// Shared, workspace-scoped skills that any agent in the workspace can be given.
+	// NOT the same as per-agent skills (those live under an agent's own file store).
+	list_workspace_skills: {
+		description:
+			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	get_workspace_skill: {
+		description:
+			'Get a shared workspace skill by name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: skillNameSchema.describe(
+				'Skill name. Lowercase letters, numbers, and hyphens only; max 64 chars.',
+			),
+		}),
+	},
+	create_workspace_skill: {
+		description:
+			'Create a shared workspace skill. The skill is stored once in the workspace and can be attached to any number of agents afterwards — NOT a per-agent skill. Content must be valid SKILL.md (markdown with optional YAML frontmatter); the server parses the frontmatter to extract the description.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: skillNameSchema.describe(
+				'Skill name. Lowercase letters, numbers, and hyphens only; max 64 chars. Must be unique within the workspace.',
+			),
+			content: z
+				.string()
+				.min(1)
+				.describe(
+					'Full SKILL.md content. Optional YAML frontmatter (--- name, description, ... ---) is parsed for the description.',
+				),
+		}),
+	},
+	update_workspace_skill: {
+		description:
+			'Replace the content of an existing shared workspace skill. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: skillNameSchema.describe('Name of the workspace skill to update.'),
+			content: z
+				.string()
+				.min(1)
+				.describe('New SKILL.md content. Replaces the existing body entirely.'),
+		}),
+	},
+	delete_workspace_skill: {
+		description:
+			'Delete a shared workspace skill. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: skillNameSchema.describe('Name of the workspace skill to delete.'),
 		}),
 	},
 	get_events: {
@@ -427,7 +573,7 @@ export const tools = {
 	// ─── Notifications ───────────────────────────────────────
 	create_notification: {
 		description:
-			'Create a notification for a human in the workspace. Use when the agent needs human input (decision, information), wants to share a strategic recommendation, report good news, or raise an alert.',
+			'Create a notification for a human in the workspace. Use when the agent needs human input (decision, information), wants to share a strategic recommendation, report good news, or raise an alert. Pass session_id when the agent expects to be resumed with the human\'s reply — this enables the free-text "Reply to agent" input in the UI. To render clickable buttons, pass metadata.actions as a NATIVE JSON array (not a stringified one). For a structured picker (radio/checkbox/text), set metadata.input_type and metadata.options as a NATIVE JSON array.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
@@ -437,11 +583,10 @@ export const tools = {
 				),
 			title: z.string().min(1),
 			content: z.string().optional(),
-			metadata: z
-				.record(z.unknown())
+			metadata: notificationMetadataInput
 				.optional()
 				.describe(
-					'Structured data. Supports "actions" array to define custom action buttons: [{ label: "Button text", response: "value_sent_back", navigate?: { to: "object"|"objects"|"activity"|"agent"|"trigger", id?: "uuid" } }]. Also supports: input_type (confirmation|single_choice|multiple_choice|text), question, options ([{label, value, description?}]), tags, suggestion, urgency_label, meta_text.',
+					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags. Other keys pass through.',
 				),
 			source_actor_id: z.string().uuid().describe('The agent actor creating this notification'),
 			target_actor_id: z
@@ -458,7 +603,9 @@ export const tools = {
 				.string()
 				.uuid()
 				.optional()
-				.describe('Session that created this notification, for feedback routing'),
+				.describe(
+					'Session that created this notification. When set (and metadata.input_type is NOT set), the UI renders a free-text "Reply to agent" input that routes the reply back to this session.',
+				),
 		}),
 	},
 	list_notifications: {
@@ -491,7 +638,11 @@ export const tools = {
 				.enum(['pending', 'seen', 'resolved', 'dismissed'])
 				.optional()
 				.describe('New status for the notification'),
-			metadata: z.record(z.unknown()).optional().describe('Metadata to update on the notification'),
+			metadata: notificationMetadataInput
+				.optional()
+				.describe(
+					'Metadata to update on the notification. Same shape as create_notification.metadata — native arrays for actions/options, do NOT stringify.',
+				),
 		}),
 	},
 	delete_notification: {
@@ -529,6 +680,57 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
+		}),
+	},
+	// ─── LLM API Keys ─────────────────────────────────────────
+	set_llm_api_key: {
+		description:
+			"Save (or replace) a workspace LLM API key. Stored in workspace settings alongside any other providers. Returns { success, provider, last4 } — the full key is never echoed back. The key is stored as-is with no server-side validation against the provider; use the UI at /settings/keys if you need a live validation check. Mirrors the 'LLM API Keys' inputs in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			provider: z.enum(['anthropic', 'openai']),
+			api_key: z.string().min(1).describe('The API key (e.g. "sk-ant-..." or "sk-...").'),
+		}),
+	},
+	get_llm_api_keys: {
+		description:
+			"Report which LLM API keys are configured for the workspace. Returns { anthropic: { set, last4? }, openai: { set, last4? } } — never the full key. Mirrors the 'LLM API Keys' status in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	delete_llm_api_key: {
+		description:
+			'Remove a workspace LLM API key for a single provider. Other providers are left untouched.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			provider: z.enum(['anthropic', 'openai']),
+		}),
+	},
+	// ─── Claude Subscription ──────────────────────────────────
+	import_claude_subscription: {
+		description:
+			"Import Claude Pro/Max/Teams subscription tokens for the workspace (from ~/.claude/.credentials.json). Stored encrypted; used as the preferred auth for sandboxed Claude Code runs. Mirrors the 'Claude Subscription → Import credentials' action in Settings → Keys.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			access_token: z.string().min(1),
+			refresh_token: z.string().min(1),
+			expires_at: z.number().describe('Unix ms timestamp when the access token expires.'),
+			subscription_type: z.string().optional().describe('e.g. "pro", "max", "teams".'),
+			scopes: z.array(z.string()).optional(),
+		}),
+	},
+	get_claude_subscription_status: {
+		description:
+			'Check Claude subscription connection status for the workspace. Returns { connected, valid, subscription_type?, expires_at? } — never the tokens themselves.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	disconnect_claude_subscription: {
+		description: 'Disconnect the Claude subscription for the workspace (removes stored tokens).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 		}),
 	},
 	// ─── Extensions ──────────────────────────────────────────

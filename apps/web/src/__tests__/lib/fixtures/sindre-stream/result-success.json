@@ -1,0 +1,12 @@
+{
+	"type": "result",
+	"subtype": "success",
+	"is_error": false,
+	"duration_ms": 1823,
+	"duration_api_ms": 1401,
+	"num_turns": 2,
+	"result": "You have 3 active bets, 12 tasks in progress.",
+	"session_id": "sess-sindre-123",
+	"total_cost_usd": 0.00091,
+	"usage": { "input_tokens": 820, "output_tokens": 120 }
+}

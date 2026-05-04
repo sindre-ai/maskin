@@ -78,6 +78,12 @@ export function parseSkillMd(raw: string): ParsedSkill {
 
 /**
  * Serialize structured skill data back to SKILL.md format.
+ *
+ * Only keys present in `SkillFrontmatter` (plus `name` and `description`) are
+ * emitted. Custom/unrecognised frontmatter keys on the input SKILL.md are
+ * dropped by `parseSkillMd` and will therefore NOT survive a
+ * parse → serialize round-trip. Callers that rewrite stored SKILL.md content
+ * (e.g. the workspace-skills update route) must document this to users.
  */
 export function serializeSkillMd(skill: {
 	name: string

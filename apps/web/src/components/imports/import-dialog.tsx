@@ -22,6 +22,7 @@ import {
 } from '@/hooks/use-imports'
 import type {
 	ColumnMappingInput,
+	CsvOptions,
 	ImportMappingInput,
 	ImportResponse,
 	RelationshipMappingInput,
@@ -33,6 +34,18 @@ import { ChevronDown, ChevronRight, FileUp, Link2, Loader2, Plus, Upload, X } fr
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type Step = 'upload' | 'mapping'
+
+const DELIMITER_OPTIONS = [
+	{ value: ',', label: 'Comma (,)' },
+	{ value: ';', label: 'Semicolon (;)' },
+	{ value: '\t', label: 'Tab' },
+	{ value: '|', label: 'Pipe (|)' },
+]
+
+const ENCODING_OPTIONS = [
+	{ value: 'utf-8', label: 'UTF-8' },
+	{ value: 'latin-1', label: 'Latin-1 / ISO-8859-1' },
+]
 
 interface ImportDialogProps {
 	open: boolean
@@ -87,6 +100,19 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 		[importId, updateMapping],
 	)
 
+	const handleCsvOptionsChange = useCallback(
+		async (csvOptions: CsvOptions) => {
+			if (!importId) return
+			const importRecord = importData ?? createImport.data
+			const currentMapping = importRecord?.mapping ?? { typeMappings: [], relationships: [] }
+			await updateMapping.mutateAsync({
+				id: importId,
+				mapping: { ...currentMapping, csvOptions },
+			})
+		},
+		[importId, importData, createImport.data, updateMapping],
+	)
+
 	const importRecord = importData ?? createImport.data
 
 	return (
@@ -107,10 +133,12 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 
 				{step === 'mapping' && importRecord && (
 					<MappingStep
+						key={importRecord.preview?.columns?.join('\t') ?? ''}
 						importRecord={importRecord}
 						workspace={workspace}
 						onConfirm={handleConfirm}
 						onMappingUpdate={handleMappingUpdate}
+						onCsvOptionsChange={handleCsvOptionsChange}
 						isUpdating={updateMapping.isPending}
 					/>
 				)}
@@ -198,12 +226,14 @@ function MappingStep({
 	workspace,
 	onConfirm,
 	onMappingUpdate,
+	onCsvOptionsChange,
 	isUpdating,
 }: {
 	importRecord: ImportResponse
 	workspace: { settings: Record<string, unknown> }
 	onConfirm: () => void
 	onMappingUpdate: (mapping: ImportMappingInput) => void
+	onCsvOptionsChange: (csvOptions: CsvOptions) => void
 	isUpdating: boolean
 }) {
 	const mapping = importRecord.mapping
@@ -339,8 +369,9 @@ function MappingStep({
 		(): ImportMappingInput => ({
 			typeMappings,
 			relationships: localRelationships,
+			...(mapping?.csvOptions ? { csvOptions: mapping.csvOptions } : {}),
 		}),
-		[typeMappings, localRelationships],
+		[typeMappings, localRelationships, mapping?.csvOptions],
 	)
 
 	// Save mapping on changes (skip initial render, deduplicate identical updates)
@@ -409,6 +440,58 @@ function MappingStep({
 					<span className="font-medium">{importRecord.fileName}</span>
 				</div>
 			</div>
+
+			{/* CSV format options */}
+			{importRecord.fileType === 'csv' && (
+				<div className="flex gap-3 items-center text-sm border rounded-lg px-3 py-2 bg-muted/30">
+					<div className="flex items-center gap-2">
+						<span className="text-muted-foreground text-xs">Delimiter:</span>
+						<Select
+							value={mapping.csvOptions?.delimiter ?? ','}
+							onValueChange={(v) =>
+								onCsvOptionsChange({
+									...mapping.csvOptions,
+									delimiter: v as CsvOptions['delimiter'],
+								})
+							}
+						>
+							<SelectTrigger className="w-[130px] h-7 text-xs">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{DELIMITER_OPTIONS.map((opt) => (
+									<SelectItem key={opt.value} value={opt.value}>
+										{opt.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+					<div className="flex items-center gap-2">
+						<span className="text-muted-foreground text-xs">Encoding:</span>
+						<Select
+							value={mapping.csvOptions?.encoding ?? 'utf-8'}
+							onValueChange={(v) =>
+								onCsvOptionsChange({
+									...mapping.csvOptions,
+									encoding: v as CsvOptions['encoding'],
+								})
+							}
+						>
+							<SelectTrigger className="w-[170px] h-7 text-xs">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{ENCODING_OPTIONS.map((opt) => (
+									<SelectItem key={opt.value} value={opt.value}>
+										{opt.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+				</div>
+			)}
 
 			{/* Type mappings */}
 			<div className="space-y-3">

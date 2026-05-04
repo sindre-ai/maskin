@@ -1,7 +1,11 @@
 import { ActivityItemView } from '@/components/activity/activity-item'
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { buildActorResponse, buildEventResponse } from '../../factories'
+
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
 
 describe('ActivityItemView', () => {
 	it('renders actor name and event description', () => {
@@ -61,20 +65,19 @@ describe('ActivityItemView', () => {
 		expect(screen.queryByText('error')).not.toBeInTheDocument()
 	})
 
-	it('renders entity title as button when onNavigate is provided', async () => {
-		const user = userEvent.setup()
+	it('renders entity title as link when workspaceId is provided', () => {
 		const actor = buildActorResponse()
 		const event = buildEventResponse({
 			entityId: 'obj-1',
 			workspaceId: 'ws-1',
 			data: { title: 'Clickable' },
 		})
-		const onNavigate = vi.fn()
 
-		render(<ActivityItemView event={event} actor={actor} onNavigate={onNavigate} />)
+		render(<ActivityItemView event={event} actor={actor} workspaceId="ws-1" />)
 
-		await user.click(screen.getByText('Clickable'))
-		expect(onNavigate).toHaveBeenCalledWith('ws-1', 'obj-1', 'bet')
+		const link = screen.getByText('Clickable')
+		expect(link.tagName).toBe('A')
+		expect(link).toHaveClass('hover:underline')
 	})
 
 	it('applies reduced opacity for agent actors', () => {

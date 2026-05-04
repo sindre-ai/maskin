@@ -44,7 +44,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
-			<SidebarHeader className="h-16 justify-center">
+			<SidebarHeader className="h-11 justify-center">
 				<SidebarMenu>
 					<SidebarMenuItem>
 						<SidebarTrigger />

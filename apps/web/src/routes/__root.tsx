@@ -19,6 +19,7 @@ function RootComponent() {
 			<Toaster
 				theme={resolvedTheme}
 				position="bottom-right"
+				style={{ zIndex: 50 }}
 				toastOptions={{
 					style: {
 						background: 'var(--ui-card)',

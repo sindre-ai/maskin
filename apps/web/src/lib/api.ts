@@ -89,6 +89,8 @@ export const api = {
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
 		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
+		graph: (id: string, workspaceId: string) =>
+			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
 		create: (workspaceId: string, data: CreateObjectInput) =>
 			request<ObjectResponse>('/objects', { method: 'POST', body: data, workspaceId }),
 		update: (id: string, data: UpdateObjectInput) =>
@@ -114,6 +116,8 @@ export const api = {
 			request<ActorResponse>(`/actors/${id}`, { method: 'PATCH', body: data }),
 		regenerateApiKey: (id: string) =>
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
+		reset: (id: string, workspaceId: string) =>
+			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
 	},
@@ -234,6 +238,14 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<SessionLogResponse[]>(`/sessions/${id}/logs${qs}`, { workspaceId })
 		},
+		input: (id: string, body: SessionInputBody, workspaceId: string) =>
+			request<{ ok: true }>(`/sessions/${id}/input`, {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		stop: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
 	},
 
 	events: {
@@ -295,6 +307,41 @@ export const api = {
 			request<{ success: boolean }>('/claude-oauth', {
 				method: 'DELETE',
 				workspaceId,
+			}),
+	},
+
+	workspaceSkills: {
+		list: (workspaceId: string) =>
+			request<WorkspaceSkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
+		get: (workspaceId: string, name: string) =>
+			request<WorkspaceSkillDetail>(`/workspaces/${workspaceId}/skills/${name}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateWorkspaceSkillInput) =>
+			request<WorkspaceSkillDetail>(`/workspaces/${workspaceId}/skills`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (workspaceId: string, name: string, data: UpdateWorkspaceSkillInput) =>
+			request<WorkspaceSkillDetail>(`/workspaces/${workspaceId}/skills/${name}`, {
+				method: 'PUT',
+				body: data,
+				workspaceId,
+			}),
+		delete: (workspaceId: string, name: string) =>
+			request<{ deleted: boolean }>(`/workspaces/${workspaceId}/skills/${name}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		listForActor: (actorId: string) =>
+			request<AttachedWorkspaceSkill[]>(`/actors/${actorId}/workspace-skills`),
+		attach: (actorId: string, workspaceSkillId: string) =>
+			request<AttachedWorkspaceSkill>(`/actors/${actorId}/workspace-skills`, {
+				method: 'POST',
+				body: { workspaceSkillId },
+			}),
+		detach: (actorId: string, workspaceSkillId: string) =>
+			request<{ deleted: boolean }>(`/actors/${actorId}/workspace-skills/${workspaceSkillId}`, {
+				method: 'DELETE',
 			}),
 	},
 }
@@ -367,6 +414,7 @@ export interface ActorResponse extends ActorListItem {
 	memory: Record<string, unknown> | null
 	llmProvider: string | null
 	llmConfig: Record<string, unknown> | null
+	isSystem: boolean
 	createdAt: string | null
 	updatedAt: string | null
 }
@@ -437,6 +485,12 @@ export interface RelationshipResponse {
 	type: string
 	createdBy: string
 	createdAt: string | null
+}
+
+export interface ObjectGraphResponse {
+	object: ObjectResponse
+	relationships: RelationshipResponse[]
+	connected_objects: ObjectResponse[]
 }
 
 export interface CreateRelationshipInput {
@@ -542,9 +596,53 @@ export interface SaveSkillInput {
 	frontmatter?: Record<string, unknown>
 }
 
+export interface WorkspaceSkillListItem {
+	id: string
+	workspaceId: string
+	name: string
+	description: string | null
+	storageKey: string
+	sizeBytes: number
+	isValid: boolean
+	createdBy: string | null
+	createdAt: string
+	updatedAt: string
+}
+
+export interface WorkspaceSkillDetail extends WorkspaceSkillListItem {
+	content: string
+}
+
+export interface AttachedWorkspaceSkill extends WorkspaceSkillListItem {
+	attachedAt: string
+}
+
+export interface CreateWorkspaceSkillInput {
+	name: string
+	content: string
+}
+
+export interface UpdateWorkspaceSkillInput {
+	name?: string
+	content: string
+}
+
+export interface SessionConfigInput {
+	/** Start the container with stdin attached so subsequent user turns can be delivered via the input route. */
+	interactive?: boolean
+	base_image?: string
+	runtime?: 'claude-code' | 'codex' | 'custom'
+	timeout_seconds?: number
+	memory_mb?: number
+	cpu_shares?: number
+	env_vars?: Record<string, string>
+	mcps?: Array<Record<string, unknown>>
+}
+
 export interface CreateSessionInput {
 	actor_id: string
 	action_prompt: string
+	config?: SessionConfigInput
 	auto_start?: boolean
 }
 
@@ -565,6 +663,16 @@ export interface SessionResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+}
+
+export interface SessionInputAttachment {
+	kind: string
+	id: string
+}
+
+export interface SessionInputBody {
+	content: string
+	attachments?: SessionInputAttachment[]
 }
 
 export interface SessionLogResponse {
@@ -594,6 +702,11 @@ export interface CreateCommentInput {
 }
 
 // Imports
+export interface CsvOptions {
+	delimiter?: ',' | ';' | '\t' | '|'
+	encoding?: 'utf-8' | 'latin-1'
+}
+
 export interface ImportResponse {
 	id: string
 	workspaceId: string
@@ -651,4 +764,5 @@ export interface RelationshipMappingInput {
 export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
+	csvOptions?: CsvOptions
 }

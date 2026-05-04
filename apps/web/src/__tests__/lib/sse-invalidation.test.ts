@@ -69,6 +69,21 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('invalidates objects for knowledge entity', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'knowledge',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.all(workspaceId),
+		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.detail(entityId),
+		})
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
@@ -138,6 +153,30 @@ describe('invalidateFromSSE', () => {
 		} as never)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.workspaces.all(),
+		})
+	})
+
+	it('invalidates workspace skills for workspace_skill entity', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'workspace_skill',
+			entity_id: entityId,
+			action: 'created',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.workspaceSkills.all(workspaceId),
+		})
+	})
+
+	it('invalidates all agent skill attachments for agent_skill entity', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'agent_skill',
+			entity_id: entityId,
+			action: 'attached',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['agent-skill-attachments'],
 		})
 	})
 })

@@ -10,6 +10,11 @@ export const importStatusSchema = z.enum([
 
 export const importFileTypeSchema = z.enum(['csv', 'json'])
 
+export const csvOptionsSchema = z.object({
+	delimiter: z.enum([',', ';', '\t', '|']).default(','),
+	encoding: z.enum(['utf-8', 'latin-1']).default('utf-8'),
+})
+
 export const columnMappingSchema = z.object({
 	sourceColumn: z.string(),
 	targetField: z.string(),
@@ -32,6 +37,7 @@ export const relationshipMappingSchema = z.object({
 export const importMappingSchema = z.object({
 	typeMappings: z.array(typeMappingSchema).min(1),
 	relationships: z.array(relationshipMappingSchema).default([]),
+	csvOptions: csvOptionsSchema.optional(),
 })
 
 export const updateImportMappingSchema = z.object({
@@ -54,3 +60,4 @@ export type ColumnMapping = z.infer<typeof columnMappingSchema>
 export type TypeMapping = z.infer<typeof typeMappingSchema>
 export type RelationshipMapping = z.infer<typeof relationshipMappingSchema>
 export type ImportMapping = z.infer<typeof importMappingSchema>
+export type CsvOptions = z.infer<typeof csvOptionsSchema>

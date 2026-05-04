@@ -18,10 +18,54 @@ interface NotificationInputProps {
 	onSubmit: (response: unknown) => void
 }
 
+/**
+ * Normalize metadata.options into an array of {label, value, description?}.
+ * Tolerates three historically-seen shapes:
+ *   1. Native array of objects (the canonical shape)
+ *   2. JSON-stringified array (agents sometimes stringify)
+ *   3. Pipe-delimited string like "Yes | No" (labels only)
+ * Returns undefined if no usable options can be parsed.
+ */
+function coerceOptions(raw: unknown): InputOption[] | undefined {
+	if (Array.isArray(raw)) {
+		const valid = raw.filter(
+			(o): o is InputOption =>
+				!!o && typeof o === 'object' && typeof o.label === 'string' && typeof o.value === 'string',
+		)
+		return valid.length > 0 ? valid : undefined
+	}
+	if (typeof raw === 'string') {
+		const trimmed = raw.trim()
+		if (trimmed.startsWith('[')) {
+			try {
+				const parsed = JSON.parse(trimmed)
+				return coerceOptions(parsed)
+			} catch {
+				// fall through to pipe-delimited handling
+			}
+		}
+		if (trimmed.includes('|')) {
+			const labels = trimmed
+				.split('|')
+				.map((s) => s.trim())
+				.filter(Boolean)
+			if (labels.length === 0) return undefined
+			return labels.map((label) => ({
+				label,
+				value: label
+					.toLowerCase()
+					.replace(/[^a-z0-9]+/g, '_')
+					.replace(/^_|_$/g, ''),
+			}))
+		}
+	}
+	return undefined
+}
+
 export function NotificationInput({ metadata, onSubmit }: NotificationInputProps) {
 	const inputType = metadata.input_type as string
 	const question = metadata.question as string | undefined
-	const options = metadata.options as InputOption[] | undefined
+	const options = coerceOptions(metadata.options)
 	const placeholder = metadata.placeholder as string | undefined
 
 	const [singleValue, setSingleValue] = useState('')

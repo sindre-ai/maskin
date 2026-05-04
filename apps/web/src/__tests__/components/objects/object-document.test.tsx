@@ -1,6 +1,6 @@
 import { ObjectDocumentView } from '@/components/objects/object-document'
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
 import { buildActorResponse, buildObjectResponse } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -38,6 +38,7 @@ const baseProps = {
 	onUpdateTitle: vi.fn(),
 	onUpdateContent: vi.fn(),
 	onUpdateStatus: vi.fn(),
+	onUpdateOwner: vi.fn(),
 	onDelete: vi.fn(),
 }
 
@@ -112,5 +113,76 @@ describe('ObjectDocumentView', () => {
 		const object = buildObjectResponse({ activeSessionId: null })
 		render(<ObjectDocumentView {...baseProps} object={object} />)
 		expect(screen.queryByText('agent working')).not.toBeInTheDocument()
+	})
+
+	describe('OwnerSelect', () => {
+		const members = [
+			{ actorId: 'actor-alice', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },
+			{ actorId: 'actor-bot', role: 'member', joinedAt: null, name: 'Bot', type: 'agent' },
+		]
+
+		it('does not render owner select when members are not provided', () => {
+			const object = buildObjectResponse({ owner: null })
+			render(<ObjectDocumentView {...baseProps} object={object} />)
+			expect(screen.queryByText('Unassigned')).not.toBeInTheDocument()
+		})
+
+		it('shows "Unassigned" when owner is null', () => {
+			const object = buildObjectResponse({ owner: null })
+			render(<ObjectDocumentView {...baseProps} object={object} members={members} />)
+			expect(screen.getByText('Unassigned')).toBeInTheDocument()
+		})
+
+		it('shows owner name when owner is a current member', () => {
+			const object = buildObjectResponse({ owner: 'actor-alice' })
+			render(<ObjectDocumentView {...baseProps} object={object} members={members} />)
+			expect(screen.getByText('Alice')).toBeInTheDocument()
+		})
+
+		it('shows "Unknown" fallback when owner is set but not in members', () => {
+			const object = buildObjectResponse({ owner: 'actor-removed-12345678-abcd' })
+			render(<ObjectDocumentView {...baseProps} object={object} members={members} />)
+			expect(screen.getByText(/Unknown \(actor-re\)/)).toBeInTheDocument()
+		})
+
+		it('calls onUpdateOwner with actor id when selecting a member', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const onUpdateOwner = vi.fn()
+			const object = buildObjectResponse({ owner: null })
+			render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					members={members}
+					onUpdateOwner={onUpdateOwner}
+				/>,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			await user.click(triggers[triggers.length - 1])
+			await user.click(screen.getByRole('option', { name: /Alice/ }))
+
+			expect(onUpdateOwner).toHaveBeenCalledWith('actor-alice')
+		})
+
+		it('calls onUpdateOwner with null when selecting "Unassigned"', async () => {
+			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+			const onUpdateOwner = vi.fn()
+			const object = buildObjectResponse({ owner: 'actor-alice' })
+			render(
+				<ObjectDocumentView
+					{...baseProps}
+					object={object}
+					members={members}
+					onUpdateOwner={onUpdateOwner}
+				/>,
+			)
+
+			const triggers = screen.getAllByRole('combobox')
+			await user.click(triggers[triggers.length - 1])
+			await user.click(screen.getByRole('option', { name: /Unassigned/ }))
+
+			expect(onUpdateOwner).toHaveBeenCalledWith(null)
+		})
 	})
 })

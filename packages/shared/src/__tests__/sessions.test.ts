@@ -17,6 +17,7 @@ const uuid = '550e8400-e29b-41d4-a716-446655440000'
 describe('sessionStatusSchema', () => {
 	const statuses = [
 		'pending',
+		'queued',
 		'starting',
 		'running',
 		'snapshotting',
@@ -113,10 +114,16 @@ describe('sessionConfigSchema', () => {
 		expect(result.runtime).toBe('claude-code')
 		expect(result.runtime_config).toEqual({})
 		expect(result.timeout_seconds).toBe(600)
-		expect(result.memory_mb).toBe(8192)
+		expect(result.memory_mb).toBe(4096)
 		expect(result.cpu_shares).toBe(1024)
 		expect(result.mcps).toEqual([])
 		expect(result.env_vars).toEqual({})
+		expect(result.interactive).toBe(false)
+	})
+
+	it('accepts interactive=true', () => {
+		const result = sessionConfigSchema.parse({ interactive: true })
+		expect(result.interactive).toBe(true)
 	})
 
 	it('coerces timeout_seconds from string', () => {

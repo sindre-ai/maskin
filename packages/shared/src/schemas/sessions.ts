@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 export const sessionStatusSchema = z.enum([
 	'pending',
+	'queued',
 	'starting',
 	'running',
 	'snapshotting',
@@ -49,10 +50,11 @@ export const sessionConfigSchema = z.object({
 	runtime: sessionRuntimeSchema.default('claude-code'),
 	runtime_config: runtimeConfigSchema.default({}),
 	timeout_seconds: z.coerce.number().int().min(30).max(3600).default(600),
-	memory_mb: z.coerce.number().int().min(256).max(8192).default(8192),
+	memory_mb: z.coerce.number().int().min(256).max(8192).default(4096),
 	cpu_shares: z.coerce.number().int().min(256).max(4096).default(1024),
 	mcps: z.array(mcpServerSchema).default([]),
 	env_vars: z.record(z.string()).default({}),
+	interactive: z.boolean().default(false),
 })
 
 export const createSessionSchema = z.object({
@@ -78,4 +80,14 @@ export const sessionLogQuerySchema = z.object({
 
 export const sessionParamsSchema = z.object({
 	id: z.string().uuid(),
+})
+
+export const sessionInputAttachmentSchema = z.object({
+	kind: z.string().min(1),
+	id: z.string().min(1),
+})
+
+export const sessionInputSchema = z.object({
+	content: z.string().min(1),
+	attachments: z.array(sessionInputAttachmentSchema).optional(),
 })

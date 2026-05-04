@@ -19,7 +19,7 @@ import { useWorkspaces } from '@/hooks/use-workspaces'
 import { clearAuth, getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { ChevronsUpDown, LogOut, Settings, UserCircle } from 'lucide-react'
+import { Check, ChevronsUpDown, LogOut, Settings, UserCircle } from 'lucide-react'
 
 export function NavUser() {
 	const { workspace, workspaceId } = useWorkspace()
@@ -32,6 +32,7 @@ export function NavUser() {
 	const displayEmail = actor?.email ?? ''
 	const initial = displayName.charAt(0).toUpperCase()
 
+	const currentWorkspace = workspaces?.find((ws) => ws.id === workspaceId)
 	const otherWorkspaces = workspaces?.filter((ws) => ws.id !== workspaceId) ?? []
 
 	return (
@@ -80,13 +81,20 @@ export function NavUser() {
 							<Settings className="mr-2 size-4" />
 							Settings
 						</DropdownMenuItem>
-						{otherWorkspaces.length > 0 &&
+						{workspaces &&
+							workspaces.length > 0 &&
 							(isMobile ? (
 								<>
 									<DropdownMenuSeparator />
 									<DropdownMenuLabel className="text-xs text-muted-foreground">
-										Switch workspace
+										Workspace
 									</DropdownMenuLabel>
+									{currentWorkspace && (
+										<DropdownMenuItem disabled>
+											<Check className="mr-2 size-4" />
+											{currentWorkspace.name}
+										</DropdownMenuItem>
+									)}
 									{otherWorkspaces.map((ws) => (
 										<DropdownMenuItem
 											key={ws.id}
@@ -97,7 +105,7 @@ export function NavUser() {
 												})
 											}
 										>
-											{ws.name}
+											<span className="ml-6">{ws.name}</span>
 										</DropdownMenuItem>
 									))}
 								</>
@@ -105,9 +113,15 @@ export function NavUser() {
 								<DropdownMenuSub>
 									<DropdownMenuSubTrigger>
 										<UserCircle className="mr-2 size-4" />
-										Switch workspace
+										{currentWorkspace?.name ?? 'Switch workspace'}
 									</DropdownMenuSubTrigger>
 									<DropdownMenuSubContent className="min-w-48">
+										{currentWorkspace && (
+											<DropdownMenuItem disabled>
+												<Check className="mr-2 size-4" />
+												{currentWorkspace.name}
+											</DropdownMenuItem>
+										)}
 										{otherWorkspaces.map((ws) => (
 											<DropdownMenuItem
 												key={ws.id}
@@ -118,7 +132,7 @@ export function NavUser() {
 													})
 												}
 											>
-												{ws.name}
+												<span className="ml-6">{ws.name}</span>
 											</DropdownMenuItem>
 										))}
 									</DropdownMenuSubContent>

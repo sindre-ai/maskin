@@ -56,7 +56,7 @@ describe('AnthropicAdapter', () => {
 		await adapter.chat({ model: '', messages: [{ role: 'user', content: 'hi' }] })
 
 		const body = JSON.parse(mockFetch.mock.calls[0][1].body)
-		expect(body.model).toBe('claude-sonnet-4-20250514')
+		expect(body.model).toBe('claude-opus-4-7')
 	})
 
 	it('uses provided model', async () => {

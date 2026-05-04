@@ -1,12 +1,30 @@
 import { useActor } from '@/hooks/use-actors'
 import type { ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { Activity, CircleDot, Link2, Pencil, Play, RefreshCw, Trash2, Unlink } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Badge } from '../ui/badge'
 import { formatEventDescription, isErrorEvent } from './format-event'
+
+const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
+const SESSION_ACTIONS = new Set([
+	'session_created',
+	'session_running',
+	'session_completed',
+	'session_failed',
+	'session_timeout',
+	'session_paused',
+])
+
+function isObjectEntity(entityType: string): boolean {
+	return OBJECT_ENTITY_TYPES.has(entityType)
+}
+
+function isSessionEvent(event: EventResponse): boolean {
+	return SESSION_ACTIONS.has(event.action)
+}
 
 function getEventIcon(event: EventResponse) {
 	const action = event.action
@@ -36,14 +54,14 @@ interface ActivityItemViewProps {
 	event: EventResponse
 	actor?: ActorResponse
 	compact?: boolean
-	onNavigate?: (workspaceId: string, entityId: string, entityType?: string) => void
+	workspaceId?: string
 }
 
 export function ActivityItemView({
 	event,
 	actor,
 	compact = false,
-	onNavigate,
+	workspaceId,
 }: ActivityItemViewProps) {
 	const isAgent = actor?.type === 'agent'
 	const title = getEntityTitle(event)
@@ -52,12 +70,17 @@ export function ActivityItemView({
 
 	const Icon = getEventIcon(event)
 
-	return (
+	const isSession = isSessionEvent(event)
+	const isClickable = isSession && workspaceId && event.actorId
+
+	const content = (
 		<div
 			className={cn(
 				'flex items-start gap-2 animate-slide-in',
 				compact ? 'py-1' : 'py-2',
 				isAgent && 'opacity-75',
+				isClickable &&
+					'hover:bg-secondary/50 rounded-md px-1 -mx-1 transition-colors cursor-pointer',
 			)}
 		>
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
@@ -69,14 +92,15 @@ export function ActivityItemView({
 					</span>
 					<span className="text-muted-foreground">{description}</span>
 					{title &&
-						(onNavigate ? (
-							<button
-								type="button"
-								onClick={() => onNavigate(event.workspaceId, event.entityId, event.entityType)}
-								className="text-primary hover:underline cursor-pointer truncate text-sm"
+						(workspaceId && isObjectEntity(event.entityType) ? (
+							<Link
+								to="/$workspaceId/objects/$objectId"
+								params={{ workspaceId, objectId: event.entityId }}
+								className="text-foreground hover:underline truncate text-sm"
+								onClick={(e) => e.stopPropagation()}
 							>
 								{title}
-							</button>
+							</Link>
 						) : (
 							<span className="text-muted-foreground truncate text-sm">{title}</span>
 						))}
@@ -92,6 +116,20 @@ export function ActivityItemView({
 			</div>
 		</div>
 	)
+
+	if (isClickable) {
+		return (
+			<Link
+				to="/$workspaceId/agents/$agentId"
+				params={{ workspaceId, agentId: event.actorId }}
+				className="block no-underline text-inherit"
+			>
+				{content}
+			</Link>
+		)
+	}
+
+	return content
 }
 
 export function ActivityItem({
@@ -102,20 +140,13 @@ export function ActivityItem({
 	compact?: boolean
 }) {
 	const { data: actor } = useActor(event.actorId)
-	const navigate = useNavigate()
-
-	function handleNavigate(workspaceId: string, entityId: string, entityType?: string): void {
-		if (entityType === 'notification') {
-			navigate({ to: '/$workspaceId', params: { workspaceId } })
-			return
-		}
-		navigate({
-			to: '/$workspaceId/objects/$objectId',
-			params: { workspaceId, objectId: entityId },
-		})
-	}
 
 	return (
-		<ActivityItemView event={event} actor={actor} compact={compact} onNavigate={handleNavigate} />
+		<ActivityItemView
+			event={event}
+			actor={actor}
+			compact={compact}
+			workspaceId={event.workspaceId}
+		/>
 	)
 }

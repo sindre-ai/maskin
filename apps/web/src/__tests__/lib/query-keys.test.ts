@@ -56,14 +56,6 @@ describe('queryKeys', () => {
 		it('all includes workspaceId', () => {
 			expect(queryKeys.relationships.all('ws-1')).toEqual(['relationships', 'ws-1'])
 		})
-
-		it('byObject includes objectId', () => {
-			expect(queryKeys.relationships.byObject('obj-1')).toEqual([
-				'relationships',
-				'object',
-				'obj-1',
-			])
-		})
 	})
 
 	describe('sessions', () => {
@@ -131,6 +123,26 @@ describe('queryKeys', () => {
 				'a-1',
 				'code-review',
 			])
+		})
+	})
+
+	describe('workspaceSkills', () => {
+		it('all includes workspaceId', () => {
+			expect(queryKeys.workspaceSkills.all('ws-1')).toEqual(['workspace-skills', 'ws-1'])
+		})
+
+		it('detail includes workspaceId and name', () => {
+			expect(queryKeys.workspaceSkills.detail('ws-1', 'my-skill')).toEqual([
+				'workspace-skills',
+				'ws-1',
+				'my-skill',
+			])
+		})
+	})
+
+	describe('agentSkillAttachments', () => {
+		it('all includes actorId', () => {
+			expect(queryKeys.agentSkillAttachments.all('a-1')).toEqual(['agent-skill-attachments', 'a-1'])
 		})
 	})
 

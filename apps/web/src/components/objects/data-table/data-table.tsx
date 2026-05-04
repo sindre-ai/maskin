@@ -130,11 +130,13 @@ export function DataTable({
 		)
 	}
 
+	const virtualItems = virtualizer.getVirtualItems()
+	const totalSize = virtualizer.getTotalSize()
+	const paddingTop = virtualItems[0]?.start ?? 0
+	const paddingBottom = virtualItems.length > 0 ? totalSize - (virtualItems.at(-1)?.end ?? 0) : 0
+
 	return (
-		<div
-			ref={parentRef}
-			className="h-[calc(100vh-220px)] md:h-[calc(100vh-180px)] overflow-auto rounded-md border"
-		>
+		<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
 			<Table>
 				<TableHeader className="sticky top-0 z-10 bg-background">
 					{table.getHeaderGroups().map((headerGroup) => (
@@ -153,7 +155,7 @@ export function DataTable({
 					))}
 				</TableHeader>
 				<TableBody>
-					{virtualizer.getVirtualItems().length === 0 ? (
+					{virtualItems.length === 0 ? (
 						<TableRow>
 							<TableCell colSpan={columns.length} className="h-24 text-center">
 								No results.
@@ -161,7 +163,12 @@ export function DataTable({
 						</TableRow>
 					) : (
 						<>
-							{virtualizer.getVirtualItems().map((virtualItem) => {
+							{paddingTop > 0 && (
+								<TableRow aria-hidden className="border-0">
+									<TableCell colSpan={columns.length} style={{ height: paddingTop, padding: 0 }} />
+								</TableRow>
+							)}
+							{virtualItems.map((virtualItem) => {
 								const row = rows[virtualItem.index]
 								if (!row) return null
 
@@ -171,6 +178,8 @@ export function DataTable({
 									return (
 										<TableRow
 											key={row.id}
+											data-index={virtualItem.index}
+											ref={virtualizer.measureElement}
 											className="bg-muted/30 hover:bg-muted/50 cursor-pointer"
 											onClick={() => row.toggleExpanded()}
 										>
@@ -196,6 +205,8 @@ export function DataTable({
 								return (
 									<TableRow
 										key={row.id}
+										data-index={virtualItem.index}
+										ref={virtualizer.measureElement}
 										data-state={row.getIsSelected() && 'selected'}
 										className="cursor-pointer"
 										onClick={() => handleRowClick(row.original.id)}
@@ -210,6 +221,14 @@ export function DataTable({
 									</TableRow>
 								)
 							})}
+							{paddingBottom > 0 && (
+								<TableRow aria-hidden className="border-0">
+									<TableCell
+										colSpan={columns.length}
+										style={{ height: paddingBottom, padding: 0 }}
+									/>
+								</TableRow>
+							)}
 						</>
 					)}
 				</TableBody>

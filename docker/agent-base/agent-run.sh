@@ -131,9 +131,18 @@ run_agent() {
   case "$RUNTIME" in
     claude-code)
       local max_turns="${MAX_TURNS:-5000}"
-      local mcp_args=""
+      local mcp_args=()
       if [ -n "$MCP_CONFIG_FILE" ]; then
-        mcp_args="--mcp-config $MCP_CONFIG_FILE"
+        mcp_args=(--mcp-config "$MCP_CONFIG_FILE")
+      fi
+      if [ "$INTERACTIVE" = "1" ]; then
+        exec claude -p \
+          --input-format stream-json \
+          --output-format stream-json \
+          --verbose \
+          --dangerously-skip-permissions \
+          "${mcp_args[@]}" \
+          2>&1
       fi
       exec claude -p "$ACTION_PROMPT" \
         --print \
@@ -141,7 +150,7 @@ run_agent() {
         --output-format stream-json \
         --max-turns "$max_turns" \
         --dangerously-skip-permissions \
-        $mcp_args \
+        "${mcp_args[@]}" \
         2>&1
       ;;
     codex)
@@ -157,12 +166,18 @@ run_agent() {
         exit 1
       fi
       # Reject shell metacharacters to prevent command injection
-      if echo "$CUSTOM_COMMAND" | grep -qE '[;&|`$(){}]'; then
+      if echo "$CUSTOM_COMMAND" | grep -qE '[;&|`$(){}<>*?!\\"'"'"']'; then
         echo "[error] CUSTOM_COMMAND contains forbidden shell characters" >&2
         exit 1
       fi
-      # Use exec without eval — word splitting only, no shell interpretation
-      exec $CUSTOM_COMMAND 2>&1
+      # Split on whitespace into an array, then exec without a shell —
+      # no word splitting surprises, no glob expansion, no interpolation.
+      read -r -a custom_argv <<< "$CUSTOM_COMMAND"
+      if [ "${#custom_argv[@]}" -eq 0 ]; then
+        echo "[error] CUSTOM_COMMAND is empty after tokenization" >&2
+        exit 1
+      fi
+      exec "${custom_argv[@]}" 2>&1
       ;;
   esac
 }

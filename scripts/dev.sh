@@ -8,6 +8,14 @@ if [ -f .env ]; then
   set +a
 fi
 
+# Ensure integration encryption key exists in .env before servers start.
+node scripts/ensure-encryption-key.mjs
+if [ -f .env ]; then
+  set -a
+  source .env
+  set +a
+fi
+
 echo "Starting Docker services (postgres, seaweedfs)..."
 docker-compose up -d postgres seaweedfs
 
@@ -21,4 +29,4 @@ echo "Running database migrations..."
 pnpm db:migrate
 
 echo "Starting dev servers..."
-exec dotenv -- turbo dev
+exec dotenv -- turbo dev --log-prefix=none

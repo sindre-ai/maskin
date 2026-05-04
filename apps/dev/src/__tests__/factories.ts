@@ -32,6 +32,7 @@ export function buildActor(overrides?: Record<string, unknown>) {
 		memory: null,
 		llmProvider: null,
 		llmConfig: null,
+		isSystem: false,
 		createdBy: null,
 		createdAt: new Date(),
 		updatedAt: new Date(),
@@ -210,6 +211,7 @@ export function buildSession(overrides?: Record<string, unknown>) {
 		containerId: `container-${n}`,
 		actionPrompt: `Do something ${n}`,
 		config: {},
+		interactive: false,
 		result: null,
 		snapshotPath: null,
 		startedAt: new Date(),
@@ -301,6 +303,45 @@ export function buildAgentSkill(overrides?: Record<string, unknown>) {
 		actorId: randomUUID(),
 		workspaceId: randomUUID(),
 		fileType: 'skills',
+		...overrides,
+	}
+}
+
+export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
+	const n = next()
+	const name = `ws-skill-${n}`
+	const workspaceId = randomUUID()
+	const id = randomUUID()
+	return {
+		id,
+		workspaceId,
+		name,
+		description: `Workspace skill ${n}`,
+		content: `---\nname: ${name}\ndescription: Workspace skill ${n}\n---\n\nDo the thing ${n}`,
+		storageKey: `workspaces/${workspaceId}/skills/${id}/SKILL.md`,
+		sizeBytes: 128,
+		isValid: true,
+		createdBy: randomUUID(),
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildCreateWorkspaceSkillBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	const name = `ws-skill-${n}`
+	return {
+		name,
+		content: `---\nname: ${name}\ndescription: Workspace skill ${n}\n---\n\nDo the thing ${n}`,
+		...overrides,
+	}
+}
+
+export function buildUpdateWorkspaceSkillBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		content: `---\nname: skill\ndescription: Updated skill ${n}\n---\n\nNew body ${n}`,
 		...overrides,
 	}
 }

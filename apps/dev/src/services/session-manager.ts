@@ -1,11 +1,11 @@
-import { exec as execCb } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
-const execAsync = promisify(execCb)
+const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -17,18 +17,28 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, lt } from 'drizzle-orm'
+import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
-import { AgentStorageManager } from './agent-storage'
-import { ContainerManager, type LogChunk } from './container-manager'
+import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
+import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
 
 export interface CreateSessionParams {
 	actorId: string
 	actionPrompt: string
+	/**
+	 * Free-form session config. Recognized keys include:
+	 *   - `interactive?: boolean` — when true, start the container with stdin
+	 *     attached so subsequent user turns can be delivered via
+	 *     `ContainerManager.write()`. The value is also persisted to
+	 *     `sessions.interactive` so downstream routes (e.g. the input route)
+	 *     can gate on it without re-parsing config.
+	 *   - everything else is passed through as-is to the container env/runtime.
+	 */
 	config?: Record<string, unknown>
 	triggerId?: string
 	createdBy: string
@@ -44,7 +54,12 @@ export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
 	private watchdogInterval: NodeJS.Timeout | null = null
-	private activeSessions: Map<string, { tempDir: string }> = new Map()
+	private activeSessions: Map<
+		string,
+		{ tempDir: string; browserContainerId?: string; networkName?: string }
+	> = new Map()
+	private agentBaseBuildContext: string | null = null
+	private drainingWorkspaces: Set<string> = new Set()
 
 	constructor(
 		private db: Database,
@@ -53,6 +68,10 @@ export class SessionManager extends EventEmitter {
 		super()
 		this.containers = new ContainerManager()
 		this.agentStorage = new AgentStorageManager(storage, db)
+	}
+
+	setAgentBaseBuildContext(buildContext: string) {
+		this.agentBaseBuildContext = buildContext
 	}
 
 	async start() {
@@ -76,6 +95,9 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
+		const config = params.config ?? {}
+		const interactive = config.interactive === true
+
 		const [session] = await this.db
 			.insert(sessions)
 			.values({
@@ -84,7 +106,8 @@ export class SessionManager extends EventEmitter {
 				triggerId: params.triggerId,
 				status: 'pending',
 				actionPrompt: params.actionPrompt,
-				config: params.config ?? {},
+				config,
+				interactive,
 				createdBy: params.createdBy,
 			})
 			.returning()
@@ -120,12 +143,22 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || session.status !== 'pending') {
-			throw new Error(`Session ${sessionId} not found or not in pending state`)
+		if (!session || (session.status !== 'pending' && session.status !== 'queued')) {
+			throw new Error(`Session ${sessionId} not found or not in pending/queued state`)
 		}
 
-		// Check workspace concurrency limit
-		await this.checkConcurrencyLimit(session.workspaceId)
+		// Check workspace concurrency limit — queue instead of rejecting
+		const hasCapacity = await this.hasCapacity(session.workspaceId)
+		if (!hasCapacity) {
+			await this.db
+				.update(sessions)
+				.set({ status: 'queued', updatedAt: new Date() })
+				.where(eq(sessions.id, sessionId))
+
+			await this.insertSystemLog(sessionId, 'Session queued — waiting for capacity')
+			logger.info(`Session queued: ${sessionId}`, { workspaceId: session.workspaceId })
+			return
+		}
 
 		// Update status to starting
 		await this.db
@@ -144,9 +177,18 @@ export class SessionManager extends EventEmitter {
 			this.activeSessions.set(sessionId, { tempDir })
 
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
+			const pullResult = await this.agentStorage.pullWorkspaceSkillsForAgent(
+				session.actorId,
+				session.workspaceId,
+				tempDir,
+			)
+			await this.reportSkillPullFailures(sessionId, pullResult)
+			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
-			// Build env vars and launch container
-			const containerId = await this.launchContainer(session, tempDir, sessionId)
+			// Build env vars and launch container. Let launchContainer derive
+			// the container name from session.id so re-entry (e.g. a watchdog
+			// retry) doesn't collide with a Docker name we forced ourselves.
+			const containerId = await this.launchContainer(session, tempDir)
 
 			await this.db
 				.update(sessions)
@@ -187,10 +229,21 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
+			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
+	}
+
+	/**
+	 * Deliver a user turn to an interactive session's stdin. Caller must have
+	 * already validated the session is interactive and in `running` state; this
+	 * method only performs the stdin write and propagates any underlying error.
+	 */
+	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
+		await this.containers.write(sessionId, payload)
 	}
 
 	async stopSession(sessionId: string): Promise<void> {
@@ -204,6 +257,7 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
+		this.containers.detachStdin(sessionId)
 		await this.containers.stop(session.containerId)
 		// handleCompletion will be called by the exit watcher
 	}
@@ -240,6 +294,7 @@ export class SessionManager extends EventEmitter {
 			await this.storage.put(snapshotKey, tarStream as import('node:stream').Readable)
 
 			// Stop and remove container
+			this.containers.detachStdin(sessionId)
 			await this.containers.stop(session.containerId)
 			await this.containers.remove(session.containerId)
 
@@ -255,9 +310,15 @@ export class SessionManager extends EventEmitter {
 
 			await this.insertSystemLog(sessionId, 'Session paused and snapshot saved')
 
+			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 
 			logger.info(`Session paused: ${sessionId}`)
+
+			// Start next queued session if capacity is available
+			await this.drainQueue(session.workspaceId).catch((err) =>
+				logger.error('Failed to drain queue after pause', { error: String(err) }),
+			)
 		} catch (err) {
 			// Revert status on failure
 			await this.db
@@ -293,10 +354,20 @@ export class SessionManager extends EventEmitter {
 
 			const snapshotPath = join(tempDir, 'snapshot.tar.gz')
 			await writeFile(snapshotPath, snapshotBuffer)
-			await execAsync(`tar -xzf "${snapshotPath}" -C "${tempDir}"`)
+			await execFileAsync('tar', ['-xzf', snapshotPath, '-C', tempDir])
 
-			// Also pull latest agent files (other sessions may have added learnings)
+			// Pull latest agent files AND workspace skills — between pause and resume
+			// the attachment set and skill content may have changed, so overwrite
+			// any stale snapshot folders for currently-attached skills.
 			await this.agentStorage.pullAgentFiles(session.actorId, session.workspaceId, tempDir)
+			const pullResult = await this.agentStorage.pullWorkspaceSkillsForAgent(
+				session.actorId,
+				session.workspaceId,
+				tempDir,
+				{ overwrite: true },
+			)
+			await this.reportSkillPullFailures(sessionId, pullResult)
+			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
 
 			// Build env vars (including integration credentials) and launch container
 			const containerId = await this.launchContainer(
@@ -343,13 +414,15 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			this.containers.detachStdin(sessionId)
 			await this.clearActiveSession(sessionId)
+			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 			throw err
 		}
 	}
 
-	private async checkConcurrencyLimit(workspaceId: string): Promise<void> {
+	private async hasCapacity(workspaceId: string): Promise<boolean> {
 		const [workspace] = await this.db
 			.select()
 			.from(workspaces)
@@ -357,17 +430,58 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 
 		const settings = (workspace?.settings as WorkspaceSettings) ?? {}
-		const maxConcurrent = settings.max_concurrent_sessions ?? 5
+		const maxConcurrent = settings.max_concurrent_sessions ?? 3
 
 		const [result] = await this.db
 			.select({ count: countFn() })
 			.from(sessions)
 			.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'running')))
 
-		if (result && result.count >= maxConcurrent) {
-			throw new Error(
-				`Workspace has reached its concurrent session limit (${maxConcurrent}). Wait for a session to complete or increase the limit.`,
-			)
+		return !result || result.count < maxConcurrent
+	}
+
+	/**
+	 * Drain the queue: start queued sessions for a workspace until capacity is full or queue is empty.
+	 * Called after a session completes, fails, or times out, and from the watchdog as a safety net.
+	 * Uses a per-workspace lock to prevent concurrent drain calls from racing.
+	 */
+	private async drainQueue(workspaceId: string): Promise<void> {
+		// Prevent concurrent drains for the same workspace
+		if (this.drainingWorkspaces.has(workspaceId)) return
+		this.drainingWorkspaces.add(workspaceId)
+
+		try {
+			while (await this.hasCapacity(workspaceId)) {
+				// Atomically claim the oldest queued session by transitioning its status.
+				// If two callers race, only one gets a non-empty result from the UPDATE.
+				const [nextQueued] = await this.db
+					.select()
+					.from(sessions)
+					.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued')))
+					.orderBy(sessions.createdAt)
+					.limit(1)
+
+				if (!nextQueued) break
+
+				const [claimed] = await this.db
+					.update(sessions)
+					.set({ status: 'pending', updatedAt: new Date() })
+					.where(and(eq(sessions.id, nextQueued.id), eq(sessions.status, 'queued')))
+					.returning()
+
+				if (!claimed) break
+
+				logger.info(`Draining queue: starting session ${claimed.id}`, { workspaceId })
+				// Await start so capacity check on next iteration reflects the new running session
+				await this.startSession(claimed.id).catch((err) =>
+					logger.error('Failed to start queued session', {
+						sessionId: claimed.id,
+						error: String(err),
+					}),
+				)
+			}
+		} finally {
+			this.drainingWorkspaces.delete(workspaceId)
 		}
 	}
 
@@ -396,9 +510,21 @@ export class SessionManager extends EventEmitter {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
-			ACTION_PROMPT: session.actionPrompt,
 			MASKIN_API_URL: 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
+		}
+
+		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
+		// arrives via POST /api/sessions/:id/input over the attached stdin stream.
+		// Non-interactive sessions pass the action prompt positionally so `claude -p`
+		// runs it and exits; interactive sets INTERACTIVE=1 so agent-run.sh takes
+		// the stdin-driven stream-json branch instead.
+		// session.actionPrompt is the user's original prompt and is never written back
+		// wrapped — safe to re-prepend on every launch, including resume.
+		if (session.interactive) {
+			envVars.INTERACTIVE = '1'
+		} else {
+			envVars.ACTION_PROMPT = `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`
 		}
 
 		// Inject LLM API key: agent-level first, then workspace-level fallback
@@ -481,7 +607,9 @@ export class SessionManager extends EventEmitter {
 			try {
 				const resolved = getProvider(integration.provider)
 				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
-				envVars[`${integration.provider.toUpperCase()}_TOKEN`] = accessToken
+				const envVarName =
+					resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
+				envVars[envVarName] = accessToken
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {
 					error: String(err),
@@ -495,6 +623,7 @@ export class SessionManager extends EventEmitter {
 			'AGENT_RUNTIME',
 			'SYSTEM_PROMPT',
 			'ACTION_PROMPT',
+			'INTERACTIVE',
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
 			'ANTHROPIC_API_KEY',
@@ -510,6 +639,7 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_EXPIRES_AT',
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
+			'BROWSER_CDP_URL',
 		])
 		const userEnvVars = (sessionConfig.env_vars as Record<string, string>) ?? {}
 		for (const [key, value] of Object.entries(userEnvVars)) {
@@ -533,16 +663,41 @@ export class SessionManager extends EventEmitter {
 		}
 
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
+		const image = (sessionConfig.base_image as string) ?? 'agent-base:latest'
+
+		// Ensure the image exists — rebuild if it was pruned or lost
+		if (image === 'agent-base:latest' && this.agentBaseBuildContext) {
+			await this.containers.ensureImage(image, this.agentBaseBuildContext)
+		}
+
+		// Provision browser sidecar if Playwright MCP is configured
+		let networkMode: string | undefined
+		if (this.needsBrowserSidecar(envVars)) {
+			const prefix = session.id.slice(0, 8)
+			const result = await this.provisionBrowserSidecar(session.id, prefix)
+			if (result) {
+				envVars.BROWSER_CDP_URL = `ws://anko-browser-${prefix}:9222`
+				networkMode = result.networkName
+			}
+		}
+
 		const containerId = await this.containers.create({
-			image: (sessionConfig.base_image as string) ?? 'agent-base:latest',
+			image,
 			name,
 			env: envVars,
-			memoryMb: (sessionConfig.memory_mb as number) ?? 8192,
+			memoryMb: (sessionConfig.memory_mb as number) ?? 4096,
 			cpuShares: (sessionConfig.cpu_shares as number) ?? 1024,
 			binds: [`${tempDir}:/agent:rw`],
+			networkMode,
+			interactive: session.interactive,
 		})
 
 		await this.containers.start(containerId)
+
+		if (session.interactive) {
+			await this.containers.attachStdin(session.id, containerId)
+		}
+
 		return containerId
 	}
 
@@ -579,25 +734,57 @@ export class SessionManager extends EventEmitter {
 					sessionId,
 					error: String(err),
 				})
+				// Surface the interruption so SSE clients don't hang on a blank
+				// spinner while the container keeps running without logs.
+				await this.insertSystemLog(
+					sessionId,
+					'Log stream interrupted — session may still be running',
+				).catch((logErr) =>
+					logger.error('Failed to write log-stream-interrupted system log', {
+						sessionId,
+						error: String(logErr),
+					}),
+				)
 			}
 		})()
 	}
 
 	private watchContainerExit(sessionId: string, containerId: string) {
+		// Tolerate a few transient Docker API failures in a row before giving
+		// up and marking the session failed — a single EBUSY/socket timeout
+		// shouldn't strand the session as "running" until the hour-long
+		// timeout reaper catches it.
+		const MAX_CONSECUTIVE_INSPECT_FAILURES = 5
+		let consecutiveFailures = 0
 		const poll = async () => {
 			try {
 				const status = await this.containers.inspect(containerId)
+				consecutiveFailures = 0
 				if (!status.running) {
 					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
 					return
 				}
 			} catch (err) {
-				logger.warn('Container inspect failed, stopping exit watcher', {
+				consecutiveFailures++
+				logger.warn('Container inspect failed', {
 					sessionId,
 					containerId,
 					error: String(err),
+					consecutiveFailures,
 				})
-				return
+				if (consecutiveFailures >= MAX_CONSECUTIVE_INSPECT_FAILURES) {
+					logger.error('Container inspect failed repeatedly, marking session failed', {
+						sessionId,
+						containerId,
+					})
+					await this.handleCompletion(sessionId, containerId, 1).catch((completionErr) => {
+						logger.error('handleCompletion failed after inspect give-up', {
+							sessionId,
+							error: String(completionErr),
+						})
+					})
+					return
+				}
 			}
 			setTimeout(poll, 2000)
 		}
@@ -626,7 +813,9 @@ export class SessionManager extends EventEmitter {
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
 				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir)
+					.pushAgentFiles(session.actorId, session.workspaceId, sessionId, sessionData.tempDir, {
+						actionPrompt: session.actionPrompt,
+					})
 					.catch((err) =>
 						logger.warn('Failed to push learnings', { sessionId, error: String(err) }),
 					)
@@ -637,31 +826,71 @@ export class SessionManager extends EventEmitter {
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
-		await this.db
-			.update(sessions)
-			.set({
+		// SSE clients subscribed to /logs/stream rely on the "Session
+		// completed|failed|timed out|paused" system log to emit their `done`
+		// event and close. If any DB write below throws, subscribers would sit
+		// in the 30s keep-alive loop indefinitely — so swallow persistence
+		// errors here and always attempt the terminal system log.
+		try {
+			await this.db
+				.update(sessions)
+				.set({
+					status,
+					result: { exit_code: exitCode },
+					completedAt: new Date(),
+					updatedAt: new Date(),
+				})
+				.where(eq(sessions.id, sessionId))
+		} catch (err) {
+			logger.error('Failed to update session status in handleCompletion', {
+				sessionId,
 				status,
-				result: { exit_code: exitCode },
-				completedAt: new Date(),
-				updatedAt: new Date(),
+				error: String(err),
 			})
-			.where(eq(sessions.id, sessionId))
+		}
 
-		await this.db.insert(events).values({
-			workspaceId: session.workspaceId,
-			actorId: session.actorId,
-			action: `session_${status}`,
-			entityType: 'session',
-			entityId: sessionId,
-			data: { exit_code: exitCode },
-		})
+		try {
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: `session_${status}`,
+				entityType: 'session',
+				entityId: sessionId,
+				data: { exit_code: exitCode },
+			})
+		} catch (err) {
+			logger.error('Failed to insert completion event in handleCompletion', {
+				sessionId,
+				status,
+				error: String(err),
+			})
+		}
 
-		await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
+		try {
+			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
+		} catch (err) {
+			logger.error('Failed to write terminal system log — SSE clients may hang', {
+				sessionId,
+				status,
+				error: String(err),
+			})
+			// Last-ditch fan-out: synthesize a log event on the bus so SSE
+			// subscribers see `done` even when DB insert is failing. The log id
+			// is synthetic (negative) so it can't collide with real rows.
+			this.emit('log', {
+				sessionId,
+				logId: -Date.now(),
+				stream: 'system',
+				data: `Session ${status} with exit code ${exitCode}`,
+			})
+		}
 
 		// Clear active session link on object
 		await this.clearActiveSession(sessionId)
 
 		// Cleanup
+		this.containers.detachStdin(sessionId)
+		await this.cleanupBrowserSidecar(sessionId)
 		await this.containers
 			.remove(containerId)
 			.catch((err) =>
@@ -670,10 +899,16 @@ export class SessionManager extends EventEmitter {
 		await this.cleanupSession(sessionId)
 
 		logger.info(`Session ${status}: ${sessionId}`, { exitCode })
+
+		// Start next queued session if capacity is available
+		await this.drainQueue(session.workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after completion', { error: String(err) }),
+		)
 	}
 
 	private async runWatchdog(): Promise<void> {
 		const now = new Date()
+		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
 
 		// 1. Find sessions past timeout — push learnings before cleanup
 		const timedOut = await this.db
@@ -688,7 +923,9 @@ export class SessionManager extends EventEmitter {
 			const sessionData = this.activeSessions.get(session.id)
 			if (sessionData) {
 				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir)
+					.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir, {
+						actionPrompt: session.actionPrompt,
+					})
 					.catch((err) =>
 						logger.warn('Failed to push learnings on timeout', {
 							sessionId: session.id,
@@ -698,6 +935,7 @@ export class SessionManager extends EventEmitter {
 			}
 
 			if (session.containerId) {
+				this.containers.detachStdin(session.id)
 				await this.containers.stop(session.containerId).catch((err) =>
 					logger.warn('Failed to stop timed-out container', {
 						sessionId: session.id,
@@ -733,16 +971,30 @@ export class SessionManager extends EventEmitter {
 				data: {},
 			})
 
+			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
+				logger.warn('Failed to write timeout system log', {
+					sessionId: session.id,
+					error: String(err),
+				}),
+			)
+
 			await this.clearActiveSession(session.id)
+			await this.cleanupBrowserSidecar(session.id)
 			await this.cleanupSession(session.id)
+
+			// Start next queued session if capacity is available
+			await this.drainQueue(session.workspaceId).catch((err) =>
+				logger.error('Failed to drain queue after timeout', { error: String(err) }),
+			)
 		}
 
-		// 2. Auto-pause idle sessions (no log output for >10 minutes)
-		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
+		// 2. Auto-pause idle non-interactive sessions (no log output for >10 minutes).
+		// Interactive sessions (Sindre chat) are long-lived by design and naturally
+		// idle between user turns — pausing them silently breaks the next /input call.
 		const runningSessions = await this.db
 			.select()
 			.from(sessions)
-			.where(eq(sessions.status, 'running'))
+			.where(and(eq(sessions.status, 'running'), eq(sessions.interactive, false)))
 
 		for (const session of runningSessions) {
 			const [lastLog] = await this.db
@@ -790,6 +1042,95 @@ export class SessionManager extends EventEmitter {
 		// 4. Prune old session logs (30 days)
 		const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 		await this.db.delete(sessionLogs).where(lt(sessionLogs.createdAt, thirtyDaysAgo))
+
+		// 5. Recover stuck pending sessions — sessions stuck in 'pending' for >2 minutes
+		// without being started (e.g., startSession promise was lost or never called)
+		const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000)
+		const stuckPending = await this.db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.status, 'pending'), lt(sessions.updatedAt, twoMinutesAgo)))
+
+		for (const session of stuckPending) {
+			logger.warn(`Recovering stuck pending session: ${session.id}`, {
+				workspaceId: session.workspaceId,
+			})
+			// Move to queued so drainQueue picks them up in order
+			await this.db
+				.update(sessions)
+				.set({ status: 'queued', updatedAt: new Date() })
+				.where(and(eq(sessions.id, session.id), eq(sessions.status, 'pending')))
+				.catch((err) =>
+					logger.error('Failed to recover stuck pending session', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+		}
+
+		// 6. Fail sessions stuck in 'starting' for >10 minutes (zombie session cleanup)
+		const stuckStarting = await this.db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.status, 'starting'), lt(sessions.updatedAt, tenMinutesAgo)))
+
+		for (const session of stuckStarting) {
+			logger.warn(`Failing zombie session stuck in starting: ${session.id}`, {
+				workspaceId: session.workspaceId,
+			})
+
+			await this.db
+				.update(sessions)
+				.set({
+					status: 'failed',
+					result: { error: 'Session stuck in starting state' },
+					completedAt: new Date(),
+					updatedAt: new Date(),
+				})
+				.where(eq(sessions.id, session.id))
+
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_failed',
+				entityType: 'session',
+				entityId: session.id,
+				data: { error: 'Session stuck in starting state' },
+			})
+
+			await this.clearActiveSession(session.id)
+			await this.cleanupSession(session.id)
+
+			// Free capacity for the workspace so queued sessions can start
+			await this.drainQueue(session.workspaceId).catch((err) =>
+				logger.error('Failed to drain queue after zombie cleanup', { error: String(err) }),
+			)
+		}
+
+		// 7. Drain queued sessions for workspaces that have capacity
+		const queuedSessions = await this.db
+			.select({ workspaceId: sessions.workspaceId })
+			.from(sessions)
+			.where(or(eq(sessions.status, 'queued'), eq(sessions.status, 'pending')))
+			.groupBy(sessions.workspaceId)
+
+		for (const { workspaceId } of queuedSessions) {
+			await this.drainQueue(workspaceId).catch((err) =>
+				logger.error('Failed to drain queue in watchdog', { workspaceId, error: String(err) }),
+			)
+		}
+	}
+
+	private async reportSkillPullFailures(
+		sessionId: string,
+		result: PullWorkspaceSkillsResult,
+	): Promise<void> {
+		if (result.failures.length === 0) return
+		const names = result.failures.map((f) => f.name).join(', ')
+		await this.insertSystemLog(
+			sessionId,
+			`Warning: ${result.failures.length} workspace skill(s) could not be pulled and are unavailable in this session: ${names}`,
+		)
 	}
 
 	private async insertSystemLog(sessionId: string, content: string): Promise<void> {
@@ -805,6 +1146,142 @@ export class SessionManager extends EventEmitter {
 				stream: 'system',
 				data: content,
 			} satisfies SessionLogEvent)
+		}
+	}
+
+	/**
+	 * Check if the MCP config references ${BROWSER_CDP_URL}, indicating a browser sidecar is needed.
+	 */
+	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
+		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
+		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
+		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
+	}
+
+	/**
+	 * Provision a headless Chrome sidecar container on a per-session Docker network.
+	 * Returns the network name and browser container ID, or null if provisioning fails.
+	 * On failure, the agent session continues without browser capability.
+	 */
+	private async provisionBrowserSidecar(
+		sessionId: string,
+		prefix: string,
+	): Promise<{ networkName: string; browserContainerId: string } | null> {
+		const networkName = `anko-net-${prefix}`
+		const browserName = `anko-browser-${prefix}`
+		let browserContainerId: string | undefined
+
+		try {
+			await this.containers.pullImage('chromedp/headless-shell:latest')
+			await this.containers.createNetwork(networkName)
+
+			browserContainerId = await this.containers.create({
+				image: 'chromedp/headless-shell:latest',
+				name: browserName,
+				env: {},
+				memoryMb: 512,
+				cpuShares: 512,
+				binds: [],
+				networkMode: networkName,
+			})
+
+			await this.containers.start(browserContainerId)
+
+			// Brief wait for Chrome to initialize CDP listener
+			await new Promise((resolve) => setTimeout(resolve, 2000))
+
+			// Track sidecar resources for cleanup
+			const sessionData = this.activeSessions.get(sessionId)
+			if (sessionData) {
+				sessionData.browserContainerId = browserContainerId
+				sessionData.networkName = networkName
+			}
+
+			logger.info('Browser sidecar started', { sessionId, browserName, networkName })
+			await this.insertSystemLog(
+				sessionId,
+				'Browser sidecar started — Playwright MCP can connect via CDP',
+			)
+
+			return { networkName, browserContainerId }
+		} catch (err) {
+			logger.error('Browser sidecar failed — agent will run without browser', {
+				sessionId,
+				error: String(err),
+			})
+			await this.insertSystemLog(
+				sessionId,
+				`Browser sidecar failed to start: ${err instanceof Error ? err.message : String(err)}. Agent will continue without browser capability.`,
+			)
+
+			// Clean up partial resources
+			if (browserContainerId) {
+				await this.containers.stop(browserContainerId).catch(() => {})
+				await this.containers.remove(browserContainerId).catch(() => {})
+			}
+			await this.containers.removeNetwork(networkName).catch(() => {})
+
+			// Clear sidecar tracking
+			const sessionData = this.activeSessions.get(sessionId)
+			if (sessionData) {
+				sessionData.browserContainerId = undefined
+				sessionData.networkName = undefined
+			}
+
+			return null
+		}
+	}
+
+	/**
+	 * Clean up browser sidecar container and its Docker network.
+	 * Called before cleanupSession() in all exit paths.
+	 */
+	private async cleanupBrowserSidecar(sessionId: string): Promise<void> {
+		const sessionData = this.activeSessions.get(sessionId)
+		if (!sessionData) return
+
+		if (sessionData.browserContainerId) {
+			await this.containers
+				.stop(sessionData.browserContainerId)
+				.catch((err) =>
+					logger.warn('Failed to stop browser sidecar', { sessionId, error: String(err) }),
+				)
+			await this.containers
+				.remove(sessionData.browserContainerId)
+				.catch((err) =>
+					logger.warn('Failed to remove browser sidecar', { sessionId, error: String(err) }),
+				)
+		}
+
+		if (sessionData.networkName) {
+			await this.containers
+				.removeNetwork(sessionData.networkName)
+				.catch((err) =>
+					logger.warn('Failed to remove session network', { sessionId, error: String(err) }),
+				)
+		}
+	}
+
+	/**
+	 * Generate the workspace briefing and write it to `/agent/workspace/WORKSPACE.md`
+	 * (inside the container) by writing to the mounted tempDir before launch.
+	 * Briefing failures never block session start — the agent can still fall back
+	 * to direct MCP queries.
+	 */
+	private async writeWorkspaceBriefing(
+		workspaceId: string,
+		tempDir: string,
+		sessionId: string,
+	): Promise<void> {
+		try {
+			const briefing = await renderWorkspaceBriefing(this.db, this.storage, workspaceId)
+			await writeFile(join(tempDir, 'workspace', 'WORKSPACE.md'), briefing)
+		} catch (err) {
+			logger.warn('Failed to write workspace briefing', {
+				sessionId,
+				workspaceId,
+				error: String(err),
+			})
 		}
 	}
 

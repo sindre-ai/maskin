@@ -11,13 +11,14 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useDeleteActor, useUpdateActor } from '@/hooks/use-actors'
+import { useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
 	useActiveSessionsForActor,
 	useActorSessions,
 	useCreateSession,
+	useSession,
 	useSessionErrorLog,
 	useSessionLatestLog,
 } from '@/hooks/use-sessions'
@@ -32,16 +33,18 @@ import {
 	ChevronRight,
 	Clock,
 	MinusCircle,
+	RotateCcw,
 	Trash2,
 	XCircle,
 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
 import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
+import { SessionDetailPanel } from './session-detail-panel'
 import { Skills } from './skills'
 
 interface AgentDocumentViewProps {
@@ -136,6 +139,33 @@ export function AgentDocumentView({
 		}
 	}, [memoryDraft, onUpdateMemory])
 
+	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
+	const [viewSessionId, setViewSessionId] = useState<string | null>(null)
+	const { data: fetchedSession } = useSession(viewSessionId, workspaceId)
+
+	// When a session is fetched by ID (from instruction log), select it
+	useEffect(() => {
+		if (fetchedSession && viewSessionId) {
+			setSelectedSession(fetchedSession)
+			setViewSessionId(null)
+		}
+	}, [fetchedSession, viewSessionId])
+
+	const handleViewSession = useCallback(
+		(sessionId: string) => {
+			// Check if we already have the session in our local data
+			const existing =
+				recentSessions?.find((s) => s.id === sessionId) ??
+				activeSessions?.find((s) => s.id === sessionId)
+			if (existing) {
+				setSelectedSession(existing)
+			} else {
+				setViewSessionId(sessionId)
+			}
+		},
+		[recentSessions, activeSessions],
+	)
+
 	// Filter out active sessions from recent sessions to avoid duplicates
 	const activeIds = useMemo(
 		() => new Set((activeSessions ?? []).map((s) => s.id)),
@@ -192,7 +222,7 @@ export function AgentDocumentView({
 			</div>
 
 			{/* Instruction Log */}
-			<InstructionLog agent={agent} workspaceId={workspaceId} />
+			<InstructionLog agent={agent} workspaceId={workspaceId} onViewSession={handleViewSession} />
 
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (
@@ -215,11 +245,21 @@ export function AgentDocumentView({
 								session={session}
 								workspaceId={workspaceId}
 								agentId={agent.id}
+								onSelect={setSelectedSession}
 							/>
 						))}
 					</div>
 				</Section>
 			)}
+
+			<SessionDetailPanel
+				session={selectedSession}
+				workspaceId={workspaceId}
+				open={selectedSession !== null}
+				onOpenChange={(open) => {
+					if (!open) setSelectedSession(null)
+				}}
+			/>
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
@@ -268,7 +308,7 @@ export function AgentDocumentView({
 									value={modelDraft}
 									onChange={(e) => setModelDraft(e.target.value)}
 									onBlur={handleModelBlur}
-									placeholder="e.g. claude-sonnet-4-5-20250514"
+									placeholder="e.g. claude-opus-4-7"
 								/>
 							</div>
 						</div>
@@ -391,10 +431,12 @@ function SessionRow({
 	session,
 	workspaceId,
 	agentId,
+	onSelect,
 }: {
 	session: SessionResponse
 	workspaceId: string
 	agentId: string
+	onSelect?: (session: SessionResponse) => void
 }) {
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
@@ -418,7 +460,11 @@ function SessionRow({
 
 	return (
 		<div>
-			<div className="flex items-center gap-2.5 rounded-md px-3 py-1.5">
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
+			<div
+				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 hover:bg-secondary/50 transition-colors cursor-pointer"
+				onClick={() => onSelect?.(session)}
+			>
 				<SessionStatusIcon status={session.status} />
 				<span className={`text-sm truncate flex-1 ${isFailed ? 'text-error' : ''}`}>
 					{session.actionPrompt || 'Untitled session'}
@@ -428,19 +474,23 @@ function SessionRow({
 						<button
 							type="button"
 							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
-							onClick={() => setShowError((v) => !v)}
+							onClick={(e) => {
+								e.stopPropagation()
+								setShowError((v) => !v)
+							}}
 						>
 							{showError ? 'Hide' : 'Error'}
 						</button>
 						<button
 							type="button"
 							className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer"
-							onClick={() =>
+							onClick={(e) => {
+								e.stopPropagation()
 								createSession.mutate({
 									actor_id: agentId,
 									action_prompt: session.actionPrompt,
 								})
-							}
+							}}
 							disabled={createSession.isPending}
 						>
 							{createSession.isPending ? 'Retrying…' : 'Retry'}
@@ -466,6 +516,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
+	const resetActor = useResetActor(workspaceId)
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
@@ -477,6 +528,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	)
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [confirmReset, setConfirmReset] = useState(false)
 
 	const handleDelete = useCallback(() => {
 		deleteActor.mutate(agent.id, {
@@ -486,35 +538,67 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		})
 	}, [agent.id, deleteActor, navigate, workspaceId])
 
-	const deleteActions = useMemo(
-		() =>
-			confirmDelete ? (
+	const handleReset = useCallback(() => {
+		resetActor.mutate(agent.id, {
+			onSuccess: () => {
+				setConfirmReset(false)
+			},
+		})
+	}, [agent.id, resetActor])
+
+	const headerActions = useMemo(() => {
+		if (agent.isSystem) {
+			return confirmReset ? (
 				<div className="flex items-center gap-2">
-					<span className="text-xs text-error">Delete this agent?</span>
-					<Button
-						variant="destructive"
-						size="sm"
-						onClick={handleDelete}
-						disabled={deleteActor.isPending}
-					>
-						{deleteActor.isPending ? 'Deleting...' : 'Confirm'}
+					<span className="text-xs text-muted-foreground">Reset this agent to defaults?</span>
+					<Button size="sm" onClick={handleReset} disabled={resetActor.isPending}>
+						{resetActor.isPending ? 'Resetting...' : 'Confirm'}
 					</Button>
-					<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+					<Button variant="ghost" size="sm" onClick={() => setConfirmReset(false)}>
 						Cancel
 					</Button>
 				</div>
 			) : (
-				<Button
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 text-muted-foreground hover:text-error"
-					onClick={() => setConfirmDelete(true)}
-				>
-					<Trash2 size={15} />
+				<Button variant="ghost" size="sm" onClick={() => setConfirmReset(true)}>
+					<RotateCcw size={14} />
+					Reset to default
 				</Button>
-			),
-		[confirmDelete, handleDelete, deleteActor.isPending],
-	)
+			)
+		}
+		return confirmDelete ? (
+			<div className="flex items-center gap-2">
+				<span className="text-xs text-error">Delete this agent?</span>
+				<Button
+					variant="destructive"
+					size="sm"
+					onClick={handleDelete}
+					disabled={deleteActor.isPending}
+				>
+					{deleteActor.isPending ? 'Deleting...' : 'Confirm'}
+				</Button>
+				<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+					Cancel
+				</Button>
+			</div>
+		) : (
+			<Button
+				variant="ghost"
+				size="icon"
+				className="h-7 w-7 text-muted-foreground hover:text-error"
+				onClick={() => setConfirmDelete(true)}
+			>
+				<Trash2 size={15} />
+			</Button>
+		)
+	}, [
+		agent.isSystem,
+		confirmDelete,
+		confirmReset,
+		handleDelete,
+		handleReset,
+		deleteActor.isPending,
+		resetActor.isPending,
+	])
 
 	const handleUpdateName = useCallback(
 		(name: string) => {
@@ -560,7 +644,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 
 	return (
 		<>
-			<PageHeader actions={deleteActions} />
+			<PageHeader actions={headerActions} />
 			<AgentDocumentView
 				agent={agent}
 				workspaceId={workspaceId}

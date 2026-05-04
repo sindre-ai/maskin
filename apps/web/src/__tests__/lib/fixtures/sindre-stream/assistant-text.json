@@ -1,0 +1,14 @@
+{
+	"type": "assistant",
+	"message": {
+		"id": "msg_01ABC",
+		"type": "message",
+		"role": "assistant",
+		"content": [{ "type": "text", "text": "Looking at your workspace now…" }],
+		"model": "claude-sonnet-4-5",
+		"stop_reason": null,
+		"usage": { "input_tokens": 12, "output_tokens": 8 }
+	},
+	"parent_tool_use_id": null,
+	"session_id": "sess-sindre-123"
+}

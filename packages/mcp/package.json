@@ -11,18 +11,24 @@
 		}
 	},
 	"scripts": {
+		"start": "tsx src/server.ts",
 		"build": "tsc",
 		"type-check": "tsc --noEmit",
 		"test": "vitest"
 	},
 	"dependencies": {
+		"@maskin/ext-crm": "workspace:*",
+		"@maskin/ext-knowledge": "workspace:*",
+		"@maskin/ext-notetaker": "workspace:*",
+		"@maskin/ext-work": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",
-		"@modelcontextprotocol/ext-apps": "^1.2.2",
-		"@modelcontextprotocol/sdk": "^1.27.1",
+		"@modelcontextprotocol/ext-apps": "^1.6.0",
+		"@modelcontextprotocol/sdk": "^1.29.0",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {
+		"tsx": "^4.21.0",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"
 	}

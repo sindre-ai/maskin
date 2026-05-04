@@ -1,0 +1,9 @@
+{
+	"type": "system",
+	"subtype": "init",
+	"session_id": "sess-sindre-123",
+	"tools": ["list_objects", "search_objects"],
+	"mcp_servers": [{ "name": "maskin", "status": "connected" }],
+	"model": "claude-sonnet-4-5",
+	"apiKeySource": "env"
+}

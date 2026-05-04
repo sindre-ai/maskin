@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	actorParamsSchema,
+	actorResponseSchema,
 	actorToolsSchema,
 	actorTypeSchema,
 	createActorSchema,
@@ -162,5 +163,83 @@ describe('actorParamsSchema', () => {
 
 	it('rejects non-uuid', () => {
 		expect(() => actorParamsSchema.parse({ id: 'abc' })).toThrow()
+	})
+})
+
+describe('actorResponseSchema', () => {
+	const validResponse = {
+		id: uuid,
+		type: 'agent',
+		name: 'Sindre',
+		email: null,
+		systemPrompt: 'You are a helper',
+		tools: null,
+		memory: null,
+		llmProvider: 'anthropic',
+		llmConfig: null,
+		isSystem: true,
+		createdAt: '2026-04-17T10:34:29.083Z',
+		updatedAt: '2026-04-17T10:34:29.083Z',
+	}
+
+	it('accepts a valid response with isSystem true', () => {
+		const result = actorResponseSchema.parse(validResponse)
+		expect(result.isSystem).toBe(true)
+	})
+
+	it('accepts a valid response with isSystem false', () => {
+		const result = actorResponseSchema.parse({ ...validResponse, isSystem: false })
+		expect(result.isSystem).toBe(false)
+	})
+
+	it('rejects a response missing isSystem', () => {
+		const { isSystem: _omit, ...withoutIsSystem } = validResponse
+		expect(() => actorResponseSchema.parse(withoutIsSystem)).toThrow()
+	})
+
+	it('rejects a non-boolean isSystem', () => {
+		expect(() => actorResponseSchema.parse({ ...validResponse, isSystem: 'true' })).toThrow()
+	})
+})
+
+describe('createActorSchema does not accept is_system or isSystem', () => {
+	it('strips is_system from input (server-assigned only)', () => {
+		const parsed = createActorSchema.parse({
+			type: 'agent',
+			name: 'Bot',
+			is_system: true,
+		} as Record<string, unknown>) as Record<string, unknown>
+		expect(parsed.is_system).toBeUndefined()
+		expect(parsed.isSystem).toBeUndefined()
+	})
+
+	it('strips isSystem from input (server-assigned only)', () => {
+		const parsed = createActorSchema.parse({
+			type: 'agent',
+			name: 'Bot',
+			isSystem: true,
+		} as Record<string, unknown>) as Record<string, unknown>
+		expect(parsed.isSystem).toBeUndefined()
+		expect(parsed.is_system).toBeUndefined()
+	})
+})
+
+describe('updateActorSchema does not accept is_system or isSystem', () => {
+	it('strips is_system from input (server-assigned only)', () => {
+		const parsed = updateActorSchema.parse({
+			name: 'Updated',
+			is_system: true,
+		} as Record<string, unknown>) as Record<string, unknown>
+		expect(parsed.is_system).toBeUndefined()
+		expect(parsed.isSystem).toBeUndefined()
+	})
+
+	it('strips isSystem from input (server-assigned only)', () => {
+		const parsed = updateActorSchema.parse({
+			name: 'Updated',
+			isSystem: true,
+		} as Record<string, unknown>) as Record<string, unknown>
+		expect(parsed.isSystem).toBeUndefined()
+		expect(parsed.is_system).toBeUndefined()
 	})
 })

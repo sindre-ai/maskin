@@ -12,6 +12,7 @@ vi.mock('../../services/import-processor', () => ({
 			{ name: 'Item 2', status: 'done' },
 		],
 	}),
+	detectCsvOptions: vi.fn().mockReturnValue({ delimiter: ',', encoding: 'utf-8' }),
 	generateMapping: vi.fn().mockReturnValue({
 		typeMappings: [
 			{

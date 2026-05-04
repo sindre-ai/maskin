@@ -4,7 +4,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
+import { resolveNavigationTarget } from '@/lib/navigation'
+import { useSindre } from '@/lib/sindre-context'
+import { useWorkspace } from '@/lib/workspace-context'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { ArrowUpRight, Bot, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { NotificationInput } from './notification-input'
 
@@ -15,21 +21,71 @@ const typeLabels: Record<string, string> = {
 	alert: 'Alert',
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Metadata keys ending in _id that contain valid UUIDs, excluding known non-object fields. */
+const NON_OBJECT_ID_KEYS = new Set(['source_actor_id', 'target_actor_id', 'session_id'])
+
+function extractMetadataObjectLinks(
+	metadata: Record<string, unknown>,
+): { label: string; objectId: string }[] {
+	const links: { label: string; objectId: string }[] = []
+	for (const [key, value] of Object.entries(metadata)) {
+		if (NON_OBJECT_ID_KEYS.has(key)) continue
+		if (typeof value === 'string' && key.endsWith('_id') && UUID_RE.test(value)) {
+			const label = key
+				.replace(/_id$/, '')
+				.replace(/_/g, ' ')
+				.replace(/^\w/, (c) => c.toUpperCase())
+			links.push({ label, objectId: value })
+		}
+	}
+	return links
+}
+
 export interface NotificationAction {
 	label: string
-	response: unknown
-	variant?: 'default' | 'outline' | 'ghost'
+	response?: unknown
+	variant?: 'default' | 'outline' | 'ghost' | 'destructive'
 	navigate?: { to: string; id?: string }
+}
+
+/**
+ * Coerce a metadata value that SHOULD be an array but may have been stringified
+ * by an agent into a JSON string. Returns undefined if it can't be coerced.
+ *
+ * Why this stays lenient even though the server schema now rejects malformed
+ * strings: the DB still contains historical notifications written before the
+ * schema was tightened, and those rows must continue to render. Do NOT "clean
+ * this up" by removing the string-parse branch — it's load-bearing for legacy
+ * data. New writes are validated at the server boundary by `notificationMetadataSchema`.
+ * See: `packages/shared/src/schemas/notifications.ts` for the canonical shape.
+ */
+function coerceArray<T = unknown>(value: unknown): T[] | undefined {
+	if (Array.isArray(value)) return value as T[]
+	if (typeof value === 'string') {
+		try {
+			const parsed = JSON.parse(value)
+			return Array.isArray(parsed) ? (parsed as T[]) : undefined
+		} catch {
+			return undefined
+		}
+	}
+	return undefined
 }
 
 export function resolveActions(
 	notification: NotificationResponse,
 	metadata: Record<string, unknown>,
 ): NotificationAction[] {
-	const defined = metadata.actions as NotificationAction[] | undefined
-	if (defined && Array.isArray(defined) && defined.length > 0) {
+	const defined = coerceArray<NotificationAction>(metadata.actions)
+	if (defined && defined.length > 0) {
 		const valid = defined.filter(
-			(a) => a && typeof a === 'object' && typeof a.label === 'string' && 'response' in a,
+			(a) =>
+				a &&
+				typeof a === 'object' &&
+				typeof a.label === 'string' &&
+				('response' in a || 'navigate' in a),
 		)
 		if (valid.length > 0) return valid
 	}
@@ -75,6 +131,9 @@ interface PulseCardProps {
 }
 
 export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
+	const { openWithContext } = useSindre()
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags
@@ -93,11 +152,31 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	const [replyOpen, setReplyOpen] = useState(false)
 	const [replyText, setReplyText] = useState('')
 
+	const primaryObjectId = notification.objectId
+
+	// Extract secondary object links from metadata
+	const metadataLinks = extractMetadataObjectLinks(metadata as Record<string, unknown>).filter(
+		(link) => link.objectId !== primaryObjectId,
+	)
+
+	const handleActionClick = (action: NotificationAction) => {
+		if ('response' in action) {
+			onAction(notification, action.response, action.navigate)
+		} else if (action.navigate) {
+			const target = resolveNavigationTarget(workspaceId, action.navigate, notification)
+			if (target) navigate({ to: target.path, search: target.search })
+		}
+	}
+
 	const handleReplySubmit = () => {
 		if (!replyText.trim()) return
 		onAction(notification, { type: 'text_reply', message: replyText })
 		setReplyText('')
 		setReplyOpen(false)
+	}
+
+	const handleTalkToSindre = () => {
+		openWithContext([{ kind: 'notification', id: notification.id, title: notification.title }])
 	}
 
 	return (
@@ -118,7 +197,19 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 						</Badge>
 					)}
 				</div>
-				<CardTitle className="text-base">{notification.title}</CardTitle>
+				<CardTitle className="text-base">
+					{primaryObjectId ? (
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId: primaryObjectId }}
+							className="text-foreground hover:underline"
+						>
+							{notification.title}
+						</Link>
+					) : (
+						notification.title
+					)}
+				</CardTitle>
 				{notification.content && (
 					<div className="text-sm text-muted-foreground">
 						<MarkdownContent content={notification.content} />
@@ -130,6 +221,23 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 				{metaText && (
 					<div className="text-xs text-muted-foreground">
 						<MarkdownContent content={metaText} size="xs" />
+					</div>
+				)}
+
+				{/* Linked objects from metadata */}
+				{metadataLinks.length > 0 && (
+					<div className="flex flex-wrap gap-2">
+						{metadataLinks.map((link) => (
+							<Link
+								key={link.objectId}
+								to="/$workspaceId/objects/$objectId"
+								params={{ workspaceId, objectId: link.objectId }}
+								className="inline-flex items-center gap-1 text-xs text-primary hover:underline min-h-[28px] px-2 py-1 rounded-md bg-muted/50"
+							>
+								<ExternalLink className="h-3 w-3" />
+								{link.label}
+							</Link>
+						))}
 					</div>
 				)}
 
@@ -161,18 +269,29 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 
 				{/* Action buttons */}
 				{!isResolved && (
-					<div className="flex flex-wrap gap-2">
+					<div className="flex flex-wrap items-center gap-2">
 						{actions.map((action, i) => (
 							<Button
 								key={action.label}
 								size="sm"
 								variant={action.variant ?? (i === 0 ? 'default' : 'outline')}
-								onClick={() => onAction(notification, action.response, action.navigate)}
+								onClick={() => handleActionClick(action)}
 							>
 								{action.label}
+								{action.navigate && <ArrowUpRight className="ml-1 h-3 w-3" />}
 							</Button>
 						))}
-						<Button size="sm" variant="ghost" onClick={() => onDismiss(notification.id)}>
+						<Button size="sm" variant="outline" onClick={handleTalkToSindre}>
+							<Bot className="mr-1 h-3 w-3" />
+							Talk to Sindre
+						</Button>
+						<Separator orientation="vertical" className="h-4" />
+						<Button
+							size="sm"
+							variant="ghost"
+							className="text-muted-foreground"
+							onClick={() => onDismiss(notification.id)}
+						>
 							Dismiss
 						</Button>
 					</div>
@@ -224,6 +343,19 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 					<>
 						<span>&middot;</span>
 						<span>Session</span>
+					</>
+				)}
+				{primaryObjectId && (
+					<>
+						<span>&middot;</span>
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId: primaryObjectId }}
+							className="inline-flex items-center gap-1 text-primary hover:underline"
+						>
+							<ExternalLink className="h-3 w-3" />
+							Linked object
+						</Link>
 					</>
 				)}
 			</CardFooter>

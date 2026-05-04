@@ -26,7 +26,7 @@ describe('AgentCreateForm', () => {
 
 	it('renders model input with placeholder', () => {
 		render(<AgentCreateForm onAutoCreate={vi.fn()} />)
-		expect(screen.getByPlaceholderText('e.g. claude-sonnet-4-5-20250514')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('e.g. claude-opus-4-7')).toBeInTheDocument()
 	})
 
 	it('shows "Creating..." when isPending is true', () => {
@@ -114,7 +114,7 @@ describe('AgentCreateForm', () => {
 		const agent = buildActorResponse({ type: 'agent' })
 		render(<AgentCreateForm onAutoCreate={vi.fn()} onUpdate={onUpdate} agent={agent} />)
 
-		const modelInput = screen.getByPlaceholderText('e.g. claude-sonnet-4-5-20250514')
+		const modelInput = screen.getByPlaceholderText('e.g. claude-opus-4-7')
 		await user.type(modelInput, 'opus')
 		await user.tab()
 

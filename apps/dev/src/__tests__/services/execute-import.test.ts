@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceSettings } from '../../lib/types'
-import { executeImport } from '../../services/import-processor'
+import { executeImport, mapRowForType } from '../../services/import-processor'
 import { createTestContext } from '../setup'
 
 const defaultSettings: WorkspaceSettings = {
@@ -532,5 +532,141 @@ describe('executeImport', () => {
 		// Row has metadata but no title/content, so mapRowForType returns null
 		expect(result.successCount).toBe(0)
 		expect(result.errorCount).toBe(0)
+	})
+})
+
+describe('mapRowForType', () => {
+	it('concatenates multiple columns mapped to title', () => {
+		const row = { first_name: 'John', last_name: 'Doe' }
+		const typeMapping = {
+			objectType: 'task' as const,
+			columns: [
+				{
+					sourceColumn: 'first_name',
+					targetField: 'title',
+					transform: 'none' as const,
+					skip: false,
+				},
+				{
+					sourceColumn: 'last_name',
+					targetField: 'title',
+					transform: 'none' as const,
+					skip: false,
+				},
+			],
+			defaultStatus: 'todo',
+		}
+
+		const result = mapRowForType(row, typeMapping, defaultSettings)
+
+		expect(result).not.toBeNull()
+		expect(result?.title).toBe('John Doe')
+	})
+
+	it('concatenates multiple columns mapped to content', () => {
+		const row = { title: 'Test', part1: 'Hello', part2: 'World' }
+		const typeMapping = {
+			objectType: 'task' as const,
+			columns: [
+				{ sourceColumn: 'title', targetField: 'title', transform: 'none' as const, skip: false },
+				{ sourceColumn: 'part1', targetField: 'content', transform: 'none' as const, skip: false },
+				{ sourceColumn: 'part2', targetField: 'content', transform: 'none' as const, skip: false },
+			],
+			defaultStatus: 'todo',
+		}
+
+		const result = mapRowForType(row, typeMapping, defaultSettings)
+
+		expect(result).not.toBeNull()
+		expect(result?.content).toBe('Hello World')
+	})
+
+	it('concatenates multiple columns mapped to the same metadata field', () => {
+		const row = { name: 'Test', street: '123 Main St', city: 'Springfield' }
+		const typeMapping = {
+			objectType: 'task' as const,
+			columns: [
+				{ sourceColumn: 'name', targetField: 'title', transform: 'none' as const, skip: false },
+				{
+					sourceColumn: 'street',
+					targetField: 'metadata.address',
+					transform: 'none' as const,
+					skip: false,
+				},
+				{
+					sourceColumn: 'city',
+					targetField: 'metadata.address',
+					transform: 'none' as const,
+					skip: false,
+				},
+			],
+			defaultStatus: 'todo',
+		}
+
+		const result = mapRowForType(row, typeMapping, defaultSettings)
+
+		expect(result).not.toBeNull()
+		expect(result?.metadata.address).toBe('123 Main St Springfield')
+	})
+
+	it('skips empty values when concatenating', () => {
+		const row = { first_name: 'John', middle_name: '', last_name: 'Doe' }
+		const typeMapping = {
+			objectType: 'task' as const,
+			columns: [
+				{
+					sourceColumn: 'first_name',
+					targetField: 'title',
+					transform: 'none' as const,
+					skip: false,
+				},
+				{
+					sourceColumn: 'middle_name',
+					targetField: 'title',
+					transform: 'none' as const,
+					skip: false,
+				},
+				{
+					sourceColumn: 'last_name',
+					targetField: 'title',
+					transform: 'none' as const,
+					skip: false,
+				},
+			],
+			defaultStatus: 'todo',
+		}
+
+		const result = mapRowForType(row, typeMapping, defaultSettings)
+
+		expect(result).not.toBeNull()
+		expect(result?.title).toBe('John Doe')
+	})
+
+	it('uses last value for metadata when transforms produce non-strings', () => {
+		const row = { name: 'Test', score1: '10', score2: '20' }
+		const typeMapping = {
+			objectType: 'task' as const,
+			columns: [
+				{ sourceColumn: 'name', targetField: 'title', transform: 'none' as const, skip: false },
+				{
+					sourceColumn: 'score1',
+					targetField: 'metadata.score',
+					transform: 'number' as const,
+					skip: false,
+				},
+				{
+					sourceColumn: 'score2',
+					targetField: 'metadata.score',
+					transform: 'number' as const,
+					skip: false,
+				},
+			],
+			defaultStatus: 'todo',
+		}
+
+		const result = mapRowForType(row, typeMapping, defaultSettings)
+
+		expect(result).not.toBeNull()
+		expect(result?.metadata.score).toBe(20)
 	})
 })

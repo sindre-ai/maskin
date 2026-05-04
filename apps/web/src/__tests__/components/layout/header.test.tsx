@@ -1,5 +1,5 @@
 import { Header } from '@/components/layout/header'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', () => ({
@@ -16,6 +16,11 @@ vi.mock('@/lib/page-header-context', () => ({
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
+
+const setSindreOpen = vi.fn()
+vi.mock('@/lib/sindre-context', () => ({
+	useSindre: () => ({ setOpen: setSindreOpen }),
 }))
 
 vi.mock('@/components/ui/sidebar', () => ({
@@ -48,6 +53,14 @@ describe('Header', () => {
 		render(<Header />)
 		expect(screen.getByText('Settings')).toBeInTheDocument()
 		expect(screen.getByText('Members')).toBeInTheDocument()
+	})
+
+	it('renders a Sindre launcher that opens the panel without navigating', () => {
+		setSindreOpen.mockClear()
+		render(<Header />)
+		const launcher = screen.getByRole('button', { name: /open sindre/i })
+		fireEvent.click(launcher)
+		expect(setSindreOpen).toHaveBeenCalledWith(true)
 	})
 
 	it('renders page header actions from usePageHeader', () => {

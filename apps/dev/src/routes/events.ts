@@ -3,11 +3,13 @@ import type { Database } from '@maskin/db'
 import { events, actors, notifications, objects } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
-import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, lt } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -15,6 +17,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
+		sessionManager: SessionManager
 	}
 }
 
@@ -111,6 +114,8 @@ app.openapi(eventHistoryRoute, (async (c) => {
 	if (query.entity_id) conditions.push(eq(events.entityId, query.entity_id))
 	if (query.action) conditions.push(eq(events.action, query.action))
 	if (query.since) conditions.push(gt(events.id, query.since))
+	if (query.after) conditions.push(gte(events.createdAt, new Date(query.after)))
+	if (query.before) conditions.push(lt(events.createdAt, new Date(query.before)))
 
 	const results = await db
 		.select()
@@ -153,6 +158,7 @@ const createCommentRoute = createRoute({
 
 app.openapi(createCommentRoute, (async (c) => {
 	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
@@ -168,7 +174,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404 as never)
 	}
 
-	const created = await db.transaction(async (tx) => {
+	const { comment, agentMentions } = await db.transaction(async (tx) => {
 		const results = await tx
 			.insert(events)
 			.values({
@@ -185,10 +191,12 @@ app.openapi(createCommentRoute, (async (c) => {
 			})
 			.returning()
 
-		const comment = results[0]
-		if (!comment) {
+		const created = results[0]
+		if (!created) {
 			throw new Error('Failed to create comment')
 		}
+
+		const mentions: Array<{ agentId: string; notificationId: string }> = []
 
 		// Create notifications for @mentioned agents (batched)
 		if (body.mentions?.length) {
@@ -227,14 +235,77 @@ app.openapi(createCommentRoute, (async (c) => {
 							data: notification,
 						})),
 					)
+
+					for (const notification of createdNotifications) {
+						if (notification.targetActorId) {
+							mentions.push({
+								agentId: notification.targetActorId,
+								notificationId: notification.id,
+							})
+						}
+					}
 				}
 			}
 		}
 
-		return comment
+		return { comment: created, agentMentions: mentions }
 	})
 
-	return c.json(serializeArray([created])[0] as z.infer<typeof eventResponseSchema>, 201)
+	// Fire-and-forget: spawn an agent session per @mentioned agent so the agent
+	// can read the comment and reply. Session creation happens after the
+	// transaction commits so a failure here doesn't roll back the comment or
+	// notifications — stuck pending sessions are recovered by the watchdog.
+	for (const mention of agentMentions) {
+		sessionManager
+			.createSession(workspaceId, {
+				actorId: mention.agentId,
+				actionPrompt: buildMentionPrompt({
+					objectId: body.entity_id,
+					commenterActorId: actorId,
+					content: body.content,
+					notificationId: mention.notificationId,
+				}),
+				config: {
+					mention: {
+						object_id: body.entity_id,
+						commenter_actor_id: actorId,
+						notification_id: mention.notificationId,
+						comment_event_id: comment.id,
+					},
+				},
+				createdBy: actorId,
+			})
+			.catch((err) =>
+				logger.error('Failed to create session for @mentioned agent', {
+					agentId: mention.agentId,
+					objectId: body.entity_id,
+					notificationId: mention.notificationId,
+					error: String(err),
+				}),
+			)
+	}
+
+	return c.json(serializeArray([comment])[0] as z.infer<typeof eventResponseSchema>, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
+
+function buildMentionPrompt(ctx: {
+	objectId: string
+	commenterActorId: string
+	content: string
+	notificationId: string
+}): string {
+	return [
+		'You were @mentioned in a comment on an object. Read the comment and the object context, then reply with a comment on the same object.',
+		'',
+		`Object ID: ${ctx.objectId}`,
+		`Commenter actor ID: ${ctx.commenterActorId}`,
+		'Comment content:',
+		'"""',
+		ctx.content,
+		'"""',
+		'',
+		`After you reply, mark notification ${ctx.notificationId} as resolved.`,
+	].join('\n')
+}
 
 export default app

@@ -52,6 +52,7 @@ export const actorResponseSchema = z.object({
 	memory: jsonbField,
 	llmProvider: z.string().nullable(),
 	llmConfig: jsonbField,
+	isSystem: z.boolean(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })
@@ -66,6 +67,10 @@ export const actorListItemSchema = z.object({
 	type: z.string(),
 	name: z.string(),
 	email: z.string().nullable(),
+	role: z.string().optional(),
+	workspaces: z
+		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
+		.optional(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({
@@ -156,6 +161,7 @@ export const sessionResponseSchema = z.object({
 	containerId: z.string().nullable(),
 	actionPrompt: z.string(),
 	config: jsonbField,
+	interactive: z.boolean(),
 	result: jsonbField,
 	snapshotPath: z.string().nullable(),
 	startedAt: z.string().nullable(),

@@ -57,9 +57,9 @@ describe('TriggerForm', () => {
 
 	it('renders type buttons (event, cron, reminder)', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
-		expect(screen.getByRole('button', { name: 'event' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'cron' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'reminder' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Event/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Schedule/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Reminder/i })).toBeInTheDocument()
 	})
 
 	it('shows warning when agents array is empty', () => {
@@ -85,7 +85,7 @@ describe('TriggerForm', () => {
 		const user = userEvent.setup()
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: 'cron' }))
+		await user.click(screen.getByRole('button', { name: /Schedule/i }))
 
 		expect(screen.getByRole('button', { name: 'Hourly' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Daily' })).toBeInTheDocument()
@@ -97,7 +97,7 @@ describe('TriggerForm', () => {
 		const user = userEvent.setup()
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: 'reminder' }))
+		await user.click(screen.getByRole('button', { name: /Reminder/i }))
 
 		const dateInput = document.querySelector('input[type="date"]')
 		const timeInput = document.querySelector('input[type="time"]')
@@ -107,7 +107,9 @@ describe('TriggerForm', () => {
 
 	it('shows prompt textarea', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
-		expect(screen.getByPlaceholderText('Action prompt for the agent...')).toBeInTheDocument()
+		expect(
+			screen.getByPlaceholderText('Describe what the agent should do when this trigger fires...'),
+		).toBeInTheDocument()
 	})
 
 	it('shows enabled/disabled toggle', () => {
@@ -151,7 +153,10 @@ describe('TriggerForm', () => {
 		})
 
 		await user.type(screen.getByPlaceholderText('Trigger name'), 'New trigger')
-		await user.type(screen.getByPlaceholderText('Action prompt for the agent...'), 'Run analysis')
+		await user.type(
+			screen.getByPlaceholderText('Describe what the agent should do when this trigger fires...'),
+			'Run analysis',
+		)
 
 		expect(onAutoCreate).toHaveBeenCalledTimes(1)
 		expect(onAutoCreate).toHaveBeenCalledWith(

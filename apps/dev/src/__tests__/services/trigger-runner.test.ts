@@ -3,6 +3,7 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import {
 	TriggerRunner,
+	calculateBackoffUntil,
 	evaluateCondition,
 	evaluateConditions,
 	getObjectFromData,
@@ -37,7 +38,7 @@ describe('TriggerRunner', () => {
 		it('registers event listener on bridge', async () => {
 			mockResults.select = [] // no cron or reminder triggers
 			await runner.start()
-			expect(bridge.listenerCount('event')).toBe(1)
+			expect(bridge.listenerCount('event')).toBe(2)
 		})
 	})
 
@@ -411,6 +412,360 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
+	})
+})
+
+describe('calculateBackoffUntil()', () => {
+	it('calculates exponential backoff: 1min, 2min, 4min, 8min, 16min, 30min cap', () => {
+		const now = new Date('2026-01-01T00:00:00Z')
+
+		// 2^1 * 60s = 2min (failure count 1)
+		expect(calculateBackoffUntil(1, now).getTime() - now.getTime()).toBe(2 * 60_000)
+		// 2^2 * 60s = 4min
+		expect(calculateBackoffUntil(2, now).getTime() - now.getTime()).toBe(4 * 60_000)
+		// 2^3 * 60s = 8min
+		expect(calculateBackoffUntil(3, now).getTime() - now.getTime()).toBe(8 * 60_000)
+		// 2^4 * 60s = 16min
+		expect(calculateBackoffUntil(4, now).getTime() - now.getTime()).toBe(16 * 60_000)
+		// 2^5 * 60s = 32min → capped at 30min
+		expect(calculateBackoffUntil(5, now).getTime() - now.getTime()).toBe(30 * 60_000)
+		// Higher counts stay capped
+		expect(calculateBackoffUntil(10, now).getTime() - now.getTime()).toBe(30 * 60_000)
+	})
+})
+
+describe('TriggerRunner backoff', () => {
+	let runner: TriggerRunner
+	let bridge: EventEmitter & PgNotifyBridge
+	let sessionManager: ReturnType<typeof createMockSessionManager>
+	let mockResults: Record<string, unknown>
+
+	beforeEach(() => {
+		vi.useFakeTimers()
+		vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+		bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
+		sessionManager = createMockSessionManager()
+		const ctx = createTestContext()
+		mockResults = ctx.mockResults
+		runner = new TriggerRunner(ctx.db, bridge, sessionManager)
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'session-1',
+		})
+	})
+
+	afterEach(async () => {
+		await runner.stop()
+		vi.useRealTimers()
+	})
+
+	it('skips event trigger firing when in backoff period', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		mockResults.selectQueue = [
+			[], // cron triggers
+			[], // reminder triggers
+		]
+		await runner.start()
+
+		// Simulate a session failure event
+		// eventHandler queries for matching triggers (entity_type=session), then sessionEventHandler looks up the session
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+		]
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-fail-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Now try to fire the trigger — it should be in backoff
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-2',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+	})
+
+	it('allows trigger firing after backoff period expires', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		// Simulate one failure (backoff = 2 min for count=1)
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-fail-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Advance past the 2-minute backoff
+		await vi.advanceTimersByTimeAsync(2 * 60_000 + 1000)
+
+		// Now the trigger should fire
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-3',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('resets backoff on successful session', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		// Simulate a failure
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-fail-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Simulate a success (from a different session on the same trigger)
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_completed',
+			entity_type: 'session',
+			entity_id: 'session-2',
+			event_id: 'evt-success-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Trigger should fire immediately — no backoff
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-3',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('increases backoff duration with consecutive failures', async () => {
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		// Simulate 3 consecutive failures
+		for (let i = 1; i <= 3; i++) {
+			mockResults.selectQueue = [
+				[], // eventHandler: no triggers match entity_type=session
+				[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+			]
+			bridge.emit('event', {
+				workspace_id: 'ws-1',
+				actor_id: 'actor-1',
+				action: 'session_failed',
+				entity_type: 'session',
+				entity_id: `session-${i}`,
+				event_id: `evt-fail-${i}`,
+			} satisfies PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+		}
+
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		// After 3 failures, backoff = 2^3 * 60s = 8 minutes
+		// Advance 4 minutes — should still be in backoff
+		await vi.advanceTimersByTimeAsync(4 * 60_000)
+
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-4',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+		// Advance past 8 minutes total — should now fire
+		await vi.advanceTimersByTimeAsync(5 * 60_000)
+
+		mockResults.select = [trigger]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-5',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('clears backoff when trigger is updated', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		// Simulate a failure
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-fail-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Now update the trigger (re-enable it)
+		mockResults.selectQueue = [[trigger]]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'updated',
+			entity_type: 'trigger',
+			entity_id: 'trigger-1',
+			event_id: 'evt-update-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Now the trigger should fire — backoff was cleared
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-3',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('skips cron trigger firing when in backoff', async () => {
+		vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+		const trigger = buildTrigger({
+			id: 'trigger-cron-1',
+			type: 'cron',
+			config: { expression: '*/1 * * * *' },
+		})
+		mockResults.selectQueue = [
+			[trigger], // cron triggers
+			[], // reminder triggers
+		]
+		mockResults.insert = []
+		await runner.start()
+
+		// Fire once to confirm it works
+		await vi.advanceTimersByTimeAsync(60 * 1000)
+		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+
+		// Simulate a session failure for this trigger
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-cron-1' }], // sessionEventHandler: session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: trigger.workspaceId,
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-fail-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Next cron tick (1 minute later) — should be skipped due to backoff
+		await vi.advanceTimersByTimeAsync(60 * 1000)
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
 	})
 })
 

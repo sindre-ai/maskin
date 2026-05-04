@@ -250,6 +250,161 @@ describe('Sessions Routes', () => {
 		})
 	})
 
+	describe('POST /api/sessions/:id/input', () => {
+		it('returns 200 and forwards formatted payload when session is interactive + running', async () => {
+			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.writeInput as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{ content: 'hello sindre' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ ok: true })
+			expect(sessionManager.writeInput).toHaveBeenCalledWith(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'hello sindre' },
+			})
+		})
+
+		it('accepts attachments alongside content without affecting the payload shape', async () => {
+			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.writeInput as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{
+						content: 'what about this?',
+						attachments: [{ kind: 'object', id: '00000000-0000-0000-0000-000000000123' }],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			expect(sessionManager.writeInput).toHaveBeenCalledWith(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'what about this?' },
+			})
+		})
+
+		it('returns 404 when session not found', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions/00000000-0000-0000-0000-000000000099/input',
+					{ content: 'hi' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 409 when session is not interactive', async () => {
+			const session = buildSession({ workspaceId: wsId, interactive: false, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{ content: 'hi' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.message).toContain('not interactive')
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+		})
+
+		it('returns 409 when interactive session is not in running state', async () => {
+			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'paused' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{ content: 'hi' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.message).toContain('not running')
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+		})
+
+		it('returns 400 when writeInput throws (e.g. no stdin stream attached)', async () => {
+			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[session]]
+			;(sessionManager.writeInput as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('No stdin stream attached for session'),
+			)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${session.id}/input`,
+					{ content: 'hi' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('No stdin stream attached')
+		})
+
+		it('returns 400 when content is missing', async () => {
+			const session = buildSession({ workspaceId: wsId, interactive: true, status: 'running' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${session.id}/input`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+	})
+
 	describe('GET /api/sessions/:id/logs', () => {
 		it('returns 200 with session logs', async () => {
 			const session = buildSession({ workspaceId: wsId })

@@ -24,8 +24,8 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"postgres": "^3.4.0",
-		"hono": "^4.12.12"
+		"postgres": "^3.4.9",
+		"hono": "^4.12.14"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",

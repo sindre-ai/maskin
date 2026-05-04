@@ -58,6 +58,11 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		args: ['-y', '@modelcontextprotocol/server-slack'],
 		env: { SLACK_BOT_TOKEN: '${SLACK_TOKEN}' },
 	},
+	gmail: {
+		type: 'http',
+		url: 'https://gmailmcp.googleapis.com/mcp/v1',
+		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
+	},
 }
 
 const PLATFORM_MCP_PRESET: McpServer = {
@@ -67,6 +72,12 @@ const PLATFORM_MCP_PRESET: McpServer = {
 		Authorization: 'Bearer ${MASKIN_API_KEY}',
 		'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
 	},
+}
+
+const BROWSER_MCP_PRESET: McpServer = {
+	type: 'stdio',
+	command: 'npx',
+	args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
 }
 
 function isHttpServer(server: McpServer): boolean {
@@ -136,6 +147,11 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 		onUpdate({ mcpServers: updated })
 	}, [servers, onUpdate])
 
+	const handleAddBrowser = useCallback(() => {
+		const updated = { ...servers, playwright: BROWSER_MCP_PRESET }
+		onUpdate({ mcpServers: updated })
+	}, [servers, onUpdate])
+
 	// Integrations that have MCP presets and are active but not yet added
 	const availableQuickAdds = (integrations ?? []).filter(
 		(i: IntegrationResponse) =>
@@ -143,6 +159,7 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 	)
 
 	const hasMaskin = !!servers.maskin
+	const hasBrowser = !!servers.playwright
 
 	return (
 		<div>
@@ -187,6 +204,12 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 						<Button size="sm" variant="outline" onClick={handleAddMaskin}>
 							<Globe className="h-3.5 w-3.5 mr-1" />
 							Add Maskin
+						</Button>
+					)}
+					{!hasBrowser && (
+						<Button size="sm" variant="outline" onClick={handleAddBrowser}>
+							<Globe className="h-3.5 w-3.5 mr-1" />
+							Add Browser
 						</Button>
 					)}
 					<Button size="sm" variant="outline" onClick={() => setAddingServer(true)}>

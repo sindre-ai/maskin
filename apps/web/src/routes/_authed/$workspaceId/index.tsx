@@ -1,8 +1,11 @@
+import { WhatsHappening } from '@/components/overview/whats-happening'
 import { PulseCard } from '@/components/pulse/pulse-card'
 import { PulseFilters } from '@/components/pulse/pulse-filters'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { SindrePulseBar } from '@/components/sindre/sindre-pulse-bar'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
 import {
 	useNotifications,
@@ -10,7 +13,7 @@ import {
 	useUpdateNotification,
 } from '@/hooks/use-notifications'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
-import { resolveNavigationPath } from '@/lib/navigation'
+import { resolveNavigationTarget } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
@@ -40,6 +43,13 @@ function PulseDashboard() {
 		return map
 	}, [actors])
 
+	// Resolve the per-workspace Sindre meta-agent so the Pulse input bar can
+	// forward to the same session the workspace-layout sheet is bound to.
+	const sindreActorId = useMemo(
+		() => actors?.find((a) => a.type === 'agent' && a.name === 'Sindre')?.id ?? null,
+		[actors],
+	)
+
 	const activeNotifications = notifications ?? []
 
 	const filtered = useMemo(() => {
@@ -65,8 +75,8 @@ function PulseDashboard() {
 			{
 				onSuccess: () => {
 					if (nav) {
-						const path = resolveNavigationPath(workspaceId, nav, notification)
-						if (path) navigate({ to: path })
+						const target = resolveNavigationTarget(workspaceId, nav, notification)
+						if (target) navigate({ to: target.path, search: target.search })
 						else toast.warning('Could not navigate to the requested page.')
 					}
 				},
@@ -91,45 +101,61 @@ function PulseDashboard() {
 	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length
 
 	return (
-		<div>
-			<p className="text-sm text-muted-foreground pb-6">
-				{pendingCount > 0
-					? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
-					: ''}
-			</p>
+		<Tabs defaultValue="overview">
+			<SindrePulseBar workspaceId={workspaceId} sindreActorId={sindreActorId} className="mb-6" />
+			<TabsList>
+				<TabsTrigger value="overview">Overview</TabsTrigger>
+				<TabsTrigger value="notifications">
+					Notifications{pendingCount > 0 && ` (${pendingCount})`}
+				</TabsTrigger>
+			</TabsList>
 
-			{isLoading ? (
-				<div className="space-y-4">
-					<CardSkeleton />
-					<CardSkeleton />
-					<CardSkeleton />
-				</div>
-			) : activeNotifications.length === 0 ? (
-				<EmptyState
-					title="No notifications yet"
-					description="Agents will notify you here when they need your input or have recommendations."
-				/>
-			) : (
-				<>
-					<PulseFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
-					<div className="space-y-4">
-						{filtered.map((notification) => (
-							<PulseCard
-								key={notification.id}
-								notification={notification}
-								actorsById={actorsById}
-								onAction={handleAction}
-								onDismiss={handleDismiss}
-							/>
-						))}
-					</div>
-					{filtered.length === 0 && (
-						<p className="text-sm text-muted-foreground text-center py-8">
-							No {activeFilter.replace('_', ' ')} notifications
-						</p>
+			<TabsContent value="overview">
+				<WhatsHappening />
+			</TabsContent>
+
+			<TabsContent value="notifications">
+				<div>
+					<p className="text-sm text-muted-foreground pb-6">
+						{pendingCount > 0
+							? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
+							: ''}
+					</p>
+
+					{isLoading ? (
+						<div className="space-y-4">
+							<CardSkeleton />
+							<CardSkeleton />
+							<CardSkeleton />
+						</div>
+					) : activeNotifications.length === 0 ? (
+						<EmptyState
+							title="No notifications yet"
+							description="Agents will notify you here when they need your input or have recommendations."
+						/>
+					) : (
+						<>
+							<PulseFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
+							<div className="space-y-4">
+								{filtered.map((notification) => (
+									<PulseCard
+										key={notification.id}
+										notification={notification}
+										actorsById={actorsById}
+										onAction={handleAction}
+										onDismiss={handleDismiss}
+									/>
+								))}
+							</div>
+							{filtered.length === 0 && (
+								<p className="text-sm text-muted-foreground text-center py-8">
+									No {activeFilter.replace('_', ' ')} notifications
+								</p>
+							)}
+						</>
 					)}
-				</>
-			)}
-		</div>
+				</div>
+			</TabsContent>
+		</Tabs>
 	)
 }

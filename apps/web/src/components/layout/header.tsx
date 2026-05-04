@@ -15,9 +15,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { usePageHeader } from '@/lib/page-header-context'
+import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Layers, Plus, Sparkles, Zap } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
@@ -109,6 +110,7 @@ const createItems: CreateItem[] = [
 export function Header() {
 	const matches = useMatches()
 	const { actions } = usePageHeader()
+	const { setOpen: setSindreOpen } = useSindre()
 	const router = useRouter()
 	const navigate = useNavigate()
 	const { workspaceId } = useWorkspace()
@@ -138,14 +140,14 @@ export function Header() {
 	}
 
 	return (
-		<header className="flex h-16 shrink-0 items-center gap-2">
-			<div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
-				<SidebarTrigger className="md:hidden -ml-1" />
+		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
+			<div className="flex w-full items-center gap-1 px-3 lg:gap-2 lg:px-4">
+				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7" />
 				{crumbs.length > 1 && (
 					<Button
 						variant="ghost"
 						size="icon"
-						className="md:hidden -ml-1"
+						className="md:hidden -ml-1 h-7 w-7"
 						onClick={() => router.history.back()}
 					>
 						<ArrowLeft />
@@ -157,7 +159,7 @@ export function Header() {
 						<Button
 							variant="ghost"
 							size="icon"
-							className="-ml-1"
+							className="-ml-1 h-7 w-7"
 							onClick={() => router.history.back()}
 						>
 							<ArrowLeft />
@@ -192,8 +194,8 @@ export function Header() {
 					{actions}
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
-							<Button variant="ghost" size="icon">
-								<Plus className="h-4 w-4" />
+							<Button variant="ghost" size="icon" className="h-7 w-7">
+								<Plus size={15} />
 								<span className="sr-only">Create new</span>
 							</Button>
 						</DropdownMenuTrigger>
@@ -212,6 +214,15 @@ export function Header() {
 							})}
 						</DropdownMenuContent>
 					</DropdownMenu>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7"
+						onClick={() => setSindreOpen(true)}
+						aria-label="Open Sindre"
+					>
+						<Sparkles size={15} />
+					</Button>
 				</div>
 			</div>
 		</header>

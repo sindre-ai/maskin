@@ -43,3 +43,22 @@ export const updateActorSchema = z.object({
 export const actorParamsSchema = z.object({
 	id: z.string().uuid(),
 })
+
+// Server-assigned read-only fields (e.g. isSystem) live on response shapes only.
+// Intentionally absent from createActorSchema/updateActorSchema — clients cannot set them.
+export const actorResponseSchema = z.object({
+	id: z.string().uuid(),
+	type: z.string(),
+	name: z.string(),
+	email: z.string().nullable(),
+	systemPrompt: z.string().nullable(),
+	tools: z.unknown().nullable(),
+	memory: z.unknown().nullable(),
+	llmProvider: z.string().nullable(),
+	llmConfig: z.unknown().nullable(),
+	isSystem: z.boolean(),
+	createdAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+})
+
+export type ActorResponse = z.infer<typeof actorResponseSchema>

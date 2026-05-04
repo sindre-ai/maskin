@@ -1,4 +1,5 @@
 import { useObjects } from '@/hooks/use-objects'
+import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
@@ -8,6 +9,7 @@ export function CommandPalette() {
 	const [open, setOpen] = useState(false)
 	const { workspaceId } = useWorkspace()
 	const { data: objects } = useObjects(workspaceId)
+	const { setOpen: setSindreOpen } = useSindre()
 	const navigate = useNavigate()
 
 	const navigateTo = useCallback(
@@ -18,11 +20,25 @@ export function CommandPalette() {
 		[navigate],
 	)
 
+	const openSindre = useCallback(() => {
+		setSindreOpen(true)
+		setOpen(false)
+	}, [setSindreOpen])
+
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
 			if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
 				setOpen((o) => !o)
+			}
+			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault()
+				setOpen(true)
+			}
+			if (e.key === 'j' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault()
+				setSindreOpen(true)
+				setOpen(false)
 			}
 			if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
@@ -34,7 +50,7 @@ export function CommandPalette() {
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [navigateTo, workspaceId])
+	}, [navigateTo, workspaceId, setSindreOpen])
 
 	if (!open) return null
 
@@ -61,7 +77,20 @@ export function CommandPalette() {
 							No results found.
 						</Command.Empty>
 
-						<Command.Group heading="Navigation" className="text-xs text-muted-foreground px-2 py-1">
+						<Command.Group heading="Actions" className="text-xs text-muted-foreground px-2 py-1">
+							<Command.Item
+								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
+								onSelect={openSindre}
+							>
+								Talk to Sindre…
+								<span className="ml-auto text-xs text-muted-foreground">⌘J</span>
+							</Command.Item>
+						</Command.Group>
+
+						<Command.Group
+							heading="Navigation"
+							className="text-xs text-muted-foreground px-2 py-1 mt-2"
+						>
 							<Command.Item
 								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
 								onSelect={() => navigateTo(`/${workspaceId}`)}
@@ -107,6 +136,24 @@ export function CommandPalette() {
 							</Command.Group>
 						)}
 					</Command.List>
+					<div className="flex items-center gap-3 border-t border-border px-4 py-2 text-xs text-muted-foreground">
+						<span>
+							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘F</kbd> Search
+						</span>
+						<span>
+							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd> Toggle
+						</span>
+						<span>
+							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘J</kbd> Sindre
+						</span>
+						<span>
+							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘N</kbd> New
+							object
+						</span>
+						<span>
+							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Esc</kbd> Close
+						</span>
+					</div>
 				</Command>
 			</div>
 		</div>

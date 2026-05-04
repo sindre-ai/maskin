@@ -1,8 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
-import type { CustomExtensionEntry } from '@maskin/shared'
+import {
+	type CustomExtensionEntry,
+	WORKSPACE_TEMPLATES,
+	type WorkspaceTemplate,
+	type WorkspaceTemplateId,
+} from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
 	registerAppResource,
@@ -18,6 +24,20 @@ interface McpConfig {
 	defaultWorkspaceId: string
 	/** Path to the directory containing built MCP app HTML files */
 	htmlBasePath?: string
+	/** Transport the server is exposed over. Tailors user-facing setup hints. */
+	transport?: 'stdio' | 'http'
+}
+
+function authSetupHint(config: McpConfig): string {
+	return config.transport === 'http'
+		? 'Set an `Authorization: Bearer <YOUR_MASKIN_API_KEY>` header on the MCP request (see https://sindre.ai/docs/get-started/).'
+		: 'Restart the MCP server with the API_KEY environment variable set.'
+}
+
+function workspaceSetupHint(config: McpConfig): string {
+	return config.transport === 'http'
+		? 'Either pass workspace_id to this tool or set an `X-Workspace-Id: <YOUR_WORKSPACE_ID>` header on the MCP request. Call list_workspaces to find your workspace ID.'
+		: 'Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.'
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -46,15 +66,11 @@ async function apiCall(
 	options?: { skipAuth?: boolean; skipWorkspace?: boolean; workspaceId?: string },
 ): Promise<unknown> {
 	if (!options?.skipAuth && !config.apiKey) {
-		throw new Error(
-			'Not authenticated. Use the create_actor tool first to sign up and get an API key, then restart the MCP server with API_KEY set.',
-		)
+		throw new Error(`Not authenticated. ${authSetupHint(config)}`)
 	}
 	const effectiveWorkspaceId = options?.workspaceId ?? config.defaultWorkspaceId
 	if (!options?.skipAuth && !options?.skipWorkspace && !effectiveWorkspaceId) {
-		throw new Error(
-			'No workspace specified. Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.',
-		)
+		throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
 	}
 
 	const url = `${config.apiBaseUrl}${path}`
@@ -184,6 +200,59 @@ function buildEnableModuleSettings(
 	}
 
 	return updatedSettings
+}
+
+/**
+ * Merge default settings from all enabled modules into the given settings.
+ * Existing keys win — module defaults only fill in types not already specified.
+ * Used when applying a template so that module-provided types (e.g. CRM contact/company)
+ * pick up their statuses/display_names/field_definitions without inline duplication.
+ */
+export function mergeEnabledModuleDefaults(
+	settings: Record<string, unknown>,
+): Record<string, unknown> {
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? (settings.enabled_modules as string[])
+		: ['work']
+
+	const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
+	const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
+	const fieldDefs = { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) }
+	const relTypes = new Set<string>(
+		Array.isArray(settings.relationship_types) ? (settings.relationship_types as string[]) : [],
+	)
+
+	for (const moduleId of enabledModules) {
+		const defaults = getModuleDefaultSettings(moduleId)
+		if (!defaults) continue
+
+		if (defaults.display_names) {
+			for (const [type, name] of Object.entries(defaults.display_names)) {
+				if (!(type in displayNames)) displayNames[type] = name
+			}
+		}
+		if (defaults.statuses) {
+			for (const [type, sts] of Object.entries(defaults.statuses)) {
+				if (!(type in statuses)) statuses[type] = sts
+			}
+		}
+		if (defaults.field_definitions) {
+			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
+				if (!(type in fieldDefs)) fieldDefs[type] = fields
+			}
+		}
+		if (defaults.relationship_types) {
+			for (const rt of defaults.relationship_types) relTypes.add(rt)
+		}
+	}
+
+	return {
+		...settings,
+		display_names: displayNames,
+		statuses: statuses,
+		field_definitions: fieldDefs,
+		relationship_types: [...relTypes],
+	}
 }
 
 /** Compute the set of relationship types still referenced by remaining extensions. */
@@ -532,10 +601,12 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_actors.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
-		async () => {
-			const result = await apiCall(config, 'GET', '/api/actors', undefined, {
-				skipWorkspace: true,
-			})
+		async (args) => {
+			const result = args.workspace_id
+				? await apiCall(config, 'GET', '/api/actors', undefined, {
+						workspaceId: args.workspace_id,
+					})
+				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
 			return {
 				_meta: { toolName: 'list_actors' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -745,6 +816,133 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Workspace Skills ────────────────────────────────────
+	// Thin HTTP wrappers around /api/workspaces/:workspaceId/skills — the shared
+	// skill library. These are workspace-scoped, attachable to any agent in the
+	// workspace. The backend route enforces membership; we resolve the effective
+	// workspace ID from the arg or DEFAULT_WORKSPACE_ID before building the path.
+	const resolveWorkspaceId = (workspaceId?: string): string => {
+		const wsId = workspaceId ?? config.defaultWorkspaceId
+		if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+		return wsId
+	}
+
+	registerAppTool(
+		server,
+		'list_workspace_skills',
+		{
+			description: tools.list_workspace_skills.description,
+			inputSchema: tools.list_workspace_skills.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: { toolName: 'list_workspace_skills' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_workspace_skill',
+		{
+			description: tools.get_workspace_skill.description,
+			inputSchema: tools.get_workspace_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
+				undefined,
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: { toolName: 'get_workspace_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_workspace_skill',
+		{
+			description: tools.create_workspace_skill.description,
+			inputSchema: tools.create_workspace_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/workspaces/${wsId}/skills`,
+				{ name: args.name, content: args.content },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: { toolName: 'create_workspace_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_workspace_skill',
+		{
+			description: tools.update_workspace_skill.description,
+			inputSchema: tools.update_workspace_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'PUT',
+				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
+				{ content: args.content },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: { toolName: 'update_workspace_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_workspace_skill',
+		{
+			description: tools.delete_workspace_skill.description,
+			inputSchema: tools.delete_workspace_skill.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'DELETE',
+				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
+				undefined,
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: { toolName: 'delete_workspace_skill' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Events ───────────────────────────────────────────────
 	registerAppTool(
 		server,
@@ -859,6 +1057,28 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
+
+			// Auto-parse metadata.actions if LLM passed it as a JSON string instead of an array
+			if (body.metadata?.actions != null) {
+				if (typeof body.metadata.actions === 'string') {
+					try {
+						const parsed = JSON.parse(body.metadata.actions)
+						if (Array.isArray(parsed)) {
+							body.metadata.actions = parsed
+						} else {
+							throw new Error('metadata.actions must be an array')
+						}
+					} catch (e) {
+						if (e instanceof SyntaxError) {
+							throw new Error('metadata.actions must be a valid JSON array or native array')
+						}
+						throw e
+					}
+				} else if (!Array.isArray(body.metadata.actions)) {
+					throw new Error('metadata.actions must be an array')
+				}
+			}
+
 			const result = await apiCall(config, 'POST', '/api/notifications', body, {
 				workspaceId: workspace_id,
 			})
@@ -1235,6 +1455,154 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: { toolName: 'disconnect_integration' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── LLM API Keys ─────────────────────────────────────────
+	// Wraps PATCH /api/workspaces/:id with settings.llm_keys. The server deep-
+	// merges `llm_keys`, so a single-provider update preserves the others and
+	// `null` signals deletion — no read-modify-write dance needed here.
+	const last4 = (s: string) => (s.length <= 4 ? s : s.slice(-4))
+
+	registerAppTool(
+		server,
+		'set_llm_api_key',
+		{
+			description: tools.set_llm_api_key.description,
+			inputSchema: tools.set_llm_api_key.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			await apiCall(
+				config,
+				'PATCH',
+				`/api/workspaces/${args.workspace_id ?? config.defaultWorkspaceId}`,
+				{ settings: { llm_keys: { [args.provider]: args.api_key } } },
+				{ workspaceId: args.workspace_id },
+			)
+			const result = { success: true, provider: args.provider, last4: last4(args.api_key) }
+			return {
+				_meta: { toolName: 'set_llm_api_key' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_llm_api_keys',
+		{
+			description: tools.get_llm_api_keys.description,
+			inputSchema: tools.get_llm_api_keys.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+			const ws = await getWorkspace(config, wsId)
+			const llmKeys = (ws.settings.llm_keys ?? {}) as Record<string, string>
+			const providerStatus = (key?: string) =>
+				key ? { set: true, last4: last4(key) } : { set: false }
+			const result = {
+				anthropic: providerStatus(llmKeys.anthropic),
+				openai: providerStatus(llmKeys.openai),
+			}
+			return {
+				_meta: { toolName: 'get_llm_api_keys' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_llm_api_key',
+		{
+			description: tools.delete_llm_api_key.description,
+			inputSchema: tools.delete_llm_api_key.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			await apiCall(
+				config,
+				'PATCH',
+				`/api/workspaces/${args.workspace_id ?? config.defaultWorkspaceId}`,
+				{ settings: { llm_keys: { [args.provider]: null } } },
+				{ workspaceId: args.workspace_id },
+			)
+			const result = { success: true, provider: args.provider }
+			return {
+				_meta: { toolName: 'delete_llm_api_key' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Claude Subscription ──────────────────────────────────
+	registerAppTool(
+		server,
+		'import_claude_subscription',
+		{
+			description: tools.import_claude_subscription.description,
+			inputSchema: tools.import_claude_subscription.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/claude-oauth/import',
+				{
+					accessToken: args.access_token,
+					refreshToken: args.refresh_token,
+					expiresAt: args.expires_at,
+					subscriptionType: args.subscription_type,
+					scopes: args.scopes,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: { toolName: 'import_claude_subscription' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_claude_subscription_status',
+		{
+			description: tools.get_claude_subscription_status.description,
+			inputSchema: tools.get_claude_subscription_status.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: { toolName: 'get_claude_subscription_status' },
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'disconnect_claude_subscription',
+		{
+			description: tools.disconnect_claude_subscription.description,
+			inputSchema: tools.disconnect_claude_subscription.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'DELETE', '/api/claude-oauth', undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: { toolName: 'disconnect_claude_subscription' },
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1797,171 +2165,405 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	// ─── Hello (Agent Welcome) ───────────────────────────────
+	// ─── Get Started (Onboarding) ────────────────────────────
 	registerAppTool(
 		server,
-		'hello',
+		'get_started',
 		{
-			description: tools.hello.description,
-			inputSchema: tools.hello.inputSchema.shape,
+			description: tools.get_started.description,
+			inputSchema: tools.get_started.inputSchema.shape,
 			_meta: {},
 		},
 		async (args) => {
-			let workspaceSection = ''
-			let teamSection = ''
+			const textResponse = (text: string) => ({
+				_meta: { toolName: 'get_started' },
+				content: [{ type: 'text' as const, text }],
+			})
 
-			// All API calls are best-effort — the tool works even without auth or workspace
+			// Resolve workspace
+			let workspace: { id: string; name: string; settings: Record<string, unknown> } | undefined
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 					skipWorkspace: true,
-				})) as Array<{
-					id: string
-					name: string
-					settings: Record<string, unknown>
-				}>
-
+				})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
 				const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-				const workspace =
+				workspace =
 					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
 					workspaces[0]
-
-				if (workspace) {
-					const settings = workspace.settings ?? {}
-					const statuses = (settings.statuses ?? {}) as Record<string, string[]>
-					const fieldDefinitions = (settings.field_definitions ?? {}) as Record<
-						string,
-						Array<{
-							name: string
-							type: string
-							required: boolean
-							values?: string[]
-						}>
-					>
-					const displayNames = (settings.display_names ?? {}) as Record<string, string>
-					const relationshipTypes = (settings.relationship_types ?? []) as string[]
-					const maxSessions = (settings.max_concurrent_sessions ?? 5) as number
-
-					// Build workspace config section — derive types from settings keys
-					const configuredTypes = new Set([
-						...Object.keys(statuses),
-						...Object.keys(fieldDefinitions),
-						...Object.keys(displayNames),
-					])
-					const objectTypes =
-						configuredTypes.size > 0 ? [...configuredTypes] : ['insight', 'bet', 'task']
-
-					const typeLines: string[] = []
-					for (const t of objectTypes) {
-						const name = displayNames[t] ?? t.charAt(0).toUpperCase() + t.slice(1)
-						const typeStatuses = statuses[t] ?? []
-						const fields = fieldDefinitions[t] ?? []
-						let line = `  • ${name} (type: "${t}")`
-						if (typeStatuses.length > 0) {
-							line += `\n    Statuses: ${typeStatuses.join(' → ')}`
-						}
-						if (fields.length > 0) {
-							const fieldDesc = fields
-								.map((f) => {
-									let s = `${f.name} (${f.type}${f.required ? ', required' : ''})`
-									if (f.values && f.values.length > 0) {
-										s += ` [${f.values.join(', ')}]`
-									}
-									return s
-								})
-								.join(', ')
-							line += `\n    Custom fields: ${fieldDesc}`
-						}
-						typeLines.push(line)
-					}
-
-					workspaceSection = `
-📋 Your Workspace: "${workspace.name}"
-   ID: ${workspace.id}
-
-   Object Types:
-${typeLines.join('\n')}
-
-   Relationship Types: ${relationshipTypes.length > 0 ? relationshipTypes.join(', ') : 'informs, breaks_into, blocks, relates_to, duplicates (defaults)'}
-   Max Concurrent Sessions: ${maxSessions}
-${(() => {
-	const enabledModules = (settings.enabled_modules ?? []) as string[]
-	if (enabledModules.length === 0)
-		return '   Extensions: none enabled (use create_extension to get started)'
-	return `   Extensions: ${enabledModules.join(', ')}`
-})()}`
-
-					// Fetch team members
-					try {
-						const members = (await apiCall(
-							config,
-							'GET',
-							`/api/workspaces/${workspace.id}/members`,
-							undefined,
-							{ workspaceId: workspace.id },
-						)) as Array<{
-							actorId: string
-							name: string
-							type: string
-							role: string
-						}>
-
-						if (members.length > 0) {
-							const memberLines = members.map(
-								(m) => `  • ${m.name || 'Unnamed'} — ${m.type} (${m.role})`,
-							)
-							teamSection = `
-👥 Your Team (${members.length} member${members.length === 1 ? '' : 's'})
-${memberLines.join('\n')}`
-						}
-					} catch {
-						// Members fetch is best-effort
-					}
-				} else {
-					workspaceSection =
-						'\n📋 No workspace found. Create one with create_workspace to get started!'
-				}
 			} catch {
-				workspaceSection = `
-📋 Workspace
-   Not connected yet! To get your personalized workspace info:
-   1. Use create_actor to sign up and get an API key
-   2. Restart with API_KEY set, then call hello again
-   3. Or pass a workspace_id if you have one`
+				const setupSteps =
+					config.transport === 'http'
+						? "  1. Sign in at https://maskin.sindre.ai and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.sindre.ai/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again\n\nFull guide: https://sindre.ai/docs/get-started/"
+						: '  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again'
+				return textResponse(
+					`👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
+				)
 			}
 
-			const text = `🚀 Welcome to Maskin!
-
-Hey there! Maskin is an AI-native product development platform where humans and agents collaborate side by side. Think of it as your mission control for turning insights into bets into shipped tasks — with full observability, real-time events, and automation built in.
-
-Everything here is an API, and you're talking to it right now through MCP. Let's get you oriented!
-${workspaceSection}
-${teamSection}
-
-🧰 Available Tools
-${Object.keys(tools)
-	.filter((t) => t !== 'hello')
-	.map((t) => `   • ${t}`)
-	.join('\n')}
-${(() => {
-	const extTools = getAllModules().flatMap((ext) =>
-		(ext.mcpTools ?? []).map((t) => `   • ${ext.id}_${t.name} — [${ext.name}] ${t.description}`),
-	)
-	return extTools.length > 0 ? `\n🧩 Extension Tools\n${extTools.join('\n')}` : ''
-})()}
-
-⚡ Quick Start
-  1. Call get_workspace_schema to see the full config for your workspace
-  2. Use list_objects to see what's already in the workspace
-  3. Use create_objects to add new insights, bets, or tasks
-  4. Use search_objects to find things by keyword
-  5. Check get_events to see what's been happening lately
-
-Happy building! 🎉`
-
-			return {
-				_meta: { toolName: 'hello' },
-				content: [{ type: 'text' as const, text }],
+			if (!workspace) {
+				return textResponse(
+					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again to apply a template.',
+				)
 			}
+
+			// Pick template
+			const pickTemplate = (): WorkspaceTemplateId | 'custom' | null => {
+				if (args.template) return args.template
+				const hint = (args.use_case ?? '').toLowerCase()
+				if (!hint) return null
+				if (/growth|launch|market|sales|outreach|pipeline|crm|lead/.test(hint)) return 'growth'
+				if (/dev|engineering|product|build|ship|feature|spec|sprint|backlog/.test(hint))
+					return 'development'
+				return null
+			}
+
+			const chosen = pickTemplate()
+
+			if (chosen === null) {
+				return textResponse(
+					`👋 Welcome to Maskin, let's set up "${workspace.name}".\n\nPick a starting template by calling get_started again with one of:\n\n  • template: "development" — for product teams shipping software (bets, tasks, insights with dev statuses)\n  • template: "growth" — for founders running a pipeline (adds contact + company with a light CRM)\n  • template: "custom" — I'll ask a few questions and tailor the workspace\n\nOr just tell me the use_case in your own words and I'll pick for you.`,
+				)
+			}
+
+			if (chosen === 'custom') {
+				if (!args.custom_settings) {
+					return textResponse(
+						`🧵 Custom workspace setup for "${workspace.name}"\n\nTell me a bit about how you work and I'll tailor the settings:\n\n  1. What kinds of things do you want to track? (e.g. bets, tasks, insights, contacts, campaigns, experiments…)\n  2. For each one, what are the statuses it moves through?\n  3. Are there any custom fields that matter? (e.g. deadline, priority, impact/effort, source)\n  4. Any common relationship types? (default: informs, breaks_into, blocks, relates_to)\n\nWhen you have answers, call get_started again with:\n  template: "custom"\n  custom_settings: { display_names, statuses, field_definitions, relationship_types, custom_extensions }\n  confirm: true\n\nReference shape: call get_workspace_schema to see the current settings object.`,
+					)
+				}
+				// custom settings provided — apply on confirm
+				if (!args.confirm) {
+					return textResponse(
+						`📋 Preview — custom settings for "${workspace.name}"\n\n${JSON.stringify(args.custom_settings, null, 2)}\n\nCall get_started again with the same args plus confirm: true to apply.`,
+					)
+				}
+				try {
+					await apiCall(
+						config,
+						'PATCH',
+						`/api/workspaces/${workspace.id}`,
+						{ settings: args.custom_settings },
+						{ workspaceId: workspace.id },
+					)
+					return textResponse(
+						`✅ Custom settings applied to "${workspace.name}".\n\nNext steps:\n  1. Call get_workspace_schema to verify\n  2. Use create_objects to add your first items\n  3. Call list_objects to see what's in the workspace`,
+					)
+				} catch (err) {
+					return textResponse(`❌ Failed to apply custom settings: ${String(err)}`)
+				}
+			}
+
+			// dev or growth template
+			const template: WorkspaceTemplate = WORKSPACE_TEMPLATES[chosen]
+			const mergedSettings = mergeEnabledModuleDefaults(
+				template.settings as Record<string, unknown>,
+			)
+
+			if (!args.confirm) {
+				const previewLines: string[] = []
+				const statuses = (mergedSettings.statuses ?? {}) as Record<string, string[]>
+				const fields = (mergedSettings.field_definitions ?? {}) as Record<
+					string,
+					Array<{ name: string; type: string; values?: string[] }>
+				>
+				const displayNames = (mergedSettings.display_names ?? {}) as Record<string, string>
+				for (const [type, typeStatuses] of Object.entries(statuses)) {
+					const name = displayNames[type] ?? type
+					const line = `  • ${name} (${type}): ${typeStatuses.join(' → ')}`
+					const typeFields = fields[type]
+					if (typeFields && typeFields.length > 0) {
+						const fieldDesc = typeFields
+							.map((f) =>
+								f.values && f.values.length > 0
+									? `${f.name} [${f.values.join('|')}]`
+									: `${f.name} (${f.type})`,
+							)
+							.join(', ')
+						previewLines.push(`${line}\n      Fields: ${fieldDesc}`)
+					} else {
+						previewLines.push(line)
+					}
+				}
+				const extLines = Object.entries(template.settings.custom_extensions ?? {}).map(
+					([id, ext]) => `  • ${ext.name} (${id}): types [${ext.types.join(', ')}]`,
+				)
+				const seedLines = template.seedNodes.map(
+					(n) => `  • [${n.$id}] ${displayNames[n.type] ?? n.type}: ${n.title}`,
+				)
+
+				return textResponse(
+					`📋 Preview — "${template.name}" template for workspace "${workspace.name}"
+
+${template.description}
+
+Object types & statuses:
+${previewLines.join('\n')}
+${extLines.length > 0 ? `\nCustom extensions:\n${extLines.join('\n')}\n` : ''}
+Seed examples (${template.seedNodes.length} objects + ${template.seedEdges.length} relationships):
+${seedLines.join('\n')}
+
+Before applying, ASK THE USER these questions in one message so we can tailor the workspace. They can answer any, all, or none:
+  1. What should I name the workspace? (currently "${workspace.name}")
+  2. What are you building or working on?
+  3. Any near-term goal or milestone I should reflect in the starter examples?
+
+Then call get_started again with confirm: true, and (if the user told you anything) pass workspace_name and/or seed_overrides keyed by the [$id] shown above. If the user said "just apply it" or gave nothing, call with only { template: "${template.id}", confirm: true }.`,
+				)
+			}
+
+			// Apply: optional rename → merge settings → seed objects via /api/graph
+			if (args.workspace_name && args.workspace_name.trim() !== workspace.name) {
+				try {
+					await apiCall(
+						config,
+						'PATCH',
+						`/api/workspaces/${workspace.id}`,
+						{ name: args.workspace_name.trim() },
+						{ workspaceId: workspace.id },
+					)
+					workspace.name = args.workspace_name.trim()
+				} catch (err) {
+					return textResponse(
+						`❌ Failed to rename workspace: ${String(err)}\n\nNothing else was applied. Retry with a different name, or omit workspace_name.`,
+					)
+				}
+			}
+
+			try {
+				await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${workspace.id}`,
+					{ settings: mergedSettings },
+					{ workspaceId: workspace.id },
+				)
+			} catch (err) {
+				return textResponse(
+					`❌ Failed to apply template settings: ${String(err)}\n\nNothing was seeded. You can retry or run create_workspace-specific tools manually.`,
+				)
+			}
+
+			const overrides = args.seed_overrides ?? {}
+			const tailoredNodes = template.seedNodes.map((n) => {
+				const o = overrides[n.$id]
+				if (!o) return n
+				return {
+					...n,
+					title: o.title ?? n.title,
+					content: o.content ?? n.content,
+					metadata: o.metadata ? { ...n.metadata, ...o.metadata } : n.metadata,
+				}
+			})
+
+			let seedSummary = ''
+			try {
+				const graphResult = (await apiCall(
+					config,
+					'POST',
+					'/api/graph',
+					{ nodes: tailoredNodes, edges: template.seedEdges },
+					{ workspaceId: workspace.id },
+				)) as { objects?: Array<{ id: string }>; relationships?: Array<{ id: string }> }
+				const createdObjects = graphResult.objects?.length ?? tailoredNodes.length
+				const createdEdges = graphResult.relationships?.length ?? template.seedEdges.length
+				seedSummary = `Seeded ${createdObjects} example objects and ${createdEdges} relationships.`
+			} catch (err) {
+				seedSummary = `Settings applied, but seeding examples failed: ${String(err)}. You can re-run get_started or add objects manually.`
+			}
+
+			// Create seed agents (if any). Track $id → real UUID so triggers can resolve
+			// their target actor, and so {{self_id}} placeholders in system prompts can
+			// be substituted with the real actor id in a second PATCH.
+			const actorIdMap: Record<string, string> = {}
+			let agentsCreated = 0
+			if (template.seedAgents && template.seedAgents.length > 0) {
+				for (const agent of template.seedAgents) {
+					try {
+						const created = (await apiCall(
+							config,
+							'POST',
+							'/api/actors',
+							{
+								type: 'agent',
+								name: agent.name,
+								system_prompt: agent.systemPrompt,
+								tools: agent.tools,
+							},
+							{ workspaceId: workspace.id },
+						)) as { id: string }
+						actorIdMap[agent.$id] = created.id
+						// Add the agent to the workspace so it shows up in the UI's
+						// agents page (which inner-joins workspace_members) and can be
+						// invoked as a workspace member by triggers and humans.
+						// Non-fatal: if this fails, the agent still exists and triggers
+						// (which FK to actors only) can still fire it.
+						try {
+							await apiCall(
+								config,
+								'POST',
+								`/api/workspaces/${workspace.id}/members`,
+								{ actor_id: created.id, role: 'member' },
+								{ workspaceId: workspace.id },
+							)
+						} catch (err) {
+							seedSummary += ` Failed to add agent "${agent.name}" to workspace members: ${String(err)}.`
+						}
+						// Second pass: substitute {{self_id}} in the system prompt.
+						if (agent.systemPrompt.includes('{{self_id}}')) {
+							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)
+							await apiCall(
+								config,
+								'PATCH',
+								`/api/actors/${created.id}`,
+								{ system_prompt: substituted },
+								{ workspaceId: workspace.id },
+							)
+						}
+						agentsCreated++
+					} catch (err) {
+						seedSummary += ` Failed to create agent "${agent.name}": ${String(err)}.`
+					}
+				}
+			}
+
+			// Create seed triggers, resolving targetActor$id to a real UUID.
+			let triggersCreated = 0
+			if (template.seedTriggers && template.seedTriggers.length > 0) {
+				for (const trigger of template.seedTriggers) {
+					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
+					try {
+						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)
+						await apiCall(
+							config,
+							'POST',
+							'/api/triggers',
+							{
+								name: trigger.name,
+								type: trigger.type,
+								config: trigger.config,
+								action_prompt: substitutedPrompt,
+								target_actor_id: targetActorId,
+								enabled: trigger.enabled,
+							},
+							{ workspaceId: workspace.id },
+						)
+						triggersCreated++
+					} catch (err) {
+						seedSummary += ` Failed to create trigger "${trigger.name}": ${String(err)}.`
+					}
+				}
+			}
+
+			if (agentsCreated > 0 || triggersCreated > 0) {
+				seedSummary += ` Created ${agentsCreated} agents and ${triggersCreated} triggers that drive the pipeline.`
+			}
+
+			const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
+			// Magic-link auto-auth is only safe on localhost: the URL carries the raw
+			// API key in its fragment, so it must not end up in shared browser history,
+			// agent transcripts, or forwarded links. For any non-local frontend, emit a
+			// plain URL and let the user sign in normally.
+			const isLocalFrontend = (() => {
+				try {
+					const host = new URL(frontendUrl).hostname
+					return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1'
+				} catch {
+					return false
+				}
+			})()
+			const magicParams = new URLSearchParams()
+			if (isLocalFrontend && config.apiKey) {
+				magicParams.set('key', config.apiKey)
+				try {
+					const members = (await apiCall(
+						config,
+						'GET',
+						`/api/workspaces/${workspace.id}/members`,
+						undefined,
+						{ workspaceId: workspace.id },
+					)) as Array<{
+						actorId: string
+						name: string | null
+						email: string | null
+						type: string
+					}>
+					const human = members.find((m) => m.type === 'human') ?? members[0]
+					if (human) {
+						magicParams.set('actor_id', human.actorId)
+						if (human.name) magicParams.set('actor_name', human.name)
+						if (human.email) magicParams.set('actor_email', human.email)
+						if (human.type) magicParams.set('actor_type', human.type)
+					}
+				} catch {
+					// Best-effort; the frontend still works with just the key.
+				}
+			}
+			const magicSuffix = magicParams.toString() ? `#${magicParams.toString()}` : ''
+			const workspaceUrl = `${frontendUrl}/${workspace.id}${magicSuffix}`
+			const keysUrl = `${frontendUrl}/${workspace.id}/settings/keys${magicSuffix}`
+
+			// Check whether the user has already imported Claude subscription credentials.
+			// Agent sessions can't run without them, so onboarding should ask the user to
+			// add them before the pipeline kicks off. Best-effort — ignore failures.
+			let claudeOauthConnected = false
+			try {
+				const oauthStatus = (await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
+					workspaceId: workspace.id,
+				})) as { connected?: boolean; valid?: boolean }
+				claudeOauthConnected = Boolean(oauthStatus.connected && oauthStatus.valid)
+			} catch {
+				// Best-effort; fall through to prompt the user.
+			}
+
+			const claudeCredsBlock = claudeOauthConnected
+				? ''
+				: `
+
+INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this BEFORE "How to get the machine moving". The agents in this workspace run Claude sessions, which need the user's Claude subscription credentials (you can't import them via MCP — the user has to paste them). Render EXACTLY this format:
+
+  🔑 Connect your Claude subscription
+     Open ${keysUrl} → "Import credentials" and paste the output of the terminal command shown there. Agents can't run until this is done.
+
+Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to the "How to get the machine moving" steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
+
+			const devPipelineGuidance =
+				chosen === 'development'
+					? `
+
+The development pipeline is wired up end-to-end: Bet Planner → Senior Developer → Code Reviewer → CTO → Development Driver. The user steers; the agents build.
+
+INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print this block verbatim. Render EXACTLY this format (no extra prose, no per-step explanations):
+
+  How to get the machine moving — just say yes and I'll:
+    1. Connect GitHub
+    2. Sharpen the starter tasks
+    3. Kick off task 1 (Senior Developer picks it up)
+    4. Hand off to Code Reviewer + CTO for review and merge
+
+  Should I start now?
+
+Then STOP. Do not explain each step — one line each, nothing more. Wait for the user to say yes/go/start before taking any action.
+
+When the user confirms (yes / go / start / do it / sure), execute the steps in order: (a) call connect_integration for provider "github" — ask only for the repo URL if needed; (b) set the seed bet's \`github_link\` metadata to that repo URL; (c) use update_objects to rewrite task1 + task2 into concrete tickets with specific files/areas, acceptance criteria, and dependencies, tailored to what the user told you earlier; (d) move task1 to "in_progress"; (e) briefly confirm each step as you go ("✅ GitHub connected", "✅ Repo attached to bet", etc.). After step (d), tell the user the pipeline is running and they'll be pinged when the PR needs review — then on a NEW line, offer to use the wait time productively with something like: "Want to set up anything else while the agents work? A couple of options: connect Slack so you can drop feedback/insights into the workspace and chat with agents from where you already are, or wire up another integration. Or we can just wait." Keep this offer short (one short paragraph, not a bulleted list).
+
+If the user says "not now" or steers elsewhere, follow their direction.`
+					: `
+
+INSTRUCTIONS FOR THE "How to get the machine moving" SECTION — do NOT print verbatim. Render a terse list of 2–3 one-line items (a few words each) tailored to what the user told you earlier. End with "Should I start now?" on its own line. Do not explain each item. Wait for the user to confirm before acting.`
+
+			return textResponse(
+				`✅ "${template.name}" template applied to workspace "${workspace.name}". ${seedSummary}
+
+🌐 Open the workspace in your browser: ${workspaceUrl}
+
+Template pitch (use to describe what the user just got — rephrase in your own voice, don't quote verbatim):
+${template.pitch}
+
+INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, excited message with these parts in order:
+  1. An enthusiastic opener grounded in the template pitch above. Frame it as "you now have your own [AI team / execution machine / growth engine]" — make it feel like a capability unlock, not a config change. 2–3 sentences.
+  2. The workspace URL above as a clickable link.
+  3. ${claudeOauthConnected ? 'A "How to get the machine moving" section — see the template-specific guidance below.' : 'A "Connect your Claude subscription" section (see guidance below) BEFORE the "How to get the machine moving" section.'}${claudeCredsBlock}${devPipelineGuidance}`,
+			)
 		},
 	)
 
@@ -2002,6 +2604,7 @@ async function main() {
 		apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
 		apiKey: process.env.API_KEY || '',
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
+		transport: 'stdio',
 	}
 
 	const server = createMcpServer(config)

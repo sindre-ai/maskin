@@ -29,11 +29,14 @@ function TriggersApp() {
 				<div className="p-4 text-sm text-foreground">{text}</div>
 			)
 		case 'create_trigger':
+		case 'update_trigger':
 			return isObject<TriggerResponse>(data, 'id', 'name') ? (
 				<TriggerDetailView trigger={data} />
 			) : (
 				<div className="p-4 text-sm text-foreground">{text}</div>
 			)
+		case 'delete_trigger':
+			return <TriggerDeletedView />
 		default:
 			return isObject<TriggerResponse>(data, 'id', 'name') ? (
 				<TriggerDetailView trigger={data} />
@@ -111,6 +114,14 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 					</div>
 				</div>
 			)}
+		</div>
+	)
+}
+
+function TriggerDeletedView() {
+	return (
+		<div className="p-4 text-center">
+			<p className="text-sm text-muted-foreground">Trigger deleted successfully.</p>
 		</div>
 	)
 }
