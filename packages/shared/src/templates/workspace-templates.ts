@@ -61,7 +61,7 @@ const developmentTemplate: WorkspaceTemplate = {
 		},
 		statuses: {
 			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
-			task: ['todo', 'in_progress', 'in_review', 'testing', 'done', 'blocked'],
+			task: ['backlog', 'todo', 'in_progress', 'in_review', 'testing', 'done', 'blocked'],
 			insight: ['new', 'processing', 'clustered', 'discarded'],
 		},
 		field_definitions: {
@@ -132,7 +132,7 @@ const growthTemplate: WorkspaceTemplate = {
 		},
 		statuses: {
 			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
-			task: ['todo', 'in_progress', 'done', 'blocked'],
+			task: ['backlog', 'todo', 'in_progress', 'done', 'blocked'],
 			insight: ['new', 'processing', 'clustered', 'discarded'],
 			contact: [
 				'new_lead',
@@ -363,7 +363,7 @@ const outboundSalesTemplate: WorkspaceTemplate = {
 		},
 		statuses: {
 			bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
-			task: ['todo', 'in_progress', 'done', 'blocked'],
+			task: ['backlog', 'todo', 'in_progress', 'done', 'blocked'],
 			insight: ['new', 'processing', 'clustered', 'discarded'],
 			company: ['prospect', 'qualifying', 'qualified', 'customer', 'churned'],
 			contact: ['identified', 'engaged', 'responsive', 'champion', 'inactive'],
