@@ -45,6 +45,20 @@ export interface CreateSessionParams {
 	autoStart?: boolean
 }
 
+/**
+ * dockerode surfaces missing/stopped containers as either a 404 (not found)
+ * or a 409 with an "is not running" message. Either means the container is
+ * gone for our purposes and the session can't be snapshotted.
+ */
+function isContainerGoneError(err: unknown): boolean {
+	if (!err || typeof err !== 'object') return false
+	const statusCode = (err as { statusCode?: unknown }).statusCode
+	if (statusCode === 404) return true
+	const message = (err as { message?: unknown }).message
+	if (typeof message !== 'string') return false
+	return /HTTP code 404/.test(message) || /is not running/.test(message)
+}
+
 export interface SessionLogEvent extends LogChunk {
 	sessionId: string
 	logId: number
@@ -273,6 +287,14 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in running state`)
 		}
 
+		// Self-heal: if the container disappeared (stopped or removed externally),
+		// the session can never be snapshotted. Mark it failed and exit so the
+		// auto-pause loop stops retrying every minute.
+		if (!(await this.isContainerAlive(session.containerId))) {
+			await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId)
+			return
+		}
+
 		await this.db
 			.update(sessions)
 			.set({ status: 'snapshotting', updatedAt: new Date() })
@@ -320,13 +342,64 @@ export class SessionManager extends EventEmitter {
 				logger.error('Failed to drain queue after pause', { error: String(err) }),
 			)
 		} catch (err) {
-			// Revert status on failure
+			// If the container vanished mid-pause, route to terminal-failed state
+			// instead of reverting to 'running' (which would be re-retried forever).
+			if (isContainerGoneError(err)) {
+				await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId)
+				return
+			}
 			await this.db
 				.update(sessions)
 				.set({ status: 'running', updatedAt: new Date() })
 				.where(eq(sessions.id, sessionId))
 			throw err
 		}
+	}
+
+	private async isContainerAlive(containerId: string): Promise<boolean> {
+		try {
+			const status = await this.containers.inspect(containerId)
+			return status.running
+		} catch {
+			return false
+		}
+	}
+
+	private async markSessionFailedAfterContainerLoss(
+		sessionId: string,
+		workspaceId: string,
+	): Promise<void> {
+		await this.db
+			.update(sessions)
+			.set({
+				status: 'failed',
+				containerId: null,
+				completedAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.where(eq(sessions.id, sessionId))
+
+		await this.insertSystemLog(
+			sessionId,
+			'Container disappeared before pause could complete — session marked failed',
+		).catch((err) =>
+			logger.warn('Failed to insert system log for container-loss cleanup', {
+				sessionId,
+				error: String(err),
+			}),
+		)
+
+		await this.clearActiveSession(sessionId).catch(() => {})
+
+		this.containers.detachStdin(sessionId)
+		await this.cleanupBrowserSidecar(sessionId).catch(() => {})
+		await this.cleanupSession(sessionId).catch(() => {})
+
+		logger.warn('Session marked failed after container loss', { sessionId })
+
+		await this.drainQueue(workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after container-loss cleanup', { error: String(err) }),
+		)
 	}
 
 	async resumeSession(sessionId: string): Promise<void> {

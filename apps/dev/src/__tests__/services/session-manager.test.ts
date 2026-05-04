@@ -332,6 +332,7 @@ describe('SessionManager', () => {
 			})
 			mockResults.select = [session]
 			mockResults.insert = [] // for system log
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
 
 			await manager.pauseSession(session.id)
 
@@ -362,10 +363,46 @@ describe('SessionManager', () => {
 				containerId: 'container-fail',
 			})
 			mockResults.select = [session]
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
 			mockContainerManager.exec.mockRejectedValueOnce(new Error('exec failed'))
 
 			await expect(manager.pauseSession(session.id)).rejects.toThrow('exec failed')
 			// Status should be reverted to running (via the catch block's db.update call)
+		})
+
+		it('marks session failed when container is already gone (no snapshot attempt)', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-zombie',
+			})
+			mockResults.select = [session]
+			// inspect default mock returns { running: false } — container is dead
+
+			await manager.pauseSession(session.id)
+
+			// Must not attempt snapshot work on a dead container
+			expect(mockContainerManager.exec).not.toHaveBeenCalled()
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			expect(storageProvider.put).not.toHaveBeenCalled()
+			// Should resolve (not throw) so the auto-pause loop doesn't keep retrying
+		})
+
+		it('marks session failed when container vanishes mid-pause', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-vanish',
+			})
+			mockResults.select = [session]
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
+			// dockerode-style 409 thrown after we started snapshotting
+			mockContainerManager.exec.mockRejectedValueOnce(
+				Object.assign(new Error('(HTTP code 409) container is not running'), {
+					statusCode: 409,
+				}),
+			)
+
+			await manager.pauseSession(session.id)
+			// Resolves cleanly — caught and routed to terminal-failed
 		})
 	})
 
