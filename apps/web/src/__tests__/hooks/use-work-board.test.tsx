@@ -83,27 +83,6 @@ describe('useWorkBoard', () => {
 		expect(lane.columns.todo[0].id).toBe('t-1')
 	})
 
-	it('places blocked tasks in the blocked band, not in a column', async () => {
-		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
-		const blockedTask = buildObjectResponse({ id: 't-b', type: 'task', status: 'blocked' })
-		const rel = buildRelationshipResponse({
-			sourceId: 'bet-1',
-			targetId: 't-b',
-			type: 'breaks_into',
-			sourceType: 'bet',
-			targetType: 'task',
-		})
-		setupApi({ bets: [bet], tasks: [blockedTask], rels: [rel] })
-
-		const { result } = renderHook(() => useWorkBoard(), { wrapper: wrapper() })
-		await waitFor(() => expect(result.current.isLoading).toBe(false))
-
-		const lane = result.current.board.swimlanes[0]
-		expect(lane.blocked).toHaveLength(1)
-		expect(lane.blocked[0].id).toBe('t-b')
-		expect(Object.values(lane.columns).every((col) => col.length === 0)).toBe(true)
-	})
-
 	it('puts orphan tasks in a "No bet" lane at the bottom', async () => {
 		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
 		const orphan = buildObjectResponse({ id: 't-o', type: 'task', status: 'todo' })
@@ -185,7 +164,7 @@ describe('useWorkBoard', () => {
 		expect(result.current.board.swimlanes[0].bet?.id).toBe('bet-1')
 	})
 
-	it('uses workspace-configured task statuses (minus blocked) as columns', async () => {
+	it('uses workspace-configured task statuses as columns', async () => {
 		setupApi({})
 
 		const { result } = renderHook(() => useWorkBoard(), { wrapper: wrapper() })
@@ -198,6 +177,7 @@ describe('useWorkBoard', () => {
 			'in_review',
 			'testing',
 			'done',
+			'blocked',
 		])
 	})
 

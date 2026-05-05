@@ -7,7 +7,6 @@ import { useMemo } from 'react'
 
 export const ACTIVE_BET_STATUSES = ['signal', 'proposed', 'active'] as const
 export const INACTIVE_BET_STATUSES = ['completed', 'succeeded', 'failed', 'paused'] as const
-export const BLOCKED_STATUS = 'blocked'
 
 export const DEFAULT_COLUMN_STATUSES: string[] = [
 	'backlog',
@@ -23,8 +22,6 @@ export interface BoardSwimlane {
 	bet: ObjectResponse | null
 	/** Tasks grouped by status. Keys are the column statuses. */
 	columns: Record<string, ObjectResponse[]>
-	/** Tasks in the blocked band (status === 'blocked'). */
-	blocked: ObjectResponse[]
 	/** Whether the bet is "active" (signal, proposed, active). The "No bet" lane is treated as active. */
 	isActive: boolean
 }
@@ -43,8 +40,7 @@ export interface UseWorkBoardResult {
 
 function getTaskColumnStatuses(workspaceStatuses: string[] | undefined): string[] {
 	if (!workspaceStatuses || workspaceStatuses.length === 0) return DEFAULT_COLUMN_STATUSES
-	const filtered = workspaceStatuses.filter((s) => s !== BLOCKED_STATUS)
-	return filtered.length > 0 ? filtered : DEFAULT_COLUMN_STATUSES
+	return workspaceStatuses
 }
 
 function emptyColumns(statuses: string[]): Record<string, ObjectResponse[]> {
@@ -56,8 +52,7 @@ function emptyColumns(statuses: string[]): Record<string, ObjectResponse[]> {
 /**
  * Composes bets, tasks, and any bet↔task relationship (regardless of type or
  * direction) into the board model. Tasks without a parent bet land in a
- * synthetic "No bet" swimlane at the bottom. `blocked` tasks live in a
- * separate band per swimlane, never in a column.
+ * synthetic "No bet" swimlane at the bottom.
  */
 export function useWorkBoard(): UseWorkBoardResult {
 	const { workspaceId, workspace } = useWorkspace()
@@ -100,14 +95,12 @@ export function useWorkBoard(): UseWorkBoardResult {
 			lanes.set(bet.id, {
 				bet,
 				columns: emptyColumns(columnStatuses),
-				blocked: [],
 				isActive: (ACTIVE_BET_STATUSES as readonly string[]).includes(bet.status),
 			})
 		}
 		const noBetLane: BoardSwimlane = {
 			bet: null,
 			columns: emptyColumns(columnStatuses),
-			blocked: [],
 			isActive: true,
 		}
 
@@ -118,10 +111,6 @@ export function useWorkBoard(): UseWorkBoardResult {
 					? (lanes.get(parentBetId) as BoardSwimlane)
 					: noBetLane
 
-			if (task.status === BLOCKED_STATUS) {
-				lane.blocked.push(task)
-				continue
-			}
 			const column = lane.columns[task.status]
 			if (column) {
 				column.push(task)
@@ -147,8 +136,7 @@ export function useWorkBoard(): UseWorkBoardResult {
 				if (lane) orderedLanes.push(lane)
 			}
 		}
-		const hasNoBetTasks =
-			noBetLane.blocked.length > 0 || Object.values(noBetLane.columns).some((col) => col.length > 0)
+		const hasNoBetTasks = Object.values(noBetLane.columns).some((col) => col.length > 0)
 		if (hasNoBetTasks) orderedLanes.push(noBetLane)
 
 		return {

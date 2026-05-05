@@ -16,7 +16,6 @@ function buildLane(overrides: Partial<BoardSwimlane> = {}): BoardSwimlane {
 			testing: [],
 			done: [],
 		},
-		blocked: [],
 		isActive: true,
 		...overrides,
 	}
@@ -43,14 +42,8 @@ describe('Swimlane', () => {
 		expect(screen.getByText('No bet')).toBeInTheDocument()
 	})
 
-	it('renders columns and blocked band when the lane has tasks', () => {
+	it('renders columns when the lane has tasks', () => {
 		const t1 = buildObjectResponse({ id: 't-1', type: 'task', title: 'Spec', status: 'todo' })
-		const blocked = buildObjectResponse({
-			id: 't-b',
-			type: 'task',
-			title: 'Stuck',
-			status: 'blocked',
-		})
 		const lane = buildLane({
 			columns: {
 				backlog: [],
@@ -60,12 +53,9 @@ describe('Swimlane', () => {
 				testing: [],
 				done: [],
 			},
-			blocked: [blocked],
 		})
 		render(<Swimlane lane={lane} />)
 		expect(screen.getByText('Spec')).toBeInTheDocument()
-		expect(screen.getByText('Stuck')).toBeInTheDocument()
-		expect(screen.getByText('Blocked')).toBeInTheDocument()
 	})
 
 	it('formats the task count as singular for one task', () => {

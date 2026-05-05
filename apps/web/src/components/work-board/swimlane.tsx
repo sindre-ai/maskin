@@ -1,6 +1,5 @@
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { BlockedBand } from '@/components/work-board/blocked-band'
 import { Column } from '@/components/work-board/column'
 import type { BoardSwimlane } from '@/hooks/use-work-board'
 import { ChevronRight } from 'lucide-react'
@@ -11,14 +10,12 @@ interface SwimlaneProps {
 }
 
 /**
- * One bet's lane: header (bet title + status), columns, and a blocked band
- * beneath. Active bets render expanded by default; inactive bets and the
- * "No bet" lane render collapsed so the room stays scannable.
+ * One bet's lane: header (bet title + status) and columns. Active bets render
+ * expanded by default; inactive bets and the "No bet" lane render collapsed
+ * so the room stays scannable.
  */
 export function Swimlane({ lane }: SwimlaneProps) {
-	const totalInColumns = Object.values(lane.columns).reduce((sum, col) => sum + col.length, 0)
-	const totalBlocked = lane.blocked.length
-	const total = totalInColumns + totalBlocked
+	const total = Object.values(lane.columns).reduce((sum, col) => sum + col.length, 0)
 
 	// Active bets default open. Inactive bets and the "No bet" lane default closed
 	// per the bet's spec. The "No bet" lane is `isActive: true` in the model, but
@@ -58,14 +55,11 @@ export function Swimlane({ lane }: SwimlaneProps) {
 								: 'No tasks under this bet yet. Add one to get started.'}
 						</p>
 					) : (
-						<>
-							<div className="flex gap-3 overflow-x-auto pb-2">
-								{Object.entries(lane.columns).map(([status, tasks]) => (
-									<Column key={status} status={status} tasks={tasks} />
-								))}
-							</div>
-							<BlockedBand tasks={lane.blocked} />
-						</>
+						<div className="flex gap-3 overflow-x-auto pb-2">
+							{Object.entries(lane.columns).map(([status, tasks]) => (
+								<Column key={status} status={status} tasks={tasks} />
+							))}
+						</div>
 					)}
 				</div>
 			</CollapsibleContent>

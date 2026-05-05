@@ -5,8 +5,8 @@ import { useWorkBoard } from '@/hooks/use-work-board'
 
 /**
  * Top-level board: vertical stack of bet swimlanes. Each lane lays out columns
- * for the workspace's task statuses (minus `blocked`, which gets its own band).
- * Drag-and-drop, filters, and the rich card surface come in later tasks.
+ * for the workspace's task statuses. Drag-and-drop, filters, and the rich card
+ * surface come in later tasks.
  */
 export function Board() {
 	const { board, isLoading, error } = useWorkBoard()
