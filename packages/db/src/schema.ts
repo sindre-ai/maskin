@@ -357,8 +357,10 @@ export const mcpTelemetry = pgTable(
 	'mcp_telemetry',
 	{
 		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		// Aggregate-only metric rows — cascade-delete with the workspace so
+		// dashboards never read telemetry for a workspace the user has removed.
 		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
+			.references(() => workspaces.id, { onDelete: 'cascade' })
 			.notNull(),
 		eventType: text('event_type').notNull(),
 		toolName: text('tool_name').notNull(),
