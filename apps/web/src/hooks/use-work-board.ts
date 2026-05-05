@@ -51,8 +51,9 @@ function emptyColumns(statuses: string[]): Record<string, ObjectResponse[]> {
 
 /**
  * Composes bets, tasks, and any bet↔task relationship (regardless of type or
- * direction) into the board model. Tasks without a parent bet land in a
- * synthetic "No bet" swimlane at the bottom.
+ * direction) into the board model. A task linked to multiple bets appears
+ * under each of them. Tasks without a parent bet land in a synthetic "No bet"
+ * swimlane at the bottom.
  */
 export function useWorkBoard(): UseWorkBoardResult {
 	const { workspaceId, workspace } = useWorkspace()
@@ -71,7 +72,7 @@ export function useWorkBoard(): UseWorkBoardResult {
 		const betById = new Map<string, ObjectResponse>()
 		for (const bet of bets) betById.set(bet.id, bet)
 
-		const taskIdToBetId = new Map<string, string>()
+		const taskIdToBetIds = new Map<string, Set<string>>()
 		for (const rel of relationships) {
 			let betId: string | undefined
 			let taskId: string | undefined
@@ -85,9 +86,12 @@ export function useWorkBoard(): UseWorkBoardResult {
 				continue
 			}
 			if (!betById.has(betId)) continue
-			if (!taskIdToBetId.has(taskId)) {
-				taskIdToBetId.set(taskId, betId)
+			let bets = taskIdToBetIds.get(taskId)
+			if (!bets) {
+				bets = new Set<string>()
+				taskIdToBetIds.set(taskId, bets)
 			}
+			bets.add(betId)
 		}
 
 		const lanes = new Map<string, BoardSwimlane>()
@@ -104,13 +108,7 @@ export function useWorkBoard(): UseWorkBoardResult {
 			isActive: true,
 		}
 
-		for (const task of tasks) {
-			const parentBetId = taskIdToBetId.get(task.id)
-			const lane =
-				parentBetId && lanes.has(parentBetId)
-					? (lanes.get(parentBetId) as BoardSwimlane)
-					: noBetLane
-
+		const placeInLane = (lane: BoardSwimlane, task: ObjectResponse) => {
 			const column = lane.columns[task.status]
 			if (column) {
 				column.push(task)
@@ -120,6 +118,18 @@ export function useWorkBoard(): UseWorkBoardResult {
 				// so the user still sees it, rather than silently hiding it.
 				const fallback = lane.columns.backlog ?? lane.columns[columnStatuses[0]]
 				if (fallback) fallback.push(task)
+			}
+		}
+
+		for (const task of tasks) {
+			const parentBetIds = taskIdToBetIds.get(task.id)
+			if (!parentBetIds || parentBetIds.size === 0) {
+				placeInLane(noBetLane, task)
+				continue
+			}
+			for (const betId of parentBetIds) {
+				const lane = lanes.get(betId)
+				if (lane) placeInLane(lane, task)
 			}
 		}
 

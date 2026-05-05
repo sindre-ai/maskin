@@ -241,6 +241,41 @@ describe('useWorkBoard', () => {
 		expect(lane.columns.in_progress.map((t) => t.id)).toEqual(['t-reverse'])
 	})
 
+	it('shows a task under every bet it is linked to', async () => {
+		const betA = buildObjectResponse({ id: 'bet-a', type: 'bet', status: 'active', title: 'A' })
+		const betB = buildObjectResponse({ id: 'bet-b', type: 'bet', status: 'active', title: 'B' })
+		const shared = buildObjectResponse({ id: 't-shared', type: 'task', status: 'todo' })
+		setupApi({
+			bets: [betA, betB],
+			tasks: [shared],
+			rels: [
+				buildRelationshipResponse({
+					sourceId: 'bet-a',
+					targetId: 't-shared',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+				buildRelationshipResponse({
+					sourceId: 'bet-b',
+					targetId: 't-shared',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+			],
+		})
+
+		const { result } = renderHook(() => useWorkBoard(), { wrapper: wrapper() })
+		await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+		expect(result.current.board.swimlanes).toHaveLength(2)
+		const laneA = result.current.board.swimlanes.find((l) => l.bet?.id === 'bet-a')
+		const laneB = result.current.board.swimlanes.find((l) => l.bet?.id === 'bet-b')
+		expect(laneA?.columns.todo.map((t) => t.id)).toEqual(['t-shared'])
+		expect(laneB?.columns.todo.map((t) => t.id)).toEqual(['t-shared'])
+	})
+
 	it('drops a task whose status is not in the column list into the backlog column', async () => {
 		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
 		const ghostStatusTask = buildObjectResponse({
