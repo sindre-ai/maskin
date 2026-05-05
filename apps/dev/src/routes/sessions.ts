@@ -195,6 +195,12 @@ app.openapi(sessionUsageRoute, (async (c) => {
 		)
 	}
 
+	// Pass timestamps as ISO strings + ::timestamptz cast — some poolers
+	// (e.g. Supabase pgbouncer in transaction mode) can't serialize JS Date
+	// values and throw `ERR_INVALID_ARG_TYPE`.
+	const fromIso = fromDate.toISOString()
+	const toIso = toDate.toISOString()
+
 	const rows = (await db.execute(sql`
 		SELECT
 			date_trunc(${bucket}, completed_at AT TIME ZONE 'UTC') AS bucket,
@@ -210,8 +216,8 @@ app.openapi(sessionUsageRoute, (async (c) => {
 		WHERE workspace_id = ${workspaceId}
 			AND actor_id = ${actorId}
 			AND completed_at IS NOT NULL
-			AND completed_at >= ${fromDate}
-			AND completed_at <  ${toDate}
+			AND completed_at >= ${fromIso}::timestamptz
+			AND completed_at <  ${toIso}::timestamptz
 		GROUP BY 1
 		ORDER BY 1 ASC
 	`)) as unknown as Array<{
