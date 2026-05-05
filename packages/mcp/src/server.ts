@@ -87,6 +87,7 @@ const UI_RESOURCES = {
 	events: 'ui://maskin/events',
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
+	schema: 'ui://maskin/schema',
 } as const
 
 const CSP = {
@@ -1226,6 +1227,242 @@ export function createMcpServer(config: McpConfig) {
 					(args as { workspace_id?: string }).workspace_id,
 				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Workspace Schema Editing (W1) ───────────────────────
+	// Mirrors the web schema editor at
+	// apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx —
+	// each tool does read-modify-write on settings.field_definitions because the
+	// workspace PATCH endpoint shallow-merges `settings`. Auth flows through the
+	// same Bearer token used by every other tool, so changes are attributed to
+	// the calling end-user (per F4 calling-user auth model).
+	type FieldDef = {
+		name: string
+		type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
+		required?: boolean
+		values?: string[]
+	}
+	const FIELD_TYPES = ['text', 'number', 'date', 'enum', 'boolean'] as const
+
+	async function patchFieldDefinitions(
+		args: { workspace_id?: string; type: string },
+		transform: (current: FieldDef[]) => FieldDef[],
+	): Promise<{ wsId: string; updatedFields: FieldDef[] }> {
+		const wsId = args.workspace_id ?? config.defaultWorkspaceId
+		if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+		const workspace = await getWorkspace(config, wsId)
+		const fieldDefs = {
+			...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
+		}
+		const current = (fieldDefs[args.type] ?? []) as FieldDef[]
+		const updated = transform(current)
+		fieldDefs[args.type] = updated
+		await apiCall(
+			config,
+			'PATCH',
+			`/api/workspaces/${wsId}`,
+			{ settings: { field_definitions: fieldDefs } },
+			{ workspaceId: wsId },
+		)
+		return { wsId, updatedFields: updated }
+	}
+
+	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {
+		if (field.type !== 'enum') {
+			throw new Error(`Field "${field.name}" is type "${field.type}", not "enum"`)
+		}
+	}
+
+	registerAppTool(
+		server,
+		'create_workspace_field',
+		{
+			description: tools.create_workspace_field.description,
+			inputSchema: tools.create_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			if (args.field_type === 'enum' && (!args.values || args.values.length === 0)) {
+				throw new Error('Enum fields require at least one value in `values`.')
+			}
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				if (current.some((f) => f.name === args.name)) {
+					throw new Error(
+						`Field "${args.name}" already exists on type "${args.type}". Use update_workspace_field to modify it.`,
+					)
+				}
+				const next: FieldDef = {
+					name: args.name,
+					type: args.field_type,
+					...(args.required ? { required: true } : {}),
+					...(args.field_type === 'enum' && args.values ? { values: args.values } : {}),
+				}
+				return [...current, next]
+			})
+			const created = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('create_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: created }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_workspace_field',
+		{
+			description: tools.update_workspace_field.description,
+			inputSchema: tools.update_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			if (args.field_type && !FIELD_TYPES.includes(args.field_type)) {
+				throw new Error(`Unsupported field_type: ${args.field_type}`)
+			}
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const existing = current[idx] as FieldDef
+				const nextName = args.new_name ?? existing.name
+				if (
+					nextName !== existing.name &&
+					current.some((f, i) => i !== idx && f.name === nextName)
+				) {
+					throw new Error(
+						`Field "${nextName}" already exists on type "${args.type}". Choose a different name.`,
+					)
+				}
+				const nextType = args.field_type ?? existing.type
+				const nextRequired = args.required ?? existing.required ?? false
+				let nextValues: string[] | undefined
+				if (nextType === 'enum') {
+					nextValues = args.values ?? existing.values ?? []
+				}
+				const next: FieldDef = {
+					name: nextName,
+					type: nextType,
+					...(nextRequired ? { required: true } : {}),
+					...(nextType === 'enum' && nextValues ? { values: nextValues } : {}),
+				}
+				const copy = [...current]
+				copy[idx] = next
+				return copy
+			})
+			const renamed = args.new_name ?? args.name
+			const updated = updatedFields.find((f) => f.name === renamed)
+			return {
+				_meta: meta('update_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_workspace_field',
+		{
+			description: tools.delete_workspace_field.description,
+			inputSchema: tools.delete_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId } = await patchFieldDefinitions(args, (current) =>
+				current.filter((f) => f.name !== args.name),
+			)
+			return {
+				_meta: meta('delete_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{ workspace_id: wsId, type: args.type, deleted: args.name, success: true },
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_workspace_enum_value',
+		{
+			description: tools.add_workspace_enum_value.description,
+			inputSchema: tools.add_workspace_enum_value.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const field = current[idx] as FieldDef
+				ensureEnumField(field)
+				if (field.values.includes(args.value)) return current
+				const copy = [...current]
+				copy[idx] = { ...field, values: [...field.values, args.value] }
+				return copy
+			})
+			const updated = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('add_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'remove_workspace_enum_value',
+		{
+			description: tools.remove_workspace_enum_value.description,
+			inputSchema: tools.remove_workspace_enum_value.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const field = current[idx] as FieldDef
+				ensureEnumField(field)
+				if (!field.values.includes(args.value)) return current
+				const copy = [...current]
+				copy[idx] = { ...field, values: field.values.filter((v) => v !== args.value) }
+				return copy
+			})
+			const updated = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('remove_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
 			}
 		},
 	)

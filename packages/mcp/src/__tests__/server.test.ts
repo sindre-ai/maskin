@@ -40,7 +40,6 @@ describe('createMcpServer', () => {
 
 	it('registers a UI resource for every defined resource', () => {
 		createMcpServer(config)
-		// UI_RESOURCES has 7 entries: objects, relationships, actors, workspaces, events, triggers, graph
 		const resourceCount = vi.mocked(registerAppResource).mock.calls.length
 		expect(resourceCount).toBeGreaterThan(0)
 		// Verify all expected URIs are present
@@ -53,6 +52,7 @@ describe('createMcpServer', () => {
 			'ui://maskin/triggers',
 			'ui://maskin/relationships',
 			'ui://maskin/graph',
+			'ui://maskin/schema',
 		]
 		for (const uri of expectedUris) {
 			expect(resourceUris).toContain(uri)
