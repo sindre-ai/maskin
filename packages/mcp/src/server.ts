@@ -1254,7 +1254,6 @@ export function createMcpServer(config: McpConfig) {
 		required?: boolean
 		values?: string[]
 	}
-	const FIELD_TYPES = ['text', 'number', 'date', 'enum', 'boolean'] as const
 
 	async function patchFieldDefinitions(
 		args: { workspace_id?: string; type: string },
@@ -1333,9 +1332,6 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
 		},
 		async (args) => {
-			if (args.field_type && !FIELD_TYPES.includes(args.field_type)) {
-				throw new Error(`Unsupported field_type: ${args.field_type}`)
-			}
 			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
 				const idx = current.findIndex((f) => f.name === args.name)
 				if (idx === -1) {
@@ -1356,6 +1352,9 @@ export function createMcpServer(config: McpConfig) {
 				let nextValues: string[] | undefined
 				if (nextType === 'enum') {
 					nextValues = args.values ?? existing.values ?? []
+					if (nextValues.length === 0) {
+						throw new Error('Enum fields require at least one value in `values`.')
+					}
 				}
 				const next: FieldDef = {
 					name: nextName,
