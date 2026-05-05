@@ -39,7 +39,13 @@ describe('useSessionUsage', () => {
 	it('calls api.sessions.usage with the derived bucket', async () => {
 		const mockResponse = {
 			buckets: [],
-			totals: { session_count: 0, total_cost_usd: 0, input_tokens: 0, output_tokens: 0 },
+			totals: {
+				session_count: 0,
+				total_cost_usd: 0,
+				input_tokens: 0,
+				output_tokens: 0,
+				cache_tokens: 0,
+			},
 		}
 		vi.mocked(api.sessions.usage).mockResolvedValue(mockResponse)
 

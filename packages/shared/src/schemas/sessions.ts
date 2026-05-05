@@ -108,8 +108,10 @@ export const sessionUsageBucketResponseSchema = z.object({
 	total_cost_usd: z.number(),
 	input_tokens: z.number().int().min(0),
 	output_tokens: z.number().int().min(0),
-	cache_creation_input_tokens: z.number().int().min(0),
-	cache_read_input_tokens: z.number().int().min(0),
+	// Combined cache_creation_input_tokens + cache_read_input_tokens.
+	// Surfaced as a single series on the chart; the underlying DB
+	// columns remain split for future per-component reporting.
+	cache_tokens: z.number().int().min(0),
 })
 
 export const sessionUsageTotalsSchema = z.object({
@@ -117,6 +119,7 @@ export const sessionUsageTotalsSchema = z.object({
 	total_cost_usd: z.number(),
 	input_tokens: z.number().int().min(0),
 	output_tokens: z.number().int().min(0),
+	cache_tokens: z.number().int().min(0),
 })
 
 export const sessionUsageResponseSchema = z.object({

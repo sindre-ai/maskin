@@ -11,6 +11,13 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 
 type View = 'tokens' | 'cost'
 type Preset = '24h' | '7d' | '30d' | 'all' | 'custom'
+type TokenSeries = 'input' | 'output' | 'cache'
+
+const TOKEN_SERIES_LABELS: Record<TokenSeries, string> = {
+	input: 'Input',
+	output: 'Output',
+	cache: 'Cache',
+}
 
 const DAY_MS = 86_400_000
 const PRESETS: { id: Preset; label: string }[] = [
@@ -84,7 +91,9 @@ export function AgentUsageChart({
 		return data.buckets.map((b) => ({
 			bucket: b.bucket,
 			label: formatBucketLabel(b.bucket, chartBucket),
-			tokens: b.input_tokens + b.output_tokens,
+			input: b.input_tokens,
+			output: b.output_tokens,
+			cache: b.cache_tokens,
 			cost: b.total_cost_usd,
 		}))
 	}, [data, chartBucket])
@@ -134,7 +143,11 @@ export function AgentUsageChart({
 				/>
 				<Stat
 					label="Total tokens"
-					value={totals ? fullNumber.format(totals.input_tokens + totals.output_tokens) : '—'}
+					value={
+						totals
+							? fullNumber.format(totals.input_tokens + totals.output_tokens + totals.cache_tokens)
+							: '—'
+					}
 					loading={isLoading}
 				/>
 				<Stat
@@ -185,13 +198,34 @@ export function AgentUsageChart({
 									fontSize: 12,
 								}}
 								labelStyle={{ color: 'var(--muted-foreground)', fontSize: 11 }}
-								formatter={(value) => {
+								formatter={(value, name) => {
 									const n = Number(value)
 									if (view === 'cost') return [currency.format(n), 'Cost']
-									return [fullNumber.format(n), 'Tokens']
+									return [fullNumber.format(n), TOKEN_SERIES_LABELS[name as TokenSeries] ?? name]
 								}}
 							/>
-							<Bar dataKey={view} fill="var(--primary)" radius={[3, 3, 0, 0]} maxBarSize={32} />
+							{view === 'cost' ? (
+								<Bar dataKey="cost" fill="var(--primary)" radius={[3, 3, 0, 0]} maxBarSize={32} />
+							) : (
+								<>
+									<Bar dataKey="input" stackId="tokens" fill="var(--primary)" maxBarSize={32} />
+									<Bar
+										dataKey="output"
+										stackId="tokens"
+										fill="var(--primary)"
+										fillOpacity={0.65}
+										maxBarSize={32}
+									/>
+									<Bar
+										dataKey="cache"
+										stackId="tokens"
+										fill="var(--primary)"
+										fillOpacity={0.35}
+										radius={[3, 3, 0, 0]}
+										maxBarSize={32}
+									/>
+								</>
+							)}
 						</BarChart>
 					</ResponsiveContainer>
 				</div>

@@ -202,8 +202,10 @@ app.openapi(sessionUsageRoute, (async (c) => {
 			COALESCE(SUM(total_cost_usd), 0)::float8 AS total_cost_usd,
 			COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
 			COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
-			COALESCE(SUM(cache_creation_input_tokens), 0)::int AS cache_creation_input_tokens,
-			COALESCE(SUM(cache_read_input_tokens), 0)::int AS cache_read_input_tokens
+			COALESCE(
+				SUM(COALESCE(cache_creation_input_tokens, 0) + COALESCE(cache_read_input_tokens, 0)),
+				0
+			)::int AS cache_tokens
 		FROM sessions
 		WHERE workspace_id = ${workspaceId}
 			AND actor_id = ${actorId}
@@ -218,8 +220,7 @@ app.openapi(sessionUsageRoute, (async (c) => {
 		total_cost_usd: number
 		input_tokens: number
 		output_tokens: number
-		cache_creation_input_tokens: number
-		cache_read_input_tokens: number
+		cache_tokens: number
 	}>
 
 	const buckets = rows.map((r) => ({
@@ -228,8 +229,7 @@ app.openapi(sessionUsageRoute, (async (c) => {
 		total_cost_usd: Number(r.total_cost_usd),
 		input_tokens: Number(r.input_tokens),
 		output_tokens: Number(r.output_tokens),
-		cache_creation_input_tokens: Number(r.cache_creation_input_tokens),
-		cache_read_input_tokens: Number(r.cache_read_input_tokens),
+		cache_tokens: Number(r.cache_tokens),
 	}))
 
 	const totals = buckets.reduce(
@@ -238,9 +238,16 @@ app.openapi(sessionUsageRoute, (async (c) => {
 			acc.total_cost_usd += b.total_cost_usd
 			acc.input_tokens += b.input_tokens
 			acc.output_tokens += b.output_tokens
+			acc.cache_tokens += b.cache_tokens
 			return acc
 		},
-		{ session_count: 0, total_cost_usd: 0, input_tokens: 0, output_tokens: 0 },
+		{
+			session_count: 0,
+			total_cost_usd: 0,
+			input_tokens: 0,
+			output_tokens: 0,
+			cache_tokens: 0,
+		},
 	)
 
 	return c.json({ buckets, totals })

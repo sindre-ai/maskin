@@ -44,7 +44,13 @@ const agent: ActorResponse = {
 
 const emptyUsage: SessionUsageResponse = {
 	buckets: [],
-	totals: { session_count: 0, total_cost_usd: 0, input_tokens: 0, output_tokens: 0 },
+	totals: {
+		session_count: 0,
+		total_cost_usd: 0,
+		input_tokens: 0,
+		output_tokens: 0,
+		cache_tokens: 0,
+	},
 }
 
 const populatedUsage: SessionUsageResponse = {
@@ -55,8 +61,7 @@ const populatedUsage: SessionUsageResponse = {
 			total_cost_usd: 0.42,
 			input_tokens: 1000,
 			output_tokens: 500,
-			cache_creation_input_tokens: 0,
-			cache_read_input_tokens: 0,
+			cache_tokens: 0,
 		},
 	],
 	totals: {
@@ -64,6 +69,7 @@ const populatedUsage: SessionUsageResponse = {
 		total_cost_usd: 1.234,
 		input_tokens: 50_000,
 		output_tokens: 25_000,
+		cache_tokens: 10_000,
 	},
 }
 
@@ -82,7 +88,7 @@ describe('AgentUsageChart', () => {
 		vi.mocked(api.sessions.usage).mockResolvedValue(populatedUsage)
 		render(<AgentUsageChart agent={agent} workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(await screen.findByText(/\$1\.234/)).toBeInTheDocument()
-		expect(screen.getByText(/75,000/)).toBeInTheDocument()
+		expect(screen.getByText(/85,000/)).toBeInTheDocument()
 		expect(screen.getByText('12')).toBeInTheDocument()
 	})
 

@@ -696,8 +696,7 @@ export interface SessionUsageBucketResponse {
 	total_cost_usd: number
 	input_tokens: number
 	output_tokens: number
-	cache_creation_input_tokens: number
-	cache_read_input_tokens: number
+	cache_tokens: number
 }
 
 export interface SessionUsageResponse {
@@ -707,6 +706,7 @@ export interface SessionUsageResponse {
 		total_cost_usd: number
 		input_tokens: number
 		output_tokens: number
+		cache_tokens: number
 	}
 }
 
