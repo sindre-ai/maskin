@@ -1,10 +1,13 @@
 import { Card } from '@/components/ui/card'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { useDraggable, useDroppable } from '@dnd-kit/core'
 
 interface ColumnProps {
 	status: string
 	tasks: ObjectResponse[]
+	/** Swimlane identifier — `bet.id` or `'no-bet'`. Used to scope drags to a single lane. */
+	laneId: string
 }
 
 const COLUMN_LABELS: Record<string, string> = {
@@ -21,11 +24,24 @@ function formatColumnLabel(status: string): string {
 	return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-export function Column({ status, tasks }: ColumnProps) {
+export function Column({ status, tasks, laneId }: ColumnProps) {
 	const isEmpty = tasks.length === 0
+	const { setNodeRef, isOver, active } = useDroppable({
+		id: `col:${laneId}:${status}`,
+		data: { laneId, status },
+	})
+	const activeLaneId = active?.data.current?.laneId as string | undefined
+	const isValidTarget = isOver && activeLaneId === laneId
+	const isInvalidTarget = isOver && activeLaneId !== undefined && activeLaneId !== laneId
+
 	return (
 		<div
-			className="flex w-72 shrink-0 flex-col rounded-md border bg-muted/30"
+			ref={setNodeRef}
+			className={cn(
+				'flex w-72 shrink-0 flex-col rounded-md border bg-muted/30 transition-colors',
+				isValidTarget && 'border-accent bg-accent/5',
+				isInvalidTarget && 'opacity-60',
+			)}
 			data-column-status={status}
 		>
 			<div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
@@ -48,7 +64,7 @@ export function Column({ status, tasks }: ColumnProps) {
 						No tasks in {formatColumnLabel(status).toLowerCase()}.
 					</p>
 				) : (
-					tasks.map((task) => <TaskCardPlaceholder key={task.id} task={task} />)
+					tasks.map((task) => <TaskCardPlaceholder key={task.id} task={task} laneId={laneId} />)
 				)}
 			</div>
 		</div>
@@ -60,9 +76,22 @@ export function Column({ status, tasks }: ColumnProps) {
  * live status headline, blocker indicator). Kept intentionally minimal here so
  * the layout work can land without the data-density of the full card.
  */
-function TaskCardPlaceholder({ task }: { task: ObjectResponse }) {
+function TaskCardPlaceholder({ task, laneId }: { task: ObjectResponse; laneId: string }) {
+	const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+		id: `task:${laneId}:${task.id}`,
+		data: { task, laneId },
+	})
 	return (
-		<Card className="p-3 shadow-sm" data-task-id={task.id}>
+		<Card
+			ref={setNodeRef}
+			{...attributes}
+			{...listeners}
+			className={cn(
+				'p-3 shadow-sm cursor-grab active:cursor-grabbing touch-none select-none',
+				isDragging && 'opacity-40',
+			)}
+			data-task-id={task.id}
+		>
 			<p className="text-sm font-medium leading-snug line-clamp-2">
 				{task.title || 'Untitled task'}
 			</p>

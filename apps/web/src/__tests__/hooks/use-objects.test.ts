@@ -199,6 +199,75 @@ describe('useUpdateObject', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.update).toHaveBeenCalledWith('obj-1', { title: 'Updated' })
 	})
+
+	it('optimistically patches cached lists before the request resolves', async () => {
+		const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+		const React = await import('react')
+		const { queryKeys } = await import('@/lib/query-keys')
+
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: Number.POSITIVE_INFINITY },
+				mutations: { retry: false },
+			},
+		})
+		queryClient.setQueryData(queryKeys.objects.list(workspaceId, { type: 'task' }), [
+			buildObject({ id: 'obj-1', status: 'todo', title: 'Task' }),
+		])
+
+		// Hold the API call open so we can assert the cache is patched optimistically.
+		let resolveUpdate: (v: ObjectResponse) => void = () => {}
+		vi.mocked(api.objects.update).mockImplementation(
+			() =>
+				new Promise<ObjectResponse>((res) => {
+					resolveUpdate = res
+				}),
+		)
+
+		const wrapper = ({ children }: { children: React.ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper })
+
+		result.current.mutate({ id: 'obj-1', data: { status: 'in_progress' } })
+
+		await waitFor(() => {
+			const list = queryClient.getQueryData<ObjectResponse[]>(
+				queryKeys.objects.list(workspaceId, { type: 'task' }),
+			)
+			expect(list?.[0].status).toBe('in_progress')
+		})
+
+		resolveUpdate(buildObject({ id: 'obj-1', status: 'in_progress', title: 'Task' }))
+	})
+
+	it('rolls the cache back when the update fails', async () => {
+		const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+		const React = await import('react')
+		const { queryKeys } = await import('@/lib/query-keys')
+
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: Number.POSITIVE_INFINITY },
+				mutations: { retry: false },
+			},
+		})
+		const original = buildObject({ id: 'obj-1', status: 'todo', title: 'Task' })
+		queryClient.setQueryData(queryKeys.objects.list(workspaceId, { type: 'task' }), [original])
+
+		vi.mocked(api.objects.update).mockRejectedValue(new Error('boom'))
+
+		const wrapper = ({ children }: { children: React.ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper })
+
+		result.current.mutate({ id: 'obj-1', data: { status: 'in_progress' } })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const list = queryClient.getQueryData<ObjectResponse[]>(
+			queryKeys.objects.list(workspaceId, { type: 'task' }),
+		)
+		expect(list?.[0].status).toBe('todo')
+	})
 })
 
 describe('useDeleteObject', () => {

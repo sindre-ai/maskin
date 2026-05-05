@@ -26,6 +26,7 @@ export function Swimlane({ lane }: SwimlaneProps) {
 
 	const title = lane.bet?.title ?? 'No bet'
 	const status = lane.bet?.status
+	const laneId = lane.bet?.id ?? 'no-bet'
 
 	return (
 		<Collapsible
@@ -57,7 +58,7 @@ export function Swimlane({ lane }: SwimlaneProps) {
 					) : (
 						<div className="flex gap-3 overflow-x-auto pb-2">
 							{Object.entries(lane.columns).map(([status, tasks]) => (
-								<Column key={status} status={status} tasks={tasks} />
+								<Column key={status} status={status} tasks={tasks} laneId={laneId} />
 							))}
 						</div>
 					)}
