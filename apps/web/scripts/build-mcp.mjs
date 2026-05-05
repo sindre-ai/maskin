@@ -16,6 +16,7 @@ const apps = [
 	'events',
 	'triggers',
 	'graph',
+	'schema',
 	'integrations',
 ]
 

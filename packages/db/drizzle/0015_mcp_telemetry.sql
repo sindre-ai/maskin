@@ -6,7 +6,7 @@
 -- shaping queries themselves.
 CREATE TABLE IF NOT EXISTS "mcp_telemetry" (
 	"id" bigserial PRIMARY KEY,
-	"workspace_id" uuid NOT NULL REFERENCES "workspaces"("id"),
+	"workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
 	"event_type" text NOT NULL,
 	"tool_name" text NOT NULL,
 	"session_id" text,

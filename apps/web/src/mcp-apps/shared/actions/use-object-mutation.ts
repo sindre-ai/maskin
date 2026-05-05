@@ -34,27 +34,33 @@ interface ToolResultLike {
 }
 
 /**
- * Inspect an `update_objects` response and return the per-update success
- * flag. The tool returns an array of `{ id, success, error }`; we look for
- * an entry matching this hook's objectId. Falls back to "success unknown"
- * (treated as success) when the structure doesn't match.
+ * Inspect an `update_objects` response and return the per-update outcome for
+ * this hook's objectId. The tool returns an array of `{ id, success, error }`.
+ *
+ * Returns a soft failure (`success: false`) for any unparseable or
+ * unrecognised response shape rather than silently reporting success — the
+ * UI layer would otherwise clear the optimistic value and fire `onSuccess`
+ * for a write the server may never have performed.
  */
-function extractObjectResult(tr: ToolResultLike | null, objectId: string): MutationOutcome | null {
-	if (!tr || tr.toolName !== 'update_objects') return null
+function extractObjectResult(tr: ToolResultLike | null, objectId: string): MutationOutcome {
+	if (!tr || tr.toolName !== 'update_objects') {
+		return { success: false, error: 'Unexpected tool response' }
+	}
+	if (tr.result.isError === true) return { success: false, error: 'Mutation failed' }
 	const text = tr.result.content?.find((c) => c.type === 'text')?.text
-	if (!text) return tr.result.isError ? { success: false, error: 'Mutation failed' } : null
+	if (!text) return { success: false, error: 'Empty tool response' }
 	let parsed: unknown
 	try {
 		parsed = JSON.parse(text)
 	} catch {
-		return null
+		return { success: false, error: 'Malformed tool response' }
 	}
-	if (!Array.isArray(parsed)) return null
+	if (!Array.isArray(parsed)) return { success: false, error: 'Malformed tool response' }
 	const entry = parsed.find(
 		(p): p is { id?: string; success?: boolean; error?: string } =>
 			typeof p === 'object' && p !== null && (p as { id?: string }).id === objectId,
 	)
-	if (!entry) return null
+	if (!entry) return { success: false, error: 'No result for this object' }
 	if (entry.success === true) return { success: true }
 	return { success: false, error: entry.error ?? 'Mutation failed' }
 }
@@ -88,7 +94,7 @@ export function useObjectMutation<T>(opts: UseObjectMutationOptions<T>): ObjectM
 				const outcome = extractObjectResult(
 					{ result: result as ToolResultLike['result'], toolName: 'update_objects' },
 					opts.objectId,
-				) ?? { success: true }
+				)
 				if (!outcome.success) {
 					setOptimisticValue(null)
 					setError(outcome.error ?? 'Mutation failed')
