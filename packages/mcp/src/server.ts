@@ -574,35 +574,45 @@ function extractWorkspaceId(args: unknown): string | undefined {
 /**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
- * count one mutation event per call when at least one inner item succeeded —
- * matches how the bet's "20% of sessions include at least one mutation" metric
- * is meant to be read (a session that *attempted* and partially succeeded
- * counts).
+ * count one mutation event per call when at least one inner item explicitly
+ * reports success.
+ *
+ * Defaults to `false` for unrecognised shapes. Over-counting biases the bet's
+ * "20% of sessions include at least one mutation" metric upward, so unknown
+ * responses are treated as "not a confirmed mutation" rather than assuming
+ * success.
  */
 function isSuccessfulMutationResponse(response: unknown): boolean {
 	if (!response || typeof response !== 'object') return false
+	if ((response as { isError?: unknown }).isError === true) return false
 	const content = (response as { content?: unknown }).content
 	if (!Array.isArray(content) || content.length === 0) return false
 	const first = content[0] as { type?: string; text?: string } | undefined
-	if (!first || first.type !== 'text' || typeof first.text !== 'string') return true
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return false
 	let parsed: unknown
 	try {
 		parsed = JSON.parse(first.text)
 	} catch {
-		return true
+		return false
 	}
 	if (Array.isArray(parsed)) {
+		// Per-target aggregation (update_objects-style). The call counts when
+		// at least one entry explicitly reports success === true.
 		return parsed.some((entry) => {
 			if (!entry || typeof entry !== 'object') return false
-			const success = (entry as { success?: unknown }).success
-			return success === true || success === undefined
+			return (entry as { success?: unknown }).success === true
 		})
 	}
 	if (parsed && typeof parsed === 'object') {
-		const errored = (parsed as { error?: unknown }).error
-		return errored === undefined || errored === null
+		const obj = parsed as { success?: unknown; error?: unknown; id?: unknown }
+		if (obj.success === true) return true
+		if (obj.success === false) return false
+		// No explicit success flag — accept as confirmed only if the payload has
+		// no `error` field and looks like a record (has an `id`). Anything else
+		// stays uncounted.
+		return obj.error == null && typeof obj.id === 'string'
 	}
-	return true
+	return false
 }
 
 /** Best-effort object_type label for the mutation event. */

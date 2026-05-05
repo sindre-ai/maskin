@@ -56,6 +56,11 @@ export const queryKeys = {
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
 		byActorAll: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'all'] as const,
+		usage: (
+			workspaceId: string,
+			actorId: string,
+			range: { from: string; to: string; bucket: string },
+		) => ['sessions', workspaceId, 'actor', actorId, 'usage', range] as const,
 	},
 	events: {
 		history: (workspaceId: string, filters?: Record<string, unknown>) =>

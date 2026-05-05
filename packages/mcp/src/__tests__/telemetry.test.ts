@@ -125,4 +125,59 @@ describe('MCP telemetry wrapper', () => {
 		expect(toolCalls).toHaveLength(1)
 		expect(toolCalls[0].tool_name).toBe('list_workspaces')
 	})
+
+	it('covers every MCP write tool in MUTATION_TOOL_KINDS', async () => {
+		// Drift between the MUTATION_TOOL_KINDS table and the registered tool
+		// set is the highest-leverage way to undercount the bet's mutation
+		// metric. This test pins the contract: every tool whose name implies a
+		// mutation (create_*, update_*, delete_*, plus a known set of
+		// non-CRUD-named writes) is either listed in MUTATION_TOOL_KINDS or
+		// explicitly opted out below.
+		const { MUTATION_TOOL_KINDS } = await import('../telemetry')
+		const NON_CRUD_WRITE_TOOLS = new Set([
+			'add_workspace_member',
+			'regenerate_api_key',
+			'connect_integration',
+			'disconnect_integration',
+			'set_llm_api_key',
+			'import_claude_subscription',
+			'disconnect_claude_subscription',
+			'stop_session',
+			'pause_session',
+			'resume_session',
+			'run_agent',
+		])
+		// Tools whose names start with create_/update_/delete_ but are NOT
+		// mutations (e.g. delete_object is — but no such read-only impostors
+		// exist today; this list is the documented opt-out hatch).
+		const READ_ONLY_PREFIX_EXCEPTIONS = new Set<string>([])
+
+		for (const name of handlers.keys()) {
+			const looksLikeWrite =
+				name.startsWith('create_') ||
+				name.startsWith('update_') ||
+				name.startsWith('delete_') ||
+				NON_CRUD_WRITE_TOOLS.has(name)
+
+			if (!looksLikeWrite) continue
+			if (READ_ONLY_PREFIX_EXCEPTIONS.has(name)) continue
+
+			expect(
+				MUTATION_TOOL_KINDS[name],
+				`${name} is a write tool but is missing from MUTATION_TOOL_KINDS`,
+			).toBeDefined()
+		}
+	})
+
+	it('does not emit a mutation event when the response shape is unrecognised', async () => {
+		// Default fetch stub returns `[]` so update_objects with no updates
+		// returns an empty result array. With no entry reporting success: true
+		// the wrapper must NOT count the call as a mutation — otherwise the
+		// bet metric is biased upward.
+		const handler = getHandler('update_objects')
+		await handler({ workspace_id: wsId, updates: [] })
+
+		const mutations = recorded.filter((r) => r.event_type === 'mutation')
+		expect(mutations).toHaveLength(0)
+	})
 })

@@ -124,4 +124,64 @@ describe('useObjectMutation', () => {
 
 		await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(null))
 	})
+
+	it('treats unparseable tool responses as a soft failure', async () => {
+		// Server returned non-JSON text — we must not silently report success
+		// or call onSuccess, otherwise the optimistic UI clears for a write
+		// the server may never have made.
+		const callTool = vi.fn().mockResolvedValue({
+			content: [{ type: 'text', text: 'not-json' }],
+		})
+		const onSuccess = vi.fn()
+		const { result } = renderHook(
+			() =>
+				useObjectMutation<string>({
+					objectId: 'obj-5',
+					field: 'status',
+					onSuccess,
+				}),
+			{ wrapper: makeWrapper(callTool) },
+		)
+
+		await act(async () => {
+			const outcome = await result.current.run('done')
+			expect(outcome.success).toBe(false)
+		})
+
+		expect(onSuccess).not.toHaveBeenCalled()
+		expect(result.current.optimisticValue).toBeNull()
+		expect(result.current.error).toBeTruthy()
+	})
+
+	it('treats a missing entry for this objectId as a soft failure', async () => {
+		// update_objects returned results, but none matched the object we asked
+		// to mutate — could mean the server filtered it out (e.g. permissions)
+		// or the call was misrouted. Either way we should not claim success.
+		const callTool = vi.fn().mockResolvedValue({
+			content: [
+				{
+					type: 'text',
+					text: JSON.stringify([{ type: 'object', id: 'other-obj', success: true }]),
+				},
+			],
+		})
+		const onSuccess = vi.fn()
+		const { result } = renderHook(
+			() =>
+				useObjectMutation<string>({
+					objectId: 'obj-6',
+					field: 'status',
+					onSuccess,
+				}),
+			{ wrapper: makeWrapper(callTool) },
+		)
+
+		await act(async () => {
+			const outcome = await result.current.run('done')
+			expect(outcome.success).toBe(false)
+		})
+
+		expect(onSuccess).not.toHaveBeenCalled()
+		expect(result.current.optimisticValue).toBeNull()
+	})
 })
