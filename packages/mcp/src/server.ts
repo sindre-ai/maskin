@@ -87,6 +87,7 @@ const UI_RESOURCES = {
 	events: 'ui://maskin/events',
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
+	extensions: 'ui://maskin/extensions',
 } as const
 
 const CSP = {
@@ -2081,7 +2082,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_extensions.description,
 			inputSchema: tools.list_extensions.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			const modules = getAllModules()
@@ -2187,7 +2188,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_extension.description,
 			inputSchema: tools.create_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			// Check if this is a known module
@@ -2316,7 +2317,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.update_extension.description,
 			inputSchema: tools.update_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			const workspace = await getWorkspace(config, args.workspace_id)
@@ -2533,7 +2534,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_extension.description,
 			inputSchema: tools.delete_extension.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.extensions, csp: CSP } },
 		},
 		async (args) => {
 			// Check if the extension is a registered module
