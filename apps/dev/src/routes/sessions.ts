@@ -7,8 +7,10 @@ import {
 	sessionLogQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionUsageQuerySchema,
+	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -135,6 +137,114 @@ app.openapi(listSessionsRoute, (async (c) => {
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
 }) as RouteHandler<typeof listSessionsRoute, Env>)
+
+// GET /usage - Aggregated cost & token usage for an agent over time
+// Registered before /{id} so the static `usage` segment wins the match.
+const DAY_MS = 86_400_000
+const MAX_RANGE_DAYS = 366
+const MAX_HOURLY_RANGE_DAYS = 60
+
+const sessionUsageRoute = createRoute({
+	method: 'get',
+	path: '/usage',
+	tags: ['Sessions'],
+	summary: 'Aggregate session cost & token usage for an agent',
+	request: {
+		headers: workspaceIdHeader,
+		query: sessionUsageQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionUsageResponseSchema } },
+			description: 'Bucketed usage and totals',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid range or bucket',
+		},
+	},
+})
+
+app.openapi(sessionUsageRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { actor_id: actorId, from, to, bucket } = c.req.valid('query')
+
+	const fromDate = new Date(from)
+	const toDate = new Date(to)
+	const fromMs = fromDate.getTime()
+	const toMs = toDate.getTime()
+
+	if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+		return c.json(createApiError('VALIDATION_ERROR', '`to` must be after `from`'), 400)
+	}
+	const spanDays = (toMs - fromMs) / DAY_MS
+	if (spanDays > MAX_RANGE_DAYS) {
+		return c.json(
+			createApiError('VALIDATION_ERROR', `Range may not exceed ${MAX_RANGE_DAYS} days`),
+			400,
+		)
+	}
+	if (bucket === 'hour' && spanDays > MAX_HOURLY_RANGE_DAYS) {
+		return c.json(
+			createApiError(
+				'VALIDATION_ERROR',
+				`Hourly bucket only supported for ranges up to ${MAX_HOURLY_RANGE_DAYS} days`,
+			),
+			400,
+		)
+	}
+
+	const rows = (await db.execute(sql`
+		SELECT
+			date_trunc(${bucket}, completed_at AT TIME ZONE 'UTC') AS bucket,
+			COUNT(*)::int AS session_count,
+			COALESCE(SUM(total_cost_usd), 0)::float8 AS total_cost_usd,
+			COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
+			COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
+			COALESCE(SUM(cache_creation_input_tokens), 0)::int AS cache_creation_input_tokens,
+			COALESCE(SUM(cache_read_input_tokens), 0)::int AS cache_read_input_tokens
+		FROM sessions
+		WHERE workspace_id = ${workspaceId}
+			AND actor_id = ${actorId}
+			AND completed_at IS NOT NULL
+			AND completed_at >= ${fromDate}
+			AND completed_at <  ${toDate}
+		GROUP BY 1
+		ORDER BY 1 ASC
+	`)) as unknown as Array<{
+		bucket: Date | string
+		session_count: number
+		total_cost_usd: number
+		input_tokens: number
+		output_tokens: number
+		cache_creation_input_tokens: number
+		cache_read_input_tokens: number
+	}>
+
+	const buckets = rows.map((r) => ({
+		bucket: r.bucket instanceof Date ? r.bucket.toISOString() : String(r.bucket),
+		session_count: Number(r.session_count),
+		total_cost_usd: Number(r.total_cost_usd),
+		input_tokens: Number(r.input_tokens),
+		output_tokens: Number(r.output_tokens),
+		cache_creation_input_tokens: Number(r.cache_creation_input_tokens),
+		cache_read_input_tokens: Number(r.cache_read_input_tokens),
+	}))
+
+	const totals = buckets.reduce(
+		(acc, b) => {
+			acc.session_count += b.session_count
+			acc.total_cost_usd += b.total_cost_usd
+			acc.input_tokens += b.input_tokens
+			acc.output_tokens += b.output_tokens
+			return acc
+		},
+		{ session_count: 0, total_cost_usd: 0, input_tokens: 0, output_tokens: 0 },
+	)
+
+	return c.json({ buckets, totals })
+}) as RouteHandler<typeof sessionUsageRoute, Env>)
 
 // GET /:id - Get session detail
 const getSessionRoute = createRoute({

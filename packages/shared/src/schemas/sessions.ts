@@ -91,3 +91,36 @@ export const sessionInputSchema = z.object({
 	content: z.string().min(1),
 	attachments: z.array(sessionInputAttachmentSchema).optional(),
 })
+
+export const sessionUsageBucketSchema = z.enum(['hour', 'day', 'week'])
+export type SessionUsageBucket = z.infer<typeof sessionUsageBucketSchema>
+
+export const sessionUsageQuerySchema = z.object({
+	actor_id: z.string().uuid(),
+	from: z.string().datetime(),
+	to: z.string().datetime(),
+	bucket: sessionUsageBucketSchema,
+})
+
+export const sessionUsageBucketResponseSchema = z.object({
+	bucket: z.string(),
+	session_count: z.number().int().min(0),
+	total_cost_usd: z.number(),
+	input_tokens: z.number().int().min(0),
+	output_tokens: z.number().int().min(0),
+	cache_creation_input_tokens: z.number().int().min(0),
+	cache_read_input_tokens: z.number().int().min(0),
+})
+
+export const sessionUsageTotalsSchema = z.object({
+	session_count: z.number().int().min(0),
+	total_cost_usd: z.number(),
+	input_tokens: z.number().int().min(0),
+	output_tokens: z.number().int().min(0),
+})
+
+export const sessionUsageResponseSchema = z.object({
+	buckets: z.array(sessionUsageBucketResponseSchema),
+	totals: sessionUsageTotalsSchema,
+})
+export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>

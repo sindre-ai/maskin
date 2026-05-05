@@ -25,6 +25,7 @@ import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { type SessionUsage, extractSessionUsage } from './usage-parser'
 import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
 
 export interface CreateSessionParams {
@@ -899,6 +900,20 @@ export class SessionManager extends EventEmitter {
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		// Extract token / cost usage from the tail of stdout. Codex and custom
+		// runtimes don't emit structured usage — extractor returns null and the
+		// columns stay NULL. Parser failures must never block the status update,
+		// so this is wrapped in its own try/catch.
+		let usage: SessionUsage | null = null
+		try {
+			usage = await extractSessionUsage(this.db, sessionId)
+		} catch (err) {
+			logger.warn('Failed to parse usage from session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -912,6 +927,16 @@ export class SessionManager extends EventEmitter {
 					result: { exit_code: exitCode },
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					...(usage
+						? {
+								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+								inputTokens: usage.inputTokens,
+								outputTokens: usage.outputTokens,
+								cacheCreationInputTokens: usage.cacheCreationInputTokens,
+								cacheReadInputTokens: usage.cacheReadInputTokens,
+								durationMs: usage.durationMs,
+							}
+						: {}),
 				})
 				.where(eq(sessions.id, sessionId))
 		} catch (err) {
