@@ -1311,6 +1311,17 @@ export function createMcpServer(config: McpConfig) {
 		return true
 	}
 
+	function fieldDefMapsEqual(
+		a: Record<string, FieldDef[]>,
+		b: Record<string, FieldDef[]>,
+	): boolean {
+		const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+		for (const k of keys) {
+			if (!fieldsEqual(a[k] ?? [], b[k] ?? [])) return false
+		}
+		return true
+	}
+
 	async function patchFieldDefinitions(
 		args: { workspace_id?: string; type: string },
 		transform: (current: FieldDef[]) => FieldDef[],
@@ -1321,9 +1332,10 @@ export function createMcpServer(config: McpConfig) {
 			let lastErr: Error | null = null
 			for (let attempt = 0; attempt < MAX_RMW_ATTEMPTS; attempt++) {
 				const workspace = await getWorkspace(config, wsId)
-				const fieldDefs = {
+				const baseline = {
 					...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
 				}
+				const fieldDefs = { ...baseline }
 				const current = (fieldDefs[args.type] ?? []) as FieldDef[]
 				const updated = transform(current)
 				fieldDefs[args.type] = updated
@@ -1335,13 +1347,12 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: wsId, idempotencyKey: `mcp-schema-${wsId}-${randomUUID()}` },
 				)
 				const verify = await getWorkspace(config, wsId)
-				const verifyFields =
-					((verify.settings.field_definitions ?? {}) as Record<string, FieldDef[]>)[args.type] ?? []
-				if (fieldsEqual(verifyFields, updated)) {
+				const verifyAll = (verify.settings.field_definitions ?? {}) as Record<string, FieldDef[]>
+				if (fieldDefMapsEqual(verifyAll, fieldDefs)) {
 					return { wsId, updatedFields: updated }
 				}
 				lastErr = new Error(
-					`Concurrent edit detected on workspace "${wsId}" type "${args.type}" (attempt ${attempt + 1}/${MAX_RMW_ATTEMPTS}).`,
+					`Concurrent edit detected on workspace "${wsId}" (attempt ${attempt + 1}/${MAX_RMW_ATTEMPTS}). Another writer modified field_definitions between read and verify; retrying.`,
 				)
 			}
 			throw (
@@ -1356,6 +1367,11 @@ export function createMcpServer(config: McpConfig) {
 	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {
 		if (field.type !== 'enum') {
 			throw new Error(`Field "${field.name}" is type "${field.type}", not "enum"`)
+		}
+		if (!Array.isArray(field.values)) {
+			throw new Error(
+				`Field "${field.name}" is type "enum" but has no values list. Repair via update_workspace_field with values: [...] before adding or removing values.`,
+			)
 		}
 	}
 

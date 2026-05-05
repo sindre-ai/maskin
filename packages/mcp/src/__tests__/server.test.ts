@@ -1429,6 +1429,71 @@ describe('tool handlers', () => {
 
 				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
 			})
+
+			it('throws when the enum field has no values list', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([buildWorkspace({ task: [{ name: 'priority', type: 'enum' }] })]),
+				} as Response)
+
+				const handler = getHandler('remove_workspace_enum_value')
+				await expect(handler({ type: 'task', name: 'priority', value: 'low' })).rejects.toThrow(
+					/has no values list/,
+				)
+			})
+		})
+
+		describe('cross-type concurrency', () => {
+			it('detects a concurrent edit on a different type and retries', async () => {
+				// Attempt 1: read sees only `task`. Our PATCH would replace
+				// field_definitions wholesale and clobber a concurrent edit on `note`.
+				// Verify reads back the post-PATCH workspace and finds `note: [n]` —
+				// proof another writer landed between our GET and PATCH — so we retry.
+				// Attempt 2: read includes `note`, PATCH preserves it, verify agrees.
+				const taskAfter: FieldDef[] = [{ name: 'tag', type: 'text' }]
+				const noteFromOther: FieldDef[] = [{ name: 'n', type: 'text' }]
+				vi.spyOn(globalThis, 'fetch')
+					// Attempt 1
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: [] })]),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve(buildWorkspace({ task: taskAfter })),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: taskAfter, note: noteFromOther })]),
+					} as Response)
+					// Attempt 2 — read now includes note, so our PATCH preserves it
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: [], note: noteFromOther })]),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve(buildWorkspace({ task: taskAfter, note: noteFromOther })),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: taskAfter, note: noteFromOther })]),
+					} as Response)
+
+				const handler = getHandler('create_workspace_field')
+				await handler({ type: 'task', name: 'tag', field_type: 'text' })
+
+				const patches = vi
+					.mocked(fetch)
+					.mock.calls.filter((c) => (c[1] as RequestInit)?.method === 'PATCH')
+				expect(patches.length).toBe(2)
+				const finalBody = JSON.parse((patches[1]?.[1] as RequestInit).body as string) as {
+					settings: { field_definitions: Record<string, FieldDef[]> }
+				}
+				expect(finalBody.settings.field_definitions.note).toEqual(noteFromOther)
+				expect(finalBody.settings.field_definitions.task).toEqual(taskAfter)
+			})
 		})
 	})
 })
