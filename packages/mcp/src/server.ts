@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -100,7 +101,12 @@ async function apiCall(
 	method: string,
 	path: string,
 	body?: unknown,
-	options?: { skipAuth?: boolean; skipWorkspace?: boolean; workspaceId?: string },
+	options?: {
+		skipAuth?: boolean
+		skipWorkspace?: boolean
+		workspaceId?: string
+		idempotencyKey?: string
+	},
 ): Promise<unknown> {
 	if (!options?.skipAuth && !config.apiKey) {
 		throw new Error(`Not authenticated. ${authSetupHint(config)}`)
@@ -119,6 +125,9 @@ async function apiCall(
 	}
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
+	}
+	if (options?.idempotencyKey) {
+		headers['Idempotency-Key'] = options.idempotencyKey
 	}
 
 	const response = await fetch(url, {
@@ -157,6 +166,25 @@ async function apiCall(
 	}
 
 	return response.json()
+}
+
+// Per-workspace mutex used to serialize read-modify-write tool calls (e.g.
+// schema edits) within a single MCP process. Two MCP tool invocations from
+// the same host targeting the same workspace will run sequentially, which
+// eliminates lost-update races inside this process. Cross-process races
+// still exist; callers that care must additionally verify after PATCH.
+const workspaceLocks = new Map<string, Promise<unknown>>()
+
+function withWorkspaceLock<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
+	const prev = workspaceLocks.get(workspaceId) ?? Promise.resolve()
+	const result = prev.catch(() => undefined).then(fn)
+	const lockEntry: Promise<unknown> = result
+		.catch(() => undefined)
+		.finally(() => {
+			if (workspaceLocks.get(workspaceId) === lockEntry) workspaceLocks.delete(workspaceId)
+		})
+	workspaceLocks.set(workspaceId, lockEntry)
+	return result
 }
 
 async function getWorkspace(
@@ -1248,11 +1276,39 @@ export function createMcpServer(config: McpConfig) {
 	// workspace PATCH endpoint shallow-merges `settings`. Auth flows through the
 	// same Bearer token used by every other tool, so changes are attributed to
 	// the calling end-user (per F4 calling-user auth model).
+	//
+	// Concurrency: workspace PATCH only shallow-merges `settings`, so two
+	// interleaved RMWs on `field_definitions` would lose updates. We mitigate
+	// this with three layers:
+	//   1) Per-workspace in-process mutex (`withWorkspaceLock`) so back-to-back
+	//      MCP tool calls in this process never race.
+	//   2) Idempotency-Key on the PATCH so the host's retries don't double-apply.
+	//   3) Re-read after PATCH and compare; on drift, retry up to 3 times. This
+	//      catches cross-process races (a different MCP server or the web UI
+	//      patching the same workspace concurrently).
 	type FieldDef = {
 		name: string
 		type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
 		required?: boolean
 		values?: string[]
+	}
+
+	const MAX_RMW_ATTEMPTS = 3
+
+	function fieldsEqual(a: FieldDef[], b: FieldDef[]): boolean {
+		if (a.length !== b.length) return false
+		for (let i = 0; i < a.length; i++) {
+			const x = a[i] as FieldDef
+			const y = b[i] as FieldDef
+			if (x.name !== y.name) return false
+			if (x.type !== y.type) return false
+			if ((x.required ?? false) !== (y.required ?? false)) return false
+			const xv = x.values ?? []
+			const yv = y.values ?? []
+			if (xv.length !== yv.length) return false
+			for (let j = 0; j < xv.length; j++) if (xv[j] !== yv[j]) return false
+		}
+		return true
 	}
 
 	async function patchFieldDefinitions(
@@ -1261,21 +1317,40 @@ export function createMcpServer(config: McpConfig) {
 	): Promise<{ wsId: string; updatedFields: FieldDef[] }> {
 		const wsId = args.workspace_id ?? config.defaultWorkspaceId
 		if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
-		const workspace = await getWorkspace(config, wsId)
-		const fieldDefs = {
-			...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
-		}
-		const current = (fieldDefs[args.type] ?? []) as FieldDef[]
-		const updated = transform(current)
-		fieldDefs[args.type] = updated
-		await apiCall(
-			config,
-			'PATCH',
-			`/api/workspaces/${wsId}`,
-			{ settings: { field_definitions: fieldDefs } },
-			{ workspaceId: wsId },
-		)
-		return { wsId, updatedFields: updated }
+		return withWorkspaceLock(wsId, async () => {
+			let lastErr: Error | null = null
+			for (let attempt = 0; attempt < MAX_RMW_ATTEMPTS; attempt++) {
+				const workspace = await getWorkspace(config, wsId)
+				const fieldDefs = {
+					...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
+				}
+				const current = (fieldDefs[args.type] ?? []) as FieldDef[]
+				const updated = transform(current)
+				fieldDefs[args.type] = updated
+				await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${wsId}`,
+					{ settings: { field_definitions: fieldDefs } },
+					{ workspaceId: wsId, idempotencyKey: `mcp-schema-${wsId}-${randomUUID()}` },
+				)
+				const verify = await getWorkspace(config, wsId)
+				const verifyFields =
+					((verify.settings.field_definitions ?? {}) as Record<string, FieldDef[]>)[args.type] ?? []
+				if (fieldsEqual(verifyFields, updated)) {
+					return { wsId, updatedFields: updated }
+				}
+				lastErr = new Error(
+					`Concurrent edit detected on workspace "${wsId}" type "${args.type}" (attempt ${attempt + 1}/${MAX_RMW_ATTEMPTS}).`,
+				)
+			}
+			throw (
+				lastErr ??
+				new Error(
+					`Failed to apply schema change to workspace "${wsId}" type "${args.type}" after ${MAX_RMW_ATTEMPTS} attempts due to concurrent edits.`,
+				)
+			)
+		})
 	}
 
 	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {

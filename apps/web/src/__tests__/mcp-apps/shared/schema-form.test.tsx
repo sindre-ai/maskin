@@ -115,5 +115,4 @@ describe('SchemaForm', () => {
 		expect(screen.getByText(/tag is required/i)).toBeInTheDocument()
 		expect(onSubmit).not.toHaveBeenCalled()
 	})
-
 })
