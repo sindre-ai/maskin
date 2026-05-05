@@ -89,6 +89,7 @@ const UI_RESOURCES = {
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
 	schema: 'ui://maskin/schema',
+	members: 'ui://maskin/members',
 } as const
 
 const CSP = {
@@ -1248,7 +1249,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.add_workspace_member.description,
 			inputSchema: tools.add_workspace_member.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.members, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(
