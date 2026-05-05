@@ -40,7 +40,6 @@ describe('createMcpServer', () => {
 
 	it('registers a UI resource for every defined resource', () => {
 		createMcpServer(config)
-		// UI_RESOURCES has 7 entries: objects, relationships, actors, workspaces, events, triggers, graph
 		const resourceCount = vi.mocked(registerAppResource).mock.calls.length
 		expect(resourceCount).toBeGreaterThan(0)
 		// Verify all expected URIs are present
@@ -53,6 +52,7 @@ describe('createMcpServer', () => {
 			'ui://maskin/triggers',
 			'ui://maskin/relationships',
 			'ui://maskin/graph',
+			'ui://maskin/schema',
 		]
 		for (const uri of expectedUris) {
 			expect(resourceUris).toContain(uri)
@@ -1114,6 +1114,386 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/claude-oauth',
 				expect.objectContaining({ method: 'DELETE' }),
 			)
+		})
+	})
+
+	describe('workspace schema handlers', () => {
+		// Each tool runs read-modify-write on settings.field_definitions plus a
+		// post-PATCH verify re-read. So every successful call mocks three fetches:
+		//   1. GET  /api/workspaces        — read current state
+		//   2. PATCH /api/workspaces/:id   — write merged state
+		//   3. GET  /api/workspaces        — verify the change landed
+		type FieldDef = {
+			name: string
+			type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
+			required?: boolean
+			values?: string[]
+		}
+		const wsId = 'ws-default-123'
+		const buildWorkspace = (fields: Record<string, FieldDef[]>) => ({
+			id: wsId,
+			name: 'My Workspace',
+			settings: { field_definitions: fields },
+		})
+
+		function mockRmwSequence(
+			initial: Record<string, FieldDef[]>,
+			after: Record<string, FieldDef[]>,
+		) {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace(initial)]),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve(buildWorkspace(after)),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace(after)]),
+				} as Response)
+		}
+
+		function lastPatchBody(): { settings: { field_definitions: Record<string, FieldDef[]> } } {
+			const calls = vi.mocked(fetch).mock.calls
+			const patch = [...calls].reverse().find((c) => (c[1] as RequestInit)?.method === 'PATCH')
+			if (!patch) throw new Error('no PATCH call')
+			return JSON.parse((patch[1] as RequestInit).body as string)
+		}
+
+		describe('create_workspace_field', () => {
+			it('appends a new text field and PATCHes the merged field_definitions', async () => {
+				mockRmwSequence(
+					{ task: [{ name: 'priority', type: 'text' }] },
+					{
+						task: [
+							{ name: 'priority', type: 'text' },
+							{ name: 'tag', type: 'text', required: true },
+						],
+					},
+				)
+
+				const handler = getHandler('create_workspace_field')
+				const result = (await handler({
+					type: 'task',
+					name: 'tag',
+					field_type: 'text',
+					required: true,
+				})) as { content: Array<{ text: string }> }
+
+				const body = lastPatchBody()
+				expect(body.settings.field_definitions.task).toEqual([
+					{ name: 'priority', type: 'text' },
+					{ name: 'tag', type: 'text', required: true },
+				])
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.field).toEqual({ name: 'tag', type: 'text', required: true })
+			})
+
+			it('sends an Idempotency-Key header on the PATCH', async () => {
+				mockRmwSequence({ task: [] }, { task: [{ name: 'tag', type: 'text' }] })
+				const handler = getHandler('create_workspace_field')
+				await handler({ type: 'task', name: 'tag', field_type: 'text' })
+
+				const calls = vi.mocked(fetch).mock.calls
+				const patch = calls.find((c) => (c[1] as RequestInit)?.method === 'PATCH')
+				if (!patch) throw new Error('no PATCH call')
+				const headers = (patch[1] as RequestInit).headers as Record<string, string>
+				expect(headers['Idempotency-Key']).toMatch(/^mcp-schema-ws-default-123-/)
+			})
+
+			it('throws when enum is created without values', async () => {
+				const fetchSpy = vi.spyOn(globalThis, 'fetch')
+				const handler = getHandler('create_workspace_field')
+				await expect(
+					handler({ type: 'task', name: 'priority', field_type: 'enum' }),
+				).rejects.toThrow(/Enum fields require at least one value/)
+				expect(fetchSpy).not.toHaveBeenCalled()
+			})
+
+			it('throws when the field name already exists on the type', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
+				} as Response)
+
+				const handler = getHandler('create_workspace_field')
+				await expect(handler({ type: 'task', name: 'tag', field_type: 'text' })).rejects.toThrow(
+					/already exists on type "task"/,
+				)
+			})
+
+			it('retries when post-PATCH verify shows the change was clobbered', async () => {
+				const desired: FieldDef[] = [{ name: 'tag', type: 'text' }]
+				vi.spyOn(globalThis, 'fetch')
+					// Attempt 1: read empty, PATCH, verify shows it was clobbered (still empty)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: [] })]),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve(buildWorkspace({ task: [] })),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: [] })]),
+					} as Response)
+					// Attempt 2: read, PATCH, verify succeeds
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: [] })]),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve(buildWorkspace({ task: desired })),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: desired })]),
+					} as Response)
+
+				const handler = getHandler('create_workspace_field')
+				const result = (await handler({
+					type: 'task',
+					name: 'tag',
+					field_type: 'text',
+				})) as { content: Array<{ text: string }> }
+
+				expect(JSON.parse(result.content[0].text).field).toEqual({ name: 'tag', type: 'text' })
+				const patches = vi
+					.mocked(fetch)
+					.mock.calls.filter((c) => (c[1] as RequestInit)?.method === 'PATCH')
+				expect(patches.length).toBe(2)
+			})
+
+			it('gives up after 3 attempts when verify never agrees', async () => {
+				const stuck = buildWorkspace({ task: [] })
+				vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+					if ((init as RequestInit | undefined)?.method === 'PATCH') {
+						return Promise.resolve({ ok: true, json: () => Promise.resolve(stuck) } as Response)
+					}
+					return Promise.resolve({
+						ok: true,
+						json: () => Promise.resolve([stuck]),
+					} as Response)
+				})
+
+				const handler = getHandler('create_workspace_field')
+				await expect(handler({ type: 'task', name: 'tag', field_type: 'text' })).rejects.toThrow(
+					/Concurrent edit detected/,
+				)
+			})
+		})
+
+		describe('update_workspace_field', () => {
+			it('renames a field and rejects collisions with another field on the same type', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							buildWorkspace({
+								task: [
+									{ name: 'tag', type: 'text' },
+									{ name: 'label', type: 'text' },
+								],
+							}),
+						]),
+				} as Response)
+
+				const handler = getHandler('update_workspace_field')
+				await expect(handler({ type: 'task', name: 'tag', new_name: 'label' })).rejects.toThrow(
+					/already exists on type "task"/,
+				)
+			})
+
+			it('switches type from enum to text and drops stale values on PATCH', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'text' }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', field_type: 'text' })
+
+				const body = lastPatchBody()
+				expect(body.settings.field_definitions.task).toEqual([{ name: 'priority', type: 'text' }])
+			})
+
+			it('throws when switching to enum with no available values', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
+				} as Response)
+
+				const handler = getHandler('update_workspace_field')
+				await expect(handler({ type: 'task', name: 'tag', field_type: 'enum' })).rejects.toThrow(
+					/Enum fields require at least one value/,
+				)
+			})
+		})
+
+		describe('delete_workspace_field', () => {
+			it('removes the named field from the type', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [
+						{ name: 'tag', type: 'text' },
+						{ name: 'priority', type: 'enum', values: ['low'] },
+					],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('delete_workspace_field')
+				const result = (await handler({ type: 'task', name: 'tag' })) as {
+					content: Array<{ text: string }>
+				}
+
+				expect(lastPatchBody().settings.field_definitions.task).toEqual(after.task)
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed).toMatchObject({ deleted: 'tag', success: true })
+			})
+		})
+
+		describe('add_workspace_enum_value', () => {
+			it('appends the value to an enum field', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('add_workspace_enum_value')
+				await handler({ type: 'task', name: 'priority', value: 'high' })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low', 'high'])
+			})
+
+			it('throws when the field is not an enum', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
+				} as Response)
+
+				const handler = getHandler('add_workspace_enum_value')
+				await expect(handler({ type: 'task', name: 'tag', value: 'x' })).rejects.toThrow(
+					/not "enum"/,
+				)
+			})
+
+			it('throws when the field does not exist', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace({ task: [] })]),
+				} as Response)
+
+				const handler = getHandler('add_workspace_enum_value')
+				await expect(handler({ type: 'task', name: 'missing', value: 'x' })).rejects.toThrow(
+					/not found on type "task"/,
+				)
+			})
+		})
+
+		describe('remove_workspace_enum_value', () => {
+			it('removes the value from the enum field', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('remove_workspace_enum_value')
+				await handler({ type: 'task', name: 'priority', value: 'high' })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('is a no-op when the value is already absent (still PATCHes once)', async () => {
+				const same: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(same, same)
+
+				const handler = getHandler('remove_workspace_enum_value')
+				await handler({ type: 'task', name: 'priority', value: 'high' })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('throws when the enum field has no values list', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([buildWorkspace({ task: [{ name: 'priority', type: 'enum' }] })]),
+				} as Response)
+
+				const handler = getHandler('remove_workspace_enum_value')
+				await expect(handler({ type: 'task', name: 'priority', value: 'low' })).rejects.toThrow(
+					/has no values list/,
+				)
+			})
+		})
+
+		describe('cross-type concurrency', () => {
+			it('detects a concurrent edit on a different type and retries', async () => {
+				// Attempt 1: read sees only `task`. Our PATCH would replace
+				// field_definitions wholesale and clobber a concurrent edit on `note`.
+				// Verify reads back the post-PATCH workspace and finds `note: [n]` —
+				// proof another writer landed between our GET and PATCH — so we retry.
+				// Attempt 2: read includes `note`, PATCH preserves it, verify agrees.
+				const taskAfter: FieldDef[] = [{ name: 'tag', type: 'text' }]
+				const noteFromOther: FieldDef[] = [{ name: 'n', type: 'text' }]
+				vi.spyOn(globalThis, 'fetch')
+					// Attempt 1
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: [] })]),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve(buildWorkspace({ task: taskAfter })),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: taskAfter, note: noteFromOther })]),
+					} as Response)
+					// Attempt 2 — read now includes note, so our PATCH preserves it
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: [], note: noteFromOther })]),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve(buildWorkspace({ task: taskAfter, note: noteFromOther })),
+					} as Response)
+					.mockResolvedValueOnce({
+						ok: true,
+						json: () => Promise.resolve([buildWorkspace({ task: taskAfter, note: noteFromOther })]),
+					} as Response)
+
+				const handler = getHandler('create_workspace_field')
+				await handler({ type: 'task', name: 'tag', field_type: 'text' })
+
+				const patches = vi
+					.mocked(fetch)
+					.mock.calls.filter((c) => (c[1] as RequestInit)?.method === 'PATCH')
+				expect(patches.length).toBe(2)
+				const finalBody = JSON.parse((patches[1]?.[1] as RequestInit).body as string) as {
+					settings: { field_definitions: Record<string, FieldDef[]> }
+				}
+				expect(finalBody.settings.field_definitions.note).toEqual(noteFromOther)
+				expect(finalBody.settings.field_definitions.task).toEqual(taskAfter)
+			})
 		})
 	})
 })
