@@ -3,7 +3,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useSessionUsage } from '@/hooks/use-session-usage'
+import { pickBucket, useSessionUsage } from '@/hooks/use-session-usage'
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useMemo, useState } from 'react'
@@ -28,10 +28,15 @@ const PRESETS: { id: Preset; label: string }[] = [
 	{ id: 'custom', label: 'Custom' },
 ]
 
-function presetRange(preset: Exclude<Preset, 'custom'>, agentCreatedAt: string): DateRangeValue {
+function presetRange(preset: Exclude<Preset, 'custom'>, agentCreatedAt?: string): DateRangeValue {
 	const to = new Date()
 	if (preset === 'all') {
-		const from = new Date(agentCreatedAt)
+		// Floor `from` to at least one day before `to` so the backend's
+		// `to > from` guard always passes — even for brand-new agents with a
+		// near-`now` createdAt or a missing/invalid timestamp.
+		const parsed = agentCreatedAt ? new Date(agentCreatedAt) : null
+		const fromMs = parsed && Number.isFinite(parsed.getTime()) ? parsed.getTime() : to.getTime()
+		const from = new Date(Math.min(fromMs, to.getTime() - DAY_MS))
 		return { from, to }
 	}
 	const days = preset === '24h' ? 1 : preset === '7d' ? 7 : 30
@@ -69,22 +74,17 @@ export function AgentUsageChart({
 	const [view, setView] = useState<View>('tokens')
 	const [preset, setPreset] = useState<Preset>('30d')
 	const [customRange, setCustomRange] = useState<DateRangeValue>(() =>
-		presetRange('30d', agent.createdAt ?? new Date().toISOString()),
+		presetRange('30d', agent.createdAt ?? undefined),
 	)
 
 	const range: DateRangeValue = useMemo(() => {
 		if (preset === 'custom') return customRange
-		return presetRange(preset, agent.createdAt ?? new Date().toISOString())
+		return presetRange(preset, agent.createdAt ?? undefined)
 	}, [preset, customRange, agent.createdAt])
 
 	const { data, isLoading, error } = useSessionUsage(workspaceId, agent.id, range.from, range.to)
 
-	const chartBucket = useMemo<'hour' | 'day' | 'week'>(() => {
-		const span = (range.to.getTime() - range.from.getTime()) / DAY_MS
-		if (span < 2) return 'hour'
-		if (span <= 90) return 'day'
-		return 'week'
-	}, [range])
+	const chartBucket = useMemo(() => pickBucket(range.from.getTime(), range.to.getTime()), [range])
 
 	const chartData = useMemo(() => {
 		if (!data) return []

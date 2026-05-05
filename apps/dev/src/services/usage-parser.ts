@@ -70,11 +70,13 @@ export async function extractSessionUsage(
 		.select({ content: sessionLogs.content })
 		.from(sessionLogs)
 		.where(and(eq(sessionLogs.sessionId, sessionId), eq(sessionLogs.stream, 'stdout')))
-		.orderBy(desc(sessionLogs.createdAt))
+		.orderBy(desc(sessionLogs.id))
 		.limit(MAX_LOG_ROWS_FETCHED)
 
 	if (rows.length === 0) return null
 	// Rows came back newest-first; flip so chunks are in arrival order.
+	// Order by `id` (bigserial, monotonic) rather than `createdAt`, which can
+	// tie at millisecond granularity and shuffle chunks within a tie.
 	const chunks = rows.map((r) => r.content).reverse()
 	return parseUsageFromLogChunks(chunks)
 }
