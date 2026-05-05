@@ -8,14 +8,22 @@ import {
 	WORKSPACE_TEMPLATES,
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
+	buildWebAppHref,
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
+	registerAppTool as _registerAppTool,
 	registerAppResource,
-	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import {
+	MUTATION_TOOL_KINDS,
+	type TelemetrySink,
+	createDefaultSink,
+	recordMutation,
+	recordToolCall,
+} from './telemetry.js'
 import { tools } from './tools.js'
 
 interface McpConfig {
@@ -26,6 +34,34 @@ interface McpConfig {
 	htmlBasePath?: string
 	/** Transport the server is exposed over. Tailors user-facing setup hints. */
 	transport?: 'stdio' | 'http'
+	/**
+	 * Public base URL of the Maskin web app, used by MCP card UIs to build deep
+	 * links back to the workspace (e.g. "https://maskin.example.com" or
+	 * "http://localhost:5173"). Threaded through `_meta.webAppBaseUrl` on every
+	 * tool response so each rendered card can produce stable object URLs.
+	 */
+	webAppBaseUrl?: string
+	/**
+	 * Telemetry sink for `tool_call` and `mutation` events emitted on every
+	 * tool response. Defaults to a fire-and-forget POST to /api/telemetry/mcp;
+	 * tests inject capturing sinks and deployments without telemetry can pass
+	 * a noop. The default never throws and never blocks tool calls.
+	 */
+	telemetrySink?: TelemetrySink
+}
+
+/**
+ * Build the `_meta` envelope returned to MCP cards. Always includes `toolName`
+ * so the card runtime can switch on it; optionally includes `webAppBaseUrl` +
+ * `workspaceId` so cards can render deep links into the web app (X1 in the
+ * MCP UI parity backlog).
+ */
+function meta(toolName: string, config: McpConfig, workspaceId?: string): Record<string, unknown> {
+	const m: Record<string, unknown> = { toolName }
+	if (config.webAppBaseUrl) m.webAppBaseUrl = config.webAppBaseUrl.replace(/\/$/, '')
+	const ws = workspaceId ?? config.defaultWorkspaceId
+	if (ws) m.workspaceId = ws
+	return m
 }
 
 function authSetupHint(config: McpConfig): string {
@@ -287,6 +323,314 @@ function collectActiveRelTypes(
 	return [...active]
 }
 
+/**
+ * Trim a string to a max length without slicing mid-codepoint, returning a
+ * preview suitable for `resources/list` descriptions. Returns the empty
+ * string when no input is provided.
+ */
+function makePreview(text: string | null | undefined, maxLen = 200): string {
+	if (!text) return ''
+	const trimmed = text.trim()
+	if (trimmed.length <= maxLen) return trimmed
+	// Slice on a UTF-16 boundary; trailing whitespace from a mid-word slice
+	// is removed so the ellipsis sits flush with the last character.
+	return `${trimmed.slice(0, maxLen).trimEnd()}…`
+}
+
+interface ObjectRow {
+	id: string
+	workspaceId: string
+	type: string
+	title: string | null
+	content: string | null
+	status: string
+	updatedAt?: string
+}
+
+interface ActorRow {
+	id: string
+	type: 'human' | 'agent'
+	name: string
+	email?: string | null
+	role?: string
+}
+
+interface TriggerRow {
+	id: string
+	workspaceId: string
+	name: string
+	type: string
+	enabled: boolean
+}
+
+/**
+ * Register MCP resources so the host (Claude Desktop / Claude.ai paperclip
+ * picker, Cursor, etc.) can list and read Maskin objects. Resource URIs are
+ * the same deep-link URLs the chat card and web app use, so the picker, the
+ * card, and the workspace all agree on object identity.
+ *
+ * Without `webAppBaseUrl` we cannot form deep links — the registration is
+ * skipped and `resources/list` returns nothing rather than emitting URIs that
+ * don't resolve in the web app.
+ */
+function registerObjectResources(server: McpServer, config: McpConfig) {
+	const baseUrl = config.webAppBaseUrl?.replace(/\/$/, '')
+	if (!baseUrl) return
+
+	// ─── Unified objects (insight / bet / task / meeting / ...) ───
+	const objectsTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/objects/{objectId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const objs = (await apiCall(config, 'GET', '/api/objects?limit=100', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as ObjectRow[]
+				return {
+					resources: objs.map((o) => ({
+						uri: buildWebAppHref(baseUrl, o.workspaceId, { kind: 'object', id: o.id }),
+						name: o.title?.trim() || `Untitled ${o.type}`,
+						description: `[${o.type} · ${o.status}] ${makePreview(o.content)}`.trim(),
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (objects) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-object',
+		objectsTemplate,
+		{
+			title: 'Maskin object',
+			description:
+				'Workspace objects (insight, bet, task, meeting, decision, document, …). Filter by type or status when listing — the picker can ask for "all bets" or "all open insights".',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const objectId = String(vars.objectId)
+			const obj = (await apiCall(config, 'GET', `/api/objects/${objectId}`, undefined, {
+				workspaceId,
+			})) as ObjectRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'object',
+				id: obj.id,
+			})
+			const payload = {
+				id: obj.id,
+				type: obj.type,
+				title: obj.title ?? null,
+				status: obj.status,
+				preview: makePreview(obj.content),
+				deepLink,
+				workspaceId: obj.workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	// ─── Actors (humans + agents) ──────────────────────────────────
+	const actorsTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/agents/{actorId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const actors = (await apiCall(config, 'GET', '/api/actors', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as ActorRow[]
+				return {
+					resources: actors.map((a) => ({
+						uri: buildWebAppHref(baseUrl, config.defaultWorkspaceId, {
+							kind: 'actor',
+							id: a.id,
+						}),
+						name: a.name || `${a.type}-${a.id.slice(0, 8)}`,
+						description: `[${a.type}]${a.email ? ` ${a.email}` : ''}`,
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (actors) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-actor',
+		actorsTemplate,
+		{
+			title: 'Maskin actor',
+			description: 'Workspace members and agents (humans + AI).',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const actorId = String(vars.actorId)
+			const actor = (await apiCall(config, 'GET', `/api/actors/${actorId}`, undefined, {
+				workspaceId,
+			})) as ActorRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'actor',
+				id: actor.id,
+			})
+			const payload = {
+				id: actor.id,
+				type: actor.type,
+				name: actor.name,
+				email: actor.email ?? null,
+				deepLink,
+				workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	// ─── Triggers ──────────────────────────────────────────────────
+	const triggersTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/triggers/{triggerId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const triggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as TriggerRow[]
+				return {
+					resources: triggers.map((t) => ({
+						uri: buildWebAppHref(baseUrl, t.workspaceId, { kind: 'trigger', id: t.id }),
+						name: t.name || `Trigger ${t.id.slice(0, 8)}`,
+						description: `[${t.type} · ${t.enabled ? 'enabled' : 'disabled'}]`,
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (triggers) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-trigger',
+		triggersTemplate,
+		{
+			title: 'Maskin trigger',
+			description: 'Cron / event-based automations that run agents.',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const triggerId = String(vars.triggerId)
+			const trigger = (await apiCall(config, 'GET', `/api/triggers/${triggerId}`, undefined, {
+				workspaceId,
+			})) as TriggerRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'trigger',
+				id: trigger.id,
+			})
+			const payload = {
+				id: trigger.id,
+				name: trigger.name,
+				type: trigger.type,
+				enabled: trigger.enabled,
+				deepLink,
+				workspaceId: trigger.workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+}
+
+/** Extracts a workspace_id from tool args without coupling the wrapper to the schemas. */
+function extractWorkspaceId(args: unknown): string | undefined {
+	if (!args || typeof args !== 'object') return undefined
+	const ws = (args as { workspace_id?: unknown }).workspace_id
+	return typeof ws === 'string' ? ws : undefined
+}
+
+/**
+ * Inspects a mutation tool response to decide whether it actually mutated
+ * something. Tools like `update_objects` aggregate per-target outcomes, so we
+ * count one mutation event per call when at least one inner item explicitly
+ * reports success.
+ *
+ * Defaults to `false` for unrecognised shapes. Over-counting biases the bet's
+ * "20% of sessions include at least one mutation" metric upward, so unknown
+ * responses are treated as "not a confirmed mutation" rather than assuming
+ * success.
+ */
+function isSuccessfulMutationResponse(response: unknown): boolean {
+	if (!response || typeof response !== 'object') return false
+	if ((response as { isError?: unknown }).isError === true) return false
+	const content = (response as { content?: unknown }).content
+	if (!Array.isArray(content) || content.length === 0) return false
+	const first = content[0] as { type?: string; text?: string } | undefined
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return false
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(first.text)
+	} catch {
+		return false
+	}
+	if (Array.isArray(parsed)) {
+		// Per-target aggregation (update_objects-style). The call counts when
+		// at least one entry explicitly reports success === true.
+		return parsed.some((entry) => {
+			if (!entry || typeof entry !== 'object') return false
+			return (entry as { success?: unknown }).success === true
+		})
+	}
+	if (parsed && typeof parsed === 'object') {
+		const obj = parsed as { success?: unknown; error?: unknown; id?: unknown }
+		if (obj.success === true) return true
+		if (obj.success === false) return false
+		// No explicit success flag — accept as confirmed only if the payload has
+		// no `error` field and looks like a record (has an `id`). Anything else
+		// stays uncounted.
+		return obj.error == null && typeof obj.id === 'string'
+	}
+	return false
+}
+
+/** Best-effort object_type label for the mutation event. */
+function extractObjectType(toolName: string, args: unknown): string | undefined {
+	if (toolName === 'update_objects' || toolName === 'create_objects') return 'object'
+	if (toolName === 'delete_object') return 'object'
+	if (toolName === 'create_relationship' || toolName === 'delete_relationship')
+		return 'relationship'
+	if (toolName.startsWith('create_') || toolName.startsWith('update_')) {
+		const kind = toolName.split('_')[1]
+		if (kind) return kind
+	}
+	if (args && typeof args === 'object') {
+		const ot = (args as { object_type?: unknown; type?: unknown }).object_type
+		if (typeof ot === 'string') return ot
+	}
+	return undefined
+}
+
 function loadHtml(config: McpConfig, filename: string): string {
 	const basePath = config.htmlBasePath ?? resolve(__dirname, '../../../apps/web/dist-mcp')
 	const fullPath = resolve(basePath, filename)
@@ -306,6 +650,71 @@ export function createMcpServer(config: McpConfig) {
 		version: '0.1.0',
 	})
 
+	const telemetrySink: TelemetrySink = config.telemetrySink ?? createDefaultSink()
+	const telemetryTarget = {
+		apiBaseUrl: config.apiBaseUrl,
+		apiKey: config.apiKey,
+		workspaceId: config.defaultWorkspaceId,
+	}
+
+	// Telemetry-instrumented tool registration. Wraps the upstream
+	// `registerAppTool` so every tool response emits a `tool_call` telemetry
+	// event (rich-render % numerator/denominator) and successful mutations
+	// emit an additional `mutation` event. Failures inside the original
+	// handler are re-thrown unchanged so MCP error semantics are preserved.
+	//
+	// We deliberately type as `any` at the boundary because ext-apps' generic
+	// tool signature can't be re-introduced through a higher-order wrapper
+	// without losing the per-tool input schema inference; the wrapper is purely
+	// pass-through so giving up the wrapper's signature is safe.
+	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
+		const defHasRichRender = Boolean(definition?._meta?.ui)
+		const mutationKind = MUTATION_TOOL_KINDS[name]
+
+		const wrappedHandler = async (args: unknown, extra: unknown) => {
+			const start = Date.now()
+			let response: unknown
+			try {
+				response = await handler(args, extra)
+			} catch (err) {
+				recordToolCall(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					has_rich_render: defHasRichRender,
+					duration_ms: Date.now() - start,
+					workspace_id: extractWorkspaceId(args),
+				})
+				throw err
+			}
+
+			const responseMeta = (response as { _meta?: { ui?: unknown } } | undefined)?._meta
+			const responseHasRichRender =
+				defHasRichRender || Boolean(responseMeta && 'ui' in responseMeta)
+
+			recordToolCall(telemetrySink, telemetryTarget, {
+				tool_name: name,
+				has_rich_render: responseHasRichRender,
+				duration_ms: Date.now() - start,
+				workspace_id: extractWorkspaceId(args),
+			})
+
+			if (mutationKind && isSuccessfulMutationResponse(response)) {
+				recordMutation(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					mutation_kind: mutationKind,
+					object_type: extractObjectType(name, args),
+					workspace_id: extractWorkspaceId(args),
+				})
+			}
+
+			return response
+		}
+
+		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
+		return _registerAppTool(s, name, definition, wrappedHandler as any)
+		// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+	}) as any as typeof _registerAppTool
+
 	// ─── Register UI resources ─────────────────────────────────
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
 		registerAppResource(server, `${name}-ui`, uri, { mimeType: RESOURCE_MIME_TYPE }, async () => {
@@ -315,6 +724,9 @@ export function createMcpServer(config: McpConfig) {
 			}
 		})
 	}
+
+	// ─── Register data resources for the picker ────────────────
+	registerObjectResources(server, config)
 
 	// ─── Objects ───────────────────────────────────────────────
 	registerAppTool(
@@ -331,7 +743,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'create_objects' },
+				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -360,7 +772,7 @@ export function createMcpServer(config: McpConfig) {
 				}),
 			)
 			return {
-				_meta: { toolName: 'get_objects' },
+				_meta: meta('get_objects', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
 			}
 		},
@@ -438,7 +850,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			return {
-				_meta: { toolName: 'update_objects' },
+				_meta: meta('update_objects', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
 			}
 		},
@@ -457,7 +869,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'delete_object' },
+				_meta: meta('delete_object', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -481,7 +893,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_objects' },
+				_meta: meta('list_objects', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -506,7 +918,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'search_objects' },
+				_meta: meta('search_objects', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -530,7 +942,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_relationships' },
+				_meta: meta('list_relationships', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -549,7 +961,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'delete_relationship' },
+				_meta: meta(
+					'delete_relationship',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -587,7 +1003,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			return {
-				_meta: { toolName: 'create_actor' },
+				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -608,7 +1024,7 @@ export function createMcpServer(config: McpConfig) {
 					})
 				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
 			return {
-				_meta: { toolName: 'list_actors' },
+				_meta: meta('list_actors', config),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -627,7 +1043,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'get_actor' },
+				_meta: meta('get_actor', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -647,7 +1063,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'update_actor' },
+				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -666,7 +1082,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'regenerate_api_key' },
+				_meta: meta('regenerate_api_key', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -686,7 +1102,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'create_workspace' },
+				_meta: meta('create_workspace', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -706,7 +1122,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'update_workspace' },
+				_meta: meta('update_workspace', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -725,7 +1141,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'list_workspaces' },
+				_meta: meta('list_workspaces', config),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -787,7 +1203,11 @@ export function createMcpServer(config: McpConfig) {
 			schema.types = typeSchemas
 
 			return {
-				_meta: { toolName: 'get_workspace_schema' },
+				_meta: meta(
+					'get_workspace_schema',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(schema, null, 2) }],
 			}
 		},
@@ -810,7 +1230,11 @@ export function createMcpServer(config: McpConfig) {
 				{ skipWorkspace: true },
 			)
 			return {
-				_meta: { toolName: 'add_workspace_member' },
+				_meta: meta(
+					'add_workspace_member',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -841,7 +1265,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: wsId,
 			})
 			return {
-				_meta: { toolName: 'list_workspace_skills' },
+				_meta: meta(
+					'list_workspace_skills',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -865,7 +1293,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: wsId },
 			)
 			return {
-				_meta: { toolName: 'get_workspace_skill' },
+				_meta: meta(
+					'get_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -889,7 +1321,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: wsId },
 			)
 			return {
-				_meta: { toolName: 'create_workspace_skill' },
+				_meta: meta(
+					'create_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -913,7 +1349,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: wsId },
 			)
 			return {
-				_meta: { toolName: 'update_workspace_skill' },
+				_meta: meta(
+					'update_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -937,7 +1377,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: wsId },
 			)
 			return {
-				_meta: { toolName: 'delete_workspace_skill' },
+				_meta: meta(
+					'delete_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -961,7 +1405,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'get_events' },
+				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -982,7 +1426,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'create_trigger' },
+				_meta: meta('create_trigger', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1001,7 +1445,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_triggers' },
+				_meta: meta('list_triggers', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1021,7 +1465,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'update_trigger' },
+				_meta: meta('update_trigger', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1040,7 +1484,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'delete_trigger' },
+				_meta: meta('delete_trigger', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1083,7 +1527,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'create_notification' },
+				_meta: meta(
+					'create_notification',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1107,7 +1555,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_notifications' },
+				_meta: meta('list_notifications', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1126,7 +1574,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'get_notification' },
+				_meta: meta('get_notification', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1146,7 +1594,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'update_notification' },
+				_meta: meta(
+					'update_notification',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1165,7 +1617,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'delete_notification' },
+				_meta: meta(
+					'delete_notification',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1186,7 +1642,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'create_session' },
+				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1210,7 +1666,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_sessions' },
+				_meta: meta('list_sessions', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1239,13 +1695,13 @@ export function createMcpServer(config: McpConfig) {
 					wsOpts,
 				)
 				return {
-					_meta: { toolName: 'get_session' },
+					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify({ session, logs }, null, 2) }],
 				}
 			}
 
 			return {
-				_meta: { toolName: 'get_session' },
+				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(session, null, 2) }],
 			}
 		},
@@ -1264,7 +1720,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'stop_session' },
+				_meta: meta('stop_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1283,7 +1739,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'pause_session' },
+				_meta: meta('pause_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1302,7 +1758,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'resume_session' },
+				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1364,7 +1820,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 
 			return {
-				_meta: { toolName: 'run_agent' },
+				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
 					{ type: 'text' as const, text: JSON.stringify({ session: current, logs }, null, 2) },
 				],
@@ -1386,7 +1842,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_integrations' },
+				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1405,7 +1861,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'list_integration_providers' },
+				_meta: meta('list_integration_providers', config),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1430,7 +1886,11 @@ export function createMcpServer(config: McpConfig) {
 				install_url: string
 			}
 			return {
-				_meta: { toolName: 'connect_integration' },
+				_meta: meta(
+					'connect_integration',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [
 					{
 						type: 'text' as const,
@@ -1454,7 +1914,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'disconnect_integration' },
+				_meta: meta(
+					'disconnect_integration',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1484,7 +1948,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 			const result = { success: true, provider: args.provider, last4: last4(args.api_key) }
 			return {
-				_meta: { toolName: 'set_llm_api_key' },
+				_meta: meta('set_llm_api_key', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1510,7 +1974,7 @@ export function createMcpServer(config: McpConfig) {
 				openai: providerStatus(llmKeys.openai),
 			}
 			return {
-				_meta: { toolName: 'get_llm_api_keys' },
+				_meta: meta('get_llm_api_keys', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1534,7 +1998,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 			const result = { success: true, provider: args.provider }
 			return {
-				_meta: { toolName: 'delete_llm_api_key' },
+				_meta: meta('delete_llm_api_key', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1564,7 +2028,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: args.workspace_id },
 			)
 			return {
-				_meta: { toolName: 'import_claude_subscription' },
+				_meta: meta(
+					'import_claude_subscription',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1583,7 +2051,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'get_claude_subscription_status' },
+				_meta: meta(
+					'get_claude_subscription_status',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1602,7 +2074,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'disconnect_claude_subscription' },
+				_meta: meta(
+					'disconnect_claude_subscription',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1709,7 +2185,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
 
 			return {
-				_meta: { toolName: 'list_extensions' },
+				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1744,7 +2220,11 @@ export function createMcpServer(config: McpConfig) {
 
 				if (enabledModules.includes(args.id)) {
 					return {
-						_meta: { toolName: 'create_extension' },
+						_meta: meta(
+							'create_extension',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
 						content: [
 							{
 								type: 'text' as const,
@@ -1765,7 +2245,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'create_extension' },
+					_meta: meta('create_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
@@ -1834,7 +2314,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 
 			return {
-				_meta: { toolName: 'create_extension' },
+				_meta: meta('create_extension', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1880,7 +2360,11 @@ export function createMcpServer(config: McpConfig) {
 					)
 
 					return {
-						_meta: { toolName: 'update_extension' },
+						_meta: meta(
+							'update_extension',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
 						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 					}
 				}
@@ -1892,7 +2376,11 @@ export function createMcpServer(config: McpConfig) {
 					if (mod) {
 						if (enabledModules.includes(args.id)) {
 							return {
-								_meta: { toolName: 'update_extension' },
+								_meta: meta(
+									'update_extension',
+									config,
+									(args as { workspace_id?: string }).workspace_id,
+								),
 								content: [
 									{
 										type: 'text' as const,
@@ -1913,7 +2401,11 @@ export function createMcpServer(config: McpConfig) {
 						)
 
 						return {
-							_meta: { toolName: 'update_extension' },
+							_meta: meta(
+								'update_extension',
+								config,
+								(args as { workspace_id?: string }).workspace_id,
+							),
 							content: [
 								{
 									type: 'text' as const,
@@ -1931,7 +2423,11 @@ export function createMcpServer(config: McpConfig) {
 
 				if (!enabledModules.includes(args.id)) {
 					return {
-						_meta: { toolName: 'update_extension' },
+						_meta: meta(
+							'update_extension',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
 						content: [
 							{
 								type: 'text' as const,
@@ -1954,7 +2450,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'update_extension' },
+					_meta: meta('update_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
@@ -2030,7 +2526,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'update_extension' },
+					_meta: meta('update_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
@@ -2100,7 +2596,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'delete_extension' },
+					_meta: meta('delete_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [
 						{
 							type: 'text' as const,
@@ -2154,7 +2650,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'delete_extension' },
+					_meta: meta('delete_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
@@ -2176,7 +2672,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const textResponse = (text: string) => ({
-				_meta: { toolName: 'get_started' },
+				_meta: meta('get_started', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text }],
 			})
 
@@ -2584,7 +3080,11 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
 							apiCall(config, method, `/api/m/${ext.id}${path}`, body, options),
 						)
 						return {
-							_meta: { toolName: `${ext.id}_${tool.name}` },
+							_meta: meta(
+								`${ext.id}_${tool.name}`,
+								config,
+								(args as { workspace_id?: string }).workspace_id,
+							),
 							content: result.content,
 						}
 					},
@@ -2605,6 +3105,7 @@ async function main() {
 		apiKey: process.env.API_KEY || '',
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 		transport: 'stdio',
+		webAppBaseUrl: process.env.WEB_APP_URL || process.env.FRONTEND_URL,
 	}
 
 	const server = createMcpServer(config)

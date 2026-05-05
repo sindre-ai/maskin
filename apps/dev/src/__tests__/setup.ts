@@ -133,6 +133,7 @@ function createChain(
 		'offset',
 		'orderBy',
 		'groupBy',
+		'having',
 		'insert',
 		'values',
 		'returning',

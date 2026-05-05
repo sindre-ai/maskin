@@ -23,6 +23,9 @@ const config = {
 	apiBaseUrl: 'http://localhost:3000',
 	apiKey: 'ank_testkey123',
 	defaultWorkspaceId: 'ws-default-123',
+	// Suppress fire-and-forget telemetry POSTs so tests counting fetch calls
+	// see only the tool's own API call.
+	telemetrySink: () => {},
 }
 
 describe('createMcpServer', () => {

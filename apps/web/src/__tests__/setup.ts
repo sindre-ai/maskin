@@ -21,6 +21,16 @@ if (typeof Element !== 'undefined') {
 	}
 }
 
+// Radix's `react-use-size` (used by Switch + others) reads ResizeObserver.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+	class ResizeObserverStub {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	}
+	globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver
+}
+
 export function createTestQueryClient() {
 	return new QueryClient({
 		defaultOptions: {

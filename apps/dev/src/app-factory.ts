@@ -26,6 +26,7 @@ import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
+import telemetryRoutes from './routes/telemetry'
 import triggersRoutes from './routes/triggers'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
@@ -200,6 +201,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
+	app.route('/api/telemetry', telemetryRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
