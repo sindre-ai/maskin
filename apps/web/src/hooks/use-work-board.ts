@@ -54,9 +54,10 @@ function emptyColumns(statuses: string[]): Record<string, ObjectResponse[]> {
 }
 
 /**
- * Composes bets, tasks, and `breaks_into` relationships into the board model.
- * Tasks without a parent bet land in a synthetic "No bet" swimlane at the bottom.
- * `blocked` tasks live in a separate band per swimlane, never in a column.
+ * Composes bets, tasks, and any bet↔task relationship (regardless of type or
+ * direction) into the board model. Tasks without a parent bet land in a
+ * synthetic "No bet" swimlane at the bottom. `blocked` tasks live in a
+ * separate band per swimlane, never in a column.
  */
 export function useWorkBoard(): UseWorkBoardResult {
 	const { workspaceId, workspace } = useWorkspace()
@@ -72,17 +73,27 @@ export function useWorkBoard(): UseWorkBoardResult {
 		const tasks = tasksQuery.data ?? []
 		const relationships = relationshipsQuery.data ?? []
 
-		const taskIdToBetId = new Map<string, string>()
-		for (const rel of relationships) {
-			if (rel.type !== 'breaks_into') continue
-			if (rel.targetType !== 'task') continue
-			if (!taskIdToBetId.has(rel.targetId)) {
-				taskIdToBetId.set(rel.targetId, rel.sourceId)
-			}
-		}
-
 		const betById = new Map<string, ObjectResponse>()
 		for (const bet of bets) betById.set(bet.id, bet)
+
+		const taskIdToBetId = new Map<string, string>()
+		for (const rel of relationships) {
+			let betId: string | undefined
+			let taskId: string | undefined
+			if (rel.sourceType === 'bet' && rel.targetType === 'task') {
+				betId = rel.sourceId
+				taskId = rel.targetId
+			} else if (rel.sourceType === 'task' && rel.targetType === 'bet') {
+				betId = rel.targetId
+				taskId = rel.sourceId
+			} else {
+				continue
+			}
+			if (!betById.has(betId)) continue
+			if (!taskIdToBetId.has(taskId)) {
+				taskIdToBetId.set(taskId, betId)
+			}
+		}
 
 		const lanes = new Map<string, BoardSwimlane>()
 		for (const bet of bets) {

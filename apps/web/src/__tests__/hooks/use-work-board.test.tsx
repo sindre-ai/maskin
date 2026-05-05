@@ -218,6 +218,49 @@ describe('useWorkBoard', () => {
 		])
 	})
 
+	it('groups tasks under their parent bet regardless of relationship type or direction', async () => {
+		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
+		const tInforms = buildObjectResponse({ id: 't-informs', type: 'task', status: 'todo' })
+		const tReverse = buildObjectResponse({ id: 't-reverse', type: 'task', status: 'in_progress' })
+		const tRelates = buildObjectResponse({ id: 't-relates', type: 'task', status: 'todo' })
+		setupApi({
+			bets: [bet],
+			tasks: [tInforms, tReverse, tRelates],
+			rels: [
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-informs',
+					type: 'informs',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+				buildRelationshipResponse({
+					sourceId: 't-reverse',
+					targetId: 'bet-1',
+					type: 'breaks_into',
+					sourceType: 'task',
+					targetType: 'bet',
+				}),
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-relates',
+					type: 'relates_to',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+			],
+		})
+
+		const { result } = renderHook(() => useWorkBoard(), { wrapper: wrapper() })
+		await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+		expect(result.current.board.swimlanes).toHaveLength(1)
+		const lane = result.current.board.swimlanes[0]
+		expect(lane.bet?.id).toBe('bet-1')
+		expect(lane.columns.todo.map((t) => t.id).sort()).toEqual(['t-informs', 't-relates'])
+		expect(lane.columns.in_progress.map((t) => t.id)).toEqual(['t-reverse'])
+	})
+
 	it('drops a task whose status is not in the column list into the backlog column', async () => {
 		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
 		const ghostStatusTask = buildObjectResponse({
