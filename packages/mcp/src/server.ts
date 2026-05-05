@@ -87,6 +87,7 @@ const UI_RESOURCES = {
 	events: 'ui://maskin/events',
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
+	sessions: 'ui://maskin/sessions',
 } as const
 
 const CSP = {
@@ -1624,7 +1625,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_session.description,
 			inputSchema: tools.create_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
@@ -1644,7 +1645,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_sessions.description,
 			inputSchema: tools.list_sessions.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const params = new URLSearchParams()
@@ -1668,7 +1669,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_session.description,
 			inputSchema: tools.get_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
@@ -1703,7 +1704,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.stop_session.description,
 			inputSchema: tools.stop_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
@@ -1722,7 +1723,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.pause_session.description,
 			inputSchema: tools.pause_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
@@ -1741,7 +1742,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.resume_session.description,
 			inputSchema: tools.resume_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
@@ -1760,7 +1761,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.run_agent.description,
 			inputSchema: tools.run_agent.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id } = args

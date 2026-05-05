@@ -20,7 +20,7 @@ PR 0 must land first. After that, the vertical slices can land in any order, but
 | 0   | Scaffolding                  | `mcp/scaffolding`     | #376   | ✅ open  | Foundation. Required by every later slice. |
 | 1   | Schema                       | `mcp/schema`          | —      | pending | 5 new tools, schema card, `schema-form` / `schema-select` / `use-workspace-schema`. Cleanest vertical. |
 | 2   | Integrations + OAuth-from-chat | `mcp/integrations`  | —      | pending | Integrations card + `/oauth-return` route + `apps/dev/src/routes/integrations.ts` shim + `vite.config` ngrok-allowed-hosts + `apps/dev/src/index.ts` FRONTEND_URL warning. |
-| 3   | Sessions                     | `mcp/sessions`        | —      | pending | Sessions card + flip 7 sessions tools' `_meta.ui.resourceUri`. |
+| 3   | Sessions                     | `mcp/sessions`        | TBD    | open    | Sessions card + flip 7 sessions tools' `_meta.ui.resourceUri`. Stacked on `mcp/scaffolding`. |
 | 4   | Skills                       | `mcp/skills`          | —      | pending | Skills card + flip 5 skills tools. |
 | 5   | Notifications                | `mcp/notifications`   | —      | pending | Notifications card + flip 5 notification tools. |
 | 6   | LLM keys                     | `mcp/llm-keys`        | —      | pending | LLM keys card + flip 3 llm-keys tools. |
