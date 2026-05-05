@@ -53,6 +53,7 @@ describe('createMcpServer', () => {
 			'ui://maskin/triggers',
 			'ui://maskin/relationships',
 			'ui://maskin/graph',
+			'ui://maskin/integrations',
 		]
 		for (const uri of expectedUris) {
 			expect(resourceUris).toContain(uri)

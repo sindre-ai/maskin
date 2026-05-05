@@ -87,6 +87,7 @@ const UI_RESOURCES = {
 	events: 'ui://maskin/events',
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
+	integrations: 'ui://maskin/integrations',
 } as const
 
 const CSP = {
@@ -1825,7 +1826,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_integrations.description,
 			inputSchema: tools.list_integrations.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'GET', '/api/integrations', undefined, {
@@ -1844,7 +1845,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_integration_providers.description,
 			inputSchema: tools.list_integration_providers.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async () => {
 			const result = await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
@@ -1863,7 +1864,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.connect_integration.description,
 			inputSchema: tools.connect_integration.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = (await apiCall(
@@ -1897,7 +1898,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.disconnect_integration.description,
 			inputSchema: tools.disconnect_integration.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'DELETE', `/api/integrations/${args.id}`, undefined, {

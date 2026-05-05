@@ -90,6 +90,17 @@ try {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
 
+// FRONTEND_URL is required for OAuth flows: `/api/integrations/:provider/callback`
+// redirects through `${FRONTEND_URL}/oauth-return` so the rich-app integrations
+// card can postMessage back to the chat surface (see I2 in the parity gap list).
+// Without it, OAuth callbacks fall back to `http://localhost:5173`, which works
+// in dev but breaks any deployed environment.
+if (!process.env.FRONTEND_URL) {
+	logger.warn(
+		'FRONTEND_URL is not set — OAuth integration callbacks will redirect to http://localhost:5173. Set FRONTEND_URL to your deployed web app origin in production.',
+	)
+}
+
 serve({ fetch: app.fetch, port }, () => {
 	const webUrl = 'http://localhost:5173'
 	const apiUrl = `http://localhost:${port}`
