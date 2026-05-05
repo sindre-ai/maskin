@@ -87,6 +87,7 @@ const UI_RESOURCES = {
 	events: 'ui://maskin/events',
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
+	skills: 'ui://maskin/skills',
 } as const
 
 const CSP = {
@@ -1247,7 +1248,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_workspace_skills.description,
 			inputSchema: tools.list_workspace_skills.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -1271,7 +1272,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_workspace_skill.description,
 			inputSchema: tools.get_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -1299,7 +1300,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_workspace_skill.description,
 			inputSchema: tools.create_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -1327,7 +1328,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.update_workspace_skill.description,
 			inputSchema: tools.update_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
@@ -1355,7 +1356,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_workspace_skill.description,
 			inputSchema: tools.delete_workspace_skill.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.skills, csp: CSP } },
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
