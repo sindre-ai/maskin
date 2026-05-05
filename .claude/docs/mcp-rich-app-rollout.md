@@ -26,7 +26,7 @@ PR 0 must land first. After that, the vertical slices can land in any order, but
 | 6   | LLM keys                     | `mcp/llm-keys`        | —      | pending | LLM keys card + flip 3 llm-keys tools. |
 | 7   | Members                      | `mcp/members`         | —      | pending | Members card + flip `add_workspace_member`. |
 | 8   | Extensions                   | `mcp/extensions`      | —      | pending | Extensions card + flip 4 extensions tools. |
-| 9   | Objects + Graph + Relationships | `mcp/objects-graph` | —      | pending | Bundle: shared `extractors.ts`, `metadata-editor.tsx`, `relationships-editor.tsx`, `widgets/*` catalog (object-card, object-kanban, object-list-table, relationship-graph, activity-feed, content-fold), `owner-action`, `status-action`. Adds `update_objects.owner` field. |
+| 9   | Objects + Graph + Relationships | `mcp/objects-graph` | #387   | open    | Bundle: shared `extractors.ts`, `metadata-editor.tsx`, `relationships-editor.tsx`, `widgets/*` catalog (object-card, object-kanban, object-list-table, relationship-graph, activity-feed, content-fold), `owner-action`, `status-action`. Adds `update_objects.owner` field. **Stacks on `mcp/schema`** (uses `schema-form` + `use-workspace-schema`), not directly on `mcp/scaffolding`. |
 | 10  | Actors + Events + Triggers   | `mcp/actors-triggers` | —      | pending | Smaller cards. Can be split if size warrants. |
 
 ## What goes in each slice

@@ -10,6 +10,8 @@
 
 export { ActionButton } from './action-button'
 export { ConfirmDialog } from './confirm-dialog'
+export { OwnerAction } from './owner-action'
+export { StatusAction } from './status-action'
 export { useObjectMutation } from './use-object-mutation'
 export { MUTATION_POLICY, getMutationPolicy } from './policy'
 export type {
