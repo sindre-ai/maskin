@@ -432,4 +432,141 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(404)
 		})
 	})
+
+	describe('POST /api/objects/migrate-type', () => {
+		it('returns 200 and migrates rows to the new type', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
+			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'done' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) workspace lookup, 2) rows of fromType
+			mockResults.selectQueue = [[ws], [obj1, obj2]]
+			// 2 update calls + 2 event inserts inside the transaction
+			mockResults.update = [{}]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toMatchObject({
+				mode: 'migrate',
+				fromType: 'task',
+				toType: 'bet',
+				count: 2,
+			})
+		})
+
+		it('returns 200 and 0 count when fromType has no rows', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.count).toBe(0)
+		})
+
+		it('returns 400 for invalid toType', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'nonexistent', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when mode=migrate omits toType', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when fromType equals toType', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'task', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 200 and deletes rows in delete mode', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const obj1 = buildObject({ workspaceId: wsId, type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) workspace lookup, 2) rows to delete (id list)
+			mockResults.selectQueue = [[ws], [{ id: obj1.id }]]
+			mockResults.delete = [{}]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', mode: 'delete' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toMatchObject({ mode: 'delete', fromType: 'task', count: 1 })
+		})
+
+		it('returns 404 when workspace not found', async () => {
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
 })

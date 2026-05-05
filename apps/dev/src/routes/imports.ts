@@ -491,6 +491,51 @@ app.openapi(confirmImportRoute, async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'No mapping configured'), 400)
 	}
 
+	// Reject early if the import is no longer in the 'mapping' state. The atomic UPDATE
+	// below also catches this race, but checking first avoids a workspace lookup we don't
+	// need and keeps the failure mode predictable for tests.
+	if (importRecord.status !== 'mapping') {
+		return c.json(
+			createApiError('CONFLICT', `Import is in '${importRecord.status}' state, not 'mapping'`),
+			409,
+		)
+	}
+
+	// Validate every typeMapping.objectType against the workspace's current statuses.
+	// Without this, executeImport would silently fall back to 'new' status and could
+	// produce objects with a stale type that no longer exists in the workspace.
+	const [workspace] = await db
+		.select()
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	const settings = (workspace.settings ?? {}) as WorkspaceSettings
+	const validTypes = Object.keys(settings.statuses ?? {})
+	const mapping = importRecord.mapping as z.infer<typeof importMappingSchema>
+	for (const tm of mapping.typeMappings ?? []) {
+		if (!tm.objectType || !validTypes.includes(tm.objectType)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Invalid object type '${tm.objectType}' in import mapping`,
+					[
+						{
+							field: 'mapping.typeMappings[].objectType',
+							message: `'${tm.objectType}' is not enabled in this workspace`,
+							expected: validTypes.length > 0 ? validTypes.join(' | ') : 'any enabled type',
+							received: `'${tm.objectType ?? ''}'`,
+						},
+					],
+					'Pick a valid object type in the import mapping step before confirming.',
+				),
+				400,
+			)
+		}
+	}
+
 	// Atomically claim the import — only succeeds if status is still 'mapping'
 	const [updated] = await db
 		.update(imports)

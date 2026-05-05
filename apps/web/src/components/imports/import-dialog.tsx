@@ -425,6 +425,25 @@ function MappingStep({
 		setLocalRelationships((prev) => prev.filter((_, i) => i !== index))
 	}, [])
 
+	// Flush any pending mapping change before confirming. The mapping is debounced by 500 ms
+	// so a user who clicks Confirm immediately after picking the type would otherwise import
+	// against the previously-saved mapping.
+	const [isConfirming, setIsConfirming] = useState(false)
+	const handleConfirmClick = useCallback(async () => {
+		setIsConfirming(true)
+		try {
+			const updated = buildMapping()
+			const serialized = JSON.stringify(updated)
+			if (serialized !== lastSentMapping.current) {
+				lastSentMapping.current = serialized
+				await onMappingUpdate(updated)
+			}
+			onConfirm()
+		} finally {
+			setIsConfirming(false)
+		}
+	}, [buildMapping, onMappingUpdate, onConfirm])
+
 	if (!mapping || !preview) return null
 
 	return (
@@ -642,10 +661,18 @@ function MappingStep({
 			</p>
 
 			<DialogFooter>
-				<Button onClick={onConfirm}>
-					Import {preview.totalRows} rows
-					{typeMappings.length > 1 ? ` \u00d7 ${typeMappings.length} types` : ''}
-					{localRelationships.length > 0 ? ' + relationships' : ''}
+				<Button onClick={handleConfirmClick} disabled={isUpdating || isConfirming}>
+					{isConfirming ? (
+						<>
+							<Loader2 size={14} className="animate-spin" /> Importing\u2026
+						</>
+					) : (
+						<>
+							Import {preview.totalRows} rows
+							{typeMappings.length > 1 ? ` \u00d7 ${typeMappings.length} types` : ''}
+							{localRelationships.length > 0 ? ' + relationships' : ''}
+						</>
+					)}
 				</Button>
 			</DialogFooter>
 		</div>

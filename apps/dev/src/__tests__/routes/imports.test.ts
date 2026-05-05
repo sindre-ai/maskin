@@ -185,9 +185,10 @@ describe('POST /api/imports/:id/confirm', () => {
 	it('returns 202 when import is confirmed and starts background execution', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
 		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		const ws = buildWorkspace({ id: wsId })
 		const updatedImp = { ...imp, status: 'importing' }
-		// membership check, findImport, atomic update returns updated
-		mockResults.selectQueue = [[member], [imp]]
+		// membership check, findImport, workspace (type validation), atomic update returns updated
+		mockResults.selectQueue = [[member], [imp], [ws]]
 		mockResults.update = [updatedImp]
 
 		const res = await app.request(
@@ -200,11 +201,44 @@ describe('POST /api/imports/:id/confirm', () => {
 		expect(body.status).toBe('importing')
 	})
 
+	it('returns 400 when mapping references a type not in workspace settings', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({
+			workspaceId: wsId,
+			status: 'mapping',
+			mapping: {
+				typeMappings: [
+					{
+						objectType: 'lead',
+						columns: [
+							{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false },
+						],
+						defaultStatus: 'new',
+					},
+				],
+				relationships: [],
+			},
+		})
+		const ws = buildWorkspace({ id: wsId })
+		// membership check, findImport, workspace (type validation rejects 'lead')
+		mockResults.selectQueue = [[member], [imp], [ws]]
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/imports/${imp.id}/confirm`, undefined, {
+				'x-workspace-id': wsId,
+			}),
+		)
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain("Invalid object type 'lead'")
+	})
+
 	it('returns 409 when atomic status transition fails (concurrent claim)', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
 		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
-		// membership check, findImport succeeds, but atomic update returns empty (race)
-		mockResults.selectQueue = [[member], [imp]]
+		const ws = buildWorkspace({ id: wsId })
+		// membership check, findImport, workspace, then atomic update returns empty (race)
+		mockResults.selectQueue = [[member], [imp], [ws]]
 		mockResults.update = []
 
 		const res = await app.request(
