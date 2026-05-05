@@ -129,21 +129,56 @@ export function recordMutation(
 // 20%-of-sessions metric. F4's mutation surface dispatches through these MCP
 // tool names, so card-driven actions and agent-driven calls land here together.
 // The mutation_kind label is what the dashboard groups by.
+//
+// Coverage: every MCP tool that produces a server-side write is listed here.
+// Read-only tools (list_*, get_*, search_*, get_workspace_schema, etc.) are
+// intentionally excluded.
 export const MUTATION_TOOL_KINDS: Record<string, string> = {
+	// Objects + relationships
 	create_objects: 'create',
 	update_objects: 'update',
 	delete_object: 'delete',
 	create_relationship: 'relationship_create',
 	delete_relationship: 'relationship_delete',
+	// Workspaces + members
+	create_workspace: 'workspace_create',
 	update_workspace: 'workspace_update',
+	add_workspace_member: 'workspace_member_add',
+	// Actors
 	create_actor: 'actor_create',
 	update_actor: 'actor_update',
+	regenerate_api_key: 'actor_api_key_rotate',
+	// Triggers
 	create_trigger: 'trigger_create',
 	update_trigger: 'trigger_update',
 	delete_trigger: 'trigger_delete',
+	// Notifications
 	create_notification: 'notification_create',
 	update_notification: 'notification_update',
 	delete_notification: 'notification_delete',
+	// Workspace skills
+	create_workspace_skill: 'skill_create',
+	update_workspace_skill: 'skill_update',
+	delete_workspace_skill: 'skill_delete',
+	// Extensions / modules
+	create_extension: 'extension_create',
+	update_extension: 'extension_update',
+	delete_extension: 'extension_delete',
+	// LLM API keys
+	set_llm_api_key: 'llm_key_set',
+	delete_llm_api_key: 'llm_key_delete',
+	// Claude subscription
+	import_claude_subscription: 'claude_subscription_import',
+	disconnect_claude_subscription: 'claude_subscription_disconnect',
+	// Integrations
+	connect_integration: 'integration_connect',
+	disconnect_integration: 'integration_disconnect',
+	// Sessions
+	create_session: 'session_create',
+	stop_session: 'session_stop',
+	pause_session: 'session_pause',
+	resume_session: 'session_resume',
+	run_agent: 'session_run',
 }
 
 /** Resets the warned flag — only used in tests. */
