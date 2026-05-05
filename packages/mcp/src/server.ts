@@ -87,6 +87,7 @@ const UI_RESOURCES = {
 	events: 'ui://maskin/events',
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
+	'llm-keys': 'ui://maskin/llm-keys',
 } as const
 
 const CSP = {
@@ -1936,7 +1937,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.set_llm_api_key.description,
 			inputSchema: tools.set_llm_api_key.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			await apiCall(
@@ -1960,7 +1961,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_llm_api_keys.description,
 			inputSchema: tools.get_llm_api_keys.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
@@ -1986,7 +1987,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_llm_api_key.description,
 			inputSchema: tools.delete_llm_api_key.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES['llm-keys'], csp: CSP } },
 		},
 		async (args) => {
 			await apiCall(

@@ -23,7 +23,7 @@ PR 0 must land first. After that, the vertical slices can land in any order, but
 | 3   | Sessions                     | `mcp/sessions`        | —      | pending | Sessions card + flip 7 sessions tools' `_meta.ui.resourceUri`. |
 | 4   | Skills                       | `mcp/skills`          | —      | pending | Skills card + flip 5 skills tools. |
 | 5   | Notifications                | `mcp/notifications`   | —      | pending | Notifications card + flip 5 notification tools. |
-| 6   | LLM keys                     | `mcp/llm-keys`        | —      | pending | LLM keys card + flip 3 llm-keys tools. |
+| 6   | LLM keys                     | `mcp/llm-keys`        | TBD    | open    | LLM keys card + flip 3 llm-keys tools. Stacked on `mcp/scaffolding`. |
 | 7   | Members                      | `mcp/members`         | —      | pending | Members card + flip `add_workspace_member`. |
 | 8   | Extensions                   | `mcp/extensions`      | —      | pending | Extensions card + flip 4 extensions tools. |
 | 9   | Objects + Graph + Relationships | `mcp/objects-graph` | —      | pending | Bundle: shared `extractors.ts`, `metadata-editor.tsx`, `relationships-editor.tsx`, `widgets/*` catalog (object-card, object-kanban, object-list-table, relationship-graph, activity-feed, content-fold), `owner-action`, `status-action`. Adds `update_objects.owner` field. |
