@@ -1,7 +1,10 @@
 import { Card } from '@/components/ui/card'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { useWorkspace } from '@/lib/workspace-context'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
+import { useNavigate } from '@tanstack/react-router'
+import type { KeyboardEvent } from 'react'
 
 interface ColumnProps {
 	status: string
@@ -77,17 +80,33 @@ export function Column({ status, tasks, laneId }: ColumnProps) {
  * the layout work can land without the data-density of the full card.
  */
 function TaskCardPlaceholder({ task, laneId }: { task: ObjectResponse; laneId: string }) {
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
 		id: `task:${laneId}:${task.id}`,
 		data: { task, laneId },
 	})
+	// dnd-kit's PointerSensor only activates a drag when the pointer moves past
+	// the activation distance — a release-in-place produces a normal click event
+	// here, so we can route to the detail page without conflicting with drags.
+	const handleClick = () => {
+		navigate({ to: '/$workspaceId/objects/$objectId', params: { workspaceId, objectId: task.id } })
+	}
+	const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault()
+			handleClick()
+		}
+	}
 	return (
 		<Card
 			ref={setNodeRef}
 			{...attributes}
 			{...listeners}
+			onClick={handleClick}
+			onKeyDown={handleKeyDown}
 			className={cn(
-				'p-3 shadow-sm cursor-grab active:cursor-grabbing touch-none select-none',
+				'p-3 shadow-sm cursor-pointer active:cursor-grabbing touch-none select-none hover:bg-muted/40 transition-colors',
 				isDragging && 'opacity-40',
 			)}
 			data-task-id={task.id}
