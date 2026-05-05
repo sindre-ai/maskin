@@ -246,6 +246,13 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		usage: (
+			workspaceId: string,
+			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },
+		) => {
+			const qs = new URLSearchParams(params).toString()
+			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
+		},
 	},
 
 	events: {
@@ -681,6 +688,26 @@ export interface SessionLogResponse {
 	stream: string
 	content: string
 	createdAt: string | null
+}
+
+export interface SessionUsageBucketResponse {
+	bucket: string
+	session_count: number
+	total_cost_usd: number
+	input_tokens: number
+	output_tokens: number
+	cache_tokens: number
+}
+
+export interface SessionUsageResponse {
+	buckets: SessionUsageBucketResponse[]
+	totals: {
+		session_count: number
+		total_cost_usd: number
+		input_tokens: number
+		output_tokens: number
+		cache_tokens: number
+	}
 }
 
 export interface EventResponse {

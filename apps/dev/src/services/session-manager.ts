@@ -25,6 +25,7 @@ import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
 
 export interface CreateSessionParams {
@@ -70,8 +71,27 @@ export class SessionManager extends EventEmitter {
 	private watchdogInterval: NodeJS.Timeout | null = null
 	private activeSessions: Map<
 		string,
-		{ tempDir: string; browserContainerId?: string; networkName?: string }
+		{
+			tempDir: string
+			browserContainerId?: string
+			networkName?: string
+			/**
+			 * Rolling tail of stdout (capped at STDOUT_TAIL_BYTES). Lets
+			 * `handleCompletion` parse the final stream-json `result` event from
+			 * memory, sidestepping any race with the DB log persistence pipeline.
+			 */
+			stdoutTail?: string
+			/** Resolves when `streamContainerLogs` has fully drained. */
+			logsDrained?: Promise<void>
+		}
 	> = new Map()
+	/**
+	 * Cap on the in-memory stdout tail per session. The usage parser only
+	 * scans the last 200 lines, so 64 KB is plenty even with verbose runs.
+	 */
+	private static readonly STDOUT_TAIL_BYTES = 64 * 1024
+	/** Max time to wait for the log stream to drain before parsing usage. */
+	private static readonly LOGS_DRAIN_TIMEOUT_MS = 5000
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 
@@ -781,7 +801,7 @@ export class SessionManager extends EventEmitter {
 	}
 
 	private streamContainerLogs(sessionId: string, containerId: string) {
-		;(async () => {
+		const drained = (async () => {
 			try {
 				for await (const chunk of this.containers.logs(containerId)) {
 					const [log] = await this.db
@@ -800,6 +820,17 @@ export class SessionManager extends EventEmitter {
 							stream: chunk.stream,
 							data: chunk.data,
 						} satisfies SessionLogEvent)
+					}
+
+					if (chunk.stream === 'stdout') {
+						const sessionData = this.activeSessions.get(sessionId)
+						if (sessionData) {
+							const next = (sessionData.stdoutTail ?? '') + chunk.data
+							sessionData.stdoutTail =
+								next.length > SessionManager.STDOUT_TAIL_BYTES
+									? next.slice(next.length - SessionManager.STDOUT_TAIL_BYTES)
+									: next
+						}
 					}
 				}
 			} catch (err) {
@@ -820,6 +851,9 @@ export class SessionManager extends EventEmitter {
 				)
 			}
 		})()
+
+		const sessionData = this.activeSessions.get(sessionId)
+		if (sessionData) sessionData.logsDrained = drained
 	}
 
 	private watchContainerExit(sessionId: string, containerId: string) {
@@ -899,6 +933,41 @@ export class SessionManager extends EventEmitter {
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		// Extract token / cost usage from the tail of stdout. Codex and custom
+		// runtimes don't emit structured usage — extractor returns null and the
+		// columns stay NULL. Parser failures must never block the status update,
+		// so this is wrapped in its own try/catch.
+		//
+		// Prefer the in-memory stdout tail captured by `streamContainerLogs`:
+		// the container exit poll can fire before the final `result` chunk has
+		// been persisted to `session_logs`, so a DB-only read can race and
+		// silently miss usage. We wait briefly for the log stream to drain so
+		// the in-memory buffer contains the final chunk, then parse from it.
+		// The DB path is kept as a fallback for the resume-from-snapshot case
+		// where the tail buffer may be empty.
+		let usage: SessionUsage | null = null
+		try {
+			const drained = this.activeSessions.get(sessionId)?.logsDrained
+			if (drained) {
+				await Promise.race([
+					drained,
+					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
+				])
+			}
+			const tail = this.activeSessions.get(sessionId)?.stdoutTail
+			if (tail) {
+				usage = parseUsageFromLogChunks([tail])
+			}
+			if (!usage) {
+				usage = await extractSessionUsage(this.db, sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to parse usage from session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -912,6 +981,16 @@ export class SessionManager extends EventEmitter {
 					result: { exit_code: exitCode },
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					...(usage
+						? {
+								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+								inputTokens: usage.inputTokens,
+								outputTokens: usage.outputTokens,
+								cacheCreationInputTokens: usage.cacheCreationInputTokens,
+								cacheReadInputTokens: usage.cacheReadInputTokens,
+								durationMs: usage.durationMs,
+							}
+						: {}),
 				})
 				.where(eq(sessions.id, sessionId))
 		} catch (err) {
