@@ -9,6 +9,7 @@
 		"test": "turbo test",
 		"test:integration": "turbo test:integration",
 		"test:e2e": "turbo test:e2e",
+		"test:e2e:parallel-bet": "tsx scripts/e2e/parallel-bet-autonomy.ts",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"format": "biome format --write .",
@@ -22,6 +23,7 @@
 		"@types/node": "^25.6.0",
 		"@vitest/coverage-v8": "^3.2.4",
 		"dotenv-cli": "^11.0.0",
+		"tsx": "^4.19.0",
 		"turbo": "^2.9.6",
 		"typescript": "^5.7.0"
 	},
