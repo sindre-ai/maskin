@@ -604,25 +604,38 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 			return c.json({ mode: 'migrate' as const, fromType: body.fromType, toType, count: 0 }, 200)
 		}
 
+		// Group rows by their resolved target status so we can emit one UPDATE per
+		// group instead of one per row — keeps the transaction short on large
+		// workspaces. Map preserves insertion order, so groups appear in the order
+		// statuses are first encountered while iterating rows.
 		const statusMap = body.statusMap ?? {}
+		const idsByStatus = new Map<string, string[]>()
+		const eventValues: (typeof events.$inferInsert)[] = []
+		for (const row of rows) {
+			const mappedStatus = statusMap[row.status] ?? row.status
+			const newStatus = targetStatuses.includes(mappedStatus) ? mappedStatus : fallbackStatus
+			const bucket = idsByStatus.get(newStatus)
+			if (bucket) bucket.push(row.id)
+			else idsByStatus.set(newStatus, [row.id])
+			eventValues.push({
+				workspaceId,
+				actorId,
+				action: 'type_migrated',
+				entityType: toType,
+				entityId: row.id,
+				data: { fromType: body.fromType, toType, fromStatus: row.status, toStatus: newStatus },
+			})
+		}
+
+		const now = new Date()
 		await db.transaction(async (tx) => {
-			for (const row of rows) {
-				const mappedStatus = statusMap[row.status] ?? row.status
-				const newStatus = targetStatuses.includes(mappedStatus) ? mappedStatus : fallbackStatus
+			for (const [newStatus, ids] of idsByStatus) {
 				await tx
 					.update(objects)
-					.set({ type: toType, status: newStatus, updatedAt: new Date() })
-					.where(eq(objects.id, row.id))
-
-				await tx.insert(events).values({
-					workspaceId,
-					actorId,
-					action: 'type_migrated',
-					entityType: toType,
-					entityId: row.id,
-					data: { fromType: body.fromType, toType, fromStatus: row.status, toStatus: newStatus },
-				})
+					.set({ type: toType, status: newStatus, updatedAt: now })
+					.where(inArray(objects.id, ids))
 			}
+			await tx.insert(events).values(eventValues)
 		})
 
 		return c.json(
@@ -646,16 +659,16 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 			.delete(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
 
-		for (const { id: objectId } of toDelete) {
-			await tx.insert(events).values({
+		await tx.insert(events).values(
+			toDelete.map(({ id: objectId }) => ({
 				workspaceId,
 				actorId,
-				action: 'deleted',
+				action: 'deleted' as const,
 				entityType: body.fromType,
 				entityId: objectId,
 				data: { reason: 'extension_removed' },
-			})
-		}
+			})),
+		)
 	})
 
 	return c.json({ mode: 'delete' as const, fromType: body.fromType, count: toDelete.length }, 200)

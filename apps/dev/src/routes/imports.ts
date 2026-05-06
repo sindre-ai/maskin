@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, imports, workspaces } from '@maskin/db/schema'
+import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { type CsvOptions, importMappingSchema, importQuerySchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq } from 'drizzle-orm'
@@ -519,7 +520,11 @@ app.openapi(confirmImportRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 	const settings = (workspace.settings ?? {}) as WorkspaceSettings
-	const validTypes = Object.keys(settings.statuses ?? {})
+	// Use the same resolution as POST /objects: module-provided types merged with
+	// settings.statuses. Plain Object.keys(settings.statuses) misses module types
+	// whose statuses haven't been overridden, which would reject valid mappings.
+	const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
+	const validTypes = getAllValidTypes(enabledModules, settings)
 	const mapping = importRecord.mapping as z.infer<typeof importMappingSchema>
 	for (const tm of mapping.typeMappings ?? []) {
 		if (!tm.objectType || !validTypes.includes(tm.objectType)) {
