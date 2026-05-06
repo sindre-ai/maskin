@@ -93,6 +93,41 @@ describe('Objects Integration', () => {
 			expect(logged[1].action).toBe('updated')
 			expect(logged[2].action).toBe('deleted')
 		})
+
+		it('emits status_changed atomically on PATCH status update', async () => {
+			// The orphaned-task pattern (task 811eb80b, parent bet f98547ae) was
+			// caused by the row UPDATE committing without the corresponding event
+			// INSERT. This guards against regression: every programmatic status
+			// flip must produce a status_changed event in the same DB transaction
+			// as the row update, so PG NOTIFY fires reliably.
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const created = await createRes.json()
+			expect(created.status).toBe('todo')
+
+			const updateRes = await app.request(
+				jsonRequest('PATCH', `/api/objects/${created.id}`, { status: 'in_progress' }),
+			)
+			expect(updateRes.status).toBe(200)
+
+			const logged = await db
+				.select()
+				.from(events)
+				.where(eq(events.entityId, created.id))
+				.orderBy(events.id)
+
+			// 'created' from POST + 'status_changed' from PATCH
+			expect(logged).toHaveLength(2)
+			expect(logged[1].action).toBe('status_changed')
+			const data = logged[1].data as { previous?: { status: string }; updated?: { status: string } }
+			expect(data.previous?.status).toBe('todo')
+			expect(data.updated?.status).toBe('in_progress')
+		})
 	})
 
 	describe('status validation', () => {

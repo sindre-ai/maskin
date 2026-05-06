@@ -480,22 +480,33 @@ app.openapi(updateObjectRoute, async (c) => {
 		}
 	}
 
-	const [updated] = await db.update(objects).set(updateData).where(eq(objects.id, id)).returning()
+	// Object mutation + event emission must be atomic. Without the transaction,
+	// the row UPDATE could commit while the event INSERT silently fails (transient
+	// DB hiccup, connection drop, app restart between statements), leaving status
+	// changed but no `status_changed` event for the trigger runner to consume —
+	// the orphaned-task pattern that gated this whole bet.
+	const action = body.status && body.status !== existing.status ? 'status_changed' : 'updated'
+
+	const updated = await db.transaction(async (tx) => {
+		const [row] = await tx.update(objects).set(updateData).where(eq(objects.id, id)).returning()
+
+		if (!row) return undefined
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action,
+			entityType: existing.type,
+			entityId: id,
+			data: { previous: existing, updated: row },
+		})
+
+		return row
+	})
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
-
-	// Log event
-	const action = body.status && body.status !== existing.status ? 'status_changed' : 'updated'
-	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
-		actorId,
-		action,
-		entityType: existing.type,
-		entityId: id,
-		data: { previous: existing, updated },
-	})
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
 })

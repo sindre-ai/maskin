@@ -366,7 +366,7 @@ describe('Objects Routes', () => {
 			const existing = buildObject({ status: 'todo' })
 			const updated = { ...existing, status: 'in_progress' }
 			const ws = buildWorkspace({ id: existing.workspaceId })
-			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
 			// First select: existing object, second: workspace membership, third: workspace settings
 			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
 			mockResults.update = [updated]
@@ -377,6 +377,59 @@ describe('Objects Routes', () => {
 			)
 
 			expect(res.status).toBe(200)
+			// Assert the event row was actually written, with action 'status_changed'.
+			// Without this, the route can return 200 without ever writing the event —
+			// the orphaned-task pattern this fix addresses.
+			const eventInserts = calls.inserts.filter(
+				(v): v is { action: string; entityId: string } =>
+					typeof v === 'object' && v !== null && 'action' in v,
+			)
+			expect(eventInserts).toHaveLength(1)
+			expect(eventInserts[0]?.action).toBe('status_changed')
+			expect(eventInserts[0]?.entityId).toBe(existing.id)
+		})
+
+		it('logs updated (not status_changed) when only metadata changes', async () => {
+			const existing = buildObject({ status: 'todo' })
+			const updated = { ...existing, metadata: { foo: 'bar' } }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { metadata: { foo: 'bar' } }),
+			)
+
+			expect(res.status).toBe(200)
+			const eventInserts = calls.inserts.filter(
+				(v): v is { action: string } => typeof v === 'object' && v !== null && 'action' in v,
+			)
+			expect(eventInserts).toHaveLength(1)
+			expect(eventInserts[0]?.action).toBe('updated')
+		})
+
+		it('rolls back the status change when the event insert fails', async () => {
+			// Atomicity guarantee: if event emission fails, the object update must
+			// not be committed either. Otherwise we re-introduce the orphaned-task
+			// pattern (status flips, no event, no trigger fires).
+			const existing = buildObject({ status: 'todo' })
+			const updated = { ...existing, status: 'in_progress' }
+			const ws = buildWorkspace({ id: existing.workspaceId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+			mockResults.update = [updated]
+			mockResults.insertError = new Error('event insert failed')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'in_progress' }),
+			)
+
+			// Transaction throws → route surfaces an error rather than returning 200.
+			// The exact status depends on the framework's error mapping; what
+			// matters is that we did not silently report success while losing the
+			// event.
+			expect(res.status).not.toBe(200)
 		})
 	})
 
