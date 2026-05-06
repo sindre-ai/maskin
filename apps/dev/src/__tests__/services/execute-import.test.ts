@@ -533,6 +533,142 @@ describe('executeImport', () => {
 		expect(result.successCount).toBe(0)
 		expect(result.errorCount).toBe(0)
 	})
+
+	describe('owner resolution', () => {
+		const ownerColumn = {
+			sourceColumn: 'assignee',
+			targetField: 'owner' as const,
+			transform: 'none' as const,
+			skip: false,
+		}
+		const titleColumn = {
+			sourceColumn: 'name',
+			targetField: 'title' as const,
+			transform: 'none' as const,
+			skip: false,
+		}
+
+		it('resolves an owner email to the matching actor id', async () => {
+			const { db, mockResults, calls } = createTestContext()
+			const matchingActorId = '11111111-1111-4111-8111-111111111111'
+			mockResults.selectQueue = [[{ id: matchingActorId, email: 'magnus@meshfirm.com' }]]
+			mockResults.insert = [makeObj('obj-1', 'task')]
+
+			const result = await executeImport(
+				importId,
+				[{ name: 'Alpha', assignee: 'magnus@meshfirm.com' }],
+				{
+					typeMappings: [
+						{
+							objectType: 'task',
+							columns: [titleColumn, ownerColumn],
+							defaultStatus: 'todo',
+						},
+					],
+					relationships: [],
+				},
+				workspaceId,
+				actorId,
+				defaultSettings,
+				db,
+			)
+
+			expect(result.successCount).toBe(1)
+			expect(result.errorCount).toBe(0)
+			const inserted = (calls.inserts[0] as Array<Record<string, unknown>>)[0]
+			expect(inserted?.owner).toBe(matchingActorId)
+		})
+
+		it('matches owner emails case-insensitively', async () => {
+			const { db, mockResults, calls } = createTestContext()
+			const matchingActorId = '22222222-2222-4222-8222-222222222222'
+			mockResults.selectQueue = [[{ id: matchingActorId, email: 'magnus@meshfirm.com' }]]
+			mockResults.insert = [makeObj('obj-1', 'task')]
+
+			const result = await executeImport(
+				importId,
+				[{ name: 'Alpha', assignee: 'Magnus@MESHFIRM.com' }],
+				{
+					typeMappings: [
+						{
+							objectType: 'task',
+							columns: [titleColumn, ownerColumn],
+							defaultStatus: 'todo',
+						},
+					],
+					relationships: [],
+				},
+				workspaceId,
+				actorId,
+				defaultSettings,
+				db,
+			)
+
+			expect(result.successCount).toBe(1)
+			const inserted = (calls.inserts[0] as Array<Record<string, unknown>>)[0]
+			expect(inserted?.owner).toBe(matchingActorId)
+		})
+
+		it('drops the owner field when the email matches no actor (instead of failing the batch)', async () => {
+			const { db, mockResults, calls } = createTestContext()
+			// No actors returned from the lookup
+			mockResults.selectQueue = [[]]
+			mockResults.insert = [makeObj('obj-1', 'task')]
+
+			const result = await executeImport(
+				importId,
+				[{ name: 'Alpha', assignee: 'nobody@nowhere.com' }],
+				{
+					typeMappings: [
+						{
+							objectType: 'task',
+							columns: [titleColumn, ownerColumn],
+							defaultStatus: 'todo',
+						},
+					],
+					relationships: [],
+				},
+				workspaceId,
+				actorId,
+				defaultSettings,
+				db,
+			)
+
+			expect(result.successCount).toBe(1)
+			expect(result.errorCount).toBe(0)
+			const inserted = (calls.inserts[0] as Array<Record<string, unknown>>)[0]
+			expect(inserted?.owner).toBeUndefined()
+		})
+
+		it('passes UUIDs through unchanged without an extra DB lookup', async () => {
+			const { db, mockResults, calls } = createTestContext()
+			const explicitActorId = '33333333-3333-4333-8333-333333333333'
+			mockResults.insert = [makeObj('obj-1', 'task')]
+
+			const result = await executeImport(
+				importId,
+				[{ name: 'Alpha', assignee: explicitActorId }],
+				{
+					typeMappings: [
+						{
+							objectType: 'task',
+							columns: [titleColumn, ownerColumn],
+							defaultStatus: 'todo',
+						},
+					],
+					relationships: [],
+				},
+				workspaceId,
+				actorId,
+				defaultSettings,
+				db,
+			)
+
+			expect(result.successCount).toBe(1)
+			const inserted = (calls.inserts[0] as Array<Record<string, unknown>>)[0]
+			expect(inserted?.owner).toBe(explicitActorId)
+		})
+	})
 })
 
 describe('mapRowForType', () => {

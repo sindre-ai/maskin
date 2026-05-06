@@ -1,10 +1,12 @@
 import type { Database } from '@maskin/db'
-import { events, imports, objects, relationships } from '@maskin/db/schema'
+import { events, actors, imports, objects, relationships } from '@maskin/db/schema'
 import type { CsvOptions, ImportMapping, TypeMapping } from '@maskin/shared'
 import { parse } from 'csv-parse/sync'
-import { eq } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export interface ParsedFile {
 	columns: string[]
@@ -454,6 +456,50 @@ export function mapRowForType(
 	return { type, title, content, status, metadata, owner }
 }
 
+/**
+ * Resolve raw owner strings (from a CSV) to actor IDs.
+ *
+ * - UUIDs are passed through unchanged (the FK constraint will catch invalid ones at insert time).
+ * - Anything else is treated as an email and looked up against actors.email (case-insensitive).
+ * - Inputs that can't be resolved map to `null` so the caller can drop the owner field for those
+ *   rows instead of killing the entire batch with an FK violation.
+ */
+async function resolveOwners(
+	db: Database,
+	ownerInputs: Set<string>,
+): Promise<Map<string, string | null>> {
+	const resolved = new Map<string, string | null>()
+	if (ownerInputs.size === 0) return resolved
+
+	const emails: string[] = []
+	for (const input of ownerInputs) {
+		if (UUID_RE.test(input)) {
+			resolved.set(input, input)
+		} else {
+			emails.push(input.toLowerCase())
+		}
+	}
+
+	if (emails.length > 0) {
+		const matched = await db
+			.select({ id: actors.id, email: actors.email })
+			.from(actors)
+			.where(inArray(sql`LOWER(${actors.email})`, emails))
+
+		const emailToId = new Map<string, string>()
+		for (const row of matched) {
+			if (row.email) emailToId.set(row.email.toLowerCase(), row.id)
+		}
+
+		for (const input of ownerInputs) {
+			if (UUID_RE.test(input)) continue
+			resolved.set(input, emailToId.get(input.toLowerCase()) ?? null)
+		}
+	}
+
+	return resolved
+}
+
 export async function executeImport(
 	importId: string,
 	rows: Record<string, string>[],
@@ -473,6 +519,22 @@ export async function executeImport(
 	// Track (rowIndex, objectType) → created object ID for relationship pass
 	const rowTypeToObjectId = new Map<string, string>()
 
+	// Resolve every distinct owner value once up-front. objects.owner is a UUID FK to actors,
+	// so passing a raw email or name through would FK-violate and roll back the whole batch
+	// (every row in it gets reported as a failure even when only the owner column was bad).
+	const ownerInputs = new Set<string>()
+	for (const row of rows) {
+		if (!row) continue
+		for (const typeMapping of mapping.typeMappings) {
+			for (const col of typeMapping.columns) {
+				if (col.skip || col.targetField !== 'owner') continue
+				const value = row[col.sourceColumn]
+				if (value) ownerInputs.add(value)
+			}
+		}
+	}
+	const ownerMap = await resolveOwners(db, ownerInputs)
+
 	// ── Pass 1: Create objects ──────────────────────────────────────────
 	for (let i = 0; i < rows.length; i += BATCH_SIZE) {
 		const batch = rows.slice(i, i + BATCH_SIZE)
@@ -486,9 +548,15 @@ export async function executeImport(
 
 			for (const typeMapping of mapping.typeMappings) {
 				const mapped = mapRowForType(row, typeMapping, settings)
-				if (mapped) {
-					validRows.push({ rowIndex, typeMapping, mapped })
+				if (!mapped) continue
+
+				if (mapped.owner) {
+					// Resolve raw string (email or UUID) to actor ID; fall back to undefined when
+					// nothing matches so an unresolvable owner doesn't roll back the whole batch.
+					mapped.owner = ownerMap.get(mapped.owner) ?? undefined
 				}
+
+				validRows.push({ rowIndex, typeMapping, mapped })
 			}
 		}
 
