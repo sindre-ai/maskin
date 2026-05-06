@@ -181,7 +181,18 @@ export class TriggerRunner {
 					continue
 				}
 			}
-			if (config.action && config.action !== event.action) continue
+			// Strict action match — except a status_changed trigger also fires
+			// when an object is *created* directly at the target status, because
+			// programmatic create_objects/POST /api/graph emits `created` rather
+			// than `status_changed`. The to_status / from_status checks below
+			// still gate the match (from_status naturally fails on `created`),
+			// so transition-specific triggers stay unaffected.
+			const isCreatedAtTargetStatus =
+				config.action === 'status_changed' &&
+				event.action === 'created' &&
+				typeof config.to_status === 'string' &&
+				!config.from_status
+			if (config.action && config.action !== event.action && !isCreatedAtTargetStatus) continue
 
 			// Check filter conditions
 			if (config.filter) {

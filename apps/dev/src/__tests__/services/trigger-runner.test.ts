@@ -189,6 +189,77 @@ describe('TriggerRunner', () => {
 			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
 
+		it('fires status_changed trigger on created event when new object lands at to_status', async () => {
+			// Programmatic creation via create_objects/MCP emits a `created` event
+			// rather than `status_changed`. A status-entry trigger
+			// (action: 'status_changed', to_status: 'proposed') should still match
+			// so the orchestration path doesn't depend on creation route.
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'bet',
+					action: 'status_changed',
+					to_status: 'proposed',
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[{ data: { status: 'proposed' } }], // fetchEventData (created → object directly)
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, entity_type: 'bet', action: 'created' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fire status_changed trigger on created event when status differs from to_status', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'bet',
+					action: 'status_changed',
+					to_status: 'active',
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[{ data: { status: 'proposed' } }], // created at a different status
+			]
+
+			bridge.emit('event', { ...baseEvent, entity_type: 'bet', action: 'created' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('does not fire status_changed trigger on created event when from_status is set', async () => {
+			// from_status implies a transition. A `created` event has no previous
+			// status, so a trigger that requires from_status should not match.
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					from_status: 'todo',
+					to_status: 'in_progress',
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[{ data: { status: 'in_progress' } }],
+			]
+
+			bridge.emit('event', { ...baseEvent, action: 'created' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
 		it('fetches event data from DB when trigger has filter conditions', async () => {
 			const trigger = buildTrigger({
 				workspaceId: 'ws-1',
