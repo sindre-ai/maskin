@@ -31,7 +31,7 @@ export function Column({ status, tasks, laneId }: ColumnProps) {
 	const isEmpty = tasks.length === 0
 	const { setNodeRef, isOver, active } = useDroppable({
 		id: `col:${laneId}:${status}`,
-		data: { laneId, status },
+		data: { laneId, status, kind: 'column' },
 	})
 	const activeLaneId = active?.data.current?.laneId as string | undefined
 	const isValidTarget = isOver && activeLaneId === laneId
@@ -67,7 +67,15 @@ export function Column({ status, tasks, laneId }: ColumnProps) {
 						No tasks in {formatColumnLabel(status).toLowerCase()}.
 					</p>
 				) : (
-					tasks.map((task) => <TaskCardPlaceholder key={task.id} task={task} laneId={laneId} />)
+					tasks.map((task, index) => (
+						<TaskCardPlaceholder
+							key={task.id}
+							task={task}
+							laneId={laneId}
+							status={status}
+							index={index}
+						/>
+					))
 				)}
 			</div>
 		</div>
@@ -78,14 +86,51 @@ export function Column({ status, tasks, laneId }: ColumnProps) {
  * Bare placeholder card. Task 3 replaces this with the rich card (assignees,
  * live status headline, blocker indicator). Kept intentionally minimal here so
  * the layout work can land without the data-density of the full card.
+ *
+ * Each card is both draggable (the drag source) and droppable (a reorder
+ * target). Dropping a card onto another card means "place this card before
+ * the target," which lets dnd-kit/core handle within-column reordering
+ * without pulling in `@dnd-kit/sortable` as a new dep.
  */
-function TaskCardPlaceholder({ task, laneId }: { task: ObjectResponse; laneId: string }) {
+function TaskCardPlaceholder({
+	task,
+	laneId,
+	status,
+	index,
+}: {
+	task: ObjectResponse
+	laneId: string
+	status: string
+	index: number
+}) {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
-	const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+	const {
+		attributes,
+		listeners,
+		setNodeRef: setDragRef,
+		isDragging,
+	} = useDraggable({
 		id: `task:${laneId}:${task.id}`,
-		data: { task, laneId },
+		data: { task, laneId, status, index, kind: 'task' },
 	})
+	const {
+		setNodeRef: setDropRef,
+		isOver,
+		active,
+	} = useDroppable({
+		id: `taskdrop:${laneId}:${task.id}`,
+		data: { task, laneId, status, index, kind: 'card' },
+	})
+	const setRef = (node: HTMLElement | null) => {
+		setDragRef(node)
+		setDropRef(node)
+	}
+	// Only highlight a hovered card when the drag originated in the same
+	// swimlane — cross-bet drags are explicitly unsupported in v1.
+	const activeLaneId = active?.data.current?.laneId as string | undefined
+	const activeTaskId = active?.data.current?.task?.id as string | undefined
+	const isReorderTarget = isOver && activeLaneId === laneId && activeTaskId !== task.id
 	// dnd-kit's PointerSensor only activates a drag when the pointer moves past
 	// the activation distance — a release-in-place produces a normal click event
 	// here, so we can route to the detail page without conflicting with drags.
@@ -100,7 +145,7 @@ function TaskCardPlaceholder({ task, laneId }: { task: ObjectResponse; laneId: s
 	}
 	return (
 		<Card
-			ref={setNodeRef}
+			ref={setRef}
 			{...attributes}
 			{...listeners}
 			onClick={handleClick}
@@ -108,8 +153,10 @@ function TaskCardPlaceholder({ task, laneId }: { task: ObjectResponse; laneId: s
 			className={cn(
 				'p-3 shadow-sm cursor-pointer active:cursor-grabbing touch-none select-none hover:bg-muted/40 transition-colors',
 				isDragging && 'opacity-40',
+				isReorderTarget && 'ring-2 ring-accent ring-offset-1',
 			)}
 			data-task-id={task.id}
+			data-task-index={index}
 		>
 			<p className="text-sm font-medium leading-snug line-clamp-2">
 				{task.title || 'Untitled task'}

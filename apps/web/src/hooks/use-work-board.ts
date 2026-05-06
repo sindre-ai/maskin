@@ -2,6 +2,7 @@ import { useBets } from '@/hooks/use-bets'
 import { useObjects } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import type { ObjectResponse } from '@/lib/api'
+import { sortTasksByOrder } from '@/lib/task-order'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMemo } from 'react'
 
@@ -148,6 +149,15 @@ export function useWorkBoard(): UseWorkBoardResult {
 		}
 		const hasNoBetTasks = Object.values(noBetLane.columns).some((col) => col.length > 0)
 		if (hasNoBetTasks) orderedLanes.push(noBetLane)
+
+		// Sort each column by `metadata.order` so within-column drag-and-drop
+		// (Task 4) renders cards in the user's last-chosen order. Tasks without an
+		// order key gather at the bottom of their column.
+		for (const lane of orderedLanes) {
+			for (const status of Object.keys(lane.columns)) {
+				lane.columns[status] = sortTasksByOrder(lane.columns[status])
+			}
+		}
 
 		return {
 			swimlanes: orderedLanes,
