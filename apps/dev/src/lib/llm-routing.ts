@@ -220,7 +220,8 @@ export async function resolveLlmRoute(params: {
 			ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 			ANTHROPIC_API_KEY: '',
 			ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4-flash',
-			ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
+			ANTHROPIC_SMALL_FAST_MODEL:
+				fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
 		},
 	}
 }

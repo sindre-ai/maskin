@@ -95,7 +95,9 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 			<div>
 				<Label className="mb-1 text-bold">Default LLM ($5 Free Usage)</Label>
 				<p className="text-xs text-muted-foreground mb-6">
-					Uses Deepseek V4 Flash via OpenRouter as the default model when no API keys are configured. <b>Provides up to $5 USD equivalent of free usage per day, per workspace.</b> Automatically activates for users without Claude subscriptions, API keys or custom llm.
+					Uses Deepseek V4 Flash via OpenRouter as the default model when no API keys are
+					configured. <b>Provides up to $5 USD equivalent of free usage per day, per workspace.</b>
+					Automatically activates for users without Claude subscriptions, API keys or custom llm.
 				</p>
 			</div>
 			<Label className="mb-1 text-bold">Claude Subscription</Label>
