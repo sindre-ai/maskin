@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, imports, workspaces } from '@maskin/db/schema'
-import { importMappingSchema, importQuerySchema } from '@maskin/shared'
+import { type CsvOptions, importMappingSchema, importQuerySchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
@@ -287,14 +287,20 @@ app.openapi(updateMappingRoute, async (c) => {
 		)
 	}
 
-	// Check if CSV options changed — if so, re-parse the file from storage
-	const existingMapping = importRecord.mapping as Record<string, unknown> | null
+	// Check if CSV options changed — if so, re-parse the file from storage.
+	// Compare fields directly: JSON.stringify is order-sensitive and Postgres JSONB
+	// doesn't preserve key insertion order, so a round-trip through the DB returns
+	// keys in a different order than Zod's parsed output (delimiter/encoding flip).
+	// Stringify-based comparison would spuriously report a change and trigger the
+	// regeneration branch below, silently overwriting the user's chosen objectType.
+	const existingMapping = importRecord.mapping as { csvOptions?: CsvOptions } | null
 	const newCsvOptions = mapping.csvOptions
 	const existingCsvOptions = existingMapping?.csvOptions
 	const csvOptionsChanged =
 		importRecord.fileType === 'csv' &&
-		newCsvOptions &&
-		JSON.stringify(newCsvOptions) !== JSON.stringify(existingCsvOptions)
+		!!newCsvOptions &&
+		(newCsvOptions.delimiter !== existingCsvOptions?.delimiter ||
+			newCsvOptions.encoding !== existingCsvOptions?.encoding)
 
 	let finalMapping = mapping
 	let updatedPreview = undefined
