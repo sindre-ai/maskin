@@ -1,0 +1,15 @@
+{
+	"name": "@maskin/e2e-scripts",
+	"version": "0.0.0",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"scripts": {
+		"type-check": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}

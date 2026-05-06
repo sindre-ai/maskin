@@ -18,6 +18,8 @@
  * causing is a five-minute job.
  */
 
+import { parseFinitePositiveEnv } from './parse-env'
+
 type Status = string
 
 interface ObjectRow {
@@ -90,8 +92,8 @@ const env = (key: string, fallback?: string) => {
 const BASE_URL = env('MASKIN_API_BASE_URL', 'http://localhost:5173')
 const API_KEY = env('MASKIN_API_KEY')
 const WORKSPACE_ID = env('MASKIN_WORKSPACE_ID')
-const BUDGET_MS = Number(env('E2E_BUDGET_MIN', '90')) * 60_000
-const POLL_MS = Number(env('E2E_POLL_SEC', '30')) * 1_000
+const BUDGET_MS = parseFinitePositiveEnv(process.env.E2E_BUDGET_MIN, 90, 'E2E_BUDGET_MIN') * 60_000
+const POLL_MS = parseFinitePositiveEnv(process.env.E2E_POLL_SEC, 30, 'E2E_POLL_SEC') * 1_000
 const REPORT_PATH = process.env.E2E_REPORT_PATH ?? null
 const KEEP_OBJECTS = process.env.E2E_KEEP_OBJECTS === '1'
 
