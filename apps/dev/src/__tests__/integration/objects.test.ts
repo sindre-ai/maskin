@@ -144,6 +144,76 @@ describe('Objects Integration', () => {
 			}
 		})
 
+		it('rolls back the row INSERT when the events INSERT fails inside the transaction', async () => {
+			// Real-DB regression for the atomicity guarantee on POST. The unit
+			// test in routes/objects.test.ts only asserts the route returns
+			// non-201; the load-bearing property is that the OBJECT row is NOT
+			// committed when the events INSERT fails inside the same tx.
+			// Without that, a programmatically-created bet exists in the DB
+			// while no `created` event ever reaches the trigger runner — the
+			// orphaned-bet pattern this fix addresses.
+			const app = createApp()
+
+			await sql`
+				CREATE OR REPLACE FUNCTION reject_events_insert_on_create_test() RETURNS TRIGGER AS $$
+				BEGIN
+					RAISE EXCEPTION 'forced events insert failure for create-atomicity test';
+				END;
+				$$ LANGUAGE plpgsql
+			`
+			await sql`
+				CREATE TRIGGER reject_events_insert_on_create_test
+				BEFORE INSERT ON events
+				FOR EACH ROW EXECUTE FUNCTION reject_events_insert_on_create_test()
+			`
+
+			try {
+				const createRes = await app.request(
+					jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+
+				// Transaction rolled back → route surfaces an error, not 201.
+				expect(createRes.status).not.toBe(201)
+
+				// And the object table must contain no rows for this workspace,
+				// proving the INSERT did not commit even though the route attempted it.
+				const rows = await db.select().from(objects).where(eq(objects.workspaceId, workspaceId))
+				expect(rows).toHaveLength(0)
+			} finally {
+				await sql`DROP TRIGGER IF EXISTS reject_events_insert_on_create_test ON events`
+				await sql`DROP FUNCTION IF EXISTS reject_events_insert_on_create_test()`
+			}
+		})
+
+		it('emits a created event atomically on POST', async () => {
+			// Companion to the PATCH atomicity guard. Programmatic bet creation
+			// via MCP `create_objects` (status='proposed') depends on the
+			// `created` event reaching the trigger runner so the
+			// `Bet Created → Plan Tasks` trigger fires. Without this guard,
+			// the orphaned-bet pattern (bet 56ee8790: 12 tasks, 0 blocks edges)
+			// is the canonical reproduction.
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects',
+					buildCreateObjectBody({ type: 'bet', status: 'proposed' }),
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(createRes.status).toBe(201)
+			const created = await createRes.json()
+
+			const logged = await db.select().from(events).where(eq(events.entityId, created.id))
+
+			expect(logged).toHaveLength(1)
+			expect(logged[0].action).toBe('created')
+			expect(logged[0].entityType).toBe('bet')
+		})
+
 		it('emits status_changed atomically on PATCH status update', async () => {
 			// The orphaned-task pattern (task 811eb80b, parent bet f98547ae) was
 			// caused by the row UPDATE committing without the corresponding event

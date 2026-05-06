@@ -361,6 +361,67 @@ describe('Objects Routes', () => {
 		})
 	})
 
+	describe('POST /api/objects - created event atomicity', () => {
+		it('emits a created event in the same transaction as the row insert', async () => {
+			// Without this, programmatic bet creation via MCP `create_objects`
+			// silently misses the trigger runner — `Bet Created → Plan Tasks`
+			// never fires, the bet sits unplanned, and the parallelization
+			// orchestrator has no `blocks` graph to fan out on.
+			const ws = buildWorkspace({ id: wsId })
+			const obj = buildObject({ workspaceId: wsId, type: 'bet', status: 'proposed' })
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [obj]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects',
+					buildCreateObjectBody({ type: 'bet', status: 'proposed' }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			// Assert the event row was actually written, with action 'created'.
+			// The event insert is a separate `.values()` call inside the
+			// transaction — calls.inserts captures both the object row and the
+			// event row, so we filter for the events-shaped entry.
+			const eventInserts = calls.inserts.filter(
+				(v): v is { action: string; entityId: string; entityType: string } =>
+					typeof v === 'object' && v !== null && 'action' in v,
+			)
+			expect(eventInserts).toHaveLength(1)
+			expect(eventInserts[0]?.action).toBe('created')
+			expect(eventInserts[0]?.entityType).toBe('bet')
+			expect(eventInserts[0]?.entityId).toBe(obj.id)
+		})
+
+		it('rolls back the row insert when the event insert fails', async () => {
+			// Atomicity guarantee: if event emission fails, the object row
+			// must not be committed either. Otherwise we re-introduce the
+			// orphaned-bet pattern (bet exists, no event, no Plan Tasks
+			// trigger fires).
+			const ws = buildWorkspace({ id: wsId })
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [obj]
+			mockResults.insertError = new Error('event insert failed')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			// Transaction throws → route surfaces an error rather than 201.
+			// What matters is that we did not silently report success while
+			// losing the event.
+			expect(res.status).not.toBe(201)
+		})
+	})
+
 	describe('PATCH /api/objects/:id - status_changed event', () => {
 		it('logs status_changed event when status changes', async () => {
 			const existing = buildObject({ status: 'todo' })
