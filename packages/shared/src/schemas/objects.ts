@@ -26,6 +26,28 @@ export const updateObjectSchema = z.object({
 	owner: z.string().uuid().nullable().optional(),
 })
 
+/** Bulk-migrate or delete every object of a given type within a workspace.
+ * Used when an extension is removed/disabled, to avoid orphaning rows whose
+ * `type` no longer maps to anything in workspace.settings. */
+export const migrateObjectTypeSchema = z
+	.object({
+		fromType: objectTypeSchema,
+		mode: z.enum(['migrate', 'delete']),
+		toType: objectTypeSchema.optional(),
+		statusMap: z.record(z.string(), z.string()).optional(),
+	})
+	.refine((v) => (v.mode === 'migrate' ? !!v.toType && v.toType !== v.fromType : true), {
+		message: 'toType is required for migrate mode and must differ from fromType',
+		path: ['toType'],
+	})
+
+export const migrateObjectTypeResponseSchema = z.object({
+	mode: z.enum(['migrate', 'delete']),
+	fromType: z.string(),
+	toType: z.string().optional(),
+	count: z.number().int().nonnegative(),
+})
+
 /** Known built-in sort columns — keep in sync with sortColumns in apps/dev/src/routes/objects.ts */
 export const KNOWN_SORT_COLUMNS = [
 	'createdAt',

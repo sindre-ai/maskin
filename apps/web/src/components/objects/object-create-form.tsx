@@ -1,9 +1,8 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
-import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useEffect, useRef, useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
@@ -25,9 +24,7 @@ export function ObjectCreateForm({
 	isPending = false,
 	error,
 }: ObjectCreateFormProps) {
-	const enabledModules = useEnabledModules()
-
-	const availableTypes = useMemo(() => getEnabledObjectTypeTabs(enabledModules), [enabledModules])
+	const availableTypes = useAvailableObjectTypes()
 
 	const [type, setType] = useState('')
 	const [title, setTitle] = useState('')

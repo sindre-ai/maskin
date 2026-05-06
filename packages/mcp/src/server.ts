@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -100,7 +101,12 @@ async function apiCall(
 	method: string,
 	path: string,
 	body?: unknown,
-	options?: { skipAuth?: boolean; skipWorkspace?: boolean; workspaceId?: string },
+	options?: {
+		skipAuth?: boolean
+		skipWorkspace?: boolean
+		workspaceId?: string
+		idempotencyKey?: string
+	},
 ): Promise<unknown> {
 	if (!options?.skipAuth && !config.apiKey) {
 		throw new Error(`Not authenticated. ${authSetupHint(config)}`)
@@ -119,6 +125,9 @@ async function apiCall(
 	}
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
+	}
+	if (options?.idempotencyKey) {
+		headers['Idempotency-Key'] = options.idempotencyKey
 	}
 
 	const response = await fetch(url, {
@@ -157,6 +166,25 @@ async function apiCall(
 	}
 
 	return response.json()
+}
+
+// Per-workspace mutex used to serialize read-modify-write tool calls (e.g.
+// schema edits) within a single MCP process. Two MCP tool invocations from
+// the same host targeting the same workspace will run sequentially, which
+// eliminates lost-update races inside this process. Cross-process races
+// still exist; callers that care must additionally verify after PATCH.
+const workspaceLocks = new Map<string, Promise<unknown>>()
+
+function withWorkspaceLock<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
+	const prev = workspaceLocks.get(workspaceId) ?? Promise.resolve()
+	const result = prev.catch(() => undefined).then(fn)
+	const lockEntry: Promise<unknown> = result
+		.catch(() => undefined)
+		.finally(() => {
+			if (workspaceLocks.get(workspaceId) === lockEntry) workspaceLocks.delete(workspaceId)
+		})
+	workspaceLocks.set(workspaceId, lockEntry)
+	return result
 }
 
 async function getWorkspace(
@@ -574,35 +602,45 @@ function extractWorkspaceId(args: unknown): string | undefined {
 /**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
- * count one mutation event per call when at least one inner item succeeded —
- * matches how the bet's "20% of sessions include at least one mutation" metric
- * is meant to be read (a session that *attempted* and partially succeeded
- * counts).
+ * count one mutation event per call when at least one inner item explicitly
+ * reports success.
+ *
+ * Defaults to `false` for unrecognised shapes. Over-counting biases the bet's
+ * "20% of sessions include at least one mutation" metric upward, so unknown
+ * responses are treated as "not a confirmed mutation" rather than assuming
+ * success.
  */
 function isSuccessfulMutationResponse(response: unknown): boolean {
 	if (!response || typeof response !== 'object') return false
+	if ((response as { isError?: unknown }).isError === true) return false
 	const content = (response as { content?: unknown }).content
 	if (!Array.isArray(content) || content.length === 0) return false
 	const first = content[0] as { type?: string; text?: string } | undefined
-	if (!first || first.type !== 'text' || typeof first.text !== 'string') return true
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return false
 	let parsed: unknown
 	try {
 		parsed = JSON.parse(first.text)
 	} catch {
-		return true
+		return false
 	}
 	if (Array.isArray(parsed)) {
+		// Per-target aggregation (update_objects-style). The call counts when
+		// at least one entry explicitly reports success === true.
 		return parsed.some((entry) => {
 			if (!entry || typeof entry !== 'object') return false
-			const success = (entry as { success?: unknown }).success
-			return success === true || success === undefined
+			return (entry as { success?: unknown }).success === true
 		})
 	}
 	if (parsed && typeof parsed === 'object') {
-		const errored = (parsed as { error?: unknown }).error
-		return errored === undefined || errored === null
+		const obj = parsed as { success?: unknown; error?: unknown; id?: unknown }
+		if (obj.success === true) return true
+		if (obj.success === false) return false
+		// No explicit success flag — accept as confirmed only if the payload has
+		// no `error` field and looks like a record (has an `id`). Anything else
+		// stays uncounted.
+		return obj.error == null && typeof obj.id === 'string'
 	}
-	return true
+	return false
 }
 
 /** Best-effort object_type label for the mutation event. */
@@ -1238,13 +1276,51 @@ export function createMcpServer(config: McpConfig) {
 	// workspace PATCH endpoint shallow-merges `settings`. Auth flows through the
 	// same Bearer token used by every other tool, so changes are attributed to
 	// the calling end-user (per F4 calling-user auth model).
+	//
+	// Concurrency: workspace PATCH only shallow-merges `settings`, so two
+	// interleaved RMWs on `field_definitions` would lose updates. We mitigate
+	// this with three layers:
+	//   1) Per-workspace in-process mutex (`withWorkspaceLock`) so back-to-back
+	//      MCP tool calls in this process never race.
+	//   2) Idempotency-Key on the PATCH so the host's retries don't double-apply.
+	//   3) Re-read after PATCH and compare; on drift, retry up to 3 times. This
+	//      catches cross-process races (a different MCP server or the web UI
+	//      patching the same workspace concurrently).
 	type FieldDef = {
 		name: string
 		type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
 		required?: boolean
 		values?: string[]
 	}
-	const FIELD_TYPES = ['text', 'number', 'date', 'enum', 'boolean'] as const
+
+	const MAX_RMW_ATTEMPTS = 3
+
+	function fieldsEqual(a: FieldDef[], b: FieldDef[]): boolean {
+		if (a.length !== b.length) return false
+		for (let i = 0; i < a.length; i++) {
+			const x = a[i] as FieldDef
+			const y = b[i] as FieldDef
+			if (x.name !== y.name) return false
+			if (x.type !== y.type) return false
+			if ((x.required ?? false) !== (y.required ?? false)) return false
+			const xv = x.values ?? []
+			const yv = y.values ?? []
+			if (xv.length !== yv.length) return false
+			for (let j = 0; j < xv.length; j++) if (xv[j] !== yv[j]) return false
+		}
+		return true
+	}
+
+	function fieldDefMapsEqual(
+		a: Record<string, FieldDef[]>,
+		b: Record<string, FieldDef[]>,
+	): boolean {
+		const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+		for (const k of keys) {
+			if (!fieldsEqual(a[k] ?? [], b[k] ?? [])) return false
+		}
+		return true
+	}
 
 	async function patchFieldDefinitions(
 		args: { workspace_id?: string; type: string },
@@ -1252,26 +1328,50 @@ export function createMcpServer(config: McpConfig) {
 	): Promise<{ wsId: string; updatedFields: FieldDef[] }> {
 		const wsId = args.workspace_id ?? config.defaultWorkspaceId
 		if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
-		const workspace = await getWorkspace(config, wsId)
-		const fieldDefs = {
-			...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
-		}
-		const current = (fieldDefs[args.type] ?? []) as FieldDef[]
-		const updated = transform(current)
-		fieldDefs[args.type] = updated
-		await apiCall(
-			config,
-			'PATCH',
-			`/api/workspaces/${wsId}`,
-			{ settings: { field_definitions: fieldDefs } },
-			{ workspaceId: wsId },
-		)
-		return { wsId, updatedFields: updated }
+		return withWorkspaceLock(wsId, async () => {
+			let lastErr: Error | null = null
+			for (let attempt = 0; attempt < MAX_RMW_ATTEMPTS; attempt++) {
+				const workspace = await getWorkspace(config, wsId)
+				const baseline = {
+					...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
+				}
+				const fieldDefs = { ...baseline }
+				const current = (fieldDefs[args.type] ?? []) as FieldDef[]
+				const updated = transform(current)
+				fieldDefs[args.type] = updated
+				await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${wsId}`,
+					{ settings: { field_definitions: fieldDefs } },
+					{ workspaceId: wsId, idempotencyKey: `mcp-schema-${wsId}-${randomUUID()}` },
+				)
+				const verify = await getWorkspace(config, wsId)
+				const verifyAll = (verify.settings.field_definitions ?? {}) as Record<string, FieldDef[]>
+				if (fieldDefMapsEqual(verifyAll, fieldDefs)) {
+					return { wsId, updatedFields: updated }
+				}
+				lastErr = new Error(
+					`Concurrent edit detected on workspace "${wsId}" (attempt ${attempt + 1}/${MAX_RMW_ATTEMPTS}). Another writer modified field_definitions between read and verify; retrying.`,
+				)
+			}
+			throw (
+				lastErr ??
+				new Error(
+					`Failed to apply schema change to workspace "${wsId}" type "${args.type}" after ${MAX_RMW_ATTEMPTS} attempts due to concurrent edits.`,
+				)
+			)
+		})
 	}
 
 	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {
 		if (field.type !== 'enum') {
 			throw new Error(`Field "${field.name}" is type "${field.type}", not "enum"`)
+		}
+		if (!Array.isArray(field.values)) {
+			throw new Error(
+				`Field "${field.name}" is type "enum" but has no values list. Repair via update_workspace_field with values: [...] before adding or removing values.`,
+			)
 		}
 	}
 
@@ -1323,9 +1423,6 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
 		},
 		async (args) => {
-			if (args.field_type && !FIELD_TYPES.includes(args.field_type)) {
-				throw new Error(`Unsupported field_type: ${args.field_type}`)
-			}
 			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
 				const idx = current.findIndex((f) => f.name === args.name)
 				if (idx === -1) {
@@ -1346,6 +1443,9 @@ export function createMcpServer(config: McpConfig) {
 				let nextValues: string[] | undefined
 				if (nextType === 'enum') {
 					nextValues = args.values ?? existing.values ?? []
+					if (nextValues.length === 0) {
+						throw new Error('Enum fields require at least one value in `values`.')
+					}
 				}
 				const next: FieldDef = {
 					name: nextName,
