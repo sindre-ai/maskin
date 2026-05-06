@@ -53,6 +53,36 @@ export function useUpdateObject(workspaceId: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateObjectInput }) =>
 			api.objects.update(id, data),
+		onMutate: async ({ id, data }) => {
+			await queryClient.cancelQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			await queryClient.cancelQueries({ queryKey: queryKeys.objects.detail(id) })
+
+			const listSnapshots = queryClient.getQueriesData<ObjectResponse[]>({
+				queryKey: queryKeys.objects.all(workspaceId),
+			})
+			const detailSnapshot = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(id))
+
+			const patch = (obj: ObjectResponse): ObjectResponse => ({ ...obj, ...data }) as ObjectResponse
+
+			queryClient.setQueriesData<ObjectResponse[]>(
+				{ queryKey: queryKeys.objects.all(workspaceId) },
+				(prev) => (prev ? prev.map((obj) => (obj.id === id ? patch(obj) : obj)) : prev),
+			)
+			if (detailSnapshot) {
+				queryClient.setQueryData(queryKeys.objects.detail(id), patch(detailSnapshot))
+			}
+
+			return { listSnapshots, detailSnapshot }
+		},
+		onError: (_err, { id }, context) => {
+			if (!context) return
+			for (const [key, value] of context.listSnapshots) {
+				queryClient.setQueryData(key, value)
+			}
+			if (context.detailSnapshot) {
+				queryClient.setQueryData(queryKeys.objects.detail(id), context.detailSnapshot)
+			}
+		},
 		onSettled: (_data, _err, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })

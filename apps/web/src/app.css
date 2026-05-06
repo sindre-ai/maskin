@@ -32,6 +32,8 @@
 	/* Status badge colors */
 	--color-status-new-bg: var(--st-new-bg);
 	--color-status-new-text: var(--st-new-text);
+	--color-status-backlog-bg: var(--st-backlog-bg);
+	--color-status-backlog-text: var(--st-backlog-text);
 	--color-status-todo-bg: var(--st-todo-bg);
 	--color-status-todo-text: var(--st-todo-text);
 	--color-status-processing-bg: var(--st-processing-bg);
@@ -118,6 +120,8 @@
 	/* Status badges */
 	--st-new-bg: #f4f4f5;
 	--st-new-text: #71717a;
+	--st-backlog-bg: #fafafa;
+	--st-backlog-text: #52525b;
 	--st-todo-bg: #f4f4f5;
 	--st-todo-text: #71717a;
 	--st-processing-bg: #fef3c7;
@@ -193,6 +197,8 @@
 	/* Status badges */
 	--st-new-bg: #3f3f46;
 	--st-new-text: #d4d4d8;
+	--st-backlog-bg: #27272a;
+	--st-backlog-text: #a1a1aa;
 	--st-todo-bg: #3f3f46;
 	--st-todo-text: #d4d4d8;
 	--st-processing-bg: #422006;

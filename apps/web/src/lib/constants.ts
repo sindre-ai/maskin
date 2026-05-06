@@ -1,5 +1,6 @@
 export const statusColors: Record<string, { bg: string; text: string }> = {
 	new: { bg: 'bg-status-new-bg', text: 'text-status-new-text' },
+	backlog: { bg: 'bg-status-backlog-bg', text: 'text-status-backlog-text' },
 	todo: { bg: 'bg-status-todo-bg', text: 'text-status-todo-text' },
 	processing: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	in_progress: { bg: 'bg-status-in_progress-bg', text: 'text-status-in_progress-text' },
