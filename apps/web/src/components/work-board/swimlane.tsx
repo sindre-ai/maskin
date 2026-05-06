@@ -1,6 +1,6 @@
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Column } from '@/components/work-board/column'
+import { Column, SOFT_WIP_THRESHOLD } from '@/components/work-board/column'
 import type { BoardSwimlane } from '@/hooks/use-work-board'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
@@ -58,7 +58,13 @@ export function Swimlane({ lane }: SwimlaneProps) {
 					) : (
 						<div className="flex gap-3 overflow-x-auto pb-2">
 							{Object.entries(lane.columns).map(([status, tasks]) => (
-								<Column key={status} status={status} tasks={tasks} laneId={laneId} />
+								<Column
+									key={status}
+									status={status}
+									tasks={tasks}
+									laneId={laneId}
+									showWipBadge={status === 'in_review' && tasks.length > SOFT_WIP_THRESHOLD}
+								/>
 							))}
 						</div>
 					)}

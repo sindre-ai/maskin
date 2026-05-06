@@ -58,4 +58,17 @@ describe('Column', () => {
 			params: { workspaceId: 'ws-1', objectId: 't-click' },
 		})
 	})
+
+	it('renders the soft WIP badge only when showWipBadge is true', () => {
+		const tasks = [buildObjectResponse({ id: 't-1', type: 'task', title: 'r' })]
+		const { rerender } = render(
+			<Column status="in_review" tasks={tasks} laneId="bet-1" showWipBadge={false} />,
+			{ wrapper: wrapper() },
+		)
+		expect(screen.queryByTestId('wip-badge')).not.toBeInTheDocument()
+
+		rerender(<Column status="in_review" tasks={tasks} laneId="bet-1" showWipBadge={true} />)
+		expect(screen.getByTestId('wip-badge')).toBeInTheDocument()
+		expect(screen.getByText(/review queue is filling up/i)).toBeInTheDocument()
+	})
 })

@@ -9,12 +9,24 @@ vi.mock('@/lib/api', () => ({
 		relationships: {
 			list: vi.fn(),
 		},
+		actors: {
+			list: vi.fn(),
+		},
 	},
 }))
 
+vi.mock('@/lib/auth', async (orig) => {
+	const mod = (await orig()) as Record<string, unknown>
+	return {
+		...mod,
+		getStoredActor: vi.fn(() => null),
+	}
+})
+
 import { useWorkBoard } from '@/hooks/use-work-board'
 import { api } from '@/lib/api'
-import { buildObjectResponse, buildRelationshipResponse } from '../factories'
+import { getStoredActor } from '@/lib/auth'
+import { buildActorListItem, buildObjectResponse, buildRelationshipResponse } from '../factories'
 import { createWorkspaceWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -23,6 +35,7 @@ function setupApi({
 	bets = [] as ReturnType<typeof buildObjectResponse>[],
 	tasks = [] as ReturnType<typeof buildObjectResponse>[],
 	rels = [] as ReturnType<typeof buildRelationshipResponse>[],
+	actors = [] as ReturnType<typeof buildActorListItem>[],
 }) {
 	vi.mocked(api.objects.list).mockImplementation(async (_ws: string, filters) => {
 		if (filters?.type === 'bet') return bets
@@ -30,6 +43,7 @@ function setupApi({
 		return []
 	})
 	vi.mocked(api.relationships.list).mockResolvedValue(rels)
+	vi.mocked(api.actors.list).mockResolvedValue(actors)
 }
 
 const wrapper = () =>
@@ -274,6 +288,240 @@ describe('useWorkBoard', () => {
 		const laneB = result.current.board.swimlanes.find((l) => l.bet?.id === 'bet-b')
 		expect(laneA?.columns.todo.map((t) => t.id)).toEqual(['t-shared'])
 		expect(laneB?.columns.todo.map((t) => t.id)).toEqual(['t-shared'])
+	})
+
+	it('filters by bet — only that swimlane survives', async () => {
+		const betA = buildObjectResponse({ id: 'bet-a', type: 'bet', status: 'active', title: 'A' })
+		const betB = buildObjectResponse({ id: 'bet-b', type: 'bet', status: 'active', title: 'B' })
+		const tA = buildObjectResponse({ id: 't-a', type: 'task', status: 'todo' })
+		const tB = buildObjectResponse({ id: 't-b', type: 'task', status: 'todo' })
+		setupApi({
+			bets: [betA, betB],
+			tasks: [tA, tB],
+			rels: [
+				buildRelationshipResponse({
+					sourceId: 'bet-a',
+					targetId: 't-a',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+				buildRelationshipResponse({
+					sourceId: 'bet-b',
+					targetId: 't-b',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+			],
+		})
+		const { result } = renderHook(() => useWorkBoard({ filters: { bet: 'bet-a' } }), {
+			wrapper: wrapper(),
+		})
+		await waitFor(() => expect(result.current.isLoading).toBe(false))
+		expect(result.current.board.swimlanes).toHaveLength(1)
+		expect(result.current.board.swimlanes[0].bet?.id).toBe('bet-a')
+	})
+
+	it('filters by status=blocked — keeps only blocked tasks; hides empty lanes', async () => {
+		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
+		const tBlocked = buildObjectResponse({ id: 't-b', type: 'task', status: 'blocked' })
+		const tTodo = buildObjectResponse({ id: 't-t', type: 'task', status: 'todo' })
+		const otherBet = buildObjectResponse({ id: 'bet-other', type: 'bet', status: 'active' })
+		setupApi({
+			bets: [bet, otherBet],
+			tasks: [tBlocked, tTodo],
+			rels: [
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-b',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-t',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+			],
+		})
+		const { result } = renderHook(() => useWorkBoard({ filters: { status: 'blocked' } }), {
+			wrapper: wrapper(),
+		})
+		await waitFor(() => expect(result.current.isLoading).toBe(false))
+		expect(result.current.board.swimlanes).toHaveLength(1)
+		const lane = result.current.board.swimlanes[0]
+		expect(lane.bet?.id).toBe('bet-1')
+		expect(lane.columns.blocked.map((t) => t.id)).toEqual(['t-b'])
+		expect(lane.columns.todo).toHaveLength(0)
+	})
+
+	it('filters by assignee=mine — uses the stored actor id', async () => {
+		vi.mocked(getStoredActor).mockReturnValue({
+			id: 'me',
+			name: 'Me',
+			type: 'human',
+			email: null,
+		})
+		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
+		const mine = buildObjectResponse({ id: 't-mine', type: 'task', status: 'todo', owner: 'me' })
+		const someone = buildObjectResponse({
+			id: 't-other',
+			type: 'task',
+			status: 'todo',
+			owner: 'someone-else',
+		})
+		setupApi({
+			bets: [bet],
+			tasks: [mine, someone],
+			rels: [
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-mine',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-other',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+			],
+		})
+		const { result } = renderHook(() => useWorkBoard({ filters: { assignee: 'mine' } }), {
+			wrapper: wrapper(),
+		})
+		await waitFor(() => expect(result.current.isLoading).toBe(false))
+		const tasksInLane = result.current.board.swimlanes[0].columns.todo
+		expect(tasksInLane.map((t) => t.id)).toEqual(['t-mine'])
+	})
+
+	it('filters by assignee=agents — fetches actors and matches by type', async () => {
+		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
+		const agentTask = buildObjectResponse({
+			id: 't-a',
+			type: 'task',
+			status: 'todo',
+			owner: 'agent-1',
+		})
+		const humanTask = buildObjectResponse({
+			id: 't-h',
+			type: 'task',
+			status: 'todo',
+			owner: 'human-1',
+		})
+		setupApi({
+			bets: [bet],
+			tasks: [agentTask, humanTask],
+			rels: [
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-a',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-h',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+			],
+			actors: [
+				buildActorListItem({ id: 'agent-1', type: 'agent' }),
+				buildActorListItem({ id: 'human-1', type: 'human' }),
+			],
+		})
+		const { result } = renderHook(() => useWorkBoard({ filters: { assignee: 'agents' } }), {
+			wrapper: wrapper(),
+		})
+		await waitFor(() => expect(result.current.isLoading).toBe(false))
+		await waitFor(() => {
+			expect(result.current.board.swimlanes[0]?.columns.todo.map((t) => t.id)).toEqual(['t-a'])
+		})
+	})
+
+	it('AND-combines multiple filters — bet + status', async () => {
+		const betA = buildObjectResponse({ id: 'bet-a', type: 'bet', status: 'active' })
+		const betB = buildObjectResponse({ id: 'bet-b', type: 'bet', status: 'active' })
+		const tABlocked = buildObjectResponse({ id: 't-ab', type: 'task', status: 'blocked' })
+		const tATodo = buildObjectResponse({ id: 't-at', type: 'task', status: 'todo' })
+		const tBBlocked = buildObjectResponse({ id: 't-bb', type: 'task', status: 'blocked' })
+		setupApi({
+			bets: [betA, betB],
+			tasks: [tABlocked, tATodo, tBBlocked],
+			rels: [
+				buildRelationshipResponse({
+					sourceId: 'bet-a',
+					targetId: 't-ab',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+				buildRelationshipResponse({
+					sourceId: 'bet-a',
+					targetId: 't-at',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+				buildRelationshipResponse({
+					sourceId: 'bet-b',
+					targetId: 't-bb',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+			],
+		})
+		const { result } = renderHook(
+			() => useWorkBoard({ filters: { bet: 'bet-a', status: 'blocked' } }),
+			{ wrapper: wrapper() },
+		)
+		await waitFor(() => expect(result.current.isLoading).toBe(false))
+		expect(result.current.board.swimlanes).toHaveLength(1)
+		expect(result.current.board.swimlanes[0].bet?.id).toBe('bet-a')
+		expect(result.current.board.swimlanes[0].columns.blocked.map((t) => t.id)).toEqual(['t-ab'])
+		expect(result.current.board.swimlanes[0].columns.todo).toHaveLength(0)
+	})
+
+	it('hides empty lanes when any filter is active', async () => {
+		const bet = buildObjectResponse({ id: 'bet-1', type: 'bet', status: 'active' })
+		const otherBet = buildObjectResponse({ id: 'bet-2', type: 'bet', status: 'active' })
+		const blocked = buildObjectResponse({ id: 't-b', type: 'task', status: 'blocked' })
+		setupApi({
+			bets: [bet, otherBet],
+			tasks: [blocked],
+			rels: [
+				buildRelationshipResponse({
+					sourceId: 'bet-1',
+					targetId: 't-b',
+					type: 'breaks_into',
+					sourceType: 'bet',
+					targetType: 'task',
+				}),
+			],
+		})
+		// No filters: both lanes survive (empty `bet-2` is still visible).
+		const { result: noFilters } = renderHook(() => useWorkBoard(), { wrapper: wrapper() })
+		await waitFor(() => expect(noFilters.current.isLoading).toBe(false))
+		expect(noFilters.current.board.swimlanes.map((l) => l.bet?.id)).toEqual(['bet-1', 'bet-2'])
+
+		// With status filter, only the lane with matching tasks shows.
+		const { result: withFilter } = renderHook(
+			() => useWorkBoard({ filters: { status: 'blocked' } }),
+			{ wrapper: wrapper() },
+		)
+		await waitFor(() => expect(withFilter.current.isLoading).toBe(false))
+		expect(withFilter.current.board.swimlanes.map((l) => l.bet?.id)).toEqual(['bet-1'])
 	})
 
 	it('drops a task whose status is not in the column list into the backlog column', async () => {

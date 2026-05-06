@@ -80,4 +80,40 @@ describe('Swimlane', () => {
 		render(<Swimlane lane={lane} />, { wrapper: wrapper() })
 		expect(screen.getByText('1 task')).toBeInTheDocument()
 	})
+
+	it('does not show the WIP badge at exactly the threshold (5 in_review)', () => {
+		const reviewTasks = Array.from({ length: 5 }, (_, i) =>
+			buildObjectResponse({ id: `r-${i}`, type: 'task', title: `R${i}`, status: 'in_review' }),
+		)
+		const lane = buildLane({
+			columns: {
+				backlog: [],
+				todo: [],
+				in_progress: [],
+				in_review: reviewTasks,
+				testing: [],
+				done: [],
+			},
+		})
+		render(<Swimlane lane={lane} />, { wrapper: wrapper() })
+		expect(screen.queryByTestId('wip-badge')).not.toBeInTheDocument()
+	})
+
+	it('shows the WIP badge at threshold + 1 (6 in_review)', () => {
+		const reviewTasks = Array.from({ length: 6 }, (_, i) =>
+			buildObjectResponse({ id: `r-${i}`, type: 'task', title: `R${i}`, status: 'in_review' }),
+		)
+		const lane = buildLane({
+			columns: {
+				backlog: [],
+				todo: [],
+				in_progress: [],
+				in_review: reviewTasks,
+				testing: [],
+				done: [],
+			},
+		})
+		render(<Swimlane lane={lane} />, { wrapper: wrapper() })
+		expect(screen.getByTestId('wip-badge')).toBeInTheDocument()
+	})
 })

@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -11,7 +12,16 @@ interface ColumnProps {
 	tasks: ObjectResponse[]
 	/** Swimlane identifier — `bet.id` or `'no-bet'`. Used to scope drags to a single lane. */
 	laneId: string
+	/** When true, render the soft "review queue is filling up" badge in the header. Never blocks anything. */
+	showWipBadge?: boolean
 }
+
+/**
+ * Soft cap on `in_review` per swimlane before the column flags itself as
+ * filling up. Hard-coded today; surfaced as a constant so the future
+ * workspace-level setting (Task 5 brief) can plug in without a refactor.
+ */
+export const SOFT_WIP_THRESHOLD = 5
 
 const COLUMN_LABELS: Record<string, string> = {
 	backlog: 'Backlog',
@@ -27,7 +37,7 @@ function formatColumnLabel(status: string): string {
 	return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-export function Column({ status, tasks, laneId }: ColumnProps) {
+export function Column({ status, tasks, laneId, showWipBadge }: ColumnProps) {
 	const isEmpty = tasks.length === 0
 	const { setNodeRef, isOver, active } = useDroppable({
 		id: `col:${laneId}:${status}`,
@@ -51,14 +61,26 @@ export function Column({ status, tasks, laneId }: ColumnProps) {
 				<span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					{formatColumnLabel(status)}
 				</span>
-				<span
-					className={cn(
-						'text-xs font-mono tabular-nums',
-						isEmpty ? 'text-muted-foreground/60' : 'text-muted-foreground',
+				<div className="flex items-center gap-1.5">
+					{showWipBadge && (
+						<Badge
+							variant="secondary"
+							className="font-normal text-[10px] py-0 px-1.5 h-4"
+							title={`More than ${SOFT_WIP_THRESHOLD} items in review — heads up, not a block.`}
+							data-testid="wip-badge"
+						>
+							Review queue is filling up
+						</Badge>
 					)}
-				>
-					{tasks.length}
-				</span>
+					<span
+						className={cn(
+							'text-xs font-mono tabular-nums',
+							isEmpty ? 'text-muted-foreground/60' : 'text-muted-foreground',
+						)}
+					>
+						{tasks.length}
+					</span>
+				</div>
 			</div>
 
 			<div className="flex flex-col gap-2 p-2 min-h-24">

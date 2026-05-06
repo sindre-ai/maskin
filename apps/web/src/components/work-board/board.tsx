@@ -1,6 +1,8 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { Card } from '@/components/ui/card'
+import type { WorkBoardFilters } from '@/components/work-board/filters'
+import { hasActiveFilters } from '@/components/work-board/filters'
 import { Swimlane } from '@/components/work-board/swimlane'
 import { useUpdateObject } from '@/hooks/use-objects'
 import { useWorkBoard } from '@/hooks/use-work-board'
@@ -23,9 +25,14 @@ import { toast } from 'sonner'
  * for the workspace's task statuses. Cards are draggable between columns
  * within the same swimlane to change the task's status.
  */
-export function Board() {
+export interface BoardProps {
+	filters?: WorkBoardFilters
+}
+
+export function Board({ filters }: BoardProps = {}) {
 	const { workspaceId } = useWorkspace()
-	const { board, isLoading, error } = useWorkBoard()
+	const { board, isLoading, error } = useWorkBoard({ filters })
+	const filtersActive = hasActiveFilters(filters ?? {})
 	const updateObject = useUpdateObject(workspaceId)
 
 	// 5px activation distance so a click on the card still bubbles for navigation
@@ -54,7 +61,12 @@ export function Board() {
 	}
 
 	if (board.swimlanes.length === 0) {
-		return (
+		return filtersActive ? (
+			<EmptyState
+				title="No tasks match these filters"
+				description="Adjust or clear the filters above to see more work."
+			/>
+		) : (
 			<EmptyState
 				title="No bets or tasks yet"
 				description="Create a bet and break it into tasks to see swimlanes here. Loose tasks land in a 'No bet' lane at the bottom."
