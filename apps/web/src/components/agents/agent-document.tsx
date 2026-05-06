@@ -42,6 +42,7 @@ import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
+import { AgentUsageChart } from './agent-usage-chart'
 import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
 import { SessionDetailPanel } from './session-detail-panel'
@@ -260,6 +261,9 @@ export function AgentDocumentView({
 					if (!open) setSelectedSession(null)
 				}}
 			/>
+
+			{/* Usage chart */}
+			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>

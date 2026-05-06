@@ -1,3 +1,4 @@
+import { ExtensionRemovalDialog } from '@/components/extensions/extension-removal-dialog'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,6 +15,11 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Monitor, Moon, Sun, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
+
+interface PendingRemoval {
+	affectedTypes: string[]
+	commit: () => void
+}
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
 	component: GeneralPage,
@@ -69,33 +75,27 @@ function ExtensionsSection() {
 	const enabledModules = useEnabledModules()
 	const allModules = getAllWebModules()
 	const customExtensions = useCustomExtensions()
-	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+	const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null)
 
-	const handleToggle = (moduleId: string, enabled: boolean) => {
-		const next = enabled
-			? [...enabledModules, moduleId]
-			: enabledModules.filter((m) => m !== moduleId)
-
+	const enableModule = (moduleId: string) => {
+		const next = [...enabledModules, moduleId]
 		let mergedSettings: Record<string, unknown> = { ...settings, enabled_modules: next }
 
-		// When enabling, merge the module's default settings (only add missing keys)
-		if (enabled) {
-			const mod = getWebModule(moduleId)
-			const defaults = mod?.defaultSettings
-			if (defaults) {
-				const currentDisplayNames = (settings?.display_names as Record<string, string>) ?? {}
-				const currentStatuses = (settings?.statuses as Record<string, string[]>) ?? {}
-				mergedSettings = {
-					...mergedSettings,
-					display_names: {
-						...defaults.display_names,
-						...currentDisplayNames,
-					},
-					statuses: {
-						...defaults.statuses,
-						...currentStatuses,
-					},
-				}
+		const mod = getWebModule(moduleId)
+		const defaults = mod?.defaultSettings
+		if (defaults) {
+			const currentDisplayNames = (settings?.display_names as Record<string, string>) ?? {}
+			const currentStatuses = (settings?.statuses as Record<string, string[]>) ?? {}
+			mergedSettings = {
+				...mergedSettings,
+				display_names: {
+					...defaults.display_names,
+					...currentDisplayNames,
+				},
+				statuses: {
+					...defaults.statuses,
+					...currentStatuses,
+				},
 			}
 		}
 
@@ -105,7 +105,28 @@ function ExtensionsSection() {
 		)
 	}
 
-	const handleToggleCustomExtension = (extId: string, enabled: boolean) => {
+	const disableModule = (moduleId: string) => {
+		const next = enabledModules.filter((m) => m !== moduleId)
+		updateWorkspace.mutate(
+			{ settings: { ...settings, enabled_modules: next } },
+			{ onError: () => toast.error('Failed to update extensions') },
+		)
+	}
+
+	const handleToggle = (moduleId: string, enabled: boolean) => {
+		if (enabled) {
+			enableModule(moduleId)
+			return
+		}
+		const mod = getWebModule(moduleId)
+		const moduleTypes = mod?.objectTypeTabs.map((t) => t.value) ?? []
+		setPendingRemoval({
+			affectedTypes: moduleTypes,
+			commit: () => disableModule(moduleId),
+		})
+	}
+
+	const persistCustomExtensionEnabled = (extId: string, enabled: boolean) => {
 		const customExts = {
 			...((settings?.custom_extensions as Record<string, unknown>) ?? {}),
 		}
@@ -118,7 +139,19 @@ function ExtensionsSection() {
 		)
 	}
 
-	const handleDeleteCustomExtension = (extId: string, types: string[]) => {
+	const handleToggleCustomExtension = (extId: string, enabled: boolean) => {
+		if (enabled) {
+			persistCustomExtensionEnabled(extId, true)
+			return
+		}
+		const ext = customExtensions.find((e) => e.id === extId)
+		setPendingRemoval({
+			affectedTypes: ext?.types ?? [],
+			commit: () => persistCustomExtensionEnabled(extId, false),
+		})
+	}
+
+	const persistDeleteCustomExtension = (extId: string, types: string[]) => {
 		const statuses = { ...((settings?.statuses as Record<string, string[]>) ?? {}) }
 		const displayNames = { ...((settings?.display_names as Record<string, string>) ?? {}) }
 		const fieldDefs = {
@@ -147,6 +180,13 @@ function ExtensionsSection() {
 			},
 			{ onError: () => toast.error('Failed to delete extension') },
 		)
+	}
+
+	const handleDeleteCustomExtension = (extId: string, types: string[]) => {
+		setPendingRemoval({
+			affectedTypes: types,
+			commit: () => persistDeleteCustomExtension(extId, types),
+		})
 	}
 
 	return (
@@ -192,32 +232,14 @@ function ExtensionsSection() {
 							)}
 						</div>
 						<div className="flex items-center gap-3">
-							{confirmDeleteId === ext.id ? (
-								<div className="flex items-center gap-1">
-									<Button
-										size="sm"
-										variant="destructive"
-										onClick={() => {
-											handleDeleteCustomExtension(ext.id, ext.types)
-											setConfirmDeleteId(null)
-										}}
-									>
-										Delete
-									</Button>
-									<Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
-										Cancel
-									</Button>
-								</div>
-							) : (
-								<button
-									type="button"
-									aria-label={`Delete ${ext.name}`}
-									onClick={() => setConfirmDeleteId(ext.id)}
-									className="text-muted-foreground hover:text-destructive transition-colors"
-								>
-									<Trash2 size={15} />
-								</button>
-							)}
+							<button
+								type="button"
+								aria-label={`Delete ${ext.name}`}
+								onClick={() => handleDeleteCustomExtension(ext.id, ext.types)}
+								className="text-muted-foreground hover:text-destructive transition-colors"
+							>
+								<Trash2 size={15} />
+							</button>
 							<Switch
 								checked={ext.enabled}
 								onCheckedChange={(checked) => handleToggleCustomExtension(ext.id, !!checked)}
@@ -226,6 +248,22 @@ function ExtensionsSection() {
 					</div>
 				))}
 			</div>
+
+			{pendingRemoval && (
+				<ExtensionRemovalDialog
+					open={true}
+					onOpenChange={(open) => {
+						if (!open) setPendingRemoval(null)
+					}}
+					affectedTypes={pendingRemoval.affectedTypes}
+					workspaceId={workspaceId}
+					settings={settings}
+					onConfirmed={() => {
+						pendingRemoval.commit()
+						setPendingRemoval(null)
+					}}
+				/>
+			)}
 		</div>
 	)
 }

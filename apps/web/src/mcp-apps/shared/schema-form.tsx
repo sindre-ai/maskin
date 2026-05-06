@@ -2,7 +2,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
 import { type FormEvent, useMemo, useState } from 'react'
 import { SchemaSelect } from './schema-select'
 import {
@@ -36,15 +35,7 @@ function fieldLabel(field: SchemaFieldDef): string {
 	return field.name.replace(/_/g, ' ')
 }
 
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function validate(
-	values: Record<string, unknown>,
-	fields: SchemaFieldDef[],
-	jsonDrafts: Record<string, string>,
-): FieldErrors {
+function validate(values: Record<string, unknown>, fields: SchemaFieldDef[]): FieldErrors {
 	const errors: FieldErrors = {}
 	for (const f of fields) {
 		const v = values[f.name]
@@ -57,16 +48,6 @@ function validate(
 			if (isEmpty) {
 				errors[f.name] = `${fieldLabel(f)} is required`
 				continue
-			}
-		}
-		if (f.type === 'json') {
-			const draft = jsonDrafts[f.name]
-			if (draft !== undefined && draft.trim() !== '') {
-				try {
-					JSON.parse(draft)
-				} catch (err) {
-					errors[f.name] = `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`
-				}
 			}
 		}
 		if (f.type === 'number' && v !== undefined && v !== null && v !== '') {
@@ -85,8 +66,8 @@ function validate(
 /**
  * Schema-driven form for the custom metadata fields of an object type. Renders
  * one input per field declared on `get_workspace_schema`, dispatching by field
- * type to a typed widget (text, number, date, enum select, boolean toggle, JSON
- * editor). Validation runs on submit and surfaces errors inline.
+ * type to a typed widget (text, number, date, enum select, boolean toggle).
+ * Validation runs on submit and surfaces errors inline.
  *
  * The form is controlled — pass `values` and react to `onChange`. Provide
  * `onSubmit` to render a submit button and run validation on click.
@@ -116,15 +97,6 @@ export function SchemaForm({
 		return all.filter((f) => set.has(f.name))
 	}, [schema, objectType, fieldNames])
 
-	const [jsonDrafts, setJsonDrafts] = useState<Record<string, string>>(() => {
-		const drafts: Record<string, string> = {}
-		for (const f of fields) {
-			if (f.type === 'json' && isJsonObject(values[f.name])) {
-				drafts[f.name] = JSON.stringify(values[f.name], null, 2)
-			}
-		}
-		return drafts
-	})
 	const [errors, setErrors] = useState<FieldErrors>({})
 	const [submitting, setSubmitting] = useState(false)
 
@@ -139,28 +111,12 @@ export function SchemaForm({
 	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault()
 		if (!onSubmit) return
-		const next = { ...values }
-		// Materialise any pending JSON drafts back into values before validating.
-		for (const f of fields) {
-			if (f.type === 'json' && jsonDrafts[f.name] !== undefined) {
-				const draft = jsonDrafts[f.name].trim()
-				if (draft === '') {
-					next[f.name] = undefined
-					continue
-				}
-				try {
-					next[f.name] = JSON.parse(draft)
-				} catch {
-					// validation step will surface the parse error
-				}
-			}
-		}
-		const validationErrors = validate(next, fields, jsonDrafts)
+		const validationErrors = validate(values, fields)
 		setErrors(validationErrors)
 		if (Object.keys(validationErrors).length > 0) return
 		setSubmitting(true)
 		try {
-			await onSubmit(next)
+			await onSubmit(values)
 		} finally {
 			setSubmitting(false)
 		}
@@ -226,26 +182,6 @@ export function SchemaForm({
 								/>
 								<span className="text-xs text-muted-foreground">{v === true ? 'On' : 'Off'}</span>
 							</div>
-						) : f.type === 'json' ? (
-							<Textarea
-								id={inputId}
-								value={jsonDrafts[f.name] ?? (isJsonObject(v) ? JSON.stringify(v, null, 2) : '')}
-								onChange={(e) => {
-									const draft = e.target.value
-									setJsonDrafts((cur) => ({ ...cur, [f.name]: draft }))
-									try {
-										const parsed = JSON.parse(draft)
-										setFieldValue(f.name, parsed)
-									} catch {
-										// keep last-good value; validation will catch on submit
-									}
-								}}
-								rows={5}
-								className="font-mono text-xs"
-								disabled={disabled}
-								aria-invalid={errMsg ? true : undefined}
-								aria-describedby={errMsg ? errId : undefined}
-							/>
 						) : f.type === 'number' ? (
 							<Input
 								id={inputId}

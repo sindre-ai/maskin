@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useCallTool, useToolResult } from './mcp-app-provider'
 import { safeParseJson } from './parse'
 
-export type SchemaFieldType = 'text' | 'number' | 'date' | 'enum' | 'boolean' | 'json'
+export type SchemaFieldType = 'text' | 'number' | 'date' | 'enum' | 'boolean'
 
 export interface SchemaFieldDef {
 	name: string
@@ -29,7 +29,7 @@ interface ToolContent {
 	text?: string
 }
 
-const KNOWN_FIELD_TYPES: SchemaFieldType[] = ['text', 'number', 'date', 'enum', 'boolean', 'json']
+const KNOWN_FIELD_TYPES: SchemaFieldType[] = ['text', 'number', 'date', 'enum', 'boolean']
 
 function isFieldType(t: unknown): t is SchemaFieldType {
 	return typeof t === 'string' && (KNOWN_FIELD_TYPES as string[]).includes(t)

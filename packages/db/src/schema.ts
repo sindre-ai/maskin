@@ -6,6 +6,7 @@ import {
 	index,
 	integer,
 	jsonb,
+	numeric,
 	pgTable,
 	primaryKey,
 	text,
@@ -197,6 +198,12 @@ export const sessions = pgTable(
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
+		totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
+		inputTokens: integer('input_tokens'),
+		outputTokens: integer('output_tokens'),
+		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
+		cacheReadInputTokens: integer('cache_read_input_tokens'),
+		durationMs: integer('duration_ms'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -206,6 +213,9 @@ export const sessions = pgTable(
 	(t) => [
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
 		index('sessions_actor_idx').on(t.actorId),
+		index('sessions_actor_completed_idx')
+			.on(t.actorId, t.completedAt)
+			.where(sql`${t.completedAt} IS NOT NULL`),
 	],
 )
 
@@ -357,8 +367,10 @@ export const mcpTelemetry = pgTable(
 	'mcp_telemetry',
 	{
 		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		// Aggregate-only metric rows — cascade-delete with the workspace so
+		// dashboards never read telemetry for a workspace the user has removed.
 		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
+			.references(() => workspaces.id, { onDelete: 'cascade' })
 			.notNull(),
 		eventType: text('event_type').notNull(),
 		toolName: text('tool_name').notNull(),

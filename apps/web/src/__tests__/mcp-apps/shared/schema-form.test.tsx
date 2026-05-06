@@ -25,7 +25,6 @@ const schema: WorkspaceSchema = {
 				{ name: 'priority', type: 'enum', required: true, values: ['low', 'high'] },
 				{ name: 'count', type: 'number', required: false },
 				{ name: 'enabled', type: 'boolean', required: false },
-				{ name: 'config', type: 'json', required: false },
 				{ name: 'tag', type: 'text', required: true },
 			],
 		},
@@ -58,7 +57,6 @@ describe('SchemaForm', () => {
 		expect(screen.getByLabelText(/priority/i)).toBeInTheDocument()
 		expect(screen.getByLabelText(/count/i)).toBeInTheDocument()
 		expect(screen.getByLabelText(/enabled/i)).toBeInTheDocument()
-		expect(screen.getByLabelText(/config/i)).toBeInTheDocument()
 		expect(screen.getByLabelText(/tag/i)).toBeInTheDocument()
 	})
 
@@ -116,42 +114,5 @@ describe('SchemaForm', () => {
 		})
 		expect(screen.getByText(/tag is required/i)).toBeInTheDocument()
 		expect(onSubmit).not.toHaveBeenCalled()
-	})
-
-	it('flags invalid JSON inline at submit time', async () => {
-		const onSubmit = vi.fn()
-		render(
-			<Harness
-				initial={{ priority: 'low', tag: 'x' }}
-				onSubmit={onSubmit}
-				fieldNames={['config', 'priority', 'tag']}
-			/>,
-		)
-		fireEvent.change(screen.getByLabelText(/config/i), { target: { value: '{not json' } })
-		fireEvent.click(screen.getByRole('button', { name: /save/i }))
-		await waitFor(() => {
-			expect(screen.getByText(/invalid json/i)).toBeInTheDocument()
-		})
-		expect(onSubmit).not.toHaveBeenCalled()
-	})
-
-	it('parses valid JSON and forwards to onSubmit', async () => {
-		const onSubmit = vi.fn()
-		render(
-			<Harness
-				initial={{ priority: 'low', tag: 'x' }}
-				onSubmit={onSubmit}
-				fieldNames={['config', 'priority', 'tag']}
-			/>,
-		)
-		fireEvent.change(screen.getByLabelText(/config/i), { target: { value: '{"k":1}' } })
-		fireEvent.click(screen.getByRole('button', { name: /save/i }))
-		await waitFor(() => {
-			expect(onSubmit).toHaveBeenCalledTimes(1)
-		})
-		const submitted = onSubmit.mock.calls[0][0]
-		expect(submitted.config).toEqual({ k: 1 })
-		expect(submitted.priority).toBe('low')
-		expect(submitted.tag).toBe('x')
 	})
 })
