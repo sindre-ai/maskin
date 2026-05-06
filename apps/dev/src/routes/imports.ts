@@ -1,7 +1,8 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, imports, workspaces } from '@maskin/db/schema'
-import { importMappingSchema, importQuerySchema } from '@maskin/shared'
+import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
+import { type CsvOptions, importMappingSchema, importQuerySchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
@@ -287,14 +288,20 @@ app.openapi(updateMappingRoute, async (c) => {
 		)
 	}
 
-	// Check if CSV options changed — if so, re-parse the file from storage
-	const existingMapping = importRecord.mapping as Record<string, unknown> | null
+	// Check if CSV options changed — if so, re-parse the file from storage.
+	// Compare fields directly: JSON.stringify is order-sensitive and Postgres JSONB
+	// doesn't preserve key insertion order, so a round-trip through the DB returns
+	// keys in a different order than Zod's parsed output (delimiter/encoding flip).
+	// Stringify-based comparison would spuriously report a change and trigger the
+	// regeneration branch below, silently overwriting the user's chosen objectType.
+	const existingMapping = importRecord.mapping as { csvOptions?: CsvOptions } | null
 	const newCsvOptions = mapping.csvOptions
 	const existingCsvOptions = existingMapping?.csvOptions
 	const csvOptionsChanged =
 		importRecord.fileType === 'csv' &&
-		newCsvOptions &&
-		JSON.stringify(newCsvOptions) !== JSON.stringify(existingCsvOptions)
+		!!newCsvOptions &&
+		(newCsvOptions.delimiter !== existingCsvOptions?.delimiter ||
+			newCsvOptions.encoding !== existingCsvOptions?.encoding)
 
 	let finalMapping = mapping
 	let updatedPreview = undefined
@@ -489,6 +496,55 @@ app.openapi(confirmImportRoute, async (c) => {
 
 	if (!importRecord.mapping) {
 		return c.json(createApiError('BAD_REQUEST', 'No mapping configured'), 400)
+	}
+
+	// Reject early if the import is no longer in the 'mapping' state. The atomic UPDATE
+	// below also catches this race, but checking first avoids a workspace lookup we don't
+	// need and keeps the failure mode predictable for tests.
+	if (importRecord.status !== 'mapping') {
+		return c.json(
+			createApiError('CONFLICT', `Import is in '${importRecord.status}' state, not 'mapping'`),
+			409,
+		)
+	}
+
+	// Validate every typeMapping.objectType against the workspace's current statuses.
+	// Without this, executeImport would silently fall back to 'new' status and could
+	// produce objects with a stale type that no longer exists in the workspace.
+	const [workspace] = await db
+		.select()
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	const settings = (workspace.settings ?? {}) as WorkspaceSettings
+	// Use the same resolution as POST /objects: module-provided types merged with
+	// settings.statuses. Plain Object.keys(settings.statuses) misses module types
+	// whose statuses haven't been overridden, which would reject valid mappings.
+	const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
+	const validTypes = getAllValidTypes(enabledModules, settings)
+	const mapping = importRecord.mapping as z.infer<typeof importMappingSchema>
+	for (const tm of mapping.typeMappings ?? []) {
+		if (!tm.objectType || !validTypes.includes(tm.objectType)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Invalid object type '${tm.objectType}' in import mapping`,
+					[
+						{
+							field: 'mapping.typeMappings[].objectType',
+							message: `'${tm.objectType}' is not enabled in this workspace`,
+							expected: validTypes.length > 0 ? validTypes.join(' | ') : 'any enabled type',
+							received: `'${tm.objectType ?? ''}'`,
+						},
+					],
+					'Pick a valid object type in the import mapping step before confirming.',
+				),
+				400,
+			)
+		}
 	}
 
 	// Atomically claim the import — only succeeds if status is still 'mapping'

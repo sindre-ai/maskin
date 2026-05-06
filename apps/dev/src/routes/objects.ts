@@ -4,6 +4,8 @@ import { events, objects, relationships, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	createObjectSchema,
+	migrateObjectTypeResponseSchema,
+	migrateObjectTypeSchema,
 	objectQuerySchema,
 	searchObjectsSchema,
 	updateObjectSchema,
@@ -517,6 +519,159 @@ const deleteObjectRoute = createRoute({
 			description: 'Object not found',
 		},
 	},
+})
+
+// POST /migrate-type - Bulk migrate or delete every object of a given type
+const migrateObjectTypeRoute = createRoute({
+	method: 'post',
+	path: '/migrate-type',
+	tags: ['Objects'],
+	summary: 'Migrate or delete all objects of a given type in a workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: migrateObjectTypeSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: migrateObjectTypeResponseSchema } },
+			description: 'Migration completed',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Workspace not found',
+		},
+	},
+})
+
+app.openapi(migrateObjectTypeRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const body = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [workspace] = await db
+		.select()
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const settings = workspace.settings as WorkspaceSettings
+
+	if (body.mode === 'migrate') {
+		// At this point Zod refine guarantees toType is defined; assert for TS narrowing.
+		const toType = body.toType as string
+		const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
+		const validTypes = getAllValidTypes(enabledModules, settings)
+		if (!validTypes.includes(toType)) {
+			return c.json(createInvalidTypeError(toType, 'toType', validTypes), 400)
+		}
+
+		const targetStatuses = settings?.statuses?.[toType] ?? []
+		const fallbackStatus = targetStatuses[0]
+		if (!fallbackStatus) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Target type '${toType}' has no statuses configured`,
+					undefined,
+					'Configure at least one status for the target type before migrating.',
+				),
+				400,
+			)
+		}
+
+		// Pull every object of fromType so we can compute per-row status mapping.
+		const rows = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
+
+		if (rows.length === 0) {
+			return c.json({ mode: 'migrate' as const, fromType: body.fromType, toType, count: 0 }, 200)
+		}
+
+		// Group rows by their resolved target status so we can emit one UPDATE per
+		// group instead of one per row — keeps the transaction short on large
+		// workspaces. Map preserves insertion order, so groups appear in the order
+		// statuses are first encountered while iterating rows.
+		const statusMap = body.statusMap ?? {}
+		const idsByStatus = new Map<string, string[]>()
+		const eventValues: (typeof events.$inferInsert)[] = []
+		for (const row of rows) {
+			const mappedStatus = statusMap[row.status] ?? row.status
+			const newStatus = targetStatuses.includes(mappedStatus) ? mappedStatus : fallbackStatus
+			const bucket = idsByStatus.get(newStatus)
+			if (bucket) bucket.push(row.id)
+			else idsByStatus.set(newStatus, [row.id])
+			eventValues.push({
+				workspaceId,
+				actorId,
+				action: 'type_migrated',
+				entityType: toType,
+				entityId: row.id,
+				data: { fromType: body.fromType, toType, fromStatus: row.status, toStatus: newStatus },
+			})
+		}
+
+		const now = new Date()
+		await db.transaction(async (tx) => {
+			for (const [newStatus, ids] of idsByStatus) {
+				await tx
+					.update(objects)
+					.set({ type: toType, status: newStatus, updatedAt: now })
+					.where(inArray(objects.id, ids))
+			}
+			await tx.insert(events).values(eventValues)
+		})
+
+		return c.json(
+			{ mode: 'migrate' as const, fromType: body.fromType, toType, count: rows.length },
+			200,
+		)
+	}
+
+	// mode === 'delete'
+	const toDelete = await db
+		.select({ id: objects.id })
+		.from(objects)
+		.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
+
+	if (toDelete.length === 0) {
+		return c.json({ mode: 'delete' as const, fromType: body.fromType, count: 0 }, 200)
+	}
+
+	await db.transaction(async (tx) => {
+		await tx
+			.delete(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
+
+		await tx.insert(events).values(
+			toDelete.map(({ id: objectId }) => ({
+				workspaceId,
+				actorId,
+				action: 'deleted' as const,
+				entityType: body.fromType,
+				entityId: objectId,
+				data: { reason: 'extension_removed' },
+			})),
+		)
+	})
+
+	return c.json({ mode: 'delete' as const, fromType: body.fromType, count: toDelete.length }, 200)
 })
 
 app.openapi(deleteObjectRoute, async (c) => {

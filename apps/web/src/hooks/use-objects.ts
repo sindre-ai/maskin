@@ -2,7 +2,7 @@ import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-import type { ObjectResponse } from '../lib/api'
+import type { MigrateObjectTypeInput, ObjectResponse } from '../lib/api'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -55,6 +55,17 @@ export function useUpdateObject(workspaceId: string) {
 			api.objects.update(id, data),
 		onSettled: (_data, _err, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+		},
+	})
+}
+
+export function useMigrateObjectType(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: MigrateObjectTypeInput) => api.objects.migrateType(workspaceId, data),
+		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 		},
