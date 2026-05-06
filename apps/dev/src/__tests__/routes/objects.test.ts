@@ -553,6 +553,66 @@ describe('Objects Routes', () => {
 			expect(body).toMatchObject({ mode: 'delete', fromType: 'task', count: 1 })
 		})
 
+		it('applies statusMap and falls back when target lacks the source status', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			// 'task' statuses → ['todo', 'in_progress', 'done', 'blocked']
+			// 'bet'  statuses → ['signal', 'proposed', 'active', ...] — no overlap
+			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
+			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'done' })
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws], [obj1, obj2]]
+			mockResults.update = [{}]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{
+						fromType: 'task',
+						toType: 'bet',
+						mode: 'migrate',
+						// 'todo' is mapped explicitly; 'done' has no entry → uses fallback
+						statusMap: { todo: 'active' },
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			// First update: 'todo' → 'active' via statusMap
+			expect(calls.updates[0]).toMatchObject({ type: 'bet', status: 'active' })
+			// Second update: 'done' isn't a valid bet status and isn't in statusMap → first bet status
+			expect(calls.updates[1]).toMatchObject({ type: 'bet', status: 'signal' })
+		})
+
+		it('returns 400 when target type has no statuses configured', async () => {
+			const ws = buildWorkspace({
+				id: wsId,
+				settings: {
+					enabled_modules: ['work'],
+					display_names: { bet: 'Bet', task: 'Task' },
+					statuses: {
+						task: ['todo', 'done'],
+						bet: [],
+					},
+				},
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
 		it('returns 404 when workspace not found', async () => {
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
 			mockResults.selectQueue = [[]]

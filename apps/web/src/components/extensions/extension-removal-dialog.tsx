@@ -63,16 +63,28 @@ export function ExtensionRemovalDialog({
 	)
 
 	// Per-type counts. Skip query when the dialog isn't open.
+	// Fetch one extra row past the cap so we can show "100+" instead of an
+	// undercount when the user has more objects than the page size.
+	const COUNT_CAP = 100
 	const countQueries = useQueries({
 		queries: affectedTypes.map((type) => ({
 			queryKey: ['objects', workspaceId, 'count-by-type', type] as const,
 			queryFn: async () => {
-				const rows = await api.objects.list(workspaceId, { type, limit: '100' })
-				return rows.length
+				const rows = await api.objects.list(workspaceId, {
+					type,
+					limit: String(COUNT_CAP + 1),
+				})
+				return { count: Math.min(rows.length, COUNT_CAP), hasMore: rows.length > COUNT_CAP }
 			},
 			enabled: open,
 		})),
 	})
+
+	const formatCount = (data: { count: number; hasMore: boolean } | undefined) => {
+		if (!data) return '0 objects'
+		const suffix = data.hasMore ? '+' : ''
+		return `${data.count}${suffix} object${data.count === 1 && !data.hasMore ? '' : 's'}`
+	}
 
 	const [choices, setChoices] = useState<Record<string, Choice>>({})
 	const [submitting, setSubmitting] = useState(false)
@@ -84,8 +96,8 @@ export function ExtensionRemovalDialog({
 
 	// Types with no existing objects don't need a choice — auto-resolve them.
 	const allResolved = affectedTypes.every((t, idx) => {
-		const count = countQueries[idx]?.data ?? 0
-		if (count === 0) return true
+		const data = countQueries[idx]?.data
+		if (data && data.count === 0 && !data.hasMore) return true
 		const c = choices[t]
 		if (!c) return false
 		if (c.kind === 'migrate') return !!c.toType
@@ -139,7 +151,8 @@ export function ExtensionRemovalDialog({
 				<div className="space-y-4 max-h-[60vh] overflow-y-auto">
 					{affectedTypes.map((type, idx) => {
 						const countQuery = countQueries[idx]
-						const count = countQuery?.data ?? 0
+						const data = countQuery?.data
+						const isEmpty = !!data && data.count === 0 && !data.hasMore
 						const label = displayNames[type] ?? type
 						const choice = choices[type]
 						const sourceStatuses = statuses[type] ?? []
@@ -152,14 +165,12 @@ export function ExtensionRemovalDialog({
 									<div>
 										<div className="text-sm font-medium capitalize">{label}</div>
 										<div className="text-xs text-muted-foreground">
-											{countQuery?.isLoading
-												? 'Counting…'
-												: `${count} object${count === 1 ? '' : 's'}`}
+											{countQuery?.isLoading ? 'Counting…' : formatCount(data)}
 										</div>
 									</div>
 								</div>
 
-								{count === 0 ? (
+								{isEmpty ? (
 									<p className="text-xs text-muted-foreground">
 										No objects to migrate. The extension will be removed.
 									</p>
@@ -260,8 +271,7 @@ export function ExtensionRemovalDialog({
 										<div className="flex items-start gap-2">
 											<RadioGroupItem value="delete" id={`${type}-delete`} className="mt-1" />
 											<Label htmlFor={`${type}-delete`} className="text-sm font-normal">
-												Delete {count} object{count === 1 ? '' : 's'}{' '}
-												<span className="text-error">(permanent)</span>
+												Delete {formatCount(data)} <span className="text-error">(permanent)</span>
 											</Label>
 										</div>
 

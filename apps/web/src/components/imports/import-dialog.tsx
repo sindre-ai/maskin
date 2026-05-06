@@ -664,7 +664,7 @@ function MappingStep({
 				<Button onClick={handleConfirmClick} disabled={isUpdating || isConfirming}>
 					{isConfirming ? (
 						<>
-							<Loader2 size={14} className="animate-spin" /> Importing\u2026
+							<Loader2 size={14} className="animate-spin" /> Importing&hellip;
 						</>
 					) : (
 						<>
