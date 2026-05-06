@@ -431,6 +431,29 @@ describe('Objects Routes', () => {
 			// event.
 			expect(res.status).not.toBe(200)
 		})
+
+		it('returns 404 when the row vanishes between the initial select and the tx update', async () => {
+			// Race-condition branch: the route loads the object via db.select(),
+			// then enters a transaction and re-issues tx.update().returning(). If
+			// a concurrent DELETE landed between those two reads, the UPDATE
+			// matches zero rows. The route's `if (!row) return undefined` branch
+			// must produce a clean 404 — not a 500 or a half-committed event row.
+			const existing = buildObject({ status: 'todo' })
+			const ws = buildWorkspace({ id: existing.workspaceId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// existing → workspace member → workspace settings (status validation)
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+			// tx.update().returning() resolves to [] — the row was deleted between reads.
+			mockResults.update = []
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'in_progress' }),
+			)
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error.code).toBe('NOT_FOUND')
+		})
 	})
 
 	describe('GET /api/objects/:id/graph - no relationships', () => {

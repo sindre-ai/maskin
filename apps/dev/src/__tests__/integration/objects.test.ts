@@ -1,8 +1,8 @@
-import { events } from '@maskin/db/schema'
+import { events, objects } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { buildCreateObjectBody, insertActor, insertObject, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 
 const { default: objectsRoutes } = await import('../../routes/objects')
 
@@ -92,6 +92,56 @@ describe('Objects Integration', () => {
 			expect(logged[0].action).toBe('created')
 			expect(logged[1].action).toBe('updated')
 			expect(logged[2].action).toBe('deleted')
+		})
+
+		it('rolls back the row UPDATE when the events INSERT fails inside the transaction', async () => {
+			// Real-DB regression for the atomicity guarantee. The unit test in
+			// routes/objects.test.ts only asserts the route returns non-200; the
+			// load-bearing property is that the row UPDATE is NOT committed when
+			// the events INSERT fails inside the same tx. Without that, the
+			// orphaned-task pattern (status flips, no event, no trigger) returns.
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const created = await createRes.json()
+			expect(created.status).toBe('todo')
+
+			// Install a BEFORE INSERT trigger on `events` that raises, forcing the
+			// INSERT inside the route's tx to fail. Drop it in finally so subsequent
+			// tests start clean (beforeEach TRUNCATEs but does not DROP triggers).
+			await sql`
+				CREATE OR REPLACE FUNCTION reject_events_insert_atomicity_test() RETURNS TRIGGER AS $$
+				BEGIN
+					RAISE EXCEPTION 'forced events insert failure for atomicity test';
+				END;
+				$$ LANGUAGE plpgsql
+			`
+			await sql`
+				CREATE TRIGGER reject_events_insert_atomicity_test
+				BEFORE INSERT ON events
+				FOR EACH ROW EXECUTE FUNCTION reject_events_insert_atomicity_test()
+			`
+
+			try {
+				const updateRes = await app.request(
+					jsonRequest('PATCH', `/api/objects/${created.id}`, { status: 'in_progress' }),
+				)
+
+				// Transaction rolled back → route surfaces an error, not 200.
+				expect(updateRes.status).not.toBe(200)
+
+				// The DB row's status must still be the original — proving the
+				// UPDATE did not commit even though the route attempted it.
+				const [row] = await db.select().from(objects).where(eq(objects.id, created.id))
+				expect(row?.status).toBe('todo')
+			} finally {
+				await sql`DROP TRIGGER IF EXISTS reject_events_insert_atomicity_test ON events`
+				await sql`DROP FUNCTION IF EXISTS reject_events_insert_atomicity_test()`
+			}
 		})
 
 		it('emits status_changed atomically on PATCH status update', async () => {
