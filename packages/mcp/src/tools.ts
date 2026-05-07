@@ -221,9 +221,17 @@ export const tools = {
 		}),
 	},
 	list_relationships: {
-		description: 'List relationships with optional filters',
+		description:
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Match relationships where this object is either the source or the target (direction-agnostic). Prefer this over source_id/target_id when you want every edge connected to an object.',
+				),
 			source_id: z.string().uuid().optional(),
 			target_id: z.string().uuid().optional(),
 			type: z.string().optional(),

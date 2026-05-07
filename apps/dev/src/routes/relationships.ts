@@ -2,7 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, relationships } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
@@ -112,6 +112,11 @@ app.openapi(listRelationshipsRoute, async (c) => {
 	const query = c.req.valid('query')
 
 	const conditions = []
+	if (query.object_id) {
+		conditions.push(
+			or(eq(relationships.sourceId, query.object_id), eq(relationships.targetId, query.object_id)),
+		)
+	}
 	if (query.source_id) conditions.push(eq(relationships.sourceId, query.source_id))
 	if (query.target_id) conditions.push(eq(relationships.targetId, query.target_id))
 	if (query.type) conditions.push(eq(relationships.type, query.type))

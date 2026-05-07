@@ -964,6 +964,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const params = new URLSearchParams()
+			if (args.object_id) params.set('object_id', args.object_id)
 			if (args.source_id) params.set('source_id', args.source_id)
 			if (args.target_id) params.set('target_id', args.target_id)
 			if (args.type) params.set('type', args.type)
