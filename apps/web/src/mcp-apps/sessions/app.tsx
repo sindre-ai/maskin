@@ -1,21 +1,12 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
-import {
-	ArrowLeft,
-	CheckCircle2,
-	Clock,
-	MinusCircle,
-	Pause,
-	Play,
-	Square,
-	Terminal,
-	XCircle,
-} from 'lucide-react'
+import { ArrowLeft, Clock, Pause, Play, Square, Terminal } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
@@ -26,31 +17,9 @@ import { WebAppLink } from '../shared/web-app-link'
 const TERMINAL = new Set(['completed', 'failed', 'timeout'])
 const RUNNING = new Set(['running', 'starting', 'snapshotting'])
 
-const STATUS_CONFIG: Record<string, { icon: React.ElementType; label: string; className: string }> =
-	{
-		completed: { icon: CheckCircle2, label: 'Completed', className: 'text-success' },
-		failed: { icon: XCircle, label: 'Failed', className: 'text-error' },
-		timeout: { icon: Clock, label: 'Timed out', className: 'text-error' },
-		running: { icon: Spinner, label: 'Running', className: 'text-accent' },
-		starting: { icon: Spinner, label: 'Starting', className: 'text-accent' },
-		paused: { icon: Clock, label: 'Paused', className: 'text-warning' },
-		snapshotting: { icon: Clock, label: 'Snapshotting', className: 'text-warning' },
-		pending: { icon: Clock, label: 'Pending', className: 'text-muted-foreground' },
-	}
-
-const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-	pending: 'secondary',
-	starting: 'default',
-	running: 'default',
-	snapshotting: 'default',
-	paused: 'outline',
-	completed: 'secondary',
-	failed: 'destructive',
-	timeout: 'destructive',
-}
-
 type SessionLog = { id?: number; stream?: string; content?: string; createdAt?: string | null }
 type LogFilter = 'all' | 'stdout' | 'stderr' | 'system'
+type SessionMutation = 'pause_session' | 'resume_session' | 'stop_session'
 
 /**
  * Server-side session payload, optionally enriched with `actorName` by the MCP
@@ -64,23 +33,120 @@ interface SessionWithLogsEnvelope {
 	logs?: SessionLog[]
 }
 
+type ToolResult = { content?: Array<{ type: string; text?: string }> }
+
 function actorDisplay(session: { actorName?: string; actorId: string }): string {
 	if (session.actorName) return session.actorName
 	return session.actorId.slice(0, 8)
 }
 
-function SessionStatus({ status }: { status: string }) {
-	const cfg = STATUS_CONFIG[status] ?? {
-		icon: MinusCircle,
-		label: status,
-		className: 'text-muted-foreground',
+/** Pull `{ session, logs? }` out of any session-tool response shape. */
+function parseSessionFromResult(result: ToolResult): SessionWithLogsEnvelope | null {
+	const text = result.content?.find((c) => c.type === 'text')?.text
+	if (!text) return null
+	const unwrapped = unwrapEnvelope(safeParseJson(text))
+	if (isObject<SessionWithLogsEnvelope>(unwrapped, 'session')) {
+		return { session: unwrapped.session, logs: unwrapped.logs }
 	}
-	const Icon = cfg.icon
+	if (isObject<EnrichedSession>(unwrapped, 'id', 'status')) {
+		return { session: unwrapped }
+	}
+	return null
+}
+
+/**
+ * Shared optimistic-update flow for pause/resume/stop. Caller supplies the
+ * apply/rollback callbacks that mutate its local state, plus optional
+ * `applySession` to absorb the full updated session from the response.
+ */
+function useSessionMutation(applySession?: (session: EnrichedSession) => void) {
+	const callTool = useCallTool()
+	const [busyId, setBusyId] = useState<string | null>(null)
+
+	const run = useCallback(
+		async (params: {
+			session: EnrichedSession
+			tool: SessionMutation
+			applyOptimistic: () => void
+			rollback: () => void
+		}) => {
+			setBusyId(params.session.id)
+			params.applyOptimistic()
+			try {
+				const result = await callTool(params.tool, { id: params.session.id })
+				if (applySession) {
+					const parsed = parseSessionFromResult(result)
+					if (parsed?.session) applySession(parsed.session)
+				}
+			} catch (err) {
+				params.rollback()
+				console.error(`Failed to ${params.tool}`, err)
+			} finally {
+				setBusyId(null)
+			}
+		},
+		[callTool, applySession],
+	)
+
+	return { busyId, run }
+}
+
+/**
+ * Pause/resume/stop button group, shared between row and detail views.
+ * `variant: 'icon'` is icon-only ghost buttons (stops click bubbling so the
+ * surrounding row's onSelect doesn't fire); `variant: 'labeled'` is icon+label
+ * outline buttons.
+ */
+function SessionActions({
+	session,
+	busy,
+	variant,
+	onPause,
+	onResume,
+	onStop,
+}: {
+	session: EnrichedSession
+	busy: boolean
+	variant: 'icon' | 'labeled'
+	onPause: () => void
+	onResume: () => void
+	onStop: () => void
+}) {
+	const isRunning = RUNNING.has(session.status)
+	const isPaused = session.status === 'paused'
+	const isTerminal = TERMINAL.has(session.status)
+	const buttonVariant = variant === 'icon' ? 'ghost' : 'outline'
+
+	const handle = (fn: () => void) => (e: React.MouseEvent) => {
+		if (variant === 'icon') e.stopPropagation()
+		fn()
+	}
+
+	const buttons: Array<{ show: boolean; icon: typeof Pause; label: string; onClick: () => void }> =
+		[
+			{ show: isRunning, icon: Pause, label: 'Pause', onClick: onPause },
+			{ show: isPaused, icon: Play, label: 'Resume', onClick: onResume },
+			{ show: !isTerminal, icon: Square, label: 'Stop', onClick: onStop },
+		]
+
 	return (
-		<span className={cn('flex items-center gap-1.5 text-sm font-medium', cfg.className)}>
-			<Icon size={14} />
-			{cfg.label}
-		</span>
+		<>
+			{buttons
+				.filter((b) => b.show)
+				.map(({ icon: Icon, label, onClick }) => (
+					<Button
+						key={label}
+						size="sm"
+						variant={buttonVariant}
+						disabled={busy}
+						onClick={handle(onClick)}
+						title={label}
+					>
+						<Icon className={cn('size-4', variant === 'labeled' && 'mr-1')} />
+						{variant === 'labeled' && label}
+					</Button>
+				))}
+		</>
 	)
 }
 
@@ -99,43 +165,25 @@ function SessionsApp() {
 	const data = safeParseJson(text)
 	if (!data) return <div className="p-4 text-sm text-foreground">{text}</div>
 
-	const unwrapped = unwrapEnvelope(data)
-
-	switch (toolResult.toolName) {
-		case 'list_sessions':
-			return isArray(unwrapped) ? (
-				<SessionListView sessions={unwrapped as EnrichedSession[]} />
-			) : (
-				<div className="p-4 text-sm text-foreground">{text}</div>
-			)
-		case 'create_session':
-		case 'get_session':
-		case 'pause_session':
-		case 'resume_session':
-		case 'stop_session':
-			if (isObject<SessionWithLogsEnvelope>(unwrapped, 'session')) {
-				return <SessionDetailView session={unwrapped.session} logs={unwrapped.logs} />
-			}
-			return isObject<EnrichedSession>(unwrapped, 'id', 'status') ? (
-				<SessionDetailView session={unwrapped} />
-			) : (
-				<div className="p-4 text-sm text-foreground">{text}</div>
-			)
-		case 'run_agent':
-			return isObject<SessionWithLogsEnvelope>(unwrapped, 'session') ? (
-				<SessionDetailView session={unwrapped.session} logs={unwrapped.logs} />
-			) : (
-				<div className="p-4 text-sm text-foreground">{text}</div>
-			)
-		default:
-			return <div className="p-4 text-sm text-foreground">{text}</div>
+	if (toolResult.toolName === 'list_sessions') {
+		const unwrapped = unwrapEnvelope(data)
+		return isArray(unwrapped) ? (
+			<SessionListView sessions={unwrapped as EnrichedSession[]} />
+		) : (
+			<div className="p-4 text-sm text-foreground">{text}</div>
+		)
 	}
+
+	// create_session, get_session, pause_session, resume_session, stop_session,
+	// run_agent — all return either { session, logs? } or a raw session.
+	const parsed = parseSessionFromResult(toolResult.result)
+	if (parsed) return <SessionDetailView session={parsed.session} logs={parsed.logs} />
+	return <div className="p-4 text-sm text-foreground">{text}</div>
 }
 
 function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
 	const callTool = useCallTool()
 	const [local, setLocal] = useState<EnrichedSession[]>(sessions)
-	const [busyId, setBusyId] = useState<string | null>(null)
 	const [selected, setSelected] = useState<{
 		session: EnrichedSession
 		logs?: SessionLog[]
@@ -146,27 +194,21 @@ function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
 		setLocal(sessions)
 	}, [sessions])
 
-	const runAction = useCallback(
-		async (
-			session: EnrichedSession,
-			tool: 'pause_session' | 'resume_session' | 'stop_session',
-			optimisticStatus: string,
-		) => {
-			setBusyId(session.id)
+	const { busyId, run } = useSessionMutation()
+
+	const handleAction = useCallback(
+		(session: EnrichedSession, tool: SessionMutation, optimisticStatus: string) => {
 			const previous = session.status
-			setLocal((cur) =>
-				cur.map((s) => (s.id === session.id ? { ...s, status: optimisticStatus } : s)),
-			)
-			try {
-				await callTool(tool, { id: session.id })
-			} catch (err) {
-				setLocal((cur) => cur.map((s) => (s.id === session.id ? { ...s, status: previous } : s)))
-				console.error(`Failed to ${tool}`, err)
-			} finally {
-				setBusyId(null)
-			}
+			const setStatus = (status: string) =>
+				setLocal((cur) => cur.map((s) => (s.id === session.id ? { ...s, status } : s)))
+			run({
+				session,
+				tool,
+				applyOptimistic: () => setStatus(optimisticStatus),
+				rollback: () => setStatus(previous),
+			})
 		},
-		[callTool],
+		[run],
 	)
 
 	const openDetail = useCallback(
@@ -178,21 +220,12 @@ function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
 					include_logs: true,
 					log_limit: 200,
 				})
-				const text = result.content?.find(
-					(c: { type: string; text?: string }) => c.type === 'text',
-				)?.text
-				if (!text) {
-					setSelected({ session, loading: false })
-					return
-				}
-				const unwrapped = unwrapEnvelope(safeParseJson(text))
-				if (isObject<SessionWithLogsEnvelope>(unwrapped, 'session')) {
-					setSelected({ session: unwrapped.session, logs: unwrapped.logs, loading: false })
-				} else if (isObject<EnrichedSession>(unwrapped, 'id', 'status')) {
-					setSelected({ session: unwrapped, loading: false })
-				} else {
-					setSelected({ session, loading: false })
-				}
+				const parsed = parseSessionFromResult(result)
+				setSelected(
+					parsed
+						? { session: parsed.session, logs: parsed.logs, loading: false }
+						: { session, loading: false },
+				)
 			} catch (err) {
 				console.error('Failed to load session detail', err)
 				setSelected({ session, loading: false })
@@ -227,9 +260,9 @@ function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
 					session={session}
 					busy={busyId === session.id}
 					onSelect={() => openDetail(session)}
-					onPause={() => runAction(session, 'pause_session', 'paused')}
-					onResume={() => runAction(session, 'resume_session', 'running')}
-					onStop={() => runAction(session, 'stop_session', 'completed')}
+					onPause={() => handleAction(session, 'pause_session', 'paused')}
+					onResume={() => handleAction(session, 'resume_session', 'running')}
+					onStop={() => handleAction(session, 'stop_session', 'completed')}
 				/>
 			))}
 		</div>
@@ -251,13 +284,6 @@ function SessionRow({
 	onResume: () => void
 	onStop: () => void
 }) {
-	const isRunning = RUNNING.has(session.status)
-	const isPaused = session.status === 'paused'
-	const isTerminal = TERMINAL.has(session.status)
-	const stop = (handler: () => void) => (e: React.MouseEvent) => {
-		e.stopPropagation()
-		handler()
-	}
 	return (
 		<div className="rounded-lg border border-border bg-bg-surface p-3 flex items-start gap-3 hover:border-border-hover hover:bg-bg-hover transition-colors">
 			<button
@@ -266,7 +292,7 @@ function SessionRow({
 				className="flex-1 min-w-0 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
 			>
 				<div className="flex items-center gap-2 flex-wrap">
-					<Badge variant={STATUS_VARIANTS[session.status] ?? 'secondary'}>{session.status}</Badge>
+					<StatusBadge status={session.status} />
 					<span className="font-mono text-xs text-muted-foreground truncate">{session.id}</span>
 					{session.createdAt && (
 						<span className="text-xs text-muted-foreground">
@@ -283,21 +309,14 @@ function SessionRow({
 					{actorDisplay(session)}
 				</Badge>
 				<WebAppLink target={{ kind: 'session', id: session.id, actorId: session.actorId }} />
-				{isRunning && (
-					<Button size="sm" variant="ghost" disabled={busy} onClick={stop(onPause)} title="Pause">
-						<Pause className="size-4" />
-					</Button>
-				)}
-				{isPaused && (
-					<Button size="sm" variant="ghost" disabled={busy} onClick={stop(onResume)} title="Resume">
-						<Play className="size-4" />
-					</Button>
-				)}
-				{!isTerminal && (
-					<Button size="sm" variant="ghost" disabled={busy} onClick={stop(onStop)} title="Stop">
-						<Square className="size-4" />
-					</Button>
-				)}
+				<SessionActions
+					session={session}
+					busy={busy}
+					variant="icon"
+					onPause={onPause}
+					onResume={onResume}
+					onStop={onStop}
+				/>
 			</div>
 		</div>
 	)
@@ -314,45 +333,30 @@ function SessionDetailView({
 	loading?: boolean
 	onBack?: () => void
 }) {
-	const callTool = useCallTool()
 	const [current, setCurrent] = useState<EnrichedSession>(session)
-	const [busy, setBusy] = useState(false)
 	const [logFilter, setLogFilter] = useState<LogFilter>('all')
 
 	useEffect(() => {
 		setCurrent(session)
 	}, [session])
 
-	const runAction = useCallback(
-		async (tool: 'pause_session' | 'resume_session' | 'stop_session', optimisticStatus: string) => {
-			setBusy(true)
+	const { busyId, run } = useSessionMutation(setCurrent)
+	const busy = busyId === current.id
+
+	const handleAction = useCallback(
+		(tool: SessionMutation, optimisticStatus: string) => {
 			const previous = current.status
-			setCurrent((c) => ({ ...c, status: optimisticStatus }))
-			try {
-				const result = await callTool(tool, { id: current.id })
-				const text = result.content?.find(
-					(c: { type: string; text?: string }) => c.type === 'text',
-				)?.text
-				if (text) {
-					const next = unwrapEnvelope(safeParseJson(text))
-					if (isObject<EnrichedSession>(next, 'id', 'status')) {
-						setCurrent(next)
-					}
-				}
-			} catch (err) {
-				setCurrent((c) => ({ ...c, status: previous }))
-				console.error(`Failed to ${tool}`, err)
-			} finally {
-				setBusy(false)
-			}
+			run({
+				session: current,
+				tool,
+				applyOptimistic: () => setCurrent((c) => ({ ...c, status: optimisticStatus })),
+				rollback: () => setCurrent((c) => ({ ...c, status: previous })),
+			})
 		},
-		[callTool, current.id, current.status],
+		[run, current],
 	)
 
 	const isRunning = RUNNING.has(current.status)
-	const isPaused = current.status === 'paused'
-	const isTerminal = TERMINAL.has(current.status)
-
 	const duration = formatDurationBetween(current.startedAt, current.completedAt)
 	const result = current.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
@@ -397,7 +401,10 @@ function SessionDetailView({
 			</div>
 
 			<div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm">
-				<SessionStatus status={current.status} />
+				<div className="flex items-center gap-1.5">
+					<StatusBadge status={current.status} />
+					{isRunning && <Spinner className="size-3 text-accent" />}
+				</div>
 				{duration && (
 					<span className="text-muted-foreground flex items-center gap-1">
 						<Clock size={13} />
@@ -421,36 +428,14 @@ function SessionDetailView({
 			)}
 
 			<div className="flex items-center gap-2">
-				{isRunning && (
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={busy}
-						onClick={() => runAction('pause_session', 'paused')}
-					>
-						<Pause className="size-4 mr-1" /> Pause
-					</Button>
-				)}
-				{isPaused && (
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={busy}
-						onClick={() => runAction('resume_session', 'running')}
-					>
-						<Play className="size-4 mr-1" /> Resume
-					</Button>
-				)}
-				{!isTerminal && (
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={busy}
-						onClick={() => runAction('stop_session', 'completed')}
-					>
-						<Square className="size-4 mr-1" /> Stop
-					</Button>
-				)}
+				<SessionActions
+					session={current}
+					busy={busy}
+					variant="labeled"
+					onPause={() => handleAction('pause_session', 'paused')}
+					onResume={() => handleAction('resume_session', 'running')}
+					onStop={() => handleAction('stop_session', 'completed')}
+				/>
 			</div>
 
 			<div>
