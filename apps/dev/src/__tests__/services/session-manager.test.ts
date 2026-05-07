@@ -406,6 +406,58 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('writeInput()', () => {
+		it('persists the user input as a stdout session_logs row and emits a log event', async () => {
+			const session = buildSession({ interactive: true, status: 'running' })
+			const log = {
+				id: 42,
+				sessionId: session.id,
+				stream: 'stdout',
+				content: '{"type":"user","message":{"role":"user","content":"hello"}}',
+				createdAt: new Date(),
+			}
+			mockResults.insert = [log]
+
+			const events: unknown[] = []
+			manager.on('log', (e) => events.push(e))
+
+			await manager.writeInput(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'hello' },
+			})
+
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'hello' },
+			})
+			expect(events).toEqual([
+				{
+					sessionId: session.id,
+					logId: 42,
+					stream: 'stdout',
+					data: '{"type":"user","message":{"role":"user","content":"hello"}}',
+				},
+			])
+		})
+
+		it('does not record a log row when the stdin write fails', async () => {
+			const session = buildSession({ interactive: true, status: 'running' })
+			mockContainerManager.write.mockRejectedValueOnce(new Error('stream closed'))
+
+			const events: unknown[] = []
+			manager.on('log', (e) => events.push(e))
+
+			await expect(
+				manager.writeInput(session.id, {
+					type: 'user',
+					message: { role: 'user', content: 'hi' },
+				}),
+			).rejects.toThrow('stream closed')
+
+			expect(events).toEqual([])
+		})
+	})
+
 	describe('resumeSession()', () => {
 		it('throws when session not paused', async () => {
 			const session = buildSession({ status: 'running' })

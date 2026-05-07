@@ -18,7 +18,6 @@ import {
 	useCreateSession,
 	useSession,
 	useSessionErrorLog,
-	useSessionLatestLog,
 	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
@@ -94,44 +93,6 @@ describe('useSession', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Not found')
-	})
-})
-
-describe('useSessionLatestLog', () => {
-	it('returns the last log entry', async () => {
-		const logs = [buildLog({ id: 1, content: 'first' }), buildLog({ id: 2, content: 'latest' })]
-		vi.mocked(api.sessions.logs).mockResolvedValue(logs)
-
-		const { result } = renderHook(() => useSessionLatestLog('session-1', workspaceId), {
-			wrapper: TestWrapper,
-		})
-
-		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data?.content).toBe('latest')
-		expect(api.sessions.logs).toHaveBeenCalledWith('session-1', workspaceId, {
-			limit: '5',
-			stream: 'stdout',
-		})
-	})
-
-	it('returns null when no logs', async () => {
-		vi.mocked(api.sessions.logs).mockResolvedValue([])
-
-		const { result } = renderHook(() => useSessionLatestLog('session-1', workspaceId), {
-			wrapper: TestWrapper,
-		})
-
-		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data).toBeNull()
-	})
-
-	it('is not enabled when sessionId is null', async () => {
-		const { result } = renderHook(() => useSessionLatestLog(null, workspaceId), {
-			wrapper: TestWrapper,
-		})
-
-		expect(result.current.isFetching).toBe(false)
-		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})
 })
 
