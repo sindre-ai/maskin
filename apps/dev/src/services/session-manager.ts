@@ -278,6 +278,27 @@ export class SessionManager extends EventEmitter {
 	 */
 	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
 		await this.containers.write(sessionId, payload)
+		// The CLI does not echo the user turn back to stdout — only the
+		// assistant response. Persist the same JSON envelope we wrote to
+		// stdin as a stdout-stream log row so historical transcripts and the
+		// live SSE feed can render the user's turn alongside the agent's
+		// reply.
+		const [log] = await this.db
+			.insert(sessionLogs)
+			.values({
+				sessionId,
+				stream: 'stdout',
+				content: JSON.stringify(payload),
+			})
+			.returning()
+		if (log) {
+			this.emit('log', {
+				sessionId,
+				logId: log.id,
+				stream: 'stdout',
+				data: log.content,
+			} satisfies SessionLogEvent)
+		}
 	}
 
 	async stopSession(sessionId: string): Promise<void> {

@@ -20,7 +20,7 @@ import {
 	useCreateSession,
 	useSession,
 	useSessionErrorLog,
-	useSessionLatestLog,
+	useSessionLogs,
 } from '@/hooks/use-sessions'
 import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { formatDurationBetween } from '@/lib/format-duration'
@@ -33,6 +33,7 @@ import {
 	ChevronRight,
 	Clock,
 	MinusCircle,
+	PauseCircle,
 	RotateCcw,
 	Trash2,
 	XCircle,
@@ -46,6 +47,7 @@ import { AgentUsageChart } from './agent-usage-chart'
 import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
 import { SessionDetailPanel } from './session-detail-panel'
+import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
 
 interface AgentDocumentViewProps {
@@ -230,7 +232,12 @@ export function AgentDocumentView({
 				<Section title="Currently Working On">
 					<div className="space-y-2">
 						{activeSessions.map((session) => (
-							<ActiveSessionCard key={session.id} session={session} workspaceId={workspaceId} />
+							<ActiveSessionCard
+								key={session.id}
+								session={session}
+								workspaceId={workspaceId}
+								onSelect={setSelectedSession}
+							/>
 						))}
 					</div>
 				</Section>
@@ -392,24 +399,32 @@ function Section({
 function ActiveSessionCard({
 	session,
 	workspaceId,
+	onSelect,
 }: {
 	session: SessionResponse
 	workspaceId: string
+	onSelect?: (session: SessionResponse) => void
 }) {
-	const { data: latestLog } = useSessionLatestLog(session.id, workspaceId)
+	const { data: logs } = useSessionLogs(session.id, workspaceId, true, { live: true })
 	const duration = useDuration(session.startedAt)
+	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
+	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-w-0">
-			<Spinner />
+		<button
+			type="button"
+			className="flex w-full items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
+			onClick={() => onSelect?.(session)}
+		>
+			{idle ? <PauseCircle size={14} className="shrink-0 text-muted-foreground" /> : <Spinner />}
 			<span className="text-sm truncate flex-1 min-w-0">{session.actionPrompt}</span>
-			{latestLog && (
+			{preview && (
 				<span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[200px]">
-					{latestLog.content}
+					{preview}
 				</span>
 			)}
 			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
-		</div>
+		</button>
 	)
 }
 
