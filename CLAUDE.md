@@ -43,6 +43,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ## Prerequisites
 - Node.js ≥ 20
 - pnpm 9.15.0
+- Docker + Docker Compose (must be installed and running — `pnpm dev` / `pnpm dev:win` start PostgreSQL + SeaweedFS via `docker-compose`, the app cannot run without it)
 
 ## Commands
 - `pnpm install` — install all dependencies
