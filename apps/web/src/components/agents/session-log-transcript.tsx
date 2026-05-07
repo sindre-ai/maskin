@@ -102,7 +102,7 @@ function describeEvent(event: SindreEvent): string | null {
 		case 'tool_use':
 			return `Using ${event.name}`
 		case 'thinking':
-			return event.redacted ? 'Thinking…' : 'Thinking…'
+			return event.redacted ? 'Thinking (redacted)…' : 'Thinking…'
 		case 'user':
 			return `You: ${truncate(event.text, 60)}`
 		case 'result':
