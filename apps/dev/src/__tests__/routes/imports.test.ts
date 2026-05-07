@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildImport, buildWorkspace, buildWorkspaceMember } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createImportTestApp } from '../setup'
@@ -29,7 +29,7 @@ vi.mock('../../services/import-processor', () => ({
 	executeImport: vi.fn(),
 }))
 
-const { parseFile } = await import('../../services/import-processor')
+const { parseFile, generateMapping } = await import('../../services/import-processor')
 const { default: importsRoutes } = await import('../../routes/imports')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
@@ -92,6 +92,10 @@ describe('GET /api/imports', () => {
 })
 
 describe('PATCH /api/imports/:id/mapping', () => {
+	beforeEach(() => {
+		vi.mocked(generateMapping).mockClear()
+	})
+
 	it('updates mapping when import is in mapping state', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
 		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
@@ -120,6 +124,96 @@ describe('PATCH /api/imports/:id/mapping', () => {
 			),
 		)
 		expect(res.status).toBe(200)
+	})
+
+	it('preserves user objectType when csvOptions key order differs but values match', async () => {
+		// Regression for the bug where Postgres JSONB returns csvOptions with keys in a
+		// different order than Zod's parsed input ({encoding, delimiter} vs {delimiter,
+		// encoding}). The route used JSON.stringify(...) for comparison, which is order-
+		// sensitive, so it spuriously detected a CSV-options change and regenerated the
+		// mapping — overwriting the user's chosen objectType with validTypes[0] ('bet').
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({
+			workspaceId: wsId,
+			status: 'mapping',
+			mapping: {
+				typeMappings: [
+					{
+						objectType: 'bet',
+						columns: [
+							{ sourceColumn: 'title', targetField: 'title', transform: 'none', skip: false },
+						],
+						defaultStatus: 'signal',
+					},
+				],
+				relationships: [],
+				// Postgres JSONB shape: encoding before delimiter
+				csvOptions: { encoding: 'utf-8', delimiter: ',' },
+			},
+		})
+		mockResults.selectQueue = [[member], [imp]]
+		mockResults.update = [imp]
+
+		const userMapping = {
+			typeMappings: [
+				{
+					objectType: 'task',
+					columns: [
+						{ sourceColumn: 'title', targetField: 'title', transform: 'none', skip: false },
+					],
+					defaultStatus: 'todo',
+				},
+			],
+			relationships: [],
+			// Zod-parsed shape: delimiter before encoding (same values)
+			csvOptions: { delimiter: ',', encoding: 'utf-8' },
+		}
+
+		const res = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/imports/${imp.id}/mapping`,
+				{ mapping: userMapping },
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(200)
+		// generateMapping must NOT be called — csvOptions didn't actually change
+		expect(generateMapping).not.toHaveBeenCalled()
+	})
+
+	it('regenerates mapping when csvOptions actually change', async () => {
+		const { app, mockResults, storageProvider } = createImportTestApp(importsRoutes, '/api/imports')
+		const ws = buildWorkspace({ id: wsId })
+		const imp = buildImport({
+			workspaceId: wsId,
+			status: 'mapping',
+			mapping: {
+				typeMappings: [{ objectType: 'task', columns: [], defaultStatus: 'todo' }],
+				relationships: [],
+				csvOptions: { delimiter: ',', encoding: 'utf-8' },
+			},
+		})
+		mockResults.selectQueue = [[member], [imp], [ws]]
+		mockResults.update = [imp]
+		vi.mocked(storageProvider.get).mockResolvedValue(Buffer.from('a;b\n1;2'))
+
+		const res = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/imports/${imp.id}/mapping`,
+				{
+					mapping: {
+						typeMappings: [{ objectType: 'task', columns: [], defaultStatus: 'todo' }],
+						relationships: [],
+						csvOptions: { delimiter: ';', encoding: 'utf-8' },
+					},
+				},
+				{ 'x-workspace-id': wsId },
+			),
+		)
+		expect(res.status).toBe(200)
+		expect(generateMapping).toHaveBeenCalledTimes(1)
 	})
 
 	it('returns 409 when import is not in mapping state', async () => {
@@ -185,9 +279,10 @@ describe('POST /api/imports/:id/confirm', () => {
 	it('returns 202 when import is confirmed and starts background execution', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
 		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
+		const ws = buildWorkspace({ id: wsId })
 		const updatedImp = { ...imp, status: 'importing' }
-		// membership check, findImport, atomic update returns updated
-		mockResults.selectQueue = [[member], [imp]]
+		// membership check, findImport, workspace (type validation), atomic update returns updated
+		mockResults.selectQueue = [[member], [imp], [ws]]
 		mockResults.update = [updatedImp]
 
 		const res = await app.request(
@@ -200,11 +295,44 @@ describe('POST /api/imports/:id/confirm', () => {
 		expect(body.status).toBe('importing')
 	})
 
+	it('returns 400 when mapping references a type not in workspace settings', async () => {
+		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
+		const imp = buildImport({
+			workspaceId: wsId,
+			status: 'mapping',
+			mapping: {
+				typeMappings: [
+					{
+						objectType: 'lead',
+						columns: [
+							{ sourceColumn: 'name', targetField: 'title', transform: 'none', skip: false },
+						],
+						defaultStatus: 'new',
+					},
+				],
+				relationships: [],
+			},
+		})
+		const ws = buildWorkspace({ id: wsId })
+		// membership check, findImport, workspace (type validation rejects 'lead')
+		mockResults.selectQueue = [[member], [imp], [ws]]
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/imports/${imp.id}/confirm`, undefined, {
+				'x-workspace-id': wsId,
+			}),
+		)
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain("Invalid object type 'lead'")
+	})
+
 	it('returns 409 when atomic status transition fails (concurrent claim)', async () => {
 		const { app, mockResults } = createImportTestApp(importsRoutes, '/api/imports')
 		const imp = buildImport({ workspaceId: wsId, status: 'mapping' })
-		// membership check, findImport succeeds, but atomic update returns empty (race)
-		mockResults.selectQueue = [[member], [imp]]
+		const ws = buildWorkspace({ id: wsId })
+		// membership check, findImport, workspace, then atomic update returns empty (race)
+		mockResults.selectQueue = [[member], [imp], [ws]]
 		mockResults.update = []
 
 		const res = await app.request(

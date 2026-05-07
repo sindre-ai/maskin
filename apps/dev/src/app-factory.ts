@@ -112,7 +112,32 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if ('status' in err && typeof err.status === 'number') {
 			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
 		}
-		logger.error('Unhandled error', { error: String(err), stack: err.stack })
+		const cause = (err as { cause?: unknown }).cause as
+			| {
+					message?: string
+					code?: string
+					detail?: string
+					hint?: string
+					position?: string
+					where?: string
+					schema_name?: string
+					table_name?: string
+					column_name?: string
+			  }
+			| undefined
+		logger.error('Unhandled error', {
+			error: String(err),
+			cause: cause?.message ?? (cause ? String(cause) : undefined),
+			pgCode: cause?.code,
+			pgDetail: cause?.detail,
+			pgHint: cause?.hint,
+			pgPosition: cause?.position,
+			pgWhere: cause?.where,
+			pgSchema: cause?.schema_name,
+			pgTable: cause?.table_name,
+			pgColumn: cause?.column_name,
+			stack: err.stack,
+		})
 		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 	})
 

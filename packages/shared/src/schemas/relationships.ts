@@ -11,6 +11,7 @@ export const createRelationshipSchema = z.object({
 export const relationshipQuerySchema = z.object({
 	source_id: z.string().uuid().optional(),
 	target_id: z.string().uuid().optional(),
+	object_id: z.string().uuid().optional(),
 	type: z.string().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),

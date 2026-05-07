@@ -221,9 +221,17 @@ export const tools = {
 		}),
 	},
 	list_relationships: {
-		description: 'List relationships with optional filters',
+		description:
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Match relationships where this object is either the source or the target (direction-agnostic). Prefer this over source_id/target_id when you want every edge connected to an object.',
+				),
 			source_id: z.string().uuid().optional(),
 			target_id: z.string().uuid().optional(),
 			type: z.string().optional(),
@@ -343,6 +351,91 @@ export const tools = {
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe('Role: owner (full control), admin (manage members), member (read/write)'),
+		}),
+	},
+	// ─── Workspace Schema Editing (W1) ──────────────────────
+	// Mutate `settings.field_definitions[type]` so agents can author/extend
+	// the workspace schema from chat. Mirrors the web schema editor at
+	// apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx —
+	// each tool does a read-modify-write on the workspace because the PATCH
+	// endpoint shallow-merges `settings`.
+	create_workspace_field: {
+		description:
+			'Add a new metadata field to a workspace object type (e.g. insight, bet, task). Mirrors the web schema editor — once added, the field is available via get_workspace_schema and accepted by create_objects / update_objects metadata. Field names must be unique within a type.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z
+				.string()
+				.min(1)
+				.describe('Object type to attach the field to (e.g. "insight", "bet", "task").'),
+			name: z.string().min(1).describe('Field name. Must be unique within the type.'),
+			field_type: z
+				.enum(['text', 'number', 'date', 'enum', 'boolean'])
+				.describe(
+					'Field value type. Use "enum" for a fixed set of values (provide values[]); "text" for free text; "number"/"date"/"boolean" for typed scalars.',
+				),
+			required: z
+				.boolean()
+				.optional()
+				.describe('When true, the field is required on objects of this type.'),
+			values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe('Allowed values for an enum field. Required when field_type is "enum".'),
+		}),
+	},
+	update_workspace_field: {
+		description:
+			'Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or replace the full enum value list. Pass only the fields you want to change.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z.string().min(1).describe('Object type the field belongs to.'),
+			name: z.string().min(1).describe('Existing field name to update.'),
+			new_name: z
+				.string()
+				.min(1)
+				.optional()
+				.describe('Optional rename. Must remain unique within the type.'),
+			field_type: z
+				.enum(['text', 'number', 'date', 'enum', 'boolean'])
+				.optional()
+				.describe('Optional new field type.'),
+			required: z.boolean().optional().describe('Optional new required flag.'),
+			values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe(
+					'Optional full replacement list of enum values. Pass an empty array to clear. Use add/remove_workspace_enum_value to mutate one value without losing others.',
+				),
+		}),
+	},
+	delete_workspace_field: {
+		description:
+			'Remove a metadata field from a workspace object type. Existing objects keep any data they previously stored under this field; new objects can no longer set it. Idempotent — deleting a field that does not exist returns success.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z.string().min(1).describe('Object type the field belongs to.'),
+			name: z.string().min(1).describe('Field name to delete.'),
+		}),
+	},
+	add_workspace_enum_value: {
+		description:
+			'Append an allowed value to an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — adding an existing value is a no-op.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z.string().min(1).describe('Object type the field belongs to.'),
+			name: z.string().min(1).describe('Enum field name.'),
+			value: z.string().min(1).describe('Value to add.'),
+		}),
+	},
+	remove_workspace_enum_value: {
+		description:
+			'Remove an allowed value from an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — removing a missing value is a no-op. Existing objects that previously stored this value keep their stored value; only new writes are constrained.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z.string().min(1).describe('Object type the field belongs to.'),
+			name: z.string().min(1).describe('Enum field name.'),
+			value: z.string().min(1).describe('Value to remove.'),
 		}),
 	},
 	// ─── Workspace Skills ─────────────────────────────────────

@@ -100,6 +100,12 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects/search${qs}`, { workspaceId })
 		},
+		migrateType: (workspaceId: string, body: MigrateObjectTypeInput) =>
+			request<MigrateObjectTypeResponse>('/objects/migrate-type', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 	},
 
 	auth: {
@@ -246,6 +252,13 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		usage: (
+			workspaceId: string,
+			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },
+		) => {
+			const qs = new URLSearchParams(params).toString()
+			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
+		},
 	},
 
 	events: {
@@ -399,6 +412,20 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	owner?: string | null
+}
+
+export interface MigrateObjectTypeInput {
+	fromType: string
+	mode: 'migrate' | 'delete'
+	toType?: string
+	statusMap?: Record<string, string>
+}
+
+export interface MigrateObjectTypeResponse {
+	mode: 'migrate' | 'delete'
+	fromType: string
+	toType?: string
+	count: number
 }
 
 export interface ActorListItem {
@@ -681,6 +708,26 @@ export interface SessionLogResponse {
 	stream: string
 	content: string
 	createdAt: string | null
+}
+
+export interface SessionUsageBucketResponse {
+	bucket: string
+	session_count: number
+	total_cost_usd: number
+	input_tokens: number
+	output_tokens: number
+	cache_tokens: number
+}
+
+export interface SessionUsageResponse {
+	buckets: SessionUsageBucketResponse[]
+	totals: {
+		session_count: number
+		total_cost_usd: number
+		input_tokens: number
+		output_tokens: number
+		cache_tokens: number
+	}
 }
 
 export interface EventResponse {

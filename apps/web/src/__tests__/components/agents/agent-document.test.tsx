@@ -24,7 +24,6 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useActorSessions: () => ({ data: [] }),
 	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
 	useSession: () => ({ data: null }),
-	useSessionLatestLog: () => ({ data: null }),
 	useSessionErrorLog: () => ({ data: null }),
 	useSessionLogs: () => ({ data: [], isLoading: false }),
 	useStopSession: () => ({ mutate: vi.fn(), isPending: false }),
@@ -56,6 +55,10 @@ vi.mock('@/components/agents/mcp-servers', () => ({
 
 vi.mock('@/components/agents/skills', () => ({
 	Skills: () => null,
+}))
+
+vi.mock('@/components/agents/agent-usage-chart', () => ({
+	AgentUsageChart: () => null,
 }))
 
 vi.mock('@/components/activity/activity-item', () => ({

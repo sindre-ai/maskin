@@ -144,12 +144,60 @@ function parseError(envelope: Record<string, unknown>): SindreEvent {
 }
 
 /**
+ * Extract a real user message (typed input) from a `type: 'user'` envelope.
+ * The CLI emits two flavours of user envelope: the user's own input echoed
+ * back into the conversation (`message.content` is a string, or an array of
+ * `text` blocks), and tool-result echoes the SDK injects after each
+ * `tool_use` (`message.content` is an array of `tool_result` blocks). Only
+ * the former should surface in the transcript — the latter would just
+ * duplicate work the matching `tool_use` event already represents.
+ */
+function parseUserMessage(envelope: Record<string, unknown>): SindreEvent[] {
+	const message = envelope.message
+	if (!isRecord(message)) return []
+	const content = message.content
+
+	if (typeof content === 'string') {
+		const trimmed = content.trim()
+		if (trimmed.length === 0) return []
+		return [{ kind: 'user', text: content }]
+	}
+
+	if (Array.isArray(content)) {
+		const texts: string[] = []
+		for (const block of content) {
+			if (!isRecord(block)) continue
+			if (block.type === 'text') {
+				const text = asString(block.text)
+				if (text !== undefined) texts.push(text)
+			}
+			// `tool_result` blocks are intentionally skipped — the matching
+			// `tool_use` event is already in the transcript.
+		}
+		if (texts.length === 0) return []
+		return [{ kind: 'user', text: texts.join('\n') }]
+	}
+
+	return []
+}
+
+export interface ParseSindreOptions {
+	/**
+	 * When true, `type: 'user'` envelopes that carry actual user text (not
+	 * just tool-result echoes) emit a `kind: 'user'` event. Off by default so
+	 * the live Sindre chat — which adds user events client-side on send —
+	 * doesn't double up when the CLI echoes the same text back.
+	 */
+	includeUser?: boolean
+}
+
+/**
  * Parse a single stdout log line. Returns an array because one assistant
  * envelope may contain multiple content blocks, each becoming its own event.
  * User echoes and any other recognised-but-uninteresting envelopes return an
- * empty array.
+ * empty array unless `includeUser` is set.
  */
-export function parseSindreLine(line: string): SindreEvent[] {
+export function parseSindreLine(line: string, options: ParseSindreOptions = {}): SindreEvent[] {
 	const trimmed = line.trim()
 	if (trimmed.length === 0) return []
 
@@ -172,7 +220,7 @@ export function parseSindreLine(line: string): SindreEvent[] {
 			return events
 		}
 		case 'user':
-			return []
+			return options.includeUser ? parseUserMessage(envelope) : []
 		case 'result':
 			return [parseResult(envelope)]
 		case 'system':

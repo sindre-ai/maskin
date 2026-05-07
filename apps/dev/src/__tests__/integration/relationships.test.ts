@@ -55,6 +55,48 @@ describe('Relationships Integration', () => {
 		expect(list).toHaveLength(1)
 	})
 
+	it('lists relationships in either direction via object_id', async () => {
+		const app = createApp()
+		const obj3 = await insertObject(db, workspaceId, getTestActorId(), {
+			type: 'task',
+			status: 'open',
+		})
+
+		// obj1 is the source of an edge to obj2
+		await app.request(
+			jsonRequest(
+				'POST',
+				'/api/relationships',
+				buildCreateRelationshipBody({
+					source_id: obj1Id,
+					target_id: obj2Id,
+					type: 'breaks_into',
+				}),
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+
+		// obj1 is the target of an edge from obj3
+		await app.request(
+			jsonRequest(
+				'POST',
+				'/api/relationships',
+				buildCreateRelationshipBody({
+					source_id: obj3.id,
+					target_id: obj1Id,
+					type: 'breaks_into',
+				}),
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+
+		// object_id should return both edges, regardless of direction
+		const res = await app.request(jsonGet(`/api/relationships?object_id=${obj1Id}`))
+		expect(res.status).toBe(200)
+		const list = await res.json()
+		expect(list).toHaveLength(2)
+	})
+
 	it('enforces unique constraint on (source, target, type)', async () => {
 		const app = createApp()
 		const body = buildCreateRelationshipBody({

@@ -18,13 +18,14 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
-import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
+import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
 
 export interface CreateSessionParams {
@@ -70,8 +71,27 @@ export class SessionManager extends EventEmitter {
 	private watchdogInterval: NodeJS.Timeout | null = null
 	private activeSessions: Map<
 		string,
-		{ tempDir: string; browserContainerId?: string; networkName?: string }
+		{
+			tempDir: string
+			browserContainerId?: string
+			networkName?: string
+			/**
+			 * Rolling tail of stdout (capped at STDOUT_TAIL_BYTES). Lets
+			 * `handleCompletion` parse the final stream-json `result` event from
+			 * memory, sidestepping any race with the DB log persistence pipeline.
+			 */
+			stdoutTail?: string
+			/** Resolves when `streamContainerLogs` has fully drained. */
+			logsDrained?: Promise<void>
+		}
 	> = new Map()
+	/**
+	 * Cap on the in-memory stdout tail per session. The usage parser only
+	 * scans the last 200 lines, so 64 KB is plenty even with verbose runs.
+	 */
+	private static readonly STDOUT_TAIL_BYTES = 64 * 1024
+	/** Max time to wait for the log stream to drain before parsing usage. */
+	private static readonly LOGS_DRAIN_TIMEOUT_MS = 5000
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 
@@ -258,6 +278,27 @@ export class SessionManager extends EventEmitter {
 	 */
 	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
 		await this.containers.write(sessionId, payload)
+		// The CLI does not echo the user turn back to stdout — only the
+		// assistant response. Persist the same JSON envelope we wrote to
+		// stdin as a stdout-stream log row so historical transcripts and the
+		// live SSE feed can render the user's turn alongside the agent's
+		// reply.
+		const [log] = await this.db
+			.insert(sessionLogs)
+			.values({
+				sessionId,
+				stream: 'stdout',
+				content: JSON.stringify(payload),
+			})
+			.returning()
+		if (log) {
+			this.emit('log', {
+				sessionId,
+				logId: log.id,
+				stream: 'stdout',
+				data: log.content,
+			} satisfies SessionLogEvent)
+		}
 	}
 
 	async stopSession(sessionId: string): Promise<void> {
@@ -600,7 +641,11 @@ export class SessionManager extends EventEmitter {
 			envVars.ACTION_PROMPT = `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`
 		}
 
-		// Inject LLM API key: agent-level first, then workspace-level fallback
+		// Resolve LLM credentials in priority order:
+		//   agent override → workspace custom_llm → Claude OAuth → workspace api key → system fallback
+		// See lib/llm-routing.ts. The route taken is persisted on
+		// sessions.config.llm_route so we can attribute usage and enforce
+		// the system-fallback per-actor daily quota.
 		const [ws] = await this.db
 			.select()
 			.from(workspaces)
@@ -609,42 +654,54 @@ export class SessionManager extends EventEmitter {
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
-		if (llmConfig.api_key) {
-			if (agent.llmProvider === 'anthropic') {
-				envVars.ANTHROPIC_API_KEY = llmConfig.api_key as string
-			} else if (agent.llmProvider === 'openai') {
-				envVars.OPENAI_API_KEY = llmConfig.api_key as string
+		let routeTaken: LlmRoute | null = null
+		try {
+			const resolved = await resolveLlmRoute({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				wsSettings,
+				agent: {
+					provider: agent.llmProvider,
+					apiKey: (llmConfig.api_key as string | undefined) ?? null,
+				},
+			})
+			if (resolved) {
+				routeTaken = resolved.route
+				Object.assign(envVars, resolved.envVars)
 			}
-		} else {
-			// Check for Claude OAuth tokens (subscription auth) before API key fallback
-			try {
-				const oauthResult = await getValidOAuthToken(this.db, session.workspaceId)
-				if (oauthResult) {
-					// Claude Code reads OAuth from ~/.claude/.credentials.json, not env vars.
-					// Pass full token set so agent-run.sh can write the credentials file.
-					envVars.CLAUDE_OAUTH_ACCESS_TOKEN = oauthResult.tokens.accessToken
-					envVars.CLAUDE_OAUTH_REFRESH_TOKEN = oauthResult.tokens.refreshToken
-					envVars.CLAUDE_OAUTH_EXPIRES_AT = String(oauthResult.tokens.expiresAt)
-					if (oauthResult.tokens.scopes) {
-						envVars.CLAUDE_OAUTH_SCOPES = JSON.stringify(oauthResult.tokens.scopes)
-					}
-					if (oauthResult.tokens.subscriptionType) {
-						envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
-					}
-				} else if (wsLlmKeys.anthropic) {
-					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
-				}
-			} catch (err) {
-				logger.warn('Failed to use Claude OAuth tokens, falling back to API key', {
+		} catch (err) {
+			if (err instanceof FallbackQuotaExceededError) {
+				logger.warn('System LLM fallback quota exceeded', {
 					sessionId: session.id,
-					error: String(err),
+					actorId: session.actorId,
+					used: err.used,
+					limit: err.limit,
 				})
-				if (wsLlmKeys.anthropic) {
-					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
-				}
 			}
-			if (wsLlmKeys.openai) {
-				envVars.OPENAI_API_KEY = wsLlmKeys.openai
+			throw err
+		}
+
+		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY).
+		if (llmConfig.api_key && agent.llmProvider === 'openai') {
+			envVars.OPENAI_API_KEY = llmConfig.api_key as string
+		}
+		// Workspace OpenAI key — independent of the anthropic-side routing above.
+		if (!llmConfig.api_key && wsLlmKeys.openai) {
+			envVars.OPENAI_API_KEY = wsLlmKeys.openai
+		}
+
+		// Persist the chosen route on the session config so cron-based quota
+		// queries (and later analytics) can find fallback sessions cheaply.
+		if (routeTaken) {
+			const existingConfig = (session.config as Record<string, unknown>) ?? {}
+			if (existingConfig.llm_route !== routeTaken) {
+				const updatedConfig = { ...existingConfig, llm_route: routeTaken }
+				await this.db
+					.update(sessions)
+					.set({ config: updatedConfig })
+					.where(eq(sessions.id, session.id))
+				;(session as { config: Record<string, unknown> }).config = updatedConfig
 			}
 		}
 
@@ -700,6 +757,10 @@ export class SessionManager extends EventEmitter {
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
 			'ANTHROPIC_API_KEY',
+			'ANTHROPIC_AUTH_TOKEN',
+			'ANTHROPIC_BASE_URL',
+			'ANTHROPIC_MODEL',
+			'ANTHROPIC_SMALL_FAST_MODEL',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
@@ -781,7 +842,7 @@ export class SessionManager extends EventEmitter {
 	}
 
 	private streamContainerLogs(sessionId: string, containerId: string) {
-		;(async () => {
+		const drained = (async () => {
 			try {
 				for await (const chunk of this.containers.logs(containerId)) {
 					const [log] = await this.db
@@ -800,6 +861,17 @@ export class SessionManager extends EventEmitter {
 							stream: chunk.stream,
 							data: chunk.data,
 						} satisfies SessionLogEvent)
+					}
+
+					if (chunk.stream === 'stdout') {
+						const sessionData = this.activeSessions.get(sessionId)
+						if (sessionData) {
+							const next = (sessionData.stdoutTail ?? '') + chunk.data
+							sessionData.stdoutTail =
+								next.length > SessionManager.STDOUT_TAIL_BYTES
+									? next.slice(next.length - SessionManager.STDOUT_TAIL_BYTES)
+									: next
+						}
 					}
 				}
 			} catch (err) {
@@ -820,6 +892,9 @@ export class SessionManager extends EventEmitter {
 				)
 			}
 		})()
+
+		const sessionData = this.activeSessions.get(sessionId)
+		if (sessionData) sessionData.logsDrained = drained
 	}
 
 	private watchContainerExit(sessionId: string, containerId: string) {
@@ -899,6 +974,41 @@ export class SessionManager extends EventEmitter {
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		// Extract token / cost usage from the tail of stdout. Codex and custom
+		// runtimes don't emit structured usage — extractor returns null and the
+		// columns stay NULL. Parser failures must never block the status update,
+		// so this is wrapped in its own try/catch.
+		//
+		// Prefer the in-memory stdout tail captured by `streamContainerLogs`:
+		// the container exit poll can fire before the final `result` chunk has
+		// been persisted to `session_logs`, so a DB-only read can race and
+		// silently miss usage. We wait briefly for the log stream to drain so
+		// the in-memory buffer contains the final chunk, then parse from it.
+		// The DB path is kept as a fallback for the resume-from-snapshot case
+		// where the tail buffer may be empty.
+		let usage: SessionUsage | null = null
+		try {
+			const drained = this.activeSessions.get(sessionId)?.logsDrained
+			if (drained) {
+				await Promise.race([
+					drained,
+					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
+				])
+			}
+			const tail = this.activeSessions.get(sessionId)?.stdoutTail
+			if (tail) {
+				usage = parseUsageFromLogChunks([tail])
+			}
+			if (!usage) {
+				usage = await extractSessionUsage(this.db, sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to parse usage from session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -912,6 +1022,16 @@ export class SessionManager extends EventEmitter {
 					result: { exit_code: exitCode },
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					...(usage
+						? {
+								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+								inputTokens: usage.inputTokens,
+								outputTokens: usage.outputTokens,
+								cacheCreationInputTokens: usage.cacheCreationInputTokens,
+								cacheReadInputTokens: usage.cacheReadInputTokens,
+								durationMs: usage.durationMs,
+							}
+						: {}),
 				})
 				.where(eq(sessions.id, sessionId))
 		} catch (err) {

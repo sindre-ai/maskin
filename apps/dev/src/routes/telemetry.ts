@@ -144,10 +144,11 @@ app.openapi(summaryRoute, (async (c) => {
 	const toolCallsRich = toolCallRows[0]?.rich ?? 0
 	const richPct = toolCallsTotal > 0 ? (toolCallsRich / toolCallsTotal) * 100 : 0
 
-	// Sessions: distinct session_id across tool_call events (denominator) and
-	// distinct session_id with at least one mutation (numerator). We only count
-	// sessions that produced at least one tool_call so an empty-session noise
-	// floor doesn't depress the ratio.
+	// Sessions: distinct session_id with at least one tool_call (denominator)
+	// and distinct session_id with at least one mutation (numerator). The
+	// HAVING clause enforces "produced at least one tool_call" so a session
+	// that recorded only mutations (a bug / out-of-order delivery) doesn't
+	// inflate the numerator without contributing to the denominator.
 	const sessionRows = await db
 		.select({
 			session_id: mcpTelemetry.sessionId,
@@ -156,6 +157,7 @@ app.openapi(summaryRoute, (async (c) => {
 		.from(mcpTelemetry)
 		.where(and(eq(mcpTelemetry.workspaceId, workspaceId), gte(mcpTelemetry.createdAt, windowStart)))
 		.groupBy(mcpTelemetry.sessionId)
+		.having(sql`bool_or(${mcpTelemetry.eventType} = 'tool_call')`)
 
 	let sessionsTotal = 0
 	let sessionsWithMutation = 0

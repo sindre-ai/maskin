@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -88,6 +89,7 @@ const UI_RESOURCES = {
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
 	sessions: 'ui://maskin/sessions',
+	schema: 'ui://maskin/schema',
 } as const
 
 const CSP = {
@@ -100,7 +102,12 @@ async function apiCall(
 	method: string,
 	path: string,
 	body?: unknown,
-	options?: { skipAuth?: boolean; skipWorkspace?: boolean; workspaceId?: string },
+	options?: {
+		skipAuth?: boolean
+		skipWorkspace?: boolean
+		workspaceId?: string
+		idempotencyKey?: string
+	},
 ): Promise<unknown> {
 	if (!options?.skipAuth && !config.apiKey) {
 		throw new Error(`Not authenticated. ${authSetupHint(config)}`)
@@ -119,6 +126,9 @@ async function apiCall(
 	}
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
+	}
+	if (options?.idempotencyKey) {
+		headers['Idempotency-Key'] = options.idempotencyKey
 	}
 
 	const response = await fetch(url, {
@@ -157,6 +167,25 @@ async function apiCall(
 	}
 
 	return response.json()
+}
+
+// Per-workspace mutex used to serialize read-modify-write tool calls (e.g.
+// schema edits) within a single MCP process. Two MCP tool invocations from
+// the same host targeting the same workspace will run sequentially, which
+// eliminates lost-update races inside this process. Cross-process races
+// still exist; callers that care must additionally verify after PATCH.
+const workspaceLocks = new Map<string, Promise<unknown>>()
+
+function withWorkspaceLock<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
+	const prev = workspaceLocks.get(workspaceId) ?? Promise.resolve()
+	const result = prev.catch(() => undefined).then(fn)
+	const lockEntry: Promise<unknown> = result
+		.catch(() => undefined)
+		.finally(() => {
+			if (workspaceLocks.get(workspaceId) === lockEntry) workspaceLocks.delete(workspaceId)
+		})
+	workspaceLocks.set(workspaceId, lockEntry)
+	return result
 }
 
 async function getWorkspace(
@@ -610,35 +639,45 @@ function extractWorkspaceId(args: unknown): string | undefined {
 /**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
- * count one mutation event per call when at least one inner item succeeded —
- * matches how the bet's "20% of sessions include at least one mutation" metric
- * is meant to be read (a session that *attempted* and partially succeeded
- * counts).
+ * count one mutation event per call when at least one inner item explicitly
+ * reports success.
+ *
+ * Defaults to `false` for unrecognised shapes. Over-counting biases the bet's
+ * "20% of sessions include at least one mutation" metric upward, so unknown
+ * responses are treated as "not a confirmed mutation" rather than assuming
+ * success.
  */
 function isSuccessfulMutationResponse(response: unknown): boolean {
 	if (!response || typeof response !== 'object') return false
+	if ((response as { isError?: unknown }).isError === true) return false
 	const content = (response as { content?: unknown }).content
 	if (!Array.isArray(content) || content.length === 0) return false
 	const first = content[0] as { type?: string; text?: string } | undefined
-	if (!first || first.type !== 'text' || typeof first.text !== 'string') return true
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return false
 	let parsed: unknown
 	try {
 		parsed = JSON.parse(first.text)
 	} catch {
-		return true
+		return false
 	}
 	if (Array.isArray(parsed)) {
+		// Per-target aggregation (update_objects-style). The call counts when
+		// at least one entry explicitly reports success === true.
 		return parsed.some((entry) => {
 			if (!entry || typeof entry !== 'object') return false
-			const success = (entry as { success?: unknown }).success
-			return success === true || success === undefined
+			return (entry as { success?: unknown }).success === true
 		})
 	}
 	if (parsed && typeof parsed === 'object') {
-		const errored = (parsed as { error?: unknown }).error
-		return errored === undefined || errored === null
+		const obj = parsed as { success?: unknown; error?: unknown; id?: unknown }
+		if (obj.success === true) return true
+		if (obj.success === false) return false
+		// No explicit success flag — accept as confirmed only if the payload has
+		// no `error` field and looks like a record (has an `id`). Anything else
+		// stays uncounted.
+		return obj.error == null && typeof obj.id === 'string'
 	}
-	return true
+	return false
 }
 
 /** Best-effort object_type label for the mutation event. */
@@ -962,6 +1001,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const params = new URLSearchParams()
+			if (args.object_id) params.set('object_id', args.object_id)
 			if (args.source_id) params.set('source_id', args.source_id)
 			if (args.target_id) params.set('target_id', args.target_id)
 			if (args.type) params.set('type', args.type)
@@ -1263,6 +1303,304 @@ export function createMcpServer(config: McpConfig) {
 					(args as { workspace_id?: string }).workspace_id,
 				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Workspace Schema Editing (W1) ───────────────────────
+	// Mirrors the web schema editor at
+	// apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx —
+	// each tool does read-modify-write on settings.field_definitions because the
+	// workspace PATCH endpoint shallow-merges `settings`. Auth flows through the
+	// same Bearer token used by every other tool, so changes are attributed to
+	// the calling end-user (per F4 calling-user auth model).
+	//
+	// Concurrency: workspace PATCH only shallow-merges `settings`, so two
+	// interleaved RMWs on `field_definitions` would lose updates. We mitigate
+	// this with three layers:
+	//   1) Per-workspace in-process mutex (`withWorkspaceLock`) so back-to-back
+	//      MCP tool calls in this process never race.
+	//   2) Idempotency-Key on the PATCH so the host's retries don't double-apply.
+	//   3) Re-read after PATCH and compare; on drift, retry up to 3 times. This
+	//      catches cross-process races (a different MCP server or the web UI
+	//      patching the same workspace concurrently).
+	type FieldDef = {
+		name: string
+		type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
+		required?: boolean
+		values?: string[]
+	}
+
+	const MAX_RMW_ATTEMPTS = 3
+
+	function fieldsEqual(a: FieldDef[], b: FieldDef[]): boolean {
+		if (a.length !== b.length) return false
+		for (let i = 0; i < a.length; i++) {
+			const x = a[i] as FieldDef
+			const y = b[i] as FieldDef
+			if (x.name !== y.name) return false
+			if (x.type !== y.type) return false
+			if ((x.required ?? false) !== (y.required ?? false)) return false
+			const xv = x.values ?? []
+			const yv = y.values ?? []
+			if (xv.length !== yv.length) return false
+			for (let j = 0; j < xv.length; j++) if (xv[j] !== yv[j]) return false
+		}
+		return true
+	}
+
+	function fieldDefMapsEqual(
+		a: Record<string, FieldDef[]>,
+		b: Record<string, FieldDef[]>,
+	): boolean {
+		const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+		for (const k of keys) {
+			if (!fieldsEqual(a[k] ?? [], b[k] ?? [])) return false
+		}
+		return true
+	}
+
+	async function patchFieldDefinitions(
+		args: { workspace_id?: string; type: string },
+		transform: (current: FieldDef[]) => FieldDef[],
+	): Promise<{ wsId: string; updatedFields: FieldDef[] }> {
+		const wsId = args.workspace_id ?? config.defaultWorkspaceId
+		if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+		return withWorkspaceLock(wsId, async () => {
+			let lastErr: Error | null = null
+			for (let attempt = 0; attempt < MAX_RMW_ATTEMPTS; attempt++) {
+				const workspace = await getWorkspace(config, wsId)
+				const baseline = {
+					...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
+				}
+				const fieldDefs = { ...baseline }
+				const current = (fieldDefs[args.type] ?? []) as FieldDef[]
+				const updated = transform(current)
+				fieldDefs[args.type] = updated
+				await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${wsId}`,
+					{ settings: { field_definitions: fieldDefs } },
+					{ workspaceId: wsId, idempotencyKey: `mcp-schema-${wsId}-${randomUUID()}` },
+				)
+				const verify = await getWorkspace(config, wsId)
+				const verifyAll = (verify.settings.field_definitions ?? {}) as Record<string, FieldDef[]>
+				if (fieldDefMapsEqual(verifyAll, fieldDefs)) {
+					return { wsId, updatedFields: updated }
+				}
+				lastErr = new Error(
+					`Concurrent edit detected on workspace "${wsId}" (attempt ${attempt + 1}/${MAX_RMW_ATTEMPTS}). Another writer modified field_definitions between read and verify; retrying.`,
+				)
+			}
+			throw (
+				lastErr ??
+				new Error(
+					`Failed to apply schema change to workspace "${wsId}" type "${args.type}" after ${MAX_RMW_ATTEMPTS} attempts due to concurrent edits.`,
+				)
+			)
+		})
+	}
+
+	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {
+		if (field.type !== 'enum') {
+			throw new Error(`Field "${field.name}" is type "${field.type}", not "enum"`)
+		}
+		if (!Array.isArray(field.values)) {
+			throw new Error(
+				`Field "${field.name}" is type "enum" but has no values list. Repair via update_workspace_field with values: [...] before adding or removing values.`,
+			)
+		}
+	}
+
+	registerAppTool(
+		server,
+		'create_workspace_field',
+		{
+			description: tools.create_workspace_field.description,
+			inputSchema: tools.create_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			if (args.field_type === 'enum' && (!args.values || args.values.length === 0)) {
+				throw new Error('Enum fields require at least one value in `values`.')
+			}
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				if (current.some((f) => f.name === args.name)) {
+					throw new Error(
+						`Field "${args.name}" already exists on type "${args.type}". Use update_workspace_field to modify it.`,
+					)
+				}
+				const next: FieldDef = {
+					name: args.name,
+					type: args.field_type,
+					...(args.required ? { required: true } : {}),
+					...(args.field_type === 'enum' && args.values ? { values: args.values } : {}),
+				}
+				return [...current, next]
+			})
+			const created = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('create_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: created }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_workspace_field',
+		{
+			description: tools.update_workspace_field.description,
+			inputSchema: tools.update_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const existing = current[idx] as FieldDef
+				const nextName = args.new_name ?? existing.name
+				if (
+					nextName !== existing.name &&
+					current.some((f, i) => i !== idx && f.name === nextName)
+				) {
+					throw new Error(
+						`Field "${nextName}" already exists on type "${args.type}". Choose a different name.`,
+					)
+				}
+				const nextType = args.field_type ?? existing.type
+				const nextRequired = args.required ?? existing.required ?? false
+				let nextValues: string[] | undefined
+				if (nextType === 'enum') {
+					nextValues = args.values ?? existing.values ?? []
+					if (nextValues.length === 0) {
+						throw new Error('Enum fields require at least one value in `values`.')
+					}
+				}
+				const next: FieldDef = {
+					name: nextName,
+					type: nextType,
+					...(nextRequired ? { required: true } : {}),
+					...(nextType === 'enum' && nextValues ? { values: nextValues } : {}),
+				}
+				const copy = [...current]
+				copy[idx] = next
+				return copy
+			})
+			const renamed = args.new_name ?? args.name
+			const updated = updatedFields.find((f) => f.name === renamed)
+			return {
+				_meta: meta('update_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_workspace_field',
+		{
+			description: tools.delete_workspace_field.description,
+			inputSchema: tools.delete_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId } = await patchFieldDefinitions(args, (current) =>
+				current.filter((f) => f.name !== args.name),
+			)
+			return {
+				_meta: meta('delete_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{ workspace_id: wsId, type: args.type, deleted: args.name, success: true },
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_workspace_enum_value',
+		{
+			description: tools.add_workspace_enum_value.description,
+			inputSchema: tools.add_workspace_enum_value.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const field = current[idx] as FieldDef
+				ensureEnumField(field)
+				if (field.values.includes(args.value)) return current
+				const copy = [...current]
+				copy[idx] = { ...field, values: [...field.values, args.value] }
+				return copy
+			})
+			const updated = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('add_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'remove_workspace_enum_value',
+		{
+			description: tools.remove_workspace_enum_value.description,
+			inputSchema: tools.remove_workspace_enum_value.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const field = current[idx] as FieldDef
+				ensureEnumField(field)
+				if (!field.values.includes(args.value)) return current
+				const copy = [...current]
+				copy[idx] = { ...field, values: field.values.filter((v) => v !== args.value) }
+				return copy
+			})
+			const updated = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('remove_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
 			}
 		},
 	)

@@ -10,6 +10,7 @@ import {
 	sessionQuerySchema,
 	sessionRuntimeSchema,
 	sessionStatusSchema,
+	sessionUsageQuerySchema,
 } from '../schemas/sessions'
 
 const uuid = '550e8400-e29b-41d4-a716-446655440000'
@@ -271,5 +272,37 @@ describe('sessionParamsSchema', () => {
 
 	it('rejects non-uuid', () => {
 		expect(() => sessionParamsSchema.parse({ id: 'abc' })).toThrow()
+	})
+})
+
+describe('sessionUsageQuerySchema', () => {
+	const valid = {
+		actor_id: uuid,
+		from: '2026-01-01T00:00:00Z',
+		to: '2026-01-08T00:00:00Z',
+		bucket: 'day' as const,
+	}
+
+	it('accepts a valid query', () => {
+		const result = sessionUsageQuerySchema.parse(valid)
+		expect(result.actor_id).toBe(uuid)
+		expect(result.bucket).toBe('day')
+	})
+
+	it('accepts hour and week buckets', () => {
+		expect(sessionUsageQuerySchema.parse({ ...valid, bucket: 'hour' }).bucket).toBe('hour')
+		expect(sessionUsageQuerySchema.parse({ ...valid, bucket: 'week' }).bucket).toBe('week')
+	})
+
+	it('rejects unknown bucket', () => {
+		expect(() => sessionUsageQuerySchema.parse({ ...valid, bucket: 'month' })).toThrow()
+	})
+
+	it('rejects non-uuid actor_id', () => {
+		expect(() => sessionUsageQuerySchema.parse({ ...valid, actor_id: 'nope' })).toThrow()
+	})
+
+	it('rejects non-ISO datetimes', () => {
+		expect(() => sessionUsageQuerySchema.parse({ ...valid, from: 'yesterday' })).toThrow()
 	})
 })

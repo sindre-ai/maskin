@@ -51,6 +51,20 @@ export const workspaceSettingsSchema = z.object({
 			scopes: z.array(z.string()).optional(),
 		})
 		.optional(),
+	// Bring-your-own model: when enabled, sessions point Claude Code at this
+	// endpoint via ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL. Works for OpenRouter,
+	// self-hosted vLLM/Ollama, LM Studio — anything speaking the Anthropic
+	// Messages API. Takes precedence over Claude OAuth + workspace api keys.
+	// `null` on api_key signals deletion (mirrors llm_keys deep-merge convention).
+	custom_llm: z
+		.object({
+			enabled: z.boolean().default(false),
+			base_url: z.string().url().nullable().optional(),
+			api_key: z.string().nullable().optional(),
+			model: z.string().nullable().optional(),
+			small_fast_model: z.string().nullable().optional(),
+		})
+		.optional(),
 })
 
 export const createWorkspaceSchema = z.object({

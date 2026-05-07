@@ -15,6 +15,12 @@ An open-source workspace where AI agents run product development autonomously. H
 - **Everything is an API** -- UI and agents use the same endpoints. No special agent interface, no separate human interface
 - **Unified object model** -- insights, bets, and tasks are all "objects" with the same schema, connected by relationships
 
+## Prerequisites
+
+- **Node.js ≥ 20**
+- **pnpm 9.15.0** (`npm install -g pnpm@9.15.0`)
+- **Docker + Docker Compose** — must be installed and running. `pnpm dev` / `pnpm dev:win` boot PostgreSQL + SeaweedFS via `docker-compose`, so the app cannot start without Docker. Docker Desktop (macOS/Windows) bundles Compose; on Linux install `docker-compose-plugin`.
+
 ## Quick Start
 
 ### 🚀 Zero-click setup (from Claude Code)
