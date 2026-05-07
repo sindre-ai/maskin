@@ -430,6 +430,26 @@ function attachActorName<T extends SessionRow>(session: T, names: Record<string,
 }
 
 /**
+ * Enrich a single session with `actorName` via a one-shot `GET /api/actors/:id`.
+ * Cheaper than `fetchActorNameMap` for single-session tool calls.
+ * Failures are non-fatal — returns the session unchanged.
+ */
+async function enrichSessionActorName<T extends SessionRow>(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	session: T,
+): Promise<T> {
+	if (!workspaceId || !session?.actorId) return session
+	try {
+		const actor = (await apiCall(config, 'GET', `/api/actors/${session.actorId}`, undefined, {
+			workspaceId,
+		})) as ActorRow
+		if (actor?.name) return { ...session, actorName: actor.name }
+	} catch {}
+	return session
+}
+
+/**
  * Register MCP resources so the host (Claude Desktop / Claude.ai paperclip
  * picker, Cursor, etc.) can list and read Maskin objects. Resource URIs are
  * the same deep-link URLs the chat card and web app use, so the picker, the
@@ -2006,9 +2026,11 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', '/api/sessions', body, {
 				workspaceId: workspace_id,
 			})) as SessionRow
-			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
-			const enriched = attachActorName(result, names)
+			const enriched = await enrichSessionActorName(
+				config,
+				workspace_id ?? config.defaultWorkspaceId,
+				result,
+			)
 			return {
 				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
@@ -2063,8 +2085,7 @@ export function createMcpServer(config: McpConfig) {
 				undefined,
 				wsOpts,
 			)) as SessionRow
-			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
-			const enriched = attachActorName(session, names)
+			const enriched = await enrichSessionActorName(config, wsId, session)
 
 			if (args.include_logs) {
 				const params = new URLSearchParams()
@@ -2103,9 +2124,11 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as SessionRow
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
-			const enriched = attachActorName(result, names)
+			const enriched = await enrichSessionActorName(
+				config,
+				args.workspace_id ?? config.defaultWorkspaceId,
+				result,
+			)
 			return {
 				_meta: meta('stop_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
@@ -2125,9 +2148,11 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as SessionRow
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
-			const enriched = attachActorName(result, names)
+			const enriched = await enrichSessionActorName(
+				config,
+				args.workspace_id ?? config.defaultWorkspaceId,
+				result,
+			)
 			return {
 				_meta: meta('pause_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
@@ -2147,9 +2172,11 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as SessionRow
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
-			const enriched = attachActorName(result, names)
+			const enriched = await enrichSessionActorName(
+				config,
+				args.workspace_id ?? config.defaultWorkspaceId,
+				result,
+			)
 			return {
 				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],

@@ -113,17 +113,17 @@ function SessionsApp() {
 		case 'pause_session':
 		case 'resume_session':
 		case 'stop_session':
-			if (isObject<SessionWithLogsEnvelope>(data, 'session')) {
-				return <SessionDetailView session={data.session} logs={data.logs} />
+			if (isObject<SessionWithLogsEnvelope>(unwrapped, 'session')) {
+				return <SessionDetailView session={unwrapped.session} logs={unwrapped.logs} />
 			}
-			return isObject<EnrichedSession>(data, 'id', 'status') ? (
-				<SessionDetailView session={data} />
+			return isObject<EnrichedSession>(unwrapped, 'id', 'status') ? (
+				<SessionDetailView session={unwrapped} />
 			) : (
 				<div className="p-4 text-sm text-foreground">{text}</div>
 			)
 		case 'run_agent':
-			return isObject<SessionWithLogsEnvelope>(data, 'session') ? (
-				<SessionDetailView session={data.session} logs={data.logs} />
+			return isObject<SessionWithLogsEnvelope>(unwrapped, 'session') ? (
+				<SessionDetailView session={unwrapped.session} logs={unwrapped.logs} />
 			) : (
 				<div className="p-4 text-sm text-foreground">{text}</div>
 			)
@@ -185,11 +185,11 @@ function SessionListView({ sessions }: { sessions: EnrichedSession[] }) {
 					setSelected({ session, loading: false })
 					return
 				}
-				const data = safeParseJson(text)
-				if (isObject<SessionWithLogsEnvelope>(data, 'session')) {
-					setSelected({ session: data.session, logs: data.logs, loading: false })
-				} else if (isObject<EnrichedSession>(data, 'id', 'status')) {
-					setSelected({ session: data, loading: false })
+				const unwrapped = unwrapEnvelope(safeParseJson(text))
+				if (isObject<SessionWithLogsEnvelope>(unwrapped, 'session')) {
+					setSelected({ session: unwrapped.session, logs: unwrapped.logs, loading: false })
+				} else if (isObject<EnrichedSession>(unwrapped, 'id', 'status')) {
+					setSelected({ session: unwrapped, loading: false })
 				} else {
 					setSelected({ session, loading: false })
 				}
@@ -334,7 +334,7 @@ function SessionDetailView({
 					(c: { type: string; text?: string }) => c.type === 'text',
 				)?.text
 				if (text) {
-					const next = safeParseJson(text)
+					const next = unwrapEnvelope(safeParseJson(text))
 					if (isObject<EnrichedSession>(next, 'id', 'status')) {
 						setCurrent(next)
 					}
