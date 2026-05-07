@@ -364,6 +364,42 @@ interface TriggerRow {
 	enabled: boolean
 }
 
+interface SessionRow {
+	id: string
+	actorId: string
+	[key: string]: unknown
+}
+
+/**
+ * Fetch all actors in a workspace and return a map from actor id → display name.
+ * Failures are non-fatal — sessions still render, just without inline names.
+ */
+async function fetchActorNameMap(
+	config: McpConfig,
+	workspaceId: string,
+): Promise<Record<string, string>> {
+	try {
+		const actors = (await apiCall(config, 'GET', '/api/actors', undefined, {
+			workspaceId,
+		})) as ActorRow[]
+		const map: Record<string, string> = {}
+		for (const a of actors) {
+			if (a?.id && a?.name) map[a.id] = a.name
+		}
+		return map
+	} catch {
+		return {}
+	}
+}
+
+/** Inline `actorName` on a session payload using the supplied id→name map. */
+function attachActorName<T extends SessionRow>(session: T, names: Record<string, string>): T {
+	if (!session?.actorId) return session
+	const name = names[session.actorId]
+	if (!name) return session
+	return { ...session, actorName: name }
+}
+
 /**
  * Register MCP resources so the host (Claude Desktop / Claude.ai paperclip
  * picker, Cursor, etc.) can list and read Maskin objects. Resource URIs are
@@ -1629,12 +1665,15 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'POST', '/api/sessions', body, {
+			const result = (await apiCall(config, 'POST', '/api/sessions', body, {
 				workspaceId: workspace_id,
-			})
+			})) as SessionRow
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
+			const enriched = attachActorName(result, names)
 			return {
 				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1653,12 +1692,17 @@ export function createMcpServer(config: McpConfig) {
 			if (args.actor_id) params.set('actor_id', args.actor_id)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/sessions?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const [result, names] = await Promise.all([
+				apiCall(config, 'GET', `/api/sessions?${params}`, undefined, {
+					workspaceId: args.workspace_id,
+				}) as Promise<SessionRow[]>,
+				wsId ? fetchActorNameMap(config, wsId) : Promise.resolve({} as Record<string, string>),
+			])
+			const enriched = result.map((s) => attachActorName(s, names))
 			return {
 				_meta: meta('list_sessions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1673,7 +1717,16 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
-			const session = await apiCall(config, 'GET', `/api/sessions/${args.id}`, undefined, wsOpts)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const session = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.id}`,
+				undefined,
+				wsOpts,
+			)) as SessionRow
+			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
+			const enriched = attachActorName(session, names)
 
 			if (args.include_logs) {
 				const params = new URLSearchParams()
@@ -1687,13 +1740,15 @@ export function createMcpServer(config: McpConfig) {
 				)
 				return {
 					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify({ session, logs }, null, 2) }],
+					content: [
+						{ type: 'text' as const, text: JSON.stringify({ session: enriched, logs }, null, 2) },
+					],
 				}
 			}
 
 			return {
 				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(session, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1707,12 +1762,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
+			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as SessionRow
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
+			const enriched = attachActorName(result, names)
 			return {
 				_meta: meta('stop_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1726,12 +1784,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
+			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as SessionRow
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
+			const enriched = attachActorName(result, names)
 			return {
 				_meta: meta('pause_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1745,12 +1806,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
+			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as SessionRow
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
+			const enriched = attachActorName(result, names)
 			return {
 				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
