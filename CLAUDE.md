@@ -32,7 +32,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
 - Backend (`apps/dev`): Hono.js + OpenAPIHono + Drizzle ORM + PostgreSQL, runs on port 3000
 - Frontend (`apps/web`): Vite + React 19 + TanStack Router + TanStack Query + Tailwind CSS 4, runs on port 5173, proxies `/api` to backend
-- Auth: API keys (plain text, `ank_` prefix). Bearer token in Authorization header
+- Auth: API keys (plain text, `ank_` prefix). Bearer token in Authorization header. `authMiddleware` in `packages/auth` also enforces workspace membership when `X-Workspace-Id` is present — header-based routes don't need their own `isWorkspaceMember()` check; only by-ID routes (where the workspace is derived from the resource) do.
 - Real-time: PG NOTIFY → SSE bridge (packages/realtime) — events table has a DB trigger that fires NOTIFY on insert
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
@@ -43,6 +43,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ## Prerequisites
 - Node.js ≥ 20
 - pnpm 9.15.0
+- Docker + Docker Compose (must be installed and running — `pnpm dev` / `pnpm dev:win` start PostgreSQL + SeaweedFS via `docker-compose`, the app cannot run without it)
 
 ## Commands
 - `pnpm install` — install all dependencies

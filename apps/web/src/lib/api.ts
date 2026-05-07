@@ -100,6 +100,12 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects/search${qs}`, { workspaceId })
 		},
+		migrateType: (workspaceId: string, body: MigrateObjectTypeInput) =>
+			request<MigrateObjectTypeResponse>('/objects/migrate-type', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 	},
 
 	auth: {
@@ -406,6 +412,20 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	owner?: string | null
+}
+
+export interface MigrateObjectTypeInput {
+	fromType: string
+	mode: 'migrate' | 'delete'
+	toType?: string
+	statusMap?: Record<string, string>
+}
+
+export interface MigrateObjectTypeResponse {
+	mode: 'migrate' | 'delete'
+	fromType: string
+	toType?: string
+	count: number
 }
 
 export interface ActorListItem {

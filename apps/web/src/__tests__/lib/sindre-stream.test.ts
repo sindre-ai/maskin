@@ -83,6 +83,31 @@ describe('parseSindreLine', () => {
 		expect(events).toEqual([])
 	})
 
+	it('emits a user event when includeUser is set and content is a string', () => {
+		const line = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'Hi Sindre — what is up?' },
+		})
+		expect(parseSindreLine(line, { includeUser: true })).toEqual([
+			{ kind: 'user', text: 'Hi Sindre — what is up?' },
+		])
+	})
+
+	it('emits a user event when includeUser is set and content has text blocks', () => {
+		const line = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: [{ type: 'text', text: 'first line' }] },
+		})
+		expect(parseSindreLine(line, { includeUser: true })).toEqual([
+			{ kind: 'user', text: 'first line' },
+		])
+	})
+
+	it('still skips tool_result-only user echoes when includeUser is set', () => {
+		const events = parseSindreLine(loadFixtureAsLine('user-tool-result'), { includeUser: true })
+		expect(events).toEqual([])
+	})
+
 	it('parses a successful result envelope into a result event', () => {
 		const events = parseSindreLine(loadFixtureAsLine('result-success'))
 		expect(events).toEqual([

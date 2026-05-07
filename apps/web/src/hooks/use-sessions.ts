@@ -11,20 +11,6 @@ export function useSession(id: string | null, workspaceId: string) {
 	})
 }
 
-export function useSessionLatestLog(sessionId: string | null, workspaceId: string) {
-	return useQuery({
-		queryKey: queryKeys.sessions.logs(sessionId ?? ''),
-		queryFn: async () => {
-			const logs = await api.sessions.logs(sessionId as string, workspaceId, {
-				limit: '5',
-				stream: 'stdout',
-			})
-			return logs.length > 0 ? logs[logs.length - 1] : null
-		},
-		enabled: !!sessionId,
-	})
-}
-
 export function useWorkspaceSessions(workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.all(workspaceId),
@@ -80,10 +66,16 @@ export function useActorSessions(actorId: string, workspaceId: string) {
 	})
 }
 
-export function useSessionLogs(sessionId: string | null, workspaceId: string, enabled = true) {
+export function useSessionLogs(
+	sessionId: string | null,
+	workspaceId: string,
+	enabled = true,
+	{ live = false }: { live?: boolean } = {},
+) {
 	return useQuery({
 		queryKey: [...queryKeys.sessions.logs(sessionId ?? ''), 'all'],
 		queryFn: () => api.sessions.logs(sessionId as string, workspaceId, { limit: '500' }),
 		enabled: !!sessionId && enabled,
+		refetchInterval: live ? 3000 : false,
 	})
 }

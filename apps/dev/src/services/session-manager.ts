@@ -18,9 +18,9 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
-import { getValidOAuthToken } from '../lib/claude-oauth'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
+import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
@@ -278,6 +278,27 @@ export class SessionManager extends EventEmitter {
 	 */
 	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
 		await this.containers.write(sessionId, payload)
+		// The CLI does not echo the user turn back to stdout — only the
+		// assistant response. Persist the same JSON envelope we wrote to
+		// stdin as a stdout-stream log row so historical transcripts and the
+		// live SSE feed can render the user's turn alongside the agent's
+		// reply.
+		const [log] = await this.db
+			.insert(sessionLogs)
+			.values({
+				sessionId,
+				stream: 'stdout',
+				content: JSON.stringify(payload),
+			})
+			.returning()
+		if (log) {
+			this.emit('log', {
+				sessionId,
+				logId: log.id,
+				stream: 'stdout',
+				data: log.content,
+			} satisfies SessionLogEvent)
+		}
 	}
 
 	async stopSession(sessionId: string): Promise<void> {
@@ -620,7 +641,11 @@ export class SessionManager extends EventEmitter {
 			envVars.ACTION_PROMPT = `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`
 		}
 
-		// Inject LLM API key: agent-level first, then workspace-level fallback
+		// Resolve LLM credentials in priority order:
+		//   agent override → workspace custom_llm → Claude OAuth → workspace api key → system fallback
+		// See lib/llm-routing.ts. The route taken is persisted on
+		// sessions.config.llm_route so we can attribute usage and enforce
+		// the system-fallback per-actor daily quota.
 		const [ws] = await this.db
 			.select()
 			.from(workspaces)
@@ -629,42 +654,54 @@ export class SessionManager extends EventEmitter {
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
-		if (llmConfig.api_key) {
-			if (agent.llmProvider === 'anthropic') {
-				envVars.ANTHROPIC_API_KEY = llmConfig.api_key as string
-			} else if (agent.llmProvider === 'openai') {
-				envVars.OPENAI_API_KEY = llmConfig.api_key as string
+		let routeTaken: LlmRoute | null = null
+		try {
+			const resolved = await resolveLlmRoute({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				wsSettings,
+				agent: {
+					provider: agent.llmProvider,
+					apiKey: (llmConfig.api_key as string | undefined) ?? null,
+				},
+			})
+			if (resolved) {
+				routeTaken = resolved.route
+				Object.assign(envVars, resolved.envVars)
 			}
-		} else {
-			// Check for Claude OAuth tokens (subscription auth) before API key fallback
-			try {
-				const oauthResult = await getValidOAuthToken(this.db, session.workspaceId)
-				if (oauthResult) {
-					// Claude Code reads OAuth from ~/.claude/.credentials.json, not env vars.
-					// Pass full token set so agent-run.sh can write the credentials file.
-					envVars.CLAUDE_OAUTH_ACCESS_TOKEN = oauthResult.tokens.accessToken
-					envVars.CLAUDE_OAUTH_REFRESH_TOKEN = oauthResult.tokens.refreshToken
-					envVars.CLAUDE_OAUTH_EXPIRES_AT = String(oauthResult.tokens.expiresAt)
-					if (oauthResult.tokens.scopes) {
-						envVars.CLAUDE_OAUTH_SCOPES = JSON.stringify(oauthResult.tokens.scopes)
-					}
-					if (oauthResult.tokens.subscriptionType) {
-						envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
-					}
-				} else if (wsLlmKeys.anthropic) {
-					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
-				}
-			} catch (err) {
-				logger.warn('Failed to use Claude OAuth tokens, falling back to API key', {
+		} catch (err) {
+			if (err instanceof FallbackQuotaExceededError) {
+				logger.warn('System LLM fallback quota exceeded', {
 					sessionId: session.id,
-					error: String(err),
+					actorId: session.actorId,
+					used: err.used,
+					limit: err.limit,
 				})
-				if (wsLlmKeys.anthropic) {
-					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
-				}
 			}
-			if (wsLlmKeys.openai) {
-				envVars.OPENAI_API_KEY = wsLlmKeys.openai
+			throw err
+		}
+
+		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY).
+		if (llmConfig.api_key && agent.llmProvider === 'openai') {
+			envVars.OPENAI_API_KEY = llmConfig.api_key as string
+		}
+		// Workspace OpenAI key — independent of the anthropic-side routing above.
+		if (!llmConfig.api_key && wsLlmKeys.openai) {
+			envVars.OPENAI_API_KEY = wsLlmKeys.openai
+		}
+
+		// Persist the chosen route on the session config so cron-based quota
+		// queries (and later analytics) can find fallback sessions cheaply.
+		if (routeTaken) {
+			const existingConfig = (session.config as Record<string, unknown>) ?? {}
+			if (existingConfig.llm_route !== routeTaken) {
+				const updatedConfig = { ...existingConfig, llm_route: routeTaken }
+				await this.db
+					.update(sessions)
+					.set({ config: updatedConfig })
+					.where(eq(sessions.id, session.id))
+				;(session as { config: Record<string, unknown> }).config = updatedConfig
 			}
 		}
 
@@ -720,6 +757,10 @@ export class SessionManager extends EventEmitter {
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
 			'ANTHROPIC_API_KEY',
+			'ANTHROPIC_AUTH_TOKEN',
+			'ANTHROPIC_BASE_URL',
+			'ANTHROPIC_MODEL',
+			'ANTHROPIC_SMALL_FAST_MODEL',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
