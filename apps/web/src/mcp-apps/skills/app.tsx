@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Pencil, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { ConfirmDialog } from '../shared/actions'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
@@ -69,6 +70,7 @@ function SkillListView({ skills }: { skills: WorkspaceSkillRow[] }) {
 	const [local, setLocal] = useState<WorkspaceSkillRow[]>(skills)
 	const [busyName, setBusyName] = useState<string | null>(null)
 	const [creating, setCreating] = useState(false)
+	const [deletingSkill, setDeletingSkill] = useState<WorkspaceSkillRow | null>(null)
 
 	useEffect(() => {
 		setLocal(skills)
@@ -86,6 +88,7 @@ function SkillListView({ skills }: { skills: WorkspaceSkillRow[] }) {
 				console.error('Failed to delete skill', err)
 			} finally {
 				setBusyName(null)
+				setDeletingSkill(null)
 			}
 		},
 		[callTool, local],
@@ -137,7 +140,7 @@ function SkillListView({ skills }: { skills: WorkspaceSkillRow[] }) {
 								size="sm"
 								variant="ghost"
 								disabled={busyName === skill.name}
-								onClick={() => onDelete(skill)}
+								onClick={() => setDeletingSkill(skill)}
 								title="Delete"
 							>
 								<Trash2 className="size-4" />
@@ -146,6 +149,16 @@ function SkillListView({ skills }: { skills: WorkspaceSkillRow[] }) {
 					))}
 				</ul>
 			)}
+			<ConfirmDialog
+				open={deletingSkill !== null}
+				onOpenChange={(open) => { if (!open) setDeletingSkill(null) }}
+				title={`Delete "${deletingSkill?.name ?? ""}"?`}
+				description="This permanently removes the skill from the workspace. Any agents using this skill will no longer have access to it."
+				confirmLabel="Delete"
+				variant="destructive"
+				pending={busyName !== null}
+				onConfirm={() => { if (deletingSkill) onDelete(deletingSkill) }}
+			/>
 		</div>
 	)
 }
