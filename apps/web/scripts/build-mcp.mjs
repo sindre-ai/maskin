@@ -17,6 +17,7 @@ const apps = [
 	'triggers',
 	'graph',
 	'schema',
+	'sessions',
 ]
 
 // Clean output dirs
