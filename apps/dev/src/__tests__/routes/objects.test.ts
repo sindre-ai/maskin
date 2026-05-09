@@ -397,11 +397,13 @@ describe('Objects Routes', () => {
 			expect(eventInserts[0]?.entityId).toBe(obj.id)
 		})
 
-		it('rolls back the row insert when the event insert fails', async () => {
-			// Atomicity guarantee: if event emission fails, the object row
-			// must not be committed either. Otherwise we re-introduce the
-			// orphaned-bet pattern (bet exists, no event, no Plan Tasks
-			// trigger fires).
+		it('surfaces an error when the event insert in the transaction fails', async () => {
+			// The mocked `transaction(fn)` here just calls `fn(db)` against the
+			// same proxy — it has no rollback semantics — so this test only
+			// pins that a thrown event INSERT produces a non-201 response. The
+			// load-bearing rollback property (object row NOT committed when
+			// the event INSERT fails) is verified against a real PG transaction
+			// in __tests__/integration/objects.test.ts.
 			const ws = buildWorkspace({ id: wsId })
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
@@ -415,9 +417,6 @@ describe('Objects Routes', () => {
 				}),
 			)
 
-			// Transaction throws → route surfaces an error rather than 201.
-			// What matters is that we did not silently report success while
-			// losing the event.
 			expect(res.status).not.toBe(201)
 		})
 	})

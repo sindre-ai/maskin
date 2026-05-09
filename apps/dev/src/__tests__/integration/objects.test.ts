@@ -145,11 +145,14 @@ describe('Objects Integration', () => {
 		})
 
 		it('rolls back the row INSERT when the events INSERT fails inside the transaction', async () => {
-			// Real-DB regression for the atomicity guarantee on POST. The unit
-			// test in routes/objects.test.ts only asserts the route returns
-			// non-201; the load-bearing property is that the OBJECT row is NOT
-			// committed when the events INSERT fails inside the same tx.
-			// Without that, a programmatically-created bet exists in the DB
+			// Canonical proof of the POST atomicity guarantee. The unit test
+			// in routes/objects.test.ts only pins that a thrown event INSERT
+			// produces non-201 — its mocked transaction has no rollback
+			// semantics — so the load-bearing claim that the OBJECT row is
+			// NOT committed when the events INSERT fails inside the same tx
+			// is only verifiable here, against a real PG transaction with a
+			// BEFORE INSERT trigger forcing the failure. Without that
+			// guarantee, a programmatically-created bet exists in the DB
 			// while no `created` event ever reaches the trigger runner — the
 			// orphaned-bet pattern this fix addresses.
 			const app = createApp()
