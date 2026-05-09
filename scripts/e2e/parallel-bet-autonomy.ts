@@ -18,6 +18,7 @@
  * causing is a five-minute job.
  */
 
+import { createApiClient } from './api'
 import { parseFinitePositiveEnv } from './parse-env'
 
 type Status = string
@@ -94,6 +95,8 @@ const API_KEY = env('MASKIN_API_KEY')
 const WORKSPACE_ID = env('MASKIN_WORKSPACE_ID')
 const BUDGET_MS = parseFinitePositiveEnv(process.env.E2E_BUDGET_MIN, 90, 'E2E_BUDGET_MIN') * 60_000
 const POLL_MS = parseFinitePositiveEnv(process.env.E2E_POLL_SEC, 30, 'E2E_POLL_SEC') * 1_000
+const REQUEST_TIMEOUT_MS =
+	parseFinitePositiveEnv(process.env.E2E_REQUEST_TIMEOUT_SEC, 30, 'E2E_REQUEST_TIMEOUT_SEC') * 1_000
 const REPORT_PATH = process.env.E2E_REPORT_PATH ?? null
 const KEEP_OBJECTS = process.env.E2E_KEEP_OBJECTS === '1'
 
@@ -103,19 +106,11 @@ const headers = () => ({
 	'X-Workspace-Id': WORKSPACE_ID,
 })
 
-async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
-	const res = await fetch(`${BASE_URL}${path}`, {
-		method,
-		headers: headers(),
-		body: body === undefined ? undefined : JSON.stringify(body),
-	})
-	if (!res.ok) {
-		const text = await res.text().catch(() => '')
-		throw new Error(`${method} ${path} -> ${res.status} ${res.statusText}\n${text}`)
-	}
-	if (res.status === 204) return undefined as T
-	return (await res.json()) as T
-}
+const api = createApiClient({
+	baseUrl: BASE_URL,
+	headers,
+	timeoutMs: REQUEST_TIMEOUT_MS,
+})
 
 const RUN_ID = `e2e-${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 6)}`
 const SYNTHETIC_TAG = 'parallel-bet-autonomy-test'
@@ -365,7 +360,7 @@ interface RunReport {
 async function run() {
 	console.log(`[${RUN_ID}] starting parallel-bet-autonomy E2E`)
 	console.log(
-		`[${RUN_ID}] base=${BASE_URL} workspace=${WORKSPACE_ID} budget=${BUDGET_MS / 60_000}min poll=${POLL_MS / 1000}s`,
+		`[${RUN_ID}] base=${BASE_URL} workspace=${WORKSPACE_ID} budget=${BUDGET_MS / 60_000}min poll=${POLL_MS / 1000}s req_timeout=${REQUEST_TIMEOUT_MS / 1000}s`,
 	)
 
 	const startedAt = Date.now()

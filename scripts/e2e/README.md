@@ -37,6 +37,7 @@ pnpm test:e2e:parallel-bet
 | `MASKIN_WORKSPACE_ID` | (required) | Target workspace UUID |
 | `E2E_BUDGET_MIN` | `90` | Wall-clock minutes before FAIL |
 | `E2E_POLL_SEC` | `30` | Seconds between bet-state polls |
+| `E2E_REQUEST_TIMEOUT_SEC` | `30` | Per-request fetch timeout. A single hung API call aborts and is surfaced as a fatal error; the outer wall-clock budget is no longer the only bound. |
 | `E2E_REPORT_PATH` | unset | If set, write the JSON report to this path |
 | `E2E_KEEP_OBJECTS` | unset | Set to `1` to keep the synthetic bet/tasks after the run |
 
