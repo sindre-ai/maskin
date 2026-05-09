@@ -39,7 +39,21 @@ pnpm test:e2e:parallel-bet
 | `E2E_POLL_SEC` | `30` | Seconds between bet-state polls |
 | `E2E_REQUEST_TIMEOUT_SEC` | `30` | Per-request fetch timeout. A single hung API call aborts and is surfaced as a fatal error; the outer wall-clock budget is no longer the only bound. |
 | `E2E_REPORT_PATH` | unset | If set, write the JSON report to this path |
-| `E2E_KEEP_OBJECTS` | unset | Set to `1` to keep the synthetic bet/tasks after the run |
+| `E2E_KEEP_OBJECTS` | unset | Set to `1` to keep the synthetic bet/tasks after a PASS run (FAIL runs already keep them) |
+| `E2E_CLEANUP_ON_FAIL` | unset | Set to `1` to opt back in to deleting the synthetic bet/tasks on FAIL. Default: keep them so the diagnostic dump's IDs resolve during root-causing |
+
+### Cleanup behavior
+
+- **PASS** — synthetic bet and tasks are deleted, unless `E2E_KEEP_OBJECTS=1`.
+- **FAIL** — synthetic bet and tasks are kept by default so the diagnostic dump
+	stays useful. Set `E2E_CLEANUP_ON_FAIL=1` to delete them anyway.
+
+### Reliability
+
+`api()` retries transient errors (HTTP 408/425/429/5xx and network failures) up
+to three times with exponential backoff (500ms / 1s / 2s). The synthetic-bet
+creation call passes `Idempotency-Key: <RUN_ID>` so a retried request after a
+partial failure cannot double-create the bet.
 
 ### Exit codes
 

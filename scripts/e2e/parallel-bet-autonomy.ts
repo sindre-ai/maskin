@@ -18,8 +18,10 @@
  * causing is a five-minute job.
  */
 
-import { createApiClient } from './api'
+import { writeFile } from 'node:fs/promises'
+import { type RequestOptions, createApiClient } from './api'
 import { parseFinitePositiveEnv } from './parse-env'
+import { withRetries } from './retry'
 
 type Status = string
 
@@ -99,6 +101,7 @@ const REQUEST_TIMEOUT_MS =
 	parseFinitePositiveEnv(process.env.E2E_REQUEST_TIMEOUT_SEC, 30, 'E2E_REQUEST_TIMEOUT_SEC') * 1_000
 const REPORT_PATH = process.env.E2E_REPORT_PATH ?? null
 const KEEP_OBJECTS = process.env.E2E_KEEP_OBJECTS === '1'
+const CLEANUP_ON_FAIL = process.env.E2E_CLEANUP_ON_FAIL === '1'
 
 const headers = () => ({
 	'Content-Type': 'application/json',
@@ -106,11 +109,27 @@ const headers = () => ({
 	'X-Workspace-Id': WORKSPACE_ID,
 })
 
-const api = createApiClient({
+const apiClient = createApiClient({
 	baseUrl: BASE_URL,
 	headers,
 	timeoutMs: REQUEST_TIMEOUT_MS,
 })
+
+async function api<T>(
+	method: string,
+	path: string,
+	body?: unknown,
+	options: RequestOptions = {},
+): Promise<T> {
+	return withRetries(() => apiClient<T>(method, path, body, options), {
+		label: `${method} ${path}`,
+		onRetry: ({ attempt, delayMs, error, label }) => {
+			console.warn(
+				`[${RUN_ID}] retry ${label} attempt ${attempt + 1} failed: ${error.message}; retrying in ${delayMs}ms`,
+			)
+		},
+	})
+}
 
 const RUN_ID = `e2e-${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 6)}`
 const SYNTHETIC_TAG = 'parallel-bet-autonomy-test'
@@ -281,10 +300,13 @@ interface CreatedGraph {
 
 async function createSyntheticBet(): Promise<CreatedGraph> {
 	const graph = buildSyntheticGraph()
+	// RUN_ID is unique per invocation, so a retried POST cannot double-create
+	// the synthetic bet — the second attempt resolves to the first attempt's
+	// stored response.
 	const result = await api<{
 		nodes: Array<ObjectRow & { $id: string }>
 		edges: RelationshipRow[]
-	}>('POST', '/api/graph', graph)
+	}>('POST', '/api/graph', graph, { idempotencyKey: RUN_ID })
 
 	const byTempId = new Map(result.nodes.map((n) => [n.$id, n.id]))
 	const betId = byTempId.get('bet')
@@ -482,7 +504,17 @@ async function run() {
 	}
 	await emitReport(report)
 	console.error(`[${RUN_ID}] FAIL — ${report.failureReason}`)
-	if (!KEEP_OBJECTS) await cleanup(created)
+	// Preserve the synthetic bet/tasks for root-cause investigation; the
+	// diagnostic dump above references their IDs. Operators opt back in to
+	// FAIL-path cleanup with E2E_CLEANUP_ON_FAIL=1, and E2E_KEEP_OBJECTS=1
+	// continues to suppress cleanup unconditionally.
+	if (CLEANUP_ON_FAIL && !KEEP_OBJECTS) {
+		await cleanup(created)
+	} else {
+		console.error(
+			`[${RUN_ID}] FAIL: leaving synthetic bet ${created.betId} and ${Object.keys(created.taskIds).length} tasks in place for root-causing (set E2E_CLEANUP_ON_FAIL=1 to override)`,
+		)
+	}
 	process.exit(1)
 }
 
@@ -508,7 +540,6 @@ async function emitReport(report: RunReport) {
 	console.log(`[${RUN_ID}] === REPORT ===`)
 	console.log(json)
 	if (REPORT_PATH) {
-		const { writeFile } = await import('node:fs/promises')
 		await writeFile(REPORT_PATH, json, 'utf-8')
 		console.log(`[${RUN_ID}] report written to ${REPORT_PATH}`)
 	}

@@ -1,6 +1,11 @@
 // Per-request fetch helper with an AbortController-backed timeout. Without
 // this, a single hung request would be bounded only by the harness's outer
 // wall-clock budget, burning most of the run before producing FAIL.
+//
+// On non-OK HTTP responses this throws ApiError so the outer retry layer
+// (retry.ts) can identify transient statuses (5xx/429/etc.) and back off.
+
+import { ApiError } from './retry'
 
 export interface RequestConfig {
 	baseUrl: string
@@ -8,22 +13,38 @@ export interface RequestConfig {
 	timeoutMs: number
 }
 
-export type ApiFn = <T>(method: string, path: string, body?: unknown) => Promise<T>
+export interface RequestOptions {
+	idempotencyKey?: string
+}
+
+export type ApiFn = <T>(
+	method: string,
+	path: string,
+	body?: unknown,
+	options?: RequestOptions,
+) => Promise<T>
 
 export function createApiClient(config: RequestConfig): ApiFn {
-	return async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+	return async function api<T>(
+		method: string,
+		path: string,
+		body?: unknown,
+		options: RequestOptions = {},
+	): Promise<T> {
 		const controller = new AbortController()
 		const timer = setTimeout(() => controller.abort(), config.timeoutMs)
 		try {
+			const extraHeaders: Record<string, string> = {}
+			if (options.idempotencyKey) extraHeaders['Idempotency-Key'] = options.idempotencyKey
 			const res = await fetch(`${config.baseUrl}${path}`, {
 				method,
-				headers: config.headers(),
+				headers: { ...config.headers(), ...extraHeaders },
 				body: body === undefined ? undefined : JSON.stringify(body),
 				signal: controller.signal,
 			})
 			if (!res.ok) {
 				const text = await res.text().catch(() => '')
-				throw new Error(`${method} ${path} -> ${res.status} ${res.statusText}\n${text}`)
+				throw new ApiError(res.status, method, path, text, res.statusText)
 			}
 			if (res.status === 204) return undefined as T
 			return (await res.json()) as T
