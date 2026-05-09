@@ -73,4 +73,41 @@ describe('createApiClient', () => {
 		const api = createApiClient(baseConfig())
 		await expect(api('GET', '/api/health')).rejects.toThrow(/fetch failed/)
 	})
+
+	it('forwards options.idempotencyKey as the Idempotency-Key header', async () => {
+		let capturedInit: RequestInit | undefined
+		vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+			capturedInit = init
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			})
+		})
+
+		const api = createApiClient({ ...baseConfig(), timeoutMs: 1000 })
+		await api('POST', '/api/graph', { foo: 1 }, { idempotencyKey: 'run-abc' })
+
+		const headers = capturedInit?.headers as Record<string, string> | undefined
+		expect(headers?.['Idempotency-Key']).toBe('run-abc')
+		// Caller-provided base headers must still flow through.
+		expect(headers?.Authorization).toBe('Bearer test')
+	})
+
+	it('omits the Idempotency-Key header when no idempotencyKey option is provided', async () => {
+		let capturedInit: RequestInit | undefined
+		vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+			capturedInit = init
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			})
+		})
+
+		const api = createApiClient({ ...baseConfig(), timeoutMs: 1000 })
+		await api('POST', '/api/graph', { foo: 1 })
+
+		const headers = capturedInit?.headers as Record<string, string> | undefined
+		expect(headers).toBeDefined()
+		expect(headers?.['Idempotency-Key']).toBeUndefined()
+	})
 })

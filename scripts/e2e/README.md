@@ -55,6 +55,27 @@ to three times with exponential backoff (500ms / 1s / 2s). The synthetic-bet
 creation call passes `Idempotency-Key: <RUN_ID>` so a retried request after a
 partial failure cannot double-create the bet.
 
+**Per-request abort-timeouts are intentionally not retried.** When
+`E2E_REQUEST_TIMEOUT_SEC` fires and the `AbortController` cancels the in-flight
+fetch, `api()` throws a plain `Error` (`<METHOD> <PATH> aborted after <N>s
+(E2E_REQUEST_TIMEOUT_SEC)`). `isRetriable` (`retry.ts`) only classifies
+`ApiError` (transient HTTP statuses) and `TypeError` (fetch network failures)
+as retriable, so an abort is treated as a fatal signal for the whole run.
+
+The split is deliberate: bounded retries exist for transient blips
+("the network was bad for 200ms"), whereas a per-request timeout means *this
+one call has been hung for 30s* — the most likely explanations are an
+unresponsive server or a lost connection that fetch hasn't surfaced yet.
+Silently retrying that case would double or triple the wall-clock cost of a
+real outage and risk the harness running for hours against a dead workspace
+before the outer wall-clock budget kicks in. Treating it as fatal lets a 90-
+minute scheduled run fail fast and surface a clear root cause in the report
+instead of accumulating retries no one is watching.
+
+If a future change wants aborts to be retried, convert the abort path in
+`api.ts` to throw a typed retriable error and add a corresponding case to
+`isRetriable` and `retry.test.ts` — do not loosen the policy implicitly.
+
 ### Exit codes
 
 - `0` — PASS
