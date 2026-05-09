@@ -29,6 +29,7 @@ import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
+import { ObjectDiscussion } from '../threads/object-discussion'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectActionBanner } from './object-action-banner'
@@ -181,6 +182,9 @@ export function ObjectDocumentView({
 					/>
 				</div>
 			)}
+
+			{/* Discussion */}
+			<ObjectDiscussion objectId={object.id} />
 
 			{/* Activity */}
 			<ObjectActivity

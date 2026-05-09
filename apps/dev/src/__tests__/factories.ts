@@ -7,6 +7,9 @@ import {
 	relationships,
 	sessionLogs,
 	sessions,
+	threadEvents,
+	threadParticipants,
+	threads,
 	triggers,
 	workspaceMembers,
 	workspaces,
@@ -501,4 +504,70 @@ export async function insertTrigger(
 	})
 	const rows = await db.insert(triggers).values(data).returning()
 	return rows[0]
+}
+
+// ── Thread Builders ───────────────────────────────────────────────────────────
+
+export function buildThread(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		id: randomUUID(),
+		workspaceId: randomUUID(),
+		focusObjectId: null,
+		visibility: 'channel' as const,
+		state: 'open' as const,
+		kind: 'discussion' as const,
+		title: `Thread ${n}`,
+		resolvedAt: null,
+		resolvedBy: null,
+		resolution: null,
+		createdBy: randomUUID(),
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildThreadParticipant(overrides?: Record<string, unknown>) {
+	return {
+		id: randomUUID(),
+		threadId: randomUUID(),
+		actorId: randomUUID(),
+		kind: 'human' as const,
+		joinedAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildThreadEvent(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		id: randomUUID(),
+		threadId: randomUUID(),
+		actorId: randomUUID(),
+		kind: 'message' as const,
+		body: `Message ${n}`,
+		metadata: null,
+		createdAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildCreateThreadBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		title: `Thread ${n}`,
+		visibility: 'channel',
+		kind: 'discussion',
+		...overrides,
+	}
+}
+
+export function buildCreateThreadEventBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		kind: 'message',
+		body: `Message ${n}`,
+		...overrides,
+	}
 }

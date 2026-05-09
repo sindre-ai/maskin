@@ -388,6 +388,85 @@ export const mcpTelemetry = pgTable(
 	],
 )
 
+// ── Threads ───────────────────────────────────────────────────────────────
+
+export const threads = pgTable(
+	'threads',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		focusObjectId: uuid('focus_object_id').references(() => objects.id, { onDelete: 'set null' }),
+		visibility: text('visibility').notNull().default('channel'),
+		state: text('state').notNull().default('open'),
+		kind: text('kind').notNull().default('discussion'),
+		title: text('title').notNull(),
+		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+		resolvedBy: uuid('resolved_by').references(() => actors.id),
+		resolution: text('resolution'),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('threads_workspace_id_idx').on(t.workspaceId),
+		index('threads_focus_object_id_idx').on(t.focusObjectId),
+	],
+)
+
+export type Thread = typeof threads.$inferSelect
+export type NewThread = typeof threads.$inferInsert
+
+export const threadParticipants = pgTable(
+	'thread_participants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		threadId: uuid('thread_id')
+			.references(() => threads.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind').notNull(),
+		joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('thread_participants_thread_actor_uniq').on(t.threadId, t.actorId),
+		index('thread_participants_thread_id_idx').on(t.threadId),
+		index('thread_participants_actor_id_idx').on(t.actorId),
+	],
+)
+
+export type ThreadParticipant = typeof threadParticipants.$inferSelect
+export type NewThreadParticipant = typeof threadParticipants.$inferInsert
+
+export const threadEvents = pgTable(
+	'thread_events',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		threadId: uuid('thread_id')
+			.references(() => threads.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		kind: text('kind').notNull(),
+		body: text('body'),
+		metadata: jsonb('metadata'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('thread_events_thread_id_idx').on(t.threadId),
+		index('thread_events_actor_id_idx').on(t.actorId),
+	],
+)
+
+export type ThreadEvent = typeof threadEvents.$inferSelect
+export type NewThreadEvent = typeof threadEvents.$inferInsert
+
 // ── Notifications ─────────────────────────────────────────────────────────
 
 export const notifications = pgTable(

@@ -826,6 +826,104 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 		}),
 	},
+	// ─── Threads ─────────────────────────────────────────────
+	list_threads: {
+		description:
+			'List threads in the workspace. Use this to find relevant discussions, decisions in progress, or threads waiting for agent action. Filter by state (open/waiting/resolved/archived) or by a linked object to find all discussions around a specific bet, task, or insight.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			visibility: z
+				.enum(['channel', 'private'])
+				.optional()
+				.describe(
+					'Filter by visibility. "channel" = visible to all workspace members; "private" = invite-only. Defaults to channel.',
+				),
+			state: z
+				.enum(['open', 'waiting', 'resolved', 'archived'])
+				.optional()
+				.describe(
+					'Filter by thread state. "open" = active discussion; "waiting" = blocked on human input; "resolved" = decision made; "archived" = closed. Defaults to open.',
+				),
+			focus_object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to threads linked to this object (bet, task, or insight).'),
+		}),
+	},
+	get_thread: {
+		description:
+			'Get a full thread with all events and participants. Read the history before posting so your reply is informed by the full context of the discussion.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			thread_id: z.string().uuid().describe('The thread ID to fetch.'),
+		}),
+	},
+	create_thread: {
+		description:
+			'Start a new thread to surface a decision, flag an issue, share a finding, or kick off a discussion. Use kind to signal intent: "needs_input" = blocked on a human decision, "alert" = something needs urgent attention, "recommendation" = you have a suggestion, "good_news" = positive outcome to share, "fyi" = informational, "discussion" = open-ended. Pass focus_object_id to link the thread to an existing bet, task, or insight.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			title: z.string().min(1).describe('Short, descriptive thread title.'),
+			kind: z
+				.enum(['needs_input', 'alert', 'recommendation', 'good_news', 'fyi', 'discussion'])
+				.describe(
+					'Thread intent. needs_input = agent is blocked on a decision. alert = urgent issue. recommendation = agent has a suggestion. good_news = positive result. fyi = informational update. discussion = open-ended conversation.',
+				),
+			visibility: z
+				.enum(['channel', 'private'])
+				.optional()
+				.describe('"channel" (default) = all workspace members see it; "private" = invite-only.'),
+			focus_object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Link this thread to an existing object (bet, task, or insight).'),
+			first_message: z
+				.string()
+				.optional()
+				.describe(
+					'Optional opening message body (markdown supported). Posted immediately after thread creation.',
+				),
+		}),
+	},
+	post_thread_message: {
+		description:
+			'Post a message to an existing thread. Use kind to signal your intent: "message" (default) for general updates or findings, "plan" when describing what you are about to do, "yield" when you need human input before continuing — yield sets the thread state to "waiting" and surfaces it for human review.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			thread_id: z.string().uuid().describe('The thread to post to.'),
+			body: z.string().min(1).describe('Message content. Markdown is supported.'),
+			kind: z
+				.enum(['message', 'plan', 'yield'])
+				.optional()
+				.describe(
+					'"message" = standard update or finding (default). "plan" = agent describing its intended next steps. "yield" = agent is blocked and needs human input — sets thread state to "waiting".',
+				),
+		}),
+	},
+	resolve_thread: {
+		description:
+			'Mark a thread as resolved. Use this when a decision has been made, work is complete, or the issue has been addressed. Provide a brief resolution summary so others can understand the outcome without reading the full history.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			thread_id: z.string().uuid().describe('The thread to resolve.'),
+			resolution: z
+				.string()
+				.min(1)
+				.describe('Brief description of the outcome or decision that closes this thread.'),
+		}),
+	},
+	add_thread_participant: {
+		description:
+			'Invite another actor (human or agent) into a thread so they can see the history and post messages. Use this to bring in a specialist agent, loop in a stakeholder, or add a human who should be notified.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			thread_id: z.string().uuid().describe('The thread to add the participant to.'),
+			actor_id: z.string().uuid().describe('The actor to invite.'),
+			kind: z.enum(['human', 'agent']).describe('Whether the actor is a human or an agent.'),
+		}),
+	},
 	// ─── Extensions ──────────────────────────────────────────
 	list_extensions: {
 		description:

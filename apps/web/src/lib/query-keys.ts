@@ -74,4 +74,10 @@ export const queryKeys = {
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
 	},
+	threads: {
+		all: (workspaceId: string) => ['threads', workspaceId] as const,
+		list: (workspaceId: string, filters?: Record<string, unknown>) =>
+			['threads', workspaceId, 'list', filters] as const,
+		detail: (id: string) => ['threads', 'detail', id] as const,
+	},
 } as const

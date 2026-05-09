@@ -15,13 +15,14 @@ import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import { Activity, Bot, Layers, Zap } from 'lucide-react'
+import { Activity, Bot, Layers, MessagesSquare, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
 
 const coreNavItems = [
 	{ label: 'Pulse', to: '/$workspaceId' as const, exact: true, icon: Zap },
+	{ label: 'Threads', to: '/$workspaceId/threads' as const, icon: MessagesSquare },
 	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
 	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
 	{ label: 'Triggers', to: '/$workspaceId/triggers' as const, icon: Zap },

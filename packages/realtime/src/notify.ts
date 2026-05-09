@@ -12,6 +12,14 @@ export interface PgEvent {
 	data?: Record<string, unknown> | null
 }
 
+export interface PgThreadEvent {
+	id: string
+	thread_id: string
+	actor_id: string
+	kind: string
+	created_at: string
+}
+
 export class PgNotifyBridge extends EventEmitter {
 	private sql: postgres.Sql
 
@@ -27,6 +35,15 @@ export class PgNotifyBridge extends EventEmitter {
 			try {
 				const event = JSON.parse(payload) as PgEvent
 				this.emit('event', event)
+			} catch {
+				// ignore malformed payloads
+			}
+		})
+
+		await this.sql.listen('thread_event', (payload) => {
+			try {
+				const event = JSON.parse(payload) as PgThreadEvent
+				this.emit('thread_event', event)
 			} catch {
 				// ignore malformed payloads
 			}

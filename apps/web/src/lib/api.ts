@@ -307,6 +307,31 @@ export const api = {
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
 	},
 
+	threads: {
+		list: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<ThreadResponse[]>(`/threads${qs}`, { workspaceId })
+		},
+		get: (id: string, workspaceId: string) =>
+			request<ThreadWithEvents>(`/threads/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateThreadInput) =>
+			request<ThreadResponse>('/threads', { method: 'POST', body: data, workspaceId }),
+		update: (id: string, workspaceId: string, data: UpdateThreadInput) =>
+			request<ThreadResponse>(`/threads/${id}`, { method: 'PATCH', body: data, workspaceId }),
+		postEvent: (id: string, workspaceId: string, data: CreateThreadEventInput) =>
+			request<ThreadEventResponse>(`/threads/${id}/events`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		addParticipant: (id: string, workspaceId: string, data: AddThreadParticipantInput) =>
+			request<{ ok: boolean }>(`/threads/${id}/participants`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+	},
+
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
@@ -812,4 +837,95 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+}
+
+// Threads
+export interface ThreadParticipant {
+	actorId: string
+	kind: 'human' | 'agent'
+	joinedAt: string
+}
+
+export interface ThreadResponse {
+	id: string
+	workspaceId: string
+	focusObjectId: string | null
+	visibility: 'channel' | 'private'
+	state: 'open' | 'waiting' | 'resolved' | 'archived'
+	kind:
+		| 'needs_input'
+		| 'alert'
+		| 'recommendation'
+		| 'good_news'
+		| 'fyi'
+		| 'discussion'
+		| 'conversation'
+	title: string
+	resolvedAt?: string
+	resolvedBy?: string
+	resolution?: string
+	createdBy: string
+	createdAt: string
+	updatedAt: string
+	participants?: ThreadParticipant[]
+}
+
+export interface ThreadEventResponse {
+	id: string
+	threadId: string
+	actorId: string
+	kind:
+		| 'message'
+		| 'plan'
+		| 'tool_call'
+		| 'tool_result'
+		| 'join'
+		| 'leave'
+		| 'yield'
+		| 'resolve'
+		| 'archive'
+		| 'system'
+	body?: string
+	metadata?: Record<string, unknown>
+	createdAt: string
+}
+
+export interface ThreadWithEvents extends ThreadResponse {
+	events: ThreadEventResponse[]
+}
+
+export interface CreateThreadInput {
+	title: string
+	visibility: 'channel' | 'private'
+	kind?: ThreadResponse['kind']
+	focusObjectId?: string
+	body?: string
+	participantIds?: string[]
+}
+
+export interface UpdateThreadInput {
+	state?: 'open' | 'waiting' | 'resolved' | 'archived'
+	resolution?: string
+	title?: string
+}
+
+export interface CreateThreadEventInput {
+	kind:
+		| 'message'
+		| 'plan'
+		| 'tool_call'
+		| 'tool_result'
+		| 'join'
+		| 'leave'
+		| 'yield'
+		| 'resolve'
+		| 'archive'
+		| 'system'
+	body?: string
+	metadata?: Record<string, unknown>
+}
+
+export interface AddThreadParticipantInput {
+	actorId: string
+	kind: 'human' | 'agent'
 }

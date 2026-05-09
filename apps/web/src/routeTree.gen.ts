@@ -18,6 +18,7 @@ import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$wo
 import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/$workspaceId/settings'
 import { Route as AuthedWorkspaceIdActivityRouteImport } from './routes/_authed/$workspaceId/activity'
 import { Route as AuthedWorkspaceIdTriggersIndexRouteImport } from './routes/_authed/$workspaceId/triggers/index'
+import { Route as AuthedWorkspaceIdThreadsIndexRouteImport } from './routes/_authed/$workspaceId/threads/index'
 import { Route as AuthedWorkspaceIdSettingsIndexRouteImport } from './routes/_authed/$workspaceId/settings/index'
 import { Route as AuthedWorkspaceIdObjectsIndexRouteImport } from './routes/_authed/$workspaceId/objects/index'
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
@@ -77,6 +78,12 @@ const AuthedWorkspaceIdTriggersIndexRoute =
   AuthedWorkspaceIdTriggersIndexRouteImport.update({
     id: '/triggers/',
     path: '/triggers/',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
+const AuthedWorkspaceIdThreadsIndexRoute =
+  AuthedWorkspaceIdThreadsIndexRouteImport.update({
+    id: '/threads/',
+    path: '/threads/',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
 const AuthedWorkspaceIdSettingsIndexRoute =
@@ -177,6 +184,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/$workspaceId/objects/': typeof AuthedWorkspaceIdObjectsIndexRoute
   '/$workspaceId/settings/': typeof AuthedWorkspaceIdSettingsIndexRoute
+  '/$workspaceId/threads/': typeof AuthedWorkspaceIdThreadsIndexRoute
   '/$workspaceId/triggers/': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/$workspaceId/settings/objects/': typeof AuthedWorkspaceIdSettingsObjectsIndexRoute
@@ -198,6 +206,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/$workspaceId/objects': typeof AuthedWorkspaceIdObjectsIndexRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsIndexRoute
+  '/$workspaceId/threads': typeof AuthedWorkspaceIdThreadsIndexRoute
   '/$workspaceId/triggers': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/$workspaceId/settings/objects': typeof AuthedWorkspaceIdSettingsObjectsIndexRoute
@@ -223,6 +232,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
   '/_authed/$workspaceId/objects/': typeof AuthedWorkspaceIdObjectsIndexRoute
   '/_authed/$workspaceId/settings/': typeof AuthedWorkspaceIdSettingsIndexRoute
+  '/_authed/$workspaceId/threads/': typeof AuthedWorkspaceIdThreadsIndexRoute
   '/_authed/$workspaceId/triggers/': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/_authed/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/_authed/$workspaceId/settings/objects/': typeof AuthedWorkspaceIdSettingsObjectsIndexRoute
@@ -248,6 +258,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/agents/'
     | '/$workspaceId/objects/'
     | '/$workspaceId/settings/'
+    | '/$workspaceId/threads/'
     | '/$workspaceId/triggers/'
     | '/$workspaceId/settings/objects/$propertyName'
     | '/$workspaceId/settings/objects/'
@@ -269,6 +280,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/agents'
     | '/$workspaceId/objects'
     | '/$workspaceId/settings'
+    | '/$workspaceId/threads'
     | '/$workspaceId/triggers'
     | '/$workspaceId/settings/objects/$propertyName'
     | '/$workspaceId/settings/objects'
@@ -293,6 +305,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/agents/'
     | '/_authed/$workspaceId/objects/'
     | '/_authed/$workspaceId/settings/'
+    | '/_authed/$workspaceId/threads/'
     | '/_authed/$workspaceId/triggers/'
     | '/_authed/$workspaceId/settings/objects/$propertyName'
     | '/_authed/$workspaceId/settings/objects/'
@@ -367,6 +380,13 @@ declare module '@tanstack/react-router' {
       path: '/triggers'
       fullPath: '/$workspaceId/triggers/'
       preLoaderRoute: typeof AuthedWorkspaceIdTriggersIndexRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
+    '/_authed/$workspaceId/threads/': {
+      id: '/_authed/$workspaceId/threads/'
+      path: '/threads'
+      fullPath: '/$workspaceId/threads/'
+      preLoaderRoute: typeof AuthedWorkspaceIdThreadsIndexRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/settings/': {
@@ -504,6 +524,7 @@ interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdTriggersTriggerIdRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   AuthedWorkspaceIdAgentsIndexRoute: typeof AuthedWorkspaceIdAgentsIndexRoute
   AuthedWorkspaceIdObjectsIndexRoute: typeof AuthedWorkspaceIdObjectsIndexRoute
+  AuthedWorkspaceIdThreadsIndexRoute: typeof AuthedWorkspaceIdThreadsIndexRoute
   AuthedWorkspaceIdTriggersIndexRoute: typeof AuthedWorkspaceIdTriggersIndexRoute
 }
 
@@ -517,6 +538,7 @@ const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
     AuthedWorkspaceIdTriggersTriggerIdRoute,
   AuthedWorkspaceIdAgentsIndexRoute: AuthedWorkspaceIdAgentsIndexRoute,
   AuthedWorkspaceIdObjectsIndexRoute: AuthedWorkspaceIdObjectsIndexRoute,
+  AuthedWorkspaceIdThreadsIndexRoute: AuthedWorkspaceIdThreadsIndexRoute,
   AuthedWorkspaceIdTriggersIndexRoute: AuthedWorkspaceIdTriggersIndexRoute,
 }
 

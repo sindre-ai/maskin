@@ -49,5 +49,13 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// SSE payload, so invalidate all attachment queries in this tab with a broad prefix.
 			queryClient.invalidateQueries({ queryKey: ['agent-skill-attachments'] })
 			break
+		case 'thread':
+			queryClient.invalidateQueries({ queryKey: queryKeys.threads.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.threads.detail(event.entity_id) })
+			break
+		case 'thread_event':
+			// entity_id for thread_event carries the thread id in the event data; broad invalidate
+			queryClient.invalidateQueries({ queryKey: ['threads'] })
+			break
 	}
 }

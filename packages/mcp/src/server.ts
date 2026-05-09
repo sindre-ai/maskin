@@ -3081,6 +3081,155 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Threads ─────────────────────────────────────────────
+	registerAppTool(
+		server,
+		'list_threads',
+		{
+			description: tools.list_threads.description,
+			inputSchema: tools.list_threads.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			if (args.visibility) params.set('visibility', args.visibility)
+			if (args.state) params.set('state', args.state)
+			if (args.focus_object_id) params.set('focus_object_id', args.focus_object_id)
+			const result = await apiCall(config, 'GET', `/api/threads?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('list_threads', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_thread',
+		{
+			description: tools.get_thread.description,
+			inputSchema: tools.get_thread.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'GET', `/api/threads/${args.thread_id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('get_thread', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_thread',
+		{
+			description: tools.create_thread.description,
+			inputSchema: tools.create_thread.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, first_message, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/threads', body, {
+				workspaceId: workspace_id,
+				idempotencyKey: randomUUID(),
+			})
+			// If a first_message was provided, post it immediately after thread creation
+			if (first_message) {
+				const thread = result as { id: string }
+				await apiCall(
+					config,
+					'POST',
+					`/api/threads/${thread.id}/events`,
+					{ body: first_message, kind: 'message' },
+					{ workspaceId: workspace_id, idempotencyKey: randomUUID() },
+				)
+			}
+			return {
+				_meta: meta('create_thread', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'post_thread_message',
+		{
+			description: tools.post_thread_message.description,
+			inputSchema: tools.post_thread_message.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, thread_id, ...body } = args
+			const result = await apiCall(config, 'POST', `/api/threads/${thread_id}/events`, body, {
+				workspaceId: workspace_id,
+				idempotencyKey: randomUUID(),
+			})
+			return {
+				_meta: meta(
+					'post_thread_message',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'resolve_thread',
+		{
+			description: tools.resolve_thread.description,
+			inputSchema: tools.resolve_thread.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, thread_id, resolution } = args
+			const result = await apiCall(
+				config,
+				'PATCH',
+				`/api/threads/${thread_id}`,
+				{ state: 'resolved', resolution },
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('resolve_thread', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_thread_participant',
+		{
+			description: tools.add_thread_participant.description,
+			inputSchema: tools.add_thread_participant.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, thread_id, ...body } = args
+			const result = await apiCall(config, 'POST', `/api/threads/${thread_id}/participants`, body, {
+				workspaceId: workspace_id,
+				idempotencyKey: randomUUID(),
+			})
+			return {
+				_meta: meta(
+					'add_thread_participant',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Get Started (Onboarding) ────────────────────────────
 	registerAppTool(
 		server,
