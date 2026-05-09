@@ -19,6 +19,7 @@
  */
 
 import { writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { type RequestOptions, createApiClient } from './api'
 import { parseFinitePositiveEnv } from './parse-env'
 import { withRetries } from './retry'
@@ -134,7 +135,7 @@ async function api<T>(
 const RUN_ID = `e2e-${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 6)}`
 const SYNTHETIC_TAG = 'parallel-bet-autonomy-test'
 
-function buildSyntheticGraph() {
+export function buildSyntheticGraph() {
 	// Four tiny, low-stakes tasks. Prose dependencies only — no blocks edges
 	// created here, since materialization from prose is one of the things
 	// being verified.
@@ -545,7 +546,11 @@ async function emitReport(report: RunReport) {
 	}
 }
 
-run().catch((err) => {
-	console.error(`[${RUN_ID}] FATAL`, err)
-	process.exit(2)
-})
+// Only auto-run when invoked as a script. Prevents side effects (HTTP calls,
+// process.exit) when this module is imported by vitest for unit tests.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+	run().catch((err) => {
+		console.error(`[${RUN_ID}] FATAL`, err)
+		process.exit(2)
+	})
+}
