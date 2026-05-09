@@ -151,13 +151,17 @@ function SkillListView({ skills }: { skills: WorkspaceSkillRow[] }) {
 			)}
 			<ConfirmDialog
 				open={deletingSkill !== null}
-				onOpenChange={(open) => { if (!open) setDeletingSkill(null) }}
-				title={`Delete "${deletingSkill?.name ?? ""}"?`}
+				onOpenChange={(open) => {
+					if (!open) setDeletingSkill(null)
+				}}
+				title={`Delete "${deletingSkill?.name ?? ''}"?`}
 				description="This permanently removes the skill from the workspace. Any agents using this skill will no longer have access to it."
 				confirmLabel="Delete"
 				variant="destructive"
 				pending={busyName !== null}
-				onConfirm={() => { if (deletingSkill) onDelete(deletingSkill) }}
+				onConfirm={() => {
+					if (deletingSkill) onDelete(deletingSkill)
+				}}
 			/>
 		</div>
 	)
