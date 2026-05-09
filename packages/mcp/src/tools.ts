@@ -900,6 +900,13 @@ export const tools = {
 				.describe(
 					'"message" = standard update or finding (default). "plan" = agent describing its intended next steps. "yield" = agent is blocked and needs human input — sets thread state to "waiting".',
 				),
+			mentions: z
+				.array(z.string().uuid())
+				.max(20)
+				.optional()
+				.describe(
+					'Actor UUIDs to @mention. Mentioned agents are auto-added as participants and get an interactive session spawned to handle this message.',
+				),
 		}),
 	},
 	resolve_thread: {

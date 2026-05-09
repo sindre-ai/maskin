@@ -42,6 +42,8 @@ export interface CreateSessionParams {
 	 */
 	config?: Record<string, unknown>
 	triggerId?: string
+	/** Thread this session is participating in, if any. */
+	threadId?: string
 	createdBy: string
 	autoStart?: boolean
 }
@@ -138,6 +140,7 @@ export class SessionManager extends EventEmitter {
 				workspaceId,
 				actorId: params.actorId,
 				triggerId: params.triggerId,
+				threadId: params.threadId,
 				status: 'pending',
 				actionPrompt: params.actionPrompt,
 				config,
@@ -626,6 +629,7 @@ export class SessionManager extends EventEmitter {
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
 			MASKIN_API_URL: 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
+			...(session.threadId ? { THREAD_ID: session.threadId } : {}),
 		}
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn

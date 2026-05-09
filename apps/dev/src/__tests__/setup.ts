@@ -175,6 +175,7 @@ export function withTestEnv(
 		c.set('actorId', actorId)
 		c.set('actorType', actorType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('sessionManager', createMockSessionManager())
 		await next()
 	})
 }
@@ -198,11 +199,11 @@ export function createTestApp(
 
 export function createMockSessionManager(overrides?: Record<string, unknown>) {
 	return {
-		createSession: vi.fn(),
-		stopSession: vi.fn(),
-		pauseSession: vi.fn(),
-		resumeSession: vi.fn(),
-		writeInput: vi.fn(),
+		createSession: vi.fn().mockResolvedValue({}),
+		stopSession: vi.fn().mockResolvedValue(undefined),
+		pauseSession: vi.fn().mockResolvedValue(undefined),
+		resumeSession: vi.fn().mockResolvedValue(undefined),
+		writeInput: vi.fn().mockResolvedValue(undefined),
 		on: vi.fn(),
 		off: vi.fn(),
 		...overrides,

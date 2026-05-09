@@ -923,6 +923,7 @@ export interface CreateThreadEventInput {
 		| 'system'
 	body?: string
 	metadata?: Record<string, unknown>
+	mentions?: string[]
 }
 
 export interface AddThreadParticipantInput {

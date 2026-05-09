@@ -123,6 +123,7 @@ export const createThreadEventSchema = z.object({
 			]),
 		)
 		.optional(),
+	mentions: z.array(z.string().uuid()).max(20).optional(),
 })
 export type CreateThreadEvent = z.infer<typeof createThreadEventSchema>
 

@@ -1,6 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, type Thread, threadEvents, threadParticipants, threads } from '@maskin/db/schema'
+import {
+	events,
+	type Thread,
+	actors,
+	sessions,
+	threadEvents,
+	threadParticipants,
+	threads,
+} from '@maskin/db/schema'
 import type { PgNotifyBridge, PgThreadEvent } from '@maskin/realtime'
 import {
 	addThreadParticipantSchema,
@@ -19,6 +27,7 @@ import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -26,6 +35,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
+		sessionManager: SessionManager
 	}
 }
 
@@ -428,6 +438,7 @@ const appendEventRoute = createRoute({
 app.openapi(appendEventRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -491,13 +502,235 @@ app.openapi(appendEventRoute, (async (c) => {
 			entityId: id,
 			data: null,
 		})
+	} else if (body.kind === 'yield') {
+		// Agent signals it needs human input — transition thread to waiting
+		await db
+			.update(threads)
+			.set({ state: 'waiting', updatedAt: new Date() })
+			.where(eq(threads.id, id))
+
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'waiting',
+			entityType: 'thread',
+			entityId: id,
+			data: null,
+		})
+	} else if (body.kind === 'message' && thread.state === 'waiting') {
+		// Human replied to a waiting thread — resume active interactive sessions linked to this thread
+		await db.update(threads).set({ state: 'open', updatedAt: new Date() }).where(eq(threads.id, id))
+
+		const activeSessions = await db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.threadId, id),
+					eq(sessions.interactive, true),
+					eq(sessions.status, 'running'),
+				),
+			)
+
+		for (const session of activeSessions) {
+			sessionManager
+				.writeInput(session.id, {
+					type: 'user',
+					message: { role: 'user', content: body.body ?? '' },
+				})
+				.catch((err) =>
+					logger.error('Failed to write input to thread-linked session', {
+						sessionId: session.id,
+						threadId: id,
+						error: String(err),
+					}),
+				)
+		}
 	} else {
 		// Touch updatedAt so list order reflects latest activity
 		await db.update(threads).set({ updatedAt: new Date() }).where(eq(threads.id, id))
 	}
 
+	// Fire-and-forget: spawn agent sessions for @mentioned agents
+	// Follows the same pattern as comment mentions in apps/dev/src/routes/events.ts
+	if (body.mentions?.length) {
+		void spawnMentionedAgents({
+			db,
+			sessionManager,
+			workspaceId,
+			threadId: id,
+			thread,
+			mentionerActorId: actorId,
+			messageBody: body.body ?? '',
+			mentionIds: body.mentions,
+		})
+	}
+
 	return c.json(serialize(created) as z.infer<typeof threadEventResponseSchema>, 201)
 }) as RouteHandler<typeof appendEventRoute, Env>)
+
+/**
+ * Spawn interactive agent sessions for each @mentioned agent actor.
+ * Skips agents that already have an active session in this thread.
+ */
+async function spawnMentionedAgents(ctx: {
+	db: Database
+	sessionManager: SessionManager
+	workspaceId: string
+	threadId: string
+	thread: Thread
+	mentionerActorId: string
+	messageBody: string
+	mentionIds: string[]
+}): Promise<void> {
+	const {
+		db,
+		sessionManager,
+		workspaceId,
+		threadId,
+		thread,
+		mentionerActorId,
+		messageBody,
+		mentionIds,
+	} = ctx
+
+	// Look up agent actors from mention IDs
+	const mentionedActors = await db
+		.select({ id: actors.id, type: actors.type, name: actors.name })
+		.from(actors)
+		.where(inArray(actors.id, mentionIds))
+
+	const agentActors = mentionedActors.filter((a) => a.type === 'agent')
+	if (!agentActors.length) return
+
+	// Verify each agent is a workspace member
+	const memberChecks = await Promise.all(
+		agentActors.map((agent) => isWorkspaceMember(db, agent.id, workspaceId)),
+	)
+	const validAgents = agentActors.filter((_, i) => memberChecks[i])
+	if (!validAgents.length) return
+
+	// Find agents that already have an active session in this thread
+	const existingSessions = await db
+		.select({ actorId: sessions.actorId })
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.threadId, threadId),
+				inArray(sessions.status, ['pending', 'queued', 'starting', 'running']),
+			),
+		)
+	const activeAgentIds = new Set(existingSessions.map((s) => s.actorId))
+
+	// Fetch recent thread events for context (last 20)
+	const recentEvents = await db
+		.select()
+		.from(threadEvents)
+		.where(eq(threadEvents.threadId, threadId))
+		.orderBy(desc(threadEvents.createdAt))
+		.limit(20)
+	recentEvents.reverse()
+
+	for (const agent of validAgents) {
+		if (activeAgentIds.has(agent.id)) {
+			// Already an active session — deliver as input instead if session is running
+			const [runningSession] = await db
+				.select()
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.threadId, threadId),
+						eq(sessions.actorId, agent.id),
+						eq(sessions.status, 'running'),
+						eq(sessions.interactive, true),
+					),
+				)
+				.limit(1)
+			if (runningSession) {
+				sessionManager
+					.writeInput(runningSession.id, {
+						type: 'user',
+						message: { role: 'user', content: messageBody },
+					})
+					.catch((err) =>
+						logger.error('Failed to forward mention to running session', {
+							sessionId: runningSession.id,
+							agentId: agent.id,
+							error: String(err),
+						}),
+					)
+			}
+			continue
+		}
+
+		// Auto-add agent as thread participant if not already
+		await db
+			.insert(threadParticipants)
+			.values({ threadId, actorId: agent.id, kind: 'agent' })
+			.onConflictDoNothing()
+
+		const actionPrompt = buildThreadMentionPrompt({
+			thread,
+			threadId,
+			agentName: agent.name,
+			mentionerActorId,
+			messageBody,
+			recentEvents: recentEvents.map((e) => ({
+				actorId: e.actorId,
+				kind: e.kind,
+				body: e.body ?? '',
+			})),
+		})
+
+		sessionManager
+			.createSession(workspaceId, {
+				actorId: agent.id,
+				actionPrompt,
+				threadId,
+				config: { interactive: true },
+				createdBy: mentionerActorId,
+			})
+			.catch((err) =>
+				logger.error('Failed to create session for @mentioned agent in thread', {
+					agentId: agent.id,
+					threadId,
+					error: String(err),
+				}),
+			)
+	}
+}
+
+function buildThreadMentionPrompt(ctx: {
+	thread: Thread
+	threadId: string
+	agentName: string
+	mentionerActorId: string
+	messageBody: string
+	recentEvents: Array<{ actorId: string; kind: string; body: string }>
+}): string {
+	const historyLines = ctx.recentEvents.map((e) => `[${e.kind}] ${e.actorId}: ${e.body}`).join('\n')
+
+	return [
+		`You were @mentioned in thread "${ctx.thread.title}" (ID: ${ctx.threadId}).`,
+		'',
+		'## Thread history (most recent)',
+		historyLines || '(no prior events)',
+		'',
+		'## The message that mentioned you',
+		`From actor ${ctx.mentionerActorId}:`,
+		'"""',
+		ctx.messageBody,
+		'"""',
+		'',
+		'## Instructions',
+		'- Use the `post_thread_message` MCP tool to reply in this thread.',
+		'- Use kind "plan" when describing what you will do next.',
+		'- Use kind "yield" when you need human input before continuing.',
+		'- Use `resolve_thread` when the thread goal is accomplished.',
+		'- This is an interactive session — after posting your response, wait for further messages.',
+		`- Thread ID for all tool calls: ${ctx.threadId}`,
+	].join('\n')
+}
 
 // ── PATCH /:id — Update thread state ─────────────────────────────────────────
 

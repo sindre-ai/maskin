@@ -1,4 +1,5 @@
 import {
+	buildActor,
 	buildCreateThreadBody,
 	buildCreateThreadEventBody,
 	buildThread,
@@ -7,7 +8,7 @@ import {
 	buildWorkspaceMember,
 } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createMockSessionManager, createSessionTestApp, createTestApp } from '../setup'
 
 const { default: threadsRoutes } = await import('../../routes/threads')
 
@@ -304,6 +305,120 @@ describe('Threads Routes', () => {
 			)
 
 			expect(res.status).toBe(403)
+		})
+	})
+
+	describe('POST /api/threads/:id/events — agent session participation', () => {
+		it('yield event transitions thread to waiting state', async () => {
+			const { app, mockResults } = createTestApp(threadsRoutes, '/api/threads')
+			const thread = buildThread({ workspaceId: wsId, state: 'open' })
+			const participant = buildThreadParticipant({ threadId: thread.id, actorId })
+			const threadEvent = buildThreadEvent({ threadId: thread.id, actorId, kind: 'yield' })
+
+			mockResults.selectQueue = [
+				[thread], // loadThread
+				[participant], // isThreadParticipant
+			]
+			mockResults.insertQueue = [[threadEvent], []] // insert event, insert workspace event
+			mockResults.update = [{ ...thread, state: 'waiting' }]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/threads/${thread.id}/events`,
+					buildCreateThreadEventBody({ kind: 'yield', body: 'Need your input' }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.kind).toBe('yield')
+		})
+
+		it('message event on waiting thread resumes active sessions via writeInput', async () => {
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				threadsRoutes,
+				'/api/threads',
+			)
+			const thread = buildThread({ workspaceId: wsId, state: 'waiting' })
+			const participant = buildThreadParticipant({ threadId: thread.id, actorId })
+			const threadEvent = buildThreadEvent({ threadId: thread.id, actorId, kind: 'message' })
+			const activeSession = {
+				id: '00000000-0000-0000-0000-000000000099',
+				threadId: thread.id,
+				actorId: '00000000-0000-0000-0000-000000000042',
+				status: 'running',
+				interactive: true,
+			}
+
+			mockResults.selectQueue = [
+				[thread], // loadThread
+				[participant], // isThreadParticipant
+				[activeSession], // active sessions query
+			]
+			mockResults.insertQueue = [[threadEvent]] // insert event
+			mockResults.update = [{ ...thread, state: 'open' }]
+
+			const writeInputSpy = vi.spyOn(sessionManager, 'writeInput')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/threads/${thread.id}/events`,
+					buildCreateThreadEventBody({ kind: 'message', body: 'Here is my answer' }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.kind).toBe('message')
+			// writeInput is fire-and-forget — flush the microtask queue
+			await new Promise((r) => setTimeout(r, 10))
+			expect(writeInputSpy).toHaveBeenCalledWith(
+				activeSession.id,
+				expect.objectContaining({ type: 'user' }),
+			)
+		})
+
+		it('event with mentions returns 201 and creates the event', async () => {
+			// mentions trigger fire-and-forget session spawning; verify the HTTP layer works correctly
+			const { app, mockResults } = createTestApp(threadsRoutes, '/api/threads')
+			const thread = buildThread({ workspaceId: wsId, state: 'open' })
+			const participant = buildThreadParticipant({ threadId: thread.id, actorId })
+			const threadEvent = buildThreadEvent({ threadId: thread.id, actorId, kind: 'message' })
+			const agentActor = buildActor({ type: 'agent' })
+			const member = buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })
+
+			mockResults.selectQueue = [
+				[thread], // loadThread
+				[participant], // isThreadParticipant
+				// spawnMentionedAgents queries (fire-and-forget):
+				[agentActor], // actors query for mention IDs
+				[member], // isWorkspaceMember for agentActor
+				[], // active sessions check
+				[], // recent thread events
+			]
+			mockResults.insertQueue = [[threadEvent], []] // event + participant inserts
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/threads/${thread.id}/events`,
+					buildCreateThreadEventBody({
+						kind: 'message',
+						body: 'Hey @agent please help',
+						mentions: [agentActor.id],
+					}),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.kind).toBe('message')
+			expect(body.threadId).toBe(thread.id)
 		})
 	})
 

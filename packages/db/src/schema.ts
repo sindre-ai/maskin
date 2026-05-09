@@ -188,6 +188,7 @@ export const sessions = pgTable(
 			.references(() => actors.id)
 			.notNull(),
 		triggerId: uuid('trigger_id').references(() => triggers.id),
+		threadId: uuid('thread_id').references(() => threads.id, { onDelete: 'set null' }),
 		status: text('status').notNull(),
 		containerId: text('container_id'),
 		actionPrompt: text('action_prompt').notNull(),
@@ -216,6 +217,7 @@ export const sessions = pgTable(
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),
+		index('sessions_thread_id_idx').on(t.threadId),
 	],
 )
 
