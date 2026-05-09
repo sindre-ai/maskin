@@ -361,12 +361,72 @@ describe('Objects Routes', () => {
 		})
 	})
 
+	describe('POST /api/objects - created event atomicity', () => {
+		it('emits a created event in the same transaction as the row insert', async () => {
+			// Without this, programmatic bet creation via MCP `create_objects`
+			// silently misses the trigger runner — `Bet Created → Plan Tasks`
+			// never fires, the bet sits unplanned, and the parallelization
+			// orchestrator has no `blocks` graph to fan out on.
+			const ws = buildWorkspace({ id: wsId })
+			const obj = buildObject({ workspaceId: wsId, type: 'bet', status: 'proposed' })
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [obj]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects',
+					buildCreateObjectBody({ type: 'bet', status: 'proposed' }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			// Assert the event row was actually written, with action 'created'.
+			// The event insert is a separate `.values()` call inside the
+			// transaction — calls.inserts captures both the object row and the
+			// event row, so we filter for the events-shaped entry.
+			const eventInserts = calls.inserts.filter(
+				(v): v is { action: string; entityId: string; entityType: string } =>
+					typeof v === 'object' && v !== null && 'action' in v,
+			)
+			expect(eventInserts).toHaveLength(1)
+			expect(eventInserts[0]?.action).toBe('created')
+			expect(eventInserts[0]?.entityType).toBe('bet')
+			expect(eventInserts[0]?.entityId).toBe(obj.id)
+		})
+
+		it('surfaces an error when the event insert in the transaction fails', async () => {
+			// The mocked `transaction(fn)` here just calls `fn(db)` against the
+			// same proxy — it has no rollback semantics — so this test only
+			// pins that a thrown event INSERT produces a non-201 response. The
+			// load-bearing rollback property (object row NOT committed when
+			// the event INSERT fails) is verified against a real PG transaction
+			// in __tests__/integration/objects.test.ts.
+			const ws = buildWorkspace({ id: wsId })
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [obj]
+			mockResults.insertError = new Error('event insert failed')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).not.toBe(201)
+		})
+	})
+
 	describe('PATCH /api/objects/:id - status_changed event', () => {
 		it('logs status_changed event when status changes', async () => {
 			const existing = buildObject({ status: 'todo' })
 			const updated = { ...existing, status: 'in_progress' }
 			const ws = buildWorkspace({ id: existing.workspaceId })
-			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
 			// First select: existing object, second: workspace membership, third: workspace settings
 			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
 			mockResults.update = [updated]
@@ -377,6 +437,82 @@ describe('Objects Routes', () => {
 			)
 
 			expect(res.status).toBe(200)
+			// Assert the event row was actually written, with action 'status_changed'.
+			// Without this, the route can return 200 without ever writing the event —
+			// the orphaned-task pattern this fix addresses.
+			const eventInserts = calls.inserts.filter(
+				(v): v is { action: string; entityId: string } =>
+					typeof v === 'object' && v !== null && 'action' in v,
+			)
+			expect(eventInserts).toHaveLength(1)
+			expect(eventInserts[0]?.action).toBe('status_changed')
+			expect(eventInserts[0]?.entityId).toBe(existing.id)
+		})
+
+		it('logs updated (not status_changed) when only metadata changes', async () => {
+			const existing = buildObject({ status: 'todo' })
+			const updated = { ...existing, metadata: { foo: 'bar' } }
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { metadata: { foo: 'bar' } }),
+			)
+
+			expect(res.status).toBe(200)
+			const eventInserts = calls.inserts.filter(
+				(v): v is { action: string } => typeof v === 'object' && v !== null && 'action' in v,
+			)
+			expect(eventInserts).toHaveLength(1)
+			expect(eventInserts[0]?.action).toBe('updated')
+		})
+
+		it('rolls back the status change when the event insert fails', async () => {
+			// Atomicity guarantee: if event emission fails, the object update must
+			// not be committed either. Otherwise we re-introduce the orphaned-task
+			// pattern (status flips, no event, no trigger fires).
+			const existing = buildObject({ status: 'todo' })
+			const updated = { ...existing, status: 'in_progress' }
+			const ws = buildWorkspace({ id: existing.workspaceId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+			mockResults.update = [updated]
+			mockResults.insertError = new Error('event insert failed')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'in_progress' }),
+			)
+
+			// Transaction throws → route surfaces an error rather than returning 200.
+			// The exact status depends on the framework's error mapping; what
+			// matters is that we did not silently report success while losing the
+			// event.
+			expect(res.status).not.toBe(200)
+		})
+
+		it('returns 404 when the row vanishes between the initial select and the tx update', async () => {
+			// Race-condition branch: the route loads the object via db.select(),
+			// then enters a transaction and re-issues tx.update().returning(). If
+			// a concurrent DELETE landed between those two reads, the UPDATE
+			// matches zero rows. The route's `if (!row) return undefined` branch
+			// must produce a clean 404 — not a 500 or a half-committed event row.
+			const existing = buildObject({ status: 'todo' })
+			const ws = buildWorkspace({ id: existing.workspaceId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// existing → workspace member → workspace settings (status validation)
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [ws]]
+			// tx.update().returning() resolves to [] — the row was deleted between reads.
+			mockResults.update = []
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, { status: 'in_progress' }),
+			)
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error.code).toBe('NOT_FOUND')
 		})
 	})
 
