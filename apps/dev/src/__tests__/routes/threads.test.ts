@@ -217,6 +217,24 @@ describe('Threads Routes', () => {
 			expect(res.status).toBe(403)
 		})
 
+		it('returns 403 when non-participant posts to a private thread', async () => {
+			const { app, mockResults } = createTestApp(threadsRoutes, '/api/threads')
+			const thread = buildThread({ workspaceId: wsId, visibility: 'private' })
+
+			mockResults.selectQueue = [
+				[thread], // loadThread
+				[], // isThreadParticipant — actor not a participant
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/threads/${thread.id}/events`, buildCreateThreadEventBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
 		it('returns 404 when thread not found', async () => {
 			const { app } = createTestApp(threadsRoutes, '/api/threads')
 
@@ -498,6 +516,46 @@ describe('Threads Routes', () => {
 			)
 
 			expect(res.status).toBe(204)
+		})
+	})
+
+	describe('GET /api/threads/:id/events/stream — SSE', () => {
+		it('returns 404 when thread does not exist', async () => {
+			const { app } = createTestApp(threadsRoutes, '/api/threads')
+
+			const res = await app.request(
+				jsonGet('/api/threads/00000000-0000-0000-0000-000000000099/events/stream', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 for private thread when actor is not a participant', async () => {
+			const { app, mockResults } = createTestApp(threadsRoutes, '/api/threads')
+			const thread = buildThread({ workspaceId: wsId, visibility: 'private' })
+
+			mockResults.selectQueue = [
+				[thread], // loadThread
+				[], // isThreadParticipant — actor not a participant
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/threads/${thread.id}/events/stream`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 400 for an invalid (non-UUID) thread id', async () => {
+			const { app } = createTestApp(threadsRoutes, '/api/threads')
+
+			const res = await app.request(
+				jsonGet('/api/threads/not-a-uuid/events/stream', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
 		})
 	})
 })

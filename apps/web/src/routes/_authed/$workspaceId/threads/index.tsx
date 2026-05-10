@@ -11,21 +11,24 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
+import { useActors } from '@/hooks/use-actors'
 import {
 	useCreateThread,
 	usePostThreadEvent,
+	useRemoveThreadParticipant,
 	useResolveThread,
 	useThread,
 	useThreadEventStream,
 	useThreads,
 	useUpdateThread,
 } from '@/hooks/use-threads'
-import type { ThreadEventResponse, ThreadResponse } from '@/lib/api'
+import type { ActorListItem, ThreadEventResponse, ThreadResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { Archive, Check, Plus, Send, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/threads/')({
@@ -84,6 +87,12 @@ function ThreadsPage() {
 	if (activeFilter === 'resolved') queryParams.state = 'resolved'
 
 	const { data: threads, isLoading } = useThreads(workspaceId, queryParams)
+	const { data: actors } = useActors(workspaceId)
+	const actorsById = useMemo(() => {
+		const map = new Map<string, ActorListItem>()
+		for (const actor of actors ?? []) map.set(actor.id, actor)
+		return map
+	}, [actors])
 
 	const setFilter = (value: FilterTab) => {
 		navigate({
@@ -154,6 +163,7 @@ function ThreadsPage() {
 								thread={thread}
 								isSelected={thread.id === selectedThreadId}
 								onClick={() => selectThread(thread.id === selectedThreadId ? undefined : thread.id)}
+								actorsById={actorsById}
 							/>
 						))}
 					</div>
@@ -191,10 +201,12 @@ function ThreadRow({
 	thread,
 	isSelected,
 	onClick,
+	actorsById,
 }: {
 	thread: ThreadResponse
 	isSelected: boolean
 	onClick: () => void
+	actorsById: Map<string, ActorListItem>
 }) {
 	const isResolved = thread.state === 'resolved' || thread.state === 'archived'
 	const kindColor = KIND_COLORS[thread.kind] ?? 'bg-muted-foreground'
@@ -238,15 +250,18 @@ function ThreadRow({
 					{/* Participant avatars */}
 					{participants.length > 0 && (
 						<div className="flex -space-x-1">
-							{participants.slice(0, 4).map((p) => (
-								<ActorAvatar
-									key={p.actorId}
-									name={p.actorId.slice(0, 1).toUpperCase()}
-									type={p.kind}
-									size="sm"
-									className="ring-1 ring-background"
-								/>
-							))}
+							{participants.slice(0, 4).map((p) => {
+								const actor = actorsById.get(p.actorId)
+								return (
+									<ActorAvatar
+										key={p.actorId}
+										name={actor?.name ?? p.actorId.slice(0, 1).toUpperCase()}
+										type={actor?.type ?? p.kind}
+										size="sm"
+										className="ring-1 ring-background"
+									/>
+								)
+							})}
 							{participants.length > 4 && (
 								<span className="text-[10px] text-muted-foreground ml-1">
 									+{participants.length - 4}
@@ -274,11 +289,35 @@ function ThreadPanel({
 	onClose: () => void
 }) {
 	const { data: thread, isLoading } = useThread(workspaceId, threadId)
+	const { data: actors } = useActors(workspaceId)
+	const actorsById = useMemo(() => {
+		const map = new Map<string, ActorListItem>()
+		for (const actor of actors ?? []) map.set(actor.id, actor)
+		return map
+	}, [actors])
 	const resolveThread = useResolveThread(workspaceId, threadId)
 	const archiveThread = useUpdateThread(workspaceId, threadId)
 	const postEvent = usePostThreadEvent(workspaceId, threadId)
+	const removeParticipant = useRemoveThreadParticipant(workspaceId, threadId)
 	const [reply, setReply] = useState('')
+	const [resolution, setResolution] = useState('')
+	const [showResolveDialog, setShowResolveDialog] = useState(false)
 	const scrollRef = useRef<HTMLDivElement>(null)
+	const currentActorId = getStoredActor()?.id
+
+	// Detect @mentions in reply text — match participant names
+	const mentionIds = useMemo(() => {
+		if (!thread?.participants || !reply.includes('@')) return []
+		const ids: string[] = []
+		for (const p of thread.participants) {
+			const actor = actorsById.get(p.actorId)
+			if (!actor) continue
+			if (reply.toLowerCase().includes(`@${actor.name.toLowerCase()}`)) {
+				ids.push(p.actorId)
+			}
+		}
+		return ids
+	}, [reply, thread?.participants, actorsById])
 
 	// SSE stream for live event updates
 	useThreadEventStream(threadId, workspaceId, () => {
@@ -299,7 +338,11 @@ function ThreadPanel({
 	const handleSend = () => {
 		if (!reply.trim()) return
 		postEvent.mutate(
-			{ kind: 'message', body: reply.trim() },
+			{
+				kind: 'message',
+				body: reply.trim(),
+				...(mentionIds.length > 0 ? { mentions: mentionIds } : {}),
+			},
 			{
 				onSuccess: () => setReply(''),
 				onError: () => toast.error('Failed to send message'),
@@ -309,8 +352,14 @@ function ThreadPanel({
 
 	const handleResolve = () => {
 		resolveThread.mutate(
-			{ state: 'resolved' },
-			{ onError: () => toast.error('Failed to resolve thread') },
+			{ state: 'resolved', ...(resolution.trim() ? { resolution: resolution.trim() } : {}) },
+			{
+				onSuccess: () => {
+					setShowResolveDialog(false)
+					setResolution('')
+				},
+				onError: () => toast.error('Failed to resolve thread'),
+			},
 		)
 	}
 
@@ -369,9 +418,50 @@ function ThreadPanel({
 						No messages yet. Start the conversation below.
 					</div>
 				) : (
-					thread.events.map((event) => <ThreadEventItem key={event.id} event={event} />)
+					thread.events.map((event) => (
+						<ThreadEventItem key={event.id} event={event} actorsById={actorsById} />
+					))
 				)}
 			</div>
+
+			{/* Participants */}
+			{thread?.participants && thread.participants.length > 0 && (
+				<div className="px-4 py-2 border-t border-border shrink-0">
+					<p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1.5">
+						Participants
+					</p>
+					<div className="flex flex-wrap gap-1.5">
+						{thread.participants.map((p) => {
+							const actor = actorsById.get(p.actorId)
+							const name = actor?.name ?? p.actorId.slice(0, 8)
+							const isSelf = p.actorId === currentActorId
+							return (
+								<div
+									key={p.actorId}
+									className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-foreground"
+								>
+									<ActorAvatar name={name} type={actor?.type ?? p.kind} size="sm" />
+									<span>{name}</span>
+									{!isSelf && (
+										<button
+											type="button"
+											className="ml-0.5 text-muted-foreground hover:text-foreground transition-colors"
+											onClick={() =>
+												removeParticipant.mutate(p.actorId, {
+													onError: () => toast.error('Failed to remove participant'),
+												})
+											}
+											aria-label={`Remove ${name}`}
+										>
+											<X size={11} />
+										</button>
+									)}
+								</div>
+							)
+						})}
+					</div>
+				</div>
+			)}
 
 			{/* Actions bar */}
 			<div className="px-4 py-2 border-t border-border flex items-center gap-2 shrink-0">
@@ -379,7 +469,7 @@ function ThreadPanel({
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={handleResolve}
+						onClick={() => setShowResolveDialog(true)}
 						disabled={resolveThread.isPending}
 					>
 						<Check size={13} className="mr-1" />
@@ -400,6 +490,35 @@ function ThreadPanel({
 				)}
 			</div>
 
+			{/* Resolve dialog */}
+			<Dialog open={showResolveDialog} onOpenChange={setShowResolveDialog}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>Resolve thread</DialogTitle>
+					</DialogHeader>
+					<div className="space-y-3 pt-1">
+						<Label htmlFor="resolution-summary">Resolution summary (optional)</Label>
+						<Textarea
+							id="resolution-summary"
+							value={resolution}
+							onChange={(e) => setResolution(e.target.value)}
+							placeholder="What was decided or accomplished?"
+							rows={3}
+							className="resize-none text-sm"
+						/>
+						<div className="flex justify-end gap-2">
+							<Button variant="outline" size="sm" onClick={() => setShowResolveDialog(false)}>
+								Cancel
+							</Button>
+							<Button size="sm" onClick={handleResolve} disabled={resolveThread.isPending}>
+								<Check size={13} className="mr-1" />
+								Resolve
+							</Button>
+						</div>
+					</div>
+				</DialogContent>
+			</Dialog>
+
 			{/* Resolution note */}
 			{thread?.resolution && (
 				<div className="px-4 py-2 bg-bg-surface border-t border-border shrink-0">
@@ -415,9 +534,10 @@ function ThreadPanel({
 				<div className="px-4 pb-4 pt-2 border-t border-border shrink-0">
 					<div className="flex gap-2 items-end">
 						<Textarea
+							aria-label="Reply to thread"
 							value={reply}
 							onChange={(e) => setReply(e.target.value)}
-							placeholder="Reply… (⌘↵ to send)"
+							placeholder="Reply… (Cmd/Ctrl+↵ to send)"
 							rows={2}
 							className="resize-none text-sm"
 							onKeyDown={(e) => {
@@ -442,7 +562,10 @@ function ThreadPanel({
 	)
 }
 
-function ThreadEventItem({ event }: { event: ThreadEventResponse }) {
+export function ThreadEventItem({
+	event,
+	actorsById,
+}: { event: ThreadEventResponse; actorsById: Map<string, ActorListItem> }) {
 	const isSystem =
 		event.kind === 'join' ||
 		event.kind === 'leave' ||
@@ -466,17 +589,16 @@ function ThreadEventItem({ event }: { event: ThreadEventResponse }) {
 		event.kind === 'tool_result' ||
 		event.kind === 'yield'
 
+	const actor = actorsById.get(event.actorId)
+	const actorName = actor?.name ?? event.actorId.slice(0, 8)
+	const actorType = actor?.type ?? (isAgent ? 'agent' : 'human')
+
 	return (
-		<div className={cn('flex gap-2', isAgent ? 'items-start' : 'items-start')}>
-			<ActorAvatar
-				name={event.actorId.slice(0, 1).toUpperCase()}
-				type={isAgent ? 'agent' : 'human'}
-				size="sm"
-				className="shrink-0 mt-0.5"
-			/>
+		<div className="flex gap-2 items-start">
+			<ActorAvatar name={actorName} type={actorType} size="sm" className="shrink-0 mt-0.5" />
 			<div className="flex-1 min-w-0">
 				<div className="flex items-baseline gap-2 mb-0.5">
-					<span className="text-xs font-medium text-foreground">{event.actorId.slice(0, 8)}</span>
+					<span className="text-xs font-medium text-foreground">{actorName}</span>
 					<RelativeTime date={event.createdAt} className="text-[10px] text-muted-foreground" />
 					{event.kind !== 'message' && (
 						<span className="text-[10px] text-muted-foreground capitalize">{event.kind}</span>

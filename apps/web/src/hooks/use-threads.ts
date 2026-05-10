@@ -82,6 +82,16 @@ export function useAddThreadParticipant(workspaceId: string, threadId: string) {
 	})
 }
 
+export function useRemoveThreadParticipant(workspaceId: string, threadId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (actorId: string) => api.threads.removeParticipant(threadId, workspaceId, actorId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.threads.detail(threadId) })
+		},
+	})
+}
+
 export function useThreadEventStream(
 	threadId: string | null,
 	workspaceId: string,

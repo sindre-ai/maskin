@@ -1065,8 +1065,16 @@ app.get('/:id/events/stream', async (c) => {
 		)
 	}
 
+	const actorId = c.get('actorId')
+
 	const thread = await loadThread(db, threadId, workspaceId)
 	if (!thread) return c.json(createApiError('NOT_FOUND', 'Thread not found'), 404)
+
+	// Private threads: only participants can subscribe to the SSE stream
+	if (thread.visibility === 'private') {
+		const isMember = await isThreadParticipant(db, threadId, actorId)
+		if (!isMember) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
+	}
 
 	return streamSSE(c, async (stream) => {
 		const handler = (event: PgThreadEvent) => {

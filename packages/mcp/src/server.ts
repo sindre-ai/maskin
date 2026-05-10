@@ -3196,7 +3196,7 @@ export function createMcpServer(config: McpConfig) {
 				'PATCH',
 				`/api/threads/${thread_id}`,
 				{ state: 'resolved', resolution },
-				{ workspaceId: workspace_id },
+				{ workspaceId: workspace_id, idempotencyKey: randomUUID() },
 			)
 			return {
 				_meta: meta('resolve_thread', config, (args as { workspace_id?: string }).workspace_id),

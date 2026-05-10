@@ -330,6 +330,11 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		removeParticipant: (id: string, workspaceId: string, actorId: string) =>
+			request<{ ok: boolean }>(`/threads/${id}/participants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
 	},
 
 	claudeOauth: {
