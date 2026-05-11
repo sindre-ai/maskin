@@ -40,6 +40,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 		e.preventDefault()
 		if (dragIndex.current !== null && dragIndex.current !== index) {
 			setDragOverIndex(index)
+		} else if (dragIndex.current === index) {
+			setDragOverIndex(null)
 		}
 	}
 
@@ -75,6 +77,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 							<Link
 								to="/$workspaceId/pages"
 								params={{ workspaceId }}
+								aria-label="All pages directory"
 								className="rounded px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
 								onClick={() => setEditing(false)}
 							>
@@ -82,6 +85,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 							</Link>
 							<button
 								type="button"
+								aria-label={isEditing ? 'Done editing pinned pages' : 'Edit pinned pages'}
 								className="rounded px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
 								onClick={() => setEditing(!isEditing)}
 							>
@@ -138,7 +142,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 													<span>{page.label}</span>
 												</div>
 											) : (
-												<Link to={pageRoute} params={{ workspaceId }} search={{}}>
+												// biome-ignore lint/suspicious/noExplicitAny: registry routes use runtime strings
+												<Link to={pageRoute} params={{ workspaceId } as any} search={{} as any}>
 													<Icon />
 													<span>{page.label}</span>
 												</Link>
