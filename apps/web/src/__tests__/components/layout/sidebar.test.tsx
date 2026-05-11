@@ -1,15 +1,34 @@
 import { AppSidebar } from '@/components/layout/sidebar'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Activity, Bot, type LucideIcon, Zap } from 'lucide-react'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hooks/use-enabled-modules', () => ({
-	useEnabledModules: vi.fn(() => ['work']),
-}))
+const makePage = (id: string, label: string, to: string, icon: LucideIcon, exact?: true) => ({
+	id,
+	label,
+	to,
+	icon,
+	exact,
+	description: '',
+	category: 'workspace' as const,
+})
 
-vi.mock('@maskin/module-sdk', () => ({
-	getEnabledObjectTypeTabs: vi.fn((ids: string[]) =>
-		ids.includes('work') ? [{ label: 'Bets', value: 'bet' }] : [],
-	),
+vi.mock('@/hooks/use-pinned-pages', () => ({
+	usePinnedPages: vi.fn(() => ({
+		pinnedPages: [
+			makePage('pulse', 'Pulse', '/$workspaceId', Zap, true),
+			makePage('threads', 'Threads', '/$workspaceId/threads', Activity),
+			makePage('activity', 'Activity', '/$workspaceId/activity', Bot),
+		],
+		allPages: [],
+		isEditing: false,
+		setEditing: vi.fn(),
+		pin: vi.fn(),
+		unpin: vi.fn(),
+		isPinned: vi.fn(() => false),
+		reorder: vi.fn(),
+	})),
 }))
 
 vi.mock('@/lib/workspace-context', () => ({
@@ -36,6 +55,7 @@ vi.mock('@/components/ui/sidebar', () => ({
 	SidebarFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+	SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarMenuButton: ({
 		children,
@@ -64,38 +84,68 @@ vi.mock('@/components/layout/nav-user', () => ({
 	NavUser: () => <div data-testid="nav-user">NavUser</div>,
 }))
 
-import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { usePinnedPages } from '@/hooks/use-pinned-pages'
 
 describe('AppSidebar', () => {
-	it('renders core navigation items', () => {
+	it('renders pinned pages from the hook', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('Pulse')).toBeInTheDocument()
+		expect(screen.getByText('Threads')).toBeInTheDocument()
 		expect(screen.getByText('Activity')).toBeInTheDocument()
-		expect(screen.getByText('Agents')).toBeInTheDocument()
-		expect(screen.getByText('Triggers')).toBeInTheDocument()
 	})
 
-	it('shows Objects nav item when object types are enabled', () => {
+	it('shows "Pinned" section label', () => {
 		render(<AppSidebar />)
-		expect(screen.getByText('Objects')).toBeInTheDocument()
+		expect(screen.getByText('Pinned')).toBeInTheDocument()
 	})
 
-	it('hides Objects when no object types enabled', () => {
-		vi.mocked(useEnabledModules).mockReturnValue([])
+	it('shows "All" link and "Edit" button', () => {
 		render(<AppSidebar />)
-		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
+		expect(screen.getByText('All')).toBeInTheDocument()
+		expect(screen.getByText('Edit')).toBeInTheDocument()
+	})
+
+	it('shows "All pages" always-visible link', () => {
+		render(<AppSidebar />)
+		expect(screen.getByText('All pages')).toBeInTheDocument()
+	})
+
+	it('shows unpin buttons and "Done" in edit mode', () => {
+		vi.mocked(usePinnedPages).mockReturnValueOnce({
+			pinnedPages: [makePage('pulse', 'Pulse', '/$workspaceId', Zap, true)],
+			allPages: [],
+			isEditing: true,
+			setEditing: vi.fn(),
+			pin: vi.fn(),
+			unpin: vi.fn(),
+			isPinned: vi.fn(() => true),
+			reorder: vi.fn(),
+		})
+		render(<AppSidebar />)
+		expect(screen.getByText('Done')).toBeInTheDocument()
+		expect(screen.getByLabelText('Unpin Pulse')).toBeInTheDocument()
+	})
+
+	it('calls unpin when unpin button is clicked', async () => {
+		const unpin = vi.fn()
+		vi.mocked(usePinnedPages).mockReturnValueOnce({
+			pinnedPages: [makePage('pulse', 'Pulse', '/$workspaceId', Zap, true)],
+			allPages: [],
+			isEditing: true,
+			setEditing: vi.fn(),
+			pin: vi.fn(),
+			unpin,
+			isPinned: vi.fn(() => true),
+			reorder: vi.fn(),
+		})
+		render(<AppSidebar />)
+		await userEvent.click(screen.getByLabelText('Unpin Pulse'))
+		expect(unpin).toHaveBeenCalledWith('pulse')
 	})
 
 	it('renders AgentPulse and NavUser in footer', () => {
-		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
 		expect(screen.getByText('AgentPulse')).toBeInTheDocument()
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
-	})
-
-	it('does not render a Sindre launcher — lives in the app header now', () => {
-		vi.mocked(useEnabledModules).mockReturnValue(['work'])
-		render(<AppSidebar />)
-		expect(screen.queryByText('Sindre')).not.toBeInTheDocument()
 	})
 })
