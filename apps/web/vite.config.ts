@@ -12,11 +12,7 @@ export default defineConfig({
 	},
 	server: {
 		port: 5173,
-<<<<<<< Updated upstream
-		allowedHosts: ['.ngrok-free.app'],
-=======
-		allowedHosts: ['.ngrok-free.app', '.ngrok.app', '.ngrok.io'],
->>>>>>> Stashed changes
+		allowedHosts: ['.ngrok-free.app', '.ngrok.app', '.ngrok.io', '.ngrok.dev'],
 		proxy: {
 			'/api': {
 				target: 'http://localhost:3000',

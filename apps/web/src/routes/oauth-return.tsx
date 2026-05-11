@@ -16,9 +16,10 @@ import { useEffect, useState } from 'react'
  *     `/{workspaceId}/settings/integrations` to preserve the prior UX.
  *
  * Pre-shared message contract — keep in sync with
- * `apps/web/src/mcp-apps/integrations/app.tsx`. The card validates
- * `event.origin` against the MCP server's web-app base URL before
- * acting on the message.
+ * `apps/web/src/mcp-apps/integrations/integrations-app.tsx`. The card
+ * validates `event.origin` (must equal the web-app base URL),
+ * `event.source` (must be the popup it opened), `provider`, and
+ * `workspaceId` before acting on the message.
  */
 
 interface OauthReturnSearch {
@@ -48,20 +49,24 @@ function OauthReturnPage() {
 		const opener = typeof window !== 'undefined' ? window.opener : null
 		const isPopup = opener && opener !== window
 		if (isPopup) {
+			// We can't know the opener's origin a priori — MCP cards may be hosted
+			// on the MCP host's sandbox origin (not this web app's origin), so
+			// targeting `window.location.origin` would silently drop the message in
+			// cross-origin setups. Use `'*'` and rely on the receiver to enforce
+			// origin/source/workspace checks (see waitForOauthReturn in the
+			// integrations card).
+			const payload = {
+				type: POST_MESSAGE_TYPE,
+				provider: search.provider ?? null,
+				workspaceId: search.workspace_id ?? null,
+				status: search.status ?? null,
+				errorCode: search.error_code ?? null,
+			}
 			try {
-				opener.postMessage(
-					{
-						type: POST_MESSAGE_TYPE,
-						provider: search.provider ?? null,
-						workspaceId: search.workspace_id ?? null,
-						status: search.status ?? null,
-						errorCode: search.error_code ?? null,
-					},
-					'*',
-				)
+				opener.postMessage(payload, '*')
 			} catch {
-				// Cross-origin postMessage with target '*' should not throw, but guard
-				// anyway so a hardened browser still falls through to close().
+				// Hardened browsers may throw — fall through to close() so the card
+				// can still detect completion via its popup-closed interval.
 			}
 			window.close()
 			return
