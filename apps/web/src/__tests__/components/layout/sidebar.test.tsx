@@ -14,6 +14,10 @@ const makePage = (id: string, label: string, to: string, icon: LucideIcon, exact
 	category: 'workspace' as const,
 })
 
+vi.mock('@/hooks/use-mobile', () => ({
+	useIsMobile: vi.fn(() => false),
+}))
+
 vi.mock('@/hooks/use-pinned-pages', () => ({
 	usePinnedPages: vi.fn(() => ({
 		pinnedPages: [
@@ -84,6 +88,7 @@ vi.mock('@/components/layout/nav-user', () => ({
 	NavUser: () => <div data-testid="nav-user">NavUser</div>,
 }))
 
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePinnedPages } from '@/hooks/use-pinned-pages'
 
 describe('AppSidebar', () => {
@@ -157,6 +162,23 @@ describe('AppSidebar', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('All pages')).toBeInTheDocument()
 		expect(screen.queryByText('Pulse')).not.toBeInTheDocument()
+	})
+
+	it('hides grip handles in edit mode on mobile', () => {
+		vi.mocked(useIsMobile).mockReturnValueOnce(true)
+		vi.mocked(usePinnedPages).mockReturnValueOnce({
+			pinnedPages: [makePage('pulse', 'Pulse', '/$workspaceId', Zap, true)],
+			allPages: [],
+			isEditing: true,
+			setEditing: vi.fn(),
+			pin: vi.fn(),
+			unpin: vi.fn(),
+			isPinned: vi.fn(() => true),
+			reorder: vi.fn(),
+		})
+		render(<AppSidebar />)
+		// Grip handles use lucide GripVertical — not rendered on mobile
+		expect(document.querySelector('[data-lucide="grip-vertical"]')).not.toBeInTheDocument()
 	})
 
 	it('renders AgentPulse and NavUser in footer', () => {
