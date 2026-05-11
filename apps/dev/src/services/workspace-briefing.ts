@@ -29,6 +29,7 @@ This workspace works through bets — shaped, time-boxed outcomes.
 - Dig deeper with \`get_objects\`, \`search_objects\`, \`list_relationships\`.
 - Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
 - A one-line note in \`/agent/workspace/SESSION_LEARNING.md\` rolls up into the next session's briefing.
+- Save any files you produce for the user (HTML, CSS, JS, reports, etc.) to \`/agent/dist/\` — they'll be available for download from the session detail panel.
 
 You decide how to achieve the goal. This is just the terrain.
 

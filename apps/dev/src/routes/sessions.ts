@@ -21,6 +21,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -29,6 +30,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		sessionManager: SessionManager
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -682,6 +684,142 @@ app.get('/:id/logs/stream', async (c) => {
 		while (!closed) {
 			await stream.sleep(30000)
 		}
+	})
+})
+
+// GET /:id/files - List output files produced by a session
+const sessionFileItemSchema = z.object({
+	path: z.string(),
+	size_bytes: z.number().int().nonnegative(),
+})
+const sessionFilesResponseSchema = z.object({ files: z.array(sessionFileItemSchema) })
+
+const listSessionFilesRoute = createRoute({
+	method: 'get',
+	path: '/{id}/files',
+	tags: ['Sessions'],
+	summary: 'List session output files (from /agent/dist/)',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionFilesResponseSchema } },
+			description: 'List of session files',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(listSessionFilesRoute, (async (c) => {
+	const db = c.get('db')
+	const agentStorage = c.get('agentStorage')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const files = await agentStorage.listSessionDistFiles(workspaceId, id)
+	return c.json({
+		files: files.map((f) => ({ path: f.path, size_bytes: f.sizeBytes })),
+	})
+}) as RouteHandler<typeof listSessionFilesRoute, Env>)
+
+// GET /:id/files/* - Download a single output file
+//
+// Path validation must reject any path segment that could break out of the
+// session's dist prefix. We intentionally bypass OpenAPIHono here because
+// catch-all params don't round-trip cleanly through Zod-OpenAPI param schemas.
+const SAFE_FILE_PATH_RE = /^[A-Za-z0-9._\-/]+$/
+
+function isSafeRelativePath(path: string): boolean {
+	if (!path || path.length === 0 || path.length > 1024) return false
+	if (path.startsWith('/') || path.startsWith('\\')) return false
+	if (!SAFE_FILE_PATH_RE.test(path)) return false
+	for (const segment of path.split('/')) {
+		if (segment === '' || segment === '.' || segment === '..') return false
+	}
+	return true
+}
+
+function quoteFilenameForHeader(filename: string): string {
+	// RFC 6266 quoted-string: backslash-escape backslash and double-quote, drop
+	// everything else risky to a sanitized fallback.
+	const safe = filename.replace(/[\r\n"\\]/g, '_')
+	return `"${safe}"`
+}
+
+app.get('/:id/files/:path{.+}', async (c) => {
+	const db = c.get('db')
+	const agentStorage = c.get('agentStorage')
+	const rawSessionId = c.req.param('id')
+	const rawPath = c.req.param('path')
+	const workspaceId = c.req.header('x-workspace-id')
+
+	const parsedParams = sessionParamsSchema.safeParse({ id: rawSessionId })
+	if (!parsedParams.success) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid session id', [
+				{ field: 'id', message: 'Must be a UUID', expected: 'UUID string' },
+			]),
+			400,
+		)
+	}
+	const sessionId = parsedParams.data.id
+
+	if (!workspaceId) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Missing x-workspace-id header', [
+				{ field: 'x-workspace-id', message: 'Required header is missing', expected: 'UUID string' },
+			]),
+			400,
+		)
+	}
+
+	if (!isSafeRelativePath(rawPath)) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid file path', [
+				{
+					field: 'path',
+					message: 'Must be a relative path with safe characters',
+					expected: 'a/b.txt',
+				},
+			]),
+			400,
+		)
+	}
+
+	const session = await loadSessionWithAuth(db, sessionId, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	let buffer: Buffer
+	try {
+		buffer = await agentStorage.getSessionDistFile(workspaceId, sessionId, rawPath)
+	} catch (err) {
+		logger.warn('Session dist file not found', {
+			sessionId,
+			workspaceId,
+			path: rawPath,
+			error: String(err),
+		})
+		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
+	}
+
+	const lastSegment = rawPath.split('/').pop() ?? 'download'
+	const blob = new Blob([new Uint8Array(buffer)], { type: 'application/octet-stream' })
+	return new Response(blob, {
+		status: 200,
+		headers: {
+			'Content-Type': 'application/octet-stream',
+			'Content-Disposition': `attachment; filename=${quoteFilenameForHeader(lastSegment)}`,
+			'X-Content-Type-Options': 'nosniff',
+			'Cache-Control': 'private, max-age=0, must-revalidate',
+		},
 	})
 })
 

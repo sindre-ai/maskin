@@ -120,4 +120,14 @@ export class S3StorageProvider implements StorageProvider {
 			return false
 		}
 	}
+
+	async head(key: string): Promise<{ sizeBytes: number }> {
+		const response = await this.client.send(
+			new HeadObjectCommand({
+				Bucket: this.bucket,
+				Key: key,
+			}),
+		)
+		return { sizeBytes: response.ContentLength ?? 0 }
+	}
 }

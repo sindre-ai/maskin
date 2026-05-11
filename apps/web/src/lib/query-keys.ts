@@ -52,6 +52,7 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['sessions', workspaceId] as const,
 		detail: (id: string) => ['sessions', 'detail', id] as const,
 		logs: (sessionId: string) => ['sessions', sessionId, 'logs'] as const,
+		files: (sessionId: string) => ['sessions', sessionId, 'files'] as const,
 		byActor: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
 		byActorAll: (workspaceId: string, actorId: string) =>

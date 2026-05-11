@@ -1,3 +1,4 @@
+import { downloadBlob } from '@/lib/download'
 import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
 
 export interface SindreExportContext {
@@ -65,14 +66,7 @@ function renderAttachment(attachment: UserAttachmentView, ctx: SindreExportConte
 
 export function downloadSindreMarkdown(markdown: string, filename: string): void {
 	const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
-	const url = URL.createObjectURL(blob)
-	const a = document.createElement('a')
-	a.href = url
-	a.download = filename
-	document.body.appendChild(a)
-	a.click()
-	a.remove()
-	URL.revokeObjectURL(url)
+	downloadBlob(blob, filename)
 }
 
 export function buildSindreExportFilename(agentName: string, date: Date = new Date()): string {

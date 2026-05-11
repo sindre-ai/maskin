@@ -214,6 +214,7 @@ export function createMockStorageProvider(overrides?: Record<string, unknown>) {
 		put: vi.fn().mockResolvedValue(undefined),
 		get: vi.fn().mockResolvedValue(Buffer.from('')),
 		list: vi.fn().mockResolvedValue([]),
+		head: vi.fn().mockResolvedValue({ sizeBytes: 0 }),
 		delete: vi.fn().mockResolvedValue(undefined),
 		exists: vi.fn().mockResolvedValue(false),
 		ensureBucket: vi.fn().mockResolvedValue(undefined),
@@ -236,6 +237,9 @@ export function createMockAgentStorage(overrides?: Record<string, unknown>) {
 		getWorkspaceSkill: vi.fn().mockResolvedValue(''),
 		deleteWorkspaceSkill: vi.fn().mockResolvedValue(undefined),
 		pullWorkspaceSkillsForAgent: vi.fn().mockResolvedValue(undefined),
+		pushSessionDist: vi.fn().mockResolvedValue({ pushed: 0, skipped: null, totalBytes: 0 }),
+		listSessionDistFiles: vi.fn().mockResolvedValue([]),
+		getSessionDistFile: vi.fn().mockResolvedValue(Buffer.from('')),
 		...overrides,
 	} as unknown as AgentStorageManager
 }
@@ -253,6 +257,7 @@ export function createSessionTestApp(
 	const app = new CreateOpenAPIHono<Env>()
 	const { db, mockResults } = createTestContext()
 	const sessionManager = createMockSessionManager()
+	const agentStorage = createMockAgentStorage()
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
@@ -260,11 +265,12 @@ export function createSessionTestApp(
 		c.set('actorType', actorType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('sessionManager', sessionManager)
+		c.set('agentStorage', agentStorage)
 		await next()
 	})
 
 	app.route(basePath, routeModule)
-	return { app, db, mockResults, sessionManager }
+	return { app, db, mockResults, sessionManager, agentStorage }
 }
 
 /**
