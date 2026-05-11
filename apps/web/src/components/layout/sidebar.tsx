@@ -12,6 +12,7 @@ import {
 	SidebarTrigger,
 	useSidebar,
 } from '@/components/ui/sidebar'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePinnedPages } from '@/hooks/use-pinned-pages'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -25,9 +26,10 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const { setOpenMobile } = useSidebar()
+	const isMobile = useIsMobile()
 	const { pinnedPages, isEditing, setEditing, unpin, reorder } = usePinnedPages()
 
-	// Drag-and-drop state
+	// Drag-and-drop state (desktop only — HTML5 DnD doesn't work on touch)
 	const dragIndex = useRef<number | null>(null)
 	const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
@@ -59,6 +61,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 		setDragOverIndex(null)
 	}
 
+	const canDrag = isEditing && !isMobile
+
 	return (
 		<Sidebar collapsible="icon" {...props}>
 			<SidebarHeader className="h-11 justify-center">
@@ -78,7 +82,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 								to="/$workspaceId/pages"
 								params={{ workspaceId }}
 								aria-label="All pages directory"
-								className="rounded px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+								className="relative rounded px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors after:absolute after:-inset-1 after:md:hidden"
 								onClick={() => setEditing(false)}
 							>
 								All
@@ -86,7 +90,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 							<button
 								type="button"
 								aria-label={isEditing ? 'Done editing pinned pages' : 'Edit pinned pages'}
-								className="rounded px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+								className="relative rounded px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors after:absolute after:-inset-1 after:md:hidden"
 								onClick={() => setEditing(!isEditing)}
 							>
 								{isEditing ? 'Done' : 'Edit'}
@@ -112,18 +116,19 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 							return (
 								<div
 									key={page.id}
-									draggable={isEditing}
-									onDragStart={isEditing ? onDragStart(index) : undefined}
-									onDragOver={isEditing ? onDragOver(index) : undefined}
-									onDrop={isEditing ? onDrop(index) : undefined}
-									onDragEnd={isEditing ? onDragEnd : undefined}
+									draggable={canDrag}
+									onDragStart={canDrag ? onDragStart(index) : undefined}
+									onDragOver={canDrag ? onDragOver(index) : undefined}
+									onDrop={canDrag ? onDrop(index) : undefined}
+									onDragEnd={canDrag ? onDragEnd : undefined}
 									className={cn(
 										'flex items-center gap-0.5',
-										isEditing && 'cursor-grab',
+										canDrag && 'cursor-grab',
 										isDragTarget && 'opacity-50',
 									)}
 								>
-									{isEditing && (
+									{/* Grip handle: desktop-only — drag doesn't work on touch */}
+									{isEditing && !isMobile && (
 										<GripVertical
 											size={13}
 											className="shrink-0 text-muted-foreground/50 group-data-[collapsible=icon]:hidden"
@@ -154,7 +159,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 										<button
 											type="button"
 											aria-label={`Unpin ${page.label}`}
-											className="shrink-0 flex items-center justify-center w-5 h-5 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors group-data-[collapsible=icon]:hidden"
+											className="relative shrink-0 flex items-center justify-center w-5 h-5 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors group-data-[collapsible=icon]:hidden after:absolute after:-inset-2 after:md:hidden"
 											onClick={() => unpin(page.id)}
 										>
 											<X size={12} />

@@ -123,7 +123,7 @@ function PageCard({ page, pinned, onToggle }: PageCardProps) {
 				type="button"
 				onClick={onToggle}
 				aria-label={pinned ? `Unpin ${page.label}` : `Pin ${page.label} to left nav`}
-				className={`shrink-0 flex items-center gap-1.5 px-3 border-l border-border text-xs font-medium transition-colors ${
+				className={`shrink-0 flex items-center gap-1.5 px-3 min-w-[44px] border-l border-border text-xs font-medium transition-colors ${
 					pinned
 						? 'text-accent hover:bg-destructive/10 hover:text-destructive hover:border-destructive/20'
 						: 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
