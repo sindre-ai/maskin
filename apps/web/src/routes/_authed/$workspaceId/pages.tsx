@@ -110,7 +110,7 @@ function PageCard({ page, pinned, onToggle }: PageCardProps) {
 						{pinned && (
 							<Badge
 								variant="outline"
-								className="text-[10px] px-1.5 py-0 text-accent border-accent/30 bg-accent/10 font-medium"
+								className="text-xs px-1.5 py-0 text-accent border-accent/30 bg-accent/10 font-medium"
 							>
 								Pinned
 							</Badge>

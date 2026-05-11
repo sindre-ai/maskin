@@ -1,7 +1,4 @@
-import { DEFAULT_PINNED_IDS, setPinnedPageIds } from '@/lib/pinned-pages'
-import { act, renderHook } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createWorkspaceWrapper } from '../setup'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const WS = 'ws-1'
 const KEY = `maskin-pinned-pages-${WS}`
@@ -21,8 +18,10 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-// Import after mocks
 import { usePinnedPages } from '@/hooks/use-pinned-pages'
+import { DEFAULT_PINNED_IDS, setPinnedPageIds } from '@/lib/pinned-pages'
+import { act, renderHook } from '@testing-library/react'
+import { createWorkspaceWrapper } from '../setup'
 
 afterEach(() => {
 	localStorage.removeItem(KEY)

@@ -143,6 +143,22 @@ describe('AppSidebar', () => {
 		expect(unpin).toHaveBeenCalledWith('pulse')
 	})
 
+	it('renders only "All pages" when pinnedPages is empty', () => {
+		vi.mocked(usePinnedPages).mockReturnValueOnce({
+			pinnedPages: [],
+			allPages: [],
+			isEditing: false,
+			setEditing: vi.fn(),
+			pin: vi.fn(),
+			unpin: vi.fn(),
+			isPinned: vi.fn(() => false),
+			reorder: vi.fn(),
+		})
+		render(<AppSidebar />)
+		expect(screen.getByText('All pages')).toBeInTheDocument()
+		expect(screen.queryByText('Pulse')).not.toBeInTheDocument()
+	})
+
 	it('renders AgentPulse and NavUser in footer', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('AgentPulse')).toBeInTheDocument()
