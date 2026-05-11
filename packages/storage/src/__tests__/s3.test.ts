@@ -298,4 +298,30 @@ describe('S3StorageProvider', () => {
 			expect(result).toBe(false)
 		})
 	})
+
+	describe('head', () => {
+		it('returns the object size from ContentLength', async () => {
+			const { provider, send, getCommand } = getProvider()
+			send.mockResolvedValueOnce({ ContentLength: 1234 })
+
+			const result = await provider.head('my-key')
+
+			expect(result).toEqual({ sizeBytes: 1234 })
+			const command = getCommand(0)
+			expect(command).toBeInstanceOf(HeadObjectCommand)
+			expect(command.input).toEqual({
+				Bucket: 'test-bucket',
+				Key: 'my-key',
+			})
+		})
+
+		it('returns zero when ContentLength is missing', async () => {
+			const { provider, send } = getProvider()
+			send.mockResolvedValueOnce({})
+
+			const result = await provider.head('my-key')
+
+			expect(result).toEqual({ sizeBytes: 0 })
+		})
+	})
 })

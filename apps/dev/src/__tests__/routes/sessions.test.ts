@@ -605,4 +605,147 @@ describe('Sessions Routes', () => {
 			controller.abort()
 		})
 	})
+
+	describe('GET /api/sessions/:id/files', () => {
+		it('returns the list of dist files for the session', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, agentStorage } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.select = [session]
+			;(agentStorage.listSessionDistFiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+				{ path: 'index.html', sizeBytes: 42 },
+				{ path: 'assets/style.css', sizeBytes: 16 },
+			])
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/files`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.files).toEqual([
+				{ path: 'index.html', size_bytes: 42 },
+				{ path: 'assets/style.css', size_bytes: 16 },
+			])
+			expect(agentStorage.listSessionDistFiles).toHaveBeenCalledWith(wsId, session.id)
+		})
+
+		it('returns 404 when session does not exist in workspace', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/files`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /api/sessions/:id/files/*', () => {
+		it('returns the file as an attachment with correct headers', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, agentStorage } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.select = [session]
+			;(agentStorage.getSessionDistFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+				Buffer.from('hello world'),
+			)
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/files/index.html`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toBe('application/octet-stream')
+			expect(res.headers.get('content-disposition')).toBe('attachment; filename="index.html"')
+			expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+			const buf = Buffer.from(await res.arrayBuffer())
+			expect(buf.toString('utf-8')).toBe('hello world')
+			expect(agentStorage.getSessionDistFile).toHaveBeenCalledWith(wsId, session.id, 'index.html')
+		})
+
+		it('serves nested files using the last segment as filename', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, agentStorage } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.select = [session]
+			;(agentStorage.getSessionDistFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+				Buffer.from('body { color: red; }'),
+			)
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/files/assets/style.css`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-disposition')).toBe('attachment; filename="style.css"')
+			expect(agentStorage.getSessionDistFile).toHaveBeenCalledWith(
+				wsId,
+				session.id,
+				'assets/style.css',
+			)
+		})
+
+		it('rejects path traversal with 400', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, agentStorage } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.select = [session]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/files/..%2F..%2Fetc%2Fpasswd`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(agentStorage.getSessionDistFile).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 when storage cannot find the file', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, agentStorage } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.select = [session]
+			;(agentStorage.getSessionDistFile as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('NoSuchKey'),
+			)
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/files/missing.txt`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when session does not belong to workspace', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults, agentStorage } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/files/index.html`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(agentStorage.getSessionDistFile).not.toHaveBeenCalled()
+		})
+	})
 })

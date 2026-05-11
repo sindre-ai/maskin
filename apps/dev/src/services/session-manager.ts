@@ -203,7 +203,7 @@ export class SessionManager extends EventEmitter {
 		try {
 			// Pull agent files from S3 to temp dir (chmod 777 so non-root agent user in container can write)
 			const tempDir = await mkdtemp(join(tmpdir(), 'anko-session-'))
-			for (const sub of ['', 'skills', 'learnings', 'memory', 'workspace']) {
+			for (const sub of ['', 'skills', 'learnings', 'memory', 'workspace', 'dist']) {
 				const dir = sub ? join(tempDir, sub) : tempDir
 				if (sub) await mkdir(dir, { recursive: true })
 				await chmod(dir, 0o777)
@@ -967,6 +967,18 @@ export class SessionManager extends EventEmitter {
 					.catch((err) =>
 						logger.warn('Failed to push learnings', { sessionId, error: String(err) }),
 					)
+				const distResult = await this.agentStorage
+					.pushSessionDist(session.workspaceId, sessionId, sessionData.tempDir)
+					.catch((err) => {
+						logger.warn('Failed to push session dist', { sessionId, error: String(err) })
+						return null
+					})
+				if (distResult?.skipped === 'over_limit') {
+					await this.insertSystemLog(
+						sessionId,
+						'Session dist files skipped — exceeded download size limit (max 100 files / 50 MB)',
+					).catch(() => {})
+				}
 			}
 		} catch (err) {
 			logger.warn('Failed to push session files', { sessionId, error: String(err) })
@@ -1125,6 +1137,21 @@ export class SessionManager extends EventEmitter {
 							error: String(err),
 						}),
 					)
+				const distResult = await this.agentStorage
+					.pushSessionDist(session.workspaceId, session.id, sessionData.tempDir)
+					.catch((err) => {
+						logger.warn('Failed to push session dist on timeout', {
+							sessionId: session.id,
+							error: String(err),
+						})
+						return null
+					})
+				if (distResult?.skipped === 'over_limit') {
+					await this.insertSystemLog(
+						session.id,
+						'Session dist files skipped — exceeded download size limit (max 100 files / 50 MB)',
+					).catch(() => {})
+				}
 			}
 
 			if (session.containerId) {

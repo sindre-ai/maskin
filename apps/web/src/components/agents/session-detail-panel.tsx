@@ -10,6 +10,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Clock,
+	FileDown,
 	FileText,
 	MinusCircle,
 	PauseCircle,
@@ -20,6 +21,7 @@ import { useMemo, useState } from 'react'
 import { RelativeTime } from '../shared/relative-time'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet'
 import { Spinner } from '../ui/spinner'
+import { SessionFilesList } from './session-files-list'
 import {
 	SessionLogTranscript,
 	getSessionResultDisplay,
@@ -306,6 +308,15 @@ export function SessionDetailPanel({
 							) : (
 								<AffectedObjectsList objects={affectedObjects} workspaceId={workspaceId} />
 							)}
+						</div>
+
+						{/* Files */}
+						<div className="mt-6">
+							<h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mb-2">
+								<FileDown size={13} />
+								Files
+							</h4>
+							<SessionFilesList sessionId={session.id} workspaceId={workspaceId} />
 						</div>
 
 						{/* Logs */}

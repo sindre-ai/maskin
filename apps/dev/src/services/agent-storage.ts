@@ -9,6 +9,28 @@ import { appendToLedger } from './workspace-briefing'
 
 export const AGENT_STORAGE_PREFIX = 'agents'
 export const WORKSPACE_SKILLS_PREFIX = 'workspaces'
+export const SESSIONS_STORAGE_PREFIX = 'sessions'
+
+export const SESSION_DIST_MAX_FILES = 100
+export const SESSION_DIST_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+
+export function sessionDistPrefix(workspaceId: string, sessionId: string): string {
+	return `${SESSIONS_STORAGE_PREFIX}/${workspaceId}/${sessionId}/dist/`
+}
+
+export function sessionDistKey(
+	workspaceId: string,
+	sessionId: string,
+	relativePath: string,
+): string {
+	return `${sessionDistPrefix(workspaceId, sessionId)}${relativePath}`
+}
+
+export type PushSessionDistResult = {
+	pushed: number
+	skipped: 'over_limit' | null
+	totalBytes: number
+}
 
 // Keyed on the skill's UUID so concurrent writers with the same `name` can
 // never collide on the same S3 object — a stale rollback from a losing writer
@@ -180,6 +202,119 @@ export class AgentStorageManager {
 		await this.appendWorkspaceLedger(workspaceId, sessionId, localDir, opts?.actionPrompt)
 
 		logger.info(`Pushed ${pushed} files to storage`, { actorId, workspaceId, sessionId })
+	}
+
+	/**
+	 * Push the contents of `<localDir>/dist/` to S3 under
+	 * `sessions/<workspaceId>/<sessionId>/dist/<relativePath>` so the user can
+	 * download artifacts produced by an agent session. Best-effort: a missing
+	 * `dist/` returns cleanly with zero pushed; per-file upload failures are
+	 * logged and skipped rather than failing the whole session.
+	 *
+	 * Enforces SESSION_DIST_MAX_FILES and SESSION_DIST_MAX_TOTAL_BYTES caps up
+	 * front by walking before uploading — if either cap is exceeded we abort
+	 * with no uploads and return `skipped: 'over_limit'`.
+	 */
+	async pushSessionDist(
+		workspaceId: string,
+		sessionId: string,
+		localDir: string,
+	): Promise<PushSessionDistResult> {
+		const distRoot = join(localDir, 'dist')
+		let entries: { absolutePath: string; relativePath: string; sizeBytes: number }[]
+		try {
+			entries = await walkFilesWithSize(distRoot, '')
+		} catch (err) {
+			if (isFileNotFound(err)) {
+				return { pushed: 0, skipped: null, totalBytes: 0 }
+			}
+			logger.warn('Failed to walk session dist directory', {
+				workspaceId,
+				sessionId,
+				error: String(err),
+			})
+			return { pushed: 0, skipped: null, totalBytes: 0 }
+		}
+
+		if (entries.length === 0) {
+			return { pushed: 0, skipped: null, totalBytes: 0 }
+		}
+
+		const totalBytes = entries.reduce((acc, e) => acc + e.sizeBytes, 0)
+		if (entries.length > SESSION_DIST_MAX_FILES || totalBytes > SESSION_DIST_MAX_TOTAL_BYTES) {
+			logger.warn('Session dist over limit — skipping upload', {
+				workspaceId,
+				sessionId,
+				fileCount: entries.length,
+				totalBytes,
+				maxFiles: SESSION_DIST_MAX_FILES,
+				maxBytes: SESSION_DIST_MAX_TOTAL_BYTES,
+			})
+			return { pushed: 0, skipped: 'over_limit', totalBytes }
+		}
+
+		let pushed = 0
+		for (const entry of entries) {
+			try {
+				const data = await readFile(entry.absolutePath)
+				const key = sessionDistKey(workspaceId, sessionId, entry.relativePath)
+				await this.storage.put(key, data)
+				pushed++
+			} catch (err) {
+				logger.error('Failed to push session dist file', {
+					workspaceId,
+					sessionId,
+					path: entry.relativePath,
+					error: String(err),
+				})
+			}
+		}
+
+		logger.info('Pushed session dist files', {
+			workspaceId,
+			sessionId,
+			pushed,
+			fileCount: entries.length,
+			totalBytes,
+		})
+
+		return { pushed, skipped: null, totalBytes }
+	}
+
+	async listSessionDistFiles(
+		workspaceId: string,
+		sessionId: string,
+	): Promise<{ path: string; sizeBytes: number }[]> {
+		const prefix = sessionDistPrefix(workspaceId, sessionId)
+		const keys = await this.storage.list(prefix)
+		const results: { path: string; sizeBytes: number }[] = []
+		for (const key of keys) {
+			if (!key.startsWith(prefix)) continue
+			const path = key.slice(prefix.length)
+			if (!path) continue
+			try {
+				const { sizeBytes } = await this.storage.head(key)
+				results.push({ path, sizeBytes })
+			} catch (err) {
+				logger.warn('Failed to head session dist file', {
+					workspaceId,
+					sessionId,
+					key,
+					error: String(err),
+				})
+			}
+		}
+		results.sort((a, b) => a.path.localeCompare(b.path))
+		return results
+	}
+
+	async getSessionDistFile(
+		workspaceId: string,
+		sessionId: string,
+		relativePath: string,
+	): Promise<Buffer> {
+		const key = sessionDistKey(workspaceId, sessionId, relativePath)
+		return this.storage.get(key)
 	}
 
 	/**
@@ -458,6 +593,31 @@ async function folderExists(path: string): Promise<boolean> {
 	} catch {
 		return false
 	}
+}
+
+/**
+ * Recursively walk `root`, returning a flat list of files with their relative
+ * paths (POSIX-style separators) and sizes. Throws ENOENT if `root` itself is
+ * missing — callers should treat that as "no dist output."
+ */
+async function walkFilesWithSize(
+	root: string,
+	relPrefix: string,
+): Promise<{ absolutePath: string; relativePath: string; sizeBytes: number }[]> {
+	const dirEntries = await readdir(join(root, relPrefix), { withFileTypes: true })
+	const files: { absolutePath: string; relativePath: string; sizeBytes: number }[] = []
+	for (const entry of dirEntries) {
+		const entryRel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name
+		const entryAbs = join(root, entryRel)
+		if (entry.isDirectory()) {
+			const nested = await walkFilesWithSize(root, entryRel)
+			files.push(...nested)
+		} else if (entry.isFile()) {
+			const s = await stat(entryAbs)
+			files.push({ absolutePath: entryAbs, relativePath: entryRel, sizeBytes: s.size })
+		}
+	}
+	return files
 }
 
 function isFileNotFound(err: unknown): boolean {

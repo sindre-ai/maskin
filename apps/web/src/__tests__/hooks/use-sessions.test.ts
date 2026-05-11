@@ -8,6 +8,7 @@ vi.mock('@/lib/api', () => ({
 			list: vi.fn(),
 			logs: vi.fn(),
 			create: vi.fn(),
+			files: vi.fn(),
 		},
 	},
 }))
@@ -18,6 +19,7 @@ import {
 	useCreateSession,
 	useSession,
 	useSessionErrorLog,
+	useSessionFiles,
 	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
@@ -237,6 +239,40 @@ describe('useSessionErrorLog', () => {
 
 		expect(result.current.isFetching).toBe(false)
 		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+})
+
+describe('useSessionFiles', () => {
+	it('fetches files for a session', async () => {
+		vi.mocked(api.sessions.files).mockResolvedValue({
+			files: [{ path: 'index.html', size_bytes: 42 }],
+		})
+
+		const { result } = renderHook(() => useSessionFiles('session-1', workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data?.files).toEqual([{ path: 'index.html', size_bytes: 42 }])
+		expect(api.sessions.files).toHaveBeenCalledWith('session-1', workspaceId)
+	})
+
+	it('is not enabled when sessionId is null', () => {
+		const { result } = renderHook(() => useSessionFiles(null, workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.isFetching).toBe(false)
+		expect(api.sessions.files).not.toHaveBeenCalled()
+	})
+
+	it('is not enabled when enabled flag is false', () => {
+		const { result } = renderHook(() => useSessionFiles('session-1', workspaceId, false), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.isFetching).toBe(false)
+		expect(api.sessions.files).not.toHaveBeenCalled()
 	})
 })
 

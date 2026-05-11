@@ -19,6 +19,7 @@ function createMockStorage() {
 		put: vi.fn().mockResolvedValue(undefined),
 		get: vi.fn().mockResolvedValue(Buffer.from('s3 content')),
 		list: vi.fn().mockResolvedValue([]),
+		head: vi.fn().mockResolvedValue({ sizeBytes: 0 }),
 		delete: vi.fn().mockResolvedValue(undefined),
 		exists: vi.fn().mockResolvedValue(false),
 		ensureBucket: vi.fn().mockResolvedValue(undefined),
@@ -395,6 +396,118 @@ describe('AgentStorageManager', () => {
 					expect.any(Buffer),
 				)
 			})
+		})
+	})
+
+	describe('pushSessionDist()', () => {
+		const sessionId = '00000000-0000-0000-0000-0000000000aa'
+
+		// Helper that builds a fake Dirent for readdir({ withFileTypes: true })
+		function dirent(name: string, kind: 'file' | 'dir') {
+			return {
+				name,
+				isFile: () => kind === 'file',
+				isDirectory: () => kind === 'dir',
+			}
+		}
+
+		it('returns cleanly when dist directory is missing', async () => {
+			;(readdir as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+			)
+
+			const result = await manager.pushSessionDist(workspaceId, sessionId, '/tmp/agent')
+
+			expect(result).toEqual({ pushed: 0, skipped: null, totalBytes: 0 })
+			expect(storage.put).not.toHaveBeenCalled()
+		})
+
+		it('uploads files to the session dist prefix', async () => {
+			;(readdir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+				if (path.endsWith('/dist') || path.endsWith('\\dist')) {
+					return [dirent('index.html', 'file'), dirent('assets', 'dir')]
+				}
+				if (path.endsWith('assets')) {
+					return [dirent('style.css', 'file')]
+				}
+				return []
+			})
+			;(stat as ReturnType<typeof vi.fn>).mockResolvedValue({ size: 100, isDirectory: () => false })
+			;(readFile as ReturnType<typeof vi.fn>).mockResolvedValue(Buffer.from('content'))
+
+			const result = await manager.pushSessionDist(workspaceId, sessionId, '/tmp/agent')
+
+			expect(result.pushed).toBe(2)
+			expect(result.skipped).toBeNull()
+			expect(storage.put).toHaveBeenCalledWith(
+				`sessions/${workspaceId}/${sessionId}/dist/index.html`,
+				expect.any(Buffer),
+			)
+			expect(storage.put).toHaveBeenCalledWith(
+				`sessions/${workspaceId}/${sessionId}/dist/assets/style.css`,
+				expect.any(Buffer),
+			)
+		})
+
+		it('aborts upload when file count exceeds the limit', async () => {
+			const tooMany = Array.from({ length: 101 }, (_, i) => dirent(`f${i}.txt`, 'file'))
+			;(readdir as ReturnType<typeof vi.fn>).mockResolvedValue(tooMany)
+			;(stat as ReturnType<typeof vi.fn>).mockResolvedValue({ size: 1, isDirectory: () => false })
+
+			const result = await manager.pushSessionDist(workspaceId, sessionId, '/tmp/agent')
+
+			expect(result.skipped).toBe('over_limit')
+			expect(result.pushed).toBe(0)
+			expect(storage.put).not.toHaveBeenCalled()
+		})
+
+		it('aborts upload when total bytes exceed the limit', async () => {
+			;(readdir as ReturnType<typeof vi.fn>).mockResolvedValue([dirent('big.bin', 'file')])
+			;(stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+				size: 60 * 1024 * 1024,
+				isDirectory: () => false,
+			})
+
+			const result = await manager.pushSessionDist(workspaceId, sessionId, '/tmp/agent')
+
+			expect(result.skipped).toBe('over_limit')
+			expect(result.pushed).toBe(0)
+			expect(storage.put).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('listSessionDistFiles()', () => {
+		const sessionId = '00000000-0000-0000-0000-0000000000bb'
+
+		it('strips the prefix and returns paths with sizes', async () => {
+			const prefix = `sessions/${workspaceId}/${sessionId}/dist/`
+			storage.list.mockResolvedValue([`${prefix}index.html`, `${prefix}assets/style.css`])
+			storage.head.mockImplementation(async (key: string) => {
+				if (key.endsWith('index.html')) return { sizeBytes: 42 }
+				return { sizeBytes: 16 }
+			})
+
+			const result = await manager.listSessionDistFiles(workspaceId, sessionId)
+
+			expect(result).toEqual([
+				{ path: 'assets/style.css', sizeBytes: 16 },
+				{ path: 'index.html', sizeBytes: 42 },
+			])
+		})
+	})
+
+	describe('getSessionDistFile()', () => {
+		const sessionId = '00000000-0000-0000-0000-0000000000cc'
+
+		it('reads the file from the session dist key', async () => {
+			storage.get.mockResolvedValue(Buffer.from('data'))
+
+			const result = await manager.getSessionDistFile(workspaceId, sessionId, 'index.html')
+
+			expect(storage.get).toHaveBeenCalledWith(
+				`sessions/${workspaceId}/${sessionId}/dist/index.html`,
+			)
+			expect(result.toString('utf-8')).toBe('data')
 		})
 	})
 })

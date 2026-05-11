@@ -11,6 +11,14 @@ export function useSession(id: string | null, workspaceId: string) {
 	})
 }
 
+export function useSessionFiles(sessionId: string | null, workspaceId: string, enabled = true) {
+	return useQuery({
+		queryKey: queryKeys.sessions.files(sessionId ?? ''),
+		queryFn: () => api.sessions.files(sessionId as string, workspaceId),
+		enabled: !!sessionId && !!workspaceId && enabled,
+	})
+}
+
 export function useWorkspaceSessions(workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.all(workspaceId),

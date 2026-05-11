@@ -81,6 +81,33 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	return res.json()
 }
 
+async function fetchBlob(
+	path: string,
+	opts: { headers?: Record<string, string>; workspaceId?: string } = {},
+): Promise<Blob> {
+	const { headers = {}, workspaceId } = opts
+	const apiKey = getApiKey()
+
+	const reqHeaders: Record<string, string> = { ...headers }
+	if (apiKey) reqHeaders.Authorization = `Bearer ${apiKey}`
+	if (workspaceId) reqHeaders['X-Workspace-Id'] = workspaceId
+
+	const res = await fetch(`${API_BASE}${path}`, { method: 'GET', headers: reqHeaders })
+
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({ error: res.statusText }))
+		const message =
+			typeof data.error === 'object' && data.error?.message
+				? data.error.message
+				: typeof data.error === 'string'
+					? data.error
+					: res.statusText
+		throw new ApiError(res.status, message)
+	}
+
+	return res.blob()
+}
+
 // Objects
 export const api = {
 	objects: {
@@ -258,6 +285,15 @@ export const api = {
 		) => {
 			const qs = new URLSearchParams(params).toString()
 			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
+		},
+		files: (id: string, workspaceId: string) =>
+			request<{ files: SessionFileResponse[] }>(`/sessions/${id}/files`, { workspaceId }),
+		downloadFile: (id: string, path: string, workspaceId: string) => {
+			const encoded = path
+				.split('/')
+				.map((segment) => encodeURIComponent(segment))
+				.join('/')
+			return fetchBlob(`/sessions/${id}/files/${encoded}`, { workspaceId })
 		},
 	},
 
@@ -708,6 +744,11 @@ export interface SessionLogResponse {
 	stream: string
 	content: string
 	createdAt: string | null
+}
+
+export interface SessionFileResponse {
+	path: string
+	size_bytes: number
 }
 
 export interface SessionUsageBucketResponse {
