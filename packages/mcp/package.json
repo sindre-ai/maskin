@@ -23,7 +23,7 @@
 		"@maskin/ext-work": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",
-		"@modelcontextprotocol/ext-apps": "^1.6.0",
+		"@modelcontextprotocol/ext-apps": "^1.7.1",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"zod": "^3.24.0"
 	},
