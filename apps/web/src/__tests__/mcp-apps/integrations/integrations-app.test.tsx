@@ -288,6 +288,58 @@ describe('waitForOauthReturn', () => {
 		await expect(promise).resolves.toEqual({ status: 'closed', errorCode: 'timeout' })
 	})
 
+	it('drops messages with a missing provider', async () => {
+		const promise = waitForOauthReturn({
+			popup,
+			expectedOrigin,
+			expectedProvider: 'github',
+			expectedWorkspaceId: 'ws-1',
+			timeoutMs: 1000,
+		})
+		window.dispatchEvent(
+			new MessageEvent('message', {
+				data: {
+					type: POPUP_MESSAGE_TYPE,
+					provider: null,
+					workspaceId: 'ws-1',
+					status: 'success',
+				},
+				origin: expectedOrigin,
+				source: popup,
+			}),
+		)
+		await act(async () => {
+			vi.advanceTimersByTime(1001)
+		})
+		await expect(promise).resolves.toEqual({ status: 'closed', errorCode: 'timeout' })
+	})
+
+	it('drops messages with a missing workspaceId when expected', async () => {
+		const promise = waitForOauthReturn({
+			popup,
+			expectedOrigin,
+			expectedProvider: 'github',
+			expectedWorkspaceId: 'ws-1',
+			timeoutMs: 1000,
+		})
+		window.dispatchEvent(
+			new MessageEvent('message', {
+				data: {
+					type: POPUP_MESSAGE_TYPE,
+					provider: 'github',
+					workspaceId: null,
+					status: 'success',
+				},
+				origin: expectedOrigin,
+				source: popup,
+			}),
+		)
+		await act(async () => {
+			vi.advanceTimersByTime(1001)
+		})
+		await expect(promise).resolves.toEqual({ status: 'closed', errorCode: 'timeout' })
+	})
+
 	it('drops messages with a mismatched workspaceId', async () => {
 		const promise = waitForOauthReturn({
 			popup,

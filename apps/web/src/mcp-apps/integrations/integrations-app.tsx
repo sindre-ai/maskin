@@ -428,14 +428,11 @@ export function waitForOauthReturn({
 			// or windows that happen to know the message type.
 			if (event.source !== popup) return
 			if (!isOauthReturnMessage(event.data)) return
-			if (event.data.provider && event.data.provider !== expectedProvider) return
-			if (
-				expectedWorkspaceId &&
-				event.data.workspaceId &&
-				event.data.workspaceId !== expectedWorkspaceId
-			) {
-				return
-			}
+			// Require exact match — a missing/null provider or workspaceId is
+			// dropped rather than allowed through, so the trust-model checks
+			// hold even if the shim ever omits these fields.
+			if (event.data.provider !== expectedProvider) return
+			if (expectedWorkspaceId !== null && event.data.workspaceId !== expectedWorkspaceId) return
 			settle({
 				status: event.data.status ?? 'success',
 				errorCode: event.data.errorCode,
