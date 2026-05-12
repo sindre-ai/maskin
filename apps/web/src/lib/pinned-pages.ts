@@ -1,4 +1,13 @@
-import { Activity, Bot, Layers, type LucideIcon, MessagesSquare, Settings, Zap } from 'lucide-react'
+import {
+	Activity,
+	Bot,
+	Layers,
+	ListTodo,
+	type LucideIcon,
+	MessagesSquare,
+	Settings,
+	Zap,
+} from 'lucide-react'
 
 export interface PageDefinition {
 	id: string
@@ -40,6 +49,15 @@ export const ALL_PAGES: PageDefinition[] = [
 		requiresModuleObjectTypes: true,
 	},
 	{
+		id: 'tasks',
+		label: 'Tasks',
+		description: 'Concrete work agents and people are running, shown as a kanban board.',
+		category: 'workspace',
+		to: '/$workspaceId/tasks',
+		icon: ListTodo,
+		requiresModuleObjectTypes: true,
+	},
+	{
 		id: 'activity',
 		label: 'Activity',
 		description: 'Full audit log of everything agents and people have done.',
@@ -73,7 +91,7 @@ export const ALL_PAGES: PageDefinition[] = [
 	},
 ]
 
-export const DEFAULT_PINNED_IDS = ['pulse', 'threads', 'activity', 'agents', 'triggers']
+export const DEFAULT_PINNED_IDS = ['pulse', 'threads', 'tasks', 'activity', 'agents', 'triggers']
 
 const STORAGE_KEY = (workspaceId: string) => `maskin-pinned-pages-${workspaceId}`
 
