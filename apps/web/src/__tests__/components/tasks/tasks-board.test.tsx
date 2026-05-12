@@ -45,6 +45,8 @@ describe('TasksBoard', () => {
 			buildObjectResponse({ type: 'task', status: 'todo' }),
 		]
 		render(<TasksBoard tasks={tasks} bets={[]} />, { wrapper })
+		// Count appears in both the overview row and the column header — use getAllByText
+		expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1) // 2 in progress
 		expect(screen.getByText('in progress')).toBeInTheDocument()
 		expect(screen.getByText('need review')).toBeInTheDocument()
 		expect(screen.getByText('blocked')).toBeInTheDocument()
@@ -77,12 +79,21 @@ describe('TasksBoard', () => {
 		expect(screen.getByText('Stuck task')).toBeInTheDocument()
 	})
 
-	it('switches to owner grouping when Owner button clicked', async () => {
+	it('switches to owner grouping and shows owner as column header', async () => {
 		const user = userEvent.setup()
-		const tasks = [buildObjectResponse({ type: 'task', status: 'todo', owner: 'Alice' })]
+		const tasks = [
+			buildObjectResponse({ type: 'task', status: 'todo', owner: 'Alice', title: 'Alice task' }),
+			buildObjectResponse({ type: 'task', status: 'todo', owner: null, title: 'Orphan task' }),
+		]
 		render(<TasksBoard tasks={tasks} bets={[]} />, { wrapper })
-		await user.click(screen.getByText('Owner'))
+		await user.click(screen.getByRole('button', { name: 'Owner' }))
+		// Alice's name appears as a column header (uppercase via CSS, but text content is 'Alice')
 		expect(screen.getByText('Alice')).toBeInTheDocument()
+		// Unassigned column appears for tasks with no owner
+		expect(screen.getByText('Unassigned')).toBeInTheDocument()
+		// Both tasks are visible
+		expect(screen.getByText('Alice task')).toBeInTheDocument()
+		expect(screen.getByText('Orphan task')).toBeInTheDocument()
 	})
 
 	it('shows parent bet title on card when bet provided', () => {

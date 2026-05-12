@@ -73,7 +73,10 @@ export function TasksBoard({ tasks, bets }: TasksBoardProps) {
 		if (groupBy === 'priority') return PRIORITY_COLUMNS
 		if (groupBy === 'owner') {
 			const owners = [...new Set(filteredTasks.map((t) => t.owner ?? ''))].filter(Boolean)
-			return owners.map((o) => ({ key: o, label: o }))
+			const hasUnassigned = filteredTasks.some((t) => !t.owner)
+			const cols = owners.map((o) => ({ key: o, label: o }))
+			if (hasUnassigned) cols.push({ key: '', label: 'Unassigned' })
+			return cols
 		}
 		return []
 	}, [groupBy, hideDone, filteredTasks])
