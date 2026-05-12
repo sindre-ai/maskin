@@ -14,3 +14,4 @@ coverage/
 .pnpmfile.cjs
 .worktrees/
 .playwright-mcp/
+*.tar.gz

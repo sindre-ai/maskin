@@ -1375,11 +1375,11 @@ app.post('/:id/typing', async (c) => {
 		)
 	}
 
-	const participantCheck = await isThreadParticipant(db, threadId, actorId)
-	if (!participantCheck) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
-
 	const thread = await loadThread(db, threadId, workspaceId)
 	if (!thread) return c.json(createApiError('NOT_FOUND', 'Thread not found'), 404)
+
+	const participantCheck = await isThreadParticipant(db, threadId, actorId)
+	if (!participantCheck) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
 
 	bridge.emit('thread_typing', {
 		thread_id: threadId,
@@ -1452,7 +1452,9 @@ app.get('/:id/events/stream', async (c) => {
 					event: 'typing',
 					data: JSON.stringify({ actor_id: event.actor_id, status: event.status }),
 				})
-				.catch(() => {})
+				.catch(() => {
+					bridge.off('thread_typing', typingHandler)
+				})
 		}
 
 		bridge.on('thread_event', handler)
