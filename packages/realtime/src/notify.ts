@@ -20,6 +20,12 @@ export interface PgThreadEvent {
 	created_at: string
 }
 
+export interface PgThreadTyping {
+	thread_id: string
+	actor_id: string
+	status: string
+}
+
 export class PgNotifyBridge extends EventEmitter {
 	private sql: postgres.Sql
 

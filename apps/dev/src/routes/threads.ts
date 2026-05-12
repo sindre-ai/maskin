@@ -9,7 +9,7 @@ import {
 	threadParticipants,
 	threads,
 } from '@maskin/db/schema'
-import type { PgNotifyBridge, PgThreadEvent } from '@maskin/realtime'
+import type { PgNotifyBridge, PgThreadEvent, PgThreadTyping } from '@maskin/realtime'
 import {
 	addThreadParticipantSchema,
 	createThreadEventSchema,
@@ -18,6 +18,7 @@ import {
 	threadParamsSchema,
 	threadParticipantParamsSchema,
 	threadQuerySchema,
+	typingSchema,
 	updateThreadSchema,
 } from '@maskin/shared'
 import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
@@ -77,10 +78,13 @@ const threadResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
 	focusObjectId: z.string().uuid().nullable(),
-	visibility: z.string(),
 	state: z.string(),
 	kind: z.string(),
 	title: z.string(),
+	assigneeId: z.string().uuid().nullable(),
+	priority: z.string(),
+	parentThreadId: z.string().uuid().nullable(),
+	summary: z.string().nullable(),
 	participants: z.array(participantResponseSchema),
 	resolvedAt: z.string().nullable(),
 	resolvedBy: z.string().uuid().nullable(),
@@ -88,6 +92,8 @@ const threadResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	lastEventBody: z.string().nullable().optional(),
+	lastEventActorId: z.string().uuid().nullable().optional(),
 })
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -170,9 +176,11 @@ app.openapi(createThreadRoute, (async (c) => {
 			.values({
 				workspaceId,
 				focusObjectId: body.focus_object_id,
-				visibility: body.visibility,
 				kind: body.kind,
 				title: body.title,
+				assigneeId: body.assignee_id,
+				priority: body.priority,
+				parentThreadId: body.parent_thread_id,
 				createdBy: actorId,
 			})
 			.returning()
@@ -181,12 +189,23 @@ app.openapi(createThreadRoute, (async (c) => {
 
 		// Auto-add creator as participant
 		const additionalIds = (body.participant_ids ?? []).filter((id) => id !== actorId)
+
+		// Look up actor types for additional participants so agents get kind: 'agent'
+		const additionalActorTypes: Map<string, string> = new Map()
+		if (additionalIds.length > 0) {
+			const additionalActors = await tx
+				.select({ id: actors.id, type: actors.type })
+				.from(actors)
+				.where(inArray(actors.id, additionalIds))
+			for (const a of additionalActors) additionalActorTypes.set(a.id, a.type)
+		}
+
 		const participantInserts = [
 			{ threadId: created.id, actorId, kind: actorType === 'agent' ? 'agent' : 'human' },
 			...additionalIds.map((id) => ({
 				threadId: created.id,
 				actorId: id,
-				kind: 'human' as const, // default; caller can update via add-participant if needed
+				kind: (additionalActorTypes.get(id) === 'agent' ? 'agent' : 'human') as 'agent' | 'human',
 			})),
 		]
 
@@ -214,8 +233,18 @@ app.openapi(createThreadRoute, (async (c) => {
 			action: 'created',
 			entityType: 'thread',
 			entityId: created.id,
-			data: { title: created.title, visibility: created.visibility },
+			data: { title: created.title },
 		})
+
+		// First message — insert inside transaction to prevent silent data loss
+		if (body.body) {
+			await tx.insert(threadEvents).values({
+				threadId: created.id,
+				actorId,
+				kind: 'message',
+				body: body.body,
+			})
+		}
 
 		const parts = await tx
 			.select()
@@ -224,6 +253,26 @@ app.openapi(createThreadRoute, (async (c) => {
 
 		return { thread: created, participants: parts }
 	})
+
+	// Spawn agent sessions for agent participants when there's a first message
+	if (body.body && participants.length > 1) {
+		const sessionManager = c.get('sessionManager')
+		const otherParticipantIds = participants
+			.filter((p) => p.actorId !== actorId)
+			.map((p) => p.actorId)
+		if (otherParticipantIds.length > 0) {
+			void spawnMentionedAgents({
+				db,
+				sessionManager,
+				workspaceId,
+				threadId: thread.id,
+				thread,
+				mentionerActorId: actorId,
+				messageBody: body.body,
+				mentionIds: otherParticipantIds,
+			})
+		}
+	}
 
 	const serialized = serialize(thread)
 	const serializedParticipants = participants.map((p) => ({
@@ -259,7 +308,6 @@ const listThreadsRoute = createRoute({
 
 app.openapi(listThreadsRoute, (async (c) => {
 	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
@@ -267,42 +315,18 @@ app.openapi(listThreadsRoute, (async (c) => {
 	if (query.state) conditions.push(eq(threads.state, query.state))
 	if (query.focus_object_id) conditions.push(eq(threads.focusObjectId, query.focus_object_id))
 
-	// Visibility filter: private threads only visible to participants
-	if (query.visibility === 'private') {
-		conditions.push(eq(threads.visibility, 'private'))
-	} else if (query.visibility === 'channel') {
-		conditions.push(eq(threads.visibility, 'channel'))
-	}
-
 	const rawLimit = query.limit
 	const rawOffset = query.offset
 	const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50
 	const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0
 
-	const rows = await db
+	const filtered = await db
 		.select()
 		.from(threads)
 		.where(and(...conditions))
 		.orderBy(desc(threads.updatedAt))
 		.limit(limit)
 		.offset(offset)
-
-	// Filter private threads to only ones the actor participates in
-	let filtered = rows
-	const privateThreadIds = rows.filter((t) => t.visibility === 'private').map((t) => t.id)
-	if (privateThreadIds.length > 0) {
-		const participatingRows = await db
-			.select({ threadId: threadParticipants.threadId })
-			.from(threadParticipants)
-			.where(
-				and(
-					inArray(threadParticipants.threadId, privateThreadIds),
-					eq(threadParticipants.actorId, actorId),
-				),
-			)
-		const participatingIds = new Set(participatingRows.map((r) => r.threadId))
-		filtered = rows.filter((t) => t.visibility === 'channel' || participatingIds.has(t.id))
-	}
 
 	// Load participants for all threads
 	const allThreadIds = (filtered as Thread[]).map((t) => t.id)
@@ -326,13 +350,37 @@ app.openapi(listThreadsRoute, (async (c) => {
 		participantsByThread.set(p.threadId, list)
 	}
 
+	// Load last message event for each thread (for inbox preview)
+	const lastEventByThread = new Map<string, { body: string | null; actorId: string }>()
+	if (allThreadIds.length > 0) {
+		const lastEvents = await db
+			.select({
+				threadId: threadEvents.threadId,
+				body: threadEvents.body,
+				actorId: threadEvents.actorId,
+			})
+			.from(threadEvents)
+			.where(and(inArray(threadEvents.threadId, allThreadIds), eq(threadEvents.kind, 'message')))
+			.orderBy(asc(threadEvents.createdAt))
+		// Keep the last one per thread (we ordered asc so iterate and overwrite)
+		for (const e of lastEvents) {
+			lastEventByThread.set(e.threadId, { body: e.body, actorId: e.actorId })
+		}
+	}
+
 	const result = (filtered as Thread[]).map((t) => {
 		const parts = (participantsByThread.get(t.id) ?? []).map((p) => ({
 			actorId: p.actorId,
 			kind: p.kind,
 			joinedAt: p.joinedAt instanceof Date ? p.joinedAt.toISOString() : String(p.joinedAt),
 		}))
-		return { ...serialize(t), participants: parts }
+		const lastEvent = lastEventByThread.get(t.id)
+		return {
+			...serialize(t),
+			participants: parts,
+			lastEventBody: lastEvent?.body ?? null,
+			lastEventActorId: lastEvent?.actorId ?? null,
+		}
 	})
 
 	return c.json(result as z.infer<typeof threadResponseSchema>[])
@@ -348,6 +396,7 @@ const getThreadRoute = createRoute({
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
+		query: threadEventQuerySchema,
 	},
 	responses: {
 		200: {
@@ -373,27 +422,27 @@ const getThreadRoute = createRoute({
 
 app.openapi(getThreadRoute, (async (c) => {
 	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const query = c.req.valid('query')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const thread = await loadThread(db, id, workspaceId)
 	if (!thread) return c.json(createApiError('NOT_FOUND', 'Thread not found'), 404)
 
-	// Private threads: only participants can view
-	if (thread.visibility === 'private') {
-		const isMember = await isThreadParticipant(db, id, actorId)
-		if (!isMember) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
-	}
+	const rawLimit = query.limit
+	const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 100
+
+	const eventConditions = [eq(threadEvents.threadId, id)]
+	if (query.since) eventConditions.push(gt(threadEvents.createdAt, new Date(query.since)))
 
 	const [participants, threadEventsRows] = await Promise.all([
 		loadParticipants(db, id),
 		db
 			.select()
 			.from(threadEvents)
-			.where(eq(threadEvents.threadId, id))
+			.where(and(...eventConditions))
 			.orderBy(asc(threadEvents.createdAt))
-			.limit(200),
+			.limit(limit),
 	])
 
 	return c.json({
@@ -438,6 +487,7 @@ const appendEventRoute = createRoute({
 app.openapi(appendEventRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const actorType = c.get('actorType')
 	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
@@ -450,6 +500,15 @@ app.openapi(appendEventRoute, (async (c) => {
 	const isMember = await isThreadParticipant(db, id, actorId)
 	if (!isMember) {
 		return c.json(createApiError('FORBIDDEN', 'Only thread participants can post events'), 403)
+	}
+
+	// State guard: block content events on resolved/archived threads
+	const contentKinds = ['message', 'plan', 'tool_call', 'tool_result']
+	if (
+		contentKinds.includes(body.kind) &&
+		(thread.state === 'resolved' || thread.state === 'archived')
+	) {
+		return c.json(createApiError('FORBIDDEN', 'Cannot post to a resolved or archived thread'), 403)
 	}
 
 	const [created] = await db
@@ -488,6 +547,26 @@ app.openapi(appendEventRoute, (async (c) => {
 			entityId: id,
 			data: { resolution: body.body },
 		})
+
+		// Stop active sessions linked to this thread
+		const activeSessions = await db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.threadId, id),
+					inArray(sessions.status, ['pending', 'queued', 'starting', 'running']),
+				),
+			)
+		for (const session of activeSessions) {
+			sessionManager.stopSession(session.id).catch((err) =>
+				logger.error('Failed to stop session on thread resolve', {
+					sessionId: session.id,
+					threadId: id,
+					error: String(err),
+				}),
+			)
+		}
 	} else if (body.kind === 'archive') {
 		await db
 			.update(threads)
@@ -517,6 +596,139 @@ app.openapi(appendEventRoute, (async (c) => {
 			entityId: id,
 			data: null,
 		})
+	} else if (body.kind === 'handoff') {
+		// Hand off thread to another agent — update assignee and add them as participant
+		const targetActorId = body.metadata?.target_actor_id
+		if (typeof targetActorId === 'string') {
+			const [targetActor] = await db
+				.select({ id: actors.id, type: actors.type })
+				.from(actors)
+				.where(eq(actors.id, targetActorId))
+				.limit(1)
+			const isMemberOfWorkspace = await isWorkspaceMember(db, targetActorId, workspaceId)
+			if (isMemberOfWorkspace && targetActor) {
+				const targetKind = (targetActor.type === 'agent' ? 'agent' : 'human') as 'agent' | 'human'
+
+				await db
+					.update(threads)
+					.set({ assigneeId: targetActorId, updatedAt: new Date() })
+					.where(eq(threads.id, id))
+
+				// Auto-add target as participant
+				await db
+					.insert(threadParticipants)
+					.values({ threadId: id, actorId: targetActorId, kind: targetKind })
+					.onConflictDoNothing()
+
+				// Spawn a session for the target agent with thread context
+				void spawnMentionedAgents({
+					db,
+					sessionManager,
+					workspaceId,
+					threadId: id,
+					thread,
+					mentionerActorId: actorId,
+					messageBody: body.body ?? 'You have been handed this thread by another agent.',
+					mentionIds: [targetActorId],
+				})
+
+				await db.insert(events).values({
+					workspaceId,
+					actorId,
+					action: 'handoff',
+					entityType: 'thread',
+					entityId: id,
+					data: { targetActorId },
+				})
+			}
+		}
+	} else if (body.kind === 'escalate') {
+		// Escalate to humans — set state to waiting and notify all human workspace members
+		await db
+			.update(threads)
+			.set({ state: 'waiting', updatedAt: new Date() })
+			.where(eq(threads.id, id))
+
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'escalated',
+			entityType: 'thread',
+			entityId: id,
+			data: { reason: body.body },
+		})
+	} else if (body.kind === 'delegate') {
+		// Spawn a child thread assigned to a target agent
+		const targetActorId = body.metadata?.target_actor_id
+		const childTitle =
+			typeof body.metadata?.title === 'string' ? body.metadata.title : `Sub-task: ${thread.title}`
+		if (typeof targetActorId === 'string') {
+			const [targetActor] = await db
+				.select({ id: actors.id, type: actors.type })
+				.from(actors)
+				.where(eq(actors.id, targetActorId))
+				.limit(1)
+			const isMemberOfWorkspace = await isWorkspaceMember(db, targetActorId, workspaceId)
+			if (isMemberOfWorkspace && targetActor) {
+				const callerKind = (actorType === 'agent' ? 'agent' : 'human') as 'agent' | 'human'
+				const targetKind = (targetActor.type === 'agent' ? 'agent' : 'human') as 'agent' | 'human'
+
+				const [childThread] = await db
+					.insert(threads)
+					.values({
+						workspaceId,
+						kind: 'discussion',
+						title: childTitle,
+						assigneeId: targetActorId,
+						parentThreadId: id,
+						createdBy: actorId,
+					})
+					.returning()
+
+				if (childThread) {
+					// Add both actors as participants in child thread
+					await db
+						.insert(threadParticipants)
+						.values([
+							{ threadId: childThread.id, actorId, kind: callerKind },
+							{ threadId: childThread.id, actorId: targetActorId, kind: targetKind },
+						])
+						.onConflictDoNothing()
+
+					// Update the created event's metadata with the child thread id
+					await db
+						.update(threadEvents)
+						.set({
+							metadata: {
+								...(body.metadata as Record<string, unknown>),
+								child_thread_id: childThread.id,
+							},
+						})
+						.where(eq(threadEvents.id, created.id))
+
+					// Spawn agent session for target in the child thread
+					void spawnMentionedAgents({
+						db,
+						sessionManager,
+						workspaceId,
+						threadId: childThread.id,
+						thread: childThread,
+						mentionerActorId: actorId,
+						messageBody: body.body ?? 'You have been delegated a sub-task.',
+						mentionIds: [targetActorId],
+					})
+
+					await db.insert(events).values({
+						workspaceId,
+						actorId,
+						action: 'delegate',
+						entityType: 'thread',
+						entityId: id,
+						data: { childThreadId: childThread.id, targetActorId },
+					})
+				}
+			}
+		}
 	} else if (body.kind === 'message' && thread.state === 'waiting') {
 		// Human replied to a waiting thread — resume active interactive sessions linked to this thread
 		await db.update(threads).set({ state: 'open', updatedAt: new Date() }).where(eq(threads.id, id))
@@ -532,19 +744,42 @@ app.openapi(appendEventRoute, (async (c) => {
 				),
 			)
 
-		for (const session of activeSessions) {
-			sessionManager
-				.writeInput(session.id, {
-					type: 'user',
-					message: { role: 'user', content: body.body ?? '' },
+		if (activeSessions.length > 0) {
+			for (const session of activeSessions) {
+				sessionManager
+					.writeInput(session.id, {
+						type: 'user',
+						message: { role: 'user', content: body.body ?? '' },
+					})
+					.catch((err) =>
+						logger.error('Failed to write input to thread-linked session', {
+							sessionId: session.id,
+							threadId: id,
+							error: String(err),
+						}),
+					)
+			}
+		} else {
+			// No running sessions — the agent's previous session completed (it processed one turn
+			// and exited). Spawn fresh sessions for all agent participants so they can respond.
+			const agentParticipants = await db
+				.select({ actorId: threadParticipants.actorId })
+				.from(threadParticipants)
+				.innerJoin(actors, eq(threadParticipants.actorId, actors.id))
+				.where(and(eq(threadParticipants.threadId, id), eq(actors.type, 'agent')))
+
+			if (agentParticipants.length > 0) {
+				void spawnMentionedAgents({
+					db,
+					sessionManager,
+					workspaceId,
+					threadId: id,
+					thread,
+					mentionerActorId: actorId,
+					messageBody: body.body ?? '',
+					mentionIds: agentParticipants.map((p) => p.actorId),
 				})
-				.catch((err) =>
-					logger.error('Failed to write input to thread-linked session', {
-						sessionId: session.id,
-						threadId: id,
-						error: String(err),
-					}),
-				)
+			}
 		}
 	} else {
 		// Touch updatedAt so list order reflects latest activity
@@ -687,16 +922,45 @@ async function spawnMentionedAgents(ctx: {
 				actorId: agent.id,
 				actionPrompt,
 				threadId,
-				config: { interactive: true },
+				config: {
+					interactive: true,
+					// Inject Maskin MCP so the agent can always call post_thread_message,
+					// regardless of whether the agent's own tools field has it configured.
+					// ${...} placeholders are expanded by envsubst in agent-run.sh.
+					mcps: [
+						{
+							type: 'http',
+							url: '${MASKIN_API_URL}/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					],
+				},
 				createdBy: mentionerActorId,
 			})
-			.catch((err) =>
+			.catch(async (err) => {
 				logger.error('Failed to create session for @mentioned agent in thread', {
 					agentId: agent.id,
 					threadId,
 					error: String(err),
-				}),
-			)
+				})
+				await db
+					.insert(threadEvents)
+					.values({
+						threadId,
+						actorId: agent.id,
+						kind: 'system',
+						body: `Failed to start agent session: ${err instanceof Error ? err.message : String(err)}`,
+					})
+					.catch((insertErr) =>
+						logger.error('Failed to insert system event for agent spawn failure', {
+							threadId,
+							error: String(insertErr),
+						}),
+					)
+			})
 	}
 }
 
@@ -767,6 +1031,7 @@ const updateThreadRoute = createRoute({
 app.openapi(updateThreadRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const sessionManager = c.get('sessionManager')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -787,11 +1052,17 @@ app.openapi(updateThreadRoute, (async (c) => {
 		resolution?: string | null
 		resolvedAt?: Date | null
 		resolvedBy?: string | null
+		assigneeId?: string | null
+		priority?: string
+		summary?: string | null
 	} = { updatedAt: new Date() }
 
 	if (body.title !== undefined) updateData.title = body.title
 	if (body.state !== undefined) updateData.state = body.state
 	if (body.resolution !== undefined) updateData.resolution = body.resolution
+	if (body.assignee_id !== undefined) updateData.assigneeId = body.assignee_id
+	if (body.priority !== undefined) updateData.priority = body.priority
+	if (body.summary !== undefined) updateData.summary = body.summary
 
 	// If resolving, set resolved metadata
 	if (body.state === 'resolved') {
@@ -822,11 +1093,37 @@ app.openapi(updateThreadRoute, (async (c) => {
 		let eventKind: string | null = null
 		if (body.state === 'resolved') eventKind = 'resolve'
 		else if (body.state === 'archived') eventKind = 'archive'
+		else if (body.state === 'open') eventKind = 'system'
 
 		if (eventKind) {
-			await db
-				.insert(threadEvents)
-				.values({ threadId: id, actorId, kind: eventKind, body: body.resolution })
+			await db.insert(threadEvents).values({
+				threadId: id,
+				actorId,
+				kind: eventKind,
+				body: body.state === 'open' ? 'Thread reopened' : (body.resolution ?? null),
+			})
+		}
+
+		// Stop active sessions when thread is resolved
+		if (body.state === 'resolved') {
+			const activeSessions = await db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.threadId, id),
+						inArray(sessions.status, ['pending', 'queued', 'starting', 'running']),
+					),
+				)
+			for (const session of activeSessions) {
+				sessionManager.stopSession(session.id).catch((err) =>
+					logger.error('Failed to stop session on thread resolve', {
+						sessionId: session.id,
+						threadId: id,
+						error: String(err),
+					}),
+				)
+			}
 		}
 	}
 
@@ -876,9 +1173,14 @@ app.openapi(addParticipantRoute, (async (c) => {
 	const thread = await loadThread(db, id, workspaceId)
 	if (!thread) return c.json(createApiError('NOT_FOUND', 'Thread not found'), 404)
 
-	// Workspace member check — caller must be a workspace member
-	const memberCheck = await isWorkspaceMember(db, actorId, workspaceId)
-	if (!memberCheck) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
+	// Caller must be a workspace member
+	const callerCheck = await isWorkspaceMember(db, actorId, workspaceId)
+	if (!callerCheck) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
+
+	// Target actor must also be a workspace member
+	const targetCheck = await isWorkspaceMember(db, body.actor_id, workspaceId)
+	if (!targetCheck)
+		return c.json(createApiError('FORBIDDEN', 'Target actor is not a workspace member'), 403)
 
 	const [participant] = await db
 		.insert(threadParticipants)
@@ -1007,7 +1309,6 @@ const listEventsRoute = createRoute({
 
 app.openapi(listEventsRoute, (async (c) => {
 	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const query = c.req.valid('query')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -1015,16 +1316,11 @@ app.openapi(listEventsRoute, (async (c) => {
 	const thread = await loadThread(db, id, workspaceId)
 	if (!thread) return c.json(createApiError('NOT_FOUND', 'Thread not found'), 404)
 
-	if (thread.visibility === 'private') {
-		const isMember = await isThreadParticipant(db, id, actorId)
-		if (!isMember) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
-	}
-
 	const rawLimit = query.limit
 	const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 100
 
 	const conditions = [eq(threadEvents.threadId, id)]
-	if (query.since) conditions.push(gt(threadEvents.id, query.since))
+	if (query.since) conditions.push(gt(threadEvents.createdAt, new Date(query.since)))
 
 	const results = await db
 		.select()
@@ -1036,10 +1332,69 @@ app.openapi(listEventsRoute, (async (c) => {
 	return c.json(serializeArray(results) as z.infer<typeof threadEventResponseSchema>[])
 }) as RouteHandler<typeof listEventsRoute, Env>)
 
+// ── POST /:id/typing — ephemeral typing indicator ────────────────────────────
+
+app.post('/:id/typing', async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const bridge = c.get('notifyBridge')
+	const rawId = c.req.param('id')
+	const workspaceId = c.req.header('x-workspace-id')
+
+	const parsedParams = threadParamsSchema.safeParse({ id: rawId })
+	if (!parsedParams.success) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid thread id', [
+				{ field: 'id', message: 'Must be a UUID', expected: 'UUID string' },
+			]),
+			400,
+		)
+	}
+	const threadId = parsedParams.data.id
+
+	if (!workspaceId) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Missing x-workspace-id header', [
+				{ field: 'x-workspace-id', message: 'Required header is missing', expected: 'UUID string' },
+			]),
+			400,
+		)
+	}
+
+	let body: unknown
+	try {
+		body = await c.req.json()
+	} catch {
+		body = {}
+	}
+	const parsedBody = typingSchema.safeParse(body)
+	if (!parsedBody.success) {
+		return c.json(
+			createApiError('VALIDATION_ERROR', 'Invalid request body', formatZodError(parsedBody.error)),
+			400,
+		)
+	}
+
+	const participantCheck = await isThreadParticipant(db, threadId, actorId)
+	if (!participantCheck) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
+
+	const thread = await loadThread(db, threadId, workspaceId)
+	if (!thread) return c.json(createApiError('NOT_FOUND', 'Thread not found'), 404)
+
+	bridge.emit('thread_typing', {
+		thread_id: threadId,
+		actor_id: actorId,
+		status: parsedBody.data.status ?? 'Thinking...',
+	} satisfies PgThreadTyping)
+
+	return c.body(null, 204)
+})
+
 // ── GET /:id/events/stream — SSE stream ───────────────────────────────────────
 
 app.get('/:id/events/stream', async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const bridge = c.get('notifyBridge')
 	const rawId = c.req.param('id')
 	const workspaceId = c.req.header('x-workspace-id')
@@ -1065,16 +1420,11 @@ app.get('/:id/events/stream', async (c) => {
 		)
 	}
 
-	const actorId = c.get('actorId')
-
 	const thread = await loadThread(db, threadId, workspaceId)
 	if (!thread) return c.json(createApiError('NOT_FOUND', 'Thread not found'), 404)
 
-	// Private threads: only participants can subscribe to the SSE stream
-	if (thread.visibility === 'private') {
-		const isMember = await isThreadParticipant(db, threadId, actorId)
-		if (!isMember) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
-	}
+	const participantCheck = await isThreadParticipant(db, threadId, actorId)
+	if (!participantCheck) return c.json(createApiError('FORBIDDEN', 'Access denied'), 403)
 
 	return streamSSE(c, async (stream) => {
 		const handler = (event: PgThreadEvent) => {
@@ -1094,9 +1444,22 @@ app.get('/:id/events/stream', async (c) => {
 				})
 		}
 
+		const typingHandler = (event: PgThreadTyping) => {
+			if (event.thread_id !== threadId) return
+			stream
+				.writeSSE({
+					id: undefined,
+					event: 'typing',
+					data: JSON.stringify({ actor_id: event.actor_id, status: event.status }),
+				})
+				.catch(() => {})
+		}
+
 		bridge.on('thread_event', handler)
+		bridge.on('thread_typing', typingHandler)
 		stream.onAbort(() => {
 			bridge.off('thread_event', handler)
+			bridge.off('thread_typing', typingHandler)
 		})
 
 		// Keep connection alive

@@ -2,11 +2,11 @@ import { z } from 'zod'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
 
-export const threadVisibilitySchema = z.enum(['channel', 'private'])
-export type ThreadVisibility = z.infer<typeof threadVisibilitySchema>
-
 export const threadStateSchema = z.enum(['open', 'waiting', 'resolved', 'archived'])
 export type ThreadState = z.infer<typeof threadStateSchema>
+
+export const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent'])
+export type Priority = z.infer<typeof prioritySchema>
 
 export const threadKindSchema = z.enum([
 	'needs_input',
@@ -31,6 +31,9 @@ export const threadEventKindSchema = z.enum([
 	'resolve',
 	'archive',
 	'system',
+	'handoff',
+	'escalate',
+	'delegate',
 ])
 export type ThreadEventKind = z.infer<typeof threadEventKindSchema>
 
@@ -76,10 +79,13 @@ export const threadSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
 	focusObjectId: z.string().uuid().nullable(),
-	visibility: threadVisibilitySchema,
 	state: threadStateSchema,
 	kind: threadKindSchema,
 	title: z.string(),
+	assigneeId: z.string().uuid().nullable(),
+	priority: prioritySchema,
+	parentThreadId: z.string().uuid().nullable(),
+	summary: z.string().nullable(),
 	participants: z.array(participantSchema),
 	resolvedAt: z.string().nullable(),
 	resolvedBy: z.string().uuid().nullable(),
@@ -94,10 +100,13 @@ export type Thread = z.infer<typeof threadSchema>
 
 export const createThreadSchema = z.object({
 	title: z.string().min(1).max(500),
-	visibility: threadVisibilitySchema.default('channel'),
 	kind: threadKindSchema.default('discussion'),
 	focus_object_id: z.string().uuid().optional(),
 	participant_ids: z.array(z.string().uuid()).optional(),
+	body: z.string().optional(),
+	assignee_id: z.string().uuid().optional(),
+	priority: prioritySchema.default('normal'),
+	parent_thread_id: z.string().uuid().optional(),
 })
 export type CreateThread = z.infer<typeof createThreadSchema>
 
@@ -105,11 +114,14 @@ export const updateThreadSchema = z.object({
 	title: z.string().min(1).max(500).optional(),
 	state: threadStateSchema.optional(),
 	resolution: z.string().optional(),
+	assignee_id: z.string().uuid().nullable().optional(),
+	priority: prioritySchema.optional(),
+	summary: z.string().nullable().optional(),
 })
 export type UpdateThread = z.infer<typeof updateThreadSchema>
 
 export const createThreadEventSchema = z.object({
-	kind: threadEventKindSchema,
+	kind: threadEventKindSchema.default('message'),
 	body: z.string().optional(),
 	metadata: z
 		.record(
@@ -135,7 +147,6 @@ export type AddThreadParticipant = z.infer<typeof addThreadParticipantSchema>
 
 export const threadQuerySchema = z.object({
 	state: threadStateSchema.optional(),
-	visibility: threadVisibilitySchema.optional(),
 	focus_object_id: z.string().uuid().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
@@ -152,7 +163,12 @@ export const threadParticipantParamsSchema = z.object({
 })
 
 export const threadEventQuerySchema = z.object({
-	since: z.string().uuid().optional(),
+	since: z.string().datetime().optional(),
 	limit: z.coerce.number().int().min(1).max(200).default(100),
 })
 export type ThreadEventQuery = z.infer<typeof threadEventQuerySchema>
+
+export const typingSchema = z.object({
+	status: z.string().max(100).optional(),
+})
+export type Typing = z.infer<typeof typingSchema>
