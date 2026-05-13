@@ -120,9 +120,13 @@ describe('MCP telemetry wrapper', () => {
 		const handler = getHandler('list_workspaces')
 		await expect(handler({})).rejects.toThrow()
 
-		// The wrapper records the failed call before re-throwing.
+		// The wrapper records the failed call before re-throwing. `list_workspaces`
+		// declares `_meta.ui` on its definition, so the documented failure-path
+		// interpretation ("definition advertises rich render") yields `true`.
+		// Guards the intentional choice from task 146553f7.
 		const toolCalls = recorded.filter((r) => r.event_type === 'tool_call')
 		expect(toolCalls).toHaveLength(1)
 		expect(toolCalls[0].tool_name).toBe('list_workspaces')
+		expect(toolCalls[0].has_rich_render).toBe(true)
 	})
 })
