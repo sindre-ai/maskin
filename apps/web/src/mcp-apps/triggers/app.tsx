@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/cn'
 import { Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { ConfirmDialog } from '../shared/actions'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
@@ -68,6 +69,8 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 	const [filter, setFilter] = useState<'all' | 'event' | 'cron' | 'other'>('all')
 	const [compact, setCompact] = useState(false)
 	const [selected, setSelected] = useState<Set<string>>(new Set())
+	const [feedback, setFeedback] = useState<string | null>(null)
+	const [deletingTrigger, setDeletingTrigger] = useState<TriggerResponse | null>(null)
 
 	useEffect(() => {
 		setLocal(triggers)
@@ -76,6 +79,7 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 	const onToggle = useCallback(
 		async (trigger: TriggerResponse) => {
 			setBusyId(trigger.id)
+			setFeedback(null)
 			const next = !trigger.enabled
 			setLocal((cur) => cur.map((t) => (t.id === trigger.id ? { ...t, enabled: next } : t)))
 			try {
@@ -85,6 +89,7 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 					cur.map((t) => (t.id === trigger.id ? { ...t, enabled: trigger.enabled } : t)),
 				)
 				console.error('Failed to toggle trigger', err)
+				setFeedback(`Failed to ${next ? 'enable' : 'disable'} "${trigger.name}": ${String(err)}`)
 			} finally {
 				setBusyId(null)
 			}
@@ -95,6 +100,7 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 	const onDelete = useCallback(
 		async (trigger: TriggerResponse) => {
 			setBusyId(trigger.id)
+			setFeedback(null)
 			const previous = local
 			setLocal((cur) => cur.filter((t) => t.id !== trigger.id))
 			try {
@@ -102,8 +108,10 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 			} catch (err) {
 				setLocal(previous)
 				console.error('Failed to delete trigger', err)
+				setFeedback(`Failed to delete "${trigger.name}": ${String(err)}`)
 			} finally {
 				setBusyId(null)
+				setDeletingTrigger(null)
 			}
 		},
 		[callTool, local],
@@ -111,6 +119,7 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 
 	const onDisableSelected = useCallback(async () => {
 		const ids = [...selected]
+		setFeedback(null)
 		// snapshot state before any mutations for rollback
 		const previous = local
 		// optimistically disable all
@@ -137,6 +146,7 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 						: t,
 				),
 			)
+			setFeedback(`Failed to disable ${failed.length} of ${ids.length} trigger(s)`)
 		}
 	}, [callTool, local, selected])
 
@@ -314,7 +324,7 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 											<Button
 												variant="ghost"
 												size="sm"
-												onClick={() => onDelete(trigger)}
+												onClick={() => setDeletingTrigger(trigger)}
 												disabled={busyId === trigger.id}
 												aria-label={`Delete ${trigger.name}`}
 											>
@@ -337,6 +347,25 @@ function TriggerListView({ triggers }: { triggers: TriggerResponse[] }) {
 				<div className="flex-1" />
 				<WebAppLink target={{ kind: 'trigger' }} label="Open in Maskin ↗" />
 			</div>
+			{feedback && (
+				<output className="block px-3 py-2 border-t border-border text-xs text-destructive">
+					{feedback}
+				</output>
+			)}
+			<ConfirmDialog
+				open={deletingTrigger !== null}
+				onOpenChange={(open) => {
+					if (!open) setDeletingTrigger(null)
+				}}
+				title={`Delete "${deletingTrigger?.name ?? ''}"?`}
+				description="This permanently removes the trigger. Any scheduled or event-based agent runs it would have fired will stop."
+				confirmLabel="Delete"
+				variant="destructive"
+				pending={busyId !== null && busyId === deletingTrigger?.id}
+				onConfirm={() => {
+					if (deletingTrigger) onDelete(deletingTrigger)
+				}}
+			/>
 		</div>
 	)
 }
@@ -351,12 +380,14 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 	const [saving, setSaving] = useState(false)
 	const [deleted, setDeleted] = useState(false)
 	const [feedback, setFeedback] = useState<string | null>(null)
+	const [confirmingDelete, setConfirmingDelete] = useState(false)
 
 	useEffect(() => {
 		setLocal(trigger)
 		setConfigText(trigger.config ? JSON.stringify(trigger.config, null, 2) : '{}')
 		setDeleted(false)
 		setFeedback(null)
+		setConfirmingDelete(false)
 	}, [trigger])
 
 	const update = useCallback(
@@ -400,6 +431,7 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 
 	const onDelete = useCallback(async () => {
 		setSaving(true)
+		setFeedback(null)
 		try {
 			await callTool('delete_trigger', { id: trigger.id })
 			setDeleted(true)
@@ -407,6 +439,7 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 			setFeedback(`Failed to delete: ${String(err)}`)
 		} finally {
 			setSaving(false)
+			setConfirmingDelete(false)
 		}
 	}, [callTool, trigger.id])
 
@@ -515,7 +548,7 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 				<Button
 					variant="ghost"
 					size="sm"
-					onClick={onDelete}
+					onClick={() => setConfirmingDelete(true)}
 					disabled={saving}
 					className="text-destructive hover:text-destructive"
 				>
@@ -524,6 +557,18 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 				</Button>
 			</div>
 			{feedback && <p className="text-xs text-muted-foreground">{feedback}</p>}
+			<ConfirmDialog
+				open={confirmingDelete}
+				onOpenChange={(open) => {
+					if (!open) setConfirmingDelete(false)
+				}}
+				title={`Delete "${trigger.name}"?`}
+				description="This permanently removes the trigger. Any scheduled or event-based agent runs it would have fired will stop."
+				confirmLabel="Delete"
+				variant="destructive"
+				pending={saving}
+				onConfirm={onDelete}
+			/>
 		</div>
 	)
 }
