@@ -268,7 +268,7 @@ function ActorEditForm({
 		<div className="p-4 max-w-2xl space-y-3">
 			<div className="flex items-center justify-between">
 				<h2 className="text-lg font-semibold text-foreground">Edit {actor.type}</h2>
-				<WebAppLink target={{ kind: 'agent', id: actor.id }} label="Open in Maskin" />
+				{isAgent && <WebAppLink target={{ kind: 'agent', id: actor.id }} label="Open in Maskin" />}
 			</div>
 			<div className="space-y-2">
 				<label className="text-xs font-medium text-muted-foreground" htmlFor={`name-${actor.id}`}>
