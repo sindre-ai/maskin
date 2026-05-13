@@ -87,6 +87,29 @@ describe('Integrations Routes', () => {
 			expect(body.install_url).toContain('github.com')
 		})
 
+		it('returns 400 with a "not configured" message when client_id env is missing', async () => {
+			const originalClientId = process.env.SLACK_CLIENT_ID
+			Reflect.deleteProperty(process.env, 'SLACK_CLIENT_ID')
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/slack/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.message).toContain('slack is not configured')
+				expect(body.error.message).toContain('SLACK_CLIENT_ID')
+			} finally {
+				if (originalClientId !== undefined) {
+					process.env.SLACK_CLIENT_ID = originalClientId
+				}
+			}
+		})
+
 		it('returns 200 with install_url for standard oauth2 provider (slack)', async () => {
 			const originalClientId = process.env.SLACK_CLIENT_ID
 			process.env.SLACK_CLIENT_ID = 'test-slack-client-id'

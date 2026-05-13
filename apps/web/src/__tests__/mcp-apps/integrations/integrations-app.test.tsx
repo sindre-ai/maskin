@@ -155,6 +155,24 @@ describe('ProviderRow', () => {
 		openSpy.mockRestore()
 	})
 
+	it('surfaces the server error text when connect returns isError', async () => {
+		callTool.mockResolvedValueOnce({
+			isError: true,
+			content: [
+				{
+					type: 'text',
+					text: 'API error 400: Provider slack is not configured on this server: SLACK_CLIENT_ID environment variable is required',
+				},
+			],
+		})
+		const onChanged = vi.fn()
+		render(<ProviderRow provider={provider} onChanged={onChanged} />)
+		fireEvent.click(screen.getByRole('button', { name: /connect/i }))
+
+		await waitFor(() => expect(screen.getByText(/SLACK_CLIENT_ID/i)).toBeInTheDocument())
+		expect(onChanged).not.toHaveBeenCalled()
+	})
+
 	it('disconnects via callTool and refreshes', async () => {
 		callTool.mockResolvedValueOnce(textResult({ ok: true }))
 		const onChanged = vi.fn().mockResolvedValue(undefined)

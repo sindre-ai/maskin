@@ -227,6 +227,9 @@ export function ProviderRow({
 		try {
 			const res = await callTool('connect_integration', { provider: provider.name })
 			const text = res.content?.find((c) => c.type === 'text')?.text
+			if (isErrorResult(res)) {
+				throw new Error(text ?? 'Connection failed.')
+			}
 			const data = text ? safeParseJson(text) : null
 			const installUrl = isInstallUrlPayload(data) ? data.install_url : null
 			if (!installUrl) {
@@ -279,7 +282,11 @@ export function ProviderRow({
 		setBusy(true)
 		setError(null)
 		try {
-			await callTool('disconnect_integration', { id: integration.id })
+			const res = await callTool('disconnect_integration', { id: integration.id })
+			if (isErrorResult(res)) {
+				const text = res.content?.find((c) => c.type === 'text')?.text
+				throw new Error(text ?? 'Disconnect failed.')
+			}
 			await onChanged()
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err))
@@ -352,6 +359,10 @@ export function DisconnectedView() {
 			<p className="text-sm text-muted-foreground">Integration disconnected.</p>
 		</div>
 	)
+}
+
+export function isErrorResult(res: unknown): boolean {
+	return typeof res === 'object' && res !== null && (res as { isError?: unknown }).isError === true
 }
 
 export function isInstallUrlPayload(data: unknown): data is { install_url: string } {

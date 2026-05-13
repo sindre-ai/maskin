@@ -179,23 +179,41 @@ app.openapi(connectRoute, (async (c) => {
 			},
 		})
 
-	// Build install URL based on auth type
+	// Build install URL based on auth type. Missing OAuth client env vars
+	// surface as a 400 with a clear "not configured" message rather than a
+	// generic 500, so the MCP card / CLI can render an actionable hint.
 	let installUrl: string
-	if (resolved.customAuth) {
-		installUrl = resolved.customAuth.getInstallUrl(state)
-	} else if (resolved.config.auth.type === 'oauth2') {
-		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
-		const handler = new OAuth2Handler(resolved.config.auth.config)
-		installUrl = handler.createAuthorizationUrl(
-			state,
-			redirectUri,
-			statePayload.codeVerifier as string | undefined,
-		)
-	} else {
-		return c.json(
-			createApiError('BAD_REQUEST', `Provider ${providerName} does not support OAuth connect`),
-			400,
-		)
+	try {
+		if (resolved.customAuth) {
+			installUrl = resolved.customAuth.getInstallUrl(state)
+		} else if (resolved.config.auth.type === 'oauth2') {
+			const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
+			const handler = new OAuth2Handler(resolved.config.auth.config)
+			installUrl = handler.createAuthorizationUrl(
+				state,
+				redirectUri,
+				statePayload.codeVerifier as string | undefined,
+			)
+		} else {
+			return c.json(
+				createApiError('BAD_REQUEST', `Provider ${providerName} does not support OAuth connect`),
+				400,
+			)
+		}
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		if (/environment variable is required$/.test(message)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Provider ${providerName} is not configured on this server: ${message}`,
+					undefined,
+					'Set the required env vars and restart the dev server.',
+				),
+				400,
+			)
+		}
+		throw err
 	}
 
 	return c.json({ install_url: installUrl })
