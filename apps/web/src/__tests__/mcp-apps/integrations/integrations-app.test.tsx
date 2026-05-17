@@ -3,6 +3,7 @@ import {
 	OAUTH_RETURN_TIMEOUT_MS,
 	POPUP_MESSAGE_TYPE,
 	ProviderRow,
+	extractInstallUrl,
 	waitForOauthReturn,
 } from '@/mcp-apps/integrations/integrations-app'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -188,6 +189,25 @@ describe('ProviderRow', () => {
 			expect(callTool).toHaveBeenCalledWith('disconnect_integration', { id: 'i-1' })
 		})
 		expect(onChanged).toHaveBeenCalled()
+	})
+})
+
+describe('extractInstallUrl', () => {
+	it('extracts the URL from pure JSON', () => {
+		expect(extractInstallUrl('{"install_url":"https://example.com/oauth"}')).toBe(
+			'https://example.com/oauth',
+		)
+	})
+
+	it('extracts the URL from legacy prose-with-embedded-JSON', () => {
+		const text =
+			'Open this URL in your browser to complete the installation:\n\nhttps://example.com/oauth\n\n{\n  "install_url": "https://example.com/oauth"\n}'
+		expect(extractInstallUrl(text)).toBe('https://example.com/oauth')
+	})
+
+	it('returns null when no install_url is present', () => {
+		expect(extractInstallUrl('Just some text with no URL')).toBeNull()
+		expect(extractInstallUrl('{"other": "field"}')).toBeNull()
 	})
 })
 

@@ -230,10 +230,15 @@ export function ProviderRow({
 			if (isErrorResult(res)) {
 				throw new Error(text ?? 'Connection failed.')
 			}
-			const data = text ? safeParseJson(text) : null
-			const installUrl = isInstallUrlPayload(data) ? data.install_url : null
+			const installUrl = text ? extractInstallUrl(text) : null
 			if (!installUrl) {
-				throw new Error('Server did not return an install URL.')
+				// Surface the raw response so the user can debug — typically this
+				// means an older MCP server returned a payload we don't recognize.
+				throw new Error(
+					text
+						? `Could not find install URL in response:\n${text}`
+						: 'Server did not return an install URL.',
+				)
 			}
 			// Open the OAuth popup. The /oauth-return shim posts back when the
 			// callback completes — the listener below picks it up and refreshes.
@@ -372,6 +377,26 @@ export function isInstallUrlPayload(data: unknown): data is { install_url: strin
 		'install_url' in data &&
 		typeof (data as { install_url: unknown }).install_url === 'string'
 	)
+}
+
+/**
+ * Extract an OAuth install URL from a tool response text. Tolerant of two
+ * formats so the card keeps working across MCP server versions:
+ *   1. Pure JSON `{"install_url":"..."}` — emitted by the current MCP server
+ *   2. Prose with an embedded JSON block — emitted by older MCP servers
+ *      ("Open this URL...\n\n<URL>\n\n{...}")
+ */
+export function extractInstallUrl(text: string): string | null {
+	const direct = safeParseJson(text)
+	if (isInstallUrlPayload(direct)) return direct.install_url
+	// Fall back: find the first `{...}` block and try to parse it as JSON.
+	const start = text.indexOf('{')
+	const end = text.lastIndexOf('}')
+	if (start !== -1 && end > start) {
+		const embedded = safeParseJson(text.slice(start, end + 1))
+		if (isInstallUrlPayload(embedded)) return embedded.install_url
+	}
+	return null
 }
 
 export function safeOrigin(url: string): string | null {
