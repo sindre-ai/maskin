@@ -3,6 +3,7 @@ import {
 	SidebarContent,
 	SidebarFooter,
 	SidebarGroup,
+	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
@@ -11,37 +12,56 @@ import {
 	SidebarTrigger,
 	useSidebar,
 } from '@/components/ui/sidebar'
-import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { usePinnedPages } from '@/hooks/use-pinned-pages'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import { Activity, Bot, Layers, MessagesSquare, Zap } from 'lucide-react'
-import { useMemo } from 'react'
+import { GripVertical, LayoutGrid, X } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
-
-const coreNavItems = [
-	{ label: 'Pulse', to: '/$workspaceId' as const, exact: true, icon: Zap },
-	{ label: 'Threads', to: '/$workspaceId/threads' as const, icon: MessagesSquare },
-	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
-	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
-	{ label: 'Triggers', to: '/$workspaceId/triggers' as const, icon: Zap },
-]
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const { setOpenMobile } = useSidebar()
-	const enabledModules = useEnabledModules()
+	const isMobile = useIsMobile()
+	const { pinnedPages, isEditing, setEditing, unpin, reorder } = usePinnedPages()
 
-	const navItems = useMemo(() => {
-		const hasObjectTypes = getEnabledObjectTypeTabs(enabledModules).length > 0
-		const [pulse, ...rest] = coreNavItems
-		const objectsItem = hasObjectTypes
-			? [{ label: 'Objects', to: '/$workspaceId/objects' as const, icon: Layers }]
-			: []
-		return [pulse, ...objectsItem, ...rest]
-	}, [enabledModules])
+	// Drag-and-drop state (desktop only — HTML5 DnD doesn't work on touch)
+	const dragIndex = useRef<number | null>(null)
+	const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
+	const onDragStart = (index: number) => (e: React.DragEvent) => {
+		dragIndex.current = index
+		e.dataTransfer.effectAllowed = 'move'
+	}
+
+	const onDragOver = (index: number) => (e: React.DragEvent) => {
+		e.preventDefault()
+		if (dragIndex.current !== null && dragIndex.current !== index) {
+			setDragOverIndex(index)
+		} else if (dragIndex.current === index) {
+			setDragOverIndex(null)
+		}
+	}
+
+	const onDrop = (index: number) => (e: React.DragEvent) => {
+		e.preventDefault()
+		if (dragIndex.current !== null && dragIndex.current !== index) {
+			reorder(dragIndex.current, index)
+		}
+		dragIndex.current = null
+		setDragOverIndex(null)
+	}
+
+	const onDragEnd = () => {
+		dragIndex.current = null
+		setDragOverIndex(null)
+	}
+
+	const canDrag = isEditing && !isMobile
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
@@ -54,31 +74,122 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 			</SidebarHeader>
 			<SidebarContent>
 				<SidebarGroup>
+					{/* Section header: "Pinned" label + "All" link + "Edit"/"Done" toggle */}
+					<SidebarGroupLabel className="group-data-[collapsible=icon]:hidden justify-between pr-1">
+						<span>Pinned</span>
+						<div className="flex items-center gap-0.5 ml-auto">
+							<Link
+								to="/$workspaceId/pages"
+								params={{ workspaceId }}
+								aria-label="All pages directory"
+								className="relative rounded px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors after:absolute after:-inset-1 after:md:hidden"
+								onClick={() => setEditing(false)}
+							>
+								All
+							</Link>
+							<button
+								type="button"
+								aria-label={isEditing ? 'Done editing pinned pages' : 'Edit pinned pages'}
+								className="relative rounded px-1.5 py-0.5 text-[10.5px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors after:absolute after:-inset-1 after:md:hidden"
+								onClick={() => setEditing(!isEditing)}
+							>
+								{isEditing ? 'Done' : 'Edit'}
+							</button>
+						</div>
+					</SidebarGroupLabel>
+
 					<SidebarMenu>
-						{navItems.map((item) => {
-							const Icon = item.icon
+						{pinnedPages.map((page, index) => {
+							const Icon = page.icon
+							// Page routes are stored as runtime strings in the registry.
+							// TanStack Router's Link/matchRoute require statically-typed routes,
+							// so we cast here. The registry only contains valid app routes.
+							// biome-ignore lint/suspicious/noExplicitAny: registry routes are valid at runtime
+							const pageRoute = page.to as any
 							const isActive = !!matchRoute({
-								to: item.to,
+								to: pageRoute,
 								params: { workspaceId },
-								fuzzy: !('exact' in item),
+								fuzzy: !page.exact,
 							})
+							const isDragTarget = dragOverIndex === index
 
 							return (
-								<SidebarMenuItem key={item.to}>
-									<SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-										<Link
-											to={item.to}
-											params={{ workspaceId }}
-											search={{}}
-											onClick={() => setOpenMobile(false)}
+								<div
+									key={page.id}
+									draggable={canDrag}
+									onDragStart={canDrag ? onDragStart(index) : undefined}
+									onDragOver={canDrag ? onDragOver(index) : undefined}
+									onDrop={canDrag ? onDrop(index) : undefined}
+									onDragEnd={canDrag ? onDragEnd : undefined}
+									className={cn(
+										'flex items-center gap-0.5',
+										canDrag && 'cursor-grab',
+										isDragTarget && 'opacity-50',
+									)}
+								>
+									{/* Grip handle: desktop-only — drag doesn't work on touch */}
+									{isEditing && !isMobile && (
+										<GripVertical
+											size={13}
+											className="shrink-0 text-muted-foreground/50 group-data-[collapsible=icon]:hidden"
+										/>
+									)}
+									<SidebarMenuItem className="flex-1 min-w-0">
+										<SidebarMenuButton
+											asChild={!isEditing}
+											isActive={isActive}
+											tooltip={page.label}
+											onClick={isEditing ? undefined : () => setOpenMobile(false)}
 										>
-											<Icon />
-											<span>{item.label}</span>
-										</Link>
-									</SidebarMenuButton>
-								</SidebarMenuItem>
+											{isEditing ? (
+												<div className="flex items-center gap-2 w-full">
+													<Icon size={16} />
+													<span>{page.label}</span>
+												</div>
+											) : (
+												// biome-ignore lint/suspicious/noExplicitAny: registry routes use runtime strings
+												<Link to={pageRoute} params={{ workspaceId } as any} search={{} as any}>
+													<Icon />
+													<span>{page.label}</span>
+												</Link>
+											)}
+										</SidebarMenuButton>
+									</SidebarMenuItem>
+									{isEditing && (
+										<button
+											type="button"
+											aria-label={`Unpin ${page.label}`}
+											className="relative shrink-0 flex items-center justify-center w-5 h-5 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors group-data-[collapsible=icon]:hidden after:absolute after:-inset-2 after:md:hidden"
+											onClick={() => unpin(page.id)}
+										>
+											<X size={12} />
+										</button>
+									)}
+								</div>
 							)
 						})}
+
+						{/* "All pages" entry — always visible, non-removable, hidden in icon-only mode */}
+						<SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
+							<SidebarMenuButton
+								asChild
+								isActive={!!matchRoute({ to: '/$workspaceId/pages', params: { workspaceId } })}
+								tooltip="All pages"
+							>
+								<Link
+									to="/$workspaceId/pages"
+									params={{ workspaceId }}
+									search={{}}
+									onClick={() => {
+										setOpenMobile(false)
+										setEditing(false)
+									}}
+								>
+									<LayoutGrid />
+									<span className="text-muted-foreground">All pages</span>
+								</Link>
+							</SidebarMenuButton>
+						</SidebarMenuItem>
 					</SidebarMenu>
 				</SidebarGroup>
 			</SidebarContent>
