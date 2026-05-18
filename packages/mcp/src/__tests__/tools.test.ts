@@ -50,6 +50,8 @@ const ALL_TOOL_NAMES = [
 	'update_workspace_skill',
 	'delete_workspace_skill',
 	'get_events',
+	'get_comments',
+	'create_comment',
 	'create_trigger',
 	'update_trigger',
 	'delete_trigger',
@@ -380,6 +382,75 @@ describe('list_notifications schema', () => {
 	it('accepts status filter', () => {
 		const result = schema.parse({ status: 'pending' })
 		expect(result.status).toBe('pending')
+	})
+})
+
+describe('get_comments schema', () => {
+	const schema = tools.get_comments.inputSchema
+
+	it('accepts entity_id', () => {
+		const result = schema.parse({ entity_id: uuid })
+		expect(result.entity_id).toBe(uuid)
+		expect(result.limit).toBe(50)
+		expect(result.offset).toBe(0)
+	})
+
+	it('rejects missing entity_id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects non-uuid entity_id', () => {
+		expect(() => schema.parse({ entity_id: 'not-uuid' })).toThrow()
+	})
+
+	it('rejects limit above 100', () => {
+		expect(() => schema.parse({ entity_id: uuid, limit: 200 })).toThrow()
+	})
+
+	it('rejects negative offset', () => {
+		expect(() => schema.parse({ entity_id: uuid, offset: -1 })).toThrow()
+	})
+})
+
+describe('create_comment schema', () => {
+	const schema = tools.create_comment.inputSchema
+
+	it('accepts minimal input', () => {
+		const result = schema.parse({ entity_id: uuid, content: 'hi' })
+		expect(result.entity_id).toBe(uuid)
+		expect(result.content).toBe('hi')
+	})
+
+	it('accepts full input', () => {
+		const result = schema.parse({
+			entity_id: uuid,
+			content: 'reply',
+			mentions: [uuid2],
+			parent_event_id: 42,
+		})
+		expect(result.mentions).toEqual([uuid2])
+		expect(result.parent_event_id).toBe(42)
+	})
+
+	it('rejects empty content', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: '' })).toThrow()
+	})
+
+	it('rejects content above 10000 chars', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'x'.repeat(10001) })).toThrow()
+	})
+
+	it('rejects non-uuid mentions', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', mentions: ['not-uuid'] })).toThrow()
+	})
+
+	it('rejects more than 50 mentions', () => {
+		const mentions = Array.from({ length: 51 }, () => uuid)
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', mentions })).toThrow()
+	})
+
+	it('rejects non-positive parent_event_id', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', parent_event_id: 0 })).toThrow()
 	})
 })
 

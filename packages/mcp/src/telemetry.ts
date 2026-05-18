@@ -162,6 +162,8 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_notification: 'notification_create',
 	update_notification: 'notification_update',
 	delete_notification: 'notification_delete',
+	// Comments
+	create_comment: 'comment_create',
 	// Workspace skills
 	create_workspace_skill: 'skill_create',
 	update_workspace_skill: 'skill_update',
