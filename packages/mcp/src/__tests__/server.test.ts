@@ -1118,6 +1118,102 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_comments handler', () => {
+		const objectId = '550e8400-e29b-41d4-a716-446655440000'
+
+		it('GETs /api/events/history with comment filters pinned', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('get_comments')
+			await handler({ entity_id: objectId, limit: 25, offset: 5 })
+
+			const call = vi.mocked(fetch).mock.calls[0]
+			const url = call[0] as string
+			expect(url).toContain('/api/events/history?')
+			expect(url).toContain('entity_type=object')
+			expect(url).toContain(`entity_id=${objectId}`)
+			expect(url).toContain('action=commented')
+			expect(url).toContain('limit=25')
+			expect(url).toContain('offset=5')
+			expect((call[1] as RequestInit).method).toBe('GET')
+		})
+
+		it('uses workspace_id from args over default', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('get_comments')
+			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50, offset: 0 })
+
+			expect(fetch).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.objectContaining({
+					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+				}),
+			)
+		})
+	})
+
+	describe('create_comment handler', () => {
+		const objectId = '550e8400-e29b-41d4-a716-446655440000'
+		const agentId = '660e8400-e29b-41d4-a716-446655440000'
+
+		it('POSTs to /api/events with body', async () => {
+			const mockResult = { id: 1, action: 'commented' }
+			mockFetchSuccess(mockResult)
+
+			const handler = getHandler('create_comment')
+			const result = (await handler({
+				entity_id: objectId,
+				content: 'hi from mcp',
+				mentions: [agentId],
+				parent_event_id: 42,
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/events',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({
+						Authorization: 'Bearer ank_testkey123',
+						'X-Workspace-Id': 'ws-default-123',
+					}),
+				}),
+			)
+
+			const call = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse((call[1] as RequestInit).body as string)
+			expect(body).toEqual({
+				entity_id: objectId,
+				content: 'hi from mcp',
+				mentions: [agentId],
+				parent_event_id: 42,
+			})
+
+			expect(JSON.parse(result.content[0].text)).toEqual(mockResult)
+		})
+
+		it('strips workspace_id from the POST body', async () => {
+			mockFetchSuccess({})
+
+			const handler = getHandler('create_comment')
+			await handler({
+				workspace_id: 'ws-custom',
+				entity_id: objectId,
+				content: 'hello',
+			})
+
+			const call = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse((call[1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('workspace_id')
+			expect(body.entity_id).toBe(objectId)
+			expect(body.content).toBe('hello')
+
+			expect(call[1]).toMatchObject({
+				headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+			})
+		})
+	})
+
 	describe('workspace schema handlers', () => {
 		// Each tool runs read-modify-write on settings.field_definitions plus a
 		// post-PATCH verify re-read. So every successful call mocks three fetches:

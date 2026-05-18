@@ -1796,6 +1796,52 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Comments ─────────────────────────────────────────────
+	registerAppTool(
+		server,
+		'get_comments',
+		{
+			description: tools.get_comments.description,
+			inputSchema: tools.get_comments.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			params.set('entity_type', 'object')
+			params.set('entity_id', args.entity_id)
+			params.set('action', 'commented')
+			params.set('limit', String(args.limit))
+			params.set('offset', String(args.offset))
+			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_comment',
+		{
+			description: tools.create_comment.description,
+			inputSchema: tools.create_comment.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/events', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('create_comment', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Triggers ─────────────────────────────────────────────
 	registerAppTool(
 		server,

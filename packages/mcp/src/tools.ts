@@ -1,4 +1,9 @@
-import { notificationActionSchema, notificationOptionSchema, skillNameSchema } from '@maskin/shared'
+import {
+	createCommentSchema,
+	notificationActionSchema,
+	notificationOptionSchema,
+	skillNameSchema,
+} from '@maskin/shared'
 import { z } from 'zod'
 
 // Keep field list in sync with `notificationMetadataSchema` in
@@ -502,6 +507,24 @@ export const tools = {
 			entity_type: z.string().optional(),
 			action: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
+		}),
+	},
+	get_comments: {
+		description:
+			'Get comments posted on a specific object, newest first. Comments are events with action="commented" on entity_type="object". Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
+			limit: z.number().int().min(1).max(100).default(50),
+			offset: z.number().int().min(0).default(0),
+		}),
+	},
+	create_comment: {
+		description:
+			'Post a comment on an object. Set parent_event_id to thread a reply under an existing comment (use the id returned by get_comments). Include mentions as an array of actor UUIDs — for each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. Mentioning human actors does nothing automatic.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			...createCommentSchema.shape,
 		}),
 	},
 	create_trigger: {
