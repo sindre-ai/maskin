@@ -1,13 +1,9 @@
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import {
-	ALL_PAGES,
-	type PageDefinition,
-	getPinnedPageIds,
-	setPinnedPageIds,
-} from '@/lib/pinned-pages'
+import { ALL_PAGES, type PageDefinition } from '@/lib/pinned-pages'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getPinnedIdsSnapshot, setPinnedIds, subscribePinnedIds } from '@/stores/pinned-pages-store'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 
 export interface UsePinnedPagesResult {
 	pinnedPages: PageDefinition[]
@@ -25,6 +21,14 @@ export function usePinnedPages(): UsePinnedPagesResult {
 	const enabledModules = useEnabledModules()
 	const hasObjectTypes = getEnabledObjectTypeTabs(enabledModules).length > 0
 
+	// Subscribe to the shared store so any consumer (sidebar + /pages) re-renders
+	// when pins change anywhere.
+	const getSnapshot = useCallback(() => getPinnedIdsSnapshot(workspaceId), [workspaceId])
+	const pinnedIds = useSyncExternalStore(subscribePinnedIds, getSnapshot, getSnapshot)
+
+	// `isEditing` stays local — it's the sidebar's UI mode, not shared state.
+	const [isEditing, setEditing] = useState(false)
+
 	// Filtered list of pages that are available given current module state
 	const allPages = useMemo(
 		() => ALL_PAGES.filter((p) => !p.requiresModuleObjectTypes || hasObjectTypes),
@@ -32,18 +36,6 @@ export function usePinnedPages(): UsePinnedPagesResult {
 	)
 
 	const availableIds = useMemo(() => new Set(allPages.map((p) => p.id)), [allPages])
-
-	const [pinnedIds, setPinnedIds] = useState<string[]>(() => getPinnedPageIds(workspaceId))
-
-	const [isEditing, setEditing] = useState(false)
-
-	const save = useCallback(
-		(ids: string[]) => {
-			setPinnedIds(ids)
-			setPinnedPageIds(workspaceId, ids)
-		},
-		[workspaceId],
-	)
 
 	// Resolve pinned page definitions, filtering out pages whose module is disabled
 	// (pins are preserved in storage so re-enabling the module restores them)
@@ -61,16 +53,19 @@ export function usePinnedPages(): UsePinnedPagesResult {
 
 	const pin = useCallback(
 		(pageId: string) => {
-			if (!pinnedIds.includes(pageId)) save([...pinnedIds, pageId])
+			if (!pinnedIds.includes(pageId)) setPinnedIds(workspaceId, [...pinnedIds, pageId])
 		},
-		[pinnedIds, save],
+		[pinnedIds, workspaceId],
 	)
 
 	const unpin = useCallback(
 		(pageId: string) => {
-			save(pinnedIds.filter((id) => id !== pageId))
+			setPinnedIds(
+				workspaceId,
+				pinnedIds.filter((id) => id !== pageId),
+			)
 		},
-		[pinnedIds, save],
+		[pinnedIds, workspaceId],
 	)
 
 	const reorder = useCallback(
@@ -81,9 +76,9 @@ export function usePinnedPages(): UsePinnedPagesResult {
 			next.splice(toIndex, 0, moved)
 			// Preserve any hidden pins (module-gated) at the end of the stored list
 			const hiddenIds = pinnedIds.filter((id) => !availableIds.has(id))
-			save([...next, ...hiddenIds])
+			setPinnedIds(workspaceId, [...next, ...hiddenIds])
 		},
-		[pinnedPages, pinnedIds, availableIds, save],
+		[pinnedPages, pinnedIds, availableIds, workspaceId],
 	)
 
 	return { pinnedPages, allPages, isEditing, setEditing, pin, unpin, isPinned, reorder }

@@ -20,11 +20,13 @@ vi.mock('@/lib/workspace-context', () => ({
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { usePinnedPages } from '@/hooks/use-pinned-pages'
 import { DEFAULT_PINNED_IDS, setPinnedPageIds } from '@/lib/pinned-pages'
+import { __resetPinnedPagesStoreForTests } from '@/stores/pinned-pages-store'
 import { act, renderHook } from '@testing-library/react'
 import { createWorkspaceWrapper } from '../setup'
 
 afterEach(() => {
 	localStorage.removeItem(KEY)
+	__resetPinnedPagesStoreForTests()
 	vi.restoreAllMocks()
 })
 
@@ -123,5 +125,33 @@ describe('usePinnedPages', () => {
 
 		act(() => result.current.setEditing(false))
 		expect(result.current.isEditing).toBe(false)
+	})
+
+	// Regression test for the Codex finding on PR #402: two hook consumers
+	// (sidebar + /pages) used to hold independent useState copies, so a pin
+	// from one didn't update the other until remount/refresh.
+	it('shares pinned state across two consumers — pin from one updates the other', () => {
+		setPinnedPageIds(WS, ['pulse'])
+		const wrapper = createWorkspaceWrapper()
+		const sidebar = renderHook(() => usePinnedPages(), { wrapper })
+		const pagesGrid = renderHook(() => usePinnedPages(), { wrapper })
+
+		expect(sidebar.result.current.pinnedPages.map((p) => p.id)).toEqual(['pulse'])
+		expect(pagesGrid.result.current.pinnedPages.map((p) => p.id)).toEqual(['pulse'])
+
+		// Pin from the /pages grid; sidebar must reflect it without remount.
+		act(() => pagesGrid.result.current.pin('agents'))
+		expect(sidebar.result.current.pinnedPages.map((p) => p.id)).toEqual(['pulse', 'agents'])
+		expect(pagesGrid.result.current.isPinned('agents')).toBe(true)
+
+		// Unpin from the sidebar; /pages grid must reflect it without remount.
+		act(() => sidebar.result.current.unpin('pulse'))
+		expect(pagesGrid.result.current.pinnedPages.map((p) => p.id)).toEqual(['agents'])
+		expect(sidebar.result.current.isPinned('pulse')).toBe(false)
+
+		// Reorder from one; the other sees the new order.
+		act(() => sidebar.result.current.pin('triggers'))
+		act(() => sidebar.result.current.reorder(0, 1))
+		expect(pagesGrid.result.current.pinnedPages.map((p) => p.id)).toEqual(['triggers', 'agents'])
 	})
 })
