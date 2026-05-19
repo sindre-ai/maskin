@@ -4,7 +4,7 @@ import { useCreateComment } from '@/hooks/use-events'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { ArrowUp } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { MentionedText } from '../shared/mentioned-text'
 
@@ -28,9 +28,14 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const mentionListRef = useRef<HTMLDivElement>(null)
 
-	const mentionableActors = actors?.filter((a) => a.id !== actor?.id && !a.isSystem) ?? []
-	const filteredActors = mentionableActors.filter((a) =>
-		a.name.toLowerCase().includes(mentionFilter.toLowerCase()),
+	const mentionableActors = useMemo(
+		() => actors?.filter((a) => a.id !== actor?.id && !a.isSystem) ?? [],
+		[actors, actor?.id],
+	)
+	const filteredActors = useMemo(
+		() =>
+			mentionableActors.filter((a) => a.name.toLowerCase().includes(mentionFilter.toLowerCase())),
+		[mentionableActors, mentionFilter],
 	)
 
 	const insertMention = useCallback(
