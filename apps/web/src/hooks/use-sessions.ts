@@ -1,7 +1,9 @@
 import { api } from '@/lib/api'
 import type { CreateSessionInput } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+
+const ACTOR_SESSIONS_PAGE_SIZE = 5
 
 export function useSession(id: string | null, workspaceId: string) {
 	return useQuery({
@@ -58,10 +60,18 @@ export function useSessionErrorLog(
 	})
 }
 
-export function useActorSessions(actorId: string, workspaceId: string) {
-	return useQuery({
-		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),
-		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '20' }),
+export function useActorSessionsInfinite(actorId: string, workspaceId: string) {
+	return useInfiniteQuery({
+		queryKey: queryKeys.sessions.byActorAllInfinite(workspaceId, actorId),
+		queryFn: ({ pageParam }) =>
+			api.sessions.list(workspaceId, {
+				actor_id: actorId,
+				limit: String(ACTOR_SESSIONS_PAGE_SIZE),
+				offset: String(pageParam),
+			}),
+		getNextPageParam: (lastPage, allPages) =>
+			lastPage.length < ACTOR_SESSIONS_PAGE_SIZE ? undefined : allPages.flat().length,
+		initialPageParam: 0,
 		enabled: !!actorId && !!workspaceId,
 	})
 }
