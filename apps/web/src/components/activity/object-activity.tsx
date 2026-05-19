@@ -1,7 +1,8 @@
 import { useActors } from '@/hooks/use-actors'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
+import { Collapsible, CollapsibleContent } from '../ui/collapsible'
 import { ActivityComment } from './activity-comment'
 import { ActivityItem } from './activity-item'
 import { buildPhases } from './build-phases'
@@ -66,6 +67,14 @@ export function ObjectActivity({
 		}
 	}, [events, object])
 
+	// Only the current (last) phase is expanded by default; users can toggle any other.
+	const [phaseOverrides, setPhaseOverrides] = useState<Record<number, boolean>>({})
+	const currentPhaseIndex = phases.length - 1
+	const isPhaseOpen = (index: number) => phaseOverrides[index] ?? index === currentPhaseIndex
+	const togglePhase = (index: number) => {
+		setPhaseOverrides((prev) => ({ ...prev, [index]: !isPhaseOpen(index) }))
+	}
+
 	return (
 		<div className="border-t border-border pt-6">
 			<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
@@ -82,37 +91,50 @@ export function ObjectActivity({
 				{totalTopLevel === 0 && !activeSessionId && (
 					<p className="text-sm text-muted-foreground py-4 text-center">No activity yet</p>
 				)}
-				{phases.map((phase, index) => (
-					<section key={`${phase.status}-${phase.startedAt ?? index}`}>
-						<PhaseDivider status={phase.status} startedAt={phase.startedAt} />
-						<div className="space-y-0.5">
-							{phase.events.map((event) =>
-								event.action === 'commented' ? (
-									<ActivityComment
-										key={event.id}
-										event={event}
-										replies={repliesByParent.get(event.id) ?? []}
-										workspaceId={workspaceId}
-										objectId={object.id}
-									/>
-								) : (
-									<ActivityItem
-										key={event.id}
-										event={event}
-										compact
-										contextEntityId={object.id}
-										actorsById={actorsById}
-										descriptionOverride={
-											event.action === 'status_changed'
-												? formatStatusTransitionShort(event)
-												: undefined
-										}
-									/>
-								),
-							)}
-						</div>
-					</section>
-				))}
+				{phases.map((phase, index) => {
+					const open = isPhaseOpen(index)
+					return (
+						<Collapsible key={`${phase.status}-${phase.startedAt ?? index}`} asChild open={open}>
+							<section>
+								<PhaseDivider
+									status={phase.status}
+									startedAt={phase.startedAt}
+									isOpen={open}
+									eventCount={phase.events.length}
+									onToggle={() => togglePhase(index)}
+								/>
+								<CollapsibleContent>
+									<div className="space-y-0.5">
+										{phase.events.map((event) =>
+											event.action === 'commented' ? (
+												<ActivityComment
+													key={event.id}
+													event={event}
+													replies={repliesByParent.get(event.id) ?? []}
+													workspaceId={workspaceId}
+													objectId={object.id}
+												/>
+											) : (
+												<ActivityItem
+													key={event.id}
+													event={event}
+													compact
+													contextEntityId={object.id}
+													actorsById={actorsById}
+													descriptionOverride={
+														event.action === 'status_changed'
+															? formatStatusTransitionShort(event)
+															: undefined
+													}
+												/>
+											),
+										)}
+									</div>
+								</CollapsibleContent>
+							</section>
+						</Collapsible>
+					)
+				})}
 			</div>
 
 			<div className="mt-4">

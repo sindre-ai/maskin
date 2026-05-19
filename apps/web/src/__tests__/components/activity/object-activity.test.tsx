@@ -1,5 +1,6 @@
 import { ObjectActivity } from '@/components/activity/object-activity'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { buildEventResponse, buildObjectResponse } from '../../factories'
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -74,5 +75,57 @@ describe('ObjectActivity', () => {
 		render(<ObjectActivity workspaceId="ws-1" object={object} events={events} />)
 		expect(screen.getByText('active')).toBeInTheDocument()
 		expect(screen.getByText('set the status to Active')).toBeInTheDocument()
+	})
+
+	it('collapses past phases and only expands the current phase by default', () => {
+		// Events arrive from the API newest-first
+		const events = [
+			buildEventResponse({
+				id: 3,
+				action: 'commented',
+				data: { content: 'Comment in active phase' },
+			}),
+			buildEventResponse({
+				id: 2,
+				action: 'status_changed',
+				data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+			}),
+			buildEventResponse({
+				id: 1,
+				action: 'commented',
+				data: { content: 'Comment in signal phase' },
+			}),
+		]
+		render(<ObjectActivity workspaceId="ws-1" object={object} events={events} />)
+
+		// Current (active) phase content is visible
+		expect(screen.getByText('Comment in active phase')).toBeInTheDocument()
+		// Past (signal) phase content is collapsed and shows event count summary
+		expect(screen.queryByText('Comment in signal phase')).not.toBeInTheDocument()
+		expect(screen.getByText('· 1 event')).toBeInTheDocument()
+	})
+
+	it('expands a past phase when its divider is clicked', async () => {
+		const user = userEvent.setup()
+		const events = [
+			buildEventResponse({
+				id: 2,
+				action: 'status_changed',
+				data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+			}),
+			buildEventResponse({
+				id: 1,
+				action: 'commented',
+				data: { content: 'Comment in signal phase' },
+			}),
+		]
+		render(<ObjectActivity workspaceId="ws-1" object={object} events={events} />)
+
+		expect(screen.queryByText('Comment in signal phase')).not.toBeInTheDocument()
+
+		const signalTrigger = screen.getByRole('button', { name: /signal/ })
+		await user.click(signalTrigger)
+
+		expect(screen.getByText('Comment in signal phase')).toBeInTheDocument()
 	})
 })
