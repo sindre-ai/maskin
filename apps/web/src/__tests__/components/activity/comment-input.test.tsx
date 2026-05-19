@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 
 const mockMutate = vi.fn()
 const mockGetStoredActor = vi.fn()
+const mockUseActors = vi.fn()
 let mockIsPending = false
 
 vi.mock('@/lib/auth', () => ({
@@ -15,7 +16,7 @@ vi.mock('@/hooks/use-events', () => ({
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
-	useActors: () => ({ data: [] }),
+	useActors: () => mockUseActors(),
 }))
 
 describe('CommentInput', () => {
@@ -23,6 +24,7 @@ describe('CommentInput', () => {
 		mockMutate.mockClear()
 		mockIsPending = false
 		mockGetStoredActor.mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human' })
+		mockUseActors.mockReturnValue({ data: [] })
 	})
 
 	it('returns null when no stored actor', () => {
@@ -33,7 +35,9 @@ describe('CommentInput', () => {
 
 	it('renders textarea and send button', () => {
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-		expect(screen.getByPlaceholderText('Comment or instruct an agent...')).toBeInTheDocument()
+		expect(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+		).toBeInTheDocument()
 		expect(screen.getByRole('button')).toBeInTheDocument()
 	})
 
@@ -46,7 +50,10 @@ describe('CommentInput', () => {
 		const user = userEvent.setup()
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.type(screen.getByPlaceholderText('Comment or instruct an agent...'), 'Hello')
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Hello',
+		)
 		expect(screen.getByRole('button')).not.toBeDisabled()
 	})
 
@@ -55,7 +62,10 @@ describe('CommentInput', () => {
 		mockIsPending = true
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.type(screen.getByPlaceholderText('Comment or instruct an agent...'), 'Hello')
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Hello',
+		)
 		expect(screen.getByRole('button')).toBeDisabled()
 	})
 
@@ -63,12 +73,52 @@ describe('CommentInput', () => {
 		const user = userEvent.setup()
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		const textarea = screen.getByPlaceholderText('Comment or instruct an agent...')
+		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
 		await user.type(textarea, 'Test comment{Enter}')
 		expect(mockMutate).toHaveBeenCalled()
 		expect(mockMutate.mock.calls[0][0]).toMatchObject({
 			entity_id: 'obj-1',
 			content: 'Test comment',
 		})
+	})
+
+	it('hides system actors from the @mention dropdown', async () => {
+		const user = userEvent.setup()
+		mockUseActors.mockReturnValue({
+			data: [
+				{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false },
+				{ id: 'actor-3', name: 'Sindre', type: 'agent', email: null, isSystem: true },
+			],
+		})
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
+		await user.type(textarea, '@')
+
+		expect(screen.getByText('Bob')).toBeInTheDocument()
+		expect(screen.queryByText('Sindre')).not.toBeInTheDocument()
+	})
+
+	it('renders an inline highlight chip for typed @mentions', async () => {
+		const user = userEvent.setup()
+		mockUseActors.mockReturnValue({
+			data: [
+				{
+					id: 'actor-2',
+					name: 'Senior Developer',
+					type: 'agent',
+					email: null,
+					isSystem: false,
+				},
+			],
+		})
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
+		await user.type(textarea, 'hi @Senior Developer ')
+
+		const chip = screen.getByText('@Senior Developer')
+		expect(chip).toBeInTheDocument()
+		expect(chip.tagName).toBe('SPAN')
 	})
 })

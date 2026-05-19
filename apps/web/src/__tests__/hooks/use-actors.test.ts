@@ -40,6 +40,7 @@ function buildActorListItem(overrides: Partial<ActorListItem> & { id: string }):
 		type: 'human',
 		name: 'Test Actor',
 		email: null,
+		isSystem: false,
 		...overrides,
 	}
 }

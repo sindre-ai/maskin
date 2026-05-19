@@ -433,6 +433,7 @@ export interface ActorListItem {
 	type: string
 	name: string
 	email: string | null
+	isSystem: boolean
 }
 
 export interface ActorResponse extends ActorListItem {
@@ -441,7 +442,6 @@ export interface ActorResponse extends ActorListItem {
 	memory: Record<string, unknown> | null
 	llmProvider: string | null
 	llmConfig: Record<string, unknown> | null
-	isSystem: boolean
 	createdAt: string | null
 	updatedAt: string | null
 }

@@ -1,9 +1,10 @@
-import { useActor } from '@/hooks/use-actors'
-import type { EventResponse } from '@/lib/api'
+import { useActor, useActors } from '@/hooks/use-actors'
+import type { ActorListItem, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { MessageSquare } from 'lucide-react'
+import { Reply } from 'lucide-react'
 import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
+import { MentionedText } from '../shared/mentioned-text'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
 
@@ -14,23 +15,47 @@ interface ActivityCommentProps {
 	objectId: string
 }
 
-/** Renders @mentions as styled chips in comment text */
-function renderCommentContent(content: string) {
-	// Match @Name patterns (word characters and spaces after @)
-	const parts = content.split(/(@\w[\w\s]*?\b)/g)
-	return parts.map((part) => {
-		if (part.startsWith('@')) {
-			return (
-				<span
-					key={part}
-					className="inline-flex items-center rounded px-1 py-0.5 text-xs font-medium bg-primary/10 text-primary"
+interface CommentRowProps {
+	event: EventResponse
+	actors: ActorListItem[]
+	onReply?: () => void
+}
+
+function CommentRow({ event, actors, onReply }: CommentRowProps) {
+	const { data: actor } = useActor(event.actorId)
+	const content = (event.data?.content as string) ?? ''
+
+	return (
+		<div className="flex items-start gap-2 py-1">
+			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
+			<div className="flex-1 min-w-0">
+				<div className="flex items-baseline gap-1.5">
+					<span
+						className={cn(
+							'text-sm font-medium',
+							actor?.type === 'agent' ? 'text-primary' : 'text-foreground',
+						)}
+					>
+						{actor?.name ?? 'Unknown'}
+					</span>
+					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+				</div>
+				<p className="text-sm mt-0.5 whitespace-pre-wrap break-words">
+					<MentionedText content={content} actors={actors} />
+				</p>
+			</div>
+			{onReply && (
+				<button
+					type="button"
+					onClick={onReply}
+					aria-label="Reply"
+					className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0 p-1 -m-1"
 				>
-					{part}
-				</span>
-			)
-		}
-		return part
-	})
+					<Reply size={14} />
+				</button>
+			)}
+		</div>
+	)
 }
 
 export function ActivityComment({
@@ -39,96 +64,38 @@ export function ActivityComment({
 	workspaceId,
 	objectId,
 }: ActivityCommentProps) {
-	const { data: actor } = useActor(event.actorId)
-	const [showReplies, setShowReplies] = useState(false)
+	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
-
-	const content = (event.data?.content as string) ?? ''
-
-	return (
-		<div className="flex items-start gap-2 py-1">
-			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
-			<div className="flex-1 min-w-0">
-				<div className="flex items-baseline gap-1.5">
-					<span
-						className={cn(
-							'text-sm font-medium',
-							actor?.type === 'agent' ? 'text-primary' : 'text-foreground',
-						)}
-					>
-						{actor?.name ?? 'Unknown'}
-					</span>
-					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
-				</div>
-				<p className="text-sm mt-0.5 whitespace-pre-wrap break-words">
-					{renderCommentContent(content)}
-				</p>
-
-				{/* Thread controls */}
-				<div className="flex items-center gap-3 mt-1">
-					{replies.length > 0 && (
-						<button
-							type="button"
-							onClick={() => setShowReplies(!showReplies)}
-							className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-						>
-							<span>{showReplies ? '▾' : '▸'}</span>
-							{replies.length} {replies.length === 1 ? 'reply' : 'replies'}
-						</button>
-					)}
-					<button
-						type="button"
-						onClick={() => setShowReplyInput(!showReplyInput)}
-						className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-					>
-						<MessageSquare size={12} />
-						Reply
-					</button>
-				</div>
-
-				{/* Replies */}
-				{showReplies && replies.length > 0 && (
-					<div className="mt-2 ml-2 border-l-2 border-border pl-3 space-y-1">
-						{replies.map((reply) => (
-							<ReplyItem key={reply.id} event={reply} />
-						))}
-					</div>
-				)}
-
-				{/* Reply input */}
-				{showReplyInput && (
-					<div className="mt-2">
-						<CommentInput workspaceId={workspaceId} objectId={objectId} parentEventId={event.id} />
-					</div>
-				)}
-			</div>
-		</div>
-	)
-}
-
-function ReplyItem({ event }: { event: EventResponse }) {
-	const { data: actor } = useActor(event.actorId)
-	const content = (event.data?.content as string) ?? ''
+	const openReplyInput = () => setShowReplyInput(true)
+	const hasReplies = replies.length > 0
+	const actorList = actors ?? []
 
 	return (
-		<div className="flex items-start gap-2 py-1">
-			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
-			<div className="flex-1 min-w-0">
-				<div className="flex items-baseline gap-1.5">
-					<span
-						className={cn(
-							'text-sm font-medium',
-							actor?.type === 'agent' ? 'text-primary' : 'text-foreground',
-						)}
-					>
-						{actor?.name ?? 'Unknown'}
-					</span>
-					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+		<div className="group">
+			<CommentRow
+				event={event}
+				actors={actorList}
+				onReply={hasReplies ? undefined : openReplyInput}
+			/>
+
+			{hasReplies && (
+				<div className="ml-7 space-y-0.5">
+					{replies.map((reply, idx) => (
+						<CommentRow
+							key={reply.id}
+							event={reply}
+							actors={actorList}
+							onReply={idx === replies.length - 1 ? openReplyInput : undefined}
+						/>
+					))}
 				</div>
-				<p className="text-sm mt-0.5 whitespace-pre-wrap break-words">
-					{renderCommentContent(content)}
-				</p>
-			</div>
+			)}
+
+			{showReplyInput && (
+				<div className="ml-7 mt-2">
+					<CommentInput workspaceId={workspaceId} objectId={objectId} parentEventId={event.id} />
+				</div>
+			)}
 		</div>
 	)
 }

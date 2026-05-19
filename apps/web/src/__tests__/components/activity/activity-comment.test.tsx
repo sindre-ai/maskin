@@ -7,7 +7,19 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({
 		data: { id: 'actor-1', name: 'Alice', type: 'human', email: null },
 	}),
-	useActors: () => ({ data: [] }),
+	useActors: () => ({
+		data: [
+			{ id: 'actor-1', name: 'Alice', type: 'human', email: null, isSystem: false },
+			{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false },
+			{
+				id: 'actor-3',
+				name: 'Senior Developer',
+				type: 'agent',
+				email: null,
+				isSystem: false,
+			},
+		],
+	}),
 }))
 
 vi.mock('@/hooks/use-events', () => ({
@@ -46,7 +58,28 @@ describe('ActivityComment', () => {
 		expect(screen.getByText('@Bob')).toBeInTheDocument()
 	})
 
-	it('shows reply count and toggle', () => {
+	it('highlights multi-word @mentions in full', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'Hey @Senior Developer can you review?' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const chip = screen.getByText('@Senior Developer')
+		expect(chip).toBeInTheDocument()
+		expect(chip.tagName).toBe('SPAN')
+		expect(screen.queryByText('@Senior')).not.toBeInTheDocument()
+	})
+
+	it('does not chip an actor name embedded inside a longer word', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'Talked to @Bobby yesterday' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		expect(screen.queryByText('@Bob')).not.toBeInTheDocument()
+	})
+
+	it('renders replies inline without a toggle', () => {
 		const event = buildEventResponse({
 			id: 1,
 			action: 'commented',
@@ -62,10 +95,10 @@ describe('ActivityComment', () => {
 
 		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
 
-		expect(screen.getByText('1 reply')).toBeInTheDocument()
+		expect(screen.getByText('Reply one')).toBeInTheDocument()
 	})
 
-	it('shows plural reply count', () => {
+	it('renders multiple replies inline', () => {
 		const event = buildEventResponse({
 			id: 1,
 			action: 'commented',
@@ -78,16 +111,33 @@ describe('ActivityComment', () => {
 
 		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
 
-		expect(screen.getByText('2 replies')).toBeInTheDocument()
+		expect(screen.getByText('R1')).toBeInTheDocument()
+		expect(screen.getByText('R2')).toBeInTheDocument()
 	})
 
-	it('shows Reply button', () => {
+	it('shows a Reply action button on the top-level comment when there are no replies', () => {
 		const event = buildEventResponse({
 			action: 'commented',
 			data: { content: 'Test' },
 		})
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
-		expect(screen.getByText('Reply')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument()
+	})
+
+	it('shows the Reply action button only on the last reply when replies exist', () => {
+		const event = buildEventResponse({
+			id: 1,
+			action: 'commented',
+			data: { content: 'Thread' },
+		})
+		const replies = [
+			buildEventResponse({ id: 2, action: 'commented', data: { content: 'R1' } }),
+			buildEventResponse({ id: 3, action: 'commented', data: { content: 'R2' } }),
+		]
+
+		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
+
+		expect(screen.getAllByRole('button', { name: 'Reply' })).toHaveLength(1)
 	})
 
 	it('shows reply input on Reply click', async () => {
@@ -98,9 +148,33 @@ describe('ActivityComment', () => {
 		})
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.click(screen.getByText('Reply'))
+		await user.click(screen.getByRole('button', { name: 'Reply' }))
 		expect(
-			screen.getAllByPlaceholderText('Comment or instruct an agent...').length,
+			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
+		).toBeGreaterThanOrEqual(1)
+	})
+
+	it('clicking Reply on the last reply opens the input on the parent thread', async () => {
+		const user = userEvent.setup()
+		const event = buildEventResponse({
+			id: 1,
+			action: 'commented',
+			data: { content: 'Thread' },
+		})
+		const replies = [
+			buildEventResponse({
+				id: 2,
+				action: 'commented',
+				data: { content: 'R1', parentEventId: 1 },
+			}),
+		]
+
+		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Reply' }))
+
+		expect(
+			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
 		).toBeGreaterThanOrEqual(1)
 	})
 })
