@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const eventQuerySchema = z.object({
+	id: z.coerce.number().int().positive().optional(),
 	entity_type: z.string().optional(),
 	entity_id: z.string().uuid().optional(),
 	action: z.string().optional(),

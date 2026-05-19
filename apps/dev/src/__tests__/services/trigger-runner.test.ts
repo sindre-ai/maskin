@@ -117,6 +117,35 @@ describe('TriggerRunner', () => {
 			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
 
+		it('passes event.data through to the action prompt', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'gmail.message', action: 'received' },
+				actionPrompt: 'Read the gmail thread referenced in the event',
+			})
+			const eventData = { threadId: '19e410381018bd93', messageId: 'msg-abc' }
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[{ data: eventData }], // fetchEventData
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', {
+				...baseEvent,
+				entity_type: 'gmail.message',
+				action: 'received',
+				entity_id: 'gmail-entity-1',
+			} satisfies PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(opts.actionPrompt).toContain('19e410381018bd93')
+			expect(opts.actionPrompt).toContain('msg-abc')
+			expect(opts.actionPrompt).toContain('"data":')
+		})
+
 		it('does not fire when entity_type mismatches', async () => {
 			const trigger = buildTrigger({
 				workspaceId: 'ws-1',

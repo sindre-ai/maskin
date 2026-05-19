@@ -501,9 +501,15 @@ export const tools = {
 	},
 	get_events: {
 		description:
-			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed).',
+			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Numeric event_id. Returns at most one event when set.'),
 			entity_type: z.string().optional(),
 			action: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),

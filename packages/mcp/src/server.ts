@@ -1783,6 +1783,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const params = new URLSearchParams()
+			if (args.id) params.set('id', String(args.id))
 			if (args.entity_type) params.set('entity_type', args.entity_type)
 			if (args.action) params.set('action', args.action)
 			if (args.limit) params.set('limit', String(args.limit))

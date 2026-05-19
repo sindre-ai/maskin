@@ -47,6 +47,21 @@ describe('Events Routes', () => {
 			const body = await res.json()
 			expect(Array.isArray(body)).toBe(true)
 		})
+
+		it('accepts id filter to fetch a specific event', async () => {
+			const e1 = buildEvent({ workspaceId: wsId, id: 77800 })
+			const { app, mockResults } = createTestApp(eventsRoutes, '/api/events')
+			mockResults.select = [e1]
+
+			const res = await app.request(
+				jsonGet('/api/events/history?id=77800', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].id).toBe(77800)
+		})
 	})
 
 	describe('GET /api/events (SSE stream)', () => {
