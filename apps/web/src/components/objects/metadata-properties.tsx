@@ -106,7 +106,7 @@ export function MetadataPropertiesView({
 	}
 
 	return (
-		<div className="space-y-1 w-fit">
+		<div className="space-y-1 w-fit max-w-full">
 			{metaEntries.map(([key, value]) => {
 				const fieldDef = fieldDefs.find((f) => f.name === key)
 				return (
