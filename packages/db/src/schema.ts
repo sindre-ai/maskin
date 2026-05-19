@@ -127,7 +127,10 @@ export const events = pgTable(
 		data: jsonb('data'),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt)],
+	(t) => [
+		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
+		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+	],
 )
 
 // ── Integrations ───────────────────────────────────────────────────────────
