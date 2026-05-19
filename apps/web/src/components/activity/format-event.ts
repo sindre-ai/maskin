@@ -53,7 +53,7 @@ export function isErrorEvent(event: EventResponse): boolean {
 export function formatStatusTransitionShort(event: EventResponse): string {
 	const data = event.data as { updated?: Record<string, unknown> } | null
 	const next = data?.updated?.status
-	return `moved to ${prettyStatus(next)}`
+	return `set the status to ${prettyStatus(next)}`
 }
 
 function formatObjectUpdate(event: EventResponse, ctx?: FormatContext): string | null {

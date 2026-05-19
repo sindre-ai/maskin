@@ -58,7 +58,7 @@ interface ActivityItemViewProps {
 	/** When set and matches event.entityId, the entity title is hidden (used on the object detail page to avoid repeating the page's own title). */
 	contextEntityId?: string
 	actorsById?: Map<string, ActorListItem>
-	/** Replaces the default formatted description (used by the timeline to render compact "moved to X" rows under phase dividers). */
+	/** Replaces the default formatted description (used by the timeline to render compact "set the status to X" rows under phase dividers). */
 	descriptionOverride?: string
 }
 

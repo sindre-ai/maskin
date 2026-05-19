@@ -73,6 +73,6 @@ describe('ObjectActivity', () => {
 		]
 		render(<ObjectActivity workspaceId="ws-1" object={object} events={events} />)
 		expect(screen.getByText('active')).toBeInTheDocument()
-		expect(screen.getByText('moved to Active')).toBeInTheDocument()
+		expect(screen.getByText('set the status to Active')).toBeInTheDocument()
 	})
 })

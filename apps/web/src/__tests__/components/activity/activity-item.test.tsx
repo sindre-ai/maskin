@@ -106,9 +106,15 @@ describe('ActivityItemView', () => {
 		const actor = buildActorResponse()
 		const event = buildEventResponse({ action: 'status_changed' })
 
-		render(<ActivityItemView event={event} actor={actor} descriptionOverride="moved to Active" />)
+		render(
+			<ActivityItemView
+				event={event}
+				actor={actor}
+				descriptionOverride="set the status to Active"
+			/>,
+		)
 
-		expect(screen.getByText('moved to Active')).toBeInTheDocument()
+		expect(screen.getByText('set the status to Active')).toBeInTheDocument()
 	})
 
 	it('shows entity title when contextEntityId is set but does not match', () => {
