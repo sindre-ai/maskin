@@ -1,14 +1,18 @@
-import type { EventResponse } from '@/lib/api'
+import type { ActorListItem, EventResponse } from '@/lib/api'
 
-export function formatEventDescription(event: EventResponse): string {
+const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
+
+export interface FormatContext {
+	actorsById?: Map<string, ActorListItem>
+}
+
+export function formatEventDescription(event: EventResponse, ctx?: FormatContext): string {
 	const { action, entityType } = event
 
 	switch (action) {
 		case 'created':
 			if (entityType === 'bet') return 'proposed bet'
 			return `created ${entityType}`
-		case 'updated':
-			return `updated ${entityType}`
 		case 'deleted':
 			return `deleted ${entityType}`
 		case 'session_created':
@@ -25,6 +29,13 @@ export function formatEventDescription(event: EventResponse): string {
 			return 'paused session'
 		case 'trigger_fired':
 			return 'fired trigger'
+		case 'updated':
+		case 'status_changed':
+			if (OBJECT_ENTITY_TYPES.has(entityType)) {
+				const detail = formatObjectUpdate(event, ctx)
+				if (detail) return detail
+			}
+			return `updated ${entityType}`
 		default:
 			return `${action.replace(/_/g, ' ')} ${entityType}`
 	}
@@ -32,4 +43,105 @@ export function formatEventDescription(event: EventResponse): string {
 
 export function isErrorEvent(event: EventResponse): boolean {
 	return event.action.includes('failed') || event.action.includes('timeout')
+}
+
+function formatObjectUpdate(event: EventResponse, ctx?: FormatContext): string | null {
+	const data = event.data as {
+		previous?: Record<string, unknown>
+		updated?: Record<string, unknown>
+	} | null
+	const previous = data?.previous
+	const updated = data?.updated
+	if (!previous || !updated) return null
+
+	const clauses: string[] = []
+
+	if (changed(previous.status, updated.status)) {
+		clauses.push(
+			`changed status from ${prettyStatus(previous.status)} to ${prettyStatus(updated.status)}`,
+		)
+	}
+
+	if (changed(previous.owner, updated.owner)) {
+		clauses.push(
+			`changed owner from ${ownerLabel(previous.owner, ctx)} to ${ownerLabel(updated.owner, ctx)}`,
+		)
+	}
+
+	if (changed(previous.title, updated.title)) {
+		clauses.push(titleClause(previous.title, updated.title))
+	}
+
+	if (changed(previous.content, updated.content)) {
+		clauses.push('updated content')
+	}
+
+	const metaClauses = metadataClauses(previous.metadata, updated.metadata)
+	clauses.push(...metaClauses)
+
+	if (clauses.length === 0) return null
+	return joinClauses(clauses)
+}
+
+function changed(a: unknown, b: unknown): boolean {
+	if (a === b) return false
+	if (a == null && b == null) return false
+	return true
+}
+
+function joinClauses(clauses: string[]): string {
+	if (clauses.length === 1) return clauses[0]
+	if (clauses.length === 2) return `${clauses[0]} and ${clauses[1]}`
+	return `${clauses.slice(0, -1).join(', ')}, and ${clauses[clauses.length - 1]}`
+}
+
+function prettyStatus(value: unknown): string {
+	if (typeof value !== 'string' || value.length === 0) return 'none'
+	return value
+		.replace(/_/g, ' ')
+		.split(' ')
+		.map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1)))
+		.join(' ')
+}
+
+function ownerLabel(value: unknown, ctx?: FormatContext): string {
+	if (value == null || value === '') return 'no one'
+	if (typeof value !== 'string') return 'unknown'
+	const actor = ctx?.actorsById?.get(value)
+	return actor?.name ?? 'unknown'
+}
+
+function titleClause(prev: unknown, next: unknown): string {
+	const prevStr = typeof prev === 'string' ? prev : ''
+	const nextStr = typeof next === 'string' ? next : ''
+	if (prevStr === '' && nextStr !== '') return `set title to "${nextStr}"`
+	if (prevStr !== '' && nextStr === '') return 'cleared title'
+	return `changed title from "${prevStr}" to "${nextStr}"`
+}
+
+function metadataClauses(prev: unknown, next: unknown): string[] {
+	const prevObj = isObject(prev) ? prev : {}
+	const nextObj = isObject(next) ? next : {}
+	const keys = new Set<string>([...Object.keys(prevObj), ...Object.keys(nextObj)])
+	const changedKeys: string[] = []
+	for (const key of keys) {
+		if (!shallowEqual(prevObj[key], nextObj[key])) changedKeys.push(key)
+	}
+	if (changedKeys.length === 0) return []
+	if (changedKeys.length > 3) return [`updated ${changedKeys.length} custom fields`]
+	return changedKeys.map((k) => `updated custom field: ${k}`)
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function shallowEqual(a: unknown, b: unknown): boolean {
+	if (a === b) return true
+	if (a == null && b == null) return true
+	if (typeof a !== typeof b) return false
+	if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+		return JSON.stringify(a) === JSON.stringify(b)
+	}
+	return false
 }

@@ -1,4 +1,4 @@
-import type { EventResponse } from '@/lib/api'
+import type { ActorListItem, EventResponse } from '@/lib/api'
 
 export type CategoryFilter = 'decision' | 'finding' | 'input' | 'agent' | 'human' | 'error'
 
@@ -15,7 +15,7 @@ export const FILTER_TABS = [
 export function matchesFilter(
 	event: EventResponse,
 	filter: CategoryFilter,
-	actorTypeMap: Map<string, string>,
+	actorsById: Map<string, ActorListItem>,
 ): boolean {
 	switch (filter) {
 		case 'decision':
@@ -29,9 +29,9 @@ export function matchesFilter(
 		case 'input':
 			return event.entityType === 'notification'
 		case 'agent':
-			return actorTypeMap.get(event.actorId) === 'agent'
+			return actorsById.get(event.actorId)?.type === 'agent'
 		case 'human':
-			return actorTypeMap.get(event.actorId) === 'human'
+			return actorsById.get(event.actorId)?.type === 'human'
 		case 'error':
 			return event.action.includes('failed') || event.action.includes('timeout')
 	}
