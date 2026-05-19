@@ -186,13 +186,13 @@ export function RelatedObjectsTable({
 	}
 
 	return (
-		<div className="rounded-md border">
+		<div className="max-h-[28rem] overflow-y-auto">
 			<Table>
 				<TableHeader>
 					{table.getHeaderGroups().map((headerGroup) => (
-						<TableRow key={headerGroup.id}>
+						<TableRow key={headerGroup.id} className="border-b-0 hover:bg-transparent">
 							{headerGroup.headers.map((header) => (
-								<TableHead key={header.id}>
+								<TableHead key={header.id} className="sticky top-0 bg-background z-10">
 									{header.isPlaceholder
 										? null
 										: flexRender(header.column.columnDef.header, header.getContext())}
@@ -205,7 +205,7 @@ export function RelatedObjectsTable({
 					{table.getRowModel().rows.map((row) => (
 						<TableRow
 							key={row.id}
-							className="group cursor-pointer"
+							className="group cursor-pointer border-b-0"
 							onClick={() => handleRowClick(row.original.object.id)}
 						>
 							{row.getVisibleCells().map((cell) => (
