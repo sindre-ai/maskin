@@ -72,15 +72,13 @@ export function ObjectActivity({
 				Activity
 			</h3>
 
-			<CommentInput workspaceId={workspaceId} objectId={object.id} />
-
 			{activeSessionId && (
-				<div className="mt-3">
+				<div className="mb-3">
 					<StreamingIndicator sessionId={activeSessionId} workspaceId={workspaceId} />
 				</div>
 			)}
 
-			<div className="mt-4">
+			<div>
 				{totalTopLevel === 0 && !activeSessionId && (
 					<p className="text-sm text-muted-foreground py-4 text-center">No activity yet</p>
 				)}
@@ -115,6 +113,10 @@ export function ObjectActivity({
 						</div>
 					</section>
 				))}
+			</div>
+
+			<div className="mt-4">
+				<CommentInput workspaceId={workspaceId} objectId={object.id} />
 			</div>
 		</div>
 	)
