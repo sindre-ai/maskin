@@ -58,6 +58,8 @@ interface ActivityItemViewProps {
 	/** When set and matches event.entityId, the entity title is hidden (used on the object detail page to avoid repeating the page's own title). */
 	contextEntityId?: string
 	actorsById?: Map<string, ActorListItem>
+	/** Replaces the default formatted description (used by the timeline to render compact "moved to X" rows under phase dividers). */
+	descriptionOverride?: string
 }
 
 export function ActivityItemView({
@@ -67,10 +69,11 @@ export function ActivityItemView({
 	workspaceId,
 	contextEntityId,
 	actorsById,
+	descriptionOverride,
 }: ActivityItemViewProps) {
 	const isAgent = actor?.type === 'agent'
 	const title = getEntityTitle(event)
-	const description = formatEventDescription(event, { actorsById })
+	const description = descriptionOverride ?? formatEventDescription(event, { actorsById })
 	const hasError = isErrorEvent(event)
 
 	const Icon = getEventIcon(event)
@@ -148,11 +151,13 @@ export function ActivityItem({
 	compact = false,
 	contextEntityId,
 	actorsById,
+	descriptionOverride,
 }: {
 	event: EventResponse
 	compact?: boolean
 	contextEntityId?: string
 	actorsById?: Map<string, ActorListItem>
+	descriptionOverride?: string
 }) {
 	const { data: actor } = useActor(event.actorId)
 
@@ -164,6 +169,7 @@ export function ActivityItem({
 			workspaceId={event.workspaceId}
 			contextEntityId={contextEntityId}
 			actorsById={actorsById}
+			descriptionOverride={descriptionOverride}
 		/>
 	)
 }

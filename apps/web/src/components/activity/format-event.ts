@@ -45,6 +45,17 @@ export function isErrorEvent(event: EventResponse): boolean {
 	return event.action.includes('failed') || event.action.includes('timeout')
 }
 
+/**
+ * Compact phrasing for a `status_changed` event when rendered directly under
+ * its own phase divider — the divider already names the new status visually,
+ * so the row only needs to indicate the actor moved here.
+ */
+export function formatStatusTransitionShort(event: EventResponse): string {
+	const data = event.data as { updated?: Record<string, unknown> } | null
+	const next = data?.updated?.status
+	return `moved to ${prettyStatus(next)}`
+}
+
 function formatObjectUpdate(event: EventResponse, ctx?: FormatContext): string | null {
 	const data = event.data as {
 		previous?: Record<string, unknown>
