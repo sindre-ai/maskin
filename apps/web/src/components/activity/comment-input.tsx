@@ -36,7 +36,9 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 		const ta = inputRef.current
 		if (!ta) return
 		ta.style.height = 'auto'
+		const overflows = ta.scrollHeight > MAX_INPUT_HEIGHT_PX
 		ta.style.height = `${Math.min(ta.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`
+		ta.style.overflowY = overflows ? 'auto' : 'hidden'
 	}, [content])
 
 	const handleScroll = useCallback(() => {
@@ -203,7 +205,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 						onScroll={handleScroll}
 						placeholder="Write a comment... Use @ to mention an agent"
 						rows={1}
-						className="relative w-full resize-none overflow-y-auto rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
+						className="relative w-full resize-none overflow-y-hidden rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
 						style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 					/>
 				</div>
