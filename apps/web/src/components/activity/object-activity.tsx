@@ -1,4 +1,5 @@
-import type { EventResponse } from '@/lib/api'
+import { useActors } from '@/hooks/use-actors'
+import type { ActorListItem, EventResponse } from '@/lib/api'
 import { useMemo } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
 import { ActivityComment } from './activity-comment'
@@ -18,6 +19,13 @@ export function ObjectActivity({
 	events,
 	activeSessionId,
 }: ObjectActivityProps) {
+	const { data: actors } = useActors(workspaceId)
+	const actorsById = useMemo(() => {
+		const map = new Map<string, ActorListItem>()
+		for (const actor of actors ?? []) map.set(actor.id, actor)
+		return map
+	}, [actors])
+
 	// Group events: separate comments from system events, group replies under parents
 	const { topLevel, repliesByParent } = useMemo(() => {
 		if (!events) return { topLevel: [], repliesByParent: new Map<number, EventResponse[]>() }
@@ -74,7 +82,13 @@ export function ObjectActivity({
 							objectId={objectId}
 						/>
 					) : (
-						<ActivityItem key={event.id} event={event} compact />
+						<ActivityItem
+							key={event.id}
+							event={event}
+							compact
+							contextEntityId={objectId}
+							actorsById={actorsById}
+						/>
 					),
 				)}
 			</div>

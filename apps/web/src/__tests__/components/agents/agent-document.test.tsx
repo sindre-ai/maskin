@@ -9,6 +9,7 @@ const resetMutate = vi.fn()
 const navigateMock = vi.fn()
 
 vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: [] }),
 	useDeleteActor: () => ({ mutate: deleteMutate, isPending: false }),
 	useResetActor: () => ({ mutate: resetMutate, isPending: false }),
 	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),

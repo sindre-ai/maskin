@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
+import { useActors, useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
@@ -22,7 +22,7 @@ import {
 	useSessionErrorLog,
 	useSessionLogs,
 } from '@/hooks/use-sessions'
-import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -152,6 +152,13 @@ export function AgentDocumentView({
 	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
 	const [viewSessionId, setViewSessionId] = useState<string | null>(null)
 	const { data: fetchedSession } = useSession(viewSessionId, workspaceId)
+
+	const { data: actors } = useActors(workspaceId)
+	const actorsById = useMemo(() => {
+		const map = new Map<string, ActorListItem>()
+		for (const actor of actors ?? []) map.set(actor.id, actor)
+		return map
+	}, [actors])
 
 	// When a session is fetched by ID (from instruction log), select it
 	useEffect(() => {
@@ -390,7 +397,7 @@ export function AgentDocumentView({
 					</h3>
 					<div className="space-y-2">
 						{events.map((event) => (
-							<ActivityItem key={event.id} event={event} compact />
+							<ActivityItem key={event.id} event={event} compact actorsById={actorsById} />
 						))}
 					</div>
 				</div>
