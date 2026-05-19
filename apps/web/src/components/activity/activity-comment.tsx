@@ -60,7 +60,9 @@ export function ActivityComment({
 					</span>
 					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
 				</div>
-				<p className="text-sm mt-0.5 whitespace-pre-wrap">{renderCommentContent(content)}</p>
+				<p className="text-sm mt-0.5 whitespace-pre-wrap break-words">
+					{renderCommentContent(content)}
+				</p>
 
 				{/* Thread controls */}
 				<div className="flex items-center gap-3 mt-1">
@@ -123,7 +125,9 @@ function ReplyItem({ event }: { event: EventResponse }) {
 					</span>
 					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
 				</div>
-				<p className="text-sm mt-0.5 whitespace-pre-wrap">{renderCommentContent(content)}</p>
+				<p className="text-sm mt-0.5 whitespace-pre-wrap break-words">
+					{renderCommentContent(content)}
+				</p>
 			</div>
 		</div>
 	)

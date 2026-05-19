@@ -94,7 +94,7 @@ export function ObjectDocumentView({
 	)
 
 	return (
-		<div className="max-w-3xl mx-auto">
+		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Action banner for pending decisions */}
 			<ObjectActionBanner objectId={object.id} workspaceId={workspaceId} />
 
@@ -160,7 +160,7 @@ export function ObjectDocumentView({
 			</div>
 
 			{/* Properties */}
-			<div className="mb-6 w-fit">
+			<div className="mb-6 w-full">
 				<MetadataProperties object={object} />
 			</div>
 
