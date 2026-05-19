@@ -241,6 +241,7 @@ app.openapi(listActorsRoute, async (c) => {
 				type: actors.type,
 				name: actors.name,
 				email: actors.email,
+				isSystem: actors.isSystem,
 				role: workspaceMembers.role,
 			})
 			.from(workspaceMembers)
@@ -269,6 +270,7 @@ app.openapi(listActorsRoute, async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			isSystem: actors.isSystem,
 			workspaceId: workspaces.id,
 			workspaceName: workspaces.name,
 			role: workspaceMembers.role,
@@ -286,6 +288,7 @@ app.openapi(listActorsRoute, async (c) => {
 			type: string
 			name: string
 			email: string | null
+			isSystem: boolean
 			workspaces: { id: string; name: string; role: string }[]
 		}
 	>()
@@ -300,6 +303,7 @@ app.openapi(listActorsRoute, async (c) => {
 				type: r.type,
 				name: r.name,
 				email: r.email,
+				isSystem: r.isSystem,
 				workspaces: [membership],
 			})
 		}

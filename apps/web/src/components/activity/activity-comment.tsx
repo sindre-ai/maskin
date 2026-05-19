@@ -1,9 +1,10 @@
-import { useActor } from '@/hooks/use-actors'
+import { useActor, useActors } from '@/hooks/use-actors'
 import type { EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Reply } from 'lucide-react'
 import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
+import { MentionedText } from '../shared/mentioned-text'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
 
@@ -14,31 +15,15 @@ interface ActivityCommentProps {
 	objectId: string
 }
 
-/** Renders @mentions as styled chips in comment text */
-function renderCommentContent(content: string) {
-	const parts = content.split(/(@\w[\w\s]*?\b)/g)
-	return parts.map((part) => {
-		if (part.startsWith('@')) {
-			return (
-				<span
-					key={part}
-					className="inline-flex items-center rounded px-1 py-0.5 text-xs font-medium bg-primary/10 text-primary"
-				>
-					{part}
-				</span>
-			)
-		}
-		return part
-	})
-}
-
 interface CommentRowProps {
 	event: EventResponse
+	workspaceId: string
 	onReply?: () => void
 }
 
-function CommentRow({ event, onReply }: CommentRowProps) {
+function CommentRow({ event, workspaceId, onReply }: CommentRowProps) {
 	const { data: actor } = useActor(event.actorId)
+	const { data: actors } = useActors(workspaceId)
 	const content = (event.data?.content as string) ?? ''
 
 	return (
@@ -56,7 +41,9 @@ function CommentRow({ event, onReply }: CommentRowProps) {
 					</span>
 					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
 				</div>
-				<p className="text-sm mt-0.5 whitespace-pre-wrap">{renderCommentContent(content)}</p>
+				<p className="text-sm mt-0.5 whitespace-pre-wrap">
+					<MentionedText content={content} actors={actors ?? []} />
+				</p>
 			</div>
 			{onReply && (
 				<button
@@ -84,7 +71,11 @@ export function ActivityComment({
 
 	return (
 		<div className="group">
-			<CommentRow event={event} onReply={hasReplies ? undefined : openReplyInput} />
+			<CommentRow
+				event={event}
+				workspaceId={workspaceId}
+				onReply={hasReplies ? undefined : openReplyInput}
+			/>
 
 			{hasReplies && (
 				<div className="ml-7 space-y-0.5">
@@ -92,6 +83,7 @@ export function ActivityComment({
 						<CommentRow
 							key={reply.id}
 							event={reply}
+							workspaceId={workspaceId}
 							onReply={idx === replies.length - 1 ? openReplyInput : undefined}
 						/>
 					))}

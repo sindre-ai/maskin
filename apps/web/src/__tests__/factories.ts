@@ -84,6 +84,7 @@ export function buildActorListItem(overrides: Partial<ActorListItem> = {}): Acto
 		name: 'Test User',
 		type: 'human',
 		email: 'test@example.com',
+		isSystem: false,
 		...overrides,
 	}
 }

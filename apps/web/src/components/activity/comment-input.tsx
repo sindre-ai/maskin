@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn'
 import { ArrowUp } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
+import { MentionedText } from '../shared/mentioned-text'
 
 interface CommentInputProps {
 	workspaceId: string
@@ -27,10 +28,10 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const mentionListRef = useRef<HTMLDivElement>(null)
 
-	const filteredActors =
-		actors?.filter(
-			(a) => a.id !== actor?.id && a.name.toLowerCase().includes(mentionFilter.toLowerCase()),
-		) ?? []
+	const mentionableActors = actors?.filter((a) => a.id !== actor?.id && !a.isSystem) ?? []
+	const filteredActors = mentionableActors.filter((a) =>
+		a.name.toLowerCase().includes(mentionFilter.toLowerCase()),
+	)
 
 	const insertMention = useCallback(
 		(actorId: string, actorName: string) => {
@@ -158,6 +159,19 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 			<div className="flex items-start gap-2">
 				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
 				<div className="flex-1 relative">
+					<div
+						aria-hidden
+						className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent px-2 py-1.5 text-sm"
+						style={{ minHeight: '32px' }}
+					>
+						<MentionedText
+							content={content}
+							actors={mentionableActors}
+							mentionClassName="rounded bg-primary/10 text-primary"
+						/>
+						{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
+						{content.endsWith('\n') && '​'}
+					</div>
 					<textarea
 						ref={inputRef}
 						value={content}
@@ -165,7 +179,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 						onKeyDown={handleKeyDown}
 						placeholder="Write a comment... Use @ to mention an agent"
 						rows={1}
-						className="w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
+						className="relative w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
 						style={{ minHeight: '32px' }}
 					/>
 				</div>

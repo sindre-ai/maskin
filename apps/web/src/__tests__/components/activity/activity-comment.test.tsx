@@ -7,7 +7,19 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({
 		data: { id: 'actor-1', name: 'Alice', type: 'human', email: null },
 	}),
-	useActors: () => ({ data: [] }),
+	useActors: () => ({
+		data: [
+			{ id: 'actor-1', name: 'Alice', type: 'human', email: null, isSystem: false },
+			{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false },
+			{
+				id: 'actor-3',
+				name: 'Senior Developer',
+				type: 'agent',
+				email: null,
+				isSystem: false,
+			},
+		],
+	}),
 }))
 
 vi.mock('@/hooks/use-events', () => ({
@@ -44,6 +56,18 @@ describe('ActivityComment', () => {
 		})
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 		expect(screen.getByText('@Bob')).toBeInTheDocument()
+	})
+
+	it('highlights multi-word @mentions in full', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'Hey @Senior Developer can you review?' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const chip = screen.getByText('@Senior Developer')
+		expect(chip).toBeInTheDocument()
+		expect(chip.tagName).toBe('SPAN')
+		expect(screen.queryByText('@Senior')).not.toBeInTheDocument()
 	})
 
 	it('renders replies inline without a toggle', () => {
