@@ -1,9 +1,8 @@
-import { useActor, useActors } from '@/hooks/use-actors'
+import { useActor } from '@/hooks/use-actors'
 import type { ActorListItem, ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { Activity, CircleDot, Link2, Pencil, Play, RefreshCw, Trash2, Unlink } from 'lucide-react'
-import { useMemo } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Badge } from '../ui/badge'
@@ -148,19 +147,14 @@ export function ActivityItem({
 	event,
 	compact = false,
 	contextEntityId,
+	actorsById,
 }: {
 	event: EventResponse
 	compact?: boolean
 	contextEntityId?: string
+	actorsById?: Map<string, ActorListItem>
 }) {
 	const { data: actor } = useActor(event.actorId)
-	const { data: actors } = useActors(event.workspaceId)
-
-	const actorsById = useMemo(() => {
-		const map = new Map<string, ActorListItem>()
-		for (const a of actors ?? []) map.set(a.id, a)
-		return map
-	}, [actors])
 
 	return (
 		<ActivityItemView
