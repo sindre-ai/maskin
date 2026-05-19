@@ -1,5 +1,5 @@
 import { useActor, useActors } from '@/hooks/use-actors'
-import type { EventResponse } from '@/lib/api'
+import type { ActorListItem, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Reply } from 'lucide-react'
 import { useState } from 'react'
@@ -17,13 +17,12 @@ interface ActivityCommentProps {
 
 interface CommentRowProps {
 	event: EventResponse
-	workspaceId: string
+	actors: ActorListItem[]
 	onReply?: () => void
 }
 
-function CommentRow({ event, workspaceId, onReply }: CommentRowProps) {
+function CommentRow({ event, actors, onReply }: CommentRowProps) {
 	const { data: actor } = useActor(event.actorId)
-	const { data: actors } = useActors(workspaceId)
 	const content = (event.data?.content as string) ?? ''
 
 	return (
@@ -42,7 +41,7 @@ function CommentRow({ event, workspaceId, onReply }: CommentRowProps) {
 					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
 				</div>
 				<p className="text-sm mt-0.5 whitespace-pre-wrap break-words">
-					<MentionedText content={content} actors={actors ?? []} />
+					<MentionedText content={content} actors={actors} />
 				</p>
 			</div>
 			{onReply && (
@@ -65,15 +64,17 @@ export function ActivityComment({
 	workspaceId,
 	objectId,
 }: ActivityCommentProps) {
+	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
 	const openReplyInput = () => setShowReplyInput(true)
 	const hasReplies = replies.length > 0
+	const actorList = actors ?? []
 
 	return (
 		<div className="group">
 			<CommentRow
 				event={event}
-				workspaceId={workspaceId}
+				actors={actorList}
 				onReply={hasReplies ? undefined : openReplyInput}
 			/>
 
@@ -83,7 +84,7 @@ export function ActivityComment({
 						<CommentRow
 							key={reply.id}
 							event={reply}
-							workspaceId={workspaceId}
+							actors={actorList}
 							onReply={idx === replies.length - 1 ? openReplyInput : undefined}
 						/>
 					))}
