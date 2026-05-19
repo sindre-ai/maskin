@@ -110,9 +110,8 @@ export function RelatedObjectsTable({
 			{
 				id: 'type',
 				accessorFn: (row) => row.object.type,
-				header: 'Type',
+				header: ({ column }) => <ColumnSortHeader label="Type" column={column} />,
 				cell: ({ row }) => <TypeBadge type={row.original.object.type} />,
-				enableSorting: false,
 			},
 			{
 				id: 'actions',
