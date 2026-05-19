@@ -81,13 +81,14 @@ describe('queryKeys', () => {
 			])
 		})
 
-		it('byActorAll includes workspaceId and actorId', () => {
-			expect(queryKeys.sessions.byActorAll('ws-1', 'a-1')).toEqual([
+		it('byActorAllInfinite includes workspaceId and actorId', () => {
+			expect(queryKeys.sessions.byActorAllInfinite('ws-1', 'a-1')).toEqual([
 				'sessions',
 				'ws-1',
 				'actor',
 				'a-1',
 				'all',
+				'infinite',
 			])
 		})
 	})

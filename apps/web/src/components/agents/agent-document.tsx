@@ -16,7 +16,7 @@ import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
 	useActiveSessionsForActor,
-	useActorSessions,
+	useActorSessionsInfinite,
 	useCreateSession,
 	useSession,
 	useSessionErrorLog,
@@ -57,6 +57,9 @@ interface AgentDocumentViewProps {
 	events?: EventResponse[]
 	activeSessions?: SessionResponse[]
 	recentSessions?: SessionResponse[]
+	hasMoreSessions?: boolean
+	isLoadingMoreSessions?: boolean
+	onLoadMoreSessions?: () => void
 	onUpdateName: (name: string) => void
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
@@ -89,6 +92,9 @@ export function AgentDocumentView({
 	events,
 	activeSessions,
 	recentSessions,
+	hasMoreSessions = false,
+	isLoadingMoreSessions = false,
+	onLoadMoreSessions,
 	onUpdateName,
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
@@ -145,7 +151,6 @@ export function AgentDocumentView({
 
 	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
 	const [viewSessionId, setViewSessionId] = useState<string | null>(null)
-	const [visibleSessionCount, setVisibleSessionCount] = useState(5)
 	const { data: fetchedSession } = useSession(viewSessionId, workspaceId)
 
 	// When a session is fetched by ID (from instruction log), select it
@@ -249,9 +254,9 @@ export function AgentDocumentView({
 			{pastSessions.length > 0 && (
 				<Section title="Sessions">
 					<div
-						className={cn('space-y-1', visibleSessionCount > 10 && 'max-h-[400px] overflow-y-auto')}
+						className={cn('space-y-1', pastSessions.length > 10 && 'max-h-[400px] overflow-y-auto')}
 					>
-						{pastSessions.slice(0, visibleSessionCount).map((session) => (
+						{pastSessions.map((session) => (
 							<SessionRow
 								key={session.id}
 								session={session}
@@ -261,14 +266,15 @@ export function AgentDocumentView({
 							/>
 						))}
 					</div>
-					{visibleSessionCount < pastSessions.length && (
+					{hasMoreSessions && (
 						<Button
 							variant="ghost"
 							size="sm"
 							className="mt-2"
-							onClick={() => setVisibleSessionCount((c) => c + 5)}
+							disabled={isLoadingMoreSessions}
+							onClick={() => onLoadMoreSessions?.()}
 						>
-							<ChevronDown size={14} /> Show more
+							<ChevronDown size={14} /> {isLoadingMoreSessions ? 'Loading…' : 'Show more'}
 						</Button>
 					)}
 				</Section>
@@ -553,7 +559,13 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
-	const { data: recentSessions } = useActorSessions(agent.id, workspaceId)
+	const {
+		data: recentSessionPages,
+		hasNextPage: hasMoreSessions,
+		isFetchingNextPage: isLoadingMoreSessions,
+		fetchNextPage,
+	} = useActorSessionsInfinite(agent.id, workspaceId)
+	const recentSessions = useMemo(() => recentSessionPages?.pages.flat() ?? [], [recentSessionPages])
 	// Filter events by this agent's actorId
 	const agentEvents = useMemo(
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),
@@ -684,6 +696,9 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				events={agentEvents}
 				activeSessions={activeSessions}
 				recentSessions={recentSessions}
+				hasMoreSessions={hasMoreSessions}
+				isLoadingMoreSessions={isLoadingMoreSessions}
+				onLoadMoreSessions={() => fetchNextPage()}
 				onUpdateName={handleUpdateName}
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
