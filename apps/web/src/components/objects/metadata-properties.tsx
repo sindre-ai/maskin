@@ -217,7 +217,7 @@ function PropertyRow({
 				) : (
 					<button
 						type="button"
-						className="block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto"
+						className="block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 						onClick={() => setEditing(true)}
 					>
 						{formatDisplay(value, type)}
