@@ -518,6 +518,7 @@ export interface ObjectGraphResponse {
 	object: ObjectResponse
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
+	events: EventResponse[]
 }
 
 export interface CreateRelationshipInput {

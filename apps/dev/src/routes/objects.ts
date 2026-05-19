@@ -345,11 +345,22 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			.where(inArray(objects.id, [...connectedIds]))
 	}
 
+	// Fetch recent activity + comments for this object. Events use the object's
+	// type (task/bet/insight) as entityType for lifecycle events and 'object' for
+	// comments — filter on entityId alone (scoped by workspace) to capture both.
+	const objectEvents = await db
+		.select()
+		.from(events)
+		.where(and(eq(events.workspaceId, workspaceId), eq(events.entityId, id)))
+		.orderBy(desc(events.id))
+		.limit(100)
+
 	return c.json(
 		{
 			object: serialize(object),
 			relationships: serializeArray(rels),
 			connected_objects: serializeArray(connectedObjects),
+			events: serializeArray(objectEvents),
 		} as z.infer<typeof objectGraphResponseSchema>,
 		200,
 	)

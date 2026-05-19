@@ -1,5 +1,6 @@
 import {
 	buildCreateObjectBody,
+	buildEvent,
 	buildObject,
 	buildRelationship,
 	buildUpdateObjectBody,
@@ -283,16 +284,29 @@ describe('Objects Routes', () => {
 	})
 
 	describe('GET /api/objects/:id/graph', () => {
-		it('returns 200 with object, relationships, and connected objects', async () => {
+		it('returns 200 with object, relationships, connected objects, and events', async () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const connectedObj = buildObject({ workspaceId: wsId })
 			const rel = buildRelationship({
 				sourceId: obj.id,
 				targetId: connectedObj.id,
 			})
+			const comment = buildEvent({
+				workspaceId: wsId,
+				entityType: 'object',
+				entityId: obj.id,
+				action: 'commented',
+				data: { content: 'looks good' },
+			})
+			const lifecycleEvent = buildEvent({
+				workspaceId: wsId,
+				entityType: obj.type,
+				entityId: obj.id,
+				action: 'created',
+			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: the target object, second: relationships, third: connected objects
-			mockResults.selectQueue = [[obj], [rel], [connectedObj]]
+			// First select: target object, second: relationships, third: connected objects, fourth: events
+			mockResults.selectQueue = [[obj], [rel], [connectedObj], [comment, lifecycleEvent]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -303,6 +317,8 @@ describe('Objects Routes', () => {
 			expect(body.object.id).toBe(obj.id)
 			expect(body.relationships).toHaveLength(1)
 			expect(body.connected_objects).toHaveLength(1)
+			expect(body.events).toHaveLength(2)
+			expect(body.events[0].action).toBe('commented')
 		})
 
 		it('returns 404 when object not found', async () => {
@@ -381,11 +397,11 @@ describe('Objects Routes', () => {
 	})
 
 	describe('GET /api/objects/:id/graph - no relationships', () => {
-		it('returns empty arrays when no relationships exist', async () => {
+		it('returns empty arrays when no relationships or events exist', async () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: the object, second: relationships (empty)
-			mockResults.selectQueue = [[obj], []]
+			// First select: the object, second: relationships (empty), third: events (empty)
+			mockResults.selectQueue = [[obj], [], []]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -396,6 +412,7 @@ describe('Objects Routes', () => {
 			expect(body.object.id).toBe(obj.id)
 			expect(body.relationships).toHaveLength(0)
 			expect(body.connected_objects).toHaveLength(0)
+			expect(body.events).toHaveLength(0)
 		})
 	})
 

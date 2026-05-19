@@ -98,12 +98,6 @@ export const relationshipResponseSchema = z.object({
 	createdAt: z.string().nullable(),
 })
 
-export const objectGraphResponseSchema = z.object({
-	object: objectResponseSchema,
-	relationships: z.array(relationshipResponseSchema),
-	connected_objects: z.array(objectResponseSchema),
-})
-
 export const eventResponseSchema = z.object({
 	id: z.number(),
 	workspaceId: z.string().uuid(),
@@ -113,6 +107,13 @@ export const eventResponseSchema = z.object({
 	entityId: z.string().uuid(),
 	data: jsonbField,
 	createdAt: z.string().nullable(),
+})
+
+export const objectGraphResponseSchema = z.object({
+	object: objectResponseSchema,
+	relationships: z.array(relationshipResponseSchema),
+	connected_objects: z.array(objectResponseSchema),
+	events: z.array(eventResponseSchema),
 })
 
 export const integrationResponseSchema = z.object({

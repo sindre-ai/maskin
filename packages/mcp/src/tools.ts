@@ -150,7 +150,7 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID, each with all its relationships and connected objects. Returns the full context around each object including inbound/outbound relationships and details of connected objects.',
+			'Get one or more objects by ID, each with all its relationships, connected objects, and recent activity. Returns the full context around each object: inbound/outbound relationships, details of connected objects, and the most recent events on the object (lifecycle changes plus comments — comments are events with action="commented" and content in event.data.content, replies link via event.data.parentEventId).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
