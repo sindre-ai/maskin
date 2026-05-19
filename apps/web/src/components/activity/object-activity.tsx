@@ -1,5 +1,6 @@
 import { useActors } from '@/hooks/use-actors'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
+import { formatStatusTransitionShort } from '@maskin/shared'
 import { useMemo, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
 import { Collapsible, CollapsibleContent } from '../ui/collapsible'
@@ -7,7 +8,6 @@ import { ActivityComment } from './activity-comment'
 import { ActivityItem } from './activity-item'
 import { buildPhases } from './build-phases'
 import { CommentInput } from './comment-input'
-import { formatStatusTransitionShort } from './format-event'
 import { PhaseDivider } from './phase-divider'
 
 interface ObjectActivityProps {

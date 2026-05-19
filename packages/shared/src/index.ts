@@ -1,6 +1,7 @@
 export * from './schemas/index'
 export * from './constants/claude-oauth'
 export * from './errors'
+export * from './events/index'
 export * from './prompts'
 export * from './templates/workspace-templates'
 export * from './templates/sindre-agent'

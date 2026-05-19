@@ -1,11 +1,11 @@
 import { useActor } from '@/hooks/use-actors'
 import type { ActorListItem, ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatEventDescription, isErrorEvent } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Badge } from '../ui/badge'
-import { formatEventDescription, isErrorEvent } from './format-event'
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 const SESSION_ACTIONS = new Set([
@@ -102,14 +102,12 @@ export function ActivityItemView({
 								{title}
 							</span>
 						))}
-					<span className="flex items-center gap-1.5 ml-auto shrink-0">
-						{hasError && (
-							<Badge variant="destructive" className="text-[10px] px-1 py-0">
-								error
-							</Badge>
-						)}
-						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
-					</span>
+					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+					{hasError && (
+						<Badge variant="destructive" className="text-[10px] px-1 py-0">
+							error
+						</Badge>
+					)}
 				</div>
 			</div>
 		</div>

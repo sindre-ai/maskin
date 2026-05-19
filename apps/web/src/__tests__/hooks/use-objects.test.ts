@@ -115,7 +115,7 @@ describe('useObject', () => {
 })
 
 describe('useObjectGraph', () => {
-	it('fetches graph (object + relationships + connected_objects) for an id', async () => {
+	it('fetches graph (object + relationships + connected_objects + events) for an id', async () => {
 		const obj = buildObject({ id: 'bet-1', type: 'bet' })
 		const linkedTask = buildObject({ id: 'task-1', type: 'task' })
 		const graph = {
@@ -133,6 +133,7 @@ describe('useObjectGraph', () => {
 				},
 			],
 			connected_objects: [linkedTask],
+			events: [],
 		}
 		vi.mocked(api.objects.graph).mockResolvedValue(graph)
 
