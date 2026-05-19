@@ -1,8 +1,9 @@
-import { useActor } from '@/hooks/use-actors'
-import type { ActorResponse, EventResponse } from '@/lib/api'
+import { useActor, useActors } from '@/hooks/use-actors'
+import type { ActorListItem, ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { Activity, CircleDot, Link2, Pencil, Play, RefreshCw, Trash2, Unlink } from 'lucide-react'
+import { useMemo } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Badge } from '../ui/badge'
@@ -55,6 +56,9 @@ interface ActivityItemViewProps {
 	actor?: ActorResponse
 	compact?: boolean
 	workspaceId?: string
+	/** When set and matches event.entityId, the entity title is hidden (used on the object detail page to avoid repeating the page's own title). */
+	contextEntityId?: string
+	actorsById?: Map<string, ActorListItem>
 }
 
 export function ActivityItemView({
@@ -62,16 +66,24 @@ export function ActivityItemView({
 	actor,
 	compact = false,
 	workspaceId,
+	contextEntityId,
+	actorsById,
 }: ActivityItemViewProps) {
 	const isAgent = actor?.type === 'agent'
 	const title = getEntityTitle(event)
-	const description = formatEventDescription(event)
+	const description = formatEventDescription(event, { actorsById })
 	const hasError = isErrorEvent(event)
 
 	const Icon = getEventIcon(event)
 
 	const isSession = isSessionEvent(event)
 	const isClickable = isSession && workspaceId && event.actorId
+
+	const hideTitle =
+		contextEntityId !== undefined &&
+		contextEntityId === event.entityId &&
+		isObjectEntity(event.entityType)
+	const showTitle = !hideTitle && title
 
 	const content = (
 		<div
@@ -91,7 +103,7 @@ export function ActivityItemView({
 						{actor?.name ?? 'Unknown'}
 					</span>
 					<span className="text-muted-foreground">{description}</span>
-					{title &&
+					{showTitle &&
 						(workspaceId && isObjectEntity(event.entityType) ? (
 							<Link
 								to="/$workspaceId/objects/$objectId"
@@ -135,11 +147,20 @@ export function ActivityItemView({
 export function ActivityItem({
 	event,
 	compact = false,
+	contextEntityId,
 }: {
 	event: EventResponse
 	compact?: boolean
+	contextEntityId?: string
 }) {
 	const { data: actor } = useActor(event.actorId)
+	const { data: actors } = useActors(event.workspaceId)
+
+	const actorsById = useMemo(() => {
+		const map = new Map<string, ActorListItem>()
+		for (const a of actors ?? []) map.set(a.id, a)
+		return map
+	}, [actors])
 
 	return (
 		<ActivityItemView
@@ -147,6 +168,8 @@ export function ActivityItem({
 			actor={actor}
 			compact={compact}
 			workspaceId={event.workspaceId}
+			contextEntityId={contextEntityId}
+			actorsById={actorsById}
 		/>
 	)
 }

@@ -74,7 +74,7 @@ export function ObjectActivity({
 							objectId={objectId}
 						/>
 					) : (
-						<ActivityItem key={event.id} event={event} compact />
+						<ActivityItem key={event.id} event={event} compact contextEntityId={objectId} />
 					),
 				)}
 			</div>
