@@ -17,9 +17,11 @@ import type {
 	RelationshipResponse,
 } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
+import { DataTableControls } from './data-table/data-table-controls'
 import { RelatedObjectsTable, type ResolvedRelationship } from './related-objects-table'
 
 function resolveLinkedObjectId(rel: RelationshipResponse, currentId: string): string {
@@ -116,33 +118,24 @@ export function LinkedObjectsView({
 					Related ({totalCount})
 				</h3>
 				<div className="flex-1" />
-				<Button variant="ghost" size="sm" onClick={() => setShowAddLink(!showAddLink)}>
-					+ link
+				{uniqueTypes.length >= 2 && (
+					<DataTableControls
+						typeFilter={effectiveFilter === 'all' ? undefined : effectiveFilter}
+						onTypeFilterChange={(value) => setActiveFilter(value ?? 'all')}
+						typeCounts={typeCounts}
+					/>
+				)}
+				<Button
+					variant="ghost"
+					size="icon"
+					className="h-8 w-8"
+					title="Add link"
+					aria-label="Add link"
+					onClick={() => setShowAddLink(!showAddLink)}
+				>
+					<Plus size={14} />
 				</Button>
 			</div>
-
-			{/* Filter buttons — only when 2+ types */}
-			{uniqueTypes.length >= 2 && (
-				<div className="flex items-center gap-1 mb-3">
-					<Button
-						variant={effectiveFilter === 'all' ? 'secondary' : 'ghost'}
-						size="sm"
-						onClick={() => setActiveFilter('all')}
-					>
-						All {totalCount}
-					</Button>
-					{uniqueTypes.map((type) => (
-						<Button
-							key={type}
-							variant={effectiveFilter === type ? 'secondary' : 'ghost'}
-							size="sm"
-							onClick={() => setActiveFilter(type)}
-						>
-							{type}s {typeCounts[type]}
-						</Button>
-					))}
-				</div>
-			)}
 
 			{/* Add link form */}
 			{showAddLink && (
