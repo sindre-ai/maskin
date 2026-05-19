@@ -94,7 +94,7 @@ export function ObjectDocumentView({
 	)
 
 	return (
-		<div className="max-w-3xl mx-auto">
+		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Action banner for pending decisions */}
 			<ObjectActionBanner objectId={object.id} workspaceId={workspaceId} />
 
