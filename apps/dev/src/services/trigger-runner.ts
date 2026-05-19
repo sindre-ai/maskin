@@ -221,6 +221,12 @@ export class TriggerRunner {
 				`Trigger '${trigger.name}' fired for event ${event.action} on ${event.entity_type}`,
 			)
 
+			// Enrich the event payload with the `data` column (stripped from NOTIFY for the 8KB
+			// limit) so the agent can act directly on integration IDs like Gmail threadId / messageId
+			// without round-tripping through get_events.
+			const dataForPrompt = await getEventData()
+			const eventForPrompt = { ...event, data: dataForPrompt ?? null }
+
 			// Log trigger fired event
 			await this.db.insert(events).values({
 				workspaceId: event.workspace_id,
@@ -232,11 +238,11 @@ export class TriggerRunner {
 					trigger_name: trigger.name,
 					prompt: trigger.actionPrompt,
 					target_actor_id: trigger.targetActorId,
-					source_event: event,
+					source_event: eventForPrompt,
 				},
 			})
 
-			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(event)}`
+			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(eventForPrompt)}`
 			this.sessionManager
 				.createSession(event.workspace_id, {
 					actorId: trigger.targetActorId,

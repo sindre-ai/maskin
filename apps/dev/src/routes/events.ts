@@ -110,6 +110,7 @@ app.openapi(eventHistoryRoute, (async (c) => {
 	const query = c.req.valid('query')
 
 	const conditions = [eq(events.workspaceId, workspaceId)]
+	if (query.id) conditions.push(eq(events.id, query.id))
 	if (query.entity_type) conditions.push(eq(events.entityType, query.entity_type))
 	if (query.entity_id) conditions.push(eq(events.entityId, query.entity_id))
 	if (query.action) conditions.push(eq(events.action, query.action))
