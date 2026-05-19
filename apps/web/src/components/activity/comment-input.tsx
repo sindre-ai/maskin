@@ -3,7 +3,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCreateComment } from '@/hooks/use-events'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { SendHorizontal } from 'lucide-react'
+import { ArrowUp } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 
@@ -163,7 +163,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 						value={content}
 						onChange={handleInput}
 						onKeyDown={handleKeyDown}
-						placeholder="Comment or instruct an agent..."
+						placeholder="Write a comment... Use @ to mention an agent"
 						rows={1}
 						className="w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
 						style={{ minHeight: '32px' }}
@@ -176,7 +176,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 					disabled={!content.trim() || createComment.isPending}
 					onClick={handleSubmit}
 				>
-					<SendHorizontal size={14} />
+					<ArrowUp size={14} />
 				</Button>
 			</div>
 

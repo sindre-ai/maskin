@@ -33,7 +33,9 @@ describe('CommentInput', () => {
 
 	it('renders textarea and send button', () => {
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-		expect(screen.getByPlaceholderText('Comment or instruct an agent...')).toBeInTheDocument()
+		expect(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+		).toBeInTheDocument()
 		expect(screen.getByRole('button')).toBeInTheDocument()
 	})
 
@@ -46,7 +48,10 @@ describe('CommentInput', () => {
 		const user = userEvent.setup()
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.type(screen.getByPlaceholderText('Comment or instruct an agent...'), 'Hello')
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Hello',
+		)
 		expect(screen.getByRole('button')).not.toBeDisabled()
 	})
 
@@ -55,7 +60,10 @@ describe('CommentInput', () => {
 		mockIsPending = true
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.type(screen.getByPlaceholderText('Comment or instruct an agent...'), 'Hello')
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Hello',
+		)
 		expect(screen.getByRole('button')).toBeDisabled()
 	})
 
@@ -63,7 +71,7 @@ describe('CommentInput', () => {
 		const user = userEvent.setup()
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		const textarea = screen.getByPlaceholderText('Comment or instruct an agent...')
+		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
 		await user.type(textarea, 'Test comment{Enter}')
 		expect(mockMutate).toHaveBeenCalled()
 		expect(mockMutate.mock.calls[0][0]).toMatchObject({

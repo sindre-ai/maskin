@@ -46,7 +46,7 @@ describe('ActivityComment', () => {
 		expect(screen.getByText('@Bob')).toBeInTheDocument()
 	})
 
-	it('shows reply count and toggle', () => {
+	it('renders replies inline without a toggle', () => {
 		const event = buildEventResponse({
 			id: 1,
 			action: 'commented',
@@ -62,10 +62,10 @@ describe('ActivityComment', () => {
 
 		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
 
-		expect(screen.getByText('1 reply')).toBeInTheDocument()
+		expect(screen.getByText('Reply one')).toBeInTheDocument()
 	})
 
-	it('shows plural reply count', () => {
+	it('renders multiple replies inline', () => {
 		const event = buildEventResponse({
 			id: 1,
 			action: 'commented',
@@ -78,16 +78,17 @@ describe('ActivityComment', () => {
 
 		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
 
-		expect(screen.getByText('2 replies')).toBeInTheDocument()
+		expect(screen.getByText('R1')).toBeInTheDocument()
+		expect(screen.getByText('R2')).toBeInTheDocument()
 	})
 
-	it('shows Reply button', () => {
+	it('shows a Reply action button on each row', () => {
 		const event = buildEventResponse({
 			action: 'commented',
 			data: { content: 'Test' },
 		})
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
-		expect(screen.getByText('Reply')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument()
 	})
 
 	it('shows reply input on Reply click', async () => {
@@ -98,9 +99,34 @@ describe('ActivityComment', () => {
 		})
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.click(screen.getByText('Reply'))
+		await user.click(screen.getByRole('button', { name: 'Reply' }))
 		expect(
-			screen.getAllByPlaceholderText('Comment or instruct an agent...').length,
+			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
+		).toBeGreaterThanOrEqual(1)
+	})
+
+	it('clicking Reply on a reply opens the input on the parent thread', async () => {
+		const user = userEvent.setup()
+		const event = buildEventResponse({
+			id: 1,
+			action: 'commented',
+			data: { content: 'Thread' },
+		})
+		const replies = [
+			buildEventResponse({
+				id: 2,
+				action: 'commented',
+				data: { content: 'R1', parentEventId: 1 },
+			}),
+		]
+
+		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
+
+		const replyButtons = screen.getAllByRole('button', { name: 'Reply' })
+		await user.click(replyButtons[1])
+
+		expect(
+			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
 		).toBeGreaterThanOrEqual(1)
 	})
 })

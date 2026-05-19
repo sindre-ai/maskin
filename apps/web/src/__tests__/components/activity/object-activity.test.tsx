@@ -61,7 +61,9 @@ describe('ObjectActivity', () => {
 
 	it('shows comment input', () => {
 		render(<ObjectActivity workspaceId="ws-1" object={object} events={[]} />)
-		expect(screen.getByPlaceholderText('Comment or instruct an agent...')).toBeInTheDocument()
+		expect(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+		).toBeInTheDocument()
 	})
 
 	it('renders a phase divider for each status the object has been in', () => {
