@@ -30,7 +30,6 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
-	const mentionListRef = useRef<HTMLDivElement>(null)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: content drives the resize, including programmatic setContent (mention insert, post-submit reset)
 	useLayoutEffect(() => {
@@ -221,10 +220,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 
 			{/* @mention autocomplete dropdown */}
 			{showMentions && filteredActors.length > 0 && (
-				<div
-					ref={mentionListRef}
-					className="absolute left-7 z-50 mt-1 max-h-48 w-56 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md"
-				>
+				<div className="absolute left-7 z-50 mt-1 max-h-48 w-56 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md">
 					{filteredActors.map((a, i) => (
 						<button
 							key={a.id}

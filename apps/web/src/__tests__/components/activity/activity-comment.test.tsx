@@ -70,6 +70,15 @@ describe('ActivityComment', () => {
 		expect(screen.queryByText('@Senior')).not.toBeInTheDocument()
 	})
 
+	it('does not chip an actor name embedded inside a longer word', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'Talked to @Bobby yesterday' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		expect(screen.queryByText('@Bob')).not.toBeInTheDocument()
+	})
+
 	it('renders replies inline without a toggle', () => {
 		const event = buildEventResponse({
 			id: 1,

@@ -36,7 +36,11 @@ export function MentionedText({
 		let i = 0
 		while (i < content.length) {
 			if (content[i] === '@') {
-				const match = sortedNames.find((name) => content.startsWith(`@${name}`, i))
+				const match = sortedNames.find((name) => {
+					if (!content.startsWith(`@${name}`, i)) return false
+					const after = content[i + 1 + name.length]
+					return after === undefined || !/\w/.test(after)
+				})
 				if (match) {
 					out.push({ type: 'mention', text: `@${match}`, key: `m-${i}` })
 					i += match.length + 1
