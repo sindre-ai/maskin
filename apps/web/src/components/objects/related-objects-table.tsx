@@ -1,5 +1,4 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
-import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Badge } from '@/components/ui/badge'
@@ -12,7 +11,7 @@ import {
 	TableHeader,
 	TableRow,
 } from '@/components/ui/table'
-import type { ActorListItem, ObjectResponse, RelationshipResponse } from '@/lib/api'
+import type { ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { Link, useNavigate } from '@tanstack/react-router'
 import {
 	type Column,
@@ -35,7 +34,6 @@ export interface ResolvedRelationship {
 interface RelatedObjectsTableProps {
 	rows: ResolvedRelationship[]
 	workspaceId: string
-	actors: ActorListItem[]
 	onDeleteRelationship: (relationshipId: string) => void
 	onNavigate?: (workspaceId: string, objectId: string) => void
 }
@@ -62,12 +60,11 @@ function ColumnSortHeader({
 export function RelatedObjectsTable({
 	rows,
 	workspaceId,
-	actors,
 	onDeleteRelationship,
 	onNavigate,
 }: RelatedObjectsTableProps) {
 	const navigate = useNavigate()
-	const [sorting, setSorting] = useState<SortingState>([{ id: 'updatedAt', desc: true }])
+	const [sorting, setSorting] = useState<SortingState>([])
 
 	const columns = useMemo<ColumnDef<ResolvedRelationship>[]>(
 		() => [
@@ -118,36 +115,13 @@ export function RelatedObjectsTable({
 				enableSorting: false,
 			},
 			{
-				id: 'owner',
-				accessorFn: (row) => row.object.owner ?? '',
-				header: 'Owner',
-				cell: ({ row }) => {
-					const ownerId = row.original.object.owner
-					if (!ownerId) return <span className="text-muted-foreground">—</span>
-					const actor = actors.find((a) => a.id === ownerId)
-					return <span className="text-sm">{actor?.name ?? '—'}</span>
-				},
-				enableSorting: false,
-			},
-			{
-				id: 'updatedAt',
-				accessorFn: (row) => row.object.updatedAt ?? '',
-				header: ({ column }) => <ColumnSortHeader label="Updated" column={column} />,
-				cell: ({ row }) => (
-					<RelativeTime
-						date={row.original.object.updatedAt}
-						className="text-sm text-muted-foreground"
-					/>
-				),
-			},
-			{
 				id: 'actions',
 				header: '',
 				cell: ({ row }) => (
 					<Button
 						variant="ghost"
 						size="icon"
-						className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
+						className="h-7 w-7 text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
 						onClick={(e) => {
 							e.stopPropagation()
 							onDeleteRelationship(row.original.rel.id)
@@ -161,7 +135,7 @@ export function RelatedObjectsTable({
 				size: 40,
 			},
 		],
-		[workspaceId, actors, onDeleteRelationship],
+		[workspaceId, onDeleteRelationship],
 	)
 
 	const table = useReactTable({
@@ -188,11 +162,11 @@ export function RelatedObjectsTable({
 	return (
 		<div className="max-h-[28rem] overflow-y-auto">
 			<Table>
-				<TableHeader>
+				<TableHeader className="[&_tr]:border-b-0">
 					{table.getHeaderGroups().map((headerGroup) => (
-						<TableRow key={headerGroup.id} className="border-b-0 hover:bg-transparent">
+						<TableRow key={headerGroup.id} className="hover:bg-transparent">
 							{headerGroup.headers.map((header) => (
-								<TableHead key={header.id} className="sticky top-0 bg-background z-10">
+								<TableHead key={header.id} className="h-8 px-2 sticky top-0 bg-background z-10">
 									{header.isPlaceholder
 										? null
 										: flexRender(header.column.columnDef.header, header.getContext())}
@@ -209,7 +183,7 @@ export function RelatedObjectsTable({
 							onClick={() => handleRowClick(row.original.object.id)}
 						>
 							{row.getVisibleCells().map((cell) => (
-								<TableCell key={cell.id}>
+								<TableCell key={cell.id} className="py-1.5 px-2">
 									{flexRender(cell.column.columnDef.cell, cell.getContext())}
 								</TableCell>
 							))}

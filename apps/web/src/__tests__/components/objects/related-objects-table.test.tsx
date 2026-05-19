@@ -1,7 +1,7 @@
 import { RelatedObjectsTable } from '@/components/objects/related-objects-table'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { buildActorListItem, buildObjectResponse, buildRelationshipResponse } from '../../factories'
+import { buildObjectResponse, buildRelationshipResponse } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -23,7 +23,6 @@ function buildRow(
 
 const baseProps = {
 	workspaceId: 'ws-1',
-	actors: [],
 	onDeleteRelationship: vi.fn(),
 }
 
@@ -35,8 +34,13 @@ describe('RelatedObjectsTable', () => {
 		expect(screen.getByRole('columnheader', { name: /relationship/i })).toBeInTheDocument()
 		expect(screen.getByRole('columnheader', { name: /status/i })).toBeInTheDocument()
 		expect(screen.getByRole('columnheader', { name: /^type$/i })).toBeInTheDocument()
-		expect(screen.getByRole('columnheader', { name: /owner/i })).toBeInTheDocument()
-		expect(screen.getByRole('columnheader', { name: /updated/i })).toBeInTheDocument()
+	})
+
+	it('does not render Owner or Updated columns', () => {
+		render(<RelatedObjectsTable {...baseProps} rows={[buildRow()]} />)
+
+		expect(screen.queryByRole('columnheader', { name: /owner/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('columnheader', { name: /updated/i })).not.toBeInTheDocument()
 	})
 
 	it('renders one row per related object with title, relationship type, and status', () => {
@@ -57,22 +61,6 @@ describe('RelatedObjectsTable', () => {
 		render(<RelatedObjectsTable {...baseProps} rows={[buildRow({ title: null })]} />)
 
 		expect(screen.getByText('Untitled')).toBeInTheDocument()
-	})
-
-	it('renders owner name from the actors lookup', () => {
-		const actor = buildActorListItem({ id: 'actor-99', name: 'Ada Lovelace' })
-		const row = buildRow({ owner: actor.id })
-
-		render(<RelatedObjectsTable {...baseProps} actors={[actor]} rows={[row]} />)
-
-		expect(screen.getByText('Ada Lovelace')).toBeInTheDocument()
-	})
-
-	it('renders a dash when the object has no owner', () => {
-		render(<RelatedObjectsTable {...baseProps} rows={[buildRow({ owner: null })]} />)
-
-		// At least one em-dash in the owner column
-		expect(screen.getAllByText('—').length).toBeGreaterThan(0)
 	})
 
 	it('calls onDeleteRelationship with the relationship id when the X button is clicked', async () => {

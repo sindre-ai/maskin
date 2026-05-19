@@ -7,15 +7,9 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
-import { useActors } from '@/hooks/use-actors'
 import { useObjects } from '@/hooks/use-objects'
 import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relationships'
-import type {
-	ActorListItem,
-	CreateRelationshipInput,
-	ObjectResponse,
-	RelationshipResponse,
-} from '@/lib/api'
+import type { CreateRelationshipInput, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -37,7 +31,6 @@ export function LinkedObjectsView({
 	allObjects,
 	connectedObjects,
 	relationshipTypes,
-	actors,
 	onCreateRelationship,
 	onDeleteRelationship,
 	onNavigate,
@@ -50,7 +43,6 @@ export function LinkedObjectsView({
 	allObjects: ObjectResponse[]
 	connectedObjects?: ObjectResponse[]
 	relationshipTypes: string[]
-	actors?: ActorListItem[]
 	onCreateRelationship: (data: CreateRelationshipInput) => void
 	onDeleteRelationship: (id: string) => void
 	onNavigate?: (workspaceId: string, objectId: string) => void
@@ -156,7 +148,6 @@ export function LinkedObjectsView({
 				<RelatedObjectsTable
 					rows={filteredRelationships}
 					workspaceId={workspaceId}
-					actors={actors ?? []}
 					onDeleteRelationship={onDeleteRelationship}
 					onNavigate={onNavigate}
 				/>
@@ -180,7 +171,6 @@ export function LinkedObjects({
 }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const { data: allObjects } = useObjects(workspaceId)
-	const { data: actors } = useActors(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, objectId)
 
@@ -203,7 +193,6 @@ export function LinkedObjects({
 			allObjects={allObjects ?? []}
 			connectedObjects={connectedObjects}
 			relationshipTypes={relationshipTypes}
-			actors={actors ?? []}
 			onCreateRelationship={(data) => createRelationship.mutate(data)}
 			onDeleteRelationship={(id) => deleteRelationship.mutate(id)}
 		/>
