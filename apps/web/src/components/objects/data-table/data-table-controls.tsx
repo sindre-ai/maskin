@@ -36,6 +36,8 @@ interface DataTableControlsProps {
 	// Grouping
 	groupBy?: string
 	onGroupByChange?: (value: string | undefined) => void
+	// Trigger appearance
+	iconOnly?: boolean
 }
 
 export function DataTableControls({
@@ -57,6 +59,7 @@ export function DataTableControls({
 	onOrderChange,
 	groupBy,
 	onGroupByChange,
+	iconOnly = false,
 }: DataTableControlsProps) {
 	const hasActiveFilters = !!statusFilter || !!ownerFilter || !!typeFilter
 	const activeFilterCount = (statusFilter ? 1 : 0) + (ownerFilter ? 1 : 0) + (typeFilter ? 1 : 0)
@@ -69,15 +72,32 @@ export function DataTableControls({
 	return (
 		<Popover>
 			<PopoverTrigger asChild>
-				<Button variant="outline" size="sm" className="gap-1.5">
-					<Settings2 size={14} />
-					Controls
-					{hasActiveFilters && (
-						<span className="ml-1 rounded-full bg-primary text-primary-foreground text-xs px-1.5 py-0.5">
-							{activeFilterCount}
-						</span>
-					)}
-				</Button>
+				{iconOnly ? (
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-8 w-8 relative"
+						title="Controls"
+						aria-label="Controls"
+					>
+						<Settings2 size={14} />
+						{hasActiveFilters && (
+							<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-[10px] leading-none px-1 py-0.5 min-w-[14px] text-center">
+								{activeFilterCount}
+							</span>
+						)}
+					</Button>
+				) : (
+					<Button variant="outline" size="sm" className="gap-1.5">
+						<Settings2 size={14} />
+						Controls
+						{hasActiveFilters && (
+							<span className="ml-1 rounded-full bg-primary text-primary-foreground text-xs px-1.5 py-0.5">
+								{activeFilterCount}
+							</span>
+						)}
+					</Button>
+				)}
 			</PopoverTrigger>
 			<PopoverContent align="end" className="w-[calc(100vw-2rem)] sm:w-64 p-0">
 				<div className="max-h-[420px] overflow-y-auto">

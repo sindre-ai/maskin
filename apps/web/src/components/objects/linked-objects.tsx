@@ -120,6 +120,7 @@ export function LinkedObjectsView({
 				<div className="flex-1" />
 				{uniqueTypes.length >= 2 && (
 					<DataTableControls
+						iconOnly
 						typeFilter={effectiveFilter === 'all' ? undefined : effectiveFilter}
 						onTypeFilterChange={(value) => setActiveFilter(value ?? 'all')}
 						typeCounts={typeCounts}
