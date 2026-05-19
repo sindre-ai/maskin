@@ -689,7 +689,7 @@ export const tools = {
 	// ─── Notifications ───────────────────────────────────────
 	create_notification: {
 		description:
-			'Create a notification for a human in the workspace. Use when you need human input to make a decision that you cannot make yourself. Pass session_id when the agent expects to be resumed with the human\'s reply — this enables the free-text "Reply to agent" input in the UI. To render clickable buttons, pass metadata.actions as a NATIVE JSON array (not a stringified one). For a structured picker (radio/checkbox/text), set metadata.input_type and metadata.options as a NATIVE JSON array.',
+			'Create a notification for a human in the workspace. Use when you need human input to make a decision that you cannot make yourself. Use this tool sparingly — before creating a new notification, always call list_notifications to check whether a similar pending notification already exists that can be updated via update_notification instead. Pass session_id when the agent expects to be resumed with the human\'s reply — this enables the free-text "Reply to agent" input in the UI. To render clickable buttons, pass metadata.actions as a NATIVE JSON array (not a stringified one). For a structured picker (radio/checkbox/text), set metadata.input_type and metadata.options as a NATIVE JSON array.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
