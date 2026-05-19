@@ -82,13 +82,29 @@ describe('ActivityComment', () => {
 		expect(screen.getByText('R2')).toBeInTheDocument()
 	})
 
-	it('shows a Reply action button on each row', () => {
+	it('shows a Reply action button on the top-level comment when there are no replies', () => {
 		const event = buildEventResponse({
 			action: 'commented',
 			data: { content: 'Test' },
 		})
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 		expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument()
+	})
+
+	it('shows the Reply action button only on the last reply when replies exist', () => {
+		const event = buildEventResponse({
+			id: 1,
+			action: 'commented',
+			data: { content: 'Thread' },
+		})
+		const replies = [
+			buildEventResponse({ id: 2, action: 'commented', data: { content: 'R1' } }),
+			buildEventResponse({ id: 3, action: 'commented', data: { content: 'R2' } }),
+		]
+
+		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
+
+		expect(screen.getAllByRole('button', { name: 'Reply' })).toHaveLength(1)
 	})
 
 	it('shows reply input on Reply click', async () => {
@@ -105,7 +121,7 @@ describe('ActivityComment', () => {
 		).toBeGreaterThanOrEqual(1)
 	})
 
-	it('clicking Reply on a reply opens the input on the parent thread', async () => {
+	it('clicking Reply on the last reply opens the input on the parent thread', async () => {
 		const user = userEvent.setup()
 		const event = buildEventResponse({
 			id: 1,
@@ -122,8 +138,7 @@ describe('ActivityComment', () => {
 
 		render(<ActivityComment event={event} replies={replies} workspaceId="ws-1" objectId="obj-1" />)
 
-		const replyButtons = screen.getAllByRole('button', { name: 'Reply' })
-		await user.click(replyButtons[1])
+		await user.click(screen.getByRole('button', { name: 'Reply' }))
 
 		expect(
 			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,

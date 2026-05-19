@@ -34,7 +34,7 @@ function renderCommentContent(content: string) {
 
 interface CommentRowProps {
 	event: EventResponse
-	onReply: () => void
+	onReply?: () => void
 }
 
 function CommentRow({ event, onReply }: CommentRowProps) {
@@ -42,7 +42,7 @@ function CommentRow({ event, onReply }: CommentRowProps) {
 	const content = (event.data?.content as string) ?? ''
 
 	return (
-		<div className="group flex items-start gap-2 py-1">
+		<div className="flex items-start gap-2 py-1">
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<div className="flex-1 min-w-0">
 				<div className="flex items-baseline gap-1.5">
@@ -58,14 +58,16 @@ function CommentRow({ event, onReply }: CommentRowProps) {
 				</div>
 				<p className="text-sm mt-0.5 whitespace-pre-wrap">{renderCommentContent(content)}</p>
 			</div>
-			<button
-				type="button"
-				onClick={onReply}
-				aria-label="Reply"
-				className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0 p-1 -m-1"
-			>
-				<Reply size={14} />
-			</button>
+			{onReply && (
+				<button
+					type="button"
+					onClick={onReply}
+					aria-label="Reply"
+					className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0 p-1 -m-1"
+				>
+					<Reply size={14} />
+				</button>
+			)}
 		</div>
 	)
 }
@@ -77,15 +79,21 @@ export function ActivityComment({
 	objectId,
 }: ActivityCommentProps) {
 	const [showReplyInput, setShowReplyInput] = useState(false)
+	const openReplyInput = () => setShowReplyInput(true)
+	const hasReplies = replies.length > 0
 
 	return (
-		<div>
-			<CommentRow event={event} onReply={() => setShowReplyInput(true)} />
+		<div className="group">
+			<CommentRow event={event} onReply={hasReplies ? undefined : openReplyInput} />
 
-			{replies.length > 0 && (
+			{hasReplies && (
 				<div className="ml-7 space-y-0.5">
-					{replies.map((reply) => (
-						<CommentRow key={reply.id} event={reply} onReply={() => setShowReplyInput(true)} />
+					{replies.map((reply, idx) => (
+						<CommentRow
+							key={reply.id}
+							event={reply}
+							onReply={idx === replies.length - 1 ? openReplyInput : undefined}
+						/>
 					))}
 				</div>
 			)}
