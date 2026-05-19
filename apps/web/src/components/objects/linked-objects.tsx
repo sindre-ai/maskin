@@ -1,4 +1,3 @@
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -8,21 +7,20 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useActors } from '@/hooks/use-actors'
 import { useObjects } from '@/hooks/use-objects'
 import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relationships'
-import type { CreateRelationshipInput, ObjectResponse, RelationshipResponse } from '@/lib/api'
+import type {
+	ActorListItem,
+	CreateRelationshipInput,
+	ObjectResponse,
+	RelationshipResponse,
+} from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link } from '@tanstack/react-router'
-import { X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
-
-interface ResolvedRelationship {
-	rel: RelationshipResponse
-	object: ObjectResponse
-}
+import { RelatedObjectsTable, type ResolvedRelationship } from './related-objects-table'
 
 function resolveLinkedObjectId(rel: RelationshipResponse, currentId: string): string {
 	return rel.sourceId === currentId ? rel.targetId : rel.sourceId
@@ -37,6 +35,7 @@ export function LinkedObjectsView({
 	allObjects,
 	connectedObjects,
 	relationshipTypes,
+	actors,
 	onCreateRelationship,
 	onDeleteRelationship,
 	onNavigate,
@@ -49,6 +48,7 @@ export function LinkedObjectsView({
 	allObjects: ObjectResponse[]
 	connectedObjects?: ObjectResponse[]
 	relationshipTypes: string[]
+	actors?: ActorListItem[]
 	onCreateRelationship: (data: CreateRelationshipInput) => void
 	onDeleteRelationship: (id: string) => void
 	onNavigate?: (workspaceId: string, objectId: string) => void
@@ -159,51 +159,13 @@ export function LinkedObjectsView({
 
 			{/* Related rows */}
 			{filteredRelationships.length > 0 && (
-				<div className="space-y-1">
-					{filteredRelationships.map(({ rel, object: obj }) => (
-						<div key={rel.id} className="flex items-center gap-2 group">
-							{onNavigate ? (
-								<button
-									type="button"
-									onClick={() => onNavigate(workspaceId, obj.id)}
-									className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-accent-foreground hover:bg-accent/50 text-left"
-								>
-									<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
-									<Badge variant="outline" className="text-[10px] font-normal">
-										{rel.type.replace(/_/g, ' ')}
-									</Badge>
-									<StatusBadge status={obj.status} />
-									<TypeBadge type={obj.type} />
-								</button>
-							) : (
-								<Link
-									to="/$workspaceId/objects/$objectId"
-									params={{ workspaceId, objectId: obj.id }}
-									className="flex items-center gap-2 flex-1 rounded px-2 py-1 text-sm text-muted-foreground hover:text-accent-foreground hover:bg-accent/50"
-								>
-									<span className="flex-1 truncate">{obj.title || 'Untitled'}</span>
-									<Badge variant="outline" className="text-[10px] font-normal">
-										{rel.type.replace(/_/g, ' ')}
-									</Badge>
-									<StatusBadge status={obj.status} />
-									<TypeBadge type={obj.type} />
-								</Link>
-							)}
-							{obj.activeSessionId && (
-								<AgentWorkingBadge sessionId={obj.activeSessionId} workspaceId={workspaceId} />
-							)}
-							<Button
-								variant="ghost"
-								size="icon"
-								className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
-								onClick={() => onDeleteRelationship(rel.id)}
-								title="Remove link"
-							>
-								<X className="h-3 w-3" />
-							</Button>
-						</div>
-					))}
-				</div>
+				<RelatedObjectsTable
+					rows={filteredRelationships}
+					workspaceId={workspaceId}
+					actors={actors ?? []}
+					onDeleteRelationship={onDeleteRelationship}
+					onNavigate={onNavigate}
+				/>
 			)}
 		</div>
 	)
@@ -224,6 +186,7 @@ export function LinkedObjects({
 }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const { data: allObjects } = useObjects(workspaceId)
+	const { data: actors } = useActors(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
 	const deleteRelationship = useDeleteRelationship(workspaceId, objectId)
 
@@ -246,6 +209,7 @@ export function LinkedObjects({
 			allObjects={allObjects ?? []}
 			connectedObjects={connectedObjects}
 			relationshipTypes={relationshipTypes}
+			actors={actors ?? []}
 			onCreateRelationship={(data) => createRelationship.mutate(data)}
 			onDeleteRelationship={(id) => deleteRelationship.mutate(id)}
 		/>
