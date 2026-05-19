@@ -11,10 +11,9 @@ interface CommentInputProps {
 	workspaceId: string
 	objectId: string
 	parentEventId?: number
-	compact?: boolean
 }
 
-export function CommentInput({ workspaceId, objectId, parentEventId, compact }: CommentInputProps) {
+export function CommentInput({ workspaceId, objectId, parentEventId }: CommentInputProps) {
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
 	const { data: actors } = useActors(workspaceId)
@@ -156,13 +155,8 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 
 	return (
 		<div className="relative">
-			<div className={cn('flex items-start gap-2', compact ? 'gap-1.5' : 'gap-2')}>
-				<ActorAvatar
-					name={actor.name}
-					type={actor.type}
-					size={compact ? 'sm' : 'md'}
-					className="mt-1.5"
-				/>
+			<div className="flex items-start gap-2">
+				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
 				<div className="flex-1 relative">
 					<textarea
 						ref={inputRef}
@@ -171,21 +165,18 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 						onKeyDown={handleKeyDown}
 						placeholder="Comment or instruct an agent..."
 						rows={1}
-						className={cn(
-							'w-full resize-none rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border-focus',
-							compact && 'text-xs py-1.5 px-2',
-						)}
-						style={{ minHeight: compact ? '32px' : '38px' }}
+						className="w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
+						style={{ minHeight: '32px' }}
 					/>
 				</div>
 				<Button
 					size="icon"
 					variant="ghost"
-					className={cn('shrink-0 mt-1', compact ? 'h-6 w-6' : 'h-8 w-8')}
+					className="shrink-0 h-8 w-8"
 					disabled={!content.trim() || createComment.isPending}
 					onClick={handleSubmit}
 				>
-					<SendHorizontal size={compact ? 14 : 16} />
+					<SendHorizontal size={14} />
 				</Button>
 			</div>
 

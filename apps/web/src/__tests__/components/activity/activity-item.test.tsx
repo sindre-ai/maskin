@@ -102,6 +102,21 @@ describe('ActivityItemView', () => {
 		expect(screen.queryByText('My Bet')).not.toBeInTheDocument()
 	})
 
+	it('uses descriptionOverride in place of the formatted description', () => {
+		const actor = buildActorResponse()
+		const event = buildEventResponse({ action: 'status_changed' })
+
+		render(
+			<ActivityItemView
+				event={event}
+				actor={actor}
+				descriptionOverride="set the status to Active"
+			/>,
+		)
+
+		expect(screen.getByText('set the status to Active')).toBeInTheDocument()
+	})
+
 	it('shows entity title when contextEntityId is set but does not match', () => {
 		const actor = buildActorResponse()
 		const event = buildEventResponse({
