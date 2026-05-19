@@ -102,14 +102,12 @@ export function ActivityItemView({
 								{title}
 							</span>
 						))}
-					<span className="flex items-center gap-1.5 ml-auto shrink-0">
-						{hasError && (
-							<Badge variant="destructive" className="text-[10px] px-1 py-0">
-								error
-							</Badge>
-						)}
-						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
-					</span>
+					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+					{hasError && (
+						<Badge variant="destructive" className="text-[10px] px-1 py-0">
+							error
+						</Badge>
+					)}
 				</div>
 			</div>
 		</div>
