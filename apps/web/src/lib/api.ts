@@ -740,6 +740,8 @@ export interface EventResponse {
 	entityId: string
 	data: Record<string, unknown> | null
 	createdAt: string | null
+	/** Pre-formatted human-readable sentence (populated by /api/objects/:id/graph; absent on other event endpoints). */
+	description?: string
 }
 
 export interface CreateCommentInput {

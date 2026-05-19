@@ -1,11 +1,11 @@
 import { useActor } from '@/hooks/use-actors'
 import type { ActorListItem, ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatEventDescription, isErrorEvent } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Badge } from '../ui/badge'
-import { formatEventDescription, isErrorEvent } from './format-event'
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 const SESSION_ACTIONS = new Set([

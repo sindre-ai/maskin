@@ -107,6 +107,7 @@ export const eventResponseSchema = z.object({
 	entityId: z.string().uuid(),
 	data: jsonbField,
 	createdAt: z.string().nullable(),
+	description: z.string().optional(),
 })
 
 export const objectGraphResponseSchema = z.object({

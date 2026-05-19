@@ -1,75 +1,96 @@
-import { formatEventDescription, isErrorEvent } from '@/components/activity/format-event'
-import type { ActorListItem } from '@/lib/api'
-import { buildActorListItem, buildEventResponse } from '../../factories'
+import { describe, expect, it } from 'vitest'
+import {
+	type ActorRef,
+	type EventLike,
+	formatEventDescription,
+	isErrorEvent,
+} from '../events/format-event'
 
-function actorsMap(actors: ActorListItem[]): Map<string, ActorListItem> {
+function buildEvent(overrides: Partial<EventLike> = {}): EventLike {
+	return {
+		action: 'created',
+		entityType: 'bet',
+		data: null,
+		...overrides,
+	}
+}
+
+function buildActor(overrides: Partial<ActorRef> = {}): ActorRef {
+	return {
+		id: 'actor-1',
+		name: 'Test User',
+		...overrides,
+	}
+}
+
+function actorsMap(actors: ActorRef[]): Map<string, ActorRef> {
 	return new Map(actors.map((a) => [a.id, a]))
 }
 
 describe('formatEventDescription', () => {
 	it('returns "proposed bet" for created bet', () => {
-		const event = buildEventResponse({ action: 'created', entityType: 'bet' })
+		const event = buildEvent({ action: 'created', entityType: 'bet' })
 		expect(formatEventDescription(event)).toBe('proposed bet')
 	})
 
 	it('returns "created {type}" for created non-bet', () => {
-		const event = buildEventResponse({ action: 'created', entityType: 'insight' })
+		const event = buildEvent({ action: 'created', entityType: 'insight' })
 		expect(formatEventDescription(event)).toBe('created insight')
 	})
 
 	it('returns "updated {type}" when update event has no data', () => {
-		const event = buildEventResponse({ action: 'updated', entityType: 'task' })
+		const event = buildEvent({ action: 'updated', entityType: 'task' })
 		expect(formatEventDescription(event)).toBe('updated task')
 	})
 
 	it('returns "deleted {type}"', () => {
-		const event = buildEventResponse({ action: 'deleted', entityType: 'bet' })
+		const event = buildEvent({ action: 'deleted', entityType: 'bet' })
 		expect(formatEventDescription(event)).toBe('deleted bet')
 	})
 
 	it('returns "started session"', () => {
-		const event = buildEventResponse({ action: 'session_created', entityType: 'session' })
+		const event = buildEvent({ action: 'session_created', entityType: 'session' })
 		expect(formatEventDescription(event)).toBe('started session')
 	})
 
 	it('returns "is running session"', () => {
-		const event = buildEventResponse({ action: 'session_running', entityType: 'session' })
+		const event = buildEvent({ action: 'session_running', entityType: 'session' })
 		expect(formatEventDescription(event)).toBe('is running session')
 	})
 
 	it('returns "completed session"', () => {
-		const event = buildEventResponse({ action: 'session_completed', entityType: 'session' })
+		const event = buildEvent({ action: 'session_completed', entityType: 'session' })
 		expect(formatEventDescription(event)).toBe('completed session')
 	})
 
 	it('returns "session failed"', () => {
-		const event = buildEventResponse({ action: 'session_failed', entityType: 'session' })
+		const event = buildEvent({ action: 'session_failed', entityType: 'session' })
 		expect(formatEventDescription(event)).toBe('session failed')
 	})
 
 	it('returns "session timed out"', () => {
-		const event = buildEventResponse({ action: 'session_timeout', entityType: 'session' })
+		const event = buildEvent({ action: 'session_timeout', entityType: 'session' })
 		expect(formatEventDescription(event)).toBe('session timed out')
 	})
 
 	it('returns "paused session"', () => {
-		const event = buildEventResponse({ action: 'session_paused', entityType: 'session' })
+		const event = buildEvent({ action: 'session_paused', entityType: 'session' })
 		expect(formatEventDescription(event)).toBe('paused session')
 	})
 
 	it('returns "fired trigger"', () => {
-		const event = buildEventResponse({ action: 'trigger_fired', entityType: 'trigger' })
+		const event = buildEvent({ action: 'trigger_fired', entityType: 'trigger' })
 		expect(formatEventDescription(event)).toBe('fired trigger')
 	})
 
 	it('falls back to "updated {type}" when status_changed has no data', () => {
-		const event = buildEventResponse({ action: 'status_changed', entityType: 'bet' })
+		const event = buildEvent({ action: 'status_changed', entityType: 'bet' })
 		expect(formatEventDescription(event)).toBe('updated bet')
 	})
 
 	describe('object update diff', () => {
 		it('formats status change with capitalized labels', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'status_changed',
 				entityType: 'bet',
 				data: {
@@ -82,7 +103,7 @@ describe('formatEventDescription', () => {
 		})
 
 		it('formats multi-word status with title case', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'status_changed',
 				entityType: 'task',
 				data: {
@@ -95,7 +116,7 @@ describe('formatEventDescription', () => {
 		})
 
 		it('formats content update', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'updated',
 				entityType: 'bet',
 				data: {
@@ -108,7 +129,7 @@ describe('formatEventDescription', () => {
 		})
 
 		it('formats title update with from/to quotes', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'updated',
 				entityType: 'bet',
 				data: {
@@ -121,7 +142,7 @@ describe('formatEventDescription', () => {
 		})
 
 		it('formats title set when previous title was empty', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'updated',
 				entityType: 'bet',
 				data: {
@@ -134,9 +155,9 @@ describe('formatEventDescription', () => {
 		})
 
 		it('formats owner change using actor name lookup', () => {
-			const alice = buildActorListItem({ id: 'actor-alice', name: 'Alice' })
-			const bob = buildActorListItem({ id: 'actor-bob', name: 'Bob' })
-			const event = buildEventResponse({
+			const alice = buildActor({ id: 'actor-alice', name: 'Alice' })
+			const bob = buildActor({ id: 'actor-bob', name: 'Bob' })
+			const event = buildEvent({
 				action: 'updated',
 				entityType: 'bet',
 				data: {
@@ -151,8 +172,8 @@ describe('formatEventDescription', () => {
 		})
 
 		it('formats owner cleared as "no one"', () => {
-			const alice = buildActorListItem({ id: 'actor-alice', name: 'Alice' })
-			const event = buildEventResponse({
+			const alice = buildActor({ id: 'actor-alice', name: 'Alice' })
+			const event = buildEvent({
 				action: 'updated',
 				entityType: 'bet',
 				data: {
@@ -167,7 +188,7 @@ describe('formatEventDescription', () => {
 		})
 
 		it('joins multiple clauses with " and "', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'status_changed',
 				entityType: 'bet',
 				data: {
@@ -182,7 +203,7 @@ describe('formatEventDescription', () => {
 		})
 
 		it('emits one clause per changed metadata key', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'updated',
 				entityType: 'bet',
 				data: {
@@ -195,7 +216,7 @@ describe('formatEventDescription', () => {
 		})
 
 		it('collapses many metadata changes into a count', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'updated',
 				entityType: 'bet',
 				data: {
@@ -208,7 +229,7 @@ describe('formatEventDescription', () => {
 		})
 
 		it('falls back to "updated {type}" when no tracked field changed', () => {
-			const event = buildEventResponse({
+			const event = buildEvent({
 				action: 'updated',
 				entityType: 'bet',
 				data: {
@@ -224,22 +245,22 @@ describe('formatEventDescription', () => {
 
 describe('isErrorEvent', () => {
 	it('returns true for failed actions', () => {
-		const event = buildEventResponse({ action: 'session_failed' })
+		const event = buildEvent({ action: 'session_failed' })
 		expect(isErrorEvent(event)).toBe(true)
 	})
 
 	it('returns true for timeout actions', () => {
-		const event = buildEventResponse({ action: 'session_timeout' })
+		const event = buildEvent({ action: 'session_timeout' })
 		expect(isErrorEvent(event)).toBe(true)
 	})
 
 	it('returns false for normal actions', () => {
-		const event = buildEventResponse({ action: 'created' })
+		const event = buildEvent({ action: 'created' })
 		expect(isErrorEvent(event)).toBe(false)
 	})
 
 	it('returns false for completed actions', () => {
-		const event = buildEventResponse({ action: 'session_completed' })
+		const event = buildEvent({ action: 'session_completed' })
 		expect(isErrorEvent(event)).toBe(false)
 	})
 })

@@ -1,12 +1,21 @@
-import type { ActorListItem, EventResponse } from '@/lib/api'
+export interface ActorRef {
+	id: string
+	name: string
+}
+
+export interface EventLike {
+	action: string
+	entityType: string
+	data: unknown
+}
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 
 export interface FormatContext {
-	actorsById?: Map<string, ActorListItem>
+	actorsById?: ReadonlyMap<string, ActorRef>
 }
 
-export function formatEventDescription(event: EventResponse, ctx?: FormatContext): string {
+export function formatEventDescription(event: EventLike, ctx?: FormatContext): string {
 	const { action, entityType } = event
 
 	switch (action) {
@@ -41,7 +50,7 @@ export function formatEventDescription(event: EventResponse, ctx?: FormatContext
 	}
 }
 
-export function isErrorEvent(event: EventResponse): boolean {
+export function isErrorEvent(event: EventLike): boolean {
 	return event.action.includes('failed') || event.action.includes('timeout')
 }
 
@@ -50,13 +59,13 @@ export function isErrorEvent(event: EventResponse): boolean {
  * its own phase divider — the divider already names the new status visually,
  * so the row only needs to indicate the actor moved here.
  */
-export function formatStatusTransitionShort(event: EventResponse): string {
+export function formatStatusTransitionShort(event: EventLike): string {
 	const data = event.data as { updated?: Record<string, unknown> } | null
 	const next = data?.updated?.status
 	return `set the status to ${prettyStatus(next)}`
 }
 
-function formatObjectUpdate(event: EventResponse, ctx?: FormatContext): string | null {
+function formatObjectUpdate(event: EventLike, ctx?: FormatContext): string | null {
 	const data = event.data as {
 		previous?: Record<string, unknown>
 		updated?: Record<string, unknown>
@@ -101,9 +110,10 @@ function changed(a: unknown, b: unknown): boolean {
 }
 
 function joinClauses(clauses: string[]): string {
-	if (clauses.length === 1) return clauses[0]
+	if (clauses.length === 1) return clauses[0] ?? ''
 	if (clauses.length === 2) return `${clauses[0]} and ${clauses[1]}`
-	return `${clauses.slice(0, -1).join(', ')}, and ${clauses[clauses.length - 1]}`
+	const last = clauses[clauses.length - 1] ?? ''
+	return `${clauses.slice(0, -1).join(', ')}, and ${last}`
 }
 
 function prettyStatus(value: unknown): string {
@@ -111,7 +121,10 @@ function prettyStatus(value: unknown): string {
 	return value
 		.replace(/_/g, ' ')
 		.split(' ')
-		.map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1)))
+		.map((w) => {
+			const first = w[0]
+			return first === undefined ? w : first.toUpperCase() + w.slice(1)
+		})
 		.join(' ')
 }
 

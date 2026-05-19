@@ -285,7 +285,7 @@ describe('Objects Routes', () => {
 
 	describe('GET /api/objects/:id/graph', () => {
 		it('returns 200 with object, relationships, connected objects, and events', async () => {
-			const obj = buildObject({ workspaceId: wsId })
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
 			const connectedObj = buildObject({ workspaceId: wsId })
 			const rel = buildRelationship({
 				sourceId: obj.id,
@@ -319,6 +319,36 @@ describe('Objects Routes', () => {
 			expect(body.connected_objects).toHaveLength(1)
 			expect(body.events).toHaveLength(2)
 			expect(body.events[0].action).toBe('commented')
+			// Server-side formatted description matches what the UI renders
+			expect(body.events[1].description).toBe('proposed bet')
+		})
+
+		it('resolves actor names for owner-change events in description', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const alice = { id: '00000000-0000-0000-0000-0000000000a1', name: 'Alice' }
+			const bob = { id: '00000000-0000-0000-0000-0000000000b2', name: 'Bob' }
+			const ownerChange = buildEvent({
+				workspaceId: wsId,
+				entityType: 'bet',
+				entityId: obj.id,
+				action: 'updated',
+				data: {
+					previous: { owner: alice.id },
+					updated: { owner: bob.id },
+				},
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1: object, 2: relationships (empty → skips connected_objects fetch), 3: events, 4: actors
+			mockResults.selectQueue = [[obj], [], [ownerChange], [alice, bob]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.events).toHaveLength(1)
+			expect(body.events[0].description).toBe('changed owner from Alice to Bob')
 		})
 
 		it('returns 404 when object not found', async () => {

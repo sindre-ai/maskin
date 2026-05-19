@@ -1,9 +1,11 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, relationships, workspaces } from '@maskin/db/schema'
+import { events, actors, objects, relationships, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
+	type ActorRef,
 	createObjectSchema,
+	formatEventDescription,
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
 	objectQuerySchema,
@@ -355,12 +357,40 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.orderBy(desc(events.id))
 		.limit(100)
 
+	// Resolve actor names referenced by owner-change clauses (formatter only
+	// needs them for `data.previous.owner` / `data.updated.owner`).
+	const referencedActorIds = new Set<string>()
+	for (const event of objectEvents) {
+		const data = event.data as {
+			previous?: { owner?: unknown }
+			updated?: { owner?: unknown }
+		} | null
+		const prevOwner = data?.previous?.owner
+		const nextOwner = data?.updated?.owner
+		if (typeof prevOwner === 'string') referencedActorIds.add(prevOwner)
+		if (typeof nextOwner === 'string') referencedActorIds.add(nextOwner)
+	}
+
+	const actorsById = new Map<string, ActorRef>()
+	if (referencedActorIds.size > 0) {
+		const rows = await db
+			.select({ id: actors.id, name: actors.name })
+			.from(actors)
+			.where(inArray(actors.id, [...referencedActorIds]))
+		for (const row of rows) actorsById.set(row.id, row)
+	}
+
+	const serializedEvents = objectEvents.map((event) => ({
+		...serialize(event),
+		description: formatEventDescription(event, { actorsById }),
+	}))
+
 	return c.json(
 		{
 			object: serialize(object),
 			relationships: serializeArray(rels),
 			connected_objects: serializeArray(connectedObjects),
-			events: serializeArray(objectEvents),
+			events: serializedEvents,
 		} as z.infer<typeof objectGraphResponseSchema>,
 		200,
 	)
