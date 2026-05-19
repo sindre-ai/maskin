@@ -106,7 +106,7 @@ export function MetadataPropertiesView({
 	}
 
 	return (
-		<div className="space-y-1 w-fit">
+		<div className="space-y-1 w-full">
 			{metaEntries.map(([key, value]) => {
 				const fieldDef = fieldDefs.find((f) => f.name === key)
 				return (
@@ -217,7 +217,7 @@ function PropertyRow({
 				) : (
 					<button
 						type="button"
-						className="text-xs text-muted-foreground hover:text-foreground text-left truncate max-w-full"
+						className="block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 						onClick={() => setEditing(true)}
 					>
 						{formatDisplay(value, type)}

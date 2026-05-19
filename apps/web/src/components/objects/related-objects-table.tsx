@@ -159,7 +159,7 @@ export function RelatedObjectsTable({
 	}
 
 	return (
-		<div className="max-h-[28rem] overflow-y-auto">
+		<div className="max-h-[28rem] overflow-auto">
 			<Table>
 				<TableHeader className="[&_tr]:border-b-0">
 					{table.getHeaderGroups().map((headerGroup) => (

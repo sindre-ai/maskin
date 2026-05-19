@@ -82,23 +82,25 @@ export function ActivityItemView({
 		>
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<div className="flex-1 min-w-0">
-				<div className="flex items-baseline gap-1.5 text-sm">
+				<div className="flex items-baseline gap-1.5 text-sm flex-wrap">
 					<span className={cn('font-medium', isAgent ? 'text-primary' : 'text-foreground')}>
 						{actor?.name ?? 'Unknown'}
 					</span>
-					<span className="text-muted-foreground">{description}</span>
+					<span className="text-muted-foreground break-words min-w-0">{description}</span>
 					{showTitle &&
 						(workspaceId && isObjectEntity(event.entityType) ? (
 							<Link
 								to="/$workspaceId/objects/$objectId"
 								params={{ workspaceId, objectId: event.entityId }}
-								className="text-foreground hover:underline truncate text-sm"
+								className="text-foreground hover:underline truncate text-sm min-w-0 max-w-full"
 								onClick={(e) => e.stopPropagation()}
 							>
 								{title}
 							</Link>
 						) : (
-							<span className="text-muted-foreground truncate text-sm">{title}</span>
+							<span className="text-muted-foreground truncate text-sm min-w-0 max-w-full">
+								{title}
+							</span>
 						))}
 					<span className="flex items-center gap-1.5 ml-auto shrink-0">
 						{hasError && (

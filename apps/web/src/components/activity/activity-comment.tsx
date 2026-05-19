@@ -41,7 +41,7 @@ function CommentRow({ event, workspaceId, onReply }: CommentRowProps) {
 					</span>
 					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
 				</div>
-				<p className="text-sm mt-0.5 whitespace-pre-wrap">
+				<p className="text-sm mt-0.5 whitespace-pre-wrap break-words">
 					<MentionedText content={content} actors={actors ?? []} />
 				</p>
 			</div>
