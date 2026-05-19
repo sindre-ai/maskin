@@ -22,7 +22,12 @@ vi.mock('@/hooks/use-events', () => ({
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useActiveSessionsForActor: () => ({ data: [] }),
-	useActorSessions: () => ({ data: [] }),
+	useActorSessionsInfinite: () => ({
+		data: { pages: [[]] },
+		hasNextPage: false,
+		isFetchingNextPage: false,
+		fetchNextPage: vi.fn(),
+	}),
 	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
 	useSession: () => ({ data: null }),
 	useSessionErrorLog: () => ({ data: null }),

@@ -16,13 +16,14 @@ import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
 	useActiveSessionsForActor,
-	useActorSessions,
+	useActorSessionsInfinite,
 	useCreateSession,
 	useSession,
 	useSessionErrorLog,
 	useSessionLogs,
 } from '@/hooks/use-sessions'
 import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -56,6 +57,9 @@ interface AgentDocumentViewProps {
 	events?: EventResponse[]
 	activeSessions?: SessionResponse[]
 	recentSessions?: SessionResponse[]
+	hasMoreSessions?: boolean
+	isLoadingMoreSessions?: boolean
+	onLoadMoreSessions?: () => void
 	onUpdateName: (name: string) => void
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
@@ -88,6 +92,9 @@ export function AgentDocumentView({
 	events,
 	activeSessions,
 	recentSessions,
+	hasMoreSessions = false,
+	isLoadingMoreSessions = false,
+	onLoadMoreSessions,
 	onUpdateName,
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
@@ -253,7 +260,9 @@ export function AgentDocumentView({
 			{/* Recent Sessions */}
 			{pastSessions.length > 0 && (
 				<Section title="Sessions">
-					<div className="space-y-1">
+					<div
+						className={cn('space-y-1', pastSessions.length > 10 && 'max-h-[400px] overflow-y-auto')}
+					>
 						{pastSessions.map((session) => (
 							<SessionRow
 								key={session.id}
@@ -264,6 +273,17 @@ export function AgentDocumentView({
 							/>
 						))}
 					</div>
+					{hasMoreSessions && (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="mt-2"
+							disabled={isLoadingMoreSessions}
+							onClick={() => onLoadMoreSessions?.()}
+						>
+							<ChevronDown size={14} /> {isLoadingMoreSessions ? 'Loading…' : 'Show more'}
+						</Button>
+					)}
 				</Section>
 			)}
 
@@ -546,7 +566,13 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
-	const { data: recentSessions } = useActorSessions(agent.id, workspaceId)
+	const {
+		data: recentSessionPages,
+		hasNextPage: hasMoreSessions,
+		isFetchingNextPage: isLoadingMoreSessions,
+		fetchNextPage,
+	} = useActorSessionsInfinite(agent.id, workspaceId)
+	const recentSessions = useMemo(() => recentSessionPages?.pages.flat() ?? [], [recentSessionPages])
 	// Filter events by this agent's actorId
 	const agentEvents = useMemo(
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),
@@ -677,6 +703,9 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				events={agentEvents}
 				activeSessions={activeSessions}
 				recentSessions={recentSessions}
+				hasMoreSessions={hasMoreSessions}
+				isLoadingMoreSessions={isLoadingMoreSessions}
+				onLoadMoreSessions={() => fetchNextPage()}
 				onUpdateName={handleUpdateName}
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
