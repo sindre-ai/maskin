@@ -238,7 +238,7 @@ export class TriggerRunner {
 					trigger_name: trigger.name,
 					prompt: trigger.actionPrompt,
 					target_actor_id: trigger.targetActorId,
-					source_event: eventForPrompt,
+					source_event: event,
 				},
 			})
 
