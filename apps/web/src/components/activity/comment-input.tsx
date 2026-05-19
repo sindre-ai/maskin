@@ -4,7 +4,7 @@ import { useCreateComment } from '@/hooks/use-events'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { ArrowUp } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { MentionedText } from '../shared/mentioned-text'
 
@@ -13,6 +13,9 @@ interface CommentInputProps {
 	objectId: string
 	parentEventId?: number
 }
+
+// ~6 lines at text-sm (line-height 20px) + py-1.5 (12px) + 2px border
+const MAX_INPUT_HEIGHT_PX = 134
 
 export function CommentInput({ workspaceId, objectId, parentEventId }: CommentInputProps) {
 	const actor = getStoredActor()
@@ -26,7 +29,22 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 	const [selectedIndex, setSelectedIndex] = useState(0)
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
+	const overlayRef = useRef<HTMLDivElement>(null)
 	const mentionListRef = useRef<HTMLDivElement>(null)
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: content drives the resize, including programmatic setContent (mention insert, post-submit reset)
+	useLayoutEffect(() => {
+		const ta = inputRef.current
+		if (!ta) return
+		ta.style.height = 'auto'
+		ta.style.height = `${Math.min(ta.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`
+	}, [content])
+
+	const handleScroll = useCallback(() => {
+		const overlay = overlayRef.current
+		const ta = inputRef.current
+		if (overlay && ta) overlay.scrollTop = ta.scrollTop
+	}, [])
 
 	const mentionableActors = useMemo(
 		() => actors?.filter((a) => a.id !== actor?.id && !a.isSystem) ?? [],
@@ -165,6 +183,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
 				<div className="flex-1 relative">
 					<div
+						ref={overlayRef}
 						aria-hidden
 						className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent px-2 py-1.5 text-sm"
 						style={{ minHeight: '32px' }}
@@ -182,10 +201,11 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 						value={content}
 						onChange={handleInput}
 						onKeyDown={handleKeyDown}
+						onScroll={handleScroll}
 						placeholder="Write a comment... Use @ to mention an agent"
 						rows={1}
-						className="relative w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
-						style={{ minHeight: '32px' }}
+						className="relative w-full resize-none overflow-y-auto rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
+						style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 					/>
 				</div>
 				<Button
