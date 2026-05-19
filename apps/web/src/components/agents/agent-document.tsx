@@ -23,6 +23,7 @@ import {
 	useSessionLogs,
 } from '@/hooks/use-sessions'
 import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -144,6 +145,7 @@ export function AgentDocumentView({
 
 	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
 	const [viewSessionId, setViewSessionId] = useState<string | null>(null)
+	const [visibleSessionCount, setVisibleSessionCount] = useState(5)
 	const { data: fetchedSession } = useSession(viewSessionId, workspaceId)
 
 	// When a session is fetched by ID (from instruction log), select it
@@ -246,8 +248,10 @@ export function AgentDocumentView({
 			{/* Recent Sessions */}
 			{pastSessions.length > 0 && (
 				<Section title="Sessions">
-					<div className="space-y-1">
-						{pastSessions.map((session) => (
+					<div
+						className={cn('space-y-1', visibleSessionCount > 10 && 'max-h-[400px] overflow-y-auto')}
+					>
+						{pastSessions.slice(0, visibleSessionCount).map((session) => (
 							<SessionRow
 								key={session.id}
 								session={session}
@@ -257,6 +261,16 @@ export function AgentDocumentView({
 							/>
 						))}
 					</div>
+					{visibleSessionCount < pastSessions.length && (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="mt-2"
+							onClick={() => setVisibleSessionCount((c) => c + 5)}
+						>
+							<ChevronDown size={14} /> Show more
+						</Button>
+					)}
 				</Section>
 			)}
 

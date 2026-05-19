@@ -61,7 +61,7 @@ export function useSessionErrorLog(
 export function useActorSessions(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),
-		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '20' }),
+		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '100' }),
 		enabled: !!actorId && !!workspaceId,
 	})
 }
