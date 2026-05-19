@@ -83,7 +83,7 @@ export function ActivityComment({
 			<CommentRow event={event} onReply={() => setShowReplyInput(true)} />
 
 			{replies.length > 0 && (
-				<div className="ml-2 border-l-2 border-border pl-3 space-y-0.5">
+				<div className="ml-7 space-y-0.5">
 					{replies.map((reply) => (
 						<CommentRow key={reply.id} event={reply} onReply={() => setShowReplyInput(true)} />
 					))}
@@ -91,7 +91,7 @@ export function ActivityComment({
 			)}
 
 			{showReplyInput && (
-				<div className="ml-2 border-l-2 border-border pl-3 mt-2">
+				<div className="ml-7 mt-2">
 					<CommentInput workspaceId={workspaceId} objectId={objectId} parentEventId={event.id} />
 				</div>
 			)}
