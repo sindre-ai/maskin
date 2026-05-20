@@ -1,8 +1,11 @@
 import { useActors } from '@/hooks/use-actors'
+import { useEventVisible } from '@/hooks/use-event-visible'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { formatStatusTransitionShort } from '@maskin/shared'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
+import { Button } from '../ui/button'
 import { Collapsible, CollapsibleContent } from '../ui/collapsible'
 import { ActivityComment } from './activity-comment'
 import { ActivityItem } from './activity-item'
@@ -29,6 +32,44 @@ export function ObjectActivity({
 		for (const actor of actors ?? []) map.set(actor.id, actor)
 		return map
 	}, [actors])
+
+	// Latest commented-event id on this object — used as the high-water-mark
+	// when the user scrolls past the end of the activity list, and as the
+	// payload for the fallback "Mark all as read" button.
+	const latestEventId = useMemo(() => {
+		if (!events) return 0
+		let max = 0
+		for (const e of events) {
+			if (e.action === 'commented' && e.id > max) max = e.id
+		}
+		return max
+	}, [events])
+
+	const markRead = useMarkRead(workspaceId)
+	const markedRef = useRef(0)
+	const unreadCount = object.unread_count ?? 0
+
+	const handleSeenBottom = useCallback(
+		(eventId: number) => {
+			if (eventId <= 0) return
+			if (eventId <= markedRef.current) return
+			markedRef.current = eventId
+			markRead.mutate({ entityType: 'object', entityId: object.id, lastEventId: eventId })
+		},
+		[markRead, object.id],
+	)
+
+	const sentinelRef = useEventVisible(latestEventId, handleSeenBottom)
+
+	const handleMarkAllRead = () => {
+		if (latestEventId <= 0) return
+		markedRef.current = latestEventId
+		markRead.mutate({
+			entityType: 'object',
+			entityId: object.id,
+			lastEventId: latestEventId,
+		})
+	}
 
 	// Events arrive from the API sorted desc (newest first); reverse for chronological grouping.
 	// Then bucket replies under their parent comment so threads stay intact within phases.
@@ -77,9 +118,27 @@ export function ObjectActivity({
 
 	return (
 		<div className="border-t border-border pt-6">
-			<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
-				Activity
-			</h3>
+			<div className="flex items-center justify-between mb-3">
+				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					Activity
+					{unreadCount > 0 && (
+						<span className="ml-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-medium normal-case tracking-normal">
+							{unreadCount}
+						</span>
+					)}
+				</h3>
+				{unreadCount > 0 && (
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-[11px]"
+						onClick={handleMarkAllRead}
+						disabled={markRead.isPending}
+					>
+						Mark all as read
+					</Button>
+				)}
+			</div>
 
 			{activeSessionId && (
 				<div className="mb-3">
@@ -136,6 +195,12 @@ export function ObjectActivity({
 					)
 				})}
 			</div>
+
+			{/* Sentinel: when this element scrolls into view, advance the read
+			    high-water-mark to the latest comment event id. Covers the
+			    common case where the user scrolls past the activity list. The
+			    "Mark all as read" button above is the explicit fallback. */}
+			<div ref={sentinelRef} aria-hidden className="h-0 w-0" />
 
 			<div className="mt-4">
 				<CommentInput workspaceId={workspaceId} objectId={object.id} />

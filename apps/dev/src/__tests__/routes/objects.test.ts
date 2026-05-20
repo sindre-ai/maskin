@@ -177,6 +177,23 @@ describe('Objects Routes', () => {
 			expect(body.id).toBe(obj.id)
 		})
 
+		it('includes is_subscribed / unread_count / subscriber_count fields', async () => {
+			const obj = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			// Fields are always present, even when storage is empty (defaults zeroed).
+			expect(body).toHaveProperty('is_subscribed')
+			expect(body).toHaveProperty('unread_count')
+			expect(body).toHaveProperty('subscriber_count')
+			expect(typeof body.unread_count).toBe('number')
+			expect(typeof body.subscriber_count).toBe('number')
+		})
+
 		it('returns 404 when object not found', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 

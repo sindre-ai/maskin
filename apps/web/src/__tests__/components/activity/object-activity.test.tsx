@@ -12,6 +12,14 @@ vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+vi.mock('@/hooks/use-subscriptions', () => ({
+	useMarkRead: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/hooks/use-event-visible', () => ({
+	useEventVisible: () => ({ current: null }),
+}))
+
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'actor-1', name: 'Me', type: 'human' }),
 }))

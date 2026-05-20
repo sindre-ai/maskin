@@ -24,6 +24,12 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	autoSubscribe,
+	getSubscriberCount,
+	getUnreadCount,
+	isSubscribed,
+} from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -183,6 +189,15 @@ app.openapi(createObjectRoute, async (c) => {
 		data: created,
 	})
 
+	// Auto-subscribe the creator so they're notified about future comments.
+	await autoSubscribe(db, {
+		workspaceId,
+		actorId,
+		entityType: 'object',
+		entityId: created.id,
+		source: 'author',
+	})
+
 	return c.json(serialize(created) as z.infer<typeof objectResponseSchema>, 201)
 })
 
@@ -312,6 +327,7 @@ const getObjectGraphRoute = createRoute({
 
 app.openapi(getObjectGraphRoute, async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
@@ -385,9 +401,20 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		description: formatEventDescription(event, { actorsById }),
 	}))
 
+	const [subscribed, unreadCount, subscriberCount] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
+		getSubscriberCount(db, { entityType: 'object', entityId: id }),
+	])
+
 	return c.json(
 		{
-			object: serialize(object),
+			object: {
+				...serialize(object),
+				is_subscribed: subscribed,
+				unread_count: unreadCount,
+				subscriber_count: subscriberCount,
+			},
 			relationships: serializeArray(rels),
 			connected_objects: serializeArray(connectedObjects),
 			events: serializedEvents,
@@ -428,7 +455,26 @@ app.openapi(getObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	return c.json(serialize(object) as z.infer<typeof objectResponseSchema>, 200)
+	const [subscribed, unreadCount, subscriberCount] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, {
+			workspaceId: object.workspaceId,
+			actorId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		getSubscriberCount(db, { entityType: 'object', entityId: id }),
+	])
+
+	return c.json(
+		{
+			...serialize(object),
+			is_subscribed: subscribed,
+			unread_count: unreadCount,
+			subscriber_count: subscriberCount,
+		} as z.infer<typeof objectResponseSchema>,
+		200,
+	)
 })
 
 // PATCH /{id} - Update object

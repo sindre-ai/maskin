@@ -24,6 +24,10 @@ vi.mock('@/hooks/use-notifications', () => ({
 	useUpdateNotification: () => ({ mutate: vi.fn() }),
 }))
 
+vi.mock('@/hooks/use-subscriptions', () => ({
+	useUnread: () => ({ data: { items: [] } }),
+}))
+
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: (...args: unknown[]) => mockUseActors(...args),
 }))

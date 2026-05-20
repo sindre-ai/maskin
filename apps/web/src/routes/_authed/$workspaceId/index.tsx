@@ -3,7 +3,9 @@ import { PulseCard } from '@/components/pulse/pulse-card'
 import { PulseFilters } from '@/components/pulse/pulse-filters'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
+import { TypeBadge } from '@/components/shared/type-badge'
 import { SindrePulseBar } from '@/components/sindre/sindre-pulse-bar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
@@ -12,6 +14,7 @@ import {
 	useRespondNotification,
 	useUpdateNotification,
 } from '@/hooks/use-notifications'
+import { useUnread } from '@/hooks/use-subscriptions'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
 import { resolveNavigationTarget } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -100,6 +103,10 @@ function PulseDashboard() {
 
 	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length
 
+	const { data: unread } = useUnread(workspaceId)
+	const unreadItems = unread?.items ?? []
+	const unreadTotal = unreadItems.reduce((sum, item) => sum + item.unread_count, 0)
+
 	return (
 		<Tabs defaultValue="overview">
 			<SindrePulseBar workspaceId={workspaceId} sindreActorId={sindreActorId} className="mb-6" />
@@ -121,6 +128,54 @@ function PulseDashboard() {
 							? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
 							: ''}
 					</p>
+
+					{unreadItems.length > 0 && (
+						<div className="mb-6">
+							<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+								Unread comments
+								<span className="ml-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-medium normal-case tracking-normal">
+									{unreadTotal}
+								</span>
+							</h3>
+							<ul className="space-y-2">
+								{unreadItems.map((item) => {
+									const title = item.object?.title ?? 'Untitled'
+									const path =
+										item.entity_type === 'object'
+											? `/${workspaceId}/objects/${item.entity_id}`
+											: null
+									return (
+										<li key={`${item.entity_type}-${item.entity_id}`}>
+											<button
+												type="button"
+												onClick={() => {
+													if (path) navigate({ to: path })
+												}}
+												disabled={!path}
+												className="w-full flex items-center justify-between gap-3 rounded-md border border-border bg-bg-surface px-3 py-2 hover:bg-bg-hover transition-colors text-left"
+											>
+												<div className="min-w-0 flex-1">
+													<div className="flex items-center gap-2">
+														{item.object?.type && <TypeBadge type={item.object.type} />}
+														<span className="text-sm font-medium truncate">{title}</span>
+													</div>
+													{item.latest_activity_at && (
+														<RelativeTime
+															date={item.latest_activity_at}
+															className="text-[11px] text-muted-foreground"
+														/>
+													)}
+												</div>
+												<span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-accent text-accent-foreground text-[11px] font-medium shrink-0">
+													{item.unread_count}
+												</span>
+											</button>
+										</li>
+									)
+								})}
+							</ul>
+						</div>
+					)}
 
 					{isLoading ? (
 						<div className="space-y-4">

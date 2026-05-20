@@ -141,6 +141,7 @@ function createChain(
 		'set',
 		'delete',
 		'innerJoin',
+		'leftJoin',
 		'onConflictDoUpdate',
 		'onConflictDoNothing',
 		'for',

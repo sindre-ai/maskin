@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, notifications, objects } from '@maskin/db/schema'
+import { events, actors, notifications, objects, subscriptions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt } from 'drizzle-orm'
@@ -248,6 +248,23 @@ app.openapi(createCommentRoute, (async (c) => {
 				}
 			}
 		}
+
+		// Auto-subscribe the commenter — anyone who comments on an entity
+		// starts watching it for future activity (Slack-channel-style). On
+		// conflict we keep the existing source so author/manual subscriptions
+		// are never downgraded to 'commenter'.
+		await tx
+			.insert(subscriptions)
+			.values({
+				workspaceId,
+				actorId,
+				entityType: created.entityType,
+				entityId: created.entityId,
+				source: 'commenter',
+			})
+			.onConflictDoNothing({
+				target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
+			})
 
 		return { comment: created, agentMentions: mentions }
 	})
