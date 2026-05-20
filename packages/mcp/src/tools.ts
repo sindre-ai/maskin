@@ -527,7 +527,7 @@ export const tools = {
 		}),
 	},
 	create_comment: {
-		description: `Post a short, Slack-thread-style comment on an object. Hard limit: ${COMMENT_MAX_LENGTH} characters — keep comments concise and split longer messages into multiple comments or threaded replies. The API will reject anything over the limit with a validation error. Set parent_event_id to thread a reply under an existing comment (use the id returned by get_comments). Include mentions as an array of actor UUIDs — for each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. Mentioning human actors does nothing automatic.`,
+		description: `Post a comment on an object. Write it like a Slack message: short, concise, easy to read, and human — not a report or formal write-up. Plain conversational language, no headings or long bulleted sections, and break longer thoughts into multiple short comments or threaded replies rather than one wall of text. Hard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. Set parent_event_id to thread a reply under an existing comment (use the id returned by get_comments). Include mentions as an array of actor UUIDs — for each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. Mentioning human actors does nothing automatic.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
