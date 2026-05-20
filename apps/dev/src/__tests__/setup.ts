@@ -252,7 +252,7 @@ export function createSessionTestApp(
 	actorType = 'human',
 ) {
 	const app = new CreateOpenAPIHono<Env>()
-	const { db, mockResults } = createTestContext()
+	const { db, mockResults, calls } = createTestContext()
 	const sessionManager = createMockSessionManager()
 
 	app.use('*', async (c, next) => {
@@ -265,7 +265,7 @@ export function createSessionTestApp(
 	})
 
 	app.route(basePath, routeModule)
-	return { app, db, mockResults, sessionManager }
+	return { app, db, mockResults, sessionManager, calls }
 }
 
 /**
