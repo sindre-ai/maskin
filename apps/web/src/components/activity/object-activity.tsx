@@ -3,7 +3,7 @@ import { useEventVisible } from '@/hooks/use-event-visible'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { formatStatusTransitionShort } from '@maskin/shared'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
 import { UnreadBadge } from '../shared/unread-badge'
 import { Button } from '../ui/button'
@@ -48,6 +48,13 @@ export function ObjectActivity({
 
 	const markRead = useMarkRead(workspaceId)
 	const markedRef = useRef(0)
+	// Reset the per-object high-water-mark when navigating between objects —
+	// the component instance may be reused by the router, so a stale value
+	// from object A would suppress a valid mark-read for object B.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: object.id is the trigger, not a value read inside.
+	useEffect(() => {
+		markedRef.current = 0
+	}, [object.id])
 	const unreadCount = object.unread_count ?? 0
 
 	const handleSeenBottom = useCallback(

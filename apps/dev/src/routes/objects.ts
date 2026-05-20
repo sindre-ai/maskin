@@ -1,6 +1,14 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, objects, relationships, workspaces } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	objects,
+	readState,
+	relationships,
+	subscriptions,
+	workspaces,
+} from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
@@ -745,7 +753,21 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 		return c.json({ mode: 'delete' as const, fromType: body.fromType, count: 0 }, 200)
 	}
 
+	const deletedIds = toDelete.map(({ id }) => id)
+
 	await db.transaction(async (tx) => {
+		// Clean up polymorphic subscription + read_state rows before the
+		// objects vanish — there is no FK because (entity_type, entity_id)
+		// is polymorphic, so cascade can't do this for us.
+		await tx
+			.delete(subscriptions)
+			.where(
+				and(eq(subscriptions.entityType, 'object'), inArray(subscriptions.entityId, deletedIds)),
+			)
+		await tx
+			.delete(readState)
+			.where(and(eq(readState.entityType, 'object'), inArray(readState.entityId, deletedIds)))
+
 		await tx
 			.delete(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
@@ -776,15 +798,26 @@ app.openapi(deleteObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	await db.delete(objects).where(eq(objects.id, id))
+	await db.transaction(async (tx) => {
+		// Polymorphic subscription + read_state rows aren't FK'd to objects, so
+		// drop them explicitly to avoid orphans pointing at a freed entity_id.
+		await tx
+			.delete(subscriptions)
+			.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
+		await tx
+			.delete(readState)
+			.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))
 
-	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
-		actorId,
-		action: 'deleted',
-		entityType: existing.type,
-		entityId: id,
-		data: existing,
+		await tx.delete(objects).where(eq(objects.id, id))
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: existing.type,
+			entityId: id,
+			data: existing,
+		})
 	})
 
 	return c.json({ deleted: true as const }, 200)
