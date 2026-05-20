@@ -13,6 +13,7 @@ interface CommentInputProps {
 	workspaceId: string
 	objectId: string
 	parentEventId?: number
+	onSubmitted?: () => void
 }
 
 // ~6 lines at text-sm (line-height 20px) + py-1.5 (12px) + 2px border
@@ -22,7 +23,12 @@ const MAX_INPUT_HEIGHT_PX = 134
 // limit. Keeps the UI quiet for the common short-comment case.
 const COUNTER_VISIBILITY_THRESHOLD = 0.9
 
-export function CommentInput({ workspaceId, objectId, parentEventId }: CommentInputProps) {
+export function CommentInput({
+	workspaceId,
+	objectId,
+	parentEventId,
+	onSubmitted,
+}: CommentInputProps) {
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
 	const { data: actors } = useActors(workspaceId)
@@ -146,10 +152,11 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 				onSuccess: () => {
 					setContent('')
 					setMentions([])
+					onSubmitted?.()
 				},
 			},
 		)
-	}, [content, mentions, actors, objectId, parentEventId, createComment])
+	}, [content, mentions, actors, objectId, parentEventId, createComment, onSubmitted])
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {

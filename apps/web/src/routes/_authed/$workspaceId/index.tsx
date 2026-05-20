@@ -1,213 +1,49 @@
-import { WhatsHappening } from '@/components/overview/whats-happening'
-import { PulseCard } from '@/components/pulse/pulse-card'
-import { PulseFilters } from '@/components/pulse/pulse-filters'
+import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
-import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
-import { TypeBadge } from '@/components/shared/type-badge'
-import { UnreadBadge } from '@/components/shared/unread-badge'
-import { SindrePulseBar } from '@/components/sindre/sindre-pulse-bar'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useActors } from '@/hooks/use-actors'
-import {
-	useNotifications,
-	useRespondNotification,
-	useUpdateNotification,
-} from '@/hooks/use-notifications'
 import { useUnread } from '@/hooks/use-subscriptions'
-import type { ActorListItem, NotificationResponse } from '@/lib/api'
-import { resolveNavigationTarget } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
-import { toast } from 'sonner'
+import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
-	component: PulseDashboard,
+	component: ForYouDashboard,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function PulseDashboard() {
+function ForYouDashboard() {
 	const { workspaceId } = useWorkspace()
-	const { data: notifications, isLoading } = useNotifications(workspaceId, {
-		status: 'pending,seen',
-	})
-	const { data: actors } = useActors(workspaceId)
-	const updateNotification = useUpdateNotification(workspaceId)
-	const respondNotification = useRespondNotification(workspaceId)
-	const navigate = useNavigate()
-	const [activeFilter, setActiveFilter] = useState('all')
+	const { data, isLoading } = useUnread(workspaceId)
+	const items = data?.items ?? []
 
-	const actorsById = useMemo(() => {
-		const map = new Map<string, ActorListItem>()
-		for (const actor of actors ?? []) {
-			map.set(actor.id, actor)
-		}
-		return map
-	}, [actors])
-
-	// Resolve the per-workspace Sindre meta-agent so the Pulse input bar can
-	// forward to the same session the workspace-layout sheet is bound to.
-	const sindreActorId = useMemo(
-		() => actors?.find((a) => a.type === 'agent' && a.name === 'Sindre')?.id ?? null,
-		[actors],
-	)
-
-	const activeNotifications = notifications ?? []
-
-	const filtered = useMemo(() => {
-		if (activeFilter === 'all') return activeNotifications
-		return activeNotifications.filter((n) => n.type === activeFilter)
-	}, [activeNotifications, activeFilter])
-
-	const counts = useMemo(() => {
-		const c: Record<string, number> = { all: activeNotifications.length }
-		for (const n of activeNotifications) {
-			c[n.type] = (c[n.type] ?? 0) + 1
-		}
-		return c
-	}, [activeNotifications])
-
-	const handleAction = (
-		notification: NotificationResponse,
-		response: unknown,
-		nav?: { to: string; id?: string },
-	) => {
-		respondNotification.mutate(
-			{ id: notification.id, response },
-			{
-				onSuccess: () => {
-					if (nav) {
-						const target = resolveNavigationTarget(workspaceId, nav, notification)
-						if (target) navigate({ to: target.path, search: target.search })
-						else toast.warning('Could not navigate to the requested page.')
-					}
-				},
-				onError: () => {
-					toast.error('Failed to respond. Please try again.')
-				},
-			},
+	if (isLoading) {
+		return (
+			<div className="space-y-4">
+				<CardSkeleton />
+				<CardSkeleton />
+				<CardSkeleton />
+			</div>
 		)
 	}
 
-	const handleDismiss = (id: string) => {
-		updateNotification.mutate(
-			{ id, data: { status: 'dismissed' } },
-			{
-				onError: () => {
-					toast.error('Failed to dismiss. Please try again.')
-				},
-			},
+	if (items.length === 0) {
+		return (
+			<EmptyState
+				title="All caught up"
+				description="New comments and replies on things you're subscribed to will appear here."
+			/>
 		)
 	}
-
-	const pendingCount = activeNotifications.filter((n) => n.status === 'pending').length
-
-	const { data: unread } = useUnread(workspaceId)
-	const unreadItems = unread?.items ?? []
-	const unreadTotal = unreadItems.reduce((sum, item) => sum + item.unread_count, 0)
 
 	return (
-		<Tabs defaultValue="overview">
-			<SindrePulseBar workspaceId={workspaceId} sindreActorId={sindreActorId} className="mb-6" />
-			<TabsList>
-				<TabsTrigger value="overview">Overview</TabsTrigger>
-				<TabsTrigger value="notifications">
-					Notifications{pendingCount > 0 && ` (${pendingCount})`}
-				</TabsTrigger>
-			</TabsList>
-
-			<TabsContent value="overview">
-				<WhatsHappening />
-			</TabsContent>
-
-			<TabsContent value="notifications">
-				<div>
-					<p className="text-sm text-muted-foreground pb-6">
-						{pendingCount > 0
-							? `${pendingCount} ${pendingCount === 1 ? 'thing needs' : 'things need'} your attention. The rest is handled.`
-							: ''}
-					</p>
-
-					{unreadItems.length > 0 && (
-						<div className="mb-6">
-							<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
-								Unread comments
-								<UnreadBadge count={unreadTotal} className="ml-2 normal-case tracking-normal" />
-							</h3>
-							<ul className="space-y-2">
-								{unreadItems.map((item) => {
-									const title = item.object?.title ?? 'Untitled'
-									const path =
-										item.entity_type === 'object'
-											? `/${workspaceId}/objects/${item.entity_id}`
-											: null
-									return (
-										<li key={`${item.entity_type}-${item.entity_id}`}>
-											<button
-												type="button"
-												onClick={() => {
-													if (path) navigate({ to: path })
-												}}
-												disabled={!path}
-												className="w-full flex items-center justify-between gap-3 rounded-md border border-border bg-bg-surface px-3 py-2 hover:bg-bg-hover transition-colors text-left"
-											>
-												<div className="min-w-0 flex-1">
-													<div className="flex items-center gap-2">
-														{item.object?.type && <TypeBadge type={item.object.type} />}
-														<span className="text-sm font-medium truncate">{title}</span>
-													</div>
-													{item.latest_activity_at && (
-														<RelativeTime
-															date={item.latest_activity_at}
-															className="text-xs text-muted-foreground"
-														/>
-													)}
-												</div>
-												<UnreadBadge count={item.unread_count} className="shrink-0" />
-											</button>
-										</li>
-									)
-								})}
-							</ul>
-						</div>
-					)}
-
-					{isLoading ? (
-						<div className="space-y-4">
-							<CardSkeleton />
-							<CardSkeleton />
-							<CardSkeleton />
-						</div>
-					) : activeNotifications.length === 0 ? (
-						<EmptyState
-							title="No notifications yet"
-							description="Agents will notify you here when they need your input or have recommendations."
-						/>
-					) : (
-						<>
-							<PulseFilters active={activeFilter} onChange={setActiveFilter} counts={counts} />
-							<div className="space-y-4">
-								{filtered.map((notification) => (
-									<PulseCard
-										key={notification.id}
-										notification={notification}
-										actorsById={actorsById}
-										onAction={handleAction}
-										onDismiss={handleDismiss}
-									/>
-								))}
-							</div>
-							{filtered.length === 0 && (
-								<p className="text-sm text-muted-foreground text-center py-8">
-									No {activeFilter.replace('_', ' ')} notifications
-								</p>
-							)}
-						</>
-					)}
-				</div>
-			</TabsContent>
-		</Tabs>
+		<div className="space-y-4">
+			{items.map((item) => (
+				<UnreadThreadCard
+					key={`${item.entity_type}-${item.entity_id}`}
+					workspaceId={workspaceId}
+					item={item}
+				/>
+			))}
+		</div>
 	)
 }

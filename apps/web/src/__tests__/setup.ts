@@ -31,6 +31,22 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 	globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver
 }
 
+// jsdom doesn't ship IntersectionObserver; stub a no-op so lazy-load and
+// visibility-gated hooks don't crash. Tests that need to drive intersections
+// should override this global locally.
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+	class IntersectionObserverStub {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+		takeRecords() {
+			return []
+		}
+	}
+	globalThis.IntersectionObserver =
+		IntersectionObserverStub as unknown as typeof IntersectionObserver
+}
+
 export function createTestQueryClient() {
 	return new QueryClient({
 		defaultOptions: {

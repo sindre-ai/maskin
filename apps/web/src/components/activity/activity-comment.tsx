@@ -24,6 +24,8 @@ interface ActivityCommentProps {
 	workspaceId: string
 	objectId: string
 	mentionSessions?: SessionResponse[]
+	dividerBeforeReplyId?: number
+	divider?: React.ReactNode
 }
 
 interface CommentRowProps {
@@ -79,6 +81,8 @@ export function ActivityComment({
 	workspaceId,
 	objectId,
 	mentionSessions = [],
+	dividerBeforeReplyId,
+	divider,
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
@@ -105,12 +109,14 @@ export function ActivityComment({
 			{hasReplies && (
 				<div className="ml-7 space-y-0.5">
 					{replies.map((reply, idx) => (
-						<CommentRow
-							key={reply.id}
-							event={reply}
-							actors={actorList}
-							onReply={idx === replies.length - 1 ? openReplyInput : undefined}
-						/>
+						<div key={reply.id}>
+							{divider && dividerBeforeReplyId === reply.id && divider}
+							<CommentRow
+								event={reply}
+								actors={actorList}
+								onReply={idx === replies.length - 1 ? openReplyInput : undefined}
+							/>
+						</div>
 					))}
 				</div>
 			)}

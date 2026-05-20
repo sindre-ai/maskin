@@ -9,11 +9,15 @@ export function useEvents(workspaceId: string, filters?: Record<string, string>)
 	})
 }
 
-export function useEntityEvents(workspaceId: string, entityId: string) {
+export function useEntityEvents(
+	workspaceId: string,
+	entityId: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
 	return useQuery({
 		queryKey: queryKeys.events.byEntity(entityId),
 		queryFn: () => api.events.history(workspaceId, { entity_id: entityId, limit: '50' }),
-		enabled: !!entityId,
+		enabled: enabled && !!entityId,
 	})
 }
 
