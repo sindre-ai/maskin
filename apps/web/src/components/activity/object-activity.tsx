@@ -3,7 +3,11 @@ import { useEventVisible } from '@/hooks/use-event-visible'
 import { useMentionSessionsForObject } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse, SessionResponse } from '@/lib/api'
-import { type SessionMentionContext, formatStatusTransitionShort } from '@maskin/shared'
+import {
+	type SessionMentionContext,
+	type SessionThreadReplyContext,
+	formatStatusTransitionShort,
+} from '@maskin/shared'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
 import { UnreadBadge } from '../shared/unread-badge'
@@ -84,11 +88,16 @@ export function ObjectActivity({
 	const sessionsByComment = useMemo(() => {
 		const map = new Map<number, SessionResponse[]>()
 		for (const session of mentionSessions ?? []) {
-			const mention = (session.config as { mention?: SessionMentionContext } | null)?.mention
-			if (!mention) continue
-			const existing = map.get(mention.comment_event_id) ?? []
+			const config = session.config as {
+				mention?: SessionMentionContext
+				thread_reply?: SessionThreadReplyContext
+			} | null
+			const commentEventId =
+				config?.mention?.comment_event_id ?? config?.thread_reply?.comment_event_id
+			if (commentEventId === undefined) continue
+			const existing = map.get(commentEventId) ?? []
 			existing.push(session)
-			map.set(mention.comment_event_id, existing)
+			map.set(commentEventId, existing)
 		}
 		return map
 	}, [mentionSessions])
