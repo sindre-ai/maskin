@@ -404,7 +404,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 	const [subscribed, unreadCount, subscriberCount] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
-		getSubscriberCount(db, { entityType: 'object', entityId: id }),
+		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
 	])
 
 	return c.json(
@@ -463,7 +463,11 @@ app.openapi(getObjectRoute, async (c) => {
 			entityType: 'object',
 			entityId: id,
 		}),
-		getSubscriberCount(db, { entityType: 'object', entityId: id }),
+		getSubscriberCount(db, {
+			workspaceId: object.workspaceId,
+			entityType: 'object',
+			entityId: id,
+		}),
 	])
 
 	return c.json(

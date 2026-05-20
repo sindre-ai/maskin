@@ -147,14 +147,35 @@ const listSubscribersRoute = createRoute({
 			description: 'Subscribers',
 			content: { 'application/json': { schema: subscribersResponseSchema } },
 		},
+		404: {
+			description: 'Entity not found in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
 app.openapi(listSubscribersRoute, (async (c) => {
 	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { entity_type, entity_id } = c.req.valid('query')
 
-	const rows = await getSubscribers(db, { entityType: entity_type, entityId: entity_id })
+	// Verify the entity belongs to the caller's workspace before exposing
+	// its subscriber list — otherwise any workspace member could probe
+	// cross-workspace entity IDs and read back W2's subscriber actors.
+	if (entity_type === 'object') {
+		const [obj] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.id, entity_id), eq(objects.workspaceId, workspaceId)))
+			.limit(1)
+		if (!obj) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	const rows = await getSubscribers(db, {
+		workspaceId,
+		entityType: entity_type,
+		entityId: entity_id,
+	})
 	return c.json({ actors: rows })
 }) as RouteHandler<typeof listSubscribersRoute, Env>)
 
@@ -261,11 +282,15 @@ app.openapi(listUnreadRoute, (async (c) => {
 
 	// Hydrate object summaries for entity_type='object'. Other entity types just
 	// return the raw counts in v1 — UI consumers add their own loader when they
-	// become subscribable.
+	// become subscribable. Scoped to workspaceId so a stale subscription row
+	// pointing at a foreign object can never expose it cross-workspace.
 	const objectIds = rows.filter((r) => r.entityType === 'object').map((r) => r.entityId)
 	const objectsById = new Map<string, typeof objects.$inferSelect>()
 	if (objectIds.length > 0) {
-		const fetched = await db.select().from(objects).where(inArray(objects.id, objectIds))
+		const fetched = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, objectIds)))
 		for (const o of fetched) objectsById.set(o.id, o)
 	}
 

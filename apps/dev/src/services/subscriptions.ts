@@ -81,12 +81,19 @@ export async function isSubscribed(
 	return Boolean(row)
 }
 
-export async function getSubscriberCount(db: Database, args: EntityRef): Promise<number> {
+export async function getSubscriberCount(
+	db: Database,
+	args: { workspaceId: string } & EntityRef,
+): Promise<number> {
 	const [row] = await db
 		.select({ value: count() })
 		.from(subscriptions)
 		.where(
-			and(eq(subscriptions.entityType, args.entityType), eq(subscriptions.entityId, args.entityId)),
+			and(
+				eq(subscriptions.workspaceId, args.workspaceId),
+				eq(subscriptions.entityType, args.entityType),
+				eq(subscriptions.entityId, args.entityId),
+			),
 		)
 	return row?.value ?? 0
 }
@@ -98,13 +105,20 @@ export interface SubscriberRow {
 }
 
 /** List subscribers (joined to actors for name/type — used by the avatar stack). */
-export async function getSubscribers(db: Database, args: EntityRef): Promise<SubscriberRow[]> {
+export async function getSubscribers(
+	db: Database,
+	args: { workspaceId: string } & EntityRef,
+): Promise<SubscriberRow[]> {
 	return db
 		.select({ id: actors.id, type: actors.type, name: actors.name })
 		.from(subscriptions)
 		.innerJoin(actors, eq(subscriptions.actorId, actors.id))
 		.where(
-			and(eq(subscriptions.entityType, args.entityType), eq(subscriptions.entityId, args.entityId)),
+			and(
+				eq(subscriptions.workspaceId, args.workspaceId),
+				eq(subscriptions.entityType, args.entityType),
+				eq(subscriptions.entityId, args.entityId),
+			),
 		)
 }
 

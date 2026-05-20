@@ -98,11 +98,12 @@ describe('Subscriptions Routes', () => {
 
 	describe('GET /api/subscriptions/subscribers', () => {
 		it('returns the joined subscribers list', async () => {
+			const entityId = randomUUID()
 			const actorRow = { id: randomUUID(), type: 'human', name: 'Alice' }
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			mockResults.select = [actorRow]
+			// 1) entity-in-workspace check, 2) subscribers join.
+			mockResults.selectQueue = [[{ id: entityId }], [actorRow]]
 
-			const entityId = randomUUID()
 			const res = await app.request(
 				jsonGet(`/api/subscriptions/subscribers?entity_type=object&entity_id=${entityId}`, headers),
 			)
@@ -112,10 +113,12 @@ describe('Subscriptions Routes', () => {
 			expect(body.actors).toEqual([actorRow])
 		})
 
-		it('returns empty list when no subscribers', async () => {
-			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-
+		it('returns empty list when entity has no subscribers in this workspace', async () => {
 			const entityId = randomUUID()
+			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
+			// Entity exists, but no subscribers.
+			mockResults.selectQueue = [[{ id: entityId }], []]
+
 			const res = await app.request(
 				jsonGet(`/api/subscriptions/subscribers?entity_type=object&entity_id=${entityId}`, headers),
 			)
@@ -123,6 +126,20 @@ describe('Subscriptions Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.actors).toEqual([])
+		})
+
+		it('returns 404 when the entity is not in this workspace', async () => {
+			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
+			// no selectQueue → entity-exists check returns [] → 404.
+
+			const res = await app.request(
+				jsonGet(
+					`/api/subscriptions/subscribers?entity_type=object&entity_id=${randomUUID()}`,
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(404)
 		})
 
 		it('returns 400 when entity_id is missing', async () => {
