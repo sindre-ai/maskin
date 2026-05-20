@@ -68,6 +68,8 @@ export const createSessionSchema = z.object({
 export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
+	mention_object_id: z.string().uuid().optional(),
+	mention_comment_event_id: z.coerce.number().int().positive().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
 })

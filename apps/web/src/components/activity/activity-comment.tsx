@@ -1,5 +1,5 @@
 import { useActor, useActors } from '@/hooks/use-actors'
-import type { ActorListItem, EventResponse } from '@/lib/api'
+import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Reply } from 'lucide-react'
 import { useState } from 'react'
@@ -7,6 +7,7 @@ import { ActorAvatar } from '../shared/actor-avatar'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
+import { MentionSessionCard } from './mention-session-card'
 
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
 
@@ -22,6 +23,7 @@ interface ActivityCommentProps {
 	replies?: EventResponse[]
 	workspaceId: string
 	objectId: string
+	mentionSessions?: SessionResponse[]
 }
 
 interface CommentRowProps {
@@ -76,6 +78,7 @@ export function ActivityComment({
 	replies = [],
 	workspaceId,
 	objectId,
+	mentionSessions = [],
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
@@ -90,6 +93,14 @@ export function ActivityComment({
 				actors={actorList}
 				onReply={hasReplies ? undefined : openReplyInput}
 			/>
+
+			{mentionSessions.length > 0 && (
+				<div className="ml-7 mt-1 space-y-1">
+					{mentionSessions.map((session) => (
+						<MentionSessionCard key={session.id} session={session} workspaceId={workspaceId} />
+					))}
+				</div>
+			)}
 
 			{hasReplies && (
 				<div className="ml-7 space-y-0.5">

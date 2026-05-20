@@ -126,6 +126,14 @@ app.openapi(listSessionsRoute, (async (c) => {
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
+	if (query.mention_object_id) {
+		conditions.push(sql`${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id}`)
+	}
+	if (query.mention_comment_event_id !== undefined) {
+		conditions.push(
+			sql`${sessions.config}->'mention'->>'comment_event_id' = ${String(query.mention_comment_event_id)}`,
+		)
+	}
 
 	const results = await db
 		.select()

@@ -69,6 +69,53 @@ describe('Sessions Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 		})
+
+		it('accepts mention_object_id query parameter', async () => {
+			const objectId = '00000000-0000-0000-0000-0000000000aa'
+			const s1 = buildSession({
+				workspaceId: wsId,
+				config: { mention: { object_id: objectId, comment_event_id: 7 } },
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [s1]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions?mention_object_id=${objectId}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+		})
+
+		it('accepts mention_comment_event_id query parameter', async () => {
+			const s1 = buildSession({
+				workspaceId: wsId,
+				config: { mention: { comment_event_id: 42 } },
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [s1]
+
+			const res = await app.request(
+				jsonGet('/api/sessions?mention_comment_event_id=42', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+		})
+
+		it('rejects non-numeric mention_comment_event_id', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonGet('/api/sessions?mention_comment_event_id=not-a-number', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
 	})
 
 	describe('GET /api/sessions/:id', () => {
