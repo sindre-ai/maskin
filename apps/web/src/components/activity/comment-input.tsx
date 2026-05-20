@@ -127,7 +127,7 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 	const handleSubmit = useCallback(() => {
 		const trimmed = content.trim()
 		if (!trimmed) return
-		if (trimmed.length > COMMENT_MAX_LENGTH) return
+		if (content.length > COMMENT_MAX_LENGTH) return
 
 		// Reconcile mentions: only include actors whose @Name is still in the text
 		const activeMentions = mentions.filter((id) => {

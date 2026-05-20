@@ -177,5 +177,17 @@ describe('CommentInput', () => {
 			await user.keyboard('{Enter}')
 			expect(mockMutate).not.toHaveBeenCalled()
 		})
+
+		// Regression: raw length and trimmed length must agree on whether to block
+		// submit, otherwise trailing whitespace at the boundary lets Enter sneak
+		// through while the UI shows the input as over the limit.
+		it('does not submit when raw length is over the limit but trimmed length is not', async () => {
+			const user = userEvent.setup()
+			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+			const ta = setValue(`${'x'.repeat(COMMENT_MAX_LENGTH)}  `)
+			ta.focus()
+			await user.keyboard('{Enter}')
+			expect(mockMutate).not.toHaveBeenCalled()
+		})
 	})
 })
