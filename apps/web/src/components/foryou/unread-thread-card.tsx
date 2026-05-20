@@ -9,7 +9,7 @@ import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { Link } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface UnreadThreadCardProps {
 	workspaceId: string
@@ -21,12 +21,24 @@ interface CommentNode {
 	replies: EventResponse[]
 }
 
+// Cards within this distance of the viewport start fetching their events, so
+// the next card or two below the fold is ready by the time the user scrolls.
+const PREFETCH_ROOT_MARGIN = '400px'
+
 /**
- * Slack-style unread thread card: fixed-height scroll body anchored to the
- * bottom on mount so the unread tail is visible by default. A "New" divider
- * sits before the first thread containing unread activity; scrolling up
- * reveals older threads on the same object. CommentInput is pinned below the
- * scroll area so the reply input is always reachable.
+ * Unread thread card: shows the comment thread for one subscribed object with
+ * a red "New" divider before the first thread containing unread activity.
+ * CommentInput is pinned below the scroll area so the reply input is always
+ * reachable.
+ *
+ * Lazy-fetches per-entity events: `useEntityEvents` only fires once the card
+ * is within PREFETCH_ROOT_MARGIN of the viewport, so a page with N unread
+ * threads doesn't fan out into N parallel network requests on mount.
+ *
+ * On first load, if the divider would fall outside the scroll body, the body
+ * is scrolled (locally — never the page) so the divider sits near the top
+ * with a peek of read context above it. This fires once per card; new
+ * comments arriving via SSE never re-yank the scroll position.
  *
  * Mark-read is explicit: it only fires when the user clicks "Mark as read" or
  * successfully posts a reply. Mounting the card does not advance the read
@@ -34,7 +46,29 @@ interface CommentNode {
  */
 export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 	const objectId = item.entity_id
-	const { data: events } = useEntityEvents(workspaceId, objectId)
+
+	const cardRef = useRef<HTMLDivElement>(null)
+	const [hasBeenVisible, setHasBeenVisible] = useState(false)
+	useEffect(() => {
+		if (hasBeenVisible) return
+		const node = cardRef.current
+		if (!node) return
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((entry) => entry.isIntersecting)) {
+					setHasBeenVisible(true)
+					observer.disconnect()
+				}
+			},
+			{ rootMargin: PREFETCH_ROOT_MARGIN },
+		)
+		observer.observe(node)
+		return () => observer.disconnect()
+	}, [hasBeenVisible])
+
+	const { data: events } = useEntityEvents(workspaceId, objectId, {
+		enabled: hasBeenVisible,
+	})
 	const currentActorId = getStoredActor()?.id ?? null
 
 	const { nodes, firstUnreadRootId, latestEventId } = useMemo(() => {
@@ -108,23 +142,34 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 		markRead.mutate({ entityType: 'object', entityId: objectId, lastEventId: target })
 	}, [markRead, objectId, item.latest_event_id, latestEventId])
 
-	// Anchor the scroll body to the bottom on mount and whenever the newest
-	// event id changes (new comment arrives via SSE invalidation). Older
-	// threads stay off-screen above until the user scrolls up.
-	const scrollRef = useRef<HTMLDivElement>(null)
-	// biome-ignore lint/correctness/useExhaustiveDependencies: latestEventId is the trigger; the effect only reads the ref.
+	// Position the "New" divider into the scroll body on first render. Done
+	// manually instead of `scrollIntoView` to keep the scroll fully contained
+	// to the card — the page scroll position never moves.
+	const scrollBodyRef = useRef<HTMLDivElement>(null)
+	const dividerRef = useRef<HTMLDivElement>(null)
+	const didPositionDividerRef = useRef(false)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: firstUnreadRootId is the trigger — once it resolves the divider mounts and the effect reads it via the ref.
 	useEffect(() => {
-		const node = scrollRef.current
-		if (!node) return
-		node.scrollTop = node.scrollHeight
-	}, [latestEventId])
+		if (didPositionDividerRef.current) return
+		const body = scrollBodyRef.current
+		const divider = dividerRef.current
+		if (!body || !divider) return
+		const bodyRect = body.getBoundingClientRect()
+		const dividerRect = divider.getBoundingClientRect()
+		const isVisible = dividerRect.top >= bodyRect.top && dividerRect.bottom <= bodyRect.bottom
+		if (!isVisible) {
+			// Place the divider 16px from the top so a hint of read context shows.
+			body.scrollTop += dividerRect.top - bodyRect.top - 16
+		}
+		didPositionDividerRef.current = true
+	}, [firstUnreadRootId])
 
 	const title = item.object?.title ?? 'Untitled'
 	const objectType = item.object?.type
 	const titlePath = `/${workspaceId}/objects/${objectId}`
 
 	return (
-		<div className="rounded-lg border border-border bg-card">
+		<div ref={cardRef} className="rounded-lg border border-border bg-card">
 			<div className="flex items-center gap-2 border-b border-border px-4 py-3">
 				{objectType && <TypeBadge type={objectType} />}
 				<Link to={titlePath} className="text-sm font-medium truncate hover:underline" title={title}>
@@ -148,14 +193,14 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 				</Button>
 			</div>
 
-			<div ref={scrollRef} className="h-96 overflow-y-auto px-4 py-3">
+			<div ref={scrollBodyRef} className="h-96 overflow-y-auto px-4 py-3">
 				{nodes.length === 0 ? (
 					<p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
 				) : (
 					<div className="space-y-1">
 						{nodes.map((node) => (
 							<div key={node.root.id}>
-								{firstUnreadRootId === node.root.id && <NewDivider />}
+								{firstUnreadRootId === node.root.id && <NewDivider ref={dividerRef} />}
 								<ActivityComment
 									event={node.root}
 									replies={node.replies}
@@ -175,9 +220,9 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 	)
 }
 
-function NewDivider() {
+function NewDivider({ ref }: { ref?: React.Ref<HTMLDivElement> }) {
 	return (
-		<div className="my-2 flex items-center gap-2" aria-label="Unread divider">
+		<div ref={ref} className="my-2 flex items-center gap-2" aria-label="Unread divider">
 			<div className="h-px flex-1 bg-error" />
 			<span className="text-xs font-medium text-error">New</span>
 		</div>
