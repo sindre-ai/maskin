@@ -357,6 +357,28 @@ export const api = {
 				method: 'DELETE',
 			}),
 	},
+
+	files: {
+		list: (workspaceId: string, params?: { q?: string; limit?: number; offset?: number }) => {
+			const qs = params
+				? `?${new URLSearchParams(
+						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
+							if (v !== undefined && v !== '') acc[k] = String(v)
+							return acc
+						}, {}),
+					)}`
+				: ''
+			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
+		},
+		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateFileInput) =>
+			request<FileDetail>('/files', { method: 'POST', body: data, workspaceId }),
+		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
+			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
+		delete: (workspaceId: string, id: string) =>
+			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
+		downloadUrl: (id: string) => `${API_BASE}/files/${id}/download`,
+	},
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -653,6 +675,39 @@ export interface CreateWorkspaceSkillInput {
 export interface UpdateWorkspaceSkillInput {
 	name?: string
 	content: string
+}
+
+export interface FileListItem {
+	id: string
+	workspaceId: string
+	name: string
+	description: string | null
+	mimeType: string
+	sizeBytes: number
+	storageKey: string
+	createdBy: string
+	createdAt: string
+	updatedAt: string
+}
+
+export interface FileDetail extends FileListItem {
+	content: string
+	url: string
+	downloadUrl: string
+}
+
+export interface CreateFileInput {
+	name: string
+	description?: string | null
+	mime_type: string
+	content: string
+}
+
+export interface UpdateFileInput {
+	name?: string
+	description?: string | null
+	mime_type?: string
+	content?: string
 }
 
 export interface SessionConfigInput {
