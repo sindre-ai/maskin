@@ -175,6 +175,22 @@ app.openapi(createCommentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404 as never)
 	}
 
+	// Collapse reply chains to the thread root. The comment model only supports
+	// one level of threading, so a reply to a reply must attach to the root
+	// instead — otherwise the UI silently drops the comment (it has nowhere to
+	// place a child-of-a-child). Walk up parentEventId until we find a comment
+	// with no parent of its own. Each step requires the ancestor to be a
+	// `commented` event on the same object; if the chain is broken (parent
+	// missing, on a different object, not a comment, or cyclic), drop
+	// parentEventId so the comment posts at top level rather than becoming an
+	// un-renderable orphan.
+	const parentEventId = await resolveRootParentEventId(
+		db,
+		workspaceId,
+		body.entity_id,
+		body.parent_event_id,
+	)
+
 	const { comment, agentMentions } = await db.transaction(async (tx) => {
 		const results = await tx
 			.insert(events)
@@ -187,7 +203,7 @@ app.openapi(createCommentRoute, (async (c) => {
 				data: {
 					content: body.content,
 					mentions: body.mentions,
-					parentEventId: body.parent_event_id,
+					parentEventId,
 				},
 			})
 			.returning()
@@ -288,6 +304,41 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	return c.json(serializeArray([comment])[0] as z.infer<typeof eventResponseSchema>, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
+
+async function resolveRootParentEventId(
+	db: Database,
+	workspaceId: string,
+	entityId: string,
+	parentEventId: number | undefined,
+): Promise<number | undefined> {
+	if (parentEventId === undefined) return undefined
+
+	const seen = new Set<number>()
+	let current: number = parentEventId
+	while (!seen.has(current)) {
+		seen.add(current)
+		const rows: Array<{ id: number; data: unknown }> = await db
+			.select({ id: events.id, data: events.data })
+			.from(events)
+			.where(
+				and(
+					eq(events.id, current),
+					eq(events.workspaceId, workspaceId),
+					eq(events.entityType, 'object'),
+					eq(events.entityId, entityId),
+					eq(events.action, 'commented'),
+				),
+			)
+			.limit(1)
+		const parent = rows[0]
+		if (!parent) return undefined
+		const parentData = parent.data as { parentEventId?: number | null } | null
+		const nextId = parentData?.parentEventId
+		if (nextId === undefined || nextId === null) return parent.id
+		current = nextId
+	}
+	return undefined
+}
 
 function buildMentionPrompt(ctx: {
 	objectId: string
