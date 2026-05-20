@@ -436,7 +436,12 @@ async function spawnThreadReplySessions(ctx: {
 				eq(events.action, 'commented'),
 				or(
 					eq(events.id, ctx.threadRootEventId),
-					sql`(${events.data}->>'parentEventId')::int = ${ctx.threadRootEventId}`,
+					// Compare as text rather than casting `(data->>'parentEventId')::int`:
+					// the cast throws on any row with a non-numeric value in the JSON
+					// field, which would tank the entire thread-reply spawn for every
+					// agent in the thread. Text comparison degrades to "no match" on
+					// malformed rows instead.
+					sql`${events.data}->>'parentEventId' = ${String(ctx.threadRootEventId)}`,
 				),
 			),
 		)
