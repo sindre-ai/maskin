@@ -127,7 +127,12 @@ app.openapi(listSessionsRoute, (async (c) => {
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
 	if (query.mention_object_id) {
-		conditions.push(sql`${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id}`)
+		// Match both @mention-triggered sessions and thread-reply auto-trigger
+		// sessions for this object so the UI can attach a live activity card
+		// under either kind of triggering comment in a single query.
+		conditions.push(
+			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
+		)
 	}
 
 	const results = await db
