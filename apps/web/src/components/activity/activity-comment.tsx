@@ -62,7 +62,7 @@ function CommentRow({ event, actors, onReply }: CommentRowProps) {
 					type="button"
 					onClick={onReply}
 					aria-label="Reply"
-					className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0 p-1 -m-1"
+					className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1"
 				>
 					<Reply size={14} />
 				</button>
