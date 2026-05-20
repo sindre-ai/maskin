@@ -27,18 +27,20 @@ const PREFETCH_ROOT_MARGIN = '400px'
 
 /**
  * Unread thread card: shows the comment thread for one subscribed object with
- * a red "New" divider before the first thread containing unread activity.
- * CommentInput is pinned below the scroll area so the reply input is always
- * reachable.
+ * a red "New" divider directly above the first unread comment (Slack-style),
+ * not above the whole thread the comment belongs to. CommentInput is pinned
+ * below the scroll area and posts as a reply to the unread thread when one
+ * exists, so the user's "Thanks!" lands inline instead of starting a new
+ * top-level thread.
  *
  * Lazy-fetches per-entity events: `useEntityEvents` only fires once the card
  * is within PREFETCH_ROOT_MARGIN of the viewport, so a page with N unread
  * threads doesn't fan out into N parallel network requests on mount.
  *
- * On first load, if the divider would fall outside the scroll body, the body
- * is scrolled (locally — never the page) so the divider sits near the top
- * with a peek of read context above it. This fires once per card; new
- * comments arriving via SSE never re-yank the scroll position.
+ * On first load the scroll body is pinned to the bottom so the most recent
+ * activity is visible (and older threads are reachable by scrolling up).
+ * This fires once per card; new comments arriving via SSE never re-yank the
+ * scroll position.
  *
  * Mark-read is explicit: it only fires when the user clicks "Mark as read" or
  * successfully posts a reply. Mounting the card does not advance the read
@@ -71,67 +73,84 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 	})
 	const currentActorId = getStoredActor()?.id ?? null
 
-	const { nodes, firstUnreadRootId, latestEventId } = useMemo(() => {
-		if (!events) {
+	const { nodes, firstUnreadRootId, firstUnreadEventId, latestRootId, latestEventId } =
+		useMemo(() => {
+			if (!events) {
+				return {
+					nodes: [] as CommentNode[],
+					firstUnreadRootId: null as number | null,
+					firstUnreadEventId: null as number | null,
+					latestRootId: null as number | null,
+					latestEventId: 0,
+				}
+			}
+			const chronological = [...events].reverse()
+
+			const repliesByParent = new Map<number, EventResponse[]>()
+			const roots: EventResponse[] = []
+			for (const event of chronological) {
+				if (event.action !== 'commented') continue
+				const parentId = event.data?.parentEventId as number | undefined
+				if (parentId) {
+					const list = repliesByParent.get(parentId) ?? []
+					list.push(event)
+					repliesByParent.set(parentId, list)
+					continue
+				}
+				roots.push(event)
+			}
+
+			const built: CommentNode[] = roots.map((root) => ({
+				root,
+				replies: repliesByParent.get(root.id) ?? [],
+			}))
+
+			let maxId = 0
+			for (const node of built) {
+				if (node.root.id > maxId) maxId = node.root.id
+				for (const reply of node.replies) if (reply.id > maxId) maxId = reply.id
+			}
+
+			// Walk the *flat* timeline (root + replies in chronological order)
+			// from the newest backward, counting comments that don't belong to
+			// the viewer. item.unread_count anchors the boundary so the divider
+			// always reflects the server's count even when the local event list
+			// is partial. Capture both the exact event the divider sits above
+			// (drawn between read/unread comments inside a thread) and the
+			// containing root (the reply target for the composer).
+			const flat: { rootId: number; eventId: number; actorId: string }[] = []
+			for (const node of built) {
+				flat.push({ rootId: node.root.id, eventId: node.root.id, actorId: node.root.actorId })
+				for (const reply of node.replies) {
+					flat.push({ rootId: node.root.id, eventId: reply.id, actorId: reply.actorId })
+				}
+			}
+
+			const targetCount = item.unread_count
+			let counted = 0
+			let boundaryRootId: number | null = null
+			let boundaryEventId: number | null = null
+			for (let i = flat.length - 1; i >= 0 && counted < targetCount; i--) {
+				const entry = flat[i]
+				if (!entry) continue
+				if (currentActorId && entry.actorId === currentActorId) continue
+				counted++
+				if (counted === targetCount) {
+					boundaryRootId = entry.rootId
+					boundaryEventId = entry.eventId
+				}
+			}
+
+			const lastNode = built.length > 0 ? built[built.length - 1] : null
+
 			return {
-				nodes: [] as CommentNode[],
-				firstUnreadRootId: null as number | null,
-				latestEventId: 0,
+				nodes: built,
+				firstUnreadRootId: boundaryRootId,
+				firstUnreadEventId: boundaryEventId,
+				latestRootId: lastNode?.root.id ?? null,
+				latestEventId: maxId,
 			}
-		}
-		const chronological = [...events].reverse()
-
-		const repliesByParent = new Map<number, EventResponse[]>()
-		const roots: EventResponse[] = []
-		for (const event of chronological) {
-			if (event.action !== 'commented') continue
-			const parentId = event.data?.parentEventId as number | undefined
-			if (parentId) {
-				const list = repliesByParent.get(parentId) ?? []
-				list.push(event)
-				repliesByParent.set(parentId, list)
-				continue
-			}
-			roots.push(event)
-		}
-
-		const built: CommentNode[] = roots.map((root) => ({
-			root,
-			replies: repliesByParent.get(root.id) ?? [],
-		}))
-
-		let maxId = 0
-		for (const node of built) {
-			if (node.root.id > maxId) maxId = node.root.id
-			for (const reply of node.replies) if (reply.id > maxId) maxId = reply.id
-		}
-
-		// Walk the *flat* timeline (root + replies in chronological order) from
-		// the newest backward, counting comments that don't belong to the viewer.
-		// item.unread_count anchors the boundary so the divider always reflects
-		// the server's count, even when the local event list is partial. The
-		// boundary attaches to the *thread* containing the oldest unread comment.
-		const flat: { rootId: number; actorId: string }[] = []
-		for (const node of built) {
-			flat.push({ rootId: node.root.id, actorId: node.root.actorId })
-			for (const reply of node.replies) {
-				flat.push({ rootId: node.root.id, actorId: reply.actorId })
-			}
-		}
-
-		const targetCount = item.unread_count
-		let counted = 0
-		let boundaryRootId: number | null = null
-		for (let i = flat.length - 1; i >= 0 && counted < targetCount; i--) {
-			const entry = flat[i]
-			if (!entry) continue
-			if (currentActorId && entry.actorId === currentActorId) continue
-			counted++
-			if (counted === targetCount) boundaryRootId = entry.rootId
-		}
-
-		return { nodes: built, firstUnreadRootId: boundaryRootId, latestEventId: maxId }
-	}, [events, item.unread_count, currentActorId])
+		}, [events, item.unread_count, currentActorId])
 
 	const markRead = useMarkRead(workspaceId)
 	const handleMarkRead = useCallback(() => {
@@ -142,27 +161,21 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 		markRead.mutate({ entityType: 'object', entityId: objectId, lastEventId: target })
 	}, [markRead, objectId, item.latest_event_id, latestEventId])
 
-	// Position the "New" divider into the scroll body on first render. Done
-	// manually instead of `scrollIntoView` to keep the scroll fully contained
-	// to the card — the page scroll position never moves.
+	// Pin the scroll body to the bottom on first render so the most recent
+	// thread is visible at the bottom (Slack-style). Older threads sit above
+	// and are reachable by scrolling up. Done manually instead of
+	// `scrollIntoView` so the page scroll position never moves. Fires once
+	// per card; later SSE-driven event arrivals never re-yank the position.
 	const scrollBodyRef = useRef<HTMLDivElement>(null)
-	const dividerRef = useRef<HTMLDivElement>(null)
-	const didPositionDividerRef = useRef(false)
-	// biome-ignore lint/correctness/useExhaustiveDependencies: firstUnreadRootId is the trigger — once it resolves the divider mounts and the effect reads it via the ref.
+	const didScrollInitiallyRef = useRef(false)
 	useEffect(() => {
-		if (didPositionDividerRef.current) return
+		if (didScrollInitiallyRef.current) return
+		if (nodes.length === 0) return
 		const body = scrollBodyRef.current
-		const divider = dividerRef.current
-		if (!body || !divider) return
-		const bodyRect = body.getBoundingClientRect()
-		const dividerRect = divider.getBoundingClientRect()
-		const isVisible = dividerRect.top >= bodyRect.top && dividerRect.bottom <= bodyRect.bottom
-		if (!isVisible) {
-			// Place the divider 16px from the top so a hint of read context shows.
-			body.scrollTop += dividerRect.top - bodyRect.top - 16
-		}
-		didPositionDividerRef.current = true
-	}, [firstUnreadRootId])
+		if (!body) return
+		body.scrollTop = body.scrollHeight
+		didScrollInitiallyRef.current = true
+	}, [nodes.length])
 
 	const title = item.object?.title ?? 'Untitled'
 	const objectType = item.object?.type
@@ -198,31 +211,48 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 					<p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
 				) : (
 					<div className="space-y-1">
-						{nodes.map((node) => (
-							<div key={node.root.id}>
-								{firstUnreadRootId === node.root.id && <NewDivider ref={dividerRef} />}
-								<ActivityComment
-									event={node.root}
-									replies={node.replies}
-									workspaceId={workspaceId}
-									objectId={objectId}
-								/>
-							</div>
-						))}
+						{nodes.map((node) => {
+							const dividerOnRoot =
+								firstUnreadEventId !== null && firstUnreadEventId === node.root.id
+							const dividerInsideThread =
+								firstUnreadRootId === node.root.id &&
+								firstUnreadEventId !== null &&
+								firstUnreadEventId !== node.root.id
+							return (
+								<div key={node.root.id}>
+									{dividerOnRoot && <NewDivider />}
+									<ActivityComment
+										event={node.root}
+										replies={node.replies}
+										workspaceId={workspaceId}
+										objectId={objectId}
+										dividerBeforeReplyId={
+											dividerInsideThread ? (firstUnreadEventId ?? undefined) : undefined
+										}
+										divider={dividerInsideThread ? <NewDivider /> : undefined}
+									/>
+								</div>
+							)
+						})}
 					</div>
 				)}
 			</div>
 
 			<div className="border-t border-border px-4 py-3">
-				<CommentInput workspaceId={workspaceId} objectId={objectId} onSubmitted={handleMarkRead} />
+				<CommentInput
+					workspaceId={workspaceId}
+					objectId={objectId}
+					parentEventId={firstUnreadRootId ?? latestRootId ?? undefined}
+					onSubmitted={handleMarkRead}
+				/>
 			</div>
 		</div>
 	)
 }
 
-function NewDivider({ ref }: { ref?: React.Ref<HTMLDivElement> }) {
+function NewDivider() {
 	return (
-		<div ref={ref} className="my-2 flex items-center gap-2" aria-label="Unread divider">
+		<div className="my-2 flex items-center gap-2" aria-label="Unread divider">
 			<div className="h-px flex-1 bg-error" />
 			<span className="text-xs font-medium text-error">New</span>
 		</div>

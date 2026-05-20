@@ -9,6 +9,14 @@ import { TestWrapper } from '../../setup'
 const mockUseEntityEvents = vi.fn()
 const mockMarkReadMutate = vi.fn()
 const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: false }))
+const commentInputCalls: Array<{ parentEventId?: number; objectId: string }> = []
+
+vi.mock('@/components/activity/comment-input', () => ({
+	CommentInput: (props: { parentEventId?: number; objectId: string }) => {
+		commentInputCalls.push({ parentEventId: props.parentEventId, objectId: props.objectId })
+		return <div data-testid="comment-input" data-parent-event-id={props.parentEventId ?? ''} />
+	},
+}))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -68,6 +76,7 @@ describe('UnreadThreadCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockMarkReadMutate.mockReset()
+		commentInputCalls.length = 0
 	})
 
 	it('renders the object title and unread count', () => {
@@ -110,7 +119,61 @@ describe('UnreadThreadCard', () => {
 		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem()} />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByPlaceholderText(/Write a comment/i)).toBeInTheDocument()
+		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
+	})
+
+	it('passes the unread thread root as the reply target so the composer replies inline', () => {
+		// Root id 10 (viewer, read) with one reply id 20 (other, unread).
+		mockUseEntityEvents.mockReturnValue({
+			data: [
+				buildComment({ id: 20, actorId: 'other', data: { content: 'unread', parentEventId: 10 } }),
+				buildComment({ id: 10, actorId: 'viewer', data: { content: 'root' } }),
+			],
+		})
+		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem({ unread_count: 1 })} />, {
+			wrapper: TestWrapper,
+		})
+		const lastCall = commentInputCalls.at(-1)
+		expect(lastCall?.parentEventId).toBe(10)
+	})
+
+	it('falls back to the latest thread root when there is no unread activity', () => {
+		mockUseEntityEvents.mockReturnValue({
+			data: [
+				buildComment({ id: 30, actorId: 'viewer', data: { content: 'newer root' } }),
+				buildComment({ id: 10, actorId: 'viewer', data: { content: 'older root' } }),
+			],
+		})
+		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem({ unread_count: 0 })} />, {
+			wrapper: TestWrapper,
+		})
+		const lastCall = commentInputCalls.at(-1)
+		expect(lastCall?.parentEventId).toBe(30)
+	})
+
+	it('renders the "New" divider inside the thread when only a reply is unread', () => {
+		// Root id 10 (viewer, read) + reply id 20 (other, unread). The divider
+		// should attach to the reply, not to the thread root.
+		mockUseEntityEvents.mockReturnValue({
+			data: [
+				buildComment({
+					id: 20,
+					actorId: 'other',
+					data: { content: 'reply unread', parentEventId: 10 },
+				}),
+				buildComment({ id: 10, actorId: 'viewer', data: { content: 'root read' } }),
+			],
+		})
+		const { container } = render(
+			<UnreadThreadCard workspaceId="ws-1" item={buildItem({ unread_count: 1 })} />,
+			{ wrapper: TestWrapper },
+		)
+		const divider = container.querySelector('[aria-label="Unread divider"]')
+		expect(divider).not.toBeNull()
+		// The divider should be nested under the thread (inside the reply
+		// column), not as a direct sibling above the thread root.
+		const replyColumn = divider?.closest('.ml-7')
+		expect(replyColumn).not.toBeNull()
 	})
 
 	it('does not mark the thread as read on mount', () => {
