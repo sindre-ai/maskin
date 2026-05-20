@@ -57,7 +57,7 @@ export function SubscribeToggle({
 						/>
 					))}
 					{overflow > 0 && (
-						<span className="inline-flex items-center justify-center h-5 px-1.5 -ml-1.5 rounded-full bg-zinc-700 text-zinc-300 text-[10px] ring-1 ring-bg-surface">
+						<span className="-ml-1.5 inline-flex h-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs text-muted-foreground ring-1 ring-bg-surface">
 							+{overflow}
 						</span>
 					)}
@@ -68,8 +68,10 @@ export function SubscribeToggle({
 				size="sm"
 				onClick={handleToggle}
 				disabled={pending}
-				className="h-7 px-2 gap-1 text-[11px]"
-				aria-label={isSubscribed ? 'Unsubscribe from this object' : 'Subscribe to this object'}
+				className="h-7 gap-1 px-2 text-xs"
+				aria-label={
+					isSubscribed ? `Unsubscribe from this ${entityType}` : `Subscribe to this ${entityType}`
+				}
 				title={
 					isSubscribed
 						? 'Unsubscribe — stop getting unread badges'

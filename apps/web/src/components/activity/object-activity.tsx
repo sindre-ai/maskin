@@ -5,6 +5,7 @@ import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { formatStatusTransitionShort } from '@maskin/shared'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
+import { UnreadBadge } from '../shared/unread-badge'
 import { Button } from '../ui/button'
 import { Collapsible, CollapsibleContent } from '../ui/collapsible'
 import { ActivityComment } from './activity-comment'
@@ -121,17 +122,13 @@ export function ObjectActivity({
 			<div className="flex items-center justify-between mb-3">
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Activity
-					{unreadCount > 0 && (
-						<span className="ml-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-medium normal-case tracking-normal">
-							{unreadCount}
-						</span>
-					)}
+					<UnreadBadge count={unreadCount} className="ml-2 normal-case tracking-normal" />
 				</h3>
 				{unreadCount > 0 && (
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-7 px-2 text-[11px]"
+						className="h-7 px-2 text-xs"
 						onClick={handleMarkAllRead}
 						disabled={markRead.isPending}
 					>

@@ -6,6 +6,7 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { UnreadBadge } from '@/components/shared/unread-badge'
 import { SindrePulseBar } from '@/components/sindre/sindre-pulse-bar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
@@ -133,9 +134,7 @@ function PulseDashboard() {
 						<div className="mb-6">
 							<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
 								Unread comments
-								<span className="ml-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-medium normal-case tracking-normal">
-									{unreadTotal}
-								</span>
+								<UnreadBadge count={unreadTotal} className="ml-2 normal-case tracking-normal" />
 							</h3>
 							<ul className="space-y-2">
 								{unreadItems.map((item) => {
@@ -162,13 +161,11 @@ function PulseDashboard() {
 													{item.latest_activity_at && (
 														<RelativeTime
 															date={item.latest_activity_at}
-															className="text-[11px] text-muted-foreground"
+															className="text-xs text-muted-foreground"
 														/>
 													)}
 												</div>
-												<span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-accent text-accent-foreground text-[11px] font-medium shrink-0">
-													{item.unread_count}
-												</span>
+												<UnreadBadge count={item.unread_count} className="shrink-0" />
 											</button>
 										</li>
 									)
