@@ -155,7 +155,28 @@ describe('Subscriptions Routes', () => {
 
 	describe('POST /api/subscriptions/read', () => {
 		it('returns 200 with a valid last_event_id', async () => {
+			const entityId = randomUUID()
+			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
+			// Entity-in-workspace check returns the row.
+			mockResults.selectQueue = [[{ id: entityId }]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/subscriptions/read',
+					{ entity_type: 'object', entity_id: entityId, last_event_id: 42 },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.updated).toBe(true)
+		})
+
+		it('returns 404 when the entity is not in this workspace', async () => {
 			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
+			// no selectQueue → entity-exists check returns [] → 404.
 
 			const res = await app.request(
 				jsonRequest(
@@ -166,9 +187,7 @@ describe('Subscriptions Routes', () => {
 				),
 			)
 
-			expect(res.status).toBe(200)
-			const body = await res.json()
-			expect(body.updated).toBe(true)
+			expect(res.status).toBe(404)
 		})
 
 		it('returns 400 for zero / non-positive last_event_id', async () => {

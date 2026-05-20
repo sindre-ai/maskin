@@ -218,6 +218,10 @@ const markReadRoute = createRoute({
 			description: 'Read state updated',
 			content: { 'application/json': { schema: z.object({ updated: z.literal(true) }) } },
 		},
+		404: {
+			description: 'Entity not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -226,6 +230,12 @@ app.openapi(markReadRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
+
+	// Verify the entity belongs to the caller's workspace before writing a
+	// read_state row — otherwise any workspace member could pollute the table
+	// with rows pointing at foreign entity_ids they can't actually see.
+	const exists = await verifyEntityInWorkspace(db, workspaceId, body.entity_type, body.entity_id)
+	if (!exists) return c.json(createApiError('NOT_FOUND', 'Entity not found'), 404)
 
 	await markReadService(db, {
 		workspaceId,
