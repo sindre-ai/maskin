@@ -65,15 +65,18 @@ describe('FileBody', () => {
 			expect(screen.getByRole('heading', { level: 1, name: 'Hello world' })).toBeInTheDocument()
 		})
 
-		it('renders an <img> for safe image mime types', () => {
+		it('renders an <img> with a data URI for safe image mime types', () => {
+			// Browsers don't send our Bearer token on <img src>, so the inline
+			// preview must use the base64 content directly instead of the API URL.
+			const pngB64 = b64('fake-png-bytes')
 			const file = buildFile({
 				mimeType: 'image/png',
 				name: 'icon.png',
-				downloadUrl: 'http://localhost/api/files/file-1/download',
+				content: pngB64,
 			})
 			render(<FileBody file={file} />)
 			const img = screen.getByRole('img', { name: 'icon.png' })
-			expect(img).toHaveAttribute('src', 'http://localhost/api/files/file-1/download')
+			expect(img).toHaveAttribute('src', `data:image/png;base64,${pngB64}`)
 		})
 
 		it('renders HTML as preformatted text (NOT as HTML)', () => {

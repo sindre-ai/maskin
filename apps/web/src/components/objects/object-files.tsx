@@ -165,6 +165,8 @@ export function ObjectFiles({
 							<Link
 								to="/$workspaceId/files/$fileId"
 								params={{ workspaceId, fileId: file.id }}
+								target="_blank"
+								rel="noopener noreferrer"
 								className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm hover:bg-bg-hover transition-colors"
 							>
 								<FileIcon size={14} className="text-muted-foreground shrink-0" />

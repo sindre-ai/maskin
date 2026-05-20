@@ -1,4 +1,4 @@
-import { FileBody } from '@/components/files/file-body'
+import { FileBody, base64ToBytes } from '@/components/files/file-body'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
@@ -6,10 +6,23 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useFile } from '@/hooks/use-files'
-import { ApiError } from '@/lib/api'
+import { ApiError, type FileDetail } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Download } from 'lucide-react'
+
+function downloadFile(file: FileDetail): void {
+	const bytes = base64ToBytes(file.content)
+	const blob = new Blob([bytes.buffer as ArrayBuffer], { type: file.mimeType })
+	const url = URL.createObjectURL(blob)
+	const a = document.createElement('a')
+	a.href = url
+	a.download = file.name
+	document.body.appendChild(a)
+	a.click()
+	document.body.removeChild(a)
+	URL.revokeObjectURL(url)
+}
 
 export const Route = createFileRoute('/_authed/$workspaceId/files/$fileId')({
 	component: FileViewerPage,
@@ -71,11 +84,9 @@ function FileViewerPage() {
 				</header>
 
 				<div className="flex justify-end">
-					<Button asChild variant="outline" size="sm">
-						<a href={file.downloadUrl} target="_blank" rel="noopener noreferrer">
-							<Download size={14} />
-							Download
-						</a>
+					<Button variant="outline" size="sm" onClick={() => downloadFile(file)}>
+						<Download size={14} />
+						Download
 					</Button>
 				</div>
 

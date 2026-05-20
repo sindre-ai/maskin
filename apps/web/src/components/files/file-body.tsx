@@ -34,16 +34,22 @@ export function isPlainText(mimeType: string): boolean {
 	)
 }
 
-export function decodeBase64Utf8(base64: string): string {
-	if (typeof atob === 'undefined') return ''
+export function base64ToBytes(base64: string): Uint8Array {
+	if (typeof atob === 'undefined') return new Uint8Array()
 	try {
 		const binary = atob(base64)
 		const bytes = new Uint8Array(binary.length)
 		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-		return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+		return bytes
 	} catch {
-		return ''
+		return new Uint8Array()
 	}
+}
+
+export function decodeBase64Utf8(base64: string): string {
+	const bytes = base64ToBytes(base64)
+	if (bytes.length === 0) return ''
+	return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
 }
 
 export function FileBody({ file }: { file: FileDetail }) {
@@ -52,11 +58,13 @@ export function FileBody({ file }: { file: FileDetail }) {
 	}
 
 	if (isInlineImage(file.mimeType)) {
-		// The download endpoint sets `inline` disposition for non-script image
-		// mime types — SVG and other UNSAFE_INLINE types never reach this branch.
+		// Browsers don't send our Bearer token on <img src>, so use a data URI
+		// from the base64 content we already loaded. SVG and other UNSAFE_INLINE
+		// types never reach this branch.
+		const src = `data:${file.mimeType};base64,${file.content}`
 		return (
 			<div className="rounded-md border border-border bg-bg-surface p-4">
-				<img src={file.downloadUrl} alt={file.name} className="max-w-full h-auto rounded" />
+				<img src={src} alt={file.name} className="max-w-full h-auto rounded" />
 			</div>
 		)
 	}
