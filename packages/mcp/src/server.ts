@@ -2179,6 +2179,117 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Subscriptions ────────────────────────────────────────
+	registerAppTool(
+		server,
+		'subscribe',
+		{
+			description: tools.subscribe.description,
+			inputSchema: tools.subscribe.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/subscriptions', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('subscribe', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'unsubscribe',
+		{
+			description: tools.unsubscribe.description,
+			inputSchema: tools.unsubscribe.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'DELETE', '/api/subscriptions', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('unsubscribe', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_subscribers',
+		{
+			description: tools.list_subscribers.description,
+			inputSchema: tools.list_subscribers.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams({
+				entity_type: args.entity_type,
+				entity_id: args.entity_id,
+			})
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/subscriptions/subscribers?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('list_subscribers', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'mark_read',
+		{
+			description: tools.mark_read.description,
+			inputSchema: tools.mark_read.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/subscriptions/read', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('mark_read', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_unread',
+		{
+			description: tools.list_unread.description,
+			inputSchema: tools.list_unread.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			if (args.entity_type) params.set('entity_type', args.entity_type)
+			const qs = params.toString()
+			const path = qs ? `/api/subscriptions/unread?${qs}` : '/api/subscriptions/unread'
+			const result = await apiCall(config, 'GET', path, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Sessions ─────────────────────────────────────────────
 	registerAppTool(
 		server,

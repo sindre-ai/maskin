@@ -20,6 +20,10 @@ vi.mock('@/components/activity/object-activity', () => ({
 	ObjectActivity: () => <div data-testid="object-activity" />,
 }))
 
+vi.mock('@/components/shared/subscribe-toggle', () => ({
+	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
+}))
+
 vi.mock('@/components/objects/object-action-banner', () => ({
 	ObjectActionBanner: () => null,
 }))

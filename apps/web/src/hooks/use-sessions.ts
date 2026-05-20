@@ -34,6 +34,15 @@ export function useCreateSession(workspaceId: string) {
 	})
 }
 
+export function useMentionSessionsForObject(workspaceId: string, objectId: string | null) {
+	return useQuery({
+		queryKey: queryKeys.sessions.byMentionObject(workspaceId, objectId ?? ''),
+		queryFn: () =>
+			api.sessions.list(workspaceId, { mention_object_id: objectId as string, limit: '100' }),
+		enabled: !!workspaceId && !!objectId,
+	})
+}
+
 export function useActiveSessionsForActor(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActor(workspaceId, actorId),

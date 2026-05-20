@@ -40,6 +40,12 @@ export const objectResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	// Per-viewer subscription state. Populated only by detail/graph endpoints
+	// (list endpoints omit them to avoid N+1 queries — clients render lists
+	// without unread badges).
+	is_subscribed: z.boolean().optional(),
+	unread_count: z.number().optional(),
+	subscriber_count: z.number().optional(),
 })
 
 export const actorResponseSchema = z.object({

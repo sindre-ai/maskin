@@ -56,6 +56,8 @@ export const queryKeys = {
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
 		byActorAllInfinite: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
+		byMentionObject: (workspaceId: string, objectId: string) =>
+			['sessions', workspaceId, 'mention-object', objectId] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,
@@ -77,5 +79,11 @@ export const queryKeys = {
 	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
+	},
+	subscriptions: {
+		subscribers: (entityType: string, entityId: string) =>
+			['subscriptions', 'subscribers', entityType, entityId] as const,
+		unread: (workspaceId: string, entityType?: string) =>
+			['subscriptions', 'unread', workspaceId, entityType ?? 'all'] as const,
 	},
 } as const

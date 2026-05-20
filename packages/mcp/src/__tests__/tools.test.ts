@@ -1,3 +1,4 @@
+import { COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ZodObject } from 'zod'
 import { tools } from '../tools'
@@ -73,6 +74,11 @@ const ALL_TOOL_NAMES = [
 	'get_notification',
 	'update_notification',
 	'delete_notification',
+	'subscribe',
+	'unsubscribe',
+	'list_subscribers',
+	'mark_read',
+	'list_unread',
 	'list_integrations',
 	'list_integration_providers',
 	'connect_integration',
@@ -441,8 +447,19 @@ describe('create_comment schema', () => {
 		expect(() => schema.parse({ entity_id: uuid, content: '' })).toThrow()
 	})
 
-	it('rejects content above 10000 chars', () => {
-		expect(() => schema.parse({ entity_id: uuid, content: 'x'.repeat(10001) })).toThrow()
+	it(`accepts content at exactly ${COMMENT_MAX_LENGTH} chars`, () => {
+		const result = schema.parse({ entity_id: uuid, content: 'x'.repeat(COMMENT_MAX_LENGTH) })
+		expect(result.content.length).toBe(COMMENT_MAX_LENGTH)
+	})
+
+	it(`rejects content above ${COMMENT_MAX_LENGTH} chars with the documented message`, () => {
+		const tooLong = 'x'.repeat(COMMENT_MAX_LENGTH + 1)
+		const result = schema.safeParse({ entity_id: uuid, content: tooLong })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			const contentIssue = result.error.issues.find((i) => i.path[0] === 'content')
+			expect(contentIssue?.message).toContain(`${COMMENT_MAX_LENGTH} characters or fewer`)
+		}
 	})
 
 	it('rejects non-uuid mentions', () => {

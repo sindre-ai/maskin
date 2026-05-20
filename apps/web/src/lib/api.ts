@@ -323,6 +323,35 @@ export const api = {
 			}),
 	},
 
+	subscriptions: {
+		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
+			request<{ subscribed: true }>('/subscriptions', {
+				method: 'POST',
+				body: { entity_type: entityType, entity_id: entityId },
+				workspaceId,
+			}),
+		unsubscribe: (workspaceId: string, entityType: string, entityId: string) =>
+			request<{ unsubscribed: true }>('/subscriptions', {
+				method: 'DELETE',
+				body: { entity_type: entityType, entity_id: entityId },
+				workspaceId,
+			}),
+		subscribers: (workspaceId: string, entityType: string, entityId: string) => {
+			const qs = new URLSearchParams({ entity_type: entityType, entity_id: entityId }).toString()
+			return request<SubscribersResponse>(`/subscriptions/subscribers?${qs}`, { workspaceId })
+		},
+		markRead: (workspaceId: string, entityType: string, entityId: string, lastEventId: number) =>
+			request<{ updated: true }>('/subscriptions/read', {
+				method: 'POST',
+				body: { entity_type: entityType, entity_id: entityId, last_event_id: lastEventId },
+				workspaceId,
+			}),
+		unread: (workspaceId: string, entityType?: string) => {
+			const qs = entityType ? `?${new URLSearchParams({ entity_type: entityType }).toString()}` : ''
+			return request<UnreadResponse>(`/subscriptions/unread${qs}`, { workspaceId })
+		},
+	},
+
 	workspaceSkills: {
 		list: (workspaceId: string) =>
 			request<WorkspaceSkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
@@ -416,6 +445,27 @@ export interface ObjectResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	// Populated by detail / graph routes only — list routes omit to avoid N+1.
+	is_subscribed?: boolean
+	unread_count?: number
+	subscriber_count?: number
+}
+
+export interface SubscribersResponse {
+	actors: Array<{ id: string; type: string; name: string }>
+}
+
+export interface UnreadItem {
+	entity_type: string
+	entity_id: string
+	unread_count: number
+	latest_event_id: number | null
+	latest_activity_at: string | null
+	object?: ObjectResponse
+}
+
+export interface UnreadResponse {
+	items: UnreadItem[]
 }
 
 export interface CreateObjectInput {

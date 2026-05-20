@@ -28,6 +28,7 @@ import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { StatusBadge } from '../shared/status-badge'
+import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
@@ -150,6 +151,12 @@ export function ObjectDocumentView({
 						onChange={onUpdateOwner}
 					/>
 				)}
+				<SubscribeToggle
+					workspaceId={workspaceId}
+					entityType="object"
+					entityId={object.id}
+					isSubscribed={object.is_subscribed}
+				/>
 				{creator && (
 					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
 						<ActorAvatar name={creator.name} type={creator.type} size="sm" />
