@@ -51,7 +51,7 @@ export const runtimeConfigSchema = z.object({
 export const sessionMentionContextSchema = z.object({
 	object_id: z.string().uuid(),
 	comment_event_id: z.number().int().positive(),
-	commenter_actor_id: z.string().uuid().optional(),
+	commenter_actor_id: z.string().uuid(),
 	notification_id: z.string().uuid().optional(),
 })
 export type SessionMentionContext = z.infer<typeof sessionMentionContextSchema>
@@ -64,7 +64,7 @@ export const sessionThreadReplyContextSchema = z.object({
 	object_id: z.string().uuid(),
 	comment_event_id: z.number().int().positive(),
 	thread_root_event_id: z.number().int().positive(),
-	commenter_actor_id: z.string().uuid().optional(),
+	commenter_actor_id: z.string().uuid(),
 })
 export type SessionThreadReplyContext = z.infer<typeof sessionThreadReplyContextSchema>
 
