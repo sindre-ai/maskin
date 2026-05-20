@@ -484,3 +484,35 @@ export const notifications = pgTable(
 		index('notifications_target_actor_idx').on(t.targetActorId, t.status),
 	],
 )
+
+// ── Files ─────────────────────────────────────────────────────────────────
+//
+// Workspace-scoped files authored by agents (or members) and shared via a
+// stable URL. Bytes live in S3 under `workspaces/{workspaceId}/files/{id}`;
+// this row holds metadata only.
+export const files = pgTable(
+	'files',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		description: text('description'),
+		mimeType: text('mime_type').notNull(),
+		sizeBytes: integer('size_bytes').notNull(),
+		storageKey: text('storage_key').notNull(),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('files_ws_created_at_idx').on(t.workspaceId, t.createdAt),
+		index('files_ws_name_idx').on(t.workspaceId, t.name),
+	],
+)
+
+export type File = typeof files.$inferSelect
+export type NewFile = typeof files.$inferInsert

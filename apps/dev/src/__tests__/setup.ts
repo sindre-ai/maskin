@@ -283,7 +283,7 @@ export function createImportTestApp(
 	actorType = 'human',
 ) {
 	const app = new CreateOpenAPIHono<Env>()
-	const { db, mockResults } = createTestContext()
+	const { db, mockResults, calls } = createTestContext()
 	const storageProvider = createMockStorageProvider()
 
 	app.use('*', async (c, next) => {
@@ -296,7 +296,7 @@ export function createImportTestApp(
 	})
 
 	app.route(basePath, routeModule)
-	return { app, db, mockResults, storageProvider }
+	return { app, db, mockResults, storageProvider, calls }
 }
 
 export function createSkillsTestApp(

@@ -73,6 +73,10 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['imports', workspaceId] as const,
 		detail: (id: string) => ['imports', 'detail', id] as const,
 	},
+	files: {
+		all: (workspaceId: string) => ['files', workspaceId] as const,
+		detail: (workspaceId: string, id: string) => ['files', workspaceId, 'detail', id] as const,
+	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
 	},
