@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, actors, notifications, objects, subscriptions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
-import { and, asc, desc, eq, gt, gte, inArray, lt } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -319,6 +319,31 @@ app.openapi(createCommentRoute, (async (c) => {
 			)
 	}
 
+	// Thread-scoped auto-replies: when this comment is a reply, also fire a
+	// session for any agent who previously participated in the thread (posted
+	// a comment OR was @mentioned), so threaded conversations flow without
+	// requiring an explicit @mention on every message. The 5-in-a-row cap
+	// inside the helper bounds runaway agent-to-agent ping-pong.
+	if (parentEventId !== undefined) {
+		spawnThreadReplySessions({
+			db,
+			sessionManager,
+			workspaceId,
+			actorId,
+			objectId: body.entity_id,
+			threadRootEventId: parentEventId,
+			newCommentEventId: comment.id,
+			newCommentContent: body.content,
+			excludedAgentIds: new Set(agentMentions.map((m) => m.agentId)),
+		}).catch((err) =>
+			logger.error('Failed to spawn thread-reply sessions', {
+				objectId: body.entity_id,
+				threadRootEventId: parentEventId,
+				error: String(err),
+			}),
+		)
+	}
+
 	return c.json(serializeArray([comment])[0] as z.infer<typeof eventResponseSchema>, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
 
@@ -374,6 +399,165 @@ function buildMentionPrompt(ctx: {
 		'"""',
 		'',
 		`After you reply, mark notification ${ctx.notificationId} as resolved.`,
+	].join('\n')
+}
+
+// Cap on consecutive agent-authored comments at the tail of a thread. Once a
+// thread has this many agent replies in a row (including the comment that just
+// landed), the auto-reply trigger goes silent until a human comment breaks the
+// chain — preventing runaway agent-to-agent ping-pong.
+const MAX_CONSECUTIVE_AGENT_REPLIES = 5
+
+// Upper bound on how many recent thread comments we scan when deciding who to
+// auto-spawn. The consecutive-agent cap only inspects the tail and active
+// participants almost always sit within the most recent comments — past this
+// horizon, an agent who participated very early in a long thread may not be
+// re-triggered. Bounds worst-case scan cost on huge threads.
+const THREAD_LOOKBACK_LIMIT = 200
+
+async function spawnThreadReplySessions(ctx: {
+	db: Database
+	sessionManager: SessionManager
+	workspaceId: string
+	actorId: string
+	objectId: string
+	threadRootEventId: number
+	newCommentEventId: number
+	newCommentContent: string
+	excludedAgentIds: Set<string>
+}): Promise<void> {
+	const threadComments = await ctx.db
+		.select({
+			id: events.id,
+			actorId: events.actorId,
+			actorType: actors.type,
+			data: events.data,
+		})
+		.from(events)
+		.innerJoin(actors, eq(actors.id, events.actorId))
+		.where(
+			and(
+				eq(events.workspaceId, ctx.workspaceId),
+				eq(events.entityType, 'object'),
+				eq(events.entityId, ctx.objectId),
+				eq(events.action, 'commented'),
+				or(
+					eq(events.id, ctx.threadRootEventId),
+					// Compare as text rather than casting `(data->>'parentEventId')::int`:
+					// the cast throws on any row with a non-numeric value in the JSON
+					// field, which would tank the entire thread-reply spawn for every
+					// agent in the thread. Text comparison degrades to "no match" on
+					// malformed rows instead.
+					sql`${events.data}->>'parentEventId' = ${String(ctx.threadRootEventId)}`,
+				),
+			),
+		)
+		.orderBy(desc(events.id))
+		.limit(THREAD_LOOKBACK_LIMIT)
+
+	// 5-in-a-row cap: walk from the most recent comment back, count how many
+	// consecutive agent-authored comments sit at the tail (the new comment is
+	// included since it's already inserted at this point). Stop spawning once
+	// the cap is reached.
+	let consecutiveAgents = 0
+	for (const row of threadComments) {
+		if (row.actorType === 'agent') consecutiveAgents++
+		else break
+	}
+	if (consecutiveAgents >= MAX_CONSECUTIVE_AGENT_REPLIES) {
+		logger.info('Skipping thread-reply auto-spawn (consecutive agent cap reached)', {
+			objectId: ctx.objectId,
+			threadRootEventId: ctx.threadRootEventId,
+			consecutiveAgents,
+		})
+		return
+	}
+
+	// Collect candidate agents from two sources: actors who posted a comment in
+	// the thread, and actors who were @mentioned in any comment in the thread.
+	const agentParticipantIds = new Set<string>()
+	const mentionedCandidateIds = new Set<string>()
+	for (const row of threadComments) {
+		if (row.actorType === 'agent' && row.actorId !== ctx.actorId) {
+			agentParticipantIds.add(row.actorId)
+		}
+		const data = row.data as { mentions?: string[] | null } | null
+		if (data?.mentions) {
+			for (const id of data.mentions) {
+				if (id !== ctx.actorId) mentionedCandidateIds.add(id)
+			}
+		}
+	}
+
+	// Resolve any mentioned candidates that aren't already confirmed as agents
+	// (commenters were filtered by type at the join, mentions weren't).
+	const toResolve = Array.from(mentionedCandidateIds).filter((id) => !agentParticipantIds.has(id))
+	if (toResolve.length > 0) {
+		const resolved = await ctx.db
+			.select({ id: actors.id, type: actors.type })
+			.from(actors)
+			.where(inArray(actors.id, toResolve))
+		for (const a of resolved) {
+			if (a.type === 'agent') agentParticipantIds.add(a.id)
+		}
+	}
+
+	// Drop any agent already being spawned via the @mention path for this
+	// same comment — the mention session carries a notification id and takes
+	// precedence over the implicit thread-reply trigger.
+	const threadReplyAgentIds = Array.from(agentParticipantIds).filter(
+		(id) => !ctx.excludedAgentIds.has(id),
+	)
+
+	for (const agentId of threadReplyAgentIds) {
+		ctx.sessionManager
+			.createSession(ctx.workspaceId, {
+				actorId: agentId,
+				actionPrompt: buildThreadReplyPrompt({
+					objectId: ctx.objectId,
+					commenterActorId: ctx.actorId,
+					content: ctx.newCommentContent,
+					threadRootEventId: ctx.threadRootEventId,
+				}),
+				config: {
+					thread_reply: {
+						object_id: ctx.objectId,
+						comment_event_id: ctx.newCommentEventId,
+						thread_root_event_id: ctx.threadRootEventId,
+						commenter_actor_id: ctx.actorId,
+					},
+				},
+				createdBy: ctx.actorId,
+			})
+			.catch((err) =>
+				logger.error('Failed to create thread-reply session', {
+					agentId,
+					objectId: ctx.objectId,
+					threadRootEventId: ctx.threadRootEventId,
+					error: String(err),
+				}),
+			)
+	}
+}
+
+function buildThreadReplyPrompt(ctx: {
+	objectId: string
+	commenterActorId: string
+	content: string
+	threadRootEventId: number
+}): string {
+	return [
+		'A new comment was added to a comment thread you previously participated in. You were NOT @mentioned — you are being notified because you commented or were @mentioned earlier in this thread.',
+		'',
+		'Read the thread context (use the MCP tools to fetch comments on this object) and assess whether a reply from you adds value. If a reply is helpful, post it as a reply in the same thread. If not, take no action — silence is a valid outcome.',
+		'',
+		`Object ID: ${ctx.objectId}`,
+		`Thread root comment event ID: ${ctx.threadRootEventId}`,
+		`Commenter actor ID: ${ctx.commenterActorId}`,
+		'New comment content:',
+		'"""',
+		ctx.content,
+		'"""',
 	].join('\n')
 }
 
