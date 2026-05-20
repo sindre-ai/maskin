@@ -193,13 +193,17 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 
 	const title = item.object?.title ?? 'Untitled'
 	const objectType = item.object?.type
-	const titlePath = `/${workspaceId}/objects/${objectId}`
 
 	return (
 		<div ref={cardRef} className="rounded-lg border border-border bg-card">
 			<div className="flex items-center gap-2 border-b border-border px-4 py-3">
 				{objectType && <TypeBadge type={objectType} />}
-				<Link to={titlePath} className="text-sm font-medium truncate hover:underline" title={title}>
+				<Link
+					to="/$workspaceId/objects/$objectId"
+					params={{ workspaceId, objectId }}
+					className="text-sm font-medium truncate hover:underline"
+					title={title}
+				>
 					{title}
 				</Link>
 				{item.latest_activity_at && (

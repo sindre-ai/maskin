@@ -13,6 +13,9 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 7. **Document-first detail** — Each object opens as a Notion-like document: title, dynamic metadata badges, markdown content, linked objects.
 8. **Composable-ready** — Architecture the component system so blocks/views can be added incrementally.
 
+## Retired UI surfaces
+- **Pulse notifications** — the `PulseCard` / `PulseFilters` / `DecisionPoint` UI on the `/$workspaceId` landing page was retired in PR #428 in favor of the Slack-style unread thread stream (`UnreadThreadCard`). The backend is **still live**: the `notifications` table, `/api/notifications` routes, `useNotifications` / `useRespondNotification` / `useUpdateNotification` hooks, and `PulseCard` component remain so agents can keep emitting notifications and external surfaces (e.g. MCP) can still consume them. Do not re-introduce a Pulse panel on a primary route without a product decision — and if you do, reuse the existing components rather than rebuilding them.
+
 ## Tech Stack
 - React 19 + TypeScript (strict)
 - TanStack Router (file-based routing, auto-generated `routeTree.gen.ts`)
