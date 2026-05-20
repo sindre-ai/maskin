@@ -3,7 +3,7 @@ import { CommentInput } from '@/components/activity/comment-input'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { UnreadBadge } from '@/components/shared/unread-badge'
-import { useEventVisible } from '@/hooks/use-event-visible'
+import { Button } from '@/components/ui/button'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { EventResponse, UnreadItem } from '@/lib/api'
@@ -27,6 +27,10 @@ interface CommentNode {
  * sits before the first thread containing unread activity; scrolling up
  * reveals older threads on the same object. CommentInput is pinned below the
  * scroll area so the reply input is always reachable.
+ *
+ * Mark-read is explicit: it only fires when the user clicks "Mark as read" or
+ * successfully posts a reply. Mounting the card does not advance the read
+ * high-water-mark.
  */
 export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 	const objectId = item.entity_id
@@ -95,27 +99,14 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 		return { nodes: built, firstUnreadRootId: boundaryRootId, latestEventId: maxId }
 	}, [events, item.unread_count, currentActorId])
 
-	// Advance the read high-water-mark once the unread sentinel scrolls into
-	// view. Mirrors the pattern used by ObjectActivity. The ref is reset on
-	// objectId change so a stale value from another card never suppresses a
-	// valid mark-read for this one.
 	const markRead = useMarkRead(workspaceId)
-	const markedRef = useRef(0)
-	// biome-ignore lint/correctness/useExhaustiveDependencies: objectId is the trigger, not a value read inside.
-	useEffect(() => {
-		markedRef.current = 0
-	}, [objectId])
-
-	const handleSeen = useCallback(
-		(eventId: number) => {
-			if (eventId <= 0) return
-			if (eventId <= markedRef.current) return
-			markedRef.current = eventId
-			markRead.mutate({ entityType: 'object', entityId: objectId, lastEventId: eventId })
-		},
-		[markRead, objectId],
-	)
-	const sentinelRef = useEventVisible(latestEventId, handleSeen)
+	const handleMarkRead = useCallback(() => {
+		// Prefer the server's latest_event_id (authoritative even when local
+		// events are partial), and fall back to whatever we have loaded.
+		const target = Math.max(item.latest_event_id ?? 0, latestEventId)
+		if (target <= 0) return
+		markRead.mutate({ entityType: 'object', entityId: objectId, lastEventId: target })
+	}, [markRead, objectId, item.latest_event_id, latestEventId])
 
 	// Anchor the scroll body to the bottom on mount and whenever the newest
 	// event id changes (new comment arrives via SSE invalidation). Older
@@ -146,6 +137,15 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 					/>
 				)}
 				<UnreadBadge count={item.unread_count} className="shrink-0" />
+				<Button
+					size="sm"
+					variant="ghost"
+					className="shrink-0 h-7 px-2 text-xs"
+					onClick={handleMarkRead}
+					disabled={markRead.isPending}
+				>
+					Mark as read
+				</Button>
 			</div>
 
 			<div ref={scrollRef} className="h-96 overflow-y-auto px-4 py-3">
@@ -166,11 +166,10 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 						))}
 					</div>
 				)}
-				<div ref={sentinelRef} aria-hidden className="h-0 w-0" />
 			</div>
 
 			<div className="border-t border-border px-4 py-3">
-				<CommentInput workspaceId={workspaceId} objectId={objectId} />
+				<CommentInput workspaceId={workspaceId} objectId={objectId} onSubmitted={handleMarkRead} />
 			</div>
 		</div>
 	)

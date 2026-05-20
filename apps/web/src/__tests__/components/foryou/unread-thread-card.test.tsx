@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { EventResponse, UnreadItem } from '@/lib/api'
@@ -6,7 +7,8 @@ import { buildEventResponse, buildObjectResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
 
 const mockUseEntityEvents = vi.fn()
-const mockUseMarkRead = vi.fn(() => ({ mutate: vi.fn() }))
+const mockMarkReadMutate = vi.fn()
+const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: false }))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -38,10 +40,6 @@ vi.mock('@/hooks/use-actors', () => ({
 	}),
 }))
 
-vi.mock('@/hooks/use-event-visible', () => ({
-	useEventVisible: () => ({ current: null }),
-}))
-
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 
 function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
@@ -69,6 +67,7 @@ function buildComment(overrides: Partial<EventResponse> = {}) {
 describe('UnreadThreadCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockMarkReadMutate.mockReset()
 	})
 
 	it('renders the object title and unread count', () => {
@@ -112,5 +111,36 @@ describe('UnreadThreadCard', () => {
 			wrapper: TestWrapper,
 		})
 		expect(screen.getByPlaceholderText(/Write a comment/i)).toBeInTheDocument()
+	})
+
+	it('does not mark the thread as read on mount', () => {
+		mockUseEntityEvents.mockReturnValue({
+			data: [buildComment({ id: 30, actorId: 'other', data: { content: 'newer' } })],
+		})
+		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem({ unread_count: 1 })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(mockMarkReadMutate).not.toHaveBeenCalled()
+	})
+
+	it('marks the thread as read when the "Mark as read" button is clicked', async () => {
+		const user = userEvent.setup()
+		mockUseEntityEvents.mockReturnValue({
+			data: [buildComment({ id: 42, actorId: 'other', data: { content: 'unread' } })],
+		})
+		render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({ unread_count: 1, latest_event_id: 42 })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.click(screen.getByRole('button', { name: /mark as read/i }))
+		expect(mockMarkReadMutate).toHaveBeenCalledWith({
+			entityType: 'object',
+			entityId: 'obj-1',
+			lastEventId: 42,
+		})
 	})
 })
