@@ -1,10 +1,13 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
+import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import type { FileDetail } from '@/lib/api'
+import { useState } from 'react'
 
 // MIME types whose bytes the browser would happily execute (or interpret as HTML)
-// if we let them anywhere near `dangerouslySetInnerHTML` or an `<iframe srcDoc>`.
-// We never render these inline — only as preformatted text + download.
+// if we let them anywhere near `dangerouslySetInnerHTML` or an `<img src>`. HTML
+// is handled via a sandboxed iframe below; the rest are rendered as text only.
 export const UNSAFE_INLINE_MIME = new Set([
 	'text/html',
 	'application/xhtml+xml',
@@ -17,6 +20,10 @@ export const UNSAFE_INLINE_MIME = new Set([
 
 export function isMarkdown(mimeType: string): boolean {
 	return mimeType === 'text/markdown' || mimeType === 'text/x-markdown'
+}
+
+export function isHtml(mimeType: string): boolean {
+	return mimeType === 'text/html' || mimeType === 'application/xhtml+xml'
 }
 
 export function isInlineImage(mimeType: string): boolean {
@@ -52,9 +59,82 @@ export function decodeBase64Utf8(base64: string): string {
 	return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
 }
 
+type ViewMode = 'rendered' | 'source'
+
+function SourceView({ text }: { text: string }) {
+	return (
+		<pre className="rounded-md border border-border bg-bg-surface p-4 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto text-text">
+			{text}
+		</pre>
+	)
+}
+
+function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
+	const options: { value: ViewMode; label: string }[] = [
+		{ value: 'rendered', label: 'Rendered' },
+		{ value: 'source', label: 'Source' },
+	]
+	return (
+		<ButtonGroup>
+			{options.map((opt) => (
+				<Button
+					key={opt.value}
+					type="button"
+					variant={mode === opt.value ? 'secondary' : 'ghost'}
+					size="sm"
+					onClick={() => onChange(opt.value)}
+				>
+					{opt.label}
+				</Button>
+			))}
+		</ButtonGroup>
+	)
+}
+
+function HtmlPreview({ html, name }: { html: string; name: string }) {
+	// `srcdoc` + `sandbox` isolate the page: scripts may run inside the iframe
+	// but cannot reach our origin's cookies, storage, or DOM. We deliberately
+	// omit `allow-same-origin`, so fetch/XHR from the page sees a null origin
+	// and same-origin checks against our app fail closed.
+	return (
+		<iframe
+			title={`Preview of ${name}`}
+			srcDoc={html}
+			sandbox="allow-scripts allow-popups allow-forms"
+			className="w-full min-h-[60vh] rounded-md border border-border bg-bg-surface"
+		/>
+	)
+}
+
 export function FileBody({ file }: { file: FileDetail }) {
+	const [mode, setMode] = useState<ViewMode>('rendered')
+
 	if (isMarkdown(file.mimeType)) {
-		return <MarkdownContent content={decodeBase64Utf8(file.content)} />
+		const text = decodeBase64Utf8(file.content)
+		return (
+			<div className="space-y-3">
+				<div className="flex justify-end">
+					<ViewToggle mode={mode} onChange={setMode} />
+				</div>
+				{mode === 'rendered' ? <MarkdownContent content={text} /> : <SourceView text={text} />}
+			</div>
+		)
+	}
+
+	if (isHtml(file.mimeType)) {
+		const text = decodeBase64Utf8(file.content)
+		return (
+			<div className="space-y-3">
+				<div className="flex justify-end">
+					<ViewToggle mode={mode} onChange={setMode} />
+				</div>
+				{mode === 'rendered' ? (
+					<HtmlPreview html={text} name={file.name} />
+				) : (
+					<SourceView text={text} />
+				)}
+			</div>
+		)
 	}
 
 	if (isInlineImage(file.mimeType)) {
@@ -70,14 +150,9 @@ export function FileBody({ file }: { file: FileDetail }) {
 	}
 
 	if (isPlainText(file.mimeType)) {
-		// Preformatted text only — HTML/JS/SVG bytes are visible to the reader
-		// but cannot execute in our origin because we never set innerHTML.
-		const text = decodeBase64Utf8(file.content)
-		return (
-			<pre className="rounded-md border border-border bg-bg-surface p-4 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto text-text">
-				{text}
-			</pre>
-		)
+		// Preformatted text only — JS/SVG bytes are visible to the reader but
+		// cannot execute in our origin because we never set innerHTML.
+		return <SourceView text={decodeBase64Utf8(file.content)} />
 	}
 
 	return (

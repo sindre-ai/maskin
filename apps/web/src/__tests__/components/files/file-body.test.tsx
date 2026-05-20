@@ -1,6 +1,12 @@
-import { FileBody, isInlineImage, isMarkdown, isPlainText } from '@/components/files/file-body'
+import {
+	FileBody,
+	isHtml,
+	isInlineImage,
+	isMarkdown,
+	isPlainText,
+} from '@/components/files/file-body'
 import type { FileDetail } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 function buildFile(overrides: Partial<FileDetail> = {}): FileDetail {
@@ -33,7 +39,16 @@ describe('FileBody', () => {
 			expect(isMarkdown('text/plain')).toBe(false)
 		})
 
-		it('treats text/html as plain text, not inline-renderable', () => {
+		it('treats text/html and application/xhtml+xml as HTML', () => {
+			expect(isHtml('text/html')).toBe(true)
+			expect(isHtml('application/xhtml+xml')).toBe(true)
+			expect(isHtml('text/plain')).toBe(false)
+			expect(isHtml('text/markdown')).toBe(false)
+		})
+
+		it('treats HTML as plain text fallback and not as an inline image', () => {
+			// HTML is renderable via the sandboxed iframe path, but it must still
+			// fall through to text classification if iframe rendering is bypassed.
 			expect(isPlainText('text/html')).toBe(true)
 			expect(isInlineImage('text/html')).toBe(false)
 			expect(isMarkdown('text/html')).toBe(false)
@@ -59,10 +74,21 @@ describe('FileBody', () => {
 	})
 
 	describe('rendering', () => {
-		it('renders markdown content via react-markdown', () => {
+		it('renders markdown content via react-markdown by default', () => {
 			const file = buildFile({ mimeType: 'text/markdown', content: b64('# Hello world') })
 			render(<FileBody file={file} />)
 			expect(screen.getByRole('heading', { level: 1, name: 'Hello world' })).toBeInTheDocument()
+		})
+
+		it('switches markdown view to raw source when Source is selected', () => {
+			const file = buildFile({ mimeType: 'text/markdown', content: b64('# Hello world') })
+			const { container } = render(<FileBody file={file} />)
+			fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+
+			const pre = container.querySelector('pre')
+			expect(pre?.textContent).toBe('# Hello world')
+			// Rendered heading should be gone.
+			expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
 		})
 
 		it('renders an <img> with a data URI for safe image mime types', () => {
@@ -79,20 +105,35 @@ describe('FileBody', () => {
 			expect(img).toHaveAttribute('src', `data:image/png;base64,${pngB64}`)
 		})
 
-		it('renders HTML as preformatted text (NOT as HTML)', () => {
+		it('renders HTML inside a sandboxed iframe via srcDoc', () => {
 			const html = '<script>window.__pwned = true</script><h1>Heading</h1>'
 			const file = buildFile({ mimeType: 'text/html', name: 'page.html', content: b64(html) })
 			const { container } = render(<FileBody file={file} />)
 
-			// The literal source must be visible as text.
-			const pre = container.querySelector('pre')
-			expect(pre).not.toBeNull()
-			expect(pre?.textContent).toBe(html)
+			const iframe = container.querySelector('iframe')
+			expect(iframe).not.toBeNull()
+			// `srcdoc` carries the file bytes — the iframe is the only place the
+			// HTML is parsed. Browser maps the React `srcDoc` prop to lowercase.
+			expect(iframe?.getAttribute('srcdoc')).toBe(html)
+			// Sandbox isolates the page: scripts may run inside but cannot reach
+			// our origin. `allow-same-origin` must NOT be present.
+			const sandbox = iframe?.getAttribute('sandbox') ?? ''
+			expect(sandbox).toContain('allow-scripts')
+			expect(sandbox).not.toContain('allow-same-origin')
 
-			// No script element should have ended up in the DOM.
+			// The script in the HTML must not have been parsed into our document.
 			expect(container.querySelector('script')).toBeNull()
-			// No heading should have been parsed from the HTML — the bytes are text.
 			expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+		})
+
+		it('switches HTML view to raw source when Source is selected', () => {
+			const html = '<h1>Heading</h1>'
+			const file = buildFile({ mimeType: 'text/html', name: 'page.html', content: b64(html) })
+			const { container } = render(<FileBody file={file} />)
+			fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+
+			expect(container.querySelector('iframe')).toBeNull()
+			expect(container.querySelector('pre')?.textContent).toBe(html)
 		})
 
 		it('renders SVG as preformatted text (NOT as an inline image)', () => {
