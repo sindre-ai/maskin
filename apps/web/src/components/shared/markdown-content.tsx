@@ -142,7 +142,7 @@ export function MarkdownContent({
 				<ReactMarkdown
 					remarkPlugins={[remarkGfm, remarkBreaks]}
 					disallowedElements={disallowedElements}
-					unwrapDisallowed={Boolean(disallowedElements)}
+					unwrapDisallowed={Boolean(disallowedElements && disallowedElements.length > 0)}
 					components={components}
 				>
 					{content}
