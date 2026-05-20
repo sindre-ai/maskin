@@ -16,6 +16,7 @@ import {
 	useActiveSessionsForActor,
 	useActorSessionsInfinite,
 	useCreateSession,
+	useMentionSessionsForObject,
 	useSession,
 	useSessionErrorLog,
 	useWorkspaceSessions,
@@ -187,6 +188,33 @@ describe('useActiveSessionsForActor', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Network error')
+	})
+})
+
+describe('useMentionSessionsForObject', () => {
+	it('fetches sessions filtered by mention_object_id', async () => {
+		const sessions = [buildSession({ id: 'session-mention-1' })]
+		vi.mocked(api.sessions.list).mockResolvedValue(sessions)
+
+		const { result } = renderHook(() => useMentionSessionsForObject(workspaceId, 'object-1'), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toEqual(sessions)
+		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			mention_object_id: 'object-1',
+			limit: '100',
+		})
+	})
+
+	it('is not enabled when objectId is null', async () => {
+		const { result } = renderHook(() => useMentionSessionsForObject(workspaceId, null), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.isFetching).toBe(false)
+		expect(api.sessions.list).not.toHaveBeenCalled()
 	})
 })
 

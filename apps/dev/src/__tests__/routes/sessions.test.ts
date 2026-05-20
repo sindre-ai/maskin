@@ -69,6 +69,24 @@ describe('Sessions Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 		})
+
+		it('accepts mention_object_id query parameter', async () => {
+			const objectId = '00000000-0000-0000-0000-0000000000aa'
+			const s1 = buildSession({
+				workspaceId: wsId,
+				config: { mention: { object_id: objectId, comment_event_id: 7 } },
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [s1]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions?mention_object_id=${objectId}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+		})
 	})
 
 	describe('GET /api/sessions/:id', () => {

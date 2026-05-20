@@ -1,6 +1,7 @@
 import { useActors } from '@/hooks/use-actors'
-import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
-import { formatStatusTransitionShort } from '@maskin/shared'
+import { useMentionSessionsForObject } from '@/hooks/use-sessions'
+import type { ActorListItem, EventResponse, ObjectResponse, SessionResponse } from '@/lib/api'
+import { type SessionMentionContext, formatStatusTransitionShort } from '@maskin/shared'
 import { useMemo, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
 import { Collapsible, CollapsibleContent } from '../ui/collapsible'
@@ -29,6 +30,19 @@ export function ObjectActivity({
 		for (const actor of actors ?? []) map.set(actor.id, actor)
 		return map
 	}, [actors])
+
+	const { data: mentionSessions } = useMentionSessionsForObject(workspaceId, object.id)
+	const sessionsByComment = useMemo(() => {
+		const map = new Map<number, SessionResponse[]>()
+		for (const session of mentionSessions ?? []) {
+			const mention = (session.config as { mention?: SessionMentionContext } | null)?.mention
+			if (!mention) continue
+			const existing = map.get(mention.comment_event_id) ?? []
+			existing.push(session)
+			map.set(mention.comment_event_id, existing)
+		}
+		return map
+	}, [mentionSessions])
 
 	// Events arrive from the API sorted desc (newest first); reverse for chronological grouping.
 	// Then bucket replies under their parent comment so threads stay intact within phases.
@@ -113,6 +127,7 @@ export function ObjectActivity({
 													replies={repliesByParent.get(event.id) ?? []}
 													workspaceId={workspaceId}
 													objectId={object.id}
+													mentionSessions={sessionsByComment.get(event.id) ?? []}
 												/>
 											) : (
 												<ActivityItem
