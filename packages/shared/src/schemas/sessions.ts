@@ -51,10 +51,22 @@ export const runtimeConfigSchema = z.object({
 export const sessionMentionContextSchema = z.object({
 	object_id: z.string().uuid(),
 	comment_event_id: z.number().int().positive(),
-	commenter_actor_id: z.string().uuid().optional(),
+	commenter_actor_id: z.string().uuid(),
 	notification_id: z.string().uuid().optional(),
 })
 export type SessionMentionContext = z.infer<typeof sessionMentionContextSchema>
+
+// Set internally by the events route when a new comment lands in a thread an
+// agent previously participated in (commented or was @mentioned), without the
+// agent being explicitly @mentioned in the new comment. Lets the UI attach a
+// live activity card under the triggering comment, same as mention sessions.
+export const sessionThreadReplyContextSchema = z.object({
+	object_id: z.string().uuid(),
+	comment_event_id: z.number().int().positive(),
+	thread_root_event_id: z.number().int().positive(),
+	commenter_actor_id: z.string().uuid(),
+})
+export type SessionThreadReplyContext = z.infer<typeof sessionThreadReplyContextSchema>
 
 export const sessionConfigSchema = z.object({
 	base_image: z.string().default('agent-base:latest'),
@@ -67,6 +79,7 @@ export const sessionConfigSchema = z.object({
 	env_vars: z.record(z.string()).default({}),
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
+	thread_reply: sessionThreadReplyContextSchema.optional(),
 })
 
 export const createSessionSchema = z.object({
