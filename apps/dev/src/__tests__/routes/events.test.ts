@@ -359,6 +359,125 @@ describe('Events Routes', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
+		it('keeps parent_event_id when parent is already a top-level comment', async () => {
+			const objectId = randomUUID()
+			const rootCommentId = 76660
+			const rootComment = buildEvent({
+				id: rootCommentId,
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Original verdict' },
+			})
+			const replyEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'first reply', parentEventId: rootCommentId },
+			})
+			const { app, mockResults, calls } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }], // object lookup
+				[rootComment], // parent resolution (root, no parent of its own)
+			]
+			mockResults.insert = [replyEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'first reply', parent_event_id: rootCommentId },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { data: { parentEventId?: number } }
+			expect(inserted.data.parentEventId).toBe(rootCommentId)
+		})
+
+		it('collapses reply-to-reply to the thread root parent_event_id', async () => {
+			const objectId = randomUUID()
+			const rootCommentId = 76660
+			const replyCommentId = 78423
+			const rootComment = buildEvent({
+				id: rootCommentId,
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Original verdict' },
+			})
+			const replyComment = buildEvent({
+				id: replyCommentId,
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'can you summarize?', parentEventId: rootCommentId },
+			})
+			const grandchildEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'summary reply', parentEventId: rootCommentId },
+			})
+			const { app, mockResults, calls } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }], // object lookup
+				[replyComment], // parent walk: 78423 → has parentEventId 76660
+				[rootComment], // parent walk: 76660 → root (no parent)
+			]
+			mockResults.insert = [grandchildEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'summary reply', parent_event_id: replyCommentId },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { data: { parentEventId?: number } }
+			expect(inserted.data.parentEventId).toBe(rootCommentId)
+		})
+
+		it('drops parent_event_id when the referenced parent event does not exist', async () => {
+			const objectId = randomUUID()
+			const missingParentId = 99999
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'orphan reply' },
+			})
+			const { app, mockResults, calls } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }], // object lookup
+				[], // parent lookup: not found
+			]
+			mockResults.insert = [commentEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'orphan reply', parent_event_id: missingParentId },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { data: { parentEventId?: number } }
+			expect(inserted.data.parentEventId).toBeUndefined()
+		})
+
 		it('still returns 201 when agent session creation fails asynchronously', async () => {
 			const objectId = randomUUID()
 			const agentId = randomUUID()
