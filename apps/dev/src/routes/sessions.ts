@@ -129,11 +129,6 @@ app.openapi(listSessionsRoute, (async (c) => {
 	if (query.mention_object_id) {
 		conditions.push(sql`${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id}`)
 	}
-	if (query.mention_comment_event_id !== undefined) {
-		conditions.push(
-			sql`${sessions.config}->'mention'->>'comment_event_id' = ${String(query.mention_comment_event_id)}`,
-		)
-	}
 
 	const results = await db
 		.select()

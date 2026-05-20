@@ -45,6 +45,17 @@ export const runtimeConfigSchema = z.object({
 	command: z.string().optional(),
 })
 
+// Set internally by the events route when a comment @mentions an agent.
+// Not user-supplied — the events route writes this into sessions.config so the
+// UI can find sessions linked to a specific comment thread.
+export const sessionMentionContextSchema = z.object({
+	object_id: z.string().uuid(),
+	comment_event_id: z.number().int().positive(),
+	commenter_actor_id: z.string().uuid().optional(),
+	notification_id: z.string().uuid().optional(),
+})
+export type SessionMentionContext = z.infer<typeof sessionMentionContextSchema>
+
 export const sessionConfigSchema = z.object({
 	base_image: z.string().default('agent-base:latest'),
 	runtime: sessionRuntimeSchema.default('claude-code'),
@@ -55,6 +66,7 @@ export const sessionConfigSchema = z.object({
 	mcps: z.array(mcpServerSchema).default([]),
 	env_vars: z.record(z.string()).default({}),
 	interactive: z.boolean().default(false),
+	mention: sessionMentionContextSchema.optional(),
 })
 
 export const createSessionSchema = z.object({
@@ -69,7 +81,6 @@ export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
 	mention_object_id: z.string().uuid().optional(),
-	mention_comment_event_id: z.coerce.number().int().positive().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
 })

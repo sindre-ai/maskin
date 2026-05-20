@@ -1,14 +1,12 @@
 import { SessionDetailPanel } from '@/components/agents/session-detail-panel'
-import { getLatestActivityPreview } from '@/components/agents/session-log-transcript'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { StreamingIndicator } from '@/components/shared/streaming-indicator'
 import { useActor } from '@/hooks/use-actors'
-import { useSessionLogs } from '@/hooks/use-sessions'
 import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { CheckCircle2, ChevronRight, Clock, XCircle } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'paused'])
 
@@ -24,11 +22,7 @@ export function MentionSessionCard({ session, workspaceId }: MentionSessionCardP
 	return (
 		<>
 			{isTerminal ? (
-				<TerminalCard
-					session={session}
-					workspaceId={workspaceId}
-					onOpen={() => setPanelOpen(true)}
-				/>
+				<TerminalCard session={session} onOpen={() => setPanelOpen(true)} />
 			) : (
 				<button
 					type="button"
@@ -50,16 +44,12 @@ export function MentionSessionCard({ session, workspaceId }: MentionSessionCardP
 
 function TerminalCard({
 	session,
-	workspaceId,
 	onOpen,
 }: {
 	session: SessionResponse
-	workspaceId: string
 	onOpen: () => void
 }) {
 	const { data: actor } = useActor(session.actorId)
-	const { data: logs } = useSessionLogs(session.id, workspaceId, true)
-	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const status = getTerminalStatus(session.status)
 
@@ -72,12 +62,7 @@ function TerminalCard({
 			<status.Icon size={14} className={cn('shrink-0', status.iconClass)} />
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<span className="text-sm font-medium shrink-0">{status.label}</span>
-			{preview && (
-				<>
-					<span className="text-muted-foreground shrink-0">·</span>
-					<span className="text-sm text-muted-foreground truncate min-w-0">{preview}</span>
-				</>
-			)}
+			<span className="text-sm text-muted-foreground shrink-0">· view session logs</span>
 			{duration && (
 				<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
 			)}
@@ -89,16 +74,14 @@ function TerminalCard({
 	)
 }
 
-function getTerminalStatus(status: string): {
+function getTerminalStatus(status: SessionResponse['status']): {
 	Icon: typeof CheckCircle2
 	label: string
 	iconClass: string
 } {
-	if (status === 'completed')
-		return { Icon: CheckCircle2, label: 'Finished', iconClass: 'text-success' }
 	if (status === 'failed') return { Icon: XCircle, label: 'Failed', iconClass: 'text-error' }
 	if (status === 'timeout') return { Icon: Clock, label: 'Timed out', iconClass: 'text-error' }
 	if (status === 'paused')
 		return { Icon: Clock, label: 'Paused', iconClass: 'text-muted-foreground' }
-	return { Icon: CheckCircle2, label: status, iconClass: 'text-muted-foreground' }
+	return { Icon: CheckCircle2, label: 'Finished', iconClass: 'text-success' }
 }

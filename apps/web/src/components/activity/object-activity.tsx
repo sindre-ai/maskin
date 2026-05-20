@@ -1,7 +1,7 @@
 import { useActors } from '@/hooks/use-actors'
 import { useMentionSessionsForObject } from '@/hooks/use-sessions'
 import type { ActorListItem, EventResponse, ObjectResponse, SessionResponse } from '@/lib/api'
-import { formatStatusTransitionShort } from '@maskin/shared'
+import { type SessionMentionContext, formatStatusTransitionShort } from '@maskin/shared'
 import { useMemo, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
 import { Collapsible, CollapsibleContent } from '../ui/collapsible'
@@ -35,15 +35,11 @@ export function ObjectActivity({
 	const sessionsByComment = useMemo(() => {
 		const map = new Map<number, SessionResponse[]>()
 		for (const session of mentionSessions ?? []) {
-			const mention = (
-				session.config as { mention?: { comment_event_id?: number | string } } | null
-			)?.mention
-			const raw = mention?.comment_event_id
-			const id = typeof raw === 'string' ? Number(raw) : raw
-			if (typeof id !== 'number' || !Number.isFinite(id)) continue
-			const existing = map.get(id) ?? []
+			const mention = (session.config as { mention?: SessionMentionContext } | null)?.mention
+			if (!mention) continue
+			const existing = map.get(mention.comment_event_id) ?? []
 			existing.push(session)
-			map.set(id, existing)
+			map.set(mention.comment_event_id, existing)
 		}
 		return map
 	}, [mentionSessions])
