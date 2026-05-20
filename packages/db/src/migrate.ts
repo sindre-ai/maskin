@@ -40,9 +40,10 @@ for (const file of files) {
 		await sql.unsafe(content)
 	} catch (err: unknown) {
 		const code = (err as { code?: string }).code
-		// 42P07 = relation already exists, 42701 = column already exists
-		// This handles existing DBs that predate migration tracking
-		if (code === '42P07' || code === '42701') {
+		// 42P07 = relation already exists, 42701 = column already exists,
+		// 42710 = object (e.g. constraint) already exists.
+		// This handles existing DBs that predate migration tracking.
+		if (code === '42P07' || code === '42701' || code === '42710') {
 			console.log(`  Already applied (marking as done): ${file}`)
 		} else {
 			throw err
