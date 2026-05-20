@@ -96,13 +96,21 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 	// but cannot reach our origin's cookies, storage, or DOM. We deliberately
 	// omit `allow-same-origin`, so fetch/XHR from the page sees a null origin
 	// and same-origin checks against our app fail closed.
+	//
+	// The wrapper carries `resize` so the user gets a native CSS drag-handle
+	// in the bottom-right corner that grows it both vertically and horizontally;
+	// the iframe fills it. `overflow-hidden` is required for `resize` to take
+	// effect on a block element. The `max-w` lets the user pull the preview
+	// past the page's narrower container, up to roughly the viewport width.
 	return (
-		<iframe
-			title={`Preview of ${name}`}
-			srcDoc={html}
-			sandbox="allow-scripts allow-popups allow-forms"
-			className="w-full min-h-[60vh] rounded-md border border-border bg-bg-surface"
-		/>
+		<div className="resize overflow-hidden rounded-md border border-border bg-bg-surface w-full h-[60vh] min-h-[20vh] max-h-[200vh] max-w-[calc(100vw-4rem)]">
+			<iframe
+				title={`Preview of ${name}`}
+				srcDoc={html}
+				sandbox="allow-scripts allow-popups allow-forms"
+				className="w-full h-full block"
+			/>
+		</div>
 	)
 }
 
