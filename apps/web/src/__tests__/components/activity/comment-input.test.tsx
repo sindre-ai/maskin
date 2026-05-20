@@ -1,5 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
-import { render, screen } from '@testing-library/react'
+import { COMMENT_MAX_LENGTH } from '@maskin/shared'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 const mockMutate = vi.fn()
@@ -120,5 +121,61 @@ describe('CommentInput', () => {
 		const chip = screen.getByText('@Senior Developer')
 		expect(chip).toBeInTheDocument()
 		expect(chip.tagName).toBe('SPAN')
+	})
+
+	describe('character limit', () => {
+		const COUNTER_THRESHOLD = Math.ceil(COMMENT_MAX_LENGTH * 0.9)
+
+		// fireEvent.change is much faster than userEvent.type for thousands of
+		// characters and wraps the update in act() automatically.
+		function setValue(text: string) {
+			const ta = screen.getByPlaceholderText(
+				'Write a comment... Use @ to mention an agent',
+			) as HTMLTextAreaElement
+			fireEvent.change(ta, { target: { value: text } })
+			return ta
+		}
+
+		it('hides the counter for short comments', async () => {
+			const user = userEvent.setup()
+			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+			await user.type(
+				screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+				'hi',
+			)
+			expect(screen.queryByText(new RegExp(`/\\s*${COMMENT_MAX_LENGTH}$`))).not.toBeInTheDocument()
+		})
+
+		it('shows the counter once content reaches 90% of the limit', () => {
+			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+			setValue('x'.repeat(COUNTER_THRESHOLD))
+
+			expect(
+				screen.getByText(new RegExp(`^${COUNTER_THRESHOLD}\\s*/\\s*${COMMENT_MAX_LENGTH}$`)),
+			).toBeInTheDocument()
+			expect(screen.getByRole('button')).not.toBeDisabled()
+		})
+
+		it('disables submit, sets aria-invalid, and tints the counter when over the limit', () => {
+			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+			const ta = setValue('x'.repeat(COMMENT_MAX_LENGTH + 5))
+
+			const counter = screen.getByText(
+				new RegExp(`^${COMMENT_MAX_LENGTH + 5}\\s*/\\s*${COMMENT_MAX_LENGTH}$`),
+			)
+			expect(counter).toBeInTheDocument()
+			expect(counter.className).toContain('text-error')
+			expect(ta).toHaveAttribute('aria-invalid', 'true')
+			expect(screen.getByRole('button')).toBeDisabled()
+		})
+
+		it('does not submit when Enter is pressed over the limit', async () => {
+			const user = userEvent.setup()
+			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+			const ta = setValue('x'.repeat(COMMENT_MAX_LENGTH + 1))
+			ta.focus()
+			await user.keyboard('{Enter}')
+			expect(mockMutate).not.toHaveBeenCalled()
+		})
 	})
 })

@@ -3,6 +3,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCreateComment } from '@/hooks/use-events'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { ArrowUp } from 'lucide-react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
@@ -16,6 +17,10 @@ interface CommentInputProps {
 
 // ~6 lines at text-sm (line-height 20px) + py-1.5 (12px) + 2px border
 const MAX_INPUT_HEIGHT_PX = 134
+
+// Show the live character counter once the draft reaches this fraction of the
+// limit. Keeps the UI quiet for the common short-comment case.
+const COUNTER_VISIBILITY_THRESHOLD = 0.9
 
 export function CommentInput({ workspaceId, objectId, parentEventId }: CommentInputProps) {
 	const actor = getStoredActor()
@@ -116,9 +121,13 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 		setMentionFilter('')
 	}, [])
 
+	const overLimit = content.length > COMMENT_MAX_LENGTH
+	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
+
 	const handleSubmit = useCallback(() => {
 		const trimmed = content.trim()
 		if (!trimmed) return
+		if (trimmed.length > COMMENT_MAX_LENGTH) return
 
 		// Reconcile mentions: only include actors whose @Name is still in the text
 		const activeMentions = mentions.filter((id) => {
@@ -205,15 +214,30 @@ export function CommentInput({ workspaceId, objectId, parentEventId }: CommentIn
 						onScroll={handleScroll}
 						placeholder="Write a comment... Use @ to mention an agent"
 						rows={1}
-						className="relative w-full resize-none overflow-y-hidden rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-1 focus:ring-border-focus"
+						aria-invalid={overLimit || undefined}
+						className={cn(
+							'relative w-full resize-none overflow-y-hidden rounded-md border bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-1',
+							overLimit ? 'border-error focus:ring-error' : 'border-border focus:ring-border-focus',
+						)}
 						style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 					/>
+					{showCounter && (
+						<div
+							className={cn(
+								'mt-1 text-right text-xs tabular-nums',
+								overLimit ? 'text-error' : 'text-muted-foreground',
+							)}
+							aria-live="polite"
+						>
+							{content.length} / {COMMENT_MAX_LENGTH}
+						</div>
+					)}
 				</div>
 				<Button
 					size="icon"
 					variant="ghost"
 					className="shrink-0 h-8 w-8"
-					disabled={!content.trim() || createComment.isPending}
+					disabled={!content.trim() || createComment.isPending || overLimit}
 					onClick={handleSubmit}
 				>
 					<ArrowUp size={14} />
