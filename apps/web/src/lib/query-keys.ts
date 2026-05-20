@@ -56,6 +56,8 @@ export const queryKeys = {
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
 		byActorAllInfinite: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
+		byMentionObject: (workspaceId: string, objectId: string) =>
+			['sessions', workspaceId, 'mention-object', objectId] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,
