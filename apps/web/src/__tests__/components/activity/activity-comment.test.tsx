@@ -154,6 +154,71 @@ describe('ActivityComment', () => {
 		).toBeGreaterThanOrEqual(1)
 	})
 
+	it('renders markdown formatting in comment bodies', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: '**bold** *italic* ~~strike~~ `code`' },
+		})
+		const { container } = render(
+			<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />,
+		)
+		expect(container.querySelector('strong')?.textContent).toBe('bold')
+		expect(container.querySelector('em')?.textContent).toBe('italic')
+		expect(container.querySelector('del')?.textContent).toBe('strike')
+		expect(container.querySelector('code')?.textContent).toBe('code')
+	})
+
+	it('renders ordered and unordered lists', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: '- one\n- two\n\n1. first\n2. second' },
+		})
+		const { container } = render(
+			<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />,
+		)
+		expect(container.querySelector('ul')).not.toBeNull()
+		expect(container.querySelector('ol')).not.toBeNull()
+	})
+
+	it('renders blockquotes and links', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: '> quoted text\n\n[link](https://example.com)' },
+		})
+		const { container } = render(
+			<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />,
+		)
+		expect(container.querySelector('blockquote')).not.toBeNull()
+		const anchor = container.querySelector('a')
+		expect(anchor?.getAttribute('href')).toBe('https://example.com')
+	})
+
+	it('does not render markdown headings as <h1>', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: '# Important heading' },
+		})
+		const { container } = render(
+			<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />,
+		)
+		expect(container.querySelector('h1')).toBeNull()
+		expect(container.querySelector('h2')).toBeNull()
+		expect(screen.getByText('Important heading')).toBeInTheDocument()
+	})
+
+	it('renders mention chip together with markdown formatting', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'Hey @Bob this is **important**' },
+		})
+		const { container } = render(
+			<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />,
+		)
+		const chip = screen.getByText('@Bob')
+		expect(chip.tagName).toBe('SPAN')
+		expect(container.querySelector('strong')?.textContent).toBe('important')
+	})
+
 	it('clicking Reply on the last reply opens the input on the parent thread', async () => {
 		const user = userEvent.setup()
 		const event = buildEventResponse({

@@ -1,9 +1,28 @@
 import { Textarea } from '@/components/ui/textarea'
+import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
+import { MentionedText } from './mentioned-text'
+
+function wrapWithMentions(children: ReactNode, actors: ActorListItem[]): ReactNode {
+	if (typeof children === 'string') {
+		return <MentionedText content={children} actors={actors} />
+	}
+	if (Array.isArray(children)) {
+		return children.map((child, idx) =>
+			typeof child === 'string' ? (
+				// biome-ignore lint/suspicious/noArrayIndexKey: children come from a deterministic markdown AST; order is stable across renders
+				<MentionedText key={`m-${idx}`} content={child} actors={actors} />
+			) : (
+				child
+			),
+		)
+	}
+	return children
+}
 
 export function MarkdownContent({
 	content,
@@ -11,12 +30,16 @@ export function MarkdownContent({
 	editable = false,
 	className,
 	size = 'sm',
+	disallowedElements,
+	mentionActors,
 }: {
 	content: string
 	onChange?: (value: string) => void
 	editable?: boolean
 	className?: string
 	size?: 'sm' | 'xs'
+	disallowedElements?: string[]
+	mentionActors?: ActorListItem[]
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
@@ -52,6 +75,22 @@ export function MarkdownContent({
 	useEffect(() => {
 		if (editing) autoResize()
 	}, [editing, autoResize])
+
+	const components = useMemo<Components | undefined>(() => {
+		if (!mentionActors) return undefined
+		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors)
+		return {
+			p: ({ children }) => <p>{wrap(children)}</p>,
+			li: ({ children }) => <li>{wrap(children)}</li>,
+			em: ({ children }) => <em>{wrap(children)}</em>,
+			strong: ({ children }) => <strong>{wrap(children)}</strong>,
+			blockquote: ({ children }) => <blockquote>{wrap(children)}</blockquote>,
+			del: ({ children }) => <del>{wrap(children)}</del>,
+			a: ({ children, ...rest }) => <a {...rest}>{wrap(children)}</a>,
+			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
+			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
+		}
+	}, [mentionActors])
 
 	if (editable && editing) {
 		return (
@@ -100,7 +139,14 @@ export function MarkdownContent({
 					size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
 				)}
 			>
-				<ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
+				<ReactMarkdown
+					remarkPlugins={[remarkGfm, remarkBreaks]}
+					disallowedElements={disallowedElements}
+					unwrapDisallowed={Boolean(disallowedElements)}
+					components={components}
+				>
+					{content}
+				</ReactMarkdown>
 			</div>
 		</div>
 	)
