@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createCommentSchema, eventQuerySchema } from '../schemas/events'
+import { COMMENT_MAX_LENGTH, createCommentSchema, eventQuerySchema } from '../schemas/events'
 
 const uuid = '550e8400-e29b-41d4-a716-446655440000'
 
@@ -55,15 +55,25 @@ describe('createCommentSchema', () => {
 		expect(() => createCommentSchema.parse({ entity_id: uuid, content: '' })).toThrow()
 	})
 
-	it('rejects content exceeding 10000 chars', () => {
-		expect(() =>
-			createCommentSchema.parse({ entity_id: uuid, content: 'x'.repeat(10001) }),
-		).toThrow()
+	it(`rejects content exceeding ${COMMENT_MAX_LENGTH} chars with the documented message`, () => {
+		const result = createCommentSchema.safeParse({
+			entity_id: uuid,
+			content: 'x'.repeat(COMMENT_MAX_LENGTH + 1),
+		})
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			const contentIssue = result.error.issues.find((i) => i.path[0] === 'content')
+			expect(contentIssue?.message).toContain(`${COMMENT_MAX_LENGTH} characters or fewer`)
+			expect(contentIssue?.message).toContain('Split long messages')
+		}
 	})
 
-	it('accepts content at max 10000 chars', () => {
-		const result = createCommentSchema.parse({ entity_id: uuid, content: 'x'.repeat(10000) })
-		expect(result.content).toHaveLength(10000)
+	it(`accepts content at max ${COMMENT_MAX_LENGTH} chars`, () => {
+		const result = createCommentSchema.parse({
+			entity_id: uuid,
+			content: 'x'.repeat(COMMENT_MAX_LENGTH),
+		})
+		expect(result.content).toHaveLength(COMMENT_MAX_LENGTH)
 	})
 
 	it('accepts optional mentions array', () => {
