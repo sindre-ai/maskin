@@ -179,10 +179,17 @@ app.openapi(createCommentRoute, (async (c) => {
 	// one level of threading, so a reply to a reply must attach to the root
 	// instead — otherwise the UI silently drops the comment (it has nowhere to
 	// place a child-of-a-child). Walk up parentEventId until we find a comment
-	// with no parent of its own. If the chain is broken (parent missing or
-	// cyclic), drop parentEventId so the comment posts at top level rather than
-	// becoming an un-renderable orphan.
-	const parentEventId = await resolveRootParentEventId(db, workspaceId, body.parent_event_id)
+	// with no parent of its own. Each step requires the ancestor to be a
+	// `commented` event on the same object; if the chain is broken (parent
+	// missing, on a different object, not a comment, or cyclic), drop
+	// parentEventId so the comment posts at top level rather than becoming an
+	// un-renderable orphan.
+	const parentEventId = await resolveRootParentEventId(
+		db,
+		workspaceId,
+		body.entity_id,
+		body.parent_event_id,
+	)
 
 	const { comment, agentMentions } = await db.transaction(async (tx) => {
 		const results = await tx
@@ -301,6 +308,7 @@ app.openapi(createCommentRoute, (async (c) => {
 async function resolveRootParentEventId(
 	db: Database,
 	workspaceId: string,
+	entityId: string,
 	parentEventId: number | undefined,
 ): Promise<number | undefined> {
 	if (parentEventId === undefined) return undefined
@@ -312,7 +320,15 @@ async function resolveRootParentEventId(
 		const rows: Array<{ id: number; data: unknown }> = await db
 			.select({ id: events.id, data: events.data })
 			.from(events)
-			.where(and(eq(events.id, current), eq(events.workspaceId, workspaceId)))
+			.where(
+				and(
+					eq(events.id, current),
+					eq(events.workspaceId, workspaceId),
+					eq(events.entityType, 'object'),
+					eq(events.entityId, entityId),
+					eq(events.action, 'commented'),
+				),
+			)
 			.limit(1)
 		const parent = rows[0]
 		if (!parent) return undefined
