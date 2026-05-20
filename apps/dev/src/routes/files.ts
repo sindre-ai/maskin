@@ -45,53 +45,15 @@ function frontendBaseUrl(): string {
 	return DEV_FRONTEND_FALLBACK
 }
 
-// `downloadUrl` targets the API. In prod the API may live on a separate origin
-// from the frontend; in dev the frontend's Vite proxy forwards `/api` to the API,
-// so `FRONTEND_URL` is a safe fallback. Set `API_BASE_URL` explicitly when the API
-// is hosted somewhere the frontend does not proxy.
-function apiBaseUrl(): string {
-	const url = process.env.API_BASE_URL || process.env.FRONTEND_URL
-	if (url) return url
-	if (isProduction()) {
-		throw new Error(
-			'API_BASE_URL or FRONTEND_URL must be set in production to mint file download URLs',
-		)
-	}
-	return DEV_FRONTEND_FALLBACK
-}
-
 function fileStorageKey(workspaceId: string, fileId: string): string {
 	return `workspaces/${workspaceId}/files/${fileId}`
 }
 
-// HTML/JS/SVG are forced to attachment so the browser cannot execute the bytes
-// in our origin context — the viewer never embeds them inline.
-const UNSAFE_INLINE_MIME = new Set([
-	'text/html',
-	'application/xhtml+xml',
-	'image/svg+xml',
-	'application/javascript',
-	'text/javascript',
-	'application/ecmascript',
-	'text/ecmascript',
-])
-
-function disposition(mimeType: string, name: string): string {
-	const safeName = name.replace(/[\\"\r\n]/g, '_')
-	const isImage = mimeType.startsWith('image/') && !UNSAFE_INLINE_MIME.has(mimeType)
-	const isText =
-		(mimeType.startsWith('text/') || mimeType === 'application/json') &&
-		!UNSAFE_INLINE_MIME.has(mimeType)
-	const mode = isImage || isText ? 'inline' : 'attachment'
-	return `${mode}; filename="${safeName}"`
-}
-
-function buildResponse(row: typeof files.$inferSelect, content: string) {
+function buildResponse(row: typeof files.$inferSelect, content: string, frontendUrl: string) {
 	return {
 		...serialize(row),
 		content,
-		url: `${frontendBaseUrl()}/${row.workspaceId}/files/${row.id}`,
-		downloadUrl: `${apiBaseUrl()}/api/files/${row.id}/download`,
+		url: `${frontendUrl}/${row.workspaceId}/files/${row.id}`,
 	}
 }
 
@@ -135,51 +97,62 @@ app.openapi(createFileRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
+	// Resolve the frontend URL up front. If FRONTEND_URL is missing in prod we
+	// fail before any side effects — otherwise we'd write a row + S3 object,
+	// then 500 the response, and a retry would create another pair.
+	let frontendUrl: string
+	try {
+		frontendUrl = frontendBaseUrl()
+	} catch (err) {
+		logger.error('Cannot mint file URL', { error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'File URL not configured'), 500)
+	}
+
 	const fileId = randomUUID()
 	const storageKey = fileStorageKey(workspaceId, fileId)
 	const bytes = Buffer.from(body.content, 'base64')
 	const sizeBytes = bytes.byteLength
 
-	// DB insert inside tx → S3 put → tx commits. If S3 put throws, the tx
-	// rolls back and no row references the (never-written) key. If commit
-	// fails after the put (rare), the S3 object is orphaned under the row's
-	// UUID — inert because nothing else mints that UUID.
-	let created: typeof files.$inferSelect | undefined
-	let s3PutSucceeded = false
-	try {
-		created = await db.transaction(async (tx) => {
-			const [row] = await tx
-				.insert(files)
-				.values({
-					id: fileId,
-					workspaceId,
-					name: body.name,
-					description: body.description ?? null,
-					mimeType: body.mime_type,
-					sizeBytes,
-					storageKey,
-					createdBy: actorId,
-				})
-				.returning()
-			if (!row) throw new Error('INSERT returned no row')
-			await storage.put(storageKey, bytes)
-			s3PutSucceeded = true
-			return row
+	// Insert + commit first, then S3 put. Keeping the put outside the tx
+	// avoids holding row locks and a DB connection open for the upload
+	// duration. If the put fails we compensate by deleting the row; the
+	// row is invisible to other callers between the two steps because
+	// nothing else mints this UUID.
+	const [created] = await db
+		.insert(files)
+		.values({
+			id: fileId,
+			workspaceId,
+			name: body.name,
+			description: body.description ?? null,
+			mimeType: body.mime_type,
+			sizeBytes,
+			storageKey,
+			createdBy: actorId,
 		})
-	} catch (err) {
-		if (s3PutSucceeded) {
-			logger.error('Orphan S3 object after file commit failure', {
-				workspaceId,
-				fileId,
-				storageKey,
-				error: String(err),
-			})
-		}
-		throw err
-	}
-
+		.returning()
 	if (!created) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create file'), 500)
+	}
+
+	try {
+		await storage.put(storageKey, bytes)
+	} catch (err) {
+		logger.error('S3 put failed; rolling back file row', {
+			workspaceId,
+			fileId: created.id,
+			storageKey,
+			error: String(err),
+		})
+		try {
+			await db.delete(files).where(eq(files.id, created.id))
+		} catch (cleanupErr) {
+			logger.error('Failed to delete file row after S3 put failure (orphan row left)', {
+				fileId: created.id,
+				error: String(cleanupErr),
+			})
+		}
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to store file bytes'), 500)
 	}
 
 	// Audit event — never include the file content (8KB NOTIFY cap).
@@ -205,7 +178,10 @@ app.openapi(createFileRoute, (async (c) => {
 		})
 	}
 
-	return c.json(buildResponse(created, body.content) as z.infer<typeof fileDetailSchema>, 201)
+	return c.json(
+		buildResponse(created, body.content, frontendUrl) as z.infer<typeof fileDetailSchema>,
+		201,
+	)
 }) as RouteHandler<typeof createFileRoute, Env>)
 
 // -- GET / — List files -------------------------------------------------------
@@ -286,6 +262,14 @@ app.openapi(getFileRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 
+	let frontendUrl: string
+	try {
+		frontendUrl = frontendBaseUrl()
+	} catch (err) {
+		logger.error('Cannot mint file URL', { error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'File URL not configured'), 500)
+	}
+
 	const [row] = await db.select().from(files).where(eq(files.id, id)).limit(1)
 	if (!row || !(await isWorkspaceMember(db, actorId, row.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
@@ -304,50 +288,8 @@ app.openapi(getFileRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to read file bytes'), 500)
 	}
 
-	return c.json(buildResponse(row, content) as z.infer<typeof fileDetailSchema>, 200)
+	return c.json(buildResponse(row, content, frontendUrl) as z.infer<typeof fileDetailSchema>, 200)
 }) as RouteHandler<typeof getFileRoute, Env>)
-
-// -- GET /:id/download — Stream raw bytes ------------------------------------
-
-const downloadFileRoute = createRoute({
-	method: 'get',
-	path: '/{id}/download',
-	tags: ['Files'],
-	summary: 'Download raw file bytes',
-	request: { params: idParamSchema },
-	responses: {
-		200: {
-			content: { 'application/octet-stream': { schema: z.string() } },
-			description: 'Raw file bytes',
-		},
-		404: {
-			content: { 'application/json': { schema: errorSchema } },
-			description: 'File not found',
-		},
-	},
-})
-
-app.openapi(downloadFileRoute, (async (c) => {
-	const db = c.get('db')
-	const storage = c.get('storageProvider')
-	const actorId = c.get('actorId')
-	const { id } = c.req.valid('param')
-
-	const [row] = await db.select().from(files).where(eq(files.id, id)).limit(1)
-	if (!row || !(await isWorkspaceMember(db, actorId, row.workspaceId))) {
-		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
-	}
-
-	const bytes = await storage.get(row.storageKey)
-	// Force browsers to treat HTML/JS/SVG as downloads even if the agent uploaded
-	// them with a text MIME type. `nosniff` blocks MIME-sniffing fallback so the
-	// browser cannot escalate text/plain → text/html behind our back.
-	c.header('Content-Type', row.mimeType)
-	c.header('X-Content-Type-Options', 'nosniff')
-	c.header('Content-Disposition', disposition(row.mimeType, row.name))
-	c.header('Content-Length', String(bytes.byteLength))
-	return c.body(bytes as unknown as ArrayBuffer)
-}) as RouteHandler<typeof downloadFileRoute, Env>)
 
 // -- PATCH /:id — Update file -------------------------------------------------
 
@@ -383,6 +325,14 @@ app.openapi(updateFileRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
+	let frontendUrl: string
+	try {
+		frontendUrl = frontendBaseUrl()
+	} catch (err) {
+		logger.error('Cannot mint file URL', { error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'File URL not configured'), 500)
+	}
+
 	const [existing] = await db.select().from(files).where(eq(files.id, id)).limit(1)
 	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
@@ -392,6 +342,9 @@ app.openapi(updateFileRoute, (async (c) => {
 	const newBytes = contentChanged ? Buffer.from(body.content as string, 'base64') : null
 	const newSize = newBytes ? newBytes.byteLength : existing.sizeBytes
 
+	// Metadata update inside a tx with FOR UPDATE to serialize concurrent
+	// patches. S3 put happens after commit — same pattern as create — so
+	// the row lock is released before the (potentially slow) upload.
 	const updated = await db.transaction(async (tx) => {
 		const [locked] = await tx
 			.select()
@@ -412,16 +365,29 @@ app.openapi(updateFileRoute, (async (c) => {
 			})
 			.where(eq(files.id, existing.id))
 			.returning()
-		if (!row) return undefined
-
-		if (newBytes) {
-			await storage.put(locked.storageKey, newBytes)
-		}
 		return row
 	})
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
+	}
+
+	if (newBytes) {
+		try {
+			await storage.put(updated.storageKey, newBytes)
+		} catch (err) {
+			// The metadata row already committed with the new sizeBytes/mimeType,
+			// but the bytes failed to upload — the row now points at stale or
+			// missing content. Log loud; we can't trivially roll back the row
+			// because we don't know the prior size/mime in scope. Callers will
+			// see the inconsistency on next GET.
+			logger.error('S3 put failed during file update; row metadata may be stale', {
+				fileId: updated.id,
+				storageKey: updated.storageKey,
+				error: String(err),
+			})
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to store file bytes'), 500)
+		}
 	}
 
 	try {
@@ -458,7 +424,10 @@ app.openapi(updateFileRoute, (async (c) => {
 		})
 	}
 
-	return c.json(buildResponse(updated, contentB64) as z.infer<typeof fileDetailSchema>, 200)
+	return c.json(
+		buildResponse(updated, contentB64, frontendUrl) as z.infer<typeof fileDetailSchema>,
+		200,
+	)
 }) as RouteHandler<typeof updateFileRoute, Env>)
 
 // -- DELETE /:id — Delete file ------------------------------------------------

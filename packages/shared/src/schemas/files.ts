@@ -67,7 +67,6 @@ export type FileListItem = z.infer<typeof fileListItemSchema>
 export const fileDetailSchema = fileListItemSchema.extend({
 	content: z.string(),
 	url: z.string().url(),
-	downloadUrl: z.string().url(),
 })
 
 export type FileDetail = z.infer<typeof fileDetailSchema>

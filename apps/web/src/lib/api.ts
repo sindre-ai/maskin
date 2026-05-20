@@ -406,7 +406,6 @@ export const api = {
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
-		downloadUrl: (id: string) => `${API_BASE}/files/${id}/download`,
 	},
 }
 
@@ -743,7 +742,6 @@ export interface FileListItem {
 export interface FileDetail extends FileListItem {
 	content: string
 	url: string
-	downloadUrl: string
 }
 
 export interface CreateFileInput {

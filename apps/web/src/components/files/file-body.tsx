@@ -107,7 +107,7 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 			<iframe
 				title={`Preview of ${name}`}
 				srcDoc={html}
-				sandbox="allow-scripts allow-popups allow-forms"
+				sandbox="allow-scripts"
 				className="w-full h-full block"
 			/>
 		</div>

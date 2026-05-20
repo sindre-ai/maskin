@@ -13,12 +13,11 @@ function authedHeaders() {
 
 describe('Files Routes', () => {
 	beforeEach(() => {
-		// Routes read FRONTEND_URL for the returned `url` field and API_BASE_URL
-		// for `downloadUrl`. Pin them so assertions don't depend on dev defaults
-		// or leak between tests. vi.stubEnv handles both set and unset cleanly —
-		// plain `process.env.X = undefined` would coerce to the string 'undefined'.
+		// Routes read FRONTEND_URL for the returned `url` field. Pin it so
+		// assertions don't depend on dev defaults or leak between tests.
+		// vi.stubEnv handles both set and unset cleanly — plain
+		// `process.env.X = undefined` would coerce to the string 'undefined'.
 		vi.stubEnv('FRONTEND_URL', 'http://localhost:5173')
-		vi.stubEnv('API_BASE_URL', '')
 	})
 
 	afterEach(() => {
@@ -44,7 +43,7 @@ describe('Files Routes', () => {
 			expect(json.name).toBe(inserted.name)
 			expect(json.content).toBe(body.content)
 			expect(json.url).toBe(`http://localhost:5173/${workspaceId}/files/${inserted.id}`)
-			expect(json.downloadUrl).toBe(`http://localhost:5173/api/files/${inserted.id}/download`)
+			expect(json.downloadUrl).toBeUndefined()
 			expect(storageProvider.put).toHaveBeenCalledTimes(1)
 
 			// First insert is the file row, second is the audit event.
@@ -58,8 +57,7 @@ describe('Files Routes', () => {
 			expect((eventInsert.data as Record<string, unknown>).content).toBeUndefined()
 		})
 
-		it('targets API_BASE_URL for downloadUrl when set (split-origin prod)', async () => {
-			vi.stubEnv('API_BASE_URL', 'https://api.example.com')
+		it('mints absolute URLs from FRONTEND_URL', async () => {
 			vi.stubEnv('FRONTEND_URL', 'https://app.example.com')
 			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
 			const body = buildCreateFileBody()
@@ -71,17 +69,30 @@ describe('Files Routes', () => {
 			expect(res.status).toBe(201)
 			const json = await res.json()
 			expect(json.url).toBe(`https://app.example.com/${workspaceId}/files/${inserted.id}`)
-			expect(json.downloadUrl).toBe(`https://api.example.com/api/files/${inserted.id}/download`)
 		})
 
-		it('returns 500 in production when FRONTEND_URL is unset (no silent localhost fallback)', async () => {
+		it('returns 500 in production when FRONTEND_URL is unset, before any side effects', async () => {
 			vi.stubEnv('NODE_ENV', 'production')
 			vi.stubEnv('FRONTEND_URL', '')
-			vi.stubEnv('API_BASE_URL', '')
-			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
+			const { app, calls, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
+			const body = buildCreateFileBody()
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect(res.status).toBe(500)
+			// No row should have been inserted and no bytes written — env
+			// validation must run before any side effects so a retry doesn't
+			// create orphan rows / objects.
+			expect(calls.inserts).toHaveLength(0)
+			expect(storageProvider.put).not.toHaveBeenCalled()
+		})
+
+		it('returns 500 when S3 put fails (row is compensated)', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
 			const body = buildCreateFileBody()
 			const inserted = buildFile({ workspaceId, name: body.name, mimeType: body.mime_type })
-			mockResults.insertQueue = [[inserted], [{ id: 'evt-1' }]]
+			mockResults.insertQueue = [[inserted]]
+			vi.mocked(storageProvider.put).mockRejectedValueOnce(new Error('S3 down'))
 
 			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
 
@@ -173,69 +184,6 @@ describe('Files Routes', () => {
 			const res = await app.request(jsonGet(`/api/files/${file.id}`))
 
 			expect(res.status).toBe(404)
-		})
-	})
-
-	describe('GET /api/files/:id/download', () => {
-		it('streams raw bytes with nosniff and inline disposition for text', async () => {
-			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
-			const file = buildFile({ workspaceId, mimeType: 'text/markdown', name: 'doc.md' })
-			vi.mocked(storageProvider.get).mockResolvedValue(Buffer.from('hello'))
-			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })]]
-
-			const res = await app.request(jsonGet(`/api/files/${file.id}/download`))
-
-			expect(res.status).toBe(200)
-			expect(res.headers.get('Content-Type')).toBe('text/markdown')
-			expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
-			const disp = res.headers.get('Content-Disposition')
-			expect(disp).toMatch(/^inline; filename="doc.md"$/)
-		})
-
-		it('forces attachment for HTML so the browser cannot execute the bytes', async () => {
-			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
-			const file = buildFile({
-				workspaceId,
-				mimeType: 'text/html',
-				name: 'page.html',
-			})
-			vi.mocked(storageProvider.get).mockResolvedValue(Buffer.from('<script>alert(1)</script>'))
-			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })]]
-
-			const res = await app.request(jsonGet(`/api/files/${file.id}/download`))
-
-			expect(res.status).toBe(200)
-			expect(res.headers.get('Content-Disposition')).toMatch(/^attachment;/)
-		})
-
-		it('forces attachment for SVG (script execution vector)', async () => {
-			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
-			const file = buildFile({
-				workspaceId,
-				mimeType: 'image/svg+xml',
-				name: 'icon.svg',
-			})
-			vi.mocked(storageProvider.get).mockResolvedValue(Buffer.from('<svg></svg>'))
-			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })]]
-
-			const res = await app.request(jsonGet(`/api/files/${file.id}/download`))
-
-			expect(res.headers.get('Content-Disposition')).toMatch(/^attachment;/)
-		})
-
-		it('forces attachment for JavaScript', async () => {
-			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
-			const file = buildFile({
-				workspaceId,
-				mimeType: 'application/javascript',
-				name: 'app.js',
-			})
-			vi.mocked(storageProvider.get).mockResolvedValue(Buffer.from('alert(1)'))
-			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })]]
-
-			const res = await app.request(jsonGet(`/api/files/${file.id}/download`))
-
-			expect(res.headers.get('Content-Disposition')).toMatch(/^attachment;/)
 		})
 	})
 

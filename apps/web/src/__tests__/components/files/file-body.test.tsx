@@ -23,7 +23,6 @@ function buildFile(overrides: Partial<FileDetail> = {}): FileDetail {
 		updatedAt: new Date().toISOString(),
 		content: '',
 		url: 'http://localhost:5173/ws-1/files/file-1',
-		downloadUrl: 'http://localhost:5173/api/files/file-1/download',
 		...overrides,
 	}
 }
