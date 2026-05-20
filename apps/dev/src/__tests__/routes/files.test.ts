@@ -13,13 +13,17 @@ function authedHeaders() {
 
 describe('Files Routes', () => {
 	beforeEach(() => {
-		// Routes read FRONTEND_URL for the returned `url` field — pin it so
-		// assertions don't depend on dev defaults.
-		process.env.FRONTEND_URL = 'http://localhost:5173'
+		// Routes read FRONTEND_URL for the returned `url` field and API_BASE_URL
+		// for `downloadUrl`. Pin them so assertions don't depend on dev defaults
+		// or leak between tests. vi.stubEnv handles both set and unset cleanly —
+		// plain `process.env.X = undefined` would coerce to the string 'undefined'.
+		vi.stubEnv('FRONTEND_URL', 'http://localhost:5173')
+		vi.stubEnv('API_BASE_URL', '')
 	})
 
 	afterEach(() => {
 		vi.restoreAllMocks()
+		vi.unstubAllEnvs()
 	})
 
 	describe('POST /api/files', () => {
@@ -52,6 +56,22 @@ describe('Files Routes', () => {
 			expect(eventInsert.action).toBe('created')
 			// Audit event must NOT echo the content (PG NOTIFY 8KB cap).
 			expect((eventInsert.data as Record<string, unknown>).content).toBeUndefined()
+		})
+
+		it('targets API_BASE_URL for downloadUrl when set (split-origin prod)', async () => {
+			vi.stubEnv('API_BASE_URL', 'https://api.example.com')
+			vi.stubEnv('FRONTEND_URL', 'https://app.example.com')
+			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
+			const body = buildCreateFileBody()
+			const inserted = buildFile({ workspaceId, name: body.name, mimeType: body.mime_type })
+			mockResults.insertQueue = [[inserted], [{ id: 'evt-1' }]]
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect(res.status).toBe(201)
+			const json = await res.json()
+			expect(json.url).toBe(`https://app.example.com/${workspaceId}/files/${inserted.id}`)
+			expect(json.downloadUrl).toBe(`https://api.example.com/api/files/${inserted.id}/download`)
 		})
 
 		it('returns 400 on invalid base64 content', async () => {

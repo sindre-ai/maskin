@@ -32,6 +32,14 @@ function frontendBaseUrl(): string {
 	return process.env.FRONTEND_URL || 'http://localhost:5173'
 }
 
+// `downloadUrl` targets the API. In prod the API may live on a separate origin
+// from the frontend; in dev the frontend's Vite proxy forwards `/api` to the API,
+// so `FRONTEND_URL` is a safe fallback. Set `API_BASE_URL` explicitly when the API
+// is hosted somewhere the frontend does not proxy.
+function apiBaseUrl(): string {
+	return process.env.API_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173'
+}
+
 function fileStorageKey(workspaceId: string, fileId: string): string {
 	return `workspaces/${workspaceId}/files/${fileId}`
 }
@@ -59,12 +67,11 @@ function disposition(mimeType: string, name: string): string {
 }
 
 function buildResponse(row: typeof files.$inferSelect, content: string) {
-	const base = frontendBaseUrl()
 	return {
 		...serialize(row),
 		content,
-		url: `${base}/${row.workspaceId}/files/${row.id}`,
-		downloadUrl: `${base}/api/files/${row.id}/download`,
+		url: `${frontendBaseUrl()}/${row.workspaceId}/files/${row.id}`,
+		downloadUrl: `${apiBaseUrl()}/api/files/${row.id}/download`,
 	}
 }
 
