@@ -130,15 +130,29 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 			let counted = 0
 			let boundaryRootId: number | null = null
 			let boundaryEventId: number | null = null
+			let oldestUnreadRootId: number | null = null
+			let oldestUnreadEventId: number | null = null
 			for (let i = flat.length - 1; i >= 0 && counted < targetCount; i--) {
 				const entry = flat[i]
 				if (!entry) continue
 				if (currentActorId && entry.actorId === currentActorId) continue
 				counted++
+				oldestUnreadRootId = entry.rootId
+				oldestUnreadEventId = entry.eventId
 				if (counted === targetCount) {
 					boundaryRootId = entry.rootId
 					boundaryEventId = entry.eventId
 				}
+			}
+
+			// If the server reports more unread events than we have loaded (the
+			// events query is capped at 50), the loop never hits targetCount and
+			// no divider would be drawn. Anchor to the oldest non-viewer comment
+			// in the loaded window so the divider still appears above visible
+			// unread activity.
+			if (boundaryEventId === null && targetCount > 0 && oldestUnreadEventId !== null) {
+				boundaryRootId = oldestUnreadRootId
+				boundaryEventId = oldestUnreadEventId
 			}
 
 			const lastNode = built.length > 0 ? built[built.length - 1] : null

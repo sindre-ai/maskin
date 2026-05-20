@@ -176,6 +176,22 @@ describe('UnreadThreadCard', () => {
 		expect(replyColumn).not.toBeNull()
 	})
 
+	it('still renders a divider when unread_count exceeds the loaded events', () => {
+		// The server says 5 unread but only 2 non-viewer events are loaded
+		// (events query is capped at 50). The divider must still appear,
+		// anchored to the oldest non-viewer comment in the loaded window.
+		mockUseEntityEvents.mockReturnValue({
+			data: [
+				buildComment({ id: 20, actorId: 'other', data: { content: 'newer' } }),
+				buildComment({ id: 10, actorId: 'other', data: { content: 'older' } }),
+			],
+		})
+		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem({ unread_count: 5 })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByLabelText('Unread divider')).toBeInTheDocument()
+	})
+
 	it('does not mark the thread as read on mount', () => {
 		mockUseEntityEvents.mockReturnValue({
 			data: [buildComment({ id: 30, actorId: 'other', data: { content: 'newer' } })],
