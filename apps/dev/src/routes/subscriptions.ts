@@ -29,6 +29,42 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+/**
+ * Per-entity-type workspace membership check. Returns true if the entity
+ * exists in the given workspace. Every value of `subscribableEntityTypeSchema`
+ * MUST have a verifier here — otherwise `verifyEntityInWorkspace` throws and
+ * the route fails loud (500), preventing a silent cross-workspace info leak
+ * when new entity types are added to the schema but not wired up here.
+ */
+const entityWorkspaceVerifiers: Record<
+	string,
+	(db: Database, workspaceId: string, entityId: string) => Promise<boolean>
+> = {
+	object: async (db, workspaceId, entityId) => {
+		const [row] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.id, entityId), eq(objects.workspaceId, workspaceId)))
+			.limit(1)
+		return Boolean(row)
+	},
+}
+
+async function verifyEntityInWorkspace(
+	db: Database,
+	workspaceId: string,
+	entityType: string,
+	entityId: string,
+): Promise<boolean> {
+	const verifier = entityWorkspaceVerifiers[entityType]
+	if (!verifier) {
+		throw new Error(
+			`No workspace verifier registered for entity_type='${entityType}'. Add one to entityWorkspaceVerifiers in routes/subscriptions.ts before exposing this type via the API.`,
+		)
+	}
+	return verifier(db, workspaceId, entityId)
+}
+
 const subscribersResponseSchema = z.object({
 	actors: z.array(
 		z.object({
@@ -80,14 +116,8 @@ app.openapi(subscribeRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
-	if (body.entity_type === 'object') {
-		const [obj] = await db
-			.select({ id: objects.id })
-			.from(objects)
-			.where(and(eq(objects.id, body.entity_id), eq(objects.workspaceId, workspaceId)))
-			.limit(1)
-		if (!obj) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
-	}
+	const exists = await verifyEntityInWorkspace(db, workspaceId, body.entity_type, body.entity_id)
+	if (!exists) return c.json(createApiError('NOT_FOUND', 'Entity not found'), 404)
 
 	await autoSubscribe(db, {
 		workspaceId,
@@ -162,14 +192,8 @@ app.openapi(listSubscribersRoute, (async (c) => {
 	// Verify the entity belongs to the caller's workspace before exposing
 	// its subscriber list — otherwise any workspace member could probe
 	// cross-workspace entity IDs and read back W2's subscriber actors.
-	if (entity_type === 'object') {
-		const [obj] = await db
-			.select({ id: objects.id })
-			.from(objects)
-			.where(and(eq(objects.id, entity_id), eq(objects.workspaceId, workspaceId)))
-			.limit(1)
-		if (!obj) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
-	}
+	const exists = await verifyEntityInWorkspace(db, workspaceId, entity_type, entity_id)
+	if (!exists) return c.json(createApiError('NOT_FOUND', 'Entity not found'), 404)
 
 	const rows = await getSubscribers(db, {
 		workspaceId,
