@@ -172,8 +172,8 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 		// events are partial), and fall back to whatever we have loaded.
 		const target = Math.max(item.latest_event_id ?? 0, latestEventId)
 		if (target <= 0) return
-		markRead.mutate({ entityType: 'object', entityId: objectId, lastEventId: target })
-	}, [markRead, objectId, item.latest_event_id, latestEventId])
+		markRead.mutate({ entityType: item.entity_type, entityId: objectId, lastEventId: target })
+	}, [markRead, item.entity_type, objectId, item.latest_event_id, latestEventId])
 
 	// Pin the scroll body to the bottom on first render so the most recent
 	// thread is visible at the bottom (Slack-style). Older threads sit above
