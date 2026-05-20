@@ -408,6 +408,13 @@ function buildMentionPrompt(ctx: {
 // chain — preventing runaway agent-to-agent ping-pong.
 const MAX_CONSECUTIVE_AGENT_REPLIES = 5
 
+// Upper bound on how many recent thread comments we scan when deciding who to
+// auto-spawn. The consecutive-agent cap only inspects the tail and active
+// participants almost always sit within the most recent comments — past this
+// horizon, an agent who participated very early in a long thread may not be
+// re-triggered. Bounds worst-case scan cost on huge threads.
+const THREAD_LOOKBACK_LIMIT = 200
+
 async function spawnThreadReplySessions(ctx: {
 	db: Database
 	sessionManager: SessionManager
@@ -446,6 +453,7 @@ async function spawnThreadReplySessions(ctx: {
 			),
 		)
 		.orderBy(desc(events.id))
+		.limit(THREAD_LOOKBACK_LIMIT)
 
 	// 5-in-a-row cap: walk from the most recent comment back, count how many
 	// consecutive agent-authored comments sit at the tail (the new comment is
