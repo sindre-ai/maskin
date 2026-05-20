@@ -26,10 +26,23 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
-// Built so the file's URL can be opened in a browser without further coordination.
-// `FRONTEND_URL` is the same env var the OAuth callback uses for redirects.
+// The file URL is the whole point of this feature: agents paste it into Slack,
+// emails, comments. Shipping a `http://localhost:5173/...` link from prod would
+// silently break every share, so require `FRONTEND_URL` outside of dev and fail
+// loud instead of returning a broken URL.
+const DEV_FRONTEND_FALLBACK = 'http://localhost:5173'
+
+function isProduction(): boolean {
+	return process.env.NODE_ENV === 'production'
+}
+
 function frontendBaseUrl(): string {
-	return process.env.FRONTEND_URL || 'http://localhost:5173'
+	const url = process.env.FRONTEND_URL
+	if (url) return url
+	if (isProduction()) {
+		throw new Error('FRONTEND_URL must be set in production to mint shareable file URLs')
+	}
+	return DEV_FRONTEND_FALLBACK
 }
 
 // `downloadUrl` targets the API. In prod the API may live on a separate origin
@@ -37,7 +50,14 @@ function frontendBaseUrl(): string {
 // so `FRONTEND_URL` is a safe fallback. Set `API_BASE_URL` explicitly when the API
 // is hosted somewhere the frontend does not proxy.
 function apiBaseUrl(): string {
-	return process.env.API_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:5173'
+	const url = process.env.API_BASE_URL || process.env.FRONTEND_URL
+	if (url) return url
+	if (isProduction()) {
+		throw new Error(
+			'API_BASE_URL or FRONTEND_URL must be set in production to mint file download URLs',
+		)
+	}
+	return DEV_FRONTEND_FALLBACK
 }
 
 function fileStorageKey(workspaceId: string, fileId: string): string {

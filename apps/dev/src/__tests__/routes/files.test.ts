@@ -74,6 +74,20 @@ describe('Files Routes', () => {
 			expect(json.downloadUrl).toBe(`https://api.example.com/api/files/${inserted.id}/download`)
 		})
 
+		it('returns 500 in production when FRONTEND_URL is unset (no silent localhost fallback)', async () => {
+			vi.stubEnv('NODE_ENV', 'production')
+			vi.stubEnv('FRONTEND_URL', '')
+			vi.stubEnv('API_BASE_URL', '')
+			const { app, mockResults } = createImportTestApp(filesRoutes, '/api/files')
+			const body = buildCreateFileBody()
+			const inserted = buildFile({ workspaceId, name: body.name, mimeType: body.mime_type })
+			mockResults.insertQueue = [[inserted], [{ id: 'evt-1' }]]
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect(res.status).toBe(500)
+		})
+
 		it('returns 400 on invalid base64 content', async () => {
 			const { app } = createImportTestApp(filesRoutes, '/api/files')
 			const body = { ...buildCreateFileBody(), content: 'not base64!!' }
