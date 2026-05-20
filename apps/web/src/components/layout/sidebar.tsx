@@ -21,7 +21,7 @@ import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
 
 const coreNavItems = [
-	{ label: 'Pulse', to: '/$workspaceId' as const, exact: true, icon: Zap },
+	{ label: 'For You', to: '/$workspaceId' as const, exact: true, icon: Zap },
 	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
 	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
 	{ label: 'Triggers', to: '/$workspaceId/triggers' as const, icon: Zap },
