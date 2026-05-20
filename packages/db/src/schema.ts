@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+	bigint,
 	bigserial,
 	boolean,
 	check,
@@ -390,6 +391,69 @@ export const mcpTelemetry = pgTable(
 		index('mcp_telemetry_ws_event_type_idx').on(t.workspaceId, t.eventType, t.createdAt),
 	],
 )
+
+// ── Subscriptions ─────────────────────────────────────────────────────────
+//
+// Polymorphic per-actor subscriptions keyed on (entity_type, entity_id).
+// `source` tracks how the row was created — 'author' (creator), 'commenter'
+// (auto-attached when they comment), or 'manual' (explicit subscribe).
+// Manual/author should never be downgraded by a later auto-subscribe.
+
+export const subscriptions = pgTable(
+	'subscriptions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		entityType: text('entity_type').notNull(),
+		entityId: uuid('entity_id').notNull(),
+		source: text('source').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+	},
+	(t) => [
+		unique('subscriptions_actor_entity_uniq').on(t.actorId, t.entityType, t.entityId),
+		index('subscriptions_ws_actor_idx').on(t.workspaceId, t.actorId),
+		index('subscriptions_entity_idx').on(t.entityType, t.entityId),
+		check('subscriptions_source_check', sql`${t.source} IN ('manual', 'author', 'commenter')`),
+	],
+)
+
+export type Subscription = typeof subscriptions.$inferSelect
+export type NewSubscription = typeof subscriptions.$inferInsert
+
+// ── Read State ────────────────────────────────────────────────────────────
+//
+// Per-actor high-water-mark per subscribable entity. `last_read_event_id`
+// references events.id (bigint, monotonic) so the unread query is just a
+// simple `> last_read_event_id`. No FK to events — events are not deleted.
+
+export const readState = pgTable(
+	'read_state',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		entityType: text('entity_type').notNull(),
+		entityId: uuid('entity_id').notNull(),
+		lastReadEventId: bigint('last_read_event_id', { mode: 'number' }).notNull(),
+		lastReadAt: timestamp('last_read_at', { withTimezone: true }).defaultNow(),
+	},
+	(t) => [
+		unique('read_state_actor_entity_uniq').on(t.actorId, t.entityType, t.entityId),
+		index('read_state_ws_actor_idx').on(t.workspaceId, t.actorId),
+	],
+)
+
+export type ReadState = typeof readState.$inferSelect
+export type NewReadState = typeof readState.$inferInsert
 
 // ── Notifications ─────────────────────────────────────────────────────────
 

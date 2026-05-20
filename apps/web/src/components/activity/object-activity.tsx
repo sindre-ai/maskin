@@ -1,9 +1,13 @@
 import { useActors } from '@/hooks/use-actors'
+import { useEventVisible } from '@/hooks/use-event-visible'
 import { useMentionSessionsForObject } from '@/hooks/use-sessions'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse, SessionResponse } from '@/lib/api'
 import { type SessionMentionContext, formatStatusTransitionShort } from '@maskin/shared'
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StreamingIndicator } from '../shared/streaming-indicator'
+import { UnreadBadge } from '../shared/unread-badge'
+import { Button } from '../ui/button'
 import { Collapsible, CollapsibleContent } from '../ui/collapsible'
 import { ActivityComment } from './activity-comment'
 import { ActivityItem } from './activity-item'
@@ -30,6 +34,51 @@ export function ObjectActivity({
 		for (const actor of actors ?? []) map.set(actor.id, actor)
 		return map
 	}, [actors])
+
+	// Latest commented-event id on this object — used as the high-water-mark
+	// when the user scrolls past the end of the activity list, and as the
+	// payload for the fallback "Mark all as read" button.
+	const latestEventId = useMemo(() => {
+		if (!events) return 0
+		let max = 0
+		for (const e of events) {
+			if (e.action === 'commented' && e.id > max) max = e.id
+		}
+		return max
+	}, [events])
+
+	const markRead = useMarkRead(workspaceId)
+	const markedRef = useRef(0)
+	// Reset the per-object high-water-mark when navigating between objects —
+	// the component instance may be reused by the router, so a stale value
+	// from object A would suppress a valid mark-read for object B.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: object.id is the trigger, not a value read inside.
+	useEffect(() => {
+		markedRef.current = 0
+	}, [object.id])
+	const unreadCount = object.unread_count ?? 0
+
+	const handleSeenBottom = useCallback(
+		(eventId: number) => {
+			if (eventId <= 0) return
+			if (eventId <= markedRef.current) return
+			markedRef.current = eventId
+			markRead.mutate({ entityType: 'object', entityId: object.id, lastEventId: eventId })
+		},
+		[markRead, object.id],
+	)
+
+	const sentinelRef = useEventVisible(latestEventId, handleSeenBottom)
+
+	const handleMarkAllRead = () => {
+		if (latestEventId <= 0) return
+		markedRef.current = latestEventId
+		markRead.mutate({
+			entityType: 'object',
+			entityId: object.id,
+			lastEventId: latestEventId,
+		})
+	}
 
 	const { data: mentionSessions } = useMentionSessionsForObject(workspaceId, object.id)
 	const sessionsByComment = useMemo(() => {
@@ -91,9 +140,23 @@ export function ObjectActivity({
 
 	return (
 		<div className="border-t border-border pt-6">
-			<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
-				Activity
-			</h3>
+			<div className="flex items-center justify-between mb-3">
+				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					Activity
+					<UnreadBadge count={unreadCount} className="ml-2 normal-case tracking-normal" />
+				</h3>
+				{unreadCount > 0 && (
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-xs"
+						onClick={handleMarkAllRead}
+						disabled={markRead.isPending}
+					>
+						Mark all as read
+					</Button>
+				)}
+			</div>
 
 			{activeSessionId && (
 				<div className="mb-3">
@@ -151,6 +214,12 @@ export function ObjectActivity({
 					)
 				})}
 			</div>
+
+			{/* Sentinel: when this element scrolls into view, advance the read
+			    high-water-mark to the latest comment event id. Covers the
+			    common case where the user scrolls past the activity list. The
+			    "Mark all as read" button above is the explicit fallback. */}
+			<div ref={sentinelRef} aria-hidden className="h-0 w-0" />
 
 			<div className="mt-4">
 				<CommentInput workspaceId={workspaceId} objectId={object.id} />

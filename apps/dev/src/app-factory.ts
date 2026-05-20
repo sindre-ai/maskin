@@ -26,6 +26,7 @@ import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
+import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import triggersRoutes from './routes/triggers'
 import workspaceSkillsRoutes from './routes/workspace-skills'
@@ -198,6 +199,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
+	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)

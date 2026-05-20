@@ -1,6 +1,14 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, objects, relationships, workspaces } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	objects,
+	readState,
+	relationships,
+	subscriptions,
+	workspaces,
+} from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
@@ -24,6 +32,12 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	autoSubscribe,
+	getSubscriberCount,
+	getUnreadCount,
+	isSubscribed,
+} from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -183,6 +197,15 @@ app.openapi(createObjectRoute, async (c) => {
 		data: created,
 	})
 
+	// Auto-subscribe the creator so they're notified about future comments.
+	await autoSubscribe(db, {
+		workspaceId,
+		actorId,
+		entityType: 'object',
+		entityId: created.id,
+		source: 'author',
+	})
+
 	return c.json(serialize(created) as z.infer<typeof objectResponseSchema>, 201)
 })
 
@@ -312,6 +335,7 @@ const getObjectGraphRoute = createRoute({
 
 app.openapi(getObjectGraphRoute, async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
@@ -385,9 +409,20 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		description: formatEventDescription(event, { actorsById }),
 	}))
 
+	const [subscribed, unreadCount, subscriberCount] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
+		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
+	])
+
 	return c.json(
 		{
-			object: serialize(object),
+			object: {
+				...serialize(object),
+				is_subscribed: subscribed,
+				unread_count: unreadCount,
+				subscriber_count: subscriberCount,
+			},
 			relationships: serializeArray(rels),
 			connected_objects: serializeArray(connectedObjects),
 			events: serializedEvents,
@@ -428,7 +463,30 @@ app.openapi(getObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	return c.json(serialize(object) as z.infer<typeof objectResponseSchema>, 200)
+	const [subscribed, unreadCount, subscriberCount] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, {
+			workspaceId: object.workspaceId,
+			actorId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		getSubscriberCount(db, {
+			workspaceId: object.workspaceId,
+			entityType: 'object',
+			entityId: id,
+		}),
+	])
+
+	return c.json(
+		{
+			...serialize(object),
+			is_subscribed: subscribed,
+			unread_count: unreadCount,
+			subscriber_count: subscriberCount,
+		} as z.infer<typeof objectResponseSchema>,
+		200,
+	)
 })
 
 // PATCH /{id} - Update object
@@ -695,7 +753,21 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 		return c.json({ mode: 'delete' as const, fromType: body.fromType, count: 0 }, 200)
 	}
 
+	const deletedIds = toDelete.map(({ id }) => id)
+
 	await db.transaction(async (tx) => {
+		// Clean up polymorphic subscription + read_state rows before the
+		// objects vanish — there is no FK because (entity_type, entity_id)
+		// is polymorphic, so cascade can't do this for us.
+		await tx
+			.delete(subscriptions)
+			.where(
+				and(eq(subscriptions.entityType, 'object'), inArray(subscriptions.entityId, deletedIds)),
+			)
+		await tx
+			.delete(readState)
+			.where(and(eq(readState.entityType, 'object'), inArray(readState.entityId, deletedIds)))
+
 		await tx
 			.delete(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
@@ -726,15 +798,26 @@ app.openapi(deleteObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	await db.delete(objects).where(eq(objects.id, id))
+	await db.transaction(async (tx) => {
+		// Polymorphic subscription + read_state rows aren't FK'd to objects, so
+		// drop them explicitly to avoid orphans pointing at a freed entity_id.
+		await tx
+			.delete(subscriptions)
+			.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
+		await tx
+			.delete(readState)
+			.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))
 
-	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
-		actorId,
-		action: 'deleted',
-		entityType: existing.type,
-		entityId: id,
-		data: existing,
+		await tx.delete(objects).where(eq(objects.id, id))
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: existing.type,
+			entityId: id,
+			data: existing,
+		})
 	})
 
 	return c.json({ deleted: true as const }, 200)

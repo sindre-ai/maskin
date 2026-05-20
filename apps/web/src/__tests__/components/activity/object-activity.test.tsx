@@ -12,6 +12,14 @@ vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+vi.mock('@/hooks/use-subscriptions', () => ({
+	useMarkRead: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/hooks/use-event-visible', () => ({
+	useEventVisible: () => ({ current: null }),
+}))
+
 vi.mock('@/hooks/use-sessions', () => ({
 	useMentionSessionsForObject: () => ({ data: [] }),
 }))
