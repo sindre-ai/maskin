@@ -36,6 +36,10 @@ vi.mock('@/components/objects/linked-objects', () => ({
 	LinkedObjects: () => <div data-testid="linked-objects" />,
 }))
 
+vi.mock('@/components/objects/object-files', () => ({
+	ObjectFiles: () => <div data-testid="object-files" />,
+}))
+
 const baseProps = {
 	workspaceId: 'ws-1',
 	statuses: ['proposed', 'active', 'done'],

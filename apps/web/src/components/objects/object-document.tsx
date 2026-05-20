@@ -33,6 +33,7 @@ import { TypeBadge } from '../shared/type-badge'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectActionBanner } from './object-action-banner'
+import { ObjectFiles } from './object-files'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -188,6 +189,16 @@ export function ObjectDocumentView({
 					/>
 				</div>
 			)}
+
+			{/* Files */}
+			<div className="border-t border-border pt-6 mb-8">
+				<ObjectFiles
+					workspaceId={workspaceId}
+					objectId={object.id}
+					objectType={object.type}
+					relationships={relationships}
+				/>
+			</div>
 
 			{/* Activity */}
 			<ObjectActivity

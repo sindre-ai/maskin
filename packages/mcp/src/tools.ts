@@ -500,6 +500,66 @@ export const tools = {
 			name: skillNameSchema.describe('Name of the workspace skill to delete.'),
 		}),
 	},
+	// ─── Files ───────────────────────────────────────────────
+	create_file: {
+		description:
+			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. Pass `content` as base64-encoded bytes (max 10MB). For text content, base64-encode the UTF-8 bytes. Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: z
+				.string()
+				.min(1)
+				.max(255)
+				.describe('Display name including extension, e.g. "launch-plan.md".'),
+			description: z
+				.string()
+				.max(1000)
+				.optional()
+				.describe('Optional one-line summary surfaced in the file list.'),
+			mime_type: z
+				.string()
+				.describe(
+					'IANA MIME type of the content, e.g. "text/markdown", "text/html", "application/pdf", "image/png".',
+				),
+			content: z.string().describe('File bytes, base64-encoded. Max 10 MB after decoding.'),
+		}),
+	},
+	list_files: {
+		description: 'List files in the workspace, newest first. Pass `q` to filter by name substring.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
+			limit: z.number().int().min(1).max(200).optional(),
+			offset: z.number().int().min(0).optional(),
+		}),
+	},
+	get_file: {
+		description:
+			'Get a single file with its base64-encoded content and a viewer URL. Use this when you need to read, summarise, or hand the URL to a user.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID.'),
+		}),
+	},
+	update_file: {
+		description:
+			'Update a file. Pass any subset of name, description, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. At least one field must be provided.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID.'),
+			name: z.string().min(1).max(255).optional(),
+			description: z.string().max(1000).nullable().optional(),
+			mime_type: z.string().optional(),
+			content: z.string().optional().describe('New file bytes, base64-encoded. Max 10 MB.'),
+		}),
+	},
+	delete_file: {
+		description: 'Delete a file from the workspace. Bytes are removed from storage.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID.'),
+		}),
+	},
 	get_events: {
 		description:
 			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed).',

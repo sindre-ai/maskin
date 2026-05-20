@@ -64,5 +64,9 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// SSE payload, so invalidate all attachment queries in this tab with a broad prefix.
 			queryClient.invalidateQueries({ queryKey: ['agent-skill-attachments'] })
 			break
+		case 'file':
+			// all() is a prefix of detail() so this covers both list and detail queries.
+			queryClient.invalidateQueries({ queryKey: queryKeys.files.all(workspaceId) })
+			break
 	}
 }

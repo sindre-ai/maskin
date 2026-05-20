@@ -354,6 +354,36 @@ export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 	}
 }
 
+export function buildFile(overrides?: Record<string, unknown>) {
+	const n = next()
+	const workspaceId = randomUUID()
+	const id = randomUUID()
+	return {
+		id,
+		workspaceId,
+		name: `file-${n}.md`,
+		description: `Test file ${n}`,
+		mimeType: 'text/markdown',
+		sizeBytes: 16,
+		storageKey: `workspaces/${workspaceId}/files/${id}`,
+		createdBy: randomUUID(),
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildCreateFileBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		name: `file-${n}.md`,
+		description: `Test file ${n}`,
+		mime_type: 'text/markdown',
+		content: Buffer.from(`# Hello ${n}`).toString('base64'),
+		...overrides,
+	}
+}
+
 export function buildCreateWorkspaceSkillBody(overrides?: Record<string, unknown>) {
 	const n = next()
 	const name = `ws-skill-${n}`

@@ -1772,6 +1772,126 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Files ───────────────────────────────────────────────
+	registerAppTool(
+		server,
+		'create_file',
+		{
+			description: tools.create_file.description,
+			inputSchema: tools.create_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/files',
+				{
+					name: args.name,
+					description: args.description,
+					mime_type: args.mime_type,
+					content: args.content,
+				},
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('create_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_files',
+		{
+			description: tools.list_files.description,
+			inputSchema: tools.list_files.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const params = new URLSearchParams()
+			if (args.q) params.set('q', args.q)
+			if (args.limit !== undefined) params.set('limit', String(args.limit))
+			if (args.offset !== undefined) params.set('offset', String(args.offset))
+			const qs = params.toString()
+			const result = await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_file',
+		{
+			description: tools.get_file.description,
+			inputSchema: tools.get_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(config, 'GET', `/api/files/${args.id}`, undefined, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta('get_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_file',
+		{
+			description: tools.update_file.description,
+			inputSchema: tools.update_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const body: Record<string, unknown> = {}
+			if (args.name !== undefined) body.name = args.name
+			if (args.description !== undefined) body.description = args.description
+			if (args.mime_type !== undefined) body.mime_type = args.mime_type
+			if (args.content !== undefined) body.content = args.content
+			const result = await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta('update_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_file',
+		{
+			description: tools.delete_file.description,
+			inputSchema: tools.delete_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(config, 'DELETE', `/api/files/${args.id}`, undefined, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta('delete_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Events ───────────────────────────────────────────────
 	registerAppTool(
 		server,
