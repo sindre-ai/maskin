@@ -168,6 +168,10 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_workspace_skill: 'skill_create',
 	update_workspace_skill: 'skill_update',
 	delete_workspace_skill: 'skill_delete',
+	// Files
+	create_file: 'file_create',
+	update_file: 'file_update',
+	delete_file: 'file_delete',
 	// Extensions / modules
 	create_extension: 'extension_create',
 	update_extension: 'extension_update',
