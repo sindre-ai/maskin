@@ -190,7 +190,7 @@ export function ObjectActivity({
 									onToggle={() => togglePhase(index)}
 								/>
 								<CollapsibleContent>
-									<div className="space-y-0.5">
+									<div className="space-y-1">
 										{phase.events.map((event) =>
 											event.action === 'commented' ? (
 												<ActivityComment
