@@ -193,6 +193,34 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+
+		// LinkedIn-specific: headful Chromium stream instead of OAuth. The modal
+		// drives the lifecycle directly; the SSE stream URL is consumed via
+		// fetchEventSource (no namespace method — Bearer auth is in the path
+		// `accessToken` so the EventSource works without custom headers).
+		linkedinAuthBrowser: {
+			start: (workspaceId: string) =>
+				request<{ id: string; access_token: string; expires_at: string }>(
+					'/integrations/linkedin/auth-browser/start',
+					{ method: 'POST', workspaceId },
+				),
+			cancel: (id: string, workspaceId: string) =>
+				request<{ ok: true }>(`/integrations/linkedin/auth-browser/${id}/cancel`, {
+					method: 'POST',
+					workspaceId,
+				}),
+			sendInput: (
+				id: string,
+				accessToken: string,
+				type: 'mouse' | 'key' | 'wheel',
+				payload: Record<string, unknown>,
+				workspaceId: string,
+			) =>
+				request<void>(
+					`/integrations/linkedin/auth-browser/${id}/${accessToken}/input?type=${type}`,
+					{ method: 'POST', body: payload, workspaceId },
+				),
+		},
 	},
 
 	notifications: {
