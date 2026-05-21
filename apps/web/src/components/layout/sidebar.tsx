@@ -1,3 +1,4 @@
+import { UnreadBadge } from '@/components/shared/unread-badge'
 import {
 	Sidebar,
 	SidebarContent,
@@ -12,6 +13,7 @@ import {
 	useSidebar,
 } from '@/components/ui/sidebar'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
@@ -20,8 +22,10 @@ import { useMemo } from 'react'
 import { AgentPulse } from '../agents/agent-pulse'
 import { NavUser } from './nav-user'
 
+const FOR_YOU_ROUTE = '/$workspaceId' as const
+
 const coreNavItems = [
-	{ label: 'For You', to: '/$workspaceId' as const, exact: true, icon: Zap },
+	{ label: 'For You', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
 	{ label: 'Activity', to: '/$workspaceId/activity' as const, icon: Activity },
 	{ label: 'Agents', to: '/$workspaceId/agents' as const, icon: Bot },
 	{ label: 'Triggers', to: '/$workspaceId/triggers' as const, icon: Zap },
@@ -32,6 +36,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const matchRoute = useMatchRoute()
 	const { setOpenMobile } = useSidebar()
 	const enabledModules = useEnabledModules()
+	const { data: unread } = useUnread(workspaceId)
+	const unreadCount = unread?.items.length ?? 0
 
 	const navItems = useMemo(() => {
 		const hasObjectTypes = getEnabledObjectTypeTabs(enabledModules).length > 0
@@ -73,6 +79,12 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 										>
 											<Icon />
 											<span>{item.label}</span>
+											{item.to === FOR_YOU_ROUTE && (
+												<UnreadBadge
+													count={unreadCount}
+													className="ml-auto group-data-[collapsible=icon]:hidden"
+												/>
+											)}
 										</Link>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
