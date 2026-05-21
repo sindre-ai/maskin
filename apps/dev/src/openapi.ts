@@ -3,6 +3,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { type AppDeps, createApp, getOpenApiConfig } from './app-factory'
 import type { AgentStorageManager } from './services/agent-storage'
+import type { AuthBrowserManager } from './services/auth-browser-manager'
 import type { SessionManager } from './services/session-manager'
 
 /**
@@ -18,6 +19,7 @@ function createStubDeps(): AppDeps {
 		sessionManager: {} as unknown as SessionManager,
 		agentStorage: {} as unknown as AgentStorageManager,
 		storageProvider: {} as unknown as StorageProvider,
+		authBrowserManager: {} as unknown as AuthBrowserManager,
 	}
 }
 

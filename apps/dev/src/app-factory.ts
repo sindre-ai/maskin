@@ -33,6 +33,7 @@ import triggersRoutes from './routes/triggers'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
+import type { AuthBrowserManager } from './services/auth-browser-manager'
 import type { SessionManager } from './services/session-manager'
 
 export type Env = {
@@ -44,6 +45,7 @@ export type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
+		authBrowserManager: AuthBrowserManager
 	}
 }
 
@@ -53,6 +55,7 @@ export interface AppDeps {
 	sessionManager: SessionManager
 	agentStorage: AgentStorageManager
 	storageProvider: StorageProvider
+	authBrowserManager: AuthBrowserManager
 }
 
 export interface CreateAppOptions {
@@ -86,7 +89,8 @@ export function getOpenApiConfig(port = 3000) {
 }
 
 export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAPIHono<Env> {
-	const { db, notifyBridge, sessionManager, agentStorage, storageProvider } = deps
+	const { db, notifyBridge, sessionManager, agentStorage, storageProvider, authBrowserManager } =
+		deps
 	const port = options.port ?? (Number(process.env.PORT) || 3000)
 	const allowedOrigins =
 		options.corsOrigins ??
@@ -157,6 +161,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		c.set('sessionManager', sessionManager)
 		c.set('agentStorage', agentStorage)
 		c.set('storageProvider', storageProvider)
+		c.set('authBrowserManager', authBrowserManager)
 		await next()
 	})
 

@@ -1,0 +1,304 @@
+import { randomUUID } from 'node:crypto'
+import type { Database } from '@maskin/db'
+import { authBrowserSessions } from '@maskin/db/schema'
+import { and, eq, inArray, lt } from 'drizzle-orm'
+import { logger } from '../lib/logger'
+import { ContainerManager } from './container-manager'
+
+/** Time a session can live before the reaper kills it. */
+const TTL_MS = 10 * 60 * 1000
+/** Reaper cadence. */
+const WATCHDOG_INTERVAL_MS = 60_000
+/** Image tag built lazily from `docker/auth-browser/`. */
+const IMAGE = 'maskin-auth-browser:latest'
+/** Wait this long after container start before flipping to 'ready'. Xvfb + Chromium take a moment. */
+const STARTUP_GRACE_MS = 4000
+
+export type AuthBrowserStatus = 'starting' | 'ready' | 'captured' | 'failed' | 'expired'
+
+export interface StartParams {
+	workspaceId: string
+	actorId: string
+	provider: string
+}
+
+export interface StartResult {
+	id: string
+	accessToken: string
+	expiresAt: Date
+}
+
+/**
+ * Lightweight standalone lifecycle for short-lived headful Chromium containers.
+ * Used for provider connect flows (currently LinkedIn) that need an interactive
+ * login the user can drive, with cookies captured server-side via CDP.
+ *
+ * Parallel to SessionManager but intentionally decoupled — these are not agent
+ * sessions, have no logs, and live ~10 minutes max.
+ */
+export class AuthBrowserManager {
+	private containers: ContainerManager
+	private watchdogInterval: NodeJS.Timeout | null = null
+	private buildContext: string | null = null
+
+	constructor(private db: Database) {
+		this.containers = new ContainerManager()
+	}
+
+	/** Build-context for the auth-browser image. Resolved at boot in index.ts. */
+	setBuildContext(buildContext: string) {
+		this.buildContext = buildContext
+	}
+
+	async start(): Promise<void> {
+		// Reconcile any rows left "starting"/"ready" by a previous backend that
+		// died without cleanup. Containers/networks are reaped if missing.
+		await this.reconcile().catch((err) =>
+			logger.error('AuthBrowserManager reconcile failed', { error: String(err) }),
+		)
+
+		this.watchdogInterval = setInterval(() => {
+			this.reapExpired().catch((err) =>
+				logger.error('AuthBrowserManager reaper failed', { error: String(err) }),
+			)
+		}, WATCHDOG_INTERVAL_MS)
+	}
+
+	async stop(): Promise<void> {
+		if (this.watchdogInterval) {
+			clearInterval(this.watchdogInterval)
+			this.watchdogInterval = null
+		}
+	}
+
+	/**
+	 * Provision a new headful Chromium container and return the SSE/input access
+	 * token. Throws if another flow is already running in this workspace.
+	 * Container provisioning runs out-of-band; status flips to 'ready' (or
+	 * 'failed') asynchronously — callers poll the row or wait for SSE.
+	 */
+	async startSession(params: StartParams): Promise<StartResult> {
+		const existing = await this.db
+			.select({ id: authBrowserSessions.id })
+			.from(authBrowserSessions)
+			.where(
+				and(
+					eq(authBrowserSessions.workspaceId, params.workspaceId),
+					inArray(authBrowserSessions.status, ['starting', 'ready']),
+				),
+			)
+			.limit(1)
+		if (existing.length > 0) {
+			throw new Error(
+				'Another connect flow is already running in this workspace. Cancel it or wait for it to expire.',
+			)
+		}
+
+		const accessToken = randomUUID()
+		const expiresAt = new Date(Date.now() + TTL_MS)
+
+		const [row] = await this.db
+			.insert(authBrowserSessions)
+			.values({
+				workspaceId: params.workspaceId,
+				actorId: params.actorId,
+				provider: params.provider,
+				status: 'starting',
+				accessToken,
+				expiresAt,
+			})
+			.returning()
+		if (!row) throw new Error('Failed to insert auth_browser_sessions row')
+
+		// Provision async — surface errors via row status, not via the API
+		void this.provisionContainer(row.id).catch((err) =>
+			logger.error('Auth browser provision failed', { id: row.id, error: String(err) }),
+		)
+
+		return { id: row.id, accessToken, expiresAt }
+	}
+
+	private async provisionContainer(id: string): Promise<void> {
+		const prefix = id.slice(0, 8)
+		const networkName = `anko-auth-net-${prefix}`
+		const containerName = `anko-auth-browser-${prefix}`
+		let containerId: string | undefined
+
+		try {
+			if (this.buildContext) {
+				await this.containers.ensureImage(IMAGE, this.buildContext)
+			}
+			await this.containers.createNetwork(networkName)
+
+			containerId = await this.containers.create({
+				image: IMAGE,
+				name: containerName,
+				env: {},
+				memoryMb: 1024,
+				cpuShares: 1024,
+				binds: [],
+				networkMode: networkName,
+			})
+
+			await this.containers.start(containerId)
+			await new Promise((resolve) => setTimeout(resolve, STARTUP_GRACE_MS))
+
+			await this.db
+				.update(authBrowserSessions)
+				.set({ status: 'ready', containerId, networkName, updatedAt: new Date() })
+				.where(eq(authBrowserSessions.id, id))
+
+			logger.info('Auth browser session ready', { id, containerName, networkName })
+		} catch (err) {
+			logger.error('Auth browser provisioning failed', { id, error: String(err) })
+			await this.db
+				.update(authBrowserSessions)
+				.set({
+					status: 'failed',
+					error: err instanceof Error ? err.message : String(err),
+					updatedAt: new Date(),
+				})
+				.where(eq(authBrowserSessions.id, id))
+
+			if (containerId) {
+				await this.containers.stop(containerId).catch(() => {})
+				await this.containers.remove(containerId).catch(() => {})
+			}
+			await this.containers.removeNetwork(networkName).catch(() => {})
+		}
+	}
+
+	/**
+	 * Return the internal Docker-network CDP URL for a ready session, or null
+	 * if the session isn't usable. Used by Module C to open a CDP WebSocket.
+	 */
+	async getCdpEndpoint(id: string, accessToken: string): Promise<string | null> {
+		const [row] = await this.db
+			.select()
+			.from(authBrowserSessions)
+			.where(eq(authBrowserSessions.id, id))
+			.limit(1)
+		if (!row || row.accessToken !== accessToken || row.status !== 'ready') return null
+		if (row.expiresAt.getTime() < Date.now()) return null
+		const prefix = id.slice(0, 8)
+		return `ws://anko-auth-browser-${prefix}:9222`
+	}
+
+	/**
+	 * Tear down a session's container + network. Idempotent.
+	 * Sets status='failed' if not already 'captured'.
+	 */
+	async stopSession(id: string): Promise<void> {
+		const [row] = await this.db
+			.select()
+			.from(authBrowserSessions)
+			.where(eq(authBrowserSessions.id, id))
+			.limit(1)
+		if (!row) return
+
+		if (row.containerId) {
+			await this.containers.stop(row.containerId).catch(() => {})
+			await this.containers.remove(row.containerId).catch(() => {})
+		}
+		if (row.networkName) {
+			await this.containers.removeNetwork(row.networkName).catch(() => {})
+		}
+
+		const finalStatus: AuthBrowserStatus = row.status === 'captured' ? 'captured' : 'failed'
+		await this.db
+			.update(authBrowserSessions)
+			.set({
+				status: finalStatus,
+				containerId: null,
+				networkName: null,
+				updatedAt: new Date(),
+			})
+			.where(eq(authBrowserSessions.id, id))
+	}
+
+	/**
+	 * Mark a session as having captured credentials (encrypted JSON blob).
+	 * Tears down the container as a side effect.
+	 */
+	async markCaptured(id: string, encryptedCredentials: string): Promise<void> {
+		await this.db
+			.update(authBrowserSessions)
+			.set({
+				status: 'captured',
+				capturedCredentials: encryptedCredentials,
+				updatedAt: new Date(),
+			})
+			.where(eq(authBrowserSessions.id, id))
+		await this.stopSession(id)
+	}
+
+	/**
+	 * Reap any session whose expires_at has passed and is still alive.
+	 * Containers + networks get cleaned, row flips to 'expired'.
+	 */
+	async reapExpired(): Promise<void> {
+		const now = new Date()
+		const expired = await this.db
+			.select()
+			.from(authBrowserSessions)
+			.where(
+				and(
+					inArray(authBrowserSessions.status, ['starting', 'ready']),
+					lt(authBrowserSessions.expiresAt, now),
+				),
+			)
+
+		for (const row of expired) {
+			logger.info('Reaping expired auth browser session', { id: row.id })
+			if (row.containerId) {
+				await this.containers.stop(row.containerId).catch(() => {})
+				await this.containers.remove(row.containerId).catch(() => {})
+			}
+			if (row.networkName) {
+				await this.containers.removeNetwork(row.networkName).catch(() => {})
+			}
+			await this.db
+				.update(authBrowserSessions)
+				.set({ status: 'expired', updatedAt: new Date() })
+				.where(eq(authBrowserSessions.id, row.id))
+		}
+	}
+
+	/**
+	 * Boot-time reconciliation: any 'starting'/'ready' row whose container has
+	 * vanished (e.g. backend died between provision and cleanup) gets marked
+	 * 'failed' so the UI doesn't show ghost connect flows.
+	 */
+	private async reconcile(): Promise<void> {
+		const candidates = await this.db
+			.select()
+			.from(authBrowserSessions)
+			.where(inArray(authBrowserSessions.status, ['starting', 'ready']))
+
+		for (const row of candidates) {
+			let alive = false
+			if (row.containerId) {
+				try {
+					const status = await this.containers.inspect(row.containerId)
+					alive = status.running
+				} catch {
+					alive = false
+				}
+			}
+
+			if (!alive) {
+				await this.db
+					.update(authBrowserSessions)
+					.set({
+						status: 'failed',
+						error: 'Container missing after backend restart',
+						updatedAt: new Date(),
+					})
+					.where(eq(authBrowserSessions.id, row.id))
+				if (row.networkName) {
+					await this.containers.removeNetwork(row.networkName).catch(() => {})
+				}
+			}
+		}
+	}
+}

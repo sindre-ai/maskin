@@ -157,6 +157,43 @@ export const integrations = pgTable(
 	(t) => [unique('integrations_ws_provider_uniq').on(t.workspaceId, t.provider)],
 )
 
+// ── Auth browser sessions ──────────────────────────────────────────────────
+// Short-lived (10 min TTL) headful Chromium containers used by providers like
+// LinkedIn that can't OAuth properly. The user logs in via a streamed view
+// inside a modal; on success the cookies are captured + persisted to the
+// `integrations` row and the container is destroyed.
+
+export const authBrowserSessions = pgTable(
+	'auth_browser_sessions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		provider: text('provider').notNull(),
+		// 'starting' | 'ready' | 'captured' | 'failed' | 'expired'
+		status: text('status').notNull(),
+		containerId: text('container_id'),
+		networkName: text('network_name'),
+		// One-time UUID embedded in the SSE/input URLs so the user's browser can
+		// authenticate the stream without putting the API key in the URL.
+		accessToken: text('access_token').notNull(),
+		// Encrypted JSON {li_at, jsessionid, profile_url} once the cookies arrive.
+		capturedCredentials: text('captured_credentials'),
+		error: text('error'),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+	},
+	(t) => [
+		index('auth_browser_sessions_ws_idx').on(t.workspaceId),
+		index('auth_browser_sessions_expires_idx').on(t.expiresAt),
+	],
+)
+
 // ── Triggers ────────────────────────────────────────────────────────────────
 
 export const triggers = pgTable('triggers', {
