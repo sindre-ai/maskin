@@ -510,6 +510,10 @@ app.openapi(healthCheckRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
 	const result = await sessionManager.healthCheck(id, workspaceId)
 	return c.json(result)
 }) as RouteHandler<typeof healthCheckRoute, Env>)

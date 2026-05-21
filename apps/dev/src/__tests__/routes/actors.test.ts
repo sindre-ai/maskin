@@ -619,6 +619,7 @@ describe('Actors Routes', () => {
 			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[buildWorkspaceMember({ actorId, workspaceId: wsId })],
 			]
 			;(sessionManager.healthCheck as Mock).mockResolvedValue({
 				healthy: true,
@@ -644,6 +645,7 @@ describe('Actors Routes', () => {
 			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[buildWorkspaceMember({ actorId, workspaceId: wsId })],
 			]
 			;(sessionManager.healthCheck as Mock).mockResolvedValue({
 				healthy: false,
@@ -675,6 +677,30 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when target actor belongs to a different workspace than the caller', async () => {
+			const callerWsId = randomUUID()
+			const targetActorId = randomUUID()
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				actorsRoutes,
+				'/api/actors',
+			)
+			mockResults.selectQueue = [
+				// caller is a member of WS-A
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: callerWsId })],
+				// target actor is NOT a member of WS-A
+				[],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${targetActorId}/health-check`, undefined, {
+					'x-workspace-id': callerWsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+			expect(sessionManager.healthCheck).not.toHaveBeenCalled()
 		})
 	})
 })
