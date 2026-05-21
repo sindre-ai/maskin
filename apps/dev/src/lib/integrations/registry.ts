@@ -13,6 +13,8 @@ import {
 	resolveExternalId as linearResolveExternalId,
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
+import { linkedinAuth } from './providers/linkedin/auth'
+import { config as linkedinConfig } from './providers/linkedin/config'
 import {
 	config as slackConfig,
 	parseTokenResponse as slackParseTokenResponse,
@@ -35,6 +37,11 @@ providers.set('linear', {
 	config: linearConfig,
 	customNormalizer: linearEventNormalizer,
 	resolveExternalId: linearResolveExternalId,
+})
+
+providers.set('linkedin', {
+	config: linkedinConfig,
+	customAuth: linkedinAuth,
 })
 
 providers.set('slack', {
