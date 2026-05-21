@@ -2,7 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, relationships } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
-import { and, eq, or } from 'drizzle-orm'
+import { and, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
@@ -10,7 +10,7 @@ import {
 	relationshipResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
-import { serialize, serializeArray } from '../lib/serialize'
+import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
@@ -87,7 +87,20 @@ app.openapi(createRelationshipRoute, async (c) => {
 		data: created,
 	})
 
-	return c.json(serialize(created) as z.infer<typeof relationshipResponseSchema>, 201)
+	const endpointRows = await db
+		.select({ id: objects.id, title: objects.title })
+		.from(objects)
+		.where(inArray(objects.id, [created.sourceId, created.targetId]))
+	const titleById = new Map(endpointRows.map((r) => [r.id, r.title ?? null]))
+
+	return c.json(
+		{
+			...serialize(created),
+			sourceTitle: titleById.get(created.sourceId) ?? null,
+			targetTitle: titleById.get(created.targetId) ?? null,
+		} as z.infer<typeof relationshipResponseSchema>,
+		201,
+	)
 })
 
 // GET /api/relationships
@@ -129,7 +142,27 @@ app.openapi(listRelationshipsRoute, async (c) => {
 		.offset(query.offset)
 		.orderBy(relationships.createdAt)
 
-	return c.json(serializeArray(results) as z.infer<typeof relationshipResponseSchema>[])
+	const endpointIds = new Set<string>()
+	for (const r of results) {
+		endpointIds.add(r.sourceId)
+		endpointIds.add(r.targetId)
+	}
+	const titleById = new Map<string, string | null>()
+	if (endpointIds.size > 0) {
+		const endpointRows = await db
+			.select({ id: objects.id, title: objects.title })
+			.from(objects)
+			.where(inArray(objects.id, [...endpointIds]))
+		for (const row of endpointRows) titleById.set(row.id, row.title ?? null)
+	}
+
+	return c.json(
+		results.map((r) => ({
+			...serialize(r),
+			sourceTitle: titleById.get(r.sourceId) ?? null,
+			targetTitle: titleById.get(r.targetId) ?? null,
+		})) as z.infer<typeof relationshipResponseSchema>[],
+	)
 })
 
 // DELETE /api/relationships/:id

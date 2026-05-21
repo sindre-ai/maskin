@@ -110,7 +110,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|discarded, bet: signal|proposed|active|completed|succeeded|failed|paused, task: todo|in_progress|done|blocked.',
+			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|discarded, bet: signal|proposed|active|completed|succeeded|failed|paused, task: todo|in_progress|done|blocked. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
@@ -152,7 +152,7 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID, each with all its relationships, connected objects, and recent activity. Returns the full context around each object: inbound/outbound relationships, details of connected objects, and the most recent events on the object (lifecycle changes plus comments — comments are events with action="commented" and content in event.data.content, replies link via event.data.parentEventId).',
+			'Get one or more objects by ID, each with all its relationships, connected objects, and recent activity. Returns the full context around each object: inbound/outbound relationships (each carrying sourceTitle and targetTitle), details of connected objects, and the most recent events on the object (lifecycle changes plus comments — comments are events with action="commented" and content in event.data.content, replies link via event.data.parentEventId). When referring to these objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
@@ -160,7 +160,7 @@ export const tools = {
 	},
 	update_objects: {
 		description:
-			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types.',
+			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types. Updated objects are returned with their title; created relationships include sourceTitle and targetTitle. When referring to objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			updates: z

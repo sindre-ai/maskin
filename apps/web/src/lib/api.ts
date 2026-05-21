@@ -654,8 +654,10 @@ export interface RelationshipResponse {
 	id: string
 	sourceType: string
 	sourceId: string
+	sourceTitle?: string | null
 	targetType: string
 	targetId: string
+	targetTitle?: string | null
 	type: string
 	createdBy: string
 	createdAt: string | null
