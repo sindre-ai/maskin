@@ -17,6 +17,7 @@ const apps = [
 	'triggers',
 	'graph',
 	'schema',
+	'integrations',
 	'sessions',
 ]
 

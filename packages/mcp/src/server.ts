@@ -90,6 +90,7 @@ const UI_RESOURCES = {
 	graph: 'ui://maskin/graph',
 	sessions: 'ui://maskin/sessions',
 	schema: 'ui://maskin/schema',
+	integrations: 'ui://maskin/integrations',
 } as const
 
 const CSP = {
@@ -2778,7 +2779,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_integrations.description,
 			inputSchema: tools.list_integrations.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'GET', '/api/integrations', undefined, {
@@ -2797,7 +2798,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_integration_providers.description,
 			inputSchema: tools.list_integration_providers.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async () => {
 			const result = await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
@@ -2816,7 +2817,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.connect_integration.description,
 			inputSchema: tools.connect_integration.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = (await apiCall(
@@ -2834,12 +2835,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [
-					{
-						type: 'text' as const,
-						text: `Open this URL in your browser to complete the installation:\n\n${result.install_url}\n\n${JSON.stringify(result, null, 2)}`,
-					},
-				],
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2850,7 +2846,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.disconnect_integration.description,
 			inputSchema: tools.disconnect_integration.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.integrations, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'DELETE', `/api/integrations/${args.id}`, undefined, {

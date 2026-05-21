@@ -65,6 +65,7 @@ describe('createMcpServer', () => {
 			'ui://maskin/relationships',
 			'ui://maskin/graph',
 			'ui://maskin/schema',
+			'ui://maskin/integrations',
 			'ui://maskin/sessions',
 		]
 		for (const uri of expectedUris) {
