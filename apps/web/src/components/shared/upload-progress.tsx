@@ -1,5 +1,6 @@
 import { cn } from '@/lib/cn'
 import { Check } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 interface UploadProgressProps {
 	/** 0..1 fractional progress. Ignored when status is 'uploaded' or 'failed'. */
@@ -9,17 +10,38 @@ interface UploadProgressProps {
 	className?: string
 }
 
+// How long the success check stays visible after an upload completes before
+// fading away — short enough to feel ephemeral, long enough to register.
+const CHECK_VISIBLE_MS = 4000
+
 /**
  * Visual indicator for an in-flight or completed file upload. While uploading,
  * shows a thin progress bar driven by `progress`. On success the bar is replaced
- * by a green check; on failure by short red error text.
+ * by a green check that fades out after a few seconds; on failure by short red
+ * error text.
  */
 export function UploadProgress({ progress, status, error, className }: UploadProgressProps) {
+	const [checkVisible, setCheckVisible] = useState(true)
+
+	useEffect(() => {
+		if (status !== 'uploaded') {
+			setCheckVisible(true)
+			return
+		}
+		setCheckVisible(true)
+		const t = setTimeout(() => setCheckVisible(false), CHECK_VISIBLE_MS)
+		return () => clearTimeout(t)
+	}, [status])
+
 	if (status === 'uploaded') {
+		if (!checkVisible) return null
 		return (
 			<span
 				aria-label="Uploaded"
-				className={cn('inline-flex items-center text-success', className)}
+				className={cn(
+					'inline-flex items-center text-success transition-opacity duration-300',
+					className,
+				)}
 			>
 				<Check size={14} />
 			</span>
