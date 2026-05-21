@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	files,
 	objects,
 	readState,
 	relationships,
@@ -22,6 +23,8 @@ import {
 } from '@maskin/shared'
 import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
+import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	idParamSchema,
@@ -422,6 +425,58 @@ app.openapi(getObjectGraphRoute, async (c) => {
 	titleById.set(object.id, object.title ?? null)
 	for (const co of connectedObjects) titleById.set(co.id, co.title ?? null)
 
+	// Collect every file id this object touches: (1) files attached via
+	// `attached` relationships (sourceType/targetType === 'file'), (2) files
+	// referenced by `data.attachmentFileIds` on comment events. Resolving them
+	// here saves agents an N+1 fan-out of /api/files/:id calls.
+	const fileIds = new Set<string>()
+	for (const r of rels) {
+		if (r.sourceType === 'file') fileIds.add(r.sourceId)
+		if (r.targetType === 'file') fileIds.add(r.targetId)
+	}
+	for (const event of objectEvents) {
+		if (event.action !== 'commented') continue
+		const data = event.data as { attachmentFileIds?: unknown } | null
+		const ids = data?.attachmentFileIds
+		if (!Array.isArray(ids)) continue
+		for (const id of ids) {
+			if (typeof id === 'string') fileIds.add(id)
+		}
+	}
+
+	let filesSummary: Array<{
+		id: string
+		name: string
+		mimeType: string
+		sizeBytes: number
+		url: string
+	}> = []
+	if (fileIds.size > 0) {
+		// Skip file resolution rather than 500 the whole graph when FRONTEND_URL
+		// is missing in prod — the rest of the payload is still useful.
+		let frontendUrl: string | null = null
+		try {
+			frontendUrl = frontendBaseUrl()
+		} catch (err) {
+			logger.error('Cannot mint file URLs for object graph', { error: String(err) })
+		}
+		if (frontendUrl) {
+			const rows = await db
+				.select({
+					id: files.id,
+					name: files.name,
+					mimeType: files.mimeType,
+					sizeBytes: files.sizeBytes,
+				})
+				.from(files)
+				.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, [...fileIds])))
+			filesSummary = rows.map((row) => ({
+				...row,
+				url: fileViewerUrl(frontendUrl as string, workspaceId, row.id),
+			}))
+		}
+	}
+
 	return c.json(
 		{
 			object: {
@@ -437,6 +492,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			})),
 			connected_objects: serializeArray(connectedObjects),
 			events: serializedEvents,
+			files: filesSummary,
 		} as z.infer<typeof objectGraphResponseSchema>,
 		200,
 	)

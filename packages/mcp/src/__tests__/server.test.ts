@@ -184,6 +184,77 @@ describe('tool handlers', () => {
 				}),
 			)
 		})
+
+		it('attaches file_ids on a node by replaying each as an `attached` relationship', async () => {
+			// First fetch: POST /api/graph returns the created node with its real
+			// UUID + type. Subsequent fetches are the per-file relationship POSTs.
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							nodes: [{ $id: 'bet-1', id: 'real-bet-id', type: 'bet' }],
+							edges: [],
+						}),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					json: () => Promise.resolve({ id: 'rel-1' }),
+				} as Response)
+
+			const handler = getHandler('create_objects')
+			const result = (await handler({
+				nodes: [
+					{
+						$id: 'bet-1',
+						type: 'bet',
+						status: 'active',
+						file_ids: ['file-a', 'file-b'],
+					},
+				],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+
+			// /api/graph body must NOT contain file_ids — it's an MCP-only field.
+			const graphCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).endsWith('/api/graph'))
+			expect(graphCall).toBeDefined()
+			const graphBody = JSON.parse((graphCall?.[1] as RequestInit).body as string)
+			expect(graphBody.nodes[0].file_ids).toBeUndefined()
+
+			// Two relationship POSTs, one per file, with target_type=file & type=attached.
+			const relCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/api/relationships'))
+			expect(relCalls).toHaveLength(2)
+			const relBodies = relCalls.map((c) => JSON.parse((c[1] as RequestInit).body as string))
+			const targetIds = relBodies.map((b) => b.target_id).sort()
+			expect(targetIds).toEqual(['file-a', 'file-b'])
+			for (const body of relBodies) {
+				expect(body.source_id).toBe('real-bet-id')
+				expect(body.source_type).toBe('bet')
+				expect(body.target_type).toBe('file')
+				expect(body.type).toBe('attached')
+			}
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.file_attachments).toHaveLength(2)
+			expect(parsed.file_attachments.every((a: { success: boolean }) => a.success)).toBe(true)
+		})
+
+		it('omits file_attachments from the response when no file_ids were provided', async () => {
+			mockFetchSuccess({ nodes: [{ $id: 'x', id: 'real-x', type: 'task' }], edges: [] })
+
+			const handler = getHandler('create_objects')
+			const result = (await handler({
+				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.file_attachments).toBeUndefined()
+		})
 	})
 
 	describe('get_objects handler', () => {
@@ -223,6 +294,130 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('type=task')
 			expect(calledUrl).toContain('limit=10')
 			expect(calledUrl).toContain('offset=5')
+		})
+	})
+
+	describe('update_objects handler — file attachments', () => {
+		it('attaches files via `attach_file_ids` as `attached` relationships', async () => {
+			// PATCH the object, then POST a relationship per file.
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'obj-1', type: 'bet' }),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					json: () => Promise.resolve({ id: 'rel-1' }),
+				} as Response)
+
+			const handler = getHandler('update_objects')
+			const result = (await handler({
+				updates: [
+					{
+						id: '11111111-1111-1111-1111-111111111111',
+						title: 'New title',
+						attach_file_ids: [
+							'22222222-2222-2222-2222-222222222222',
+							'33333333-3333-3333-3333-333333333333',
+						],
+					},
+				],
+			})) as { content: Array<{ text: string }> }
+
+			const relCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/api/relationships'))
+			expect(relCalls).toHaveLength(2)
+			for (const call of relCalls) {
+				const body = JSON.parse((call[1] as RequestInit).body as string)
+				expect(body.source_id).toBe('11111111-1111-1111-1111-111111111111')
+				expect(body.target_type).toBe('file')
+				expect(body.type).toBe('attached')
+			}
+
+			const parsed = JSON.parse(result.content[0].text)
+			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
+			expect(attachments).toHaveLength(2)
+			expect(attachments.every((a: { success: boolean }) => a.success)).toBe(true)
+		})
+
+		it('skips the PATCH when an update only contains attach_file_ids', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ id: 'rel-1' }),
+			} as Response)
+
+			const handler = getHandler('update_objects')
+			await handler({
+				updates: [
+					{
+						id: '11111111-1111-1111-1111-111111111111',
+						attach_file_ids: ['22222222-2222-2222-2222-222222222222'],
+					},
+				],
+			})
+
+			// Only the relationship POST should have been issued — no PATCH.
+			const patchCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => ((c[1] as RequestInit).method ?? 'GET') === 'PATCH')
+			expect(patchCalls).toHaveLength(0)
+		})
+
+		it('detaches files via `detach_file_ids` by looking up the relationship and deleting it', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				// GET /api/relationships?source_id=...&target_id=...&type=attached
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([{ id: 'rel-99', targetType: 'file' }]),
+				} as Response)
+				// DELETE /api/relationships/rel-99
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ deleted: true }),
+				} as Response)
+
+			const handler = getHandler('update_objects')
+			const result = (await handler({
+				updates: [
+					{
+						id: '11111111-1111-1111-1111-111111111111',
+						detach_file_ids: ['22222222-2222-2222-2222-222222222222'],
+					},
+				],
+			})) as { content: Array<{ text: string }> }
+
+			const calls = vi.mocked(fetch).mock.calls
+			expect(calls[0][0]).toMatch(/\/api\/relationships\?.*type=attached/)
+			expect(calls[1][0]).toBe('http://localhost:3000/api/relationships/rel-99')
+			expect((calls[1][1] as RequestInit).method).toBe('DELETE')
+
+			const parsed = JSON.parse(result.content[0].text)
+			const detachments = parsed.filter((e: { type: string }) => e.type === 'file_detachment')
+			expect(detachments).toHaveLength(1)
+			expect(detachments[0].success).toBe(true)
+		})
+
+		it('reports a clear error when detach target has no matching attachment', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+				ok: true,
+				json: () => Promise.resolve([]),
+			} as Response)
+
+			const handler = getHandler('update_objects')
+			const result = (await handler({
+				updates: [
+					{
+						id: '11111111-1111-1111-1111-111111111111',
+						detach_file_ids: ['22222222-2222-2222-2222-222222222222'],
+					},
+				],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed[0].type).toBe('file_detachment')
+			expect(parsed[0].success).toBe(false)
+			expect(parsed[0].error).toMatch(/no attached relationship/i)
 		})
 	})
 

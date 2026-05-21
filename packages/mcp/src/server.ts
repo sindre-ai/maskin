@@ -824,13 +824,89 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'POST', '/api/graph', body, {
-				workspaceId: workspace_id,
+			const { workspace_id, nodes, edges } = args
+			const wsOpts = { workspaceId: workspace_id }
+
+			// /api/graph doesn't understand file_ids — strip them from the body
+			// and replay each node's file_ids as `attached` relationships after
+			// the graph is created. Keeps the backend schema unchanged.
+			const fileIdsByDollarId = new Map<string, string[]>()
+			const nodesForApi = nodes.map((node) => {
+				const { file_ids, ...rest } = node
+				if (file_ids?.length) fileIdsByDollarId.set(node.$id, file_ids)
+				return rest
 			})
+
+			const graphResult = (await apiCall(
+				config,
+				'POST',
+				'/api/graph',
+				{ nodes: nodesForApi, edges },
+				wsOpts,
+			)) as {
+				nodes: Array<{ id: string; type: string; $id: string }>
+				edges: unknown[]
+			}
+
+			// Map each created node's $id → real UUID + type so we can fan out
+			// `attached` relationships pointing at the requested file_ids.
+			const fileAttachments: Array<{
+				type: 'file_attachment'
+				id: string
+				success: boolean
+				result?: unknown
+				error?: string
+			}> = []
+			if (fileIdsByDollarId.size > 0) {
+				const tasks: Array<Promise<void>> = []
+				for (const node of graphResult.nodes) {
+					const fileIds = fileIdsByDollarId.get(node.$id)
+					if (!fileIds?.length) continue
+					for (const fileId of fileIds) {
+						tasks.push(
+							(async () => {
+								try {
+									const result = await apiCall(
+										config,
+										'POST',
+										'/api/relationships',
+										{
+											source_type: node.type,
+											source_id: node.id,
+											target_type: 'file',
+											target_id: fileId,
+											type: 'attached',
+										},
+										wsOpts,
+									)
+									fileAttachments.push({
+										type: 'file_attachment',
+										id: `${node.id}->${fileId}`,
+										success: true,
+										result,
+									})
+								} catch (error) {
+									fileAttachments.push({
+										type: 'file_attachment',
+										id: `${node.id}->${fileId}`,
+										success: false,
+										error: String(error),
+									})
+								}
+							})(),
+						)
+					}
+				}
+				await Promise.all(tasks)
+			}
+
+			const responseBody = fileAttachments.length
+				? { ...graphResult, file_attachments: fileAttachments }
+				: graphResult
+
 			return {
 				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
 			}
 		},
 	)
@@ -886,16 +962,123 @@ export function createMcpServer(config: McpConfig) {
 			// Update objects in parallel
 			if (args.updates?.length) {
 				const objectResults = await Promise.all(
-					args.updates.map(async ({ id, ...body }) => {
-						try {
-							const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
-							return { type: 'object' as const, id, success: true, result }
-						} catch (error) {
-							return { type: 'object' as const, id, success: false, error: String(error) }
+					args.updates.map(async ({ id, attach_file_ids, detach_file_ids, ...body }) => {
+						const out: Array<{
+							type: string
+							id: string
+							success: boolean
+							result?: unknown
+							error?: string
+						}> = []
+
+						const hasFieldUpdate = Object.values(body).some((v) => v !== undefined)
+						if (hasFieldUpdate) {
+							try {
+								const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
+								out.push({ type: 'object', id, success: true, result })
+							} catch (error) {
+								out.push({ type: 'object', id, success: false, error: String(error) })
+							}
 						}
+
+						// Attach files in parallel — each becomes an `attached` relationship.
+						// source_type is hardcoded to 'object' to match how the existing
+						// `edges` handler creates relationships. The graph endpoint reads
+						// rels by direction, not by source_type, so the literal value
+						// doesn't affect retrieval.
+						if (attach_file_ids?.length) {
+							const attachResults = await Promise.all(
+								attach_file_ids.map(async (fileId) => {
+									try {
+										const result = await apiCall(
+											config,
+											'POST',
+											'/api/relationships',
+											{
+												source_type: 'object',
+												source_id: id,
+												target_type: 'file',
+												target_id: fileId,
+												type: 'attached',
+											},
+											wsOpts,
+										)
+										return {
+											type: 'file_attachment',
+											id: `${id}->${fileId}`,
+											success: true,
+											result,
+										}
+									} catch (error) {
+										return {
+											type: 'file_attachment',
+											id: `${id}->${fileId}`,
+											success: false,
+											error: String(error),
+										}
+									}
+								}),
+							)
+							out.push(...attachResults)
+						}
+
+						// Detach files: list relationships rooted at this object with
+						// type='attached', match by target_id, then delete each.
+						// Cheaper than asking the user to track relationship UUIDs.
+						if (detach_file_ids?.length) {
+							const detachResults = await Promise.all(
+								detach_file_ids.map(async (fileId) => {
+									try {
+										const params = new URLSearchParams()
+										params.set('source_id', id)
+										params.set('target_id', fileId)
+										params.set('type', 'attached')
+										const rels = (await apiCall(
+											config,
+											'GET',
+											`/api/relationships?${params}`,
+											undefined,
+											wsOpts,
+										)) as Array<{ id: string; targetType: string }>
+										const match = rels.find((r) => r.targetType === 'file')
+										if (!match) {
+											return {
+												type: 'file_detachment',
+												id: `${id}->${fileId}`,
+												success: false,
+												error: 'No attached relationship found between this object and file',
+											}
+										}
+										const result = await apiCall(
+											config,
+											'DELETE',
+											`/api/relationships/${match.id}`,
+											undefined,
+											wsOpts,
+										)
+										return {
+											type: 'file_detachment',
+											id: `${id}->${fileId}`,
+											success: true,
+											result,
+										}
+									} catch (error) {
+										return {
+											type: 'file_detachment',
+											id: `${id}->${fileId}`,
+											success: false,
+											error: String(error),
+										}
+									}
+								}),
+							)
+							out.push(...detachResults)
+						}
+
+						return out
 					}),
 				)
-				results.push(...objectResults)
+				for (const entry of objectResults) results.push(...entry)
 			}
 
 			// Create relationships in parallel
