@@ -4,6 +4,7 @@ const SLACK_API_BASE = 'https://slack.com/api'
 const CACHE_TTL_MS = 5 * 60_000
 const MAX_PAGES = 10
 const PAGE_LIMIT = 200
+const REQUEST_TIMEOUT_MS = 10_000
 
 export type SlackConversationType = 'public_channel' | 'private_channel' | 'im' | 'mpim'
 
@@ -61,9 +62,18 @@ async function slackGet<T extends SlackResponse>(
 	params: Record<string, string>,
 ): Promise<T> {
 	const search = new URLSearchParams(params).toString()
-	const res = await fetch(`${SLACK_API_BASE}/${path}?${search}`, {
-		headers: { Authorization: `Bearer ${accessToken}` },
-	})
+	let res: Response
+	try {
+		res = await fetch(`${SLACK_API_BASE}/${path}?${search}`, {
+			headers: { Authorization: `Bearer ${accessToken}` },
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+		})
+	} catch (err) {
+		if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+			throw new Error(`Slack ${path} timed out after ${REQUEST_TIMEOUT_MS}ms`)
+		}
+		throw err
+	}
 	const json = (await res.json()) as T
 	if (!json.ok) {
 		throw new Error(`Slack ${path} failed: ${json.error ?? 'unknown error'}`)
