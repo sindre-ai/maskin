@@ -63,6 +63,22 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		url: 'https://gmailmcp.googleapis.com/mcp/v1',
 		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
 	},
+	// LinkedIn uses our cookie-based auth flow (Connect LinkedIn modal captures
+	// li_at + JSESSIONID via a headful Chromium stream). The backend injects the
+	// formatted Cookie header as LINKEDIN_TOKEN; we remap it to LINKEDIN_COOKIE
+	// because the upstream MCP server reads that name.
+	//
+	// NOTE: upstream stickerdaniel/linkedin-mcp-server still does its own
+	// browser-login flow. Until a cookie-via-env fork lands (tracked as a
+	// follow-up), this preset will start the upstream but the LINKEDIN_COOKIE
+	// env will be ignored and the server will try to open its own browser.
+	// Swap `args` to point to your fork (e.g. uvx --from git+https://...).
+	linkedin: {
+		type: 'stdio',
+		command: 'uvx',
+		args: ['linkedin-mcp-server'],
+		env: { LINKEDIN_COOKIE: '${LINKEDIN_TOKEN}' },
+	},
 }
 
 const PLATFORM_MCP_PRESET: McpServer = {
