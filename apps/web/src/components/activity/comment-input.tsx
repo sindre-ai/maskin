@@ -286,61 +286,74 @@ export function CommentInput({
 			}}
 			onDrop={handleDrop}
 		>
-			{hasAttachments && (
-				<ul className="mb-2 ml-9 flex flex-wrap gap-1.5">
-					{attachments.map((file) => (
-						<li
-							key={file.tempId}
-							className="flex items-center gap-2 rounded-md border border-border bg-card px-2 py-1 text-xs"
-						>
-							<span className="max-w-[160px] truncate font-medium">{file.name}</span>
-							<span className="font-mono text-muted-foreground">{formatSize(file.sizeBytes)}</span>
-							<UploadProgress progress={file.progress} status={file.status} error={file.error} />
-							<button
-								type="button"
-								onClick={() => draft.remove(file.tempId)}
-								aria-label={`Remove ${file.name}`}
-								className="text-muted-foreground hover:text-foreground"
-							>
-								<X size={12} />
-							</button>
-						</li>
-					))}
-				</ul>
-			)}
-
 			<div className="flex items-start gap-2">
 				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
-				<div className="flex-1 relative">
+				<div className="flex-1">
 					<div
-						ref={overlayRef}
-						aria-hidden
-						className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent px-2 py-1.5 text-sm"
-						style={{ minHeight: '32px' }}
-					>
-						<MentionedText
-							content={content}
-							actors={mentionableActors}
-							mentionClassName="rounded bg-primary/10 text-primary"
-						/>
-						{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
-						{content.endsWith('\n') && '​'}
-					</div>
-					<textarea
-						ref={inputRef}
-						value={content}
-						onChange={handleInput}
-						onKeyDown={handleKeyDown}
-						onScroll={handleScroll}
-						placeholder="Write a comment... Use @ to mention an agent"
-						rows={1}
-						aria-invalid={overLimit || undefined}
 						className={cn(
-							'relative w-full resize-none overflow-y-hidden rounded-md border bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-1',
-							overLimit ? 'border-error focus:ring-error' : 'border-border focus:ring-border-focus',
+							'rounded-md border transition-colors focus-within:ring-1',
+							overLimit
+								? 'border-error focus-within:ring-error'
+								: 'border-border focus-within:ring-border-focus',
 						)}
-						style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
-					/>
+					>
+						{hasAttachments && (
+							<ul className="flex flex-wrap gap-1.5 p-1.5">
+								{attachments.map((file) => (
+									<li
+										key={file.tempId}
+										className="flex items-center gap-2 rounded-md border border-border bg-card px-2 py-1 text-xs"
+									>
+										<UploadProgress
+											progress={file.progress}
+											status={file.status}
+											error={file.error}
+										/>
+										<span className="max-w-[160px] truncate font-medium">{file.name}</span>
+										<span className="font-mono text-muted-foreground">
+											{formatSize(file.sizeBytes)}
+										</span>
+										<button
+											type="button"
+											onClick={() => draft.remove(file.tempId)}
+											aria-label={`Remove ${file.name}`}
+											className="text-muted-foreground hover:text-foreground"
+										>
+											<X size={12} />
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+						<div className="relative">
+							<div
+								ref={overlayRef}
+								aria-hidden
+								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-sm"
+								style={{ minHeight: '32px' }}
+							>
+								<MentionedText
+									content={content}
+									actors={mentionableActors}
+									mentionClassName="rounded bg-primary/10 text-primary"
+								/>
+								{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
+								{content.endsWith('\n') && '​'}
+							</div>
+							<textarea
+								ref={inputRef}
+								value={content}
+								onChange={handleInput}
+								onKeyDown={handleKeyDown}
+								onScroll={handleScroll}
+								placeholder="Write a comment... Use @ to mention an agent"
+								rows={1}
+								aria-invalid={overLimit || undefined}
+								className="relative w-full resize-none overflow-y-hidden border-0 bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
+								style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
+							/>
+						</div>
+					</div>
 					{showCounter && (
 						<div
 							className={cn(
