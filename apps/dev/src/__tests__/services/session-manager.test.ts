@@ -748,5 +748,14 @@ describe('SessionManager', () => {
 
 			expect(result.healthy).toBe(true)
 		})
+
+		it('flags the workspace as not found when the workspace lookup returns empty', async () => {
+			mockResults.selectQueue = [[agent], []]
+
+			const result = await manager.healthCheck('agent-1', 'ws-1')
+
+			expect(result.healthy).toBe(false)
+			expect(result.issues).toContain('Workspace ws-1 not found')
+		})
 	})
 })
