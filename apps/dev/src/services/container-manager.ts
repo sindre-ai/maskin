@@ -19,6 +19,13 @@ export interface ContainerCreateOptions {
 	 * so the in-container entrypoint switches to interactive mode.
 	 */
 	interactive?: boolean
+	/**
+	 * Publish container ports to ephemeral host ports. Map of container port (with
+	 * protocol suffix, e.g. '9222/tcp') → host port string (use '' to let Docker
+	 * pick an ephemeral port). Use `getPublishedPort()` after `start()` to
+	 * discover the actual host port Docker assigned.
+	 */
+	portBindings?: Record<string, string>
 }
 
 export interface LogChunk {
@@ -123,6 +130,16 @@ export class ContainerManager {
 		const envMap = options.interactive ? { ...options.env, INTERACTIVE: '1' } : options.env
 		const env = Object.entries(envMap).map(([k, v]) => `${k}=${v}`)
 
+		// Convert portBindings to Docker's PortBindings + ExposedPorts shape.
+		const portBindings: Record<string, Array<{ HostPort: string }>> = {}
+		const exposedPorts: Record<string, object> = {}
+		if (options.portBindings) {
+			for (const [containerPort, hostPort] of Object.entries(options.portBindings)) {
+				portBindings[containerPort] = [{ HostPort: hostPort }]
+				exposedPorts[containerPort] = {}
+			}
+		}
+
 		const container = await this.docker.createContainer({
 			Image: options.image,
 			name: options.name,
@@ -134,12 +151,14 @@ export class ContainerManager {
 				StdinOnce: false,
 				Tty: false,
 			}),
+			...(options.portBindings && { ExposedPorts: exposedPorts }),
 			HostConfig: {
 				Memory: options.memoryMb * 1024 * 1024,
 				CpuShares: options.cpuShares,
 				Binds: options.binds,
 				NetworkMode: options.networkMode ?? 'bridge',
 				ExtraHosts: ['host.docker.internal:host-gateway'],
+				...(options.portBindings && { PortBindings: portBindings }),
 			},
 		})
 
@@ -346,6 +365,19 @@ export class ContainerManager {
 			startedAt: info.State.StartedAt ?? null,
 			finishedAt: info.State.FinishedAt ?? null,
 		}
+	}
+
+	/**
+	 * Return the host port Docker assigned to a published container port, or
+	 * null if the port isn't published (or the container hasn't been started).
+	 * `containerPort` uses Docker's wire format, e.g. '9222/tcp'.
+	 */
+	async getPublishedPort(containerId: string, containerPort: string): Promise<number | null> {
+		const info = await this.docker.getContainer(containerId).inspect()
+		const bindings = info.NetworkSettings.Ports?.[containerPort]
+		if (!bindings || bindings.length === 0) return null
+		const hostPort = bindings[0]?.HostPort
+		return hostPort ? Number(hostPort) : null
 	}
 
 	async exec(containerId: string, cmd: string[]): Promise<{ exitCode: number; output: string }> {

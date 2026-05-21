@@ -22,6 +22,8 @@ import {
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
+import type { AuthBrowserManager } from '../services/auth-browser-manager'
+import linkedinAuthBrowserApp from './integrations-linkedin'
 
 type Env = {
 	Variables: {
@@ -29,10 +31,15 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
+		authBrowserManager: AuthBrowserManager
 	}
 }
 
 const app = new OpenAPIHono<Env>()
+
+// LinkedIn uses a headful Chromium stream instead of the standard OAuth flow.
+// Mount its routes under /api/integrations/linkedin/auth-browser/*.
+app.route('/', linkedinAuthBrowserApp)
 
 // ── GET /api/integrations ──────────────────────────────────────────────────
 

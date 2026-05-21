@@ -138,6 +138,9 @@ export class AuthBrowserManager {
 				cpuShares: 1024,
 				binds: [],
 				networkMode: networkName,
+				// Publish CDP to an ephemeral host port so the backend (on host)
+				// can talk to chrome-remote-interface without being on the network.
+				portBindings: { '9222/tcp': '' },
 			})
 
 			await this.containers.start(containerId)
@@ -169,10 +172,14 @@ export class AuthBrowserManager {
 	}
 
 	/**
-	 * Return the internal Docker-network CDP URL for a ready session, or null
-	 * if the session isn't usable. Used by Module C to open a CDP WebSocket.
+	 * Return localhost host + port for the container's published CDP, or null
+	 * if the session isn't usable. Used by the CDP stream proxy (Module C) to
+	 * open a chrome-remote-interface client.
 	 */
-	async getCdpEndpoint(id: string, accessToken: string): Promise<string | null> {
+	async getCdpEndpoint(
+		id: string,
+		accessToken: string,
+	): Promise<{ host: string; port: number } | null> {
 		const [row] = await this.db
 			.select()
 			.from(authBrowserSessions)
@@ -180,8 +187,10 @@ export class AuthBrowserManager {
 			.limit(1)
 		if (!row || row.accessToken !== accessToken || row.status !== 'ready') return null
 		if (row.expiresAt.getTime() < Date.now()) return null
-		const prefix = id.slice(0, 8)
-		return `ws://anko-auth-browser-${prefix}:9222`
+		if (!row.containerId) return null
+		const port = await this.containers.getPublishedPort(row.containerId, '9222/tcp')
+		if (!port) return null
+		return { host: 'localhost', port }
 	}
 
 	/**

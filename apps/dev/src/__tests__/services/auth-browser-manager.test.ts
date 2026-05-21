@@ -9,6 +9,7 @@ const mockContainerManager = {
 	remove: vi.fn().mockResolvedValue(undefined),
 	removeNetwork: vi.fn().mockResolvedValue(undefined),
 	inspect: vi.fn().mockResolvedValue({ running: false, exitCode: 0 }),
+	getPublishedPort: vi.fn().mockResolvedValue(49876),
 }
 
 vi.mock('../../services/container-manager', () => ({
@@ -153,25 +154,36 @@ describe('AuthBrowserManager', () => {
 	})
 
 	describe('getCdpEndpoint', () => {
-		it('returns ws URL when row is ready, token matches, and not expired', async () => {
+		it('returns {host, port} when ready, token matches, port published, not expired', async () => {
 			const { db, mockResults } = createTestContext()
 			mockResults.select = [
 				{
 					id: 'abcdef12-rest-of-uuid',
 					status: 'ready',
 					accessToken: 'tok-1',
+					containerId: 'container-id-123',
 					expiresAt: new Date(Date.now() + 60_000),
 				},
 			]
 			const mgr = new AuthBrowserManager(db)
-			const url = await mgr.getCdpEndpoint('abcdef12-rest-of-uuid', 'tok-1')
-			expect(url).toBe('ws://anko-auth-browser-abcdef12:9222')
+			const result = await mgr.getCdpEndpoint('abcdef12-rest-of-uuid', 'tok-1')
+			expect(result).toEqual({ host: 'localhost', port: 49876 })
+			expect(mockContainerManager.getPublishedPort).toHaveBeenCalledWith(
+				'container-id-123',
+				'9222/tcp',
+			)
 		})
 
 		it('returns null when access token does not match', async () => {
 			const { db, mockResults } = createTestContext()
 			mockResults.select = [
-				{ id: 'x', status: 'ready', accessToken: 'real', expiresAt: new Date(Date.now() + 60_000) },
+				{
+					id: 'x',
+					status: 'ready',
+					accessToken: 'real',
+					containerId: 'cid',
+					expiresAt: new Date(Date.now() + 60_000),
+				},
 			]
 			const mgr = new AuthBrowserManager(db)
 			expect(await mgr.getCdpEndpoint('x', 'wrong')).toBeNull()
@@ -184,6 +196,7 @@ describe('AuthBrowserManager', () => {
 					id: 'x',
 					status: 'starting',
 					accessToken: 'tok',
+					containerId: 'cid',
 					expiresAt: new Date(Date.now() + 60_000),
 				},
 			]
@@ -194,7 +207,13 @@ describe('AuthBrowserManager', () => {
 		it('returns null when expired', async () => {
 			const { db, mockResults } = createTestContext()
 			mockResults.select = [
-				{ id: 'x', status: 'ready', accessToken: 'tok', expiresAt: new Date(Date.now() - 1000) },
+				{
+					id: 'x',
+					status: 'ready',
+					accessToken: 'tok',
+					containerId: 'cid',
+					expiresAt: new Date(Date.now() - 1000),
+				},
 			]
 			const mgr = new AuthBrowserManager(db)
 			expect(await mgr.getCdpEndpoint('x', 'tok')).toBeNull()
@@ -205,6 +224,22 @@ describe('AuthBrowserManager', () => {
 			mockResults.select = []
 			const mgr = new AuthBrowserManager(db)
 			expect(await mgr.getCdpEndpoint('nope', 'tok')).toBeNull()
+		})
+
+		it('returns null when port has not been published yet', async () => {
+			const { db, mockResults } = createTestContext()
+			mockResults.select = [
+				{
+					id: 'x',
+					status: 'ready',
+					accessToken: 'tok',
+					containerId: 'cid',
+					expiresAt: new Date(Date.now() + 60_000),
+				},
+			]
+			mockContainerManager.getPublishedPort.mockResolvedValueOnce(null)
+			const mgr = new AuthBrowserManager(db)
+			expect(await mgr.getCdpEndpoint('x', 'tok')).toBeNull()
 		})
 	})
 
