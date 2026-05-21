@@ -1,10 +1,10 @@
--- Backfill subscriptions + read_state for activity from the last 14 days.
+-- Backfill subscriptions + read_state for activity from the last 7 days.
 --
 -- Subscriptions auto-attach on object creation ('author') and on comment
 -- ('commenter'), but only for activity that happened after PR #422. Anything
 -- older has no subscription row, so authors/commenters don't see their own
 -- objects in the For You feed. This migration fills that gap for the trailing
--- 14-day window.
+-- 7-day window.
 --
 -- Authors are inserted before commenters so 'author' wins on conflict when a
 -- user both created and commented on the same object (manual subscriptions
@@ -17,7 +17,7 @@
 
 DO $$
 DECLARE
-	cutoff timestamptz := now() - interval '14 days';
+	cutoff timestamptz := now() - interval '7 days';
 	high_water bigint := COALESCE((SELECT MAX(id) FROM events), 0);
 BEGIN
 	CREATE TEMP TABLE backfilled_subs (
