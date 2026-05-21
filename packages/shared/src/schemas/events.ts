@@ -13,6 +13,7 @@ export const eventQuerySchema = z.object({
 })
 
 export const COMMENT_MAX_LENGTH = 2000
+export const COMMENT_MAX_ATTACHMENTS = 10
 
 export const createCommentSchema = z.object({
 	entity_id: z.string().uuid(),
@@ -25,4 +26,5 @@ export const createCommentSchema = z.object({
 		),
 	mentions: z.array(z.string().uuid()).max(50).optional(),
 	parent_event_id: z.number().int().positive().optional(),
+	attachment_file_ids: z.array(z.string().uuid()).max(COMMENT_MAX_ATTACHMENTS).optional(),
 })

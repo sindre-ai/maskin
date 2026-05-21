@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, notifications, objects, subscriptions } from '@maskin/db/schema'
+import { events, actors, files, notifications, objects, subscriptions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
@@ -175,6 +175,28 @@ app.openapi(createCommentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404 as never)
 	}
 
+	// Validate any attached file IDs belong to this workspace before we
+	// commit them onto the event row. Without this check an attacker could
+	// store IDs of files they cannot read, and the renderer would still
+	// resolve and link them for any workspace member who can see the comment.
+	if (body.attachment_file_ids?.length) {
+		const found = await db
+			.select({ id: files.id })
+			.from(files)
+			.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, body.attachment_file_ids)))
+
+		if (found.length !== body.attachment_file_ids.length) {
+			const foundIds = new Set(found.map((f) => f.id))
+			const missing = body.attachment_file_ids.filter((id) => !foundIds.has(id))
+			return c.json(
+				createApiError('BAD_REQUEST', 'One or more attached files do not exist in this workspace', [
+					{ field: 'attachment_file_ids', message: `Unknown file ids: ${missing.join(', ')}` },
+				]),
+				400,
+			)
+		}
+	}
+
 	// Collapse reply chains to the thread root. The comment model only supports
 	// one level of threading, so a reply to a reply must attach to the root
 	// instead — otherwise the UI silently drops the comment (it has nowhere to
@@ -204,6 +226,7 @@ app.openapi(createCommentRoute, (async (c) => {
 					content: body.content,
 					mentions: body.mentions,
 					parentEventId,
+					attachmentFileIds: body.attachment_file_ids,
 				},
 			})
 			.returning()

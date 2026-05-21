@@ -26,6 +26,10 @@ vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+vi.mock('@/hooks/use-files', () => ({
+	useFiles: () => ({ data: [] }),
+}))
+
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'actor-1', name: 'Alice', type: 'human' }),
 }))

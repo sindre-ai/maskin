@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type CreateFileInput, api } from '../lib/api'
+import { type CreateFileInput, type FileDetail, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useFile(workspaceId: string, fileId: string | null) {
@@ -19,13 +19,32 @@ export function useFiles(workspaceId: string, params?: { q?: string }) {
 	})
 }
 
+function primeFileCaches(queryClient: ReturnType<typeof useQueryClient>, file: FileDetail) {
+	queryClient.setQueryData(queryKeys.files.detail(file.workspaceId, file.id), file)
+	queryClient.invalidateQueries({ queryKey: queryKeys.files.all(file.workspaceId) })
+}
+
 export function useCreateFile(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateFileInput) => api.files.create(workspaceId, data),
-		onSuccess: (file) => {
-			queryClient.setQueryData(queryKeys.files.detail(workspaceId, file.id), file)
-			queryClient.invalidateQueries({ queryKey: queryKeys.files.all(workspaceId) })
-		},
+		onSuccess: (file) => primeFileCaches(queryClient, file),
 	})
+}
+
+/**
+ * Imperative upload helper for callers that need byte-level progress and
+ * cancellation — e.g. the comment composer's attachment chips. Use the
+ * `useCreateFile` mutation when you don't need progress.
+ */
+export function useUploadFile(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return (
+		data: CreateFileInput,
+		opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
+	) =>
+		api.files.createWithProgress(workspaceId, data, opts).then((file) => {
+			primeFileCaches(queryClient, file)
+			return file
+		})
 }

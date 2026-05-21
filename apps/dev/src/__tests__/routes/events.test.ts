@@ -267,6 +267,74 @@ describe('Events Routes', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
+		it('persists attachment_file_ids on the comment when files belong to the workspace', async () => {
+			const objectId = randomUUID()
+			const fileA = randomUUID()
+			const fileB = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: {
+					content: 'see attached',
+					attachmentFileIds: [fileA, fileB],
+				},
+			})
+			const { app, mockResults, calls } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }], // object lookup
+				[{ id: fileA }, { id: fileB }], // files validation
+			]
+			mockResults.insert = [commentEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{
+						entity_id: objectId,
+						content: 'see attached',
+						attachment_file_ids: [fileA, fileB],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const inserted = calls.inserts[0] as { data: { attachmentFileIds?: string[] } }
+			expect(inserted.data.attachmentFileIds).toEqual([fileA, fileB])
+		})
+
+		it('rejects attachment_file_ids when any file does not exist in the workspace', async () => {
+			const objectId = randomUUID()
+			const fileA = randomUUID()
+			const fileB = randomUUID()
+			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }], // object lookup
+				[{ id: fileA }], // files validation: only one of two ids resolved
+			]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{
+						entity_id: objectId,
+						content: 'attached',
+						attachment_file_ids: [fileA, fileB],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('attached files')
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
 		it('creates batch notifications and spawns a session per mentioned agent', async () => {
 			const objectId = randomUUID()
 			const agent1Id = randomUUID()
