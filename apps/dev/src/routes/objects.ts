@@ -52,6 +52,8 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 // Keep in sync with KNOWN_SORT_COLUMNS in packages/shared/src/schemas/objects.ts
 const sortColumns: Record<string, Column | SQL> = {
 	createdAt: objects.createdAt,
@@ -244,7 +246,6 @@ app.openapi(listObjectsRoute, async (c) => {
 	if (query.status) conditions.push(eq(objects.status, query.status))
 	if (query.owner) conditions.push(eq(objects.owner, query.owner))
 	if (query.ids) {
-		const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
 		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
 	}
@@ -441,8 +442,11 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		const data = event.data as { attachmentFileIds?: unknown } | null
 		const ids = data?.attachmentFileIds
 		if (!Array.isArray(ids)) continue
+		// `event.data` is JSONB and only validated by the writer that produced
+		// it. Skip anything that isn't a UUID so a stray string can't crash the
+		// inArray query below with `invalid input syntax for type uuid`.
 		for (const id of ids) {
-			if (typeof id === 'string') fileIds.add(id)
+			if (typeof id === 'string' && UUID_RE.test(id)) fileIds.add(id)
 		}
 	}
 
