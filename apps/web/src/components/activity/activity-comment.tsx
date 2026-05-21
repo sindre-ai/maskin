@@ -39,7 +39,7 @@ function CommentRow({ event, actors, onReply }: CommentRowProps) {
 	const content = (event.data?.content as string) ?? ''
 
 	return (
-		<div className="flex items-start gap-2 py-1">
+		<div className="flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors">
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<div className="flex-1 min-w-0">
 				<div className="flex items-baseline gap-1.5">
