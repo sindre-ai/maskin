@@ -291,10 +291,8 @@ export function CommentInput({
 				<div className="flex-1">
 					<div
 						className={cn(
-							'rounded-md border transition-colors focus-within:ring-1',
-							overLimit
-								? 'border-error focus-within:ring-error'
-								: 'border-border focus-within:ring-border-focus',
+							'rounded-md border transition-colors',
+							overLimit ? 'border-error' : 'border-border',
 						)}
 					>
 						{hasAttachments && (
