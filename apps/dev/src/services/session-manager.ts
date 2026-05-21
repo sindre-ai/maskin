@@ -159,9 +159,7 @@ export class SessionManager extends EventEmitter {
 				// checking the agent override path.
 				const hasNonAnthropicAgentKey = agent.llmProvider !== 'anthropic' && llmConfig.api_key
 				if (!hasNonAnthropicAgentKey) {
-					issues.push(
-						'No LLM credentials available (agent, workspace, OAuth, or system fallback)',
-					)
+					issues.push('No LLM credentials available (agent, workspace, OAuth, or system fallback)')
 				}
 			}
 		} catch (err) {

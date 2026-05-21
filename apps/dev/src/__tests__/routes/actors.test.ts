@@ -616,10 +616,7 @@ describe('Actors Routes', () => {
 		it('returns 200 and the health result when called by a workspace member', async () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
-			const { app, mockResults, sessionManager } = createSessionTestApp(
-				actorsRoutes,
-				'/api/actors',
-			)
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 			]
@@ -644,10 +641,7 @@ describe('Actors Routes', () => {
 		it('returns the list of issues when the agent is unhealthy', async () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
-			const { app, mockResults, sessionManager } = createSessionTestApp(
-				actorsRoutes,
-				'/api/actors',
-			)
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 			]

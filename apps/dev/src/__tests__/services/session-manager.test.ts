@@ -716,15 +716,16 @@ describe('SessionManager', () => {
 			const bareAgent = { ...agent, llmProvider: null, llmConfig: null }
 			mockResults.selectQueue = [[bareAgent], [workspace]]
 
-			const prev = process.env.MASKIN_FALLBACK_OPENROUTER_KEY
-			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = ''
+			const envKey = 'MASKIN_FALLBACK_OPENROUTER_KEY'
+			const prev = process.env[envKey]
+			process.env[envKey] = ''
 			try {
 				const result = await manager.healthCheck('agent-1', 'ws-1')
 				expect(result.healthy).toBe(false)
 				expect(result.issues.some((i) => i.includes('No LLM credentials'))).toBe(true)
 			} finally {
-				if (prev !== undefined) process.env.MASKIN_FALLBACK_OPENROUTER_KEY = prev
-				else delete process.env.MASKIN_FALLBACK_OPENROUTER_KEY
+				if (prev !== undefined) process.env[envKey] = prev
+				else delete process.env[envKey]
 			}
 		})
 
