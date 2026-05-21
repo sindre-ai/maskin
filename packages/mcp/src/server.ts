@@ -973,28 +973,60 @@ export function createMcpServer(config: McpConfig) {
 							error?: string
 						}> = []
 
+						// Captured from the PATCH response (when present) so attach_file_ids
+						// can use the object's real type ('bet' | 'task' | 'insight') as
+						// source_type — matching what create_objects and the web UI write.
+						let objectType: string | undefined
+
 						const hasFieldUpdate = Object.values(body).some((v) => v !== undefined)
 						if (hasFieldUpdate) {
 							try {
 								const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
+								objectType = (result as { type?: unknown })?.type as string | undefined
 								out.push({ type: 'object', id, success: true, result })
 							} catch (error) {
 								out.push({ type: 'object', id, success: false, error: String(error) })
 							}
 						}
 
-						// Attach files in parallel — each becomes an `attached` relationship.
-						// source_type is hardcoded to 'object' to match how the existing
-						// `edges` handler creates relationships. The graph endpoint reads
-						// rels by direction, not by source_type, so the literal value
-						// doesn't affect retrieval.
+						// Attach files in parallel — each becomes an `attached` relationship
+						// whose source_type is the object's real type ('bet' | 'task' |
+						// 'insight'), matching create_objects and the web UI. Retrieval
+						// goes by direction + targetType, but staying consistent keeps any
+						// future source_type queries clean.
 						//
 						// We GET the existing rel first so a repeat attach is an
 						// idempotent no-op (success + skipped) instead of failing the
 						// (source_id, target_id, type) unique constraint.
 						if (attach_file_ids?.length) {
+							// One extra GET only when no PATCH ran — otherwise the type
+							// already came back on the PATCH response.
+							let sourceType = objectType
+							if (sourceType === undefined) {
+								try {
+									const fetched = (await apiCall(
+										config,
+										'GET',
+										`/api/objects/${id}`,
+										undefined,
+										wsOpts,
+									)) as { type?: unknown }
+									sourceType = typeof fetched?.type === 'string' ? fetched.type : undefined
+								} catch {
+									// Handled per-file below.
+								}
+							}
+
 							const attachResults = await Promise.all(
 								attach_file_ids.map(async (fileId) => {
+									if (!sourceType) {
+										return {
+											type: 'file_attachment',
+											id: `${id}->${fileId}`,
+											success: false,
+											error: 'Could not resolve object type for attachment',
+										}
+									}
 									try {
 										const params = new URLSearchParams()
 										params.set('source_id', id)
@@ -1020,7 +1052,7 @@ export function createMcpServer(config: McpConfig) {
 											'POST',
 											'/api/relationships',
 											{
-												source_type: 'object',
+												source_type: sourceType,
 												source_id: id,
 												target_type: 'file',
 												target_id: fileId,

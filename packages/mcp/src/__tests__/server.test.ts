@@ -341,6 +341,9 @@ describe('tool handlers', () => {
 			for (const call of relPosts) {
 				const body = JSON.parse((call[1] as RequestInit).body as string)
 				expect(body.source_id).toBe('11111111-1111-1111-1111-111111111111')
+				// Real type from the PATCH response, not the generic 'object' — matches
+				// what create_objects and the web UI write.
+				expect(body.source_type).toBe('bet')
 				expect(body.target_type).toBe('file')
 				expect(body.type).toBe('attached')
 			}
@@ -361,6 +364,9 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () => Promise.resolve([{ id: 'rel-existing', targetType: 'file' }]),
 					} as Response
+				}
+				if (method === 'GET' && urlStr.includes('/api/objects/')) {
+					return { ok: true, json: () => Promise.resolve({ id: 'obj-1', type: 'bet' }) } as Response
 				}
 				// Any unexpected call (e.g. a POST) returns OK so we can detect it
 				// via the call-count assertion below rather than crashing the test.
@@ -400,6 +406,12 @@ describe('tool handlers', () => {
 				if (method === 'GET' && urlStr.includes('/api/relationships?')) {
 					return { ok: true, json: () => Promise.resolve([]) } as Response
 				}
+				if (method === 'GET' && urlStr.includes('/api/objects/')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve({ id: 'obj-1', type: 'task' }),
+					} as Response
+				}
 				return { ok: true, json: () => Promise.resolve({ id: 'rel-1' }) } as Response
 			})
 
@@ -413,12 +425,23 @@ describe('tool handlers', () => {
 				],
 			})
 
-			// Only the GET pre-check and the relationship POST should have been
-			// issued — no PATCH.
+			// No PATCH — the handler must instead GET the object once to learn its
+			// type, then POST the relationship using that type as source_type.
 			const patchCalls = vi
 				.mocked(fetch)
 				.mock.calls.filter((c) => ((c[1] as RequestInit).method ?? 'GET') === 'PATCH')
 			expect(patchCalls).toHaveLength(0)
+
+			const relPost = vi
+				.mocked(fetch)
+				.mock.calls.find(
+					(c) =>
+						(c[0] as string).endsWith('/api/relationships') &&
+						((c[1] as RequestInit | undefined)?.method ?? 'GET') === 'POST',
+				)
+			expect(relPost).toBeDefined()
+			const body = JSON.parse((relPost?.[1] as RequestInit).body as string)
+			expect(body.source_type).toBe('task')
 		})
 
 		it('detaches files via `detach_file_ids` by looking up the relationship and deleting it', async () => {
