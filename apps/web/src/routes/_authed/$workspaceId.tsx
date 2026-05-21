@@ -9,6 +9,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { PageHeaderProvider } from '@/lib/page-header-context'
+import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
@@ -81,21 +82,23 @@ function WorkspaceLayout() {
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<SindreProvider workspaceId={workspaceId}>
-				<PageHeaderProvider>
-					<SindrePinShell>
-						<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-							<AppSidebar />
-							<SidebarInset className="min-w-0">
-								<Header />
-								<div className="flex flex-col flex-1 overflow-auto p-4 md:p-8">
-									<Outlet />
-								</div>
-							</SidebarInset>
-						</SidebarProvider>
-					</SindrePinShell>
-				</PageHeaderProvider>
-				<CommandPalette />
-				<SindrePanel workspaceId={workspaceId} sindreActorId={sindreActorId} />
+				<PendingCommentsProvider workspaceId={workspaceId}>
+					<PageHeaderProvider>
+						<SindrePinShell>
+							<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+								<AppSidebar />
+								<SidebarInset className="min-w-0">
+									<Header />
+									<div className="flex flex-col flex-1 overflow-auto p-4 md:p-8">
+										<Outlet />
+									</div>
+								</SidebarInset>
+							</SidebarProvider>
+						</SindrePinShell>
+					</PageHeaderProvider>
+					<CommandPalette />
+					<SindrePanel workspaceId={workspaceId} sindreActorId={sindreActorId} />
+				</PendingCommentsProvider>
 			</SindreProvider>
 		</WorkspaceContext.Provider>
 	)

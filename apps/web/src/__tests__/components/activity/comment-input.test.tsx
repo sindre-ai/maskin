@@ -39,12 +39,12 @@ describe('CommentInput', () => {
 		expect(
 			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
 		).toBeInTheDocument()
-		expect(screen.getByRole('button')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument()
 	})
 
 	it('disables send when content is empty', () => {
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-		expect(screen.getByRole('button')).toBeDisabled()
+		expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
 	})
 
 	it('enables send when content has text', async () => {
@@ -55,7 +55,7 @@ describe('CommentInput', () => {
 			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
 			'Hello',
 		)
-		expect(screen.getByRole('button')).not.toBeDisabled()
+		expect(screen.getByRole('button', { name: /send/i })).not.toBeDisabled()
 	})
 
 	it('disables send when isPending', async () => {
@@ -67,7 +67,7 @@ describe('CommentInput', () => {
 			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
 			'Hello',
 		)
-		expect(screen.getByRole('button')).toBeDisabled()
+		expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
 	})
 
 	it('submits on Enter key', async () => {
@@ -153,7 +153,7 @@ describe('CommentInput', () => {
 			expect(
 				screen.getByText(new RegExp(`^${COUNTER_THRESHOLD}\\s*/\\s*${COMMENT_MAX_LENGTH}$`)),
 			).toBeInTheDocument()
-			expect(screen.getByRole('button')).not.toBeDisabled()
+			expect(screen.getByRole('button', { name: /send/i })).not.toBeDisabled()
 		})
 
 		it('disables submit, sets aria-invalid, and tints the counter when over the limit', () => {
@@ -166,7 +166,7 @@ describe('CommentInput', () => {
 			expect(counter).toBeInTheDocument()
 			expect(counter.className).toContain('text-error')
 			expect(ta).toHaveAttribute('aria-invalid', 'true')
-			expect(screen.getByRole('button')).toBeDisabled()
+			expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
 		})
 
 		it('does not submit when Enter is pressed over the limit', async () => {

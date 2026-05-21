@@ -3,6 +3,7 @@ import { useEventVisible } from '@/hooks/use-event-visible'
 import { useMentionSessionsForObject } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse, SessionResponse } from '@/lib/api'
+import { usePendingCommentsForObject } from '@/lib/pending-comments-context'
 import {
 	type SessionMentionContext,
 	type SessionThreadReplyContext,
@@ -17,6 +18,7 @@ import { ActivityComment } from './activity-comment'
 import { ActivityItem } from './activity-item'
 import { buildPhases } from './build-phases'
 import { CommentInput } from './comment-input'
+import { PendingCommentRow } from './pending-comment-row'
 import { PhaseDivider } from './phase-divider'
 
 interface ObjectActivityProps {
@@ -230,9 +232,23 @@ export function ObjectActivity({
 			    "Mark all as read" button above is the explicit fallback. */}
 			<div ref={sentinelRef} aria-hidden className="h-0 w-0" />
 
+			<PendingComments objectId={object.id} />
+
 			<div className="mt-4">
 				<CommentInput workspaceId={workspaceId} objectId={object.id} />
 			</div>
+		</div>
+	)
+}
+
+function PendingComments({ objectId }: { objectId: string }) {
+	const pending = usePendingCommentsForObject(objectId)
+	if (pending.length === 0) return null
+	return (
+		<div className="mt-2 space-y-0.5">
+			{pending.map((entry) => (
+				<PendingCommentRow key={entry.tempId} entry={entry} />
+			))}
 		</div>
 	)
 }

@@ -24,6 +24,10 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useMentionSessionsForObject: () => ({ data: [] }),
 }))
 
+vi.mock('@/hooks/use-files', () => ({
+	useFiles: () => ({ data: [] }),
+}))
+
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'actor-1', name: 'Me', type: 'human' }),
 }))

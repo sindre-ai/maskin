@@ -81,6 +81,77 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	return res.json()
 }
 
+/**
+ * XHR-based file upload that reports byte-level progress via onProgress.
+ * fetch() does not expose upload progress; we use this only for file uploads
+ * where the user benefits from a real progress bar. Supports cancellation via
+ * AbortSignal (mirrors fetch's contract).
+ */
+function uploadFileWithProgress(
+	workspaceId: string,
+	body: CreateFileInput,
+	opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
+): Promise<FileDetail> {
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest()
+		const url = `${API_BASE}/files`
+		xhr.open('POST', url, true)
+		const apiKey = getApiKey()
+		if (apiKey) xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`)
+		xhr.setRequestHeader('X-Workspace-Id', workspaceId)
+		xhr.setRequestHeader('Content-Type', 'application/json')
+
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable && opts?.onProgress) {
+				opts.onProgress(e.loaded / e.total)
+			}
+		}
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				try {
+					resolve(JSON.parse(xhr.responseText))
+				} catch (err) {
+					reject(new ApiError(xhr.status, `Invalid JSON response: ${String(err)}`))
+				}
+				return
+			}
+			let message = xhr.statusText
+			let fieldErrors: Record<string, string[]> | undefined
+			try {
+				const data = JSON.parse(xhr.responseText)
+				if (typeof data.error === 'object' && data.error?.message) {
+					message = data.error.message
+					if (Array.isArray(data.error.details)) {
+						fieldErrors = {}
+						for (const d of data.error.details) {
+							const field = d.field || '_root'
+							if (!fieldErrors[field]) fieldErrors[field] = []
+							fieldErrors[field].push(d.message)
+						}
+					}
+				} else if (typeof data.error === 'string') {
+					message = data.error
+				}
+			} catch {
+				// keep statusText
+			}
+			reject(new ApiError(xhr.status, message, fieldErrors))
+		}
+		xhr.onerror = () => reject(new ApiError(0, 'Network error'))
+		xhr.onabort = () => reject(new ApiError(0, 'Upload aborted'))
+
+		if (opts?.signal) {
+			if (opts.signal.aborted) {
+				xhr.abort()
+				return
+			}
+			opts.signal.addEventListener('abort', () => xhr.abort(), { once: true })
+		}
+
+		xhr.send(JSON.stringify(body))
+	})
+}
+
 // Objects
 export const api = {
 	objects: {
@@ -266,8 +337,13 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
 		},
-		create: (workspaceId: string, data: CreateCommentInput) =>
-			request<EventResponse>('/events', { method: 'POST', body: data, workspaceId }),
+		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
+			request<EventResponse>('/events', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+			}),
 	},
 
 	imports: {
@@ -402,6 +478,11 @@ export const api = {
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
 		create: (workspaceId: string, data: CreateFileInput) =>
 			request<FileDetail>('/files', { method: 'POST', body: data, workspaceId }),
+		createWithProgress: (
+			workspaceId: string,
+			data: CreateFileInput,
+			opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
+		) => uploadFileWithProgress(workspaceId, data, opts),
 		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
@@ -854,6 +935,7 @@ export interface CreateCommentInput {
 	content: string
 	mentions?: string[]
 	parent_event_id?: number
+	attachment_file_ids?: string[]
 }
 
 // Imports

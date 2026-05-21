@@ -1,9 +1,11 @@
 import { useActor, useActors } from '@/hooks/use-actors'
+import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Reply } from 'lucide-react'
 import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
+import { AttachedFileCard } from '../shared/attached-file-card'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
@@ -31,12 +33,15 @@ interface ActivityCommentProps {
 interface CommentRowProps {
 	event: EventResponse
 	actors: ActorListItem[]
+	workspaceId: string
 	onReply?: () => void
 }
 
-function CommentRow({ event, actors, onReply }: CommentRowProps) {
+function CommentRow({ event, actors, workspaceId, onReply }: CommentRowProps) {
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
+	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
+	const { data: workspaceFiles } = useFiles(workspaceId)
 
 	return (
 		<div className="flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors">
@@ -60,6 +65,19 @@ function CommentRow({ event, actors, onReply }: CommentRowProps) {
 					size="sm"
 					className={COMMENT_PROSE_OVERRIDES}
 				/>
+				{attachmentFileIds.length > 0 && (
+					<ul className="mt-1.5 space-y-1">
+						{attachmentFileIds.map((fileId) => {
+							const file = workspaceFiles?.find((f) => f.id === fileId)
+							if (!file) return null
+							return (
+								<li key={fileId}>
+									<AttachedFileCard workspaceId={workspaceId} file={file} />
+								</li>
+							)
+						})}
+					</ul>
+				)}
 			</div>
 			{onReply && (
 				<button
@@ -95,6 +113,7 @@ export function ActivityComment({
 			<CommentRow
 				event={event}
 				actors={actorList}
+				workspaceId={workspaceId}
 				onReply={hasReplies ? undefined : openReplyInput}
 			/>
 
@@ -114,6 +133,7 @@ export function ActivityComment({
 							<CommentRow
 								event={reply}
 								actors={actorList}
+								workspaceId={workspaceId}
 								onReply={idx === replies.length - 1 ? openReplyInput : undefined}
 							/>
 						</div>
