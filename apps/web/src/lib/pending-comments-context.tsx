@@ -326,7 +326,11 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 						parent_event_id: entry.parentEventId,
 						attachment_file_ids: attachmentIds,
 					}
-					await api.events.create(entry.workspaceId, body)
+					// Use the entry tempId as the idempotency key so any retry of the
+					// same logical comment (re-entrant tryAdvance, transient network
+					// failure, etc.) hits the server-side cached response instead of
+					// creating a duplicate event.
+					await api.events.create(entry.workspaceId, body, tempId)
 					queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entry.objectId) })
 					mutate(tempId, (prev) => ({ ...prev, status: 'completed' }))
 					setTimeout(() => {

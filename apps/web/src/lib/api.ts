@@ -337,8 +337,13 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
 		},
-		create: (workspaceId: string, data: CreateCommentInput) =>
-			request<EventResponse>('/events', { method: 'POST', body: data, workspaceId }),
+		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
+			request<EventResponse>('/events', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+			}),
 	},
 
 	imports: {

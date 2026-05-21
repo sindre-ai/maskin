@@ -35,7 +35,8 @@ vi.mock('@/lib/api', async () => {
 					})),
 			},
 			events: {
-				create: (_ws: string, body: unknown) => eventsCreateMock(body),
+				create: (_ws: string, body: unknown, idempotencyKey?: string) =>
+					eventsCreateMock(body, idempotencyKey),
 			},
 		},
 	}
@@ -109,6 +110,9 @@ describe('PendingCommentsProvider', () => {
 			content: 'see attached',
 			attachment_file_ids: ['file-1'],
 		})
+		// Idempotency key is the draft tempId — guards against duplicate POSTs
+		// from re-entrant tryAdvance or transient retries.
+		expect(eventsCreateMock.mock.calls[0][1]).toBe('d2')
 	})
 
 	it('submit before upload completes shows the entry in the feed as still pending', async () => {
