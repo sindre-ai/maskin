@@ -5,7 +5,7 @@ import {
 } from '@/lib/pending-comments-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { type ReactNode, useMemo, useState } from 'react'
 
 const uploadProgressMock = vi.fn()
 const eventsCreateMock = vi.fn()
@@ -145,5 +145,115 @@ describe('PendingCommentsProvider', () => {
 			result.current.draft.remove(tempId)
 		})
 		expect(result.current.draft.files).toHaveLength(0)
+	})
+
+	it('posts each submitted entry exactly once when multiple advance in the same tick', async () => {
+		uploadProgressMock.mockResolvedValue({ id: 'file-shared' })
+		// Hold the POST in flight so synchronous mutate→notify→tryAdvance
+		// re-entries cannot resolve their awaits and racing iterations can be
+		// observed.
+		let resolvePost: (() => void) | null = null
+		eventsCreateMock.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					resolvePost = () => resolve()
+				}),
+		)
+
+		const { result } = renderHook(
+			() => ({
+				a: useDraft({ draftId: 'race-a', workspaceId: 'ws-1', objectId: 'obj-race' }),
+				b: useDraft({ draftId: 'race-b', workspaceId: 'ws-1', objectId: 'obj-race' }),
+			}),
+			{ wrapper },
+		)
+
+		await act(async () => {
+			result.current.a.attach(new File(['hi'], 'a.txt', { type: 'text/plain' }))
+			result.current.b.attach(new File(['hi'], 'b.txt', { type: 'text/plain' }))
+		})
+		await waitFor(() => {
+			expect(result.current.a.files[0].status).toBe('uploaded')
+			expect(result.current.b.files[0].status).toBe('uploaded')
+		})
+
+		await act(async () => {
+			result.current.a.submit({ content: 'first', mentions: [] })
+			result.current.b.submit({ content: 'second', mentions: [] })
+		})
+
+		// Both should have triggered exactly one POST each — not duplicates.
+		await waitFor(() => expect(eventsCreateMock).toHaveBeenCalledTimes(2))
+
+		// Let the in-flight POSTs resolve so the test doesn't leak open promises.
+		await act(async () => {
+			resolvePost?.()
+		})
+	})
+
+	it('clears pending entries and aborts uploads when the workspace changes', async () => {
+		// Upload never resolves — we want an in-flight upload at the moment we
+		// switch workspaces, so we can confirm its controller is aborted.
+		const aborts: AbortSignal[] = []
+		uploadProgressMock.mockImplementation((_body, opts) => {
+			if (opts?.signal) aborts.push(opts.signal)
+			return new Promise<{ id: string }>(() => {})
+		})
+
+		// Captured setter so the test can change workspaceId from the outside
+		// without driving the change through a DOM click (renderHook's container
+		// isn't always reachable via `document.querySelector`).
+		let setWorkspaceId: ((id: string) => void) | null = null
+
+		function Harness({ children }: { children: ReactNode }) {
+			const [workspaceId, setter] = useState('ws-1')
+			setWorkspaceId = setter
+			// Stable QueryClient — recreating it on every render would unmount
+			// PendingCommentsProvider and reset its state for the wrong reason.
+			const client = useMemo(
+				() =>
+					new QueryClient({
+						defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+					}),
+				[],
+			)
+			return (
+				<QueryClientProvider client={client}>
+					<PendingCommentsProvider workspaceId={workspaceId}>{children}</PendingCommentsProvider>
+				</QueryClientProvider>
+			)
+		}
+
+		const { result } = renderHook(
+			() => ({
+				draft: useDraft({ draftId: 'ws-switch', workspaceId: 'ws-1', objectId: 'obj-ws' }),
+				feed: usePendingCommentsForObject('obj-ws'),
+			}),
+			{ wrapper: ({ children }) => <Harness>{children}</Harness> },
+		)
+
+		await act(async () => {
+			result.current.draft.attach(new File(['hi'], 'a.txt', { type: 'text/plain' }))
+		})
+		// startUpload has several internal awaits (dynamic import, FileReader)
+		// before it actually calls the mocked upload, so wait until the
+		// AbortSignal has been captured before asserting on it.
+		await waitFor(() => expect(aborts.length).toBe(1))
+		expect(aborts[0].aborted).toBe(false)
+
+		await act(async () => {
+			result.current.draft.submit({ content: 'will-be-dropped', mentions: [] })
+		})
+		expect(result.current.feed).toHaveLength(1)
+
+		// Simulate the user navigating to a different workspace. The Provider
+		// stays mounted but its workspaceId prop changes — the cleanup must
+		// fire so pending entries from ws-1 don't leak into ws-2.
+		await act(async () => {
+			setWorkspaceId?.('ws-2')
+		})
+
+		await waitFor(() => expect(result.current.feed).toHaveLength(0))
+		expect(aborts[0].aborted).toBe(true)
 	})
 })

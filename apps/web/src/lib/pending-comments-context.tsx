@@ -91,6 +91,23 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 	const entriesRef = useRef<Map<string, PendingComment>>(new Map())
 	const listenersRef = useRef<Set<() => void>>(new Set())
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
+	const advancingRef = useRef<Set<string>>(new Set())
+
+	// Reset state when switching workspaces — pending entries from a previous
+	// workspace are no longer relevant and could leak file ids that don't
+	// resolve in the new workspace. The reset must happen inline during render
+	// (not in a useEffect) so consumers see the cleared state in the same
+	// render. A useEffect cleanup runs *after* the render that picked up the
+	// new workspaceId, by which point the activity feed has already re-read
+	// the old entries.
+	const lastWorkspaceIdRef = useRef(workspaceId)
+	if (lastWorkspaceIdRef.current !== workspaceId) {
+		for (const controller of abortControllersRef.current.values()) controller.abort()
+		abortControllersRef.current.clear()
+		advancingRef.current.clear()
+		entriesRef.current.clear()
+		lastWorkspaceIdRef.current = workspaceId
+	}
 
 	const notify = useCallback(() => {
 		for (const l of listenersRef.current) l()
@@ -279,11 +296,19 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 	// so SSE has time to deliver the real event.
 	useEffect(() => {
 		const tryAdvance = async () => {
-			for (const entry of Array.from(entriesRef.current.values())) {
-				if (entry.status !== 'submitted') continue
+			// Iterate over keys and re-read the live entry inside the loop. The
+			// synchronous `mutate(... 'posting')` below calls `notify()`, which
+			// re-enters this function recursively. Without re-reading, the loop
+			// would still see the stale snapshot and try to post the same entry
+			// twice. The `advancingRef` adds belt-and-braces for any future async
+			// path that might process the same entry concurrently.
+			for (const tempId of Array.from(entriesRef.current.keys())) {
+				if (advancingRef.current.has(tempId)) continue
+				const entry = entriesRef.current.get(tempId)
+				if (!entry || entry.status !== 'submitted') continue
 				if (entry.files.some((f) => f.status === 'uploading')) continue
 				if (entry.files.some((f) => f.status === 'failed')) {
-					mutate(entry.tempId, (prev) => ({
+					mutate(tempId, (prev) => ({
 						...prev,
 						status: 'failed',
 						error: 'One or more attachments failed to upload',
@@ -291,7 +316,8 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 					continue
 				}
 				const attachmentIds = entry.files.map((f) => f.fileId).filter((id): id is string => !!id)
-				mutate(entry.tempId, (prev) => ({ ...prev, status: 'posting' }))
+				advancingRef.current.add(tempId)
+				mutate(tempId, (prev) => ({ ...prev, status: 'posting' }))
 				try {
 					const body: CreateCommentInput = {
 						entity_id: entry.objectId,
@@ -302,16 +328,18 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 					}
 					await api.events.create(entry.workspaceId, body)
 					queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entry.objectId) })
-					mutate(entry.tempId, (prev) => ({ ...prev, status: 'completed' }))
+					mutate(tempId, (prev) => ({ ...prev, status: 'completed' }))
 					setTimeout(() => {
-						mutate(entry.tempId, () => undefined)
+						mutate(tempId, () => undefined)
 					}, COMPLETED_DROP_MS)
 				} catch (err) {
-					mutate(entry.tempId, (prev) => ({
+					mutate(tempId, (prev) => ({
 						...prev,
 						status: 'failed',
 						error: err instanceof Error ? err.message : 'Failed to post comment',
 					}))
+				} finally {
+					advancingRef.current.delete(tempId)
 				}
 			}
 		}
@@ -349,17 +377,13 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 		],
 	)
 
-	// Reset state when switching workspaces — pending entries from a previous
-	// workspace are no longer relevant and could leak file ids that don't
-	// resolve in the new workspace.
+	// On Provider unmount, abort any in-flight uploads so they don't leak. The
+	// workspace-change reset above already handles the in-session case.
 	useEffect(() => {
 		return () => {
 			for (const controller of abortControllersRef.current.values()) controller.abort()
-			abortControllersRef.current.clear()
-			entriesRef.current.clear()
-			notify()
 		}
-	}, [notify])
+	}, [])
 
 	return <PendingCommentsContext.Provider value={value}>{children}</PendingCommentsContext.Provider>
 }
