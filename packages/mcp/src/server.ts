@@ -2283,6 +2283,10 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Notifications ────────────────────────────────────────
+	// Temporarily hidden from the MCP surface while we rethink the notification
+	// product flow. Tool definitions remain in `tools.ts` so re-enabling is a
+	// matter of uncommenting these `registerAppTool` calls.
+	/*
 	registerAppTool(
 		server,
 		'create_notification',
@@ -2418,6 +2422,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 		},
 	)
+	*/
 
 	// ─── Subscriptions ────────────────────────────────────────
 	registerAppTool(
