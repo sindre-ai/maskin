@@ -358,11 +358,13 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.from(relationships)
 		.where(or(eq(relationships.sourceId, id), eq(relationships.targetId, id)))
 
-	// Collect connected object IDs
+	// Collect connected object IDs — skip endpoints typed as 'file', since
+	// those live in the `files` table (resolved into the `files` array below)
+	// and would never match against `objects.id`.
 	const connectedIds = new Set<string>()
 	for (const rel of rels) {
-		if (rel.sourceId !== id) connectedIds.add(rel.sourceId)
-		if (rel.targetId !== id) connectedIds.add(rel.targetId)
+		if (rel.sourceId !== id && rel.sourceType !== 'file') connectedIds.add(rel.sourceId)
+		if (rel.targetId !== id && rel.targetType !== 'file') connectedIds.add(rel.targetId)
 	}
 
 	// Batch-fetch connected objects

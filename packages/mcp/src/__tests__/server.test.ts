@@ -299,16 +299,22 @@ describe('tool handlers', () => {
 
 	describe('update_objects handler — file attachments', () => {
 		it('attaches files via `attach_file_ids` as `attached` relationships', async () => {
-			// PATCH the object, then POST a relationship per file.
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ id: 'obj-1', type: 'bet' }),
-				} as Response)
-				.mockResolvedValue({
-					ok: true,
-					json: () => Promise.resolve({ id: 'rel-1' }),
-				} as Response)
+			// PATCH the object, GET (per file, returns empty → not yet attached),
+			// then POST a relationship per file.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const method = (init as RequestInit | undefined)?.method ?? 'GET'
+				const urlStr = url as string
+				if (method === 'PATCH') {
+					return {
+						ok: true,
+						json: () => Promise.resolve({ id: 'obj-1', type: 'bet' }),
+					} as Response
+				}
+				if (method === 'GET' && urlStr.includes('/api/relationships?')) {
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve({ id: 'rel-1' }) } as Response
+			})
 
 			const handler = getHandler('update_objects')
 			const result = (await handler({
@@ -324,11 +330,15 @@ describe('tool handlers', () => {
 				],
 			})) as { content: Array<{ text: string }> }
 
-			const relCalls = vi
+			const relPosts = vi
 				.mocked(fetch)
-				.mock.calls.filter((c) => (c[0] as string).endsWith('/api/relationships'))
-			expect(relCalls).toHaveLength(2)
-			for (const call of relCalls) {
+				.mock.calls.filter(
+					(c) =>
+						(c[0] as string).endsWith('/api/relationships') &&
+						((c[1] as RequestInit | undefined)?.method ?? 'GET') === 'POST',
+				)
+			expect(relPosts).toHaveLength(2)
+			for (const call of relPosts) {
 				const body = JSON.parse((call[1] as RequestInit).body as string)
 				expect(body.source_id).toBe('11111111-1111-1111-1111-111111111111')
 				expect(body.target_type).toBe('file')
@@ -339,13 +349,59 @@ describe('tool handlers', () => {
 			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
 			expect(attachments).toHaveLength(2)
 			expect(attachments.every((a: { success: boolean }) => a.success)).toBe(true)
+			expect(attachments.every((a: { skipped?: boolean }) => !a.skipped)).toBe(true)
+		})
+
+		it('skips a duplicate attach as a success+skipped no-op without POSTing', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const method = (init as RequestInit | undefined)?.method ?? 'GET'
+				const urlStr = url as string
+				if (method === 'GET' && urlStr.includes('/api/relationships?')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'rel-existing', targetType: 'file' }]),
+					} as Response
+				}
+				// Any unexpected call (e.g. a POST) returns OK so we can detect it
+				// via the call-count assertion below rather than crashing the test.
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('update_objects')
+			const result = (await handler({
+				updates: [
+					{
+						id: '11111111-1111-1111-1111-111111111111',
+						attach_file_ids: ['22222222-2222-2222-2222-222222222222'],
+					},
+				],
+			})) as { content: Array<{ text: string }> }
+
+			const relPosts = vi
+				.mocked(fetch)
+				.mock.calls.filter(
+					(c) =>
+						(c[0] as string).endsWith('/api/relationships') &&
+						((c[1] as RequestInit | undefined)?.method ?? 'GET') === 'POST',
+				)
+			expect(relPosts).toHaveLength(0)
+
+			const parsed = JSON.parse(result.content[0].text)
+			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
+			expect(attachments).toHaveLength(1)
+			expect(attachments[0].success).toBe(true)
+			expect(attachments[0].skipped).toBe(true)
 		})
 
 		it('skips the PATCH when an update only contains attach_file_ids', async () => {
-			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-				ok: true,
-				json: () => Promise.resolve({ id: 'rel-1' }),
-			} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const method = (init as RequestInit | undefined)?.method ?? 'GET'
+				const urlStr = url as string
+				if (method === 'GET' && urlStr.includes('/api/relationships?')) {
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve({ id: 'rel-1' }) } as Response
+			})
 
 			const handler = getHandler('update_objects')
 			await handler({
@@ -357,7 +413,8 @@ describe('tool handlers', () => {
 				],
 			})
 
-			// Only the relationship POST should have been issued — no PATCH.
+			// Only the GET pre-check and the relationship POST should have been
+			// issued — no PATCH.
 			const patchCalls = vi
 				.mocked(fetch)
 				.mock.calls.filter((c) => ((c[1] as RequestInit).method ?? 'GET') === 'PATCH')

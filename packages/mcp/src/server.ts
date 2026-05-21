@@ -955,6 +955,7 @@ export function createMcpServer(config: McpConfig) {
 				type: string
 				id?: string
 				success: boolean
+				skipped?: boolean
 				result?: unknown
 				error?: string
 			}> = []
@@ -967,6 +968,7 @@ export function createMcpServer(config: McpConfig) {
 							type: string
 							id: string
 							success: boolean
+							skipped?: boolean
 							result?: unknown
 							error?: string
 						}> = []
@@ -986,10 +988,33 @@ export function createMcpServer(config: McpConfig) {
 						// `edges` handler creates relationships. The graph endpoint reads
 						// rels by direction, not by source_type, so the literal value
 						// doesn't affect retrieval.
+						//
+						// We GET the existing rel first so a repeat attach is an
+						// idempotent no-op (success + skipped) instead of failing the
+						// (source_id, target_id, type) unique constraint.
 						if (attach_file_ids?.length) {
 							const attachResults = await Promise.all(
 								attach_file_ids.map(async (fileId) => {
 									try {
+										const params = new URLSearchParams()
+										params.set('source_id', id)
+										params.set('target_id', fileId)
+										params.set('type', 'attached')
+										const existing = (await apiCall(
+											config,
+											'GET',
+											`/api/relationships?${params}`,
+											undefined,
+											wsOpts,
+										)) as Array<{ id: string; targetType: string }>
+										if (existing.some((r) => r.targetType === 'file')) {
+											return {
+												type: 'file_attachment',
+												id: `${id}->${fileId}`,
+												success: true,
+												skipped: true,
+											}
+										}
 										const result = await apiCall(
 											config,
 											'POST',

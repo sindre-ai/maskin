@@ -392,11 +392,11 @@ describe('Objects Routes', () => {
 				type: 'attached',
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// Queue order matches handler call order: 1) object, 2) relationships,
-			// 3) connected_objects (file.id falls into connectedIds even though it's
-			// not an object), 4) events, 5-7) the three subscription queries fired
-			// in parallel (isSubscribed, getUnreadCount, getSubscriberCount), 8) files.
-			mockResults.selectQueue = [[obj], [rel], [], [], [], [], [], [file]]
+			// Queue order matches handler call order: 1) object, 2) relationships
+			// (file-typed endpoint → skips connected_objects), 3) events, 4-6) the
+			// three subscription queries fired in parallel (isSubscribed,
+			// getUnreadCount, getSubscriberCount), 7) files.
+			mockResults.selectQueue = [[obj], [rel], [], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
