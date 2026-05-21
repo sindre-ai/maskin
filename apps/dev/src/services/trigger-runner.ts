@@ -216,6 +216,23 @@ export class TriggerRunner {
 				continue
 			}
 
+			// Pre-flight health check — catches misconfigured agents (missing
+			// credentials, missing base image) before we waste a session slot.
+			// Failed health checks count toward the backoff counter so persistent
+			// misconfiguration trips the same backoff/circuit-breaker as runtime
+			// session failures.
+			const health = await this.sessionManager.healthCheck(
+				trigger.targetActorId,
+				event.workspace_id,
+			)
+			if (!health.healthy) {
+				logger.warn(
+					`Trigger '${trigger.name}' skipped — agent health check failed: ${health.issues.join('; ')}`,
+				)
+				this.recordTriggerFailure(trigger.id)
+				continue
+			}
+
 			// Run the agent
 			logger.info(
 				`Trigger '${trigger.name}' fired for event ${event.action} on ${event.entity_type}`,
@@ -345,6 +362,18 @@ export class TriggerRunner {
 					logger.info(
 						`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
 					)
+					return
+				}
+
+				const health = await this.sessionManager.healthCheck(
+					trigger.targetActorId,
+					trigger.workspaceId,
+				)
+				if (!health.healthy) {
+					logger.warn(
+						`Cron trigger '${trigger.name}' skipped — agent health check failed: ${health.issues.join('; ')}`,
+					)
+					this.recordTriggerFailure(trigger.id)
 					return
 				}
 

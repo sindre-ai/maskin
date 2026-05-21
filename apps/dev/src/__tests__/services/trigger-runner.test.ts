@@ -796,6 +796,104 @@ describe('TriggerRunner backoff', () => {
 		await vi.advanceTimersByTimeAsync(60 * 1000)
 		expect(sessionManager.createSession).not.toHaveBeenCalled()
 	})
+
+	it('skips event trigger when agent health check fails and records a failure', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-unhealthy',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+		;(sessionManager.healthCheck as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+			healthy: false,
+			issues: ['No LLM credentials available'],
+		})
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+		// The failed health check armed backoff. Even if health check now
+		// passes, the next firing should still be skipped (backoff).
+		;(sessionManager.healthCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
+			healthy: true,
+			issues: [],
+		})
+		mockResults.select = [trigger]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-2',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-2',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+	})
+
+	it('fires event trigger normally when agent health check passes', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-healthy',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+		;(sessionManager.healthCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
+			healthy: true,
+			issues: [],
+		})
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-1',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.healthCheck).toHaveBeenCalledWith(trigger.targetActorId, 'ws-1')
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('skips cron trigger firing when agent health check fails', async () => {
+		const trigger = buildTrigger({
+			id: 'trigger-cron-unhealthy',
+			type: 'cron',
+			config: { expression: '*/1 * * * *' },
+		})
+		mockResults.selectQueue = [[trigger], []]
+		mockResults.insert = []
+		await runner.start()
+		;(sessionManager.healthCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
+			healthy: false,
+			issues: ['Base image missing'],
+		})
+
+		await vi.advanceTimersByTimeAsync(60 * 1000)
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+	})
 })
 
 describe('evaluateCondition()', () => {

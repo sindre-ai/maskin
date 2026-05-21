@@ -204,6 +204,7 @@ export function createMockSessionManager(overrides?: Record<string, unknown>) {
 		pauseSession: vi.fn(),
 		resumeSession: vi.fn(),
 		writeInput: vi.fn(),
+		healthCheck: vi.fn().mockResolvedValue({ healthy: true, issues: [] }),
 		on: vi.fn(),
 		off: vi.fn(),
 		...overrides,

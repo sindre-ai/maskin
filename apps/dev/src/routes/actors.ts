@@ -34,12 +34,14 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -469,6 +471,48 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
+
+// POST /:id/health-check - Pre-flight health check on an agent actor
+const healthCheckResultSchema = z.object({
+	healthy: z.boolean(),
+	issues: z.array(z.string()),
+})
+
+const healthCheckRoute = createRoute({
+	method: 'post',
+	path: '/{id}/health-check',
+	tags: ['Actors'],
+	summary: 'Run a pre-flight health check on an agent actor',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: healthCheckResultSchema } },
+			description: 'Health check result',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found',
+		},
+	},
+})
+
+app.openapi(healthCheckRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const sessionManager = c.get('sessionManager')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const result = await sessionManager.healthCheck(id, workspaceId)
+	return c.json(result)
+}) as RouteHandler<typeof healthCheckRoute, Env>)
 
 // POST /:id/reset - Reset system actor to factory defaults (Sindre)
 const resetActorRoute = createRoute({
