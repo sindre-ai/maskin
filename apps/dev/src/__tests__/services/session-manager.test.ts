@@ -669,4 +669,83 @@ describe('SessionManager', () => {
 			// Watchdog completes without processing the recent session
 		})
 	})
+
+	describe('healthCheck()', () => {
+		const agent = {
+			id: 'agent-1',
+			type: 'agent',
+			llmProvider: 'anthropic',
+			llmConfig: { api_key: 'sk-ant-test' },
+			apiKey: 'ank_test',
+		}
+		const workspace = { id: 'ws-1', settings: {} }
+
+		beforeEach(() => {
+			mockContainerManager.imageExists = vi.fn().mockResolvedValue(true)
+		})
+
+		it('returns healthy when actor is an agent with credentials and image present', async () => {
+			mockResults.selectQueue = [[agent], [workspace]]
+
+			const result = await manager.healthCheck('agent-1', 'ws-1')
+
+			expect(result.healthy).toBe(true)
+			expect(result.issues).toEqual([])
+		})
+
+		it('returns unhealthy when actor is not found', async () => {
+			mockResults.selectQueue = [[]]
+
+			const result = await manager.healthCheck('missing', 'ws-1')
+
+			expect(result.healthy).toBe(false)
+			expect(result.issues[0]).toMatch(/not found/)
+		})
+
+		it('flags non-agent actor type', async () => {
+			const humanActor = { ...agent, type: 'human' }
+			mockResults.selectQueue = [[humanActor], [workspace]]
+
+			const result = await manager.healthCheck('agent-1', 'ws-1')
+
+			expect(result.healthy).toBe(false)
+			expect(result.issues.some((i) => i.includes("expected 'agent'"))).toBe(true)
+		})
+
+		it('flags missing LLM credentials when no key is configured', async () => {
+			const bareAgent = { ...agent, llmProvider: null, llmConfig: null }
+			mockResults.selectQueue = [[bareAgent], [workspace]]
+
+			const prev = process.env.MASKIN_FALLBACK_OPENROUTER_KEY
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = ''
+			try {
+				const result = await manager.healthCheck('agent-1', 'ws-1')
+				expect(result.healthy).toBe(false)
+				expect(result.issues.some((i) => i.includes('No LLM credentials'))).toBe(true)
+			} finally {
+				if (prev !== undefined) process.env.MASKIN_FALLBACK_OPENROUTER_KEY = prev
+				else delete process.env.MASKIN_FALLBACK_OPENROUTER_KEY
+			}
+		})
+
+		it('flags missing Docker base image when no build context is configured', async () => {
+			mockResults.selectQueue = [[agent], [workspace]]
+			mockContainerManager.imageExists = vi.fn().mockResolvedValue(false)
+
+			const result = await manager.healthCheck('agent-1', 'ws-1')
+
+			expect(result.healthy).toBe(false)
+			expect(result.issues.some((i) => i.includes('Base image'))).toBe(true)
+		})
+
+		it('treats missing image as healthy when build context is configured', async () => {
+			mockResults.selectQueue = [[agent], [workspace]]
+			mockContainerManager.imageExists = vi.fn().mockResolvedValue(false)
+			manager.setAgentBaseBuildContext('/tmp/build')
+
+			const result = await manager.healthCheck('agent-1', 'ws-1')
+
+			expect(result.healthy).toBe(true)
+		})
+	})
 })

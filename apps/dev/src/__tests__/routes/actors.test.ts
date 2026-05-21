@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
+import type { Mock } from 'vitest'
 import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 
@@ -608,6 +609,78 @@ describe('Actors Routes', () => {
 			expect(body.name).toBe('Sindre')
 			expect(body.email).toBe('sindre@maskin')
 			expect(body.memory).toEqual({ notes: 'user preference: concise replies' })
+		})
+	})
+
+	describe('POST /api/actors/:id/health-check', () => {
+		it('returns 200 and the health result when called by a workspace member', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				actorsRoutes,
+				'/api/actors',
+			)
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+			]
+			;(sessionManager.healthCheck as Mock).mockResolvedValue({
+				healthy: true,
+				issues: [],
+			})
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/health-check`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.healthy).toBe(true)
+			expect(body.issues).toEqual([])
+			expect(sessionManager.healthCheck).toHaveBeenCalledWith(actorId, wsId)
+		})
+
+		it('returns the list of issues when the agent is unhealthy', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				actorsRoutes,
+				'/api/actors',
+			)
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+			]
+			;(sessionManager.healthCheck as Mock).mockResolvedValue({
+				healthy: false,
+				issues: ['No LLM credentials available', "Base image 'agent-base:latest' is missing"],
+			})
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/health-check`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.healthy).toBe(false)
+			expect(body.issues).toHaveLength(2)
+		})
+
+		it('returns 404 when caller is not a workspace member', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[]] // not a member
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/health-check`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
 		})
 	})
 })

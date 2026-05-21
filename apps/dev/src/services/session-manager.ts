@@ -65,6 +65,11 @@ export interface SessionLogEvent extends LogChunk {
 	logId: number
 }
 
+export interface HealthCheckResult {
+	healthy: boolean
+	issues: string[]
+}
+
 export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
@@ -106,6 +111,80 @@ export class SessionManager extends EventEmitter {
 
 	setAgentBaseBuildContext(buildContext: string) {
 		this.agentBaseBuildContext = buildContext
+	}
+
+	/**
+	 * Pre-flight check that an agent can plausibly start a session. Verifies the
+	 * actor exists as an agent, LLM credentials resolve, and the base image is
+	 * present (or buildable). Triggers call this before spinning a container so
+	 * misconfigured agents don't burn sessions on guaranteed-fail launches.
+	 */
+	async healthCheck(actorId: string, workspaceId: string): Promise<HealthCheckResult> {
+		const issues: string[] = []
+
+		const [agent] = await this.db.select().from(actors).where(eq(actors.id, actorId)).limit(1)
+		if (!agent) {
+			return { healthy: false, issues: [`Actor ${actorId} not found`] }
+		}
+		if (agent.type !== 'agent') {
+			issues.push(`Actor ${actorId} is type '${agent.type}', expected 'agent'`)
+		}
+
+		const [ws] = await this.db
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+		if (!ws) {
+			issues.push(`Workspace ${workspaceId} not found`)
+		}
+
+		const llmConfig = (agent.llmConfig as Record<string, unknown> | null) ?? {}
+		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+		try {
+			const resolved = await resolveLlmRoute({
+				db: this.db,
+				workspaceId,
+				actorId,
+				wsSettings,
+				agent: {
+					provider: agent.llmProvider,
+					apiKey: (llmConfig.api_key as string | undefined) ?? null,
+				},
+			})
+			if (!resolved) {
+				// resolveLlmRoute returns null when an agent-level non-anthropic key
+				// is set (the route is delegated to OPENAI_API_KEY by the caller),
+				// OR when no credentials are available at all. Disambiguate by
+				// checking the agent override path.
+				const hasNonAnthropicAgentKey = agent.llmProvider !== 'anthropic' && llmConfig.api_key
+				if (!hasNonAnthropicAgentKey) {
+					issues.push(
+						'No LLM credentials available (agent, workspace, OAuth, or system fallback)',
+					)
+				}
+			}
+		} catch (err) {
+			if (err instanceof FallbackQuotaExceededError) {
+				issues.push(
+					`System LLM fallback quota exceeded for this actor: used ${err.used} of ${err.limit}`,
+				)
+			} else {
+				issues.push(`LLM credential resolution failed: ${String(err)}`)
+			}
+		}
+
+		try {
+			const baseImage = 'agent-base:latest'
+			const imagePresent = await this.containers.imageExists(baseImage)
+			if (!imagePresent && !this.agentBaseBuildContext) {
+				issues.push(`Base image '${baseImage}' is missing and no build context is configured`)
+			}
+		} catch (err) {
+			issues.push(`Docker image check failed: ${String(err)}`)
+		}
+
+		return { healthy: issues.length === 0, issues }
 	}
 
 	async start() {
