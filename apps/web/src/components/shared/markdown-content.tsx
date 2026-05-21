@@ -1,7 +1,7 @@
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
@@ -45,7 +45,9 @@ export function MarkdownContent({
 	const [draft, setDraft] = useState(content)
 	const containerRef = useRef<HTMLDivElement>(null)
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
-	const [containerHeight, setContainerHeight] = useState<number | undefined>(undefined)
+	// Height of the rendered prose view at the moment edit mode is entered.
+	// Used as a floor so the box doesn't shrink when headings/lists collapse to plain text.
+	const [lockedHeight, setLockedHeight] = useState<number | undefined>(undefined)
 
 	const handleBlur = useCallback(() => {
 		setEditing(false)
@@ -56,25 +58,24 @@ export function MarkdownContent({
 
 	const startEditing = (initialDraft: string) => {
 		if (containerRef.current) {
-			setContainerHeight(containerRef.current.offsetHeight)
+			setLockedHeight(containerRef.current.offsetHeight)
 		}
 		setDraft(initialDraft)
 		setEditing(true)
 	}
 
-	const autoResize = useCallback(() => {
+	const adjustHeight = useCallback(() => {
 		const ta = textareaRef.current
-		if (ta) {
-			ta.style.height = 'auto'
-			const scrollHeight = ta.scrollHeight
-			const minHeight = containerHeight ?? 0
-			ta.style.height = `${Math.max(scrollHeight, minHeight)}px`
-		}
-	}, [containerHeight])
+		if (!ta) return
+		ta.style.height = 'auto'
+		const scrollHeight = ta.scrollHeight
+		const min = lockedHeight ?? 0
+		ta.style.height = `${Math.max(scrollHeight, min)}px`
+	}, [lockedHeight])
 
-	useEffect(() => {
-		if (editing) autoResize()
-	}, [editing, autoResize])
+	useLayoutEffect(() => {
+		if (editing) adjustHeight()
+	}, [editing, adjustHeight])
 
 	const components = useMemo<Components | undefined>(() => {
 		if (!mentionActors) return undefined
@@ -97,11 +98,11 @@ export function MarkdownContent({
 			<Textarea
 				ref={textareaRef}
 				className="w-full bg-transparent text-sm text-muted-foreground font-sans resize-none outline-none border-none p-0 focus:outline-none overflow-hidden"
-				style={{ minHeight: containerHeight, lineHeight: '1.7142857' }}
+				style={{ minHeight: lockedHeight, lineHeight: '1.7142857' }}
 				value={draft}
 				onChange={(e) => {
 					setDraft(e.target.value)
-					autoResize()
+					adjustHeight()
 				}}
 				onBlur={handleBlur}
 				autoFocus

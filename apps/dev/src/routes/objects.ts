@@ -415,6 +415,13 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
 	])
 
+	// Build a title lookup keyed by object id so each relationship can carry the
+	// titles of its endpoints. Agents reading this payload should reference
+	// connected objects by title in human-facing output, not by UUID.
+	const titleById = new Map<string, string | null>()
+	titleById.set(object.id, object.title ?? null)
+	for (const co of connectedObjects) titleById.set(co.id, co.title ?? null)
+
 	return c.json(
 		{
 			object: {
@@ -423,7 +430,11 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
 			},
-			relationships: serializeArray(rels),
+			relationships: rels.map((r) => ({
+				...serialize(r),
+				sourceTitle: titleById.get(r.sourceId) ?? null,
+				targetTitle: titleById.get(r.targetId) ?? null,
+			})),
 			connected_objects: serializeArray(connectedObjects),
 			events: serializedEvents,
 		} as z.infer<typeof objectGraphResponseSchema>,
