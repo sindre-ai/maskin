@@ -108,9 +108,27 @@ describe('AppSidebar', () => {
 		vi.mocked(useUnread).mockReturnValue({
 			data: {
 				items: [
-					{ entity_type: 'object', entity_id: 'a', unread_count: 1, latest_event_id: 1, latest_activity_at: null },
-					{ entity_type: 'object', entity_id: 'b', unread_count: 2, latest_event_id: 2, latest_activity_at: null },
-					{ entity_type: 'object', entity_id: 'c', unread_count: 1, latest_event_id: 3, latest_activity_at: null },
+					{
+						entity_type: 'object',
+						entity_id: 'a',
+						unread_count: 1,
+						latest_event_id: 1,
+						latest_activity_at: null,
+					},
+					{
+						entity_type: 'object',
+						entity_id: 'b',
+						unread_count: 2,
+						latest_event_id: 2,
+						latest_activity_at: null,
+					},
+					{
+						entity_type: 'object',
+						entity_id: 'c',
+						unread_count: 1,
+						latest_event_id: 3,
+						latest_activity_at: null,
+					},
 				],
 			},
 		} as unknown as ReturnType<typeof useUnread>)
