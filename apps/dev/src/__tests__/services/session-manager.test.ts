@@ -748,5 +748,46 @@ describe('SessionManager', () => {
 
 			expect(result.healthy).toBe(true)
 		})
+
+		it('caches the base image presence check across successive calls within the TTL', async () => {
+			const imageExistsSpy = vi.fn().mockResolvedValue(true)
+			mockContainerManager.imageExists = imageExistsSpy
+			mockResults.selectQueue = [
+				[agent],
+				[workspace],
+				[agent],
+				[workspace],
+				[agent],
+				[workspace],
+			]
+
+			const first = await manager.healthCheck('agent-1', 'ws-1')
+			const second = await manager.healthCheck('agent-1', 'ws-1')
+			const third = await manager.healthCheck('agent-1', 'ws-1')
+
+			expect(first.healthy).toBe(true)
+			expect(second.healthy).toBe(true)
+			expect(third.healthy).toBe(true)
+			expect(imageExistsSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it('re-checks the base image after the cache TTL expires', async () => {
+			const imageExistsSpy = vi.fn().mockResolvedValue(true)
+			mockContainerManager.imageExists = imageExistsSpy
+			mockResults.selectQueue = [[agent], [workspace], [agent], [workspace]]
+
+			vi.useFakeTimers()
+			try {
+				vi.setSystemTime(new Date('2026-05-21T12:00:00Z'))
+				await manager.healthCheck('agent-1', 'ws-1')
+				expect(imageExistsSpy).toHaveBeenCalledTimes(1)
+
+				vi.setSystemTime(new Date('2026-05-21T12:00:31Z'))
+				await manager.healthCheck('agent-1', 'ws-1')
+				expect(imageExistsSpy).toHaveBeenCalledTimes(2)
+			} finally {
+				vi.useRealTimers()
+			}
+		})
 	})
 })

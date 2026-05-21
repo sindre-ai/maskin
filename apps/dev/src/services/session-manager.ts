@@ -97,7 +97,15 @@ export class SessionManager extends EventEmitter {
 	private static readonly STDOUT_TAIL_BYTES = 64 * 1024
 	/** Max time to wait for the log stream to drain before parsing usage. */
 	private static readonly LOGS_DRAIN_TIMEOUT_MS = 5000
+	/**
+	 * TTL for the agent base image presence cache in healthCheck. The base
+	 * image rarely changes at runtime, so caching this for a short window
+	 * skips the Docker-daemon round-trip on high-frequency trigger fires
+	 * without meaningfully delaying detection of a genuinely-missing image.
+	 */
+	private static readonly AGENT_BASE_IMAGE_CACHE_TTL_MS = 30_000
 	private agentBaseBuildContext: string | null = null
+	private agentBaseImageCache: { result: boolean; expiresAt: number } | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 
 	constructor(
@@ -174,7 +182,7 @@ export class SessionManager extends EventEmitter {
 
 		try {
 			const baseImage = 'agent-base:latest'
-			const imagePresent = await this.containers.imageExists(baseImage)
+			const imagePresent = await this.checkAgentBaseImagePresent(baseImage)
 			if (!imagePresent && !this.agentBaseBuildContext) {
 				issues.push(`Base image '${baseImage}' is missing and no build context is configured`)
 			}
@@ -183,6 +191,19 @@ export class SessionManager extends EventEmitter {
 		}
 
 		return { healthy: issues.length === 0, issues }
+	}
+
+	private async checkAgentBaseImagePresent(image: string): Promise<boolean> {
+		const now = Date.now()
+		if (this.agentBaseImageCache && this.agentBaseImageCache.expiresAt > now) {
+			return this.agentBaseImageCache.result
+		}
+		const result = await this.containers.imageExists(image)
+		this.agentBaseImageCache = {
+			result,
+			expiresAt: now + SessionManager.AGENT_BASE_IMAGE_CACHE_TTL_MS,
+		}
+		return result
 	}
 
 	async start() {
