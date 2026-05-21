@@ -1,6 +1,7 @@
 import {
 	buildCreateObjectBody,
 	buildEvent,
+	buildFile,
 	buildObject,
 	buildRelationship,
 	buildUpdateObjectBody,
@@ -378,6 +379,75 @@ describe('Objects Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('inlines attached file metadata (from relationships) in the files field', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const file = buildFile({ workspaceId: wsId })
+			const rel = buildRelationship({
+				sourceType: 'bet',
+				sourceId: obj.id,
+				targetType: 'file',
+				targetId: file.id,
+				type: 'attached',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Queue order matches handler call order: 1) object, 2) relationships
+			// (file-typed endpoint → skips connected_objects), 3) events, 4-6) the
+			// three subscription queries fired in parallel (isSubscribed,
+			// getUnreadCount, getSubscriberCount), 7) files.
+			mockResults.selectQueue = [[obj], [rel], [], [], [], [], [file]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(file.id)
+			expect(body.files[0].name).toBe(file.name)
+			expect(body.files[0].mimeType).toBe('text/markdown')
+			expect(body.files[0].url).toBe(`http://localhost:5173/${wsId}/files/${file.id}`)
+		})
+
+		it('inlines comment-attachment file metadata in the files field', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const file = buildFile({ workspaceId: wsId })
+			const comment = buildEvent({
+				workspaceId: wsId,
+				entityType: 'object',
+				entityId: obj.id,
+				action: 'commented',
+				data: { content: 'see file', attachmentFileIds: [file.id] },
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) object, 2) relationships (empty → skips connected_objects), 3) events,
+			// 4-6) subscription queries, 7) files.
+			mockResults.selectQueue = [[obj], [], [comment], [], [], [], [file]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(file.id)
+		})
+
+		it('returns empty files array when nothing is attached or referenced', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[obj], [], []]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.files).toEqual([])
 		})
 	})
 

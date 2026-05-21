@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	files,
 	objects,
 	readState,
 	relationships,
@@ -22,6 +23,8 @@ import {
 } from '@maskin/shared'
 import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
+import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	idParamSchema,
@@ -48,6 +51,8 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>()
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Keep in sync with KNOWN_SORT_COLUMNS in packages/shared/src/schemas/objects.ts
 const sortColumns: Record<string, Column | SQL> = {
@@ -241,7 +246,6 @@ app.openapi(listObjectsRoute, async (c) => {
 	if (query.status) conditions.push(eq(objects.status, query.status))
 	if (query.owner) conditions.push(eq(objects.owner, query.owner))
 	if (query.ids) {
-		const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
 		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
 	}
@@ -355,11 +359,13 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.from(relationships)
 		.where(or(eq(relationships.sourceId, id), eq(relationships.targetId, id)))
 
-	// Collect connected object IDs
+	// Collect connected object IDs — skip endpoints typed as 'file', since
+	// those live in the `files` table (resolved into the `files` array below)
+	// and would never match against `objects.id`.
 	const connectedIds = new Set<string>()
 	for (const rel of rels) {
-		if (rel.sourceId !== id) connectedIds.add(rel.sourceId)
-		if (rel.targetId !== id) connectedIds.add(rel.targetId)
+		if (rel.sourceId !== id && rel.sourceType !== 'file') connectedIds.add(rel.sourceId)
+		if (rel.targetId !== id && rel.targetType !== 'file') connectedIds.add(rel.targetId)
 	}
 
 	// Batch-fetch connected objects
@@ -422,6 +428,61 @@ app.openapi(getObjectGraphRoute, async (c) => {
 	titleById.set(object.id, object.title ?? null)
 	for (const co of connectedObjects) titleById.set(co.id, co.title ?? null)
 
+	// Collect every file id this object touches: (1) files attached via
+	// `attached` relationships (sourceType/targetType === 'file'), (2) files
+	// referenced by `data.attachmentFileIds` on comment events. Resolving them
+	// here saves agents an N+1 fan-out of /api/files/:id calls.
+	const fileIds = new Set<string>()
+	for (const r of rels) {
+		if (r.sourceType === 'file') fileIds.add(r.sourceId)
+		if (r.targetType === 'file') fileIds.add(r.targetId)
+	}
+	for (const event of objectEvents) {
+		if (event.action !== 'commented') continue
+		const data = event.data as { attachmentFileIds?: unknown } | null
+		const ids = data?.attachmentFileIds
+		if (!Array.isArray(ids)) continue
+		// `event.data` is JSONB and only validated by the writer that produced
+		// it. Skip anything that isn't a UUID so a stray string can't crash the
+		// inArray query below with `invalid input syntax for type uuid`.
+		for (const id of ids) {
+			if (typeof id === 'string' && UUID_RE.test(id)) fileIds.add(id)
+		}
+	}
+
+	let filesSummary: Array<{
+		id: string
+		name: string
+		mimeType: string
+		sizeBytes: number
+		url: string
+	}> = []
+	if (fileIds.size > 0) {
+		// Skip file resolution rather than 500 the whole graph when FRONTEND_URL
+		// is missing in prod — the rest of the payload is still useful.
+		let frontendUrl: string | null = null
+		try {
+			frontendUrl = frontendBaseUrl()
+		} catch (err) {
+			logger.error('Cannot mint file URLs for object graph', { error: String(err) })
+		}
+		if (frontendUrl) {
+			const rows = await db
+				.select({
+					id: files.id,
+					name: files.name,
+					mimeType: files.mimeType,
+					sizeBytes: files.sizeBytes,
+				})
+				.from(files)
+				.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, [...fileIds])))
+			filesSummary = rows.map((row) => ({
+				...row,
+				url: fileViewerUrl(frontendUrl as string, workspaceId, row.id),
+			}))
+		}
+	}
+
 	return c.json(
 		{
 			object: {
@@ -437,6 +498,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			})),
 			connected_objects: serializeArray(connectedObjects),
 			events: serializedEvents,
+			files: filesSummary,
 		} as z.infer<typeof objectGraphResponseSchema>,
 		200,
 	)

@@ -118,11 +118,24 @@ export const eventResponseSchema = z.object({
 	description: z.string().optional(),
 })
 
+export const fileSummarySchema = z.object({
+	id: z.string().uuid(),
+	name: z.string(),
+	mimeType: z.string(),
+	sizeBytes: z.number().int().nonnegative(),
+	url: z.string().url(),
+})
+
 export const objectGraphResponseSchema = z.object({
 	object: objectResponseSchema,
 	relationships: z.array(relationshipResponseSchema),
 	connected_objects: z.array(objectResponseSchema),
 	events: z.array(eventResponseSchema),
+	// Every file referenced by this object: attached directly (via an
+	// `attached` relationship to a file) or referenced from a comment's
+	// `data.attachmentFileIds`. Lets callers resolve file IDs without a
+	// follow-up round-trip to /api/files/:id.
+	files: z.array(fileSummarySchema),
 })
 
 export const integrationResponseSchema = z.object({
