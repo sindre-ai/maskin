@@ -288,6 +288,13 @@ export const tools = {
 				.describe(
 					'Role when adding to a workspace: owner (full control), member (read/write), viewer (read-only)',
 				),
+			description: z
+				.string()
+				.max(80)
+				.optional()
+				.describe(
+					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
+				),
 			system_prompt: z.string().optional(),
 			tools: z.record(z.unknown()).optional(),
 			llm_provider: z.string().optional(),
@@ -296,11 +303,16 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, system_prompt (for agents), tools configuration, memory (persistent key-value store), LLM provider, and LLM config.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, and LLM config.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
 			email: z.string().email().optional(),
+			description: z
+				.string()
+				.max(80)
+				.optional()
+				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
 			system_prompt: z.string().optional(),
 			tools: z.record(z.unknown()).optional(),
 			memory: z.record(z.unknown()).optional(),
@@ -316,7 +328,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			'List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships.',
+			'List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor\'s short `description` (one-liner) — call `get_actor` for the full `systemPrompt`, which is how to pick up context on a human teammate @mentioned in a comment.',
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -328,7 +340,8 @@ export const tools = {
 		}),
 	},
 	get_actor: {
-		description: 'Get actor details by ID',
+		description:
+			'Get an actor by ID — returns the full record including `description` (short one-liner) and `systemPrompt` (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their system prompt and tailor your reply.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 		}),

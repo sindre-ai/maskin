@@ -585,6 +585,7 @@ export interface ActorListItem {
 	type: string
 	name: string
 	email: string | null
+	description: string | null
 	isSystem: boolean
 }
 
@@ -613,6 +614,7 @@ export interface CreateActorInput {
 	name: string
 	email?: string
 	password?: string
+	description?: string
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	llm_provider?: string
@@ -622,6 +624,7 @@ export interface CreateActorInput {
 export interface UpdateActorInput {
 	name?: string
 	email?: string
+	description?: string
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	memory?: Record<string, unknown>

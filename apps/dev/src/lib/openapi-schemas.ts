@@ -53,6 +53,7 @@ export const actorResponseSchema = z.object({
 	type: z.string(),
 	name: z.string(),
 	email: z.string().nullable(),
+	description: z.string().nullable(),
 	systemPrompt: z.string().nullable(),
 	tools: jsonbField,
 	memory: jsonbField,
@@ -73,6 +74,7 @@ export const actorListItemSchema = z.object({
 	type: z.string(),
 	name: z.string(),
 	email: z.string().nullable(),
+	description: z.string().nullable(),
 	isSystem: z.boolean(),
 	role: z.string().optional(),
 	workspaces: z

@@ -130,6 +130,7 @@ app.openapi(createActorRoute, async (c) => {
 			email: body.email,
 			apiKey: key,
 			passwordHash,
+			description: body.description,
 			systemPrompt: body.system_prompt,
 			tools,
 			llmProvider: body.llm_provider,
@@ -241,6 +242,7 @@ app.openapi(listActorsRoute, async (c) => {
 				type: actors.type,
 				name: actors.name,
 				email: actors.email,
+				description: actors.description,
 				isSystem: actors.isSystem,
 				role: workspaceMembers.role,
 			})
@@ -270,6 +272,7 @@ app.openapi(listActorsRoute, async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			description: actors.description,
 			isSystem: actors.isSystem,
 			workspaceId: workspaces.id,
 			workspaceName: workspaces.name,
@@ -288,6 +291,7 @@ app.openapi(listActorsRoute, async (c) => {
 			type: string
 			name: string
 			email: string | null
+			description: string | null
 			isSystem: boolean
 			workspaces: { id: string; name: string; role: string }[]
 		}
@@ -303,6 +307,7 @@ app.openapi(listActorsRoute, async (c) => {
 				type: r.type,
 				name: r.name,
 				email: r.email,
+				description: r.description,
 				isSystem: r.isSystem,
 				workspaces: [membership],
 			})
@@ -343,6 +348,7 @@ app.openapi(getActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			description: actors.description,
 			systemPrompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
@@ -401,6 +407,7 @@ app.openapi(updateActorRoute, (async (c) => {
 		.set({
 			...(body.name && { name: body.name }),
 			...(body.email && { email: body.email }),
+			...(body.description !== undefined && { description: body.description }),
 			...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
 			...(body.tools !== undefined && { tools: body.tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
@@ -414,6 +421,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			description: actors.description,
 			systemPrompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
@@ -524,6 +532,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		.update(actors)
 		.set({
 			name: SINDRE_DEFAULT.name,
+			description: null,
 			systemPrompt: SINDRE_DEFAULT.systemPrompt,
 			llmProvider: SINDRE_DEFAULT.llmProvider,
 			llmConfig: SINDRE_DEFAULT.llmConfig,
@@ -537,6 +546,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			description: actors.description,
 			systemPrompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
