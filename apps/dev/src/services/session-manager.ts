@@ -24,6 +24,7 @@ import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../l
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
+import type { AuthBrowserManager } from './auth-browser-manager'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
@@ -60,6 +61,31 @@ function isContainerGoneError(err: unknown): boolean {
 	return /HTTP code 404/.test(message) || /is not running/.test(message)
 }
 
+/**
+ * Recursively replace `${VAR}` references in string leaves with the
+ * corresponding value from `env`. Walks objects and arrays; non-string
+ * leaves are returned as-is. Used to inline integration tokens and
+ * platform env vars into the MCP config tree before JSON.stringify so
+ * downstream consumers don't need a text-level substitution step
+ * (which corrupts JSON when values contain ", $, or backticks).
+ */
+export function expandEnvRefs<T>(value: T, env: Record<string, string>): T {
+	if (typeof value === 'string') {
+		return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, key) =>
+			env[key] !== undefined ? env[key] : m,
+		) as T
+	}
+	if (Array.isArray(value)) {
+		return value.map((v) => expandEnvRefs(v, env)) as T
+	}
+	if (value && typeof value === 'object') {
+		const out: Record<string, unknown> = {}
+		for (const [k, v] of Object.entries(value)) out[k] = expandEnvRefs(v, env)
+		return out as T
+	}
+	return value
+}
+
 export interface SessionLogEvent extends LogChunk {
 	sessionId: string
 	logId: number
@@ -75,6 +101,10 @@ export class SessionManager extends EventEmitter {
 			tempDir: string
 			browserContainerId?: string
 			networkName?: string
+			/** Id of a workspace auth-browser this session has claimed (shared
+			 *  Chromium under AuthBrowserManager). Released on cleanup. Mutually
+			 *  exclusive with browserContainerId — at most one browser per session. */
+			workspaceBrowserId?: string
 			/**
 			 * Rolling tail of stdout (capped at STDOUT_TAIL_BYTES). Lets
 			 * `handleCompletion` parse the final stream-json `result` event from
@@ -94,6 +124,7 @@ export class SessionManager extends EventEmitter {
 	private static readonly LOGS_DRAIN_TIMEOUT_MS = 5000
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
+	private authBrowserManager: AuthBrowserManager | null = null
 
 	constructor(
 		private db: Database,
@@ -106,6 +137,15 @@ export class SessionManager extends EventEmitter {
 
 	setAgentBaseBuildContext(buildContext: string) {
 		this.agentBaseBuildContext = buildContext
+	}
+
+	/**
+	 * Wire the workspace browser pool so agent sessions can reuse a logged-in
+	 * Chromium instead of spawning a per-session sidecar. Optional — if unset,
+	 * sessions fall back to the existing per-session sidecar path.
+	 */
+	setAuthBrowserManager(mgr: AuthBrowserManager) {
+		this.authBrowserManager = mgr
 	}
 
 	async start() {
@@ -710,11 +750,13 @@ export class SessionManager extends EventEmitter {
 			envVars.MASKIN_API_KEY = agent.apiKey
 		}
 
-		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } })
+		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
+		// Hold the raw object — we serialize at the bottom after all envVars (including
+		// integration tokens) are known, so ${VAR} placeholders can be expanded with
+		// JSON-safe values. Plain shell envsubst in the container would corrupt JSON
+		// when a value contains characters like " (e.g. the LinkedIn cookie's quoted
+		// JSESSIONID).
 		const agentTools = agent.tools as Record<string, unknown> | null
-		if (agentTools && Object.keys(agentTools).length > 0) {
-			envVars.AGENT_MCP_JSON = JSON.stringify(agentTools)
-		}
 
 		// Inject runtime-specific config
 		if (sessionConfig.runtime_config) {
@@ -786,14 +828,26 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Session-level MCP config (convert array → { mcpServers: { ... } } format)
+		// Session-level MCP config (convert array → { mcpServers: { ... } } format).
+		// Held raw and serialized below alongside AGENT_MCP_JSON.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		let sessionMcps: { mcpServers: Record<string, unknown> } | null = null
 		if (mcps?.length) {
 			const mcpServers: Record<string, unknown> = {}
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp
 			}
-			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
+			sessionMcps = { mcpServers }
+		}
+
+		// Expand ${VAR} placeholders in the MCP configs using the final envVars map,
+		// then serialize. JSON.stringify after substitution guarantees correct
+		// escaping of any special characters in the substituted values.
+		if (agentTools && Object.keys(agentTools).length > 0) {
+			envVars.AGENT_MCP_JSON = JSON.stringify(expandEnvRefs(agentTools, envVars))
+		}
+		if (sessionMcps) {
+			envVars.MCP_SERVERS_JSON = JSON.stringify(expandEnvRefs(sessionMcps, envVars))
 		}
 
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
@@ -804,14 +858,27 @@ export class SessionManager extends EventEmitter {
 			await this.containers.ensureImage(image, this.agentBaseBuildContext)
 		}
 
-		// Provision browser sidecar if Playwright MCP is configured
+		// Browser routing: if the MCP config wants a browser, try an idle workspace
+		// browser first (logged-in Chromium shared with the connect modal). On miss
+		// — none available or claim race lost — fall back to a per-session sidecar.
 		let networkMode: string | undefined
 		if (this.needsBrowserSidecar(envVars)) {
-			const prefix = session.id.slice(0, 8)
-			const result = await this.provisionBrowserSidecar(session.id, prefix)
-			if (result) {
-				envVars.BROWSER_CDP_URL = `ws://anko-browser-${prefix}:9222`
-				networkMode = result.networkName
+			const claimed = await this.tryClaimWorkspaceBrowser(session.id, session.workspaceId)
+			if (claimed) {
+				// host.docker.internal works because container-manager sets
+				// ExtraHosts: ['host.docker.internal:host-gateway'] on every container.
+				envVars.BROWSER_CDP_URL = `ws://host.docker.internal:${claimed.port}`
+				await this.insertSystemLog(
+					session.id,
+					`Using workspace browser (logged-in Chromium) on host port ${claimed.port}`,
+				)
+			} else {
+				const prefix = session.id.slice(0, 8)
+				const result = await this.provisionBrowserSidecar(session.id, prefix)
+				if (result) {
+					envVars.BROWSER_CDP_URL = `ws://anko-browser-${prefix}:9222`
+					networkMode = result.networkName
+				}
 			}
 		}
 
@@ -1352,6 +1419,45 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * Try to claim a logged-in workspace browser for this session. Returns the
+	 * CDP endpoint (on host.docker.internal) if successful, null otherwise.
+	 *
+	 * Caller is responsible for the fallback path — this never throws on a miss.
+	 * Tracks the claim in activeSessions so cleanup releases the browser.
+	 *
+	 * NOTE: For now this claims *any* idle browser in the workspace regardless
+	 * of provider. The session-manager doesn't yet know which provider an
+	 * agent's MCP servers need. When we add multiple browser-using providers
+	 * (e.g. Twitter), make this provider-aware via the MCP server name.
+	 */
+	private async tryClaimWorkspaceBrowser(
+		sessionId: string,
+		workspaceId: string,
+	): Promise<{ id: string; port: number } | null> {
+		const mgr = this.authBrowserManager
+		if (!mgr) return null
+
+		// Single-provider for now; LinkedIn is the only browser-auth provider.
+		const PROVIDER = 'linkedin'
+		try {
+			const claimed = await mgr.claimForAgent(workspaceId, PROVIDER, sessionId)
+			if (!claimed) return null
+
+			const sessionData = this.activeSessions.get(sessionId)
+			if (sessionData) {
+				sessionData.workspaceBrowserId = claimed.id
+			}
+			return { id: claimed.id, port: claimed.port }
+		} catch (err) {
+			logger.warn('Workspace browser claim failed; falling back to sidecar', {
+				sessionId,
+				error: String(err),
+			})
+			return null
+		}
+	}
+
+	/**
 	 * Provision a headless Chrome sidecar container on a per-session Docker network.
 	 * Returns the network name and browser container ID, or null if provisioning fails.
 	 * On failure, the agent session continues without browser capability.
@@ -1426,12 +1532,25 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Clean up browser sidecar container and its Docker network.
+	 * Clean up the browser this session was using. Two cases:
+	 *   - Per-session sidecar: stop + remove the container + its network.
+	 *   - Workspace browser: release the claim so the next agent (or the modal)
+	 *     can grab it; the container itself keeps running.
+	 *
 	 * Called before cleanupSession() in all exit paths.
 	 */
 	private async cleanupBrowserSidecar(sessionId: string): Promise<void> {
 		const sessionData = this.activeSessions.get(sessionId)
 		if (!sessionData) return
+
+		if (sessionData.workspaceBrowserId && this.authBrowserManager) {
+			await this.authBrowserManager
+				.releaseFromAgent(sessionData.workspaceBrowserId)
+				.catch((err) =>
+					logger.warn('Failed to release workspace browser', { sessionId, error: String(err) }),
+				)
+			sessionData.workspaceBrowserId = undefined
+		}
 
 		if (sessionData.browserContainerId) {
 			await this.containers

@@ -157,6 +157,59 @@ export const integrations = pgTable(
 	(t) => [unique('integrations_ws_provider_uniq').on(t.workspaceId, t.provider)],
 )
 
+// ── Auth browser sessions ──────────────────────────────────────────────────
+// Short-lived (10 min TTL) headful Chromium containers used by providers like
+// LinkedIn that can't OAuth properly. The user logs in via a streamed view
+// inside a modal; on success the cookies are captured + persisted to the
+// `integrations` row and the container is destroyed.
+
+export const authBrowserSessions = pgTable(
+	'auth_browser_sessions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		provider: text('provider').notNull(),
+		// 'starting' | 'ready' | 'idle' | 'driving' | 'failed' | 'expired'.
+		// 'idle' = container alive with logged-in cookies, no driver attached.
+		// 'driving' = an agent session has claimed the browser exclusively.
+		status: text('status').notNull(),
+		containerId: text('container_id'),
+		networkName: text('network_name'),
+		// One-time UUID embedded in the SSE/input URLs so the user's browser can
+		// authenticate the stream without putting the API key in the URL.
+		accessToken: text('access_token').notNull(),
+		// Encrypted JSON {li_at, jsessionid, profile_url} once the cookies arrive.
+		capturedCredentials: text('captured_credentials'),
+		error: text('error'),
+		// Hard upper bound — bumped on capture so idle browsers can live for hours.
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		// Updated on claim/release/capture; the idle reaper kills browsers whose
+		// last_activity_at is older than the idle timeout.
+		lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).defaultNow(),
+		// Tracks the agent session currently driving the browser (status='driving').
+		// Nulled on release so the next claim can succeed.
+		claimedBySessionId: uuid('claimed_by_session_id').references(() => sessions.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+	},
+	(t) => [
+		index('auth_browser_sessions_ws_idx').on(t.workspaceId),
+		index('auth_browser_sessions_expires_idx').on(t.expiresAt),
+		index('auth_browser_sessions_activity_idx').on(t.lastActivityAt),
+		// Enforce at most one active browser per (workspace, provider). Covers all
+		// pre-terminal statuses so concurrent /start calls can't provision a second
+		// container while a usable one exists.
+		uniqueIndex('auth_browser_sessions_ws_provider_active_uniq')
+			.on(t.workspaceId, t.provider)
+			.where(sql`${t.status} IN ('starting', 'ready', 'idle', 'driving')`),
+	],
+)
+
 // ── Triggers ────────────────────────────────────────────────────────────────
 
 export const triggers = pgTable('triggers', {

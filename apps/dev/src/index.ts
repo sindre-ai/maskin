@@ -8,6 +8,7 @@ import { createApp } from './app-factory'
 import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
+import { AuthBrowserManager } from './services/auth-browser-manager'
 import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { SessionManager } from './services/session-manager'
@@ -58,12 +59,27 @@ sessionManager.setAgentBaseBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
 )
 
+const authBrowserManager = new AuthBrowserManager(db)
+authBrowserManager.setBuildContext(
+	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/auth-browser'),
+)
+// Let the session manager reuse idle workspace browsers instead of spinning
+// up a per-session sidecar for every agent that needs Playwright access.
+sessionManager.setAuthBrowserManager(authBrowserManager)
+
 const port = Number(process.env.PORT) || 3000
 
-const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
+const app = createApp(
+	{ db, notifyBridge, sessionManager, agentStorage, storageProvider, authBrowserManager },
+	{ port },
+)
 
 sessionManager.start().then(() => {
 	logger.info('Session manager started')
+})
+
+authBrowserManager.start().then(() => {
+	logger.info('Auth browser manager started')
 })
 
 const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
