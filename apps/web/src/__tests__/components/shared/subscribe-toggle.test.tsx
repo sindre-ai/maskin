@@ -13,6 +13,14 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
+vi.mock('@/lib/auth', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth')
+	return {
+		...actual,
+		getStoredActor: vi.fn(() => ({ id: 'a1', name: 'Alice', type: 'human', email: null })),
+	}
+})
+
 import { SubscribeToggle } from '@/components/shared/subscribe-toggle'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../../setup'
@@ -67,7 +75,7 @@ describe('SubscribeToggle', () => {
 		await waitFor(() => expect(screen.getByText('+2')).toBeInTheDocument())
 	})
 
-	it('calls subscribe when not subscribed and the toggle is clicked', async () => {
+	it('calls subscribe when the + button is clicked', async () => {
 		vi.mocked(api.subscriptions.subscribers).mockResolvedValue({ actors: [] })
 		vi.mocked(api.subscriptions.subscribe).mockResolvedValue({ subscribed: true })
 
@@ -88,9 +96,31 @@ describe('SubscribeToggle', () => {
 		)
 	})
 
-	it('calls unsubscribe when already subscribed', async () => {
+	it('hides the + button when already subscribed', async () => {
 		vi.mocked(api.subscriptions.subscribers).mockResolvedValue({
 			actors: [{ id: 'a1', type: 'human', name: 'Alice' }],
+		})
+
+		render(
+			<SubscribeToggle
+				workspaceId="ws-1"
+				entityType="object"
+				entityId="obj-1"
+				isSubscribed={true}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(screen.getByText('A')).toBeInTheDocument())
+		expect(screen.queryByRole('button', { name: /^subscribe/i })).not.toBeInTheDocument()
+	})
+
+	it('calls unsubscribe when the current actor clicks their own avatar', async () => {
+		vi.mocked(api.subscriptions.subscribers).mockResolvedValue({
+			actors: [
+				{ id: 'a1', type: 'human', name: 'Alice' },
+				{ id: 'a2', type: 'human', name: 'Bob' },
+			],
 		})
 		vi.mocked(api.subscriptions.unsubscribe).mockResolvedValue({ unsubscribed: true })
 
@@ -109,6 +139,25 @@ describe('SubscribeToggle', () => {
 		await waitFor(() =>
 			expect(api.subscriptions.unsubscribe).toHaveBeenCalledWith('ws-1', 'object', 'obj-1'),
 		)
+	})
+
+	it('does not make other actors clickable', async () => {
+		vi.mocked(api.subscriptions.subscribers).mockResolvedValue({
+			actors: [{ id: 'a2', type: 'human', name: 'Bob' }],
+		})
+
+		render(
+			<SubscribeToggle
+				workspaceId="ws-1"
+				entityType="object"
+				entityId="obj-1"
+				isSubscribed={false}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(screen.getByText('B')).toBeInTheDocument())
+		expect(screen.queryByRole('button', { name: /unsubscribe/i })).not.toBeInTheDocument()
 	})
 
 	it('accepts arbitrary entityType (entity-agnostic)', async () => {
