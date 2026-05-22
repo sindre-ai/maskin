@@ -42,6 +42,11 @@ export function LinkedInLoginModal({ workspaceId, open, onClose }: Props) {
 	// check. Refs persist across the synthetic unmount.
 	type StartResult = Awaited<ReturnType<typeof api.integrations.linkedinAuthBrowser.start>>
 	const bootPromiseRef = useRef<Promise<StartResult> | null>(null)
+	// Set to true once cookies are captured. Suppresses the cancel-on-close call
+	// so the workspace browser stays alive (status='idle') for the next agent
+	// session to claim. Without this, closing the success modal would tear down
+	// the just-logged-in Chromium.
+	const capturedRef = useRef(false)
 
 	const cleanup = useCallback(async () => {
 		abortRef.current?.abort()
@@ -49,7 +54,7 @@ export function LinkedInLoginModal({ workspaceId, open, onClose }: Props) {
 		bootPromiseRef.current = null
 		const session = sessionRef.current
 		sessionRef.current = null
-		if (session) {
+		if (session && !capturedRef.current) {
 			await api.integrations.linkedinAuthBrowser.cancel(session.id, workspaceId).catch(() => {})
 		}
 	}, [workspaceId])
@@ -111,6 +116,7 @@ export function LinkedInLoginModal({ workspaceId, open, onClose }: Props) {
 						if (msg.event === 'frame') {
 							drawFrame(canvasRef.current, msg.data)
 						} else if (msg.event === 'captured') {
+							capturedRef.current = true
 							setState('captured')
 							queryClient.invalidateQueries({
 								queryKey: queryKeys.integrations.all(workspaceId),
@@ -157,6 +163,9 @@ export function LinkedInLoginModal({ workspaceId, open, onClose }: Props) {
 	useEffect(() => {
 		if (open) return
 		void cleanup()
+		// Reset capture flag for the next open cycle. cleanup() already cleared
+		// other refs but capturedRef tracks success across cleanup itself.
+		capturedRef.current = false
 	}, [open, cleanup])
 
 	const sendInput = useCallback(

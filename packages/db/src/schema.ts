@@ -174,7 +174,9 @@ export const authBrowserSessions = pgTable(
 			.references(() => actors.id)
 			.notNull(),
 		provider: text('provider').notNull(),
-		// 'starting' | 'ready' | 'captured' | 'failed' | 'expired'
+		// 'starting' | 'ready' | 'idle' | 'driving' | 'failed' | 'expired'.
+		// 'idle' = container alive with logged-in cookies, no driver attached.
+		// 'driving' = an agent session has claimed the browser exclusively.
 		status: text('status').notNull(),
 		containerId: text('container_id'),
 		networkName: text('network_name'),
@@ -184,19 +186,27 @@ export const authBrowserSessions = pgTable(
 		// Encrypted JSON {li_at, jsessionid, profile_url} once the cookies arrive.
 		capturedCredentials: text('captured_credentials'),
 		error: text('error'),
+		// Hard upper bound — bumped on capture so idle browsers can live for hours.
 		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		// Updated on claim/release/capture; the idle reaper kills browsers whose
+		// last_activity_at is older than the idle timeout.
+		lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).defaultNow(),
+		// Tracks the agent session currently driving the browser (status='driving').
+		// Nulled on release so the next claim can succeed.
+		claimedBySessionId: uuid('claimed_by_session_id').references(() => sessions.id),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
 		index('auth_browser_sessions_ws_idx').on(t.workspaceId),
 		index('auth_browser_sessions_expires_idx').on(t.expiresAt),
-		// Enforce at most one active connect flow per workspace. Backstops the
-		// service-layer SELECT in AuthBrowserManager.startSession against TOCTOU
-		// races (e.g. React StrictMode double-mount firing two POSTs in parallel).
-		uniqueIndex('auth_browser_sessions_ws_active_uniq')
-			.on(t.workspaceId)
-			.where(sql`${t.status} IN ('starting', 'ready')`),
+		index('auth_browser_sessions_activity_idx').on(t.lastActivityAt),
+		// Enforce at most one active browser per (workspace, provider). Covers all
+		// pre-terminal statuses so concurrent /start calls can't provision a second
+		// container while a usable one exists.
+		uniqueIndex('auth_browser_sessions_ws_provider_active_uniq')
+			.on(t.workspaceId, t.provider)
+			.where(sql`${t.status} IN ('starting', 'ready', 'idle', 'driving')`),
 	],
 )
 

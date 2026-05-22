@@ -282,7 +282,9 @@ app.get('/linkedin/auth-browser/:id/:accessToken/stream', async (c) => {
 						data: { provider: PROVIDER },
 					})
 
-					// Mark the auth-browser row + tear down the container.
+					// Flip the auth-browser row to 'idle' so agents can claim it and
+					// the modal can reattach for re-login. Container keeps running;
+					// idle reaper kills it after ~30 min of inactivity.
 					await mgr.markCaptured(id, encrypted)
 
 					await stream.writeSSE({ event: 'captured', data: JSON.stringify({ provider: PROVIDER }) })

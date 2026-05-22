@@ -63,6 +63,9 @@ const authBrowserManager = new AuthBrowserManager(db)
 authBrowserManager.setBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/auth-browser'),
 )
+// Let the session manager reuse idle workspace browsers instead of spinning
+// up a per-session sidecar for every agent that needs Playwright access.
+sessionManager.setAuthBrowserManager(authBrowserManager)
 
 const port = Number(process.env.PORT) || 3000
 

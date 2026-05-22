@@ -75,15 +75,46 @@ describe('AuthBrowserManager', () => {
 			expect(inserted.expiresAt).toBeInstanceOf(Date)
 		})
 
-		it('rejects when another flow is already active in the workspace', async () => {
+		it('reattaches to an existing ready/idle browser instead of provisioning new', async () => {
+			const { db, mockResults, calls } = createTestContext()
+			const existing = {
+				id: 'abs-existing',
+				workspaceId: 'ws-1',
+				provider: 'linkedin',
+				status: 'idle',
+				accessToken: 'tok-existing',
+				containerId: 'cid',
+				expiresAt: new Date(Date.now() + 60_000),
+			}
+			// findReusable's select returns the existing row.
+			mockResults.selectQueue = [[existing]]
+
+			const mgr = new AuthBrowserManager(db)
+			const result = await mgr.startSession({
+				workspaceId: 'ws-1',
+				actorId: 'actor-1',
+				provider: 'linkedin',
+			})
+
+			expect(result.id).toBe('abs-existing')
+			expect(result.accessToken).toBe('tok-existing')
+			expect(result.reattached).toBe(true)
+			// No new row inserted.
+			expect(calls.inserts).toHaveLength(0)
+			// Just a touch on lastActivityAt.
+			expect(calls.updates).toHaveLength(1)
+		})
+
+		it('refuses when an agent is currently driving the browser', async () => {
 			const { db, mockResults } = createTestContext()
 			mockResults.selectQueue = [
-				[{ id: 'abs-existing' }], // concurrency check finds an active row
+				[], // findReusable: no reusable row
+				[{ id: 'abs-driving' }], // busy check: a 'driving' row exists
 			]
 			const mgr = new AuthBrowserManager(db)
 			await expect(
 				mgr.startSession({ workspaceId: 'ws-1', actorId: 'actor-1', provider: 'linkedin' }),
-			).rejects.toThrow(/already running/i)
+			).rejects.toThrow(/agent session is currently using/i)
 		})
 	})
 
@@ -134,22 +165,88 @@ describe('AuthBrowserManager', () => {
 	})
 
 	describe('markCaptured', () => {
-		it('writes encrypted credentials, flips status to captured, and tears down', async () => {
-			const { db, mockResults, calls } = createTestContext()
-			mockResults.selectQueue = [
-				// stopSession's lookup
-				[{ id: 'abs-1', containerId: 'cid', networkName: 'net', status: 'captured' }],
-			]
+		it('writes encrypted credentials, flips status to idle, and keeps the container alive', async () => {
+			const { db, calls } = createTestContext()
 			const mgr = new AuthBrowserManager(db)
 			await mgr.markCaptured('abs-1', 'encrypted-blob')
 
-			expect(calls.updates).toHaveLength(2)
-			const captureUpdate = calls.updates[0] as Record<string, unknown>
-			expect(captureUpdate.status).toBe('captured')
-			expect(captureUpdate.capturedCredentials).toBe('encrypted-blob')
+			// Single update: idle + credentials + bumped TTL. NO teardown — the
+			// container survives so agents can claim it.
+			expect(calls.updates).toHaveLength(1)
+			const update = calls.updates[0] as Record<string, unknown>
+			expect(update.status).toBe('idle')
+			expect(update.capturedCredentials).toBe('encrypted-blob')
+			expect(update.expiresAt).toBeInstanceOf(Date)
+			expect(update.lastActivityAt).toBeInstanceOf(Date)
 
-			expect(mockContainerManager.stop).toHaveBeenCalledWith('cid')
-			expect(mockContainerManager.removeNetwork).toHaveBeenCalledWith('net')
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			expect(mockContainerManager.removeNetwork).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('claimForAgent', () => {
+		it('atomically claims an idle browser and returns the CDP endpoint', async () => {
+			const { db, mockResults, calls } = createTestContext()
+			// The UPDATE ... RETURNING claim transitions idle → driving.
+			mockResults.update = [
+				{
+					id: 'abs-1',
+					status: 'driving',
+					containerId: 'cid',
+					expiresAt: new Date(Date.now() + 60_000),
+				},
+			]
+
+			const mgr = new AuthBrowserManager(db)
+			const result = await mgr.claimForAgent('ws-1', 'linkedin', 'session-1')
+
+			expect(result).toEqual({ id: 'abs-1', host: '127.0.0.1', port: 49876 })
+			expect(calls.updates).toHaveLength(1)
+			const update = calls.updates[0] as Record<string, unknown>
+			expect(update.status).toBe('driving')
+			expect(update.claimedBySessionId).toBe('session-1')
+		})
+
+		it('returns null when no idle row matches', async () => {
+			const { db, mockResults } = createTestContext()
+			mockResults.update = [] // CAS lost / no idle row
+			const mgr = new AuthBrowserManager(db)
+			expect(await mgr.claimForAgent('ws-1', 'linkedin', 'session-1')).toBeNull()
+		})
+
+		it('rolls back to failed if the container disappeared between claim and endpoint resolve', async () => {
+			const { db, mockResults, calls } = createTestContext()
+			mockResults.update = [
+				{
+					id: 'abs-1',
+					status: 'driving',
+					containerId: 'cid',
+					expiresAt: new Date(Date.now() + 60_000),
+				},
+			]
+			mockContainerManager.getPublishedPort.mockResolvedValueOnce(null)
+			const mgr = new AuthBrowserManager(db)
+			const result = await mgr.claimForAgent('ws-1', 'linkedin', 'session-1')
+
+			expect(result).toBeNull()
+			expect(calls.updates).toHaveLength(2)
+			const rollback = calls.updates[1] as Record<string, unknown>
+			expect(rollback.status).toBe('failed')
+			expect(rollback.claimedBySessionId).toBeNull()
+		})
+	})
+
+	describe('releaseFromAgent', () => {
+		it('flips driving → idle and clears the session pointer', async () => {
+			const { db, calls } = createTestContext()
+			const mgr = new AuthBrowserManager(db)
+			await mgr.releaseFromAgent('abs-1')
+
+			expect(calls.updates).toHaveLength(1)
+			const update = calls.updates[0] as Record<string, unknown>
+			expect(update.status).toBe('idle')
+			expect(update.claimedBySessionId).toBeNull()
+			expect(update.lastActivityAt).toBeInstanceOf(Date)
 		})
 	})
 
@@ -346,15 +443,30 @@ describe('AuthBrowserManager', () => {
 		})
 	})
 
-	describe('reapExpired', () => {
+	describe('reapStale', () => {
 		it('tears down expired sessions and flips status to expired', async () => {
 			const { db, mockResults, calls } = createTestContext()
+			const expired = new Date(Date.now() - 1000)
 			mockResults.select = [
-				{ id: 'e-1', containerId: 'cid-1', networkName: 'net-1' },
-				{ id: 'e-2', containerId: null, networkName: 'net-2' },
+				{
+					id: 'e-1',
+					containerId: 'cid-1',
+					networkName: 'net-1',
+					status: 'ready',
+					expiresAt: expired,
+					lastActivityAt: expired,
+				},
+				{
+					id: 'e-2',
+					containerId: null,
+					networkName: 'net-2',
+					status: 'idle',
+					expiresAt: expired,
+					lastActivityAt: expired,
+				},
 			]
 			const mgr = new AuthBrowserManager(db)
-			await mgr.reapExpired()
+			await mgr.reapStale()
 
 			expect(mockContainerManager.stop).toHaveBeenCalledWith('cid-1')
 			expect(mockContainerManager.removeNetwork).toHaveBeenCalledWith('net-1')
@@ -369,7 +481,7 @@ describe('AuthBrowserManager', () => {
 			const { db, mockResults } = createTestContext()
 			mockResults.select = []
 			const mgr = new AuthBrowserManager(db)
-			await mgr.reapExpired()
+			await mgr.reapStale()
 			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 		})
 	})

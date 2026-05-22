@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { authBrowserSessions } from '@maskin/db/schema'
-import { and, eq, inArray, lt } from 'drizzle-orm'
+import { and, eq, inArray, lt, or } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { ContainerManager } from './container-manager'
 
-/** Time a session can live before the reaper kills it. */
-const TTL_MS = 10 * 60 * 1000
-/** Reaper cadence. */
+/** Hard upper bound on browser lifetime regardless of activity. */
+const HARD_TTL_MS = 4 * 60 * 60 * 1000 // 4 hours
+/** Tighter TTL while the row is in `starting`/`ready` (i.e. the connect modal phase). */
+const CONNECT_TTL_MS = 10 * 60 * 1000 // 10 minutes
+/** Kill an idle browser after this many ms of no activity. */
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000 // 30 minutes
+/** Watchdog cadence. */
 const WATCHDOG_INTERVAL_MS = 60_000
 /** Image tag built lazily from `docker/auth-browser/`. */
 const IMAGE = 'maskin-auth-browser:latest'
@@ -23,7 +27,7 @@ const READY_POLL_MS = 250
  *  ECONNREFUSED. */
 const CDP_HOST = '127.0.0.1'
 
-export type AuthBrowserStatus = 'starting' | 'ready' | 'captured' | 'failed' | 'expired'
+export type AuthBrowserStatus = 'starting' | 'ready' | 'idle' | 'driving' | 'failed' | 'expired'
 
 export interface StartParams {
 	workspaceId: string
@@ -35,15 +39,28 @@ export interface StartResult {
 	id: string
 	accessToken: string
 	expiresAt: Date
+	/** True if the response is reattaching to an existing logged-in browser
+	 *  (no new container was provisioned). */
+	reattached: boolean
+}
+
+export interface ClaimResult {
+	id: string
+	host: string
+	port: number
 }
 
 /**
- * Lightweight standalone lifecycle for short-lived headful Chromium containers.
- * Used for provider connect flows (currently LinkedIn) that need an interactive
- * login the user can drive, with cookies captured server-side via CDP.
+ * Per-workspace, per-provider browser lifecycle. A single Chromium container
+ * is provisioned on first login, kept alive past cookie capture, and shared
+ * between the connect modal and agent sessions over CDP.
  *
- * Parallel to SessionManager but intentionally decoupled — these are not agent
- * sessions, have no logs, and live ~10 minutes max.
+ * States:
+ *   starting → ready          (provision complete)
+ *   ready    → idle           (cookies captured; modal closes)
+ *   idle     → driving        (agent claims for exclusive use)
+ *   driving  → idle           (agent releases on session end)
+ *   any      → failed|expired (error / idle-reap / hard TTL)
  */
 export class AuthBrowserManager {
 	private containers: ContainerManager
@@ -60,14 +77,13 @@ export class AuthBrowserManager {
 	}
 
 	async start(): Promise<void> {
-		// Reconcile any rows left "starting"/"ready" by a previous backend that
-		// died without cleanup. Containers/networks are reaped if missing.
+		// Reconcile any rows left in an active state by a previous backend.
 		await this.reconcile().catch((err) =>
 			logger.error('AuthBrowserManager reconcile failed', { error: String(err) }),
 		)
 
 		this.watchdogInterval = setInterval(() => {
-			this.reapExpired().catch((err) =>
+			this.reapStale().catch((err) =>
 				logger.error('AuthBrowserManager reaper failed', { error: String(err) }),
 			)
 		}, WATCHDOG_INTERVAL_MS)
@@ -81,30 +97,50 @@ export class AuthBrowserManager {
 	}
 
 	/**
-	 * Provision a new headful Chromium container and return the SSE/input access
-	 * token. Throws if another flow is already running in this workspace.
-	 * Container provisioning runs out-of-band; status flips to 'ready' (or
-	 * 'failed') asynchronously — callers poll the row or wait for SSE.
+	 * Provision (or reattach to) a workspace browser for the given provider.
+	 *
+	 * - If a `ready`/`idle` row already exists, returns its id + access token
+	 *   (no new container, no new credentials). The modal opens directly onto
+	 *   the existing logged-in Chromium.
+	 * - If a `driving` row exists, refuses — the modal can't grab a browser the
+	 *   agent is currently driving.
+	 * - Otherwise, inserts a fresh `starting` row and provisions in the background.
 	 */
 	async startSession(params: StartParams): Promise<StartResult> {
-		const existing = await this.db
+		// Look for a reusable browser first. ready = post-provision but no cookies
+		// yet; idle = cookies captured, no driver. Both are reattach-able.
+		const reusable = await this.findReusable(params.workspaceId, params.provider)
+		if (reusable) {
+			await this.touchActivity(reusable.id)
+			return {
+				id: reusable.id,
+				accessToken: reusable.accessToken,
+				expiresAt: reusable.expiresAt,
+				reattached: true,
+			}
+		}
+
+		// If an agent is driving, refuse. The unique index will also catch this,
+		// but an explicit check yields a clearer error.
+		const busy = await this.db
 			.select({ id: authBrowserSessions.id })
 			.from(authBrowserSessions)
 			.where(
 				and(
 					eq(authBrowserSessions.workspaceId, params.workspaceId),
-					inArray(authBrowserSessions.status, ['starting', 'ready']),
+					eq(authBrowserSessions.provider, params.provider),
+					eq(authBrowserSessions.status, 'driving'),
 				),
 			)
 			.limit(1)
-		if (existing.length > 0) {
+		if (busy.length > 0) {
 			throw new Error(
-				'Another connect flow is already running in this workspace. Cancel it or wait for it to expire.',
+				'An agent session is currently using this browser. Stop the agent first, then reopen the connect modal.',
 			)
 		}
 
 		const accessToken = randomUUID()
-		const expiresAt = new Date(Date.now() + TTL_MS)
+		const expiresAt = new Date(Date.now() + CONNECT_TTL_MS)
 
 		let row: { id: string } | undefined
 		try {
@@ -123,8 +159,18 @@ export class AuthBrowserManager {
 		} catch (err) {
 			// Defense in depth against TOCTOU on the SELECT above (e.g. React StrictMode
 			// double-mount firing two POSTs in parallel). The partial unique index
-			// `auth_browser_sessions_ws_active_uniq` rejects the second insert.
+			// rejects the second insert; treat that as a reattach by re-querying.
 			if (isUniqueViolation(err)) {
+				const reuseRetry = await this.findReusable(params.workspaceId, params.provider)
+				if (reuseRetry) {
+					await this.touchActivity(reuseRetry.id)
+					return {
+						id: reuseRetry.id,
+						accessToken: reuseRetry.accessToken,
+						expiresAt: reuseRetry.expiresAt,
+						reattached: true,
+					}
+				}
 				throw new Error(
 					'Another connect flow is already running in this workspace. Cancel it or wait for it to expire.',
 				)
@@ -133,22 +179,34 @@ export class AuthBrowserManager {
 		}
 		if (!row) throw new Error('Failed to insert auth_browser_sessions row')
 
-		// Provision async — surface errors via row status, not via the API
 		void this.provisionContainer(row.id).catch((err) =>
 			logger.error('Auth browser provision failed', { id: row.id, error: String(err) }),
 		)
 
-		return { id: row.id, accessToken, expiresAt }
+		return { id: row.id, accessToken, expiresAt, reattached: false }
+	}
+
+	/** Find a row that can be reattached by the modal: ready or idle, not expired. */
+	private async findReusable(workspaceId: string, provider: string) {
+		const [row] = await this.db
+			.select()
+			.from(authBrowserSessions)
+			.where(
+				and(
+					eq(authBrowserSessions.workspaceId, workspaceId),
+					eq(authBrowserSessions.provider, provider),
+					inArray(authBrowserSessions.status, ['ready', 'idle']),
+				),
+			)
+			.limit(1)
+		if (!row) return null
+		if (row.expiresAt.getTime() < Date.now()) return null
+		return row
 	}
 
 	/**
-	 * Block until the row flips to 'ready' (resolves the same { host, port } that
-	 * `getCdpEndpoint` would). Returns null on token mismatch / failure / timeout
-	 * so the caller can 400 cleanly.
-	 *
-	 * The provisioning path is fire-and-forget from `startSession`, so the SSE/
-	 * input route can't assume the container is already up when the frontend
-	 * opens it. This helper bridges that gap without blocking `/start`.
+	 * Block until the row flips to 'ready' OR 'idle' (both are usable by the
+	 * modal). Returns null on token mismatch / failure / timeout.
 	 */
 	async waitForReady(
 		id: string,
@@ -163,13 +221,13 @@ export class AuthBrowserManager {
 				.where(eq(authBrowserSessions.id, id))
 				.limit(1)
 			if (!row || row.accessToken !== accessToken) return null
-			if (row.status === 'failed' || row.status === 'expired' || row.status === 'captured') {
+			if (row.status === 'failed' || row.status === 'expired') return null
+			if (row.status === 'driving') {
+				// An agent already claimed it — modal can't drive concurrently.
 				return null
 			}
-			if (row.status === 'ready') {
-				// Row is ready, but the published port may not yet be visible to
-				// Docker. Treat null as transient and keep polling.
-				const endpoint = await this.getCdpEndpoint(id, accessToken)
+			if (row.status === 'ready' || row.status === 'idle') {
+				const endpoint = await this.endpointForRow(row)
 				if (endpoint) return endpoint
 			}
 			await new Promise((r) => setTimeout(r, READY_POLL_MS))
@@ -197,23 +255,24 @@ export class AuthBrowserManager {
 				cpuShares: 1024,
 				binds: [],
 				networkMode: networkName,
-				// Publish CDP to an ephemeral host port so the backend (on host)
-				// can talk to chrome-remote-interface without being on the network.
 				portBindings: { '9222/tcp': '' },
 			})
 
 			await this.containers.start(containerId)
 
-			// Probe Chromium's /json/version until it responds. Far more reliable
-			// than a fixed sleep — surfaces "Chromium didn't start" as an explicit
-			// failure rather than letting CRI bang into a half-up port.
 			const port = await this.containers.getPublishedPort(containerId, '9222/tcp')
 			if (!port) throw new Error('CDP port was not published')
 			await probeCdpReady(port, STARTUP_PROBE_TIMEOUT_MS)
 
 			await this.db
 				.update(authBrowserSessions)
-				.set({ status: 'ready', containerId, networkName, updatedAt: new Date() })
+				.set({
+					status: 'ready',
+					containerId,
+					networkName,
+					updatedAt: new Date(),
+					lastActivityAt: new Date(),
+				})
 				.where(eq(authBrowserSessions.id, id))
 
 			logger.info('Auth browser session ready', { id, containerName, networkName })
@@ -238,8 +297,8 @@ export class AuthBrowserManager {
 
 	/**
 	 * Return localhost host + port for the container's published CDP, or null
-	 * if the session isn't usable. Used by the CDP stream proxy (Module C) to
-	 * open a chrome-remote-interface client.
+	 * if the session isn't usable. Used by the CDP stream proxy and agent
+	 * claim path to open a chrome-remote-interface client.
 	 */
 	async getCdpEndpoint(
 		id: string,
@@ -250,7 +309,16 @@ export class AuthBrowserManager {
 			.from(authBrowserSessions)
 			.where(eq(authBrowserSessions.id, id))
 			.limit(1)
-		if (!row || row.accessToken !== accessToken || row.status !== 'ready') return null
+		if (!row || row.accessToken !== accessToken) return null
+		// 'driving' is excluded — only the holding agent can talk to it.
+		if (row.status !== 'ready' && row.status !== 'idle') return null
+		return this.endpointForRow(row)
+	}
+
+	private async endpointForRow(row: {
+		expiresAt: Date
+		containerId: string | null
+	}): Promise<{ host: string; port: number } | null> {
 		if (row.expiresAt.getTime() < Date.now()) return null
 		if (!row.containerId) return null
 		const port = await this.containers.getPublishedPort(row.containerId, '9222/tcp')
@@ -259,8 +327,107 @@ export class AuthBrowserManager {
 	}
 
 	/**
-	 * Tear down a session's container + network. Idempotent.
-	 * Sets status='failed' if not already 'captured'.
+	 * Mark cookies captured and transition the row to `idle`. The container
+	 * keeps running so the modal can re-open it for re-login and agents can
+	 * claim it for browser automation. The hard TTL is bumped to give idle
+	 * browsers room to live; the idle reaper kills them on inactivity.
+	 */
+	async markCaptured(id: string, encryptedCredentials: string): Promise<void> {
+		await this.db
+			.update(authBrowserSessions)
+			.set({
+				status: 'idle',
+				capturedCredentials: encryptedCredentials,
+				expiresAt: new Date(Date.now() + HARD_TTL_MS),
+				lastActivityAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.where(eq(authBrowserSessions.id, id))
+	}
+
+	/**
+	 * Atomically claim an idle workspace browser for an agent session.
+	 * Returns the CDP endpoint + the row id (so the caller can release later).
+	 *
+	 * Returns null if no idle browser exists for the workspace, or if a
+	 * concurrent claim won the race.
+	 */
+	async claimForAgent(
+		workspaceId: string,
+		provider: string,
+		sessionId: string,
+	): Promise<ClaimResult | null> {
+		// CAS: only the row that's currently 'idle' transitions to 'driving'.
+		// Drizzle's update returns the updated rows when .returning() is set.
+		const [row] = await this.db
+			.update(authBrowserSessions)
+			.set({
+				status: 'driving',
+				claimedBySessionId: sessionId,
+				lastActivityAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.where(
+				and(
+					eq(authBrowserSessions.workspaceId, workspaceId),
+					eq(authBrowserSessions.provider, provider),
+					eq(authBrowserSessions.status, 'idle'),
+				),
+			)
+			.returning()
+		if (!row) return null
+
+		const endpoint = await this.endpointForRow(row)
+		if (!endpoint) {
+			// Container is gone / port not published. Roll back and let the
+			// caller fall back to a per-session sidecar.
+			await this.db
+				.update(authBrowserSessions)
+				.set({
+					status: 'failed',
+					claimedBySessionId: null,
+					error: 'Container disappeared between claim and endpoint resolve',
+					updatedAt: new Date(),
+				})
+				.where(eq(authBrowserSessions.id, row.id))
+			return null
+		}
+
+		logger.info('Workspace browser claimed by agent', {
+			id: row.id,
+			sessionId,
+			workspaceId,
+			provider,
+		})
+		return { id: row.id, host: endpoint.host, port: endpoint.port }
+	}
+
+	/**
+	 * Release a claimed browser back to idle. Safe to call multiple times.
+	 */
+	async releaseFromAgent(id: string): Promise<void> {
+		await this.db
+			.update(authBrowserSessions)
+			.set({
+				status: 'idle',
+				claimedBySessionId: null,
+				lastActivityAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.where(and(eq(authBrowserSessions.id, id), eq(authBrowserSessions.status, 'driving')))
+		logger.info('Workspace browser released to idle', { id })
+	}
+
+	private async touchActivity(id: string): Promise<void> {
+		await this.db
+			.update(authBrowserSessions)
+			.set({ lastActivityAt: new Date(), updatedAt: new Date() })
+			.where(eq(authBrowserSessions.id, id))
+	}
+
+	/**
+	 * Tear down a session's container + network. Idempotent. Used by the
+	 * /cancel route and by the reaper.
 	 */
 	async stopSession(id: string): Promise<void> {
 		const [row] = await this.db
@@ -278,52 +445,59 @@ export class AuthBrowserManager {
 			await this.containers.removeNetwork(row.networkName).catch(() => {})
 		}
 
-		const finalStatus: AuthBrowserStatus = row.status === 'captured' ? 'captured' : 'failed'
+		// 'idle'/'driving' explicit cancellation → failed. Otherwise keep the
+		// terminal status the row already has.
+		const isActive =
+			row.status === 'starting' ||
+			row.status === 'ready' ||
+			row.status === 'idle' ||
+			row.status === 'driving'
 		await this.db
 			.update(authBrowserSessions)
 			.set({
-				status: finalStatus,
+				status: isActive ? 'failed' : row.status,
 				containerId: null,
 				networkName: null,
+				claimedBySessionId: null,
 				updatedAt: new Date(),
 			})
 			.where(eq(authBrowserSessions.id, id))
 	}
 
 	/**
-	 * Mark a session as having captured credentials (encrypted JSON blob).
-	 * Tears down the container as a side effect.
+	 * Reap browsers that have outlived their usefulness:
+	 *   - Past hard TTL (`expires_at < now`)
+	 *   - Idle longer than IDLE_TIMEOUT_MS (`last_activity_at < threshold`)
+	 *
+	 * 'driving' rows are protected — an agent still owns them.
 	 */
-	async markCaptured(id: string, encryptedCredentials: string): Promise<void> {
-		await this.db
-			.update(authBrowserSessions)
-			.set({
-				status: 'captured',
-				capturedCredentials: encryptedCredentials,
-				updatedAt: new Date(),
-			})
-			.where(eq(authBrowserSessions.id, id))
-		await this.stopSession(id)
-	}
-
-	/**
-	 * Reap any session whose expires_at has passed and is still alive.
-	 * Containers + networks get cleaned, row flips to 'expired'.
-	 */
-	async reapExpired(): Promise<void> {
+	async reapStale(): Promise<void> {
 		const now = new Date()
-		const expired = await this.db
+		const idleThreshold = new Date(Date.now() - IDLE_TIMEOUT_MS)
+
+		const stale = await this.db
 			.select()
 			.from(authBrowserSessions)
 			.where(
 				and(
-					inArray(authBrowserSessions.status, ['starting', 'ready']),
-					lt(authBrowserSessions.expiresAt, now),
+					inArray(authBrowserSessions.status, ['starting', 'ready', 'idle']),
+					or(
+						lt(authBrowserSessions.expiresAt, now),
+						and(
+							eq(authBrowserSessions.status, 'idle'),
+							lt(authBrowserSessions.lastActivityAt, idleThreshold),
+						),
+					),
 				),
 			)
 
-		for (const row of expired) {
-			logger.info('Reaping expired auth browser session', { id: row.id })
+		for (const row of stale) {
+			logger.info('Reaping workspace browser', {
+				id: row.id,
+				status: row.status,
+				lastActivityAt: row.lastActivityAt?.toISOString(),
+				expiresAt: row.expiresAt.toISOString(),
+			})
 			if (row.containerId) {
 				await this.containers.stop(row.containerId).catch(() => {})
 				await this.containers.remove(row.containerId).catch(() => {})
@@ -333,21 +507,27 @@ export class AuthBrowserManager {
 			}
 			await this.db
 				.update(authBrowserSessions)
-				.set({ status: 'expired', updatedAt: new Date() })
+				.set({
+					status: 'expired',
+					containerId: null,
+					networkName: null,
+					claimedBySessionId: null,
+					updatedAt: new Date(),
+				})
 				.where(eq(authBrowserSessions.id, row.id))
 		}
 	}
 
 	/**
-	 * Boot-time reconciliation: any 'starting'/'ready' row whose container has
-	 * vanished (e.g. backend died between provision and cleanup) gets marked
-	 * 'failed' so the UI doesn't show ghost connect flows.
+	 * Boot-time reconciliation: any active-state row whose container has
+	 * vanished gets marked 'failed'. 'driving' rows also reset (the owning
+	 * agent session is gone if the backend restarted).
 	 */
 	private async reconcile(): Promise<void> {
 		const candidates = await this.db
 			.select()
 			.from(authBrowserSessions)
-			.where(inArray(authBrowserSessions.status, ['starting', 'ready']))
+			.where(inArray(authBrowserSessions.status, ['starting', 'ready', 'idle', 'driving']))
 
 		for (const row of candidates) {
 			let alive = false
@@ -366,12 +546,26 @@ export class AuthBrowserManager {
 					.set({
 						status: 'failed',
 						error: 'Container missing after backend restart',
+						claimedBySessionId: null,
 						updatedAt: new Date(),
 					})
 					.where(eq(authBrowserSessions.id, row.id))
 				if (row.networkName) {
 					await this.containers.removeNetwork(row.networkName).catch(() => {})
 				}
+			} else if (row.status === 'driving') {
+				// Container is alive but the owning agent session is gone after
+				// restart; demote to idle so the next claim can succeed.
+				await this.db
+					.update(authBrowserSessions)
+					.set({
+						status: 'idle',
+						claimedBySessionId: null,
+						lastActivityAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(authBrowserSessions.id, row.id))
+				logger.info('Recovered driving→idle after backend restart', { id: row.id })
 			}
 		}
 	}
@@ -385,12 +579,7 @@ function isUniqueViolation(err: unknown): boolean {
 
 /**
  * Hit Chromium's HTTP /json/version endpoint until it returns 200 or we time
- * out. The HTTP endpoint comes up before the WebSocket transport does, but
- * once /json/version answers we know Chromium has finished initializing the
- * remote-debugging interface.
- *
- * Logs the discovered webSocketDebuggerUrl on success — useful when debugging
- * cases where Chromium reports an unreachable hostname back to the CRI client.
+ * out. Logs the discovered webSocketDebuggerUrl on success.
  */
 async function probeCdpReady(port: number, timeoutMs: number): Promise<void> {
 	const deadline = Date.now() + timeoutMs
