@@ -28,6 +28,7 @@ export function AgentCreateForm({
 }: AgentCreateFormProps) {
 	const [name, setName] = useState('')
 	const hasAutoCreatedRef = useRef(false)
+	const [descriptionDraft, setDescriptionDraft] = useState('')
 	const [systemPromptDraft, setSystemPromptDraft] = useState('')
 	const [llmProvider, setLlmProvider] = useState('anthropic')
 	const [modelDraft, setModelDraft] = useState('')
@@ -44,6 +45,13 @@ export function AgentCreateForm({
 	const handleNameBlur = () => {
 		if (agent && name.trim() !== agent.name && onUpdate) {
 			onUpdate({ name: name.trim() })
+		}
+	}
+
+	const handleDescriptionBlur = () => {
+		const next = descriptionDraft.trim()
+		if (agent && next !== (agent.description ?? '') && onUpdate) {
+			onUpdate({ description: next })
 		}
 	}
 
@@ -95,6 +103,18 @@ export function AgentCreateForm({
 						el.style.height = `${el.scrollHeight}px`
 					}
 				}}
+			/>
+
+			{/* Description (short one-liner shown on the Agents page card) */}
+			<Input
+				type="text"
+				value={descriptionDraft}
+				onChange={(e) => setDescriptionDraft(e.target.value)}
+				onBlur={handleDescriptionBlur}
+				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+				placeholder="Short description shown on the Agents page"
+				maxLength={80}
+				className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
 			/>
 
 			{/* Metadata badges row */}

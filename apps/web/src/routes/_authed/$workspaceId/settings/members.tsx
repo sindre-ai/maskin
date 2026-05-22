@@ -1,3 +1,4 @@
+import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -43,6 +44,7 @@ function MembersPage() {
 	const [showAddDialog, setShowAddDialog] = useState(false)
 	const [actorId, setActorId] = useState('')
 	const [role, setRole] = useState('member')
+	const [activeHumanId, setActiveHumanId] = useState<string | null>(null)
 
 	const handleAdd = async (e: React.FormEvent) => {
 		e.preventDefault()
@@ -127,17 +129,40 @@ function MembersPage() {
 			) : (
 				<div className="space-y-1">
 					{members.map((member) => (
-						<div key={member.actorId} className="flex items-center gap-3 rounded px-3 py-2">
+						<button
+							type="button"
+							key={member.actorId}
+							className="flex w-full items-center gap-3 rounded px-3 py-2 text-left transition-colors hover:bg-bg-hover cursor-pointer"
+							onClick={() => {
+								if (member.type === 'agent') {
+									navigate({
+										to: '/$workspaceId/agents/$agentId',
+										params: { workspaceId, agentId: member.actorId },
+									})
+								} else {
+									setActiveHumanId(member.actorId)
+								}
+							}}
+						>
 							<ActorAvatar name={member.name} type={member.type} size="md" />
 							<div className="flex-1">
 								<p className="text-sm font-medium text-foreground">{member.name}</p>
 								<p className="text-xs text-muted-foreground">{member.type}</p>
 							</div>
 							<span className="text-xs text-muted-foreground">{member.role}</span>
-						</div>
+						</button>
 					))}
 				</div>
 			)}
+
+			<HumanDetailDialog
+				actorId={activeHumanId}
+				workspaceId={workspaceId}
+				open={activeHumanId !== null}
+				onOpenChange={(open) => {
+					if (!open) setActiveHumanId(null)
+				}}
+			/>
 		</div>
 	)
 }
