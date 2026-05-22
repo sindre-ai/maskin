@@ -11,10 +11,17 @@ const TTL_MS = 10 * 60 * 1000
 const WATCHDOG_INTERVAL_MS = 60_000
 /** Image tag built lazily from `docker/auth-browser/`. */
 const IMAGE = 'maskin-auth-browser:latest'
-/** Wait this long after container start before flipping to 'ready'. Xvfb + Chromium take a moment. */
-const STARTUP_GRACE_MS = 4000
+/** How long the readiness probe will wait for Chromium's /json/version to respond. */
+const STARTUP_PROBE_TIMEOUT_MS = 30_000
+/** Interval between probe attempts. */
+const STARTUP_PROBE_INTERVAL_MS = 250
 /** Poll cadence for waitForReady. */
 const READY_POLL_MS = 250
+/** Host CDP probes connect to. We use 127.0.0.1 explicitly instead of 'localhost'
+ *  because Node 18+ resolves 'localhost' to IPv6 (::1) first, and Docker Desktop
+ *  only binds published ports on IPv4 — yielding "socket hang up" rather than
+ *  ECONNREFUSED. */
+const CDP_HOST = '127.0.0.1'
 
 export type AuthBrowserStatus = 'starting' | 'ready' | 'captured' | 'failed' | 'expired'
 
@@ -196,7 +203,13 @@ export class AuthBrowserManager {
 			})
 
 			await this.containers.start(containerId)
-			await new Promise((resolve) => setTimeout(resolve, STARTUP_GRACE_MS))
+
+			// Probe Chromium's /json/version until it responds. Far more reliable
+			// than a fixed sleep — surfaces "Chromium didn't start" as an explicit
+			// failure rather than letting CRI bang into a half-up port.
+			const port = await this.containers.getPublishedPort(containerId, '9222/tcp')
+			if (!port) throw new Error('CDP port was not published')
+			await probeCdpReady(port, STARTUP_PROBE_TIMEOUT_MS)
 
 			await this.db
 				.update(authBrowserSessions)
@@ -242,7 +255,7 @@ export class AuthBrowserManager {
 		if (!row.containerId) return null
 		const port = await this.containers.getPublishedPort(row.containerId, '9222/tcp')
 		if (!port) return null
-		return { host: 'localhost', port }
+		return { host: CDP_HOST, port }
 	}
 
 	/**
@@ -368,4 +381,45 @@ export class AuthBrowserManager {
 // firing without depending on a pg-specific client type at this layer.
 function isUniqueViolation(err: unknown): boolean {
 	return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505'
+}
+
+/**
+ * Hit Chromium's HTTP /json/version endpoint until it returns 200 or we time
+ * out. The HTTP endpoint comes up before the WebSocket transport does, but
+ * once /json/version answers we know Chromium has finished initializing the
+ * remote-debugging interface.
+ *
+ * Logs the discovered webSocketDebuggerUrl on success — useful when debugging
+ * cases where Chromium reports an unreachable hostname back to the CRI client.
+ */
+async function probeCdpReady(port: number, timeoutMs: number): Promise<void> {
+	const deadline = Date.now() + timeoutMs
+	let lastError: unknown
+	while (Date.now() < deadline) {
+		try {
+			const res = await fetch(`http://${CDP_HOST}:${port}/json/version`, {
+				signal: AbortSignal.timeout(2000),
+			})
+			if (res.ok) {
+				const body = (await res.json().catch(() => null)) as
+					| { webSocketDebuggerUrl?: string; Browser?: string }
+					| null
+				logger.info('CDP ready', {
+					port,
+					browser: body?.Browser,
+					wsUrl: body?.webSocketDebuggerUrl,
+				})
+				return
+			}
+			lastError = new Error(`/json/version returned ${res.status}`)
+		} catch (err) {
+			lastError = err
+		}
+		await new Promise((r) => setTimeout(r, STARTUP_PROBE_INTERVAL_MS))
+	}
+	throw new Error(
+		`CDP never became reachable on ${CDP_HOST}:${port} (last error: ${
+			lastError instanceof Error ? lastError.message : String(lastError)
+		})`,
+	)
 }

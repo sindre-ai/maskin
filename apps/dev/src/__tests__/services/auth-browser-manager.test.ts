@@ -167,7 +167,7 @@ describe('AuthBrowserManager', () => {
 			]
 			const mgr = new AuthBrowserManager(db)
 			const result = await mgr.getCdpEndpoint('abcdef12-rest-of-uuid', 'tok-1')
-			expect(result).toEqual({ host: 'localhost', port: 49876 })
+			expect(result).toEqual({ host: '127.0.0.1', port: 49876 })
 			expect(mockContainerManager.getPublishedPort).toHaveBeenCalledWith(
 				'container-id-123',
 				'9222/tcp',
@@ -278,7 +278,7 @@ describe('AuthBrowserManager', () => {
 			]
 			const mgr = new AuthBrowserManager(db)
 			const result = await mgr.waitForReady('x', 'tok', 2000)
-			expect(result).toEqual({ host: 'localhost', port: 49876 })
+			expect(result).toEqual({ host: '127.0.0.1', port: 49876 })
 		})
 
 		it('returns null when access token does not match', async () => {
