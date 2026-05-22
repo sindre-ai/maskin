@@ -16,6 +16,9 @@ const FRAME_FORMAT = 'jpeg' as const
 const FRAME_QUALITY = 60
 const FRAME_EVERY_NTH = 2
 const STREAM_KEEPALIVE_MS = 30_000
+/** How long the stream/input routes wait for the container to flip to 'ready'.
+ * Covers the 4s Xvfb/Chromium grace + Docker daemon variance. */
+const READY_WAIT_MS = 30_000
 
 type Env = {
 	Variables: {
@@ -114,6 +117,11 @@ app.post('/linkedin/auth-browser/:id/:accessToken/input', async (c) => {
 	const accessToken = c.req.param('accessToken')
 	const inputType = c.req.query('type')
 
+	// Validate input type before opening CDP so unknown/typo types short-circuit cheaply.
+	if (inputType !== 'mouse' && inputType !== 'wheel' && inputType !== 'key') {
+		return c.json(createApiError('BAD_REQUEST', `Unknown input type: ${inputType}`), 400)
+	}
+
 	const endpoint = await mgr.getCdpEndpoint(id, accessToken)
 	if (!endpoint) {
 		return c.json(createApiError('BAD_REQUEST', 'Session not ready or token invalid'), 400)
@@ -132,10 +140,8 @@ app.post('/linkedin/auth-browser/:id/:accessToken/input', async (c) => {
 		const params = body as any
 		if (inputType === 'mouse' || inputType === 'wheel') {
 			await client.Input.dispatchMouseEvent(params)
-		} else if (inputType === 'key') {
-			await client.Input.dispatchKeyEvent(params)
 		} else {
-			return c.json(createApiError('BAD_REQUEST', `Unknown input type: ${inputType}`), 400)
+			await client.Input.dispatchKeyEvent(params)
 		}
 		return c.body(null, 204)
 	} catch (err) {
@@ -159,7 +165,10 @@ app.get('/linkedin/auth-browser/:id/:accessToken/stream', async (c) => {
 	const id = c.req.param('id')
 	const accessToken = c.req.param('accessToken')
 
-	const endpoint = await mgr.getCdpEndpoint(id, accessToken)
+	// The frontend opens this stream immediately after /start returns, but
+	// provisioning runs in the background (~4-8 s for Xvfb + Chromium). Wait
+	// for the row to flip to 'ready' rather than 400ing on the first attempt.
+	const endpoint = await mgr.waitForReady(id, accessToken, READY_WAIT_MS)
 	if (!endpoint) {
 		return c.json(createApiError('BAD_REQUEST', 'Session not ready or token invalid'), 400)
 	}

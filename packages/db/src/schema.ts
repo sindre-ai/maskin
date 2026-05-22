@@ -191,6 +191,12 @@ export const authBrowserSessions = pgTable(
 	(t) => [
 		index('auth_browser_sessions_ws_idx').on(t.workspaceId),
 		index('auth_browser_sessions_expires_idx').on(t.expiresAt),
+		// Enforce at most one active connect flow per workspace. Backstops the
+		// service-layer SELECT in AuthBrowserManager.startSession against TOCTOU
+		// races (e.g. React StrictMode double-mount firing two POSTs in parallel).
+		uniqueIndex('auth_browser_sessions_ws_active_uniq')
+			.on(t.workspaceId)
+			.where(sql`${t.status} IN ('starting', 'ready')`),
 	],
 )
 

@@ -32,6 +32,7 @@ function createMockAuthBrowserManager(overrides?: Partial<Record<string, unknown
 		}),
 		stopSession: vi.fn().mockResolvedValue(undefined),
 		getCdpEndpoint: vi.fn().mockResolvedValue({ host: 'localhost', port: 49876 }),
+		waitForReady: vi.fn().mockResolvedValue({ host: 'localhost', port: 49876 }),
 		markCaptured: vi.fn().mockResolvedValue(undefined),
 		reapExpired: vi.fn().mockResolvedValue(undefined),
 		...overrides,

@@ -243,6 +243,109 @@ describe('AuthBrowserManager', () => {
 		})
 	})
 
+	describe('waitForReady', () => {
+		it('returns endpoint as soon as the row flips to ready', async () => {
+			const { db, mockResults } = createTestContext()
+			// First poll: status='starting'. Second poll: status='ready' (getCdpEndpoint's lookup).
+			mockResults.selectQueue = [
+				[
+					{
+						id: 'x',
+						status: 'starting',
+						accessToken: 'tok',
+						containerId: null,
+						expiresAt: new Date(Date.now() + 60_000),
+					},
+				],
+				[
+					{
+						id: 'x',
+						status: 'ready',
+						accessToken: 'tok',
+						containerId: 'cid',
+						expiresAt: new Date(Date.now() + 60_000),
+					},
+				],
+				[
+					{
+						id: 'x',
+						status: 'ready',
+						accessToken: 'tok',
+						containerId: 'cid',
+						expiresAt: new Date(Date.now() + 60_000),
+					},
+				],
+			]
+			const mgr = new AuthBrowserManager(db)
+			const result = await mgr.waitForReady('x', 'tok', 2000)
+			expect(result).toEqual({ host: 'localhost', port: 49876 })
+		})
+
+		it('returns null when access token does not match', async () => {
+			const { db, mockResults } = createTestContext()
+			mockResults.select = [
+				{
+					id: 'x',
+					status: 'starting',
+					accessToken: 'real',
+					containerId: null,
+					expiresAt: new Date(Date.now() + 60_000),
+				},
+			]
+			const mgr = new AuthBrowserManager(db)
+			expect(await mgr.waitForReady('x', 'wrong', 1000)).toBeNull()
+		})
+
+		it('returns null immediately when status is failed', async () => {
+			const { db, mockResults } = createTestContext()
+			mockResults.select = [
+				{
+					id: 'x',
+					status: 'failed',
+					accessToken: 'tok',
+					containerId: null,
+					expiresAt: new Date(Date.now() + 60_000),
+				},
+			]
+			const mgr = new AuthBrowserManager(db)
+			expect(await mgr.waitForReady('x', 'tok', 1000)).toBeNull()
+		})
+
+		it('returns null when row missing', async () => {
+			const { db, mockResults } = createTestContext()
+			mockResults.select = []
+			const mgr = new AuthBrowserManager(db)
+			expect(await mgr.waitForReady('nope', 'tok', 500)).toBeNull()
+		})
+
+		it('returns null after timeout if still starting', async () => {
+			const { db, mockResults } = createTestContext()
+			mockResults.select = [
+				{
+					id: 'x',
+					status: 'starting',
+					accessToken: 'tok',
+					containerId: null,
+					expiresAt: new Date(Date.now() + 60_000),
+				},
+			]
+			const mgr = new AuthBrowserManager(db)
+			expect(await mgr.waitForReady('x', 'tok', 300)).toBeNull()
+		})
+	})
+
+	describe('startSession unique-violation', () => {
+		it('translates a 23505 unique violation into a friendly error', async () => {
+			const { db, mockResults } = createTestContext()
+			mockResults.selectQueue = [[]]
+			mockResults.insertError = Object.assign(new Error('duplicate key'), { code: '23505' })
+			const mgr = new AuthBrowserManager(db)
+			await expect(
+				mgr.startSession({ workspaceId: 'ws-1', actorId: 'a-1', provider: 'linkedin' }),
+			).rejects.toThrow(/already running/i)
+		})
+	})
+
 	describe('reapExpired', () => {
 		it('tears down expired sessions and flips status to expired', async () => {
 			const { db, mockResults, calls } = createTestContext()

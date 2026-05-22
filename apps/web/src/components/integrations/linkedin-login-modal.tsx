@@ -1,5 +1,11 @@
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { api } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
@@ -30,10 +36,17 @@ export function LinkedInLoginModal({ workspaceId, open, onClose }: Props) {
 	const sessionRef = useRef<{ id: string; accessToken: string } | null>(null)
 	const lastMouseMoveRef = useRef(0)
 	const abortRef = useRef<AbortController | null>(null)
+	// Holds the in-flight POST /start Promise so that React 19 StrictMode's
+	// intentional dev double-invoke (mount → cleanup → mount) reuses the same
+	// request instead of firing a second POST that races past the concurrency
+	// check. Refs persist across the synthetic unmount.
+	type StartResult = Awaited<ReturnType<typeof api.integrations.linkedinAuthBrowser.start>>
+	const bootPromiseRef = useRef<Promise<StartResult> | null>(null)
 
 	const cleanup = useCallback(async () => {
 		abortRef.current?.abort()
 		abortRef.current = null
+		bootPromiseRef.current = null
 		const session = sessionRef.current
 		sessionRef.current = null
 		if (session) {
@@ -46,88 +59,105 @@ export function LinkedInLoginModal({ workspaceId, open, onClose }: Props) {
 		onClose()
 	}, [cleanup, onClose])
 
-	// Boot the flow when the modal opens
+	// Boot the flow when the modal opens. The first StrictMode mount kicks off
+	// /start and stashes the Promise; the synthetic unmount sets `cancelled` on
+	// the first closure; the second mount reuses the Promise and is the one that
+	// actually opens the SSE.
 	useEffect(() => {
 		if (!open) return
-		let alive = true
+		let cancelled = false
 		setState('starting')
 		setErrorMessage(null)
 
 		const boot = async () => {
+			if (!bootPromiseRef.current) {
+				bootPromiseRef.current = api.integrations.linkedinAuthBrowser.start(workspaceId)
+			}
+			let start: StartResult
 			try {
-				const start = await api.integrations.linkedinAuthBrowser.start(workspaceId)
-				if (!alive) return
-				sessionRef.current = { id: start.id, accessToken: start.access_token }
-
-				const controller = new AbortController()
-				abortRef.current = controller
-
-				fetchEventSource(
-					`${API_BASE}/integrations/linkedin/auth-browser/${start.id}/${start.access_token}/stream`,
-					{
-						signal: controller.signal,
-						headers: {
-							Authorization: `Bearer ${getApiKey()}`,
-							'X-Workspace-Id': workspaceId,
-						},
-						onopen: async (res) => {
-							if (res.ok) {
-								setState('streaming')
-								return
-							}
-							// Backend hasn't finished provisioning — poll briefly via SSE close+reopen
-							// (rare; the start grace period in AuthBrowserManager should cover it).
-							throw new Error(`Stream open failed: ${res.status}`)
-						},
-						onmessage: (msg) => {
-							if (msg.event === 'frame') {
-								drawFrame(canvasRef.current, msg.data)
-							} else if (msg.event === 'captured') {
-								setState('captured')
-								queryClient.invalidateQueries({
-									queryKey: queryKeys.integrations.all(workspaceId),
-								})
-								controller.abort()
-								setTimeout(() => onClose(), 1500)
-							} else if (msg.event === 'expired') {
-								setState('expired')
-								controller.abort()
-							} else if (msg.event === 'error') {
-								setState('error')
-								try {
-									const parsed = JSON.parse(msg.data) as { message?: string }
-									setErrorMessage(parsed.message ?? 'Unknown error')
-								} catch {
-									setErrorMessage(msg.data || 'Unknown error')
-								}
-								controller.abort()
-							}
-						},
-						onerror: (err) => {
-							if (!alive) return
-							setState('error')
-							setErrorMessage(err instanceof Error ? err.message : String(err))
-							throw err // stop retry loop
-						},
-						openWhenHidden: true,
-					},
-				).catch(() => {
-					/* errors already surfaced via onerror */
-				})
+				start = await bootPromiseRef.current
 			} catch (err) {
-				if (!alive) return
+				if (cancelled) return
+				bootPromiseRef.current = null
 				setState('error')
 				setErrorMessage(err instanceof Error ? err.message : String(err))
+				return
 			}
+			if (cancelled) return
+			// Guard against opening the SSE twice (the first StrictMode invocation
+			// also reaches here, but its `cancelled` is true so it short-circuits).
+			if (abortRef.current) return
+
+			sessionRef.current = { id: start.id, accessToken: start.access_token }
+			const controller = new AbortController()
+			abortRef.current = controller
+
+			fetchEventSource(
+				`${API_BASE}/integrations/linkedin/auth-browser/${start.id}/${start.access_token}/stream`,
+				{
+					signal: controller.signal,
+					headers: {
+						Authorization: `Bearer ${getApiKey()}`,
+						'X-Workspace-Id': workspaceId,
+					},
+					onopen: async (res) => {
+						if (res.ok) {
+							setState('streaming')
+							return
+						}
+						throw new Error(`Stream open failed: ${res.status}`)
+					},
+					onmessage: (msg) => {
+						if (msg.event === 'frame') {
+							drawFrame(canvasRef.current, msg.data)
+						} else if (msg.event === 'captured') {
+							setState('captured')
+							queryClient.invalidateQueries({
+								queryKey: queryKeys.integrations.all(workspaceId),
+							})
+							controller.abort()
+							setTimeout(() => onClose(), 1500)
+						} else if (msg.event === 'expired') {
+							setState('expired')
+							controller.abort()
+						} else if (msg.event === 'error') {
+							setState('error')
+							try {
+								const parsed = JSON.parse(msg.data) as { message?: string }
+								setErrorMessage(parsed.message ?? 'Unknown error')
+							} catch {
+								setErrorMessage(msg.data || 'Unknown error')
+							}
+							controller.abort()
+						}
+					},
+					onerror: (err) => {
+						if (cancelled) return
+						setState('error')
+						setErrorMessage(err instanceof Error ? err.message : String(err))
+						throw err // stop retry loop
+					},
+					openWhenHidden: true,
+				},
+			).catch(() => {
+				/* errors already surfaced via onerror */
+			})
 		}
 
 		void boot()
 
 		return () => {
-			alive = false
-			void cleanup()
+			cancelled = true
 		}
-	}, [open, workspaceId, cleanup, onClose, queryClient])
+	}, [open, workspaceId, onClose, queryClient])
+
+	// Cleanup when the modal really closes (open → false). Decoupled from the
+	// boot effect so StrictMode's synthetic unmount doesn't tear down a session
+	// the second invocation is about to consume.
+	useEffect(() => {
+		if (open) return
+		void cleanup()
+	}, [open, cleanup])
 
 	const sendInput = useCallback(
 		(type: 'mouse' | 'key' | 'wheel', payload: Record<string, unknown>) => {
@@ -212,13 +242,12 @@ export function LinkedInLoginModal({ workspaceId, open, onClose }: Props) {
 			<DialogContent className="max-w-5xl">
 				<DialogHeader>
 					<DialogTitle>Connect LinkedIn</DialogTitle>
-				</DialogHeader>
-				<div className="space-y-3">
-					<p className="text-xs text-text-secondary">
+					<DialogDescription className="text-xs">
 						Log in to LinkedIn in the window below. We'll capture your session cookies and close the
 						window automatically once you're signed in.
-					</p>
-
+					</DialogDescription>
+				</DialogHeader>
+				<div className="space-y-3">
 					<div className="relative bg-bg-surface border border-border rounded-md overflow-hidden">
 						<canvas
 							ref={canvasRef}

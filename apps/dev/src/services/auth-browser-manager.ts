@@ -13,6 +13,8 @@ const WATCHDOG_INTERVAL_MS = 60_000
 const IMAGE = 'maskin-auth-browser:latest'
 /** Wait this long after container start before flipping to 'ready'. Xvfb + Chromium take a moment. */
 const STARTUP_GRACE_MS = 4000
+/** Poll cadence for waitForReady. */
+const READY_POLL_MS = 250
 
 export type AuthBrowserStatus = 'starting' | 'ready' | 'captured' | 'failed' | 'expired'
 
@@ -97,17 +99,31 @@ export class AuthBrowserManager {
 		const accessToken = randomUUID()
 		const expiresAt = new Date(Date.now() + TTL_MS)
 
-		const [row] = await this.db
-			.insert(authBrowserSessions)
-			.values({
-				workspaceId: params.workspaceId,
-				actorId: params.actorId,
-				provider: params.provider,
-				status: 'starting',
-				accessToken,
-				expiresAt,
-			})
-			.returning()
+		let row: { id: string } | undefined
+		try {
+			const inserted = await this.db
+				.insert(authBrowserSessions)
+				.values({
+					workspaceId: params.workspaceId,
+					actorId: params.actorId,
+					provider: params.provider,
+					status: 'starting',
+					accessToken,
+					expiresAt,
+				})
+				.returning()
+			row = inserted[0]
+		} catch (err) {
+			// Defense in depth against TOCTOU on the SELECT above (e.g. React StrictMode
+			// double-mount firing two POSTs in parallel). The partial unique index
+			// `auth_browser_sessions_ws_active_uniq` rejects the second insert.
+			if (isUniqueViolation(err)) {
+				throw new Error(
+					'Another connect flow is already running in this workspace. Cancel it or wait for it to expire.',
+				)
+			}
+			throw err
+		}
 		if (!row) throw new Error('Failed to insert auth_browser_sessions row')
 
 		// Provision async — surface errors via row status, not via the API
@@ -116,6 +132,42 @@ export class AuthBrowserManager {
 		)
 
 		return { id: row.id, accessToken, expiresAt }
+	}
+
+	/**
+	 * Block until the row flips to 'ready' (resolves the same { host, port } that
+	 * `getCdpEndpoint` would). Returns null on token mismatch / failure / timeout
+	 * so the caller can 400 cleanly.
+	 *
+	 * The provisioning path is fire-and-forget from `startSession`, so the SSE/
+	 * input route can't assume the container is already up when the frontend
+	 * opens it. This helper bridges that gap without blocking `/start`.
+	 */
+	async waitForReady(
+		id: string,
+		accessToken: string,
+		timeoutMs: number,
+	): Promise<{ host: string; port: number } | null> {
+		const deadline = Date.now() + timeoutMs
+		while (Date.now() < deadline) {
+			const [row] = await this.db
+				.select()
+				.from(authBrowserSessions)
+				.where(eq(authBrowserSessions.id, id))
+				.limit(1)
+			if (!row || row.accessToken !== accessToken) return null
+			if (row.status === 'failed' || row.status === 'expired' || row.status === 'captured') {
+				return null
+			}
+			if (row.status === 'ready') {
+				// Row is ready, but the published port may not yet be visible to
+				// Docker. Treat null as transient and keep polling.
+				const endpoint = await this.getCdpEndpoint(id, accessToken)
+				if (endpoint) return endpoint
+			}
+			await new Promise((r) => setTimeout(r, READY_POLL_MS))
+		}
+		return null
 	}
 
 	private async provisionContainer(id: string): Promise<void> {
@@ -310,4 +362,10 @@ export class AuthBrowserManager {
 			}
 		}
 	}
+}
+
+// Postgres unique-violation SQLSTATE; lets us recognize the partial unique index
+// firing without depending on a pg-specific client type at this layer.
+function isUniqueViolation(err: unknown): boolean {
+	return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505'
 }
