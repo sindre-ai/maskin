@@ -134,7 +134,11 @@ app.post('/linkedin/auth-browser/:id/:accessToken/input', async (c) => {
 
 	let client: Awaited<ReturnType<typeof CDP>> | null = null
 	try {
-		client = await CDP({ host: endpoint.host, port: endpoint.port })
+		// `local: true` makes CRI rewrite the webSocketDebuggerUrl using the
+		// host/port we passed in. Chromium reports `ws://127.0.0.1:9223/...`
+		// (its internal port), which CRI would otherwise try to dial verbatim
+		// on the host — wrong port. With this flag CRI dials our host/port.
+		client = await CDP({ host: endpoint.host, port: endpoint.port, local: true })
 		// The frontend sends CDP-shape payloads as-is; we don't validate every field.
 		// biome-ignore lint/suspicious/noExplicitAny: trust the client-shaped CDP body
 		const params = body as any
@@ -203,7 +207,11 @@ app.get('/linkedin/auth-browser/:id/:accessToken/stream', async (c) => {
 		})
 
 		try {
-			client = await CDP({ host: endpoint.host, port: endpoint.port })
+			// `local: true` makes CRI rewrite the webSocketDebuggerUrl using the
+		// host/port we passed in. Chromium reports `ws://127.0.0.1:9223/...`
+		// (its internal port), which CRI would otherwise try to dial verbatim
+		// on the host — wrong port. With this flag CRI dials our host/port.
+		client = await CDP({ host: endpoint.host, port: endpoint.port, local: true })
 			const { Page, Network } = client
 			await Page.enable()
 			await Network.enable()

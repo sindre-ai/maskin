@@ -8,9 +8,18 @@ Xvfb :99 -screen 0 1280x800x24 &
 # Give Xvfb a moment to come up before chromium tries to connect.
 sleep 1
 
+# Why the socat relay:
+#   Chrome 121+ ignores `--remote-debugging-address=0.0.0.0` and binds the CDP
+#   port to 127.0.0.1 only (CVE-2023-2312 / dns-rebinding hardening). Docker
+#   port-forwarding routes host traffic to the container's bridge IP, not
+#   127.0.0.1 inside the container, so the host can't reach Chromium directly.
+#   We work around this by having Chromium listen on 9223 (localhost-only) and
+#   socat relay 0.0.0.0:9222 → 127.0.0.1:9223. The host-published port hits
+#   socat, which forwards into the localhost-bound Chromium.
+socat TCP-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9223 &
+
 # --no-sandbox: required inside Docker (no user namespaces by default).
-# --remote-debugging-port=9222 + --remote-debugging-address=0.0.0.0: expose CDP
-#   to the per-session Docker network (host port stays unpublished).
+# --remote-debugging-port=9223: Chromium's actual CDP port (behind the socat relay).
 # --remote-allow-origins=*: Chrome 111+ blocks WebSocket upgrades from non-localhost
 #   origins by default (DNS-rebinding protection). chrome-remote-interface connects
 #   from the host so the upgrade is rejected ("socket hang up") without this flag.
@@ -20,8 +29,7 @@ sleep 1
 # Open LinkedIn login on startup so the modal user sees the right page immediately.
 DISPLAY=:99 exec chromium \
 	--no-sandbox \
-	--remote-debugging-port=9222 \
-	--remote-debugging-address=0.0.0.0 \
+	--remote-debugging-port=9223 \
 	--remote-allow-origins=* \
 	--user-data-dir=/tmp/chrome-userdata \
 	--disable-blink-features=AutomationControlled \
