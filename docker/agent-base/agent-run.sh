@@ -84,8 +84,11 @@ setup_mcps() {
   local server_count
   server_count=$(echo "$merged" | jq '.mcpServers | length')
   if [ "$server_count" -gt 0 ]; then
-    # Expand env var references (e.g. ${MASKIN_API_URL}, ${MASKIN_API_KEY})
-    echo "$merged" | envsubst > "$mcp_config"
+    # ${VAR} placeholders were already expanded by the session manager before
+    # the JSON was serialized — text-level envsubst here would corrupt JSON for
+    # values containing ", $, or backticks (e.g. LinkedIn cookie's quoted
+    # JSESSIONID). Just write the config as-is.
+    echo "$merged" > "$mcp_config"
     MCP_CONFIG_FILE="$mcp_config"
     echo "[system] MCP servers configured ($server_count servers)"
   fi

@@ -60,6 +60,31 @@ function isContainerGoneError(err: unknown): boolean {
 	return /HTTP code 404/.test(message) || /is not running/.test(message)
 }
 
+/**
+ * Recursively replace `${VAR}` references in string leaves with the
+ * corresponding value from `env`. Walks objects and arrays; non-string
+ * leaves are returned as-is. Used to inline integration tokens and
+ * platform env vars into the MCP config tree before JSON.stringify so
+ * downstream consumers don't need a text-level substitution step
+ * (which corrupts JSON when values contain ", $, or backticks).
+ */
+export function expandEnvRefs<T>(value: T, env: Record<string, string>): T {
+	if (typeof value === 'string') {
+		return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, key) =>
+			env[key] !== undefined ? env[key] : m,
+		) as T
+	}
+	if (Array.isArray(value)) {
+		return value.map((v) => expandEnvRefs(v, env)) as T
+	}
+	if (value && typeof value === 'object') {
+		const out: Record<string, unknown> = {}
+		for (const [k, v] of Object.entries(value)) out[k] = expandEnvRefs(v, env)
+		return out as T
+	}
+	return value
+}
+
 export interface SessionLogEvent extends LogChunk {
 	sessionId: string
 	logId: number
@@ -710,11 +735,13 @@ export class SessionManager extends EventEmitter {
 			envVars.MASKIN_API_KEY = agent.apiKey
 		}
 
-		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } })
+		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
+		// Hold the raw object — we serialize at the bottom after all envVars (including
+		// integration tokens) are known, so ${VAR} placeholders can be expanded with
+		// JSON-safe values. Plain shell envsubst in the container would corrupt JSON
+		// when a value contains characters like " (e.g. the LinkedIn cookie's quoted
+		// JSESSIONID).
 		const agentTools = agent.tools as Record<string, unknown> | null
-		if (agentTools && Object.keys(agentTools).length > 0) {
-			envVars.AGENT_MCP_JSON = JSON.stringify(agentTools)
-		}
 
 		// Inject runtime-specific config
 		if (sessionConfig.runtime_config) {
@@ -786,14 +813,26 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Session-level MCP config (convert array → { mcpServers: { ... } } format)
+		// Session-level MCP config (convert array → { mcpServers: { ... } } format).
+		// Held raw and serialized below alongside AGENT_MCP_JSON.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		let sessionMcps: { mcpServers: Record<string, unknown> } | null = null
 		if (mcps?.length) {
 			const mcpServers: Record<string, unknown> = {}
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp
 			}
-			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
+			sessionMcps = { mcpServers }
+		}
+
+		// Expand ${VAR} placeholders in the MCP configs using the final envVars map,
+		// then serialize. JSON.stringify after substitution guarantees correct
+		// escaping of any special characters in the substituted values.
+		if (agentTools && Object.keys(agentTools).length > 0) {
+			envVars.AGENT_MCP_JSON = JSON.stringify(expandEnvRefs(agentTools, envVars))
+		}
+		if (sessionMcps) {
+			envVars.MCP_SERVERS_JSON = JSON.stringify(expandEnvRefs(sessionMcps, envVars))
 		}
 
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`

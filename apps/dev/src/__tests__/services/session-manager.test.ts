@@ -65,7 +65,7 @@ vi.mock('../../services/workspace-briefing', () => ({
 
 import type { StorageProvider } from '@maskin/storage'
 import { AgentStorageManager } from '../../services/agent-storage'
-import { SessionManager } from '../../services/session-manager'
+import { SessionManager, expandEnvRefs } from '../../services/session-manager'
 import { buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -668,5 +668,54 @@ describe('SessionManager', () => {
 
 			// Watchdog completes without processing the recent session
 		})
+	})
+})
+
+describe('expandEnvRefs', () => {
+	it('substitutes ${VAR} in nested strings without breaking JSON-able values', () => {
+		const input = {
+			mcpServers: {
+				linkedin: {
+					command: 'uvx',
+					args: ['linkedin-mcp-server'],
+					env: { LINKEDIN_COOKIE: '${LINKEDIN_TOKEN}' },
+				},
+			},
+		}
+		// LinkedIn cookie includes a literal quoted JSESSIONID — naive text
+		// substitution into JSON would have broken on this exact value.
+		const env = {
+			LINKEDIN_TOKEN: 'li_at=AQEDAT-abc; JSESSIONID="ajax:9999"',
+		}
+		const out = expandEnvRefs(input, env)
+		const linkedinEnv = (out.mcpServers as Record<string, { env: Record<string, string> }>).linkedin
+			.env
+		expect(linkedinEnv.LINKEDIN_COOKIE).toBe('li_at=AQEDAT-abc; JSESSIONID="ajax:9999"')
+		// And the result still round-trips through JSON.
+		const json = JSON.stringify(out)
+		expect(() => JSON.parse(json)).not.toThrow()
+		const reparsed = JSON.parse(json) as typeof input
+		expect(reparsed.mcpServers.linkedin.env.LINKEDIN_COOKIE).toBe(env.LINKEDIN_TOKEN)
+	})
+
+	it('leaves unknown ${VAR} placeholders untouched', () => {
+		const out = expandEnvRefs({ x: 'hello ${UNDEFINED_VAR}' }, {})
+		expect(out.x).toBe('hello ${UNDEFINED_VAR}')
+	})
+
+	it('walks arrays and nested objects', () => {
+		const input = {
+			args: ['--token=${T}', '--other'],
+			meta: { nested: { val: '${T}' } },
+		}
+		const out = expandEnvRefs(input, { T: 'XYZ' })
+		expect(out.args).toEqual(['--token=XYZ', '--other'])
+		expect(out.meta.nested.val).toBe('XYZ')
+	})
+
+	it('does not touch non-string leaves (numbers, booleans, null)', () => {
+		const input = { n: 42, b: true, z: null }
+		const out = expandEnvRefs(input, { ANY: 'x' })
+		expect(out).toEqual({ n: 42, b: true, z: null })
 	})
 })

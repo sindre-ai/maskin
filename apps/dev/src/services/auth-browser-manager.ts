@@ -401,9 +401,10 @@ async function probeCdpReady(port: number, timeoutMs: number): Promise<void> {
 				signal: AbortSignal.timeout(2000),
 			})
 			if (res.ok) {
-				const body = (await res.json().catch(() => null)) as
-					| { webSocketDebuggerUrl?: string; Browser?: string }
-					| null
+				const body = (await res.json().catch(() => null)) as {
+					webSocketDebuggerUrl?: string
+					Browser?: string
+				} | null
 				logger.info('CDP ready', {
 					port,
 					browser: body?.Browser,

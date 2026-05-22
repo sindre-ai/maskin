@@ -208,10 +208,10 @@ app.get('/linkedin/auth-browser/:id/:accessToken/stream', async (c) => {
 
 		try {
 			// `local: true` makes CRI rewrite the webSocketDebuggerUrl using the
-		// host/port we passed in. Chromium reports `ws://127.0.0.1:9223/...`
-		// (its internal port), which CRI would otherwise try to dial verbatim
-		// on the host — wrong port. With this flag CRI dials our host/port.
-		client = await CDP({ host: endpoint.host, port: endpoint.port, local: true })
+			// host/port we passed in. Chromium reports `ws://127.0.0.1:9223/...`
+			// (its internal port), which CRI would otherwise try to dial verbatim
+			// on the host — wrong port. With this flag CRI dials our host/port.
+			client = await CDP({ host: endpoint.host, port: endpoint.port, local: true })
 			const { Page, Network } = client
 			await Page.enable()
 			await Network.enable()
