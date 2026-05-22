@@ -412,7 +412,12 @@ function buildMentionPrompt(ctx: {
 	notificationId: string
 }): string {
 	return [
-		'You were @mentioned in a comment on an object. Read the comment and the object context, then reply with a comment on the same object.',
+		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
+		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
+		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',
+		'  - doing nothing, if no response is warranted',
+		'',
+		"Let the context guide you — what is being asked explicitly, what's implied by the thread, and what would actually be useful. Action and comment aren't mutually exclusive: it's often right to do the work and post a short comment about it, or to comment first and then act, or just one or the other. Pick whatever genuinely fits.",
 		'',
 		`Object ID: ${ctx.objectId}`,
 		`Commenter actor ID: ${ctx.commenterActorId}`,
@@ -421,7 +426,7 @@ function buildMentionPrompt(ctx: {
 		ctx.content,
 		'"""',
 		'',
-		`After you reply, mark notification ${ctx.notificationId} as resolved.`,
+		`Once you have done whatever you decided to do (including if that's nothing), mark notification ${ctx.notificationId} as resolved.`,
 	].join('\n')
 }
 
