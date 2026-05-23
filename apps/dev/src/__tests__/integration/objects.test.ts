@@ -141,9 +141,18 @@ describe('Objects Integration', () => {
 	describe('POST /api/objects/bulk-update', () => {
 		it('updates many objects in one call and emits one event per object', async () => {
 			const app = createApp()
-			const a = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
-			const b = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
-			const c = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+			const a = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
+			const b = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
+			const c = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/objects/bulk-update', {
@@ -173,8 +182,14 @@ describe('Objects Integration', () => {
 
 		it('handles a mixed-type batch by validating status per type', async () => {
 			const app = createApp()
-			const task = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
-			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet', status: 'signal' })
+			const task = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
+			const bet = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'signal',
+			})
 
 			// Set owner on both — a field every type accepts — so this exercises the
 			// mixed-type happy path without needing a status that's valid for both.
@@ -199,8 +214,14 @@ describe('Objects Integration', () => {
 
 		it('reports per-id failure when status is invalid for the type, leaving siblings updated', async () => {
 			const app = createApp()
-			const task = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
-			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet', status: 'signal' })
+			const task = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
+			const bet = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'bet',
+				status: 'signal',
+			})
 
 			// 'in_progress' is valid for task but not for bet — bet should fail, task should succeed.
 			const res = await app.request(
@@ -212,7 +233,9 @@ describe('Objects Integration', () => {
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			const byId = new Map(body.results.map((r: { id: string; ok: boolean; error?: string }) => [r.id, r]))
+			const byId = new Map(
+				body.results.map((r: { id: string; ok: boolean; error?: string }) => [r.id, r]),
+			)
 			expect(byId.get(task.id)).toMatchObject({ ok: true })
 			expect(byId.get(bet.id)).toMatchObject({ ok: false })
 			expect(byId.get(bet.id).error).toContain('Invalid status')
@@ -225,12 +248,18 @@ describe('Objects Integration', () => {
 
 		it('filters out objects the caller has no access to', async () => {
 			const app = createApp()
-			const mine = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+			const mine = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+			})
 
 			// Object in another workspace where the caller has no membership.
 			const otherActor = await insertActor(db)
 			const otherWs = await insertWorkspace(db, otherActor.id)
-			const theirs = await insertObject(db, otherWs.id, otherActor.id, { type: 'task', status: 'todo' })
+			const theirs = await insertObject(db, otherWs.id, otherActor.id, {
+				type: 'task',
+				status: 'todo',
+			})
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/objects/bulk-update', {
@@ -241,7 +270,9 @@ describe('Objects Integration', () => {
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			const byId = new Map(body.results.map((r: { id: string; ok: boolean; error?: string }) => [r.id, r]))
+			const byId = new Map(
+				body.results.map((r: { id: string; ok: boolean; error?: string }) => [r.id, r]),
+			)
 			expect(byId.get(mine.id)).toMatchObject({ ok: true })
 			expect(byId.get(theirs.id)).toMatchObject({ ok: false, error: 'Object not found' })
 

@@ -931,7 +931,7 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 
 	type Plan = {
 		id: string
-		previous: typeof existingRows[number]
+		previous: (typeof existingRows)[number]
 		updateData: Partial<typeof objects.$inferInsert>
 		action: 'updated' | 'status_changed'
 	}
