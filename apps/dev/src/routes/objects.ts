@@ -8,11 +8,14 @@ import {
 	readState,
 	relationships,
 	subscriptions,
+	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	bulkUpdateObjectsResponseSchema,
+	bulkUpdateObjectsSchema,
 	createObjectSchema,
 	formatEventDescription,
 	migrateObjectTypeResponseSchema,
@@ -858,6 +861,158 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 	})
 
 	return c.json({ mode: 'delete' as const, fromType: body.fromType, count: toDelete.length }, 200)
+})
+
+// POST /bulk-update - Update many objects in one call with per-id partial failure
+const bulkUpdateObjectsRoute = createRoute({
+	method: 'post',
+	path: '/bulk-update',
+	tags: ['Objects'],
+	summary: 'Bulk update objects',
+	request: {
+		body: {
+			content: {
+				'application/json': {
+					schema: bulkUpdateObjectsSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: bulkUpdateObjectsResponseSchema } },
+			description: 'Bulk update completed (per-id results, including failures)',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+	},
+})
+
+app.openapi(bulkUpdateObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { ids, patch } = c.req.valid('json')
+
+	// Dedup so duplicates in the request don't double-write or double-report.
+	const uniqueIds = Array.from(new Set(ids))
+
+	const existingRows = await db.select().from(objects).where(inArray(objects.id, uniqueIds))
+	const existingById = new Map(existingRows.map((row) => [row.id, row]))
+
+	// Resolve membership + workspace settings once per touched workspace.
+	const touchedWorkspaceIds = Array.from(new Set(existingRows.map((row) => row.workspaceId)))
+
+	const memberWorkspaceIds = new Set<string>()
+	if (touchedWorkspaceIds.length > 0) {
+		const memberRows = await db
+			.select({ workspaceId: workspaceMembers.workspaceId })
+			.from(workspaceMembers)
+			.where(
+				and(
+					eq(workspaceMembers.actorId, actorId),
+					inArray(workspaceMembers.workspaceId, touchedWorkspaceIds),
+				),
+			)
+		for (const row of memberRows) memberWorkspaceIds.add(row.workspaceId)
+	}
+
+	const workspaceSettingsById = new Map<string, WorkspaceSettings>()
+	if (patch.status !== undefined && memberWorkspaceIds.size > 0) {
+		const wsRows = await db
+			.select()
+			.from(workspaces)
+			.where(inArray(workspaces.id, Array.from(memberWorkspaceIds)))
+		for (const ws of wsRows) {
+			workspaceSettingsById.set(ws.id, ws.settings as WorkspaceSettings)
+		}
+	}
+
+	type Plan = {
+		id: string
+		previous: typeof existingRows[number]
+		updateData: Partial<typeof objects.$inferInsert>
+		action: 'updated' | 'status_changed'
+	}
+	const plans: Plan[] = []
+	const results: { id: string; ok: boolean; error?: string }[] = []
+	const now = new Date()
+
+	for (const id of uniqueIds) {
+		const existing = existingById.get(id)
+		// Collapse "missing" and "not a workspace member" into one message so the
+		// endpoint never leaks whether an out-of-scope id actually exists.
+		if (!existing || !memberWorkspaceIds.has(existing.workspaceId)) {
+			results.push({ id, ok: false, error: 'Object not found' })
+			continue
+		}
+
+		if (patch.status !== undefined) {
+			const validStatuses = workspaceSettingsById.get(existing.workspaceId)?.statuses?.[
+				existing.type
+			]
+			if (validStatuses && !validStatuses.includes(patch.status)) {
+				results.push({
+					id,
+					ok: false,
+					error: `Invalid status '${patch.status}' for type '${existing.type}'`,
+				})
+				continue
+			}
+		}
+
+		const updateData: Partial<typeof objects.$inferInsert> = { updatedAt: now }
+		if (patch.status !== undefined) updateData.status = patch.status
+		if (patch.owner !== undefined) updateData.owner = patch.owner
+		if (patch.metadata !== undefined) {
+			updateData.metadata = existing.metadata
+				? { ...(existing.metadata as Record<string, unknown>), ...patch.metadata }
+				: patch.metadata
+		}
+
+		plans.push({
+			id,
+			previous: existing,
+			updateData,
+			action:
+				patch.status !== undefined && patch.status !== existing.status
+					? 'status_changed'
+					: 'updated',
+		})
+		results.push({ id, ok: true })
+	}
+
+	if (plans.length > 0) {
+		await db.transaction(async (tx) => {
+			for (const plan of plans) {
+				const [updated] = await tx
+					.update(objects)
+					.set(plan.updateData)
+					.where(eq(objects.id, plan.id))
+					.returning()
+				await tx.insert(events).values({
+					workspaceId: plan.previous.workspaceId,
+					actorId,
+					action: plan.action,
+					entityType: plan.previous.type,
+					entityId: plan.id,
+					data: { previous: plan.previous, updated },
+				})
+			}
+		})
+	}
+
+	const okCount = results.filter((r) => r.ok).length
+	logger.info('bulk-update objects', {
+		actorId,
+		requested: ids.length,
+		deduped: uniqueIds.length,
+		updated: okCount,
+		failed: uniqueIds.length - okCount,
+	})
+
+	return c.json({ results }, 200)
 })
 
 app.openapi(deleteObjectRoute, async (c) => {

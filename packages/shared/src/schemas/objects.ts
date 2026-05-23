@@ -26,6 +26,32 @@ export const updateObjectSchema = z.object({
 	owner: z.string().uuid().nullable().optional(),
 })
 
+/** Bulk-update many objects in one call. Status/owner/metadata are validated
+ * per-id against the existing object so a single bad row never poisons the batch
+ * — the response shape is `{ results: { id, ok, error? }[] }`. */
+export const bulkUpdateObjectsSchema = z.object({
+	ids: z.array(z.string().uuid()).min(1).max(200),
+	patch: z
+		.object({
+			status: z.string().optional(),
+			owner: z.string().uuid().nullable().optional(),
+			metadata: safeMetadataSchema.optional(),
+		})
+		.refine((p) => p.status !== undefined || p.owner !== undefined || p.metadata !== undefined, {
+			message: 'patch must include at least one of status, owner, metadata',
+		}),
+})
+
+export const bulkUpdateObjectsResultSchema = z.object({
+	id: z.string().uuid(),
+	ok: z.boolean(),
+	error: z.string().optional(),
+})
+
+export const bulkUpdateObjectsResponseSchema = z.object({
+	results: z.array(bulkUpdateObjectsResultSchema),
+})
+
 /** Bulk-migrate or delete every object of a given type within a workspace.
  * Used when an extension is removed/disabled, to avoid orphaning rows whose
  * `type` no longer maps to anything in workspace.settings. */

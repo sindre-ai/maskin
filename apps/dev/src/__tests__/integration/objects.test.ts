@@ -1,5 +1,5 @@
-import { events } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { events, objects } from '@maskin/db/schema'
+import { eq, inArray } from 'drizzle-orm'
 import { buildCreateObjectBody, insertActor, insertObject, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
@@ -135,6 +135,138 @@ describe('Objects Integration', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].workspaceId).toBe(workspaceId)
+		})
+	})
+
+	describe('POST /api/objects/bulk-update', () => {
+		it('updates many objects in one call and emits one event per object', async () => {
+			const app = createApp()
+			const a = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+			const b = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+			const c = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/bulk-update', {
+					ids: [a.id, b.id, c.id],
+					patch: { status: 'in_progress' },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.results).toHaveLength(3)
+			expect(body.results.every((r: { ok: boolean }) => r.ok)).toBe(true)
+
+			const rows = await db
+				.select()
+				.from(objects)
+				.where(inArray(objects.id, [a.id, b.id, c.id]))
+			expect(rows.every((row) => row.status === 'in_progress')).toBe(true)
+
+			const logged = await db
+				.select()
+				.from(events)
+				.where(inArray(events.entityId, [a.id, b.id, c.id]))
+			// Each object gets a create event plus one status_changed event from the bulk update.
+			expect(logged.filter((e) => e.action === 'status_changed')).toHaveLength(3)
+		})
+
+		it('handles a mixed-type batch by validating status per type', async () => {
+			const app = createApp()
+			const task = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet', status: 'signal' })
+
+			// Set owner on both — a field every type accepts — so this exercises the
+			// mixed-type happy path without needing a status that's valid for both.
+			const ownerId = getTestActorId()
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/bulk-update', {
+					ids: [task.id, bet.id],
+					patch: { owner: ownerId },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.results.map((r: { ok: boolean }) => r.ok)).toEqual([true, true])
+
+			const rows = await db
+				.select()
+				.from(objects)
+				.where(inArray(objects.id, [task.id, bet.id]))
+			expect(rows.every((row) => row.owner === ownerId)).toBe(true)
+		})
+
+		it('reports per-id failure when status is invalid for the type, leaving siblings updated', async () => {
+			const app = createApp()
+			const task = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+			const bet = await insertObject(db, workspaceId, getTestActorId(), { type: 'bet', status: 'signal' })
+
+			// 'in_progress' is valid for task but not for bet — bet should fail, task should succeed.
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/bulk-update', {
+					ids: [task.id, bet.id],
+					patch: { status: 'in_progress' },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const byId = new Map(body.results.map((r: { id: string; ok: boolean; error?: string }) => [r.id, r]))
+			expect(byId.get(task.id)).toMatchObject({ ok: true })
+			expect(byId.get(bet.id)).toMatchObject({ ok: false })
+			expect(byId.get(bet.id).error).toContain('Invalid status')
+
+			const [taskAfter] = await db.select().from(objects).where(eq(objects.id, task.id))
+			const [betAfter] = await db.select().from(objects).where(eq(objects.id, bet.id))
+			expect(taskAfter.status).toBe('in_progress')
+			expect(betAfter.status).toBe('signal') // unchanged
+		})
+
+		it('filters out objects the caller has no access to', async () => {
+			const app = createApp()
+			const mine = await insertObject(db, workspaceId, getTestActorId(), { type: 'task', status: 'todo' })
+
+			// Object in another workspace where the caller has no membership.
+			const otherActor = await insertActor(db)
+			const otherWs = await insertWorkspace(db, otherActor.id)
+			const theirs = await insertObject(db, otherWs.id, otherActor.id, { type: 'task', status: 'todo' })
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/bulk-update', {
+					ids: [mine.id, theirs.id],
+					patch: { status: 'in_progress' },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const byId = new Map(body.results.map((r: { id: string; ok: boolean; error?: string }) => [r.id, r]))
+			expect(byId.get(mine.id)).toMatchObject({ ok: true })
+			expect(byId.get(theirs.id)).toMatchObject({ ok: false, error: 'Object not found' })
+
+			const [theirsAfter] = await db.select().from(objects).where(eq(objects.id, theirs.id))
+			expect(theirsAfter.status).toBe('todo')
+		})
+
+		it('shallow-merges metadata so partial patches keep existing fields', async () => {
+			const app = createApp()
+			const obj = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				metadata: { source: 'slack', priority: 'low' },
+			})
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/bulk-update', {
+					ids: [obj.id],
+					patch: { metadata: { priority: 'high' } },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const [after] = await db.select().from(objects).where(eq(objects.id, obj.id))
+			expect(after.metadata).toEqual({ source: 'slack', priority: 'high' })
 		})
 	})
 
