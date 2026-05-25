@@ -78,9 +78,7 @@ export function BulkActionBar({
 		if (!visible && confirmOpen) setConfirmOpen(false)
 	}, [visible, confirmOpen])
 
-	const transitionClass = reducedMotion
-		? ''
-		: 'transition-all duration-200 ease-out motion-safe:transform'
+	const transitionClass = reducedMotion ? '' : 'transition-all duration-200 ease-out'
 
 	return (
 		<>
@@ -114,7 +112,7 @@ export function BulkActionBar({
 					}}
 					disabled={statusOptions.length === 0 || !onStatusChange}
 				>
-					<SelectTrigger className="rounded-full" aria-label="Set status">
+					<SelectTrigger aria-label="Set status">
 						<SelectValue placeholder="Status" />
 					</SelectTrigger>
 					<SelectContent>
@@ -132,7 +130,7 @@ export function BulkActionBar({
 					}}
 					disabled={ownerOptions.length === 0 || !onOwnerChange}
 				>
-					<SelectTrigger className="rounded-full" aria-label="Set owner">
+					<SelectTrigger aria-label="Set owner">
 						<SelectValue placeholder="Owner" />
 					</SelectTrigger>
 					<SelectContent>
