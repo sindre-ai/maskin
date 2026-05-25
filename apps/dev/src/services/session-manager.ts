@@ -92,6 +92,15 @@ export class SessionManager extends EventEmitter {
 	private static readonly STDOUT_TAIL_BYTES = 64 * 1024
 	/** Max time to wait for the log stream to drain before parsing usage. */
 	private static readonly LOGS_DRAIN_TIMEOUT_MS = 5000
+	/**
+	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
+	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
+	 * `session_logs` stops growing and the idle watchdog ~10 min later mistakes
+	 * the silence for an idle agent and force-pauses a still-running container.
+	 * Reconnect a handful of times before giving up.
+	 */
+	private static readonly LOG_STREAM_MAX_RECONNECTS = 5
+	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 
@@ -342,18 +351,20 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 
 		try {
-			// Tar the agent workspace
-			await this.containers.exec(session.containerId, [
-				'tar',
-				'-czf',
-				'/tmp/snapshot.tar.gz',
-				'/agent/',
-			])
+			// dockerode's getArchive (copyFrom) already returns a tar archive of
+			// the container path — entries are prefixed with `agent/`. Stream
+			// that straight to S3 with no extra packaging.
+			//
+			// The earlier implementation ran `tar -czf /tmp/snapshot.tar.gz
+			// /agent/` inside the container and then copied THAT file out,
+			// which wrapped the gzipped tar in a second (uncompressed) tar from
+			// dockerode. The bytes saved to S3 were `tar(snapshot.tar.gz)`, not
+			// `snapshot.tar.gz`, so `tar -xzf` on resume always failed with
+			// "not in gzip format" and the resume catch block silently marked
+			// the session failed — losing the workspace.
+			const tarStream = await this.containers.copyFrom(session.containerId, '/agent/')
 
-			const tarStream = await this.containers.copyFrom(session.containerId, '/tmp/snapshot.tar.gz')
-
-			// Stream snapshot directly to S3
-			const snapshotKey = `snapshots/${sessionId}.tar.gz`
+			const snapshotKey = `snapshots/${sessionId}.tar`
 			await this.storage.put(snapshotKey, tarStream as import('node:stream').Readable)
 
 			// Stop and remove container
@@ -466,9 +477,16 @@ export class SessionManager extends EventEmitter {
 			await chmod(tempDir, 0o777)
 			this.activeSessions.set(sessionId, { tempDir })
 
-			const snapshotPath = join(tempDir, 'snapshot.tar.gz')
+			const snapshotPath = join(tempDir, 'snapshot.tar')
 			await writeFile(snapshotPath, snapshotBuffer)
-			await execFileAsync('tar', ['-xzf', snapshotPath, '-C', tempDir])
+			// The snapshot is an uncompressed tar from dockerode's getArchive,
+			// rooted at `agent/...`. Strip that prefix so files land at
+			// tempDir/skills, tempDir/workspace, etc., which is what the
+			// `${tempDir}:/agent` bind mount expects. Remove the tarball
+			// afterwards so it doesn't appear as a stray `/agent/snapshot.tar`
+			// inside the resumed container.
+			await execFileAsync('tar', ['-xf', snapshotPath, '-C', tempDir, '--strip-components=1'])
+			await rm(snapshotPath, { force: true })
 
 			// Pull latest agent files AND workspace skills — between pause and resume
 			// the attachment set and skill content may have changed, so overwrite
@@ -843,53 +861,85 @@ export class SessionManager extends EventEmitter {
 
 	private streamContainerLogs(sessionId: string, containerId: string) {
 		const drained = (async () => {
-			try {
-				for await (const chunk of this.containers.logs(containerId)) {
-					const [log] = await this.db
-						.insert(sessionLogs)
-						.values({
-							sessionId,
-							stream: chunk.stream,
-							content: chunk.data,
-						})
-						.returning()
+			// First connect replays history (`tail: 'all'`); reconnects after a
+			// transient drop pick up from "now" (`tail: 0`) so we don't duplicate
+			// every prior log row. A few seconds of missed output is acceptable —
+			// the goal is just to keep the stream alive so the idle watchdog
+			// doesn't mistake stream silence for agent inactivity.
+			let attempt = 0
+			let firstConnect = true
+			while (true) {
+				try {
+					const logOpts = firstConnect ? {} : { tail: 0 as const }
+					firstConnect = false
+					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
+						attempt = 0
+						const [log] = await this.db
+							.insert(sessionLogs)
+							.values({
+								sessionId,
+								stream: chunk.stream,
+								content: chunk.data,
+							})
+							.returning()
 
-					if (log) {
-						this.emit('log', {
-							sessionId,
-							logId: log.id,
-							stream: chunk.stream,
-							data: chunk.data,
-						} satisfies SessionLogEvent)
-					}
+						if (log) {
+							this.emit('log', {
+								sessionId,
+								logId: log.id,
+								stream: chunk.stream,
+								data: chunk.data,
+							} satisfies SessionLogEvent)
+						}
 
-					if (chunk.stream === 'stdout') {
-						const sessionData = this.activeSessions.get(sessionId)
-						if (sessionData) {
-							const next = (sessionData.stdoutTail ?? '') + chunk.data
-							sessionData.stdoutTail =
-								next.length > SessionManager.STDOUT_TAIL_BYTES
-									? next.slice(next.length - SessionManager.STDOUT_TAIL_BYTES)
-									: next
+						if (chunk.stream === 'stdout') {
+							const sessionData = this.activeSessions.get(sessionId)
+							if (sessionData) {
+								const next = (sessionData.stdoutTail ?? '') + chunk.data
+								sessionData.stdoutTail =
+									next.length > SessionManager.STDOUT_TAIL_BYTES
+										? next.slice(next.length - SessionManager.STDOUT_TAIL_BYTES)
+										: next
+							}
 						}
 					}
-				}
-			} catch (err) {
-				logger.error('Log streaming failed', {
-					sessionId,
-					error: String(err),
-				})
-				// Surface the interruption so SSE clients don't hang on a blank
-				// spinner while the container keeps running without logs.
-				await this.insertSystemLog(
-					sessionId,
-					'Log stream interrupted — session may still be running',
-				).catch((logErr) =>
-					logger.error('Failed to write log-stream-interrupted system log', {
+					// Stream ended naturally — container exited and Docker closed the
+					// connection. `watchContainerExit` will handle terminal cleanup.
+					return
+				} catch (err) {
+					attempt++
+					logger.warn('Log stream errored', {
 						sessionId,
-						error: String(logErr),
-					}),
-				)
+						error: String(err),
+						attempt,
+					})
+
+					// If the container is gone we can't recover the stream. Let the
+					// exit watcher take it from here.
+					if (!(await this.isContainerAlive(containerId))) {
+						logger.info('Log stream ended; container no longer running', { sessionId })
+						return
+					}
+
+					if (attempt >= SessionManager.LOG_STREAM_MAX_RECONNECTS) {
+						// Genuinely cannot reattach. Surface to SSE clients so they
+						// don't sit on a blank spinner indefinitely.
+						await this.insertSystemLog(
+							sessionId,
+							'Log stream interrupted — session may still be running',
+						).catch((logErr) =>
+							logger.error('Failed to write log-stream-interrupted system log', {
+								sessionId,
+								error: String(logErr),
+							}),
+						)
+						return
+					}
+
+					await new Promise((resolve) =>
+						setTimeout(resolve, SessionManager.LOG_STREAM_RECONNECT_DELAY_MS),
+					)
+				}
 			}
 		})()
 
@@ -1198,12 +1248,37 @@ export class SessionManager extends EventEmitter {
 				.limit(1)
 
 			const lastActivity = lastLog?.createdAt ?? session.startedAt
-			if (lastActivity && lastActivity < tenMinutesAgo) {
+			if (!lastActivity || lastActivity >= tenMinutesAgo) continue
+
+			// The "no logs in 10 min" heuristic gives a false positive whenever
+			// dockerode's log stream drops mid-session — the session_logs table
+			// stops growing even though the container is happily working. Before
+			// pausing, confirm the container is actually gone *or* genuinely
+			// idle; if it's still running, leave the reattach loop in
+			// streamContainerLogs to recover and try again next tick.
+			if (!session.containerId) {
 				logger.info(`Auto-pausing idle session: ${session.id}`)
 				this.pauseSession(session.id).catch((err) =>
 					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
 				)
+				continue
 			}
+
+			if (!(await this.isContainerAlive(session.containerId))) {
+				// Container died but the exit watcher hasn't noticed (e.g.,
+				// inspect calls were transiently failing). Skip this tick;
+				// watchContainerExit will route it to terminal-failed once it
+				// recovers, or the timeout reaper will catch it.
+				logger.warn('Skipping auto-pause: container is no longer running', {
+					sessionId: session.id,
+				})
+				continue
+			}
+
+			logger.info(`Auto-pausing idle session: ${session.id}`)
+			this.pauseSession(session.id).catch((err) =>
+				logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+			)
 		}
 
 		// 3. Archive old paused sessions (7 days)

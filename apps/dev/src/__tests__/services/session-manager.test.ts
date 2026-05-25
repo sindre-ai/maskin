@@ -336,16 +336,14 @@ describe('SessionManager', () => {
 
 			await manager.pauseSession(session.id)
 
-			expect(mockContainerManager.exec).toHaveBeenCalledWith('container-xyz', [
-				'tar',
-				'-czf',
-				'/tmp/snapshot.tar.gz',
-				'/agent/',
-			])
+			// Snapshot is streamed via dockerode's getArchive — no in-container
+			// `tar -czf` exec, no double-wrapping. Stored at `.tar` (uncompressed).
+			expect(mockContainerManager.exec).not.toHaveBeenCalled()
+			expect(mockContainerManager.copyFrom).toHaveBeenCalledWith('container-xyz', '/agent/')
 			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-xyz')
 			expect(mockContainerManager.remove).toHaveBeenCalledWith('container-xyz')
 			expect(storageProvider.put).toHaveBeenCalledWith(
-				`snapshots/${session.id}.tar.gz`,
+				`snapshots/${session.id}.tar`,
 				expect.anything(),
 			)
 		})
@@ -364,9 +362,9 @@ describe('SessionManager', () => {
 			})
 			mockResults.select = [session]
 			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
-			mockContainerManager.exec.mockRejectedValueOnce(new Error('exec failed'))
+			mockContainerManager.copyFrom.mockRejectedValueOnce(new Error('copy failed'))
 
-			await expect(manager.pauseSession(session.id)).rejects.toThrow('exec failed')
+			await expect(manager.pauseSession(session.id)).rejects.toThrow('copy failed')
 			// Status should be reverted to running (via the catch block's db.update call)
 		})
 
@@ -381,7 +379,7 @@ describe('SessionManager', () => {
 			await manager.pauseSession(session.id)
 
 			// Must not attempt snapshot work on a dead container
-			expect(mockContainerManager.exec).not.toHaveBeenCalled()
+			expect(mockContainerManager.copyFrom).not.toHaveBeenCalled()
 			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 			expect(storageProvider.put).not.toHaveBeenCalled()
 			// Should resolve (not throw) so the auto-pause loop doesn't keep retrying
@@ -395,7 +393,7 @@ describe('SessionManager', () => {
 			mockResults.select = [session]
 			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
 			// dockerode-style 409 thrown after we started snapshotting
-			mockContainerManager.exec.mockRejectedValueOnce(
+			mockContainerManager.copyFrom.mockRejectedValueOnce(
 				Object.assign(new Error('(HTTP code 409) container is not running'), {
 					statusCode: 409,
 				}),
