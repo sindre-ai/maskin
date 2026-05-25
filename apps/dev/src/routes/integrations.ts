@@ -592,11 +592,10 @@ app.openapi(listSlackConversationsRoute, (async (c) => {
 		types = ['public_channel', 'private_channel', 'im', 'mpim']
 	}
 
-	const provider = getProvider('slack')
-	const tokenManager = new TokenManager()
-	const accessToken = await tokenManager.getValidToken(db, integration.id, provider)
-
 	try {
+		const provider = getProvider('slack')
+		const tokenManager = new TokenManager()
+		const accessToken = await tokenManager.getValidToken(db, integration.id, provider)
 		const conversations = await listSlackConversations(integration.id, accessToken, types)
 		return c.json(conversations)
 	} catch (err) {
@@ -661,11 +660,10 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 		.limit(1)
 	if (!integration) return c.json(createApiError('NOT_FOUND', 'Slack integration not found'), 404)
 
-	const provider = getProvider('slack')
-	const tokenManager = new TokenManager()
-	const accessToken = await tokenManager.getValidToken(db, integration.id, provider)
-
 	try {
+		const provider = getProvider('slack')
+		const tokenManager = new TokenManager()
+		const accessToken = await tokenManager.getValidToken(db, integration.id, provider)
 		const users = await listSlackUsers(integration.id, accessToken)
 		return c.json(users)
 	} catch (err) {
