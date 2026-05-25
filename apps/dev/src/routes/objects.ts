@@ -8,7 +8,6 @@ import {
 	readState,
 	relationships,
 	subscriptions,
-	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
@@ -870,6 +869,7 @@ const bulkUpdateObjectsRoute = createRoute({
 	tags: ['Objects'],
 	summary: 'Bulk update objects',
 	request: {
+		headers: workspaceIdHeader,
 		body: {
 			content: {
 				'application/json': {
@@ -893,40 +893,26 @@ const bulkUpdateObjectsRoute = createRoute({
 app.openapi(bulkUpdateObjectsRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { ids, patch } = c.req.valid('json')
 
 	// Dedup so duplicates in the request don't double-write or double-report.
 	const uniqueIds = Array.from(new Set(ids))
 
-	const existingRows = await db.select().from(objects).where(inArray(objects.id, uniqueIds))
+	// Scope the fetch to the header workspace — ids that don't belong here
+	// collapse into "Object not found" without revealing whether they exist
+	// elsewhere. authMiddleware has already verified the caller is a member
+	// of this workspace, so no inline membership check is needed.
+	const existingRows = await db
+		.select()
+		.from(objects)
+		.where(and(inArray(objects.id, uniqueIds), eq(objects.workspaceId, workspaceId)))
 	const existingById = new Map(existingRows.map((row) => [row.id, row]))
 
-	// Resolve membership + workspace settings once per touched workspace.
-	const touchedWorkspaceIds = Array.from(new Set(existingRows.map((row) => row.workspaceId)))
-
-	const memberWorkspaceIds = new Set<string>()
-	if (touchedWorkspaceIds.length > 0) {
-		const memberRows = await db
-			.select({ workspaceId: workspaceMembers.workspaceId })
-			.from(workspaceMembers)
-			.where(
-				and(
-					eq(workspaceMembers.actorId, actorId),
-					inArray(workspaceMembers.workspaceId, touchedWorkspaceIds),
-				),
-			)
-		for (const row of memberRows) memberWorkspaceIds.add(row.workspaceId)
-	}
-
-	const workspaceSettingsById = new Map<string, WorkspaceSettings>()
-	if (patch.status !== undefined && memberWorkspaceIds.size > 0) {
-		const wsRows = await db
-			.select()
-			.from(workspaces)
-			.where(inArray(workspaces.id, Array.from(memberWorkspaceIds)))
-		for (const ws of wsRows) {
-			workspaceSettingsById.set(ws.id, ws.settings as WorkspaceSettings)
-		}
+	let workspaceSettings: WorkspaceSettings | undefined
+	if (patch.status !== undefined && existingRows.length > 0) {
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+		workspaceSettings = ws?.settings as WorkspaceSettings | undefined
 	}
 
 	type Plan = {
@@ -941,17 +927,13 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 
 	for (const id of uniqueIds) {
 		const existing = existingById.get(id)
-		// Collapse "missing" and "not a workspace member" into one message so the
-		// endpoint never leaks whether an out-of-scope id actually exists.
-		if (!existing || !memberWorkspaceIds.has(existing.workspaceId)) {
+		if (!existing) {
 			results.push({ id, ok: false, error: 'Object not found' })
 			continue
 		}
 
 		if (patch.status !== undefined) {
-			const validStatuses = workspaceSettingsById.get(existing.workspaceId)?.statuses?.[
-				existing.type
-			]
+			const validStatuses = workspaceSettings?.statuses?.[existing.type]
 			if (validStatuses && !validStatuses.includes(patch.status)) {
 				results.push({
 					id,

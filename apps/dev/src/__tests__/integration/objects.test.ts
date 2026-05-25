@@ -155,10 +155,15 @@ describe('Objects Integration', () => {
 			})
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/objects/bulk-update', {
-					ids: [a.id, b.id, c.id],
-					patch: { status: 'in_progress' },
-				}),
+				jsonRequest(
+					'POST',
+					'/api/objects/bulk-update',
+					{
+						ids: [a.id, b.id, c.id],
+						patch: { status: 'in_progress' },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
 			)
 
 			expect(res.status).toBe(200)
@@ -195,10 +200,15 @@ describe('Objects Integration', () => {
 			// mixed-type happy path without needing a status that's valid for both.
 			const ownerId = getTestActorId()
 			const res = await app.request(
-				jsonRequest('POST', '/api/objects/bulk-update', {
-					ids: [task.id, bet.id],
-					patch: { owner: ownerId },
-				}),
+				jsonRequest(
+					'POST',
+					'/api/objects/bulk-update',
+					{
+						ids: [task.id, bet.id],
+						patch: { owner: ownerId },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
 			)
 
 			expect(res.status).toBe(200)
@@ -225,10 +235,15 @@ describe('Objects Integration', () => {
 
 			// 'in_progress' is valid for task but not for bet — bet should fail, task should succeed.
 			const res = await app.request(
-				jsonRequest('POST', '/api/objects/bulk-update', {
-					ids: [task.id, bet.id],
-					patch: { status: 'in_progress' },
-				}),
+				jsonRequest(
+					'POST',
+					'/api/objects/bulk-update',
+					{
+						ids: [task.id, bet.id],
+						patch: { status: 'in_progress' },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
 			)
 
 			expect(res.status).toBe(200)
@@ -246,14 +261,14 @@ describe('Objects Integration', () => {
 			expect(betAfter.status).toBe('signal') // unchanged
 		})
 
-		it('filters out objects the caller has no access to', async () => {
+		it('filters out ids that belong to a different workspace', async () => {
 			const app = createApp()
 			const mine = await insertObject(db, workspaceId, getTestActorId(), {
 				type: 'task',
 				status: 'todo',
 			})
 
-			// Object in another workspace where the caller has no membership.
+			// Object in another workspace — must not be reachable via the header workspace.
 			const otherActor = await insertActor(db)
 			const otherWs = await insertWorkspace(db, otherActor.id)
 			const theirs = await insertObject(db, otherWs.id, otherActor.id, {
@@ -262,10 +277,15 @@ describe('Objects Integration', () => {
 			})
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/objects/bulk-update', {
-					ids: [mine.id, theirs.id],
-					patch: { status: 'in_progress' },
-				}),
+				jsonRequest(
+					'POST',
+					'/api/objects/bulk-update',
+					{
+						ids: [mine.id, theirs.id],
+						patch: { status: 'in_progress' },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
 			)
 
 			expect(res.status).toBe(200)
@@ -289,10 +309,15 @@ describe('Objects Integration', () => {
 			})
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/objects/bulk-update', {
-					ids: [obj.id],
-					patch: { metadata: { priority: 'high' } },
-				}),
+				jsonRequest(
+					'POST',
+					'/api/objects/bulk-update',
+					{
+						ids: [obj.id],
+						patch: { metadata: { priority: 'high' } },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
 			)
 
 			expect(res.status).toBe(200)
