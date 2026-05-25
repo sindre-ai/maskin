@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import { useSubscribe, useSubscribers, useUnsubscribe } from '@/hooks/use-subscriptions'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -42,33 +43,38 @@ export function SubscribeToggle({
 			{visible.length > 0 && (
 				<div className="flex items-center" title={list.map((a) => a.name).join(', ')}>
 					{visible.map((actor, i) => {
-						const avatar = (
+						if (actor.id === currentActorId) {
+							return (
+								<Button
+									key={actor.id}
+									variant="ghost"
+									size="icon"
+									onClick={() => unsubscribe.mutate({ entityType, entityId })}
+									disabled={pending}
+									aria-label={`Unsubscribe from this ${entityType}`}
+									title="Click your avatar to unsubscribe — stop getting unread badges"
+									className={cn(
+										'h-5 w-5 rounded-full p-0 transition-opacity hover:bg-transparent hover:opacity-70',
+										i > 0 && '-ml-1.5',
+									)}
+								>
+									<ActorAvatar
+										name={actor.name}
+										type={actor.type}
+										size="sm"
+										className="ring-1 ring-bg-surface"
+									/>
+								</Button>
+							)
+						}
+						return (
 							<ActorAvatar
+								key={actor.id}
 								name={actor.name}
 								type={actor.type}
 								size="sm"
 								className={cn('ring-1 ring-bg-surface', i > 0 && '-ml-1.5')}
 							/>
-						)
-						if (actor.id === currentActorId) {
-							return (
-								<button
-									key={actor.id}
-									type="button"
-									onClick={() => unsubscribe.mutate({ entityType, entityId })}
-									disabled={pending}
-									aria-label={`Unsubscribe from this ${entityType}`}
-									title="Click your avatar to unsubscribe — stop getting unread badges"
-									className="inline-flex rounded-full transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-50"
-								>
-									{avatar}
-								</button>
-							)
-						}
-						return (
-							<span key={actor.id} className="inline-flex">
-								{avatar}
-							</span>
 						)
 					})}
 					{overflow > 0 && (
@@ -79,16 +85,17 @@ export function SubscribeToggle({
 				</div>
 			)}
 			{!isSubscribed && (
-				<button
-					type="button"
+				<Button
+					variant="outline"
+					size="icon"
 					onClick={() => subscribe.mutate({ entityType, entityId })}
 					disabled={pending}
 					aria-label={`Subscribe to this ${entityType}`}
 					title="Subscribe — see unread badges for new comments"
-					className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-border text-text-secondary transition-colors hover:border-border-hover hover:bg-bg-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+					className="h-5 w-5 rounded-full border-dashed bg-transparent p-0 text-text-secondary hover:bg-bg-hover hover:text-text [&_svg]:size-3"
 				>
-					<Plus size={12} />
-				</button>
+					<Plus />
+				</Button>
 			)}
 		</div>
 	)
