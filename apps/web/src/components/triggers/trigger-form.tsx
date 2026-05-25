@@ -18,6 +18,14 @@ import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from
 import type { SafeJsonValue } from '@maskin/shared'
 import { Bell, Check, Clock, Info, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+	EMPTY_SLACK_FILTER_STATE,
+	type SlackFilterState,
+	SlackFilters,
+	isSlackEntityType,
+	slackFiltersFromConditions,
+	slackFiltersToConditions,
+} from './slack-filters'
 
 // --- Types ---
 
@@ -354,19 +362,44 @@ export function TriggerForm({
 			? String(initConfig.to_status)
 			: '__any__',
 	)
-	const [conditions, setConditions] = useState<ConditionRow[]>(() => {
-		if (initialValues?.type === 'event' && Array.isArray(initConfig.conditions)) {
-			return (
-				initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[]
-			).map((c) => ({
+	const initialEntityType =
+		initialValues?.type === 'event' && initConfig.entity_type
+			? String(initConfig.entity_type)
+			: 'insight'
+
+	const initialConditionsRaw =
+		initialValues?.type === 'event' && Array.isArray(initConfig.conditions)
+			? (initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[])
+			: []
+
+	// Slack filter conditions are managed by SlackFilters; regular conditions
+	// (other field/operator/value rows) are managed by ConditionEditor. We
+	// partition the loaded conditions by which group they belong to.
+	const slackFilterFields = new Set([
+		'event.channel',
+		'event.item.channel',
+		'event.user',
+		'event.reaction',
+	])
+	const isSlackFilterCondition = (c: { field: string }) =>
+		isSlackEntityType(initialEntityType) && slackFilterFields.has(c.field)
+
+	const [conditions, setConditions] = useState<ConditionRow[]>(() =>
+		initialConditionsRaw
+			.filter((c) => !isSlackFilterCondition(c))
+			.map((c) => ({
 				id: crypto.randomUUID(),
 				field: c.field,
 				operator: c.operator as ConditionOperator,
 				value: (c.value ?? '') as SafeJsonValue,
-			}))
-		}
-		return []
-	})
+			})),
+	)
+
+	const [slackFilterState, setSlackFilterState] = useState<SlackFilterState>(() =>
+		isSlackEntityType(initialEntityType)
+			? slackFiltersFromConditions(initialEntityType, initialConditionsRaw)
+			: EMPTY_SLACK_FILTER_STATE,
+	)
 
 	// Workspace settings
 	const settings = workspace.settings as Record<string, unknown>
@@ -429,6 +462,11 @@ export function TriggerForm({
 	const currentEventDef = allEvents.find((e) => e.entityType === entityType)
 	const availableActions = currentEventDef?.actions ?? []
 	const isInternal = internalEntityTypes.has(entityType)
+	const isSlack = isSlackEntityType(entityType)
+	const slackIntegrationId = useMemo(
+		() => (integrations ?? []).find((i) => i.provider === 'slack' && i.status === 'active')?.id,
+		[integrations],
+	)
 
 	const isValid =
 		name.trim() && prompt.trim() && targetActorId && (type === 'reminder' ? scheduledDate : true)
@@ -440,11 +478,21 @@ export function TriggerForm({
 		if (!name.trim() || !prompt.trim() || !targetActorId) return null
 		if (type === 'reminder' && !scheduledDate) return null
 
-		const validConditions = conditions
+		const userConditions = conditions
 			.filter((c) => c.field && c.operator)
 			.map((c) =>
-				NO_VALUE_OPERATORS.has(c.operator) ? { field: c.field, operator: c.operator } : c,
+				NO_VALUE_OPERATORS.has(c.operator)
+					? ({ field: c.field, operator: c.operator } as {
+							field: string
+							operator: string
+							value?: SafeJsonValue
+						})
+					: c,
 			)
+		const slackConditions = isSlackEntityType(entityType)
+			? slackFiltersToConditions(entityType, slackFilterState)
+			: []
+		const allConditions = [...userConditions, ...slackConditions]
 
 		const config =
 			type === 'cron'
@@ -456,7 +504,7 @@ export function TriggerForm({
 							action,
 							...(fromStatus && fromStatus !== '__any__' && { from_status: fromStatus }),
 							...(toStatus && toStatus !== '__any__' && { to_status: toStatus }),
-							...(validConditions.length > 0 && { conditions: validConditions }),
+							...(allConditions.length > 0 && { conditions: allConditions }),
 						}
 
 		return {
@@ -476,6 +524,7 @@ export function TriggerForm({
 		scheduledDate,
 		scheduledTime,
 		conditions,
+		slackFilterState,
 		buildCronExpression,
 		entityType,
 		action,
@@ -507,6 +556,7 @@ export function TriggerForm({
 		setFromStatus('__any__')
 		setToStatus('__any__')
 		setConditions([])
+		setSlackFilterState(EMPTY_SLACK_FILTER_STATE)
 	}
 
 	const addCondition = () => {
@@ -687,6 +737,16 @@ export function TriggerForm({
 								</Select>
 							</div>
 						</div>
+					)}
+
+					{isSlack && (
+						<SlackFilters
+							entityType={entityType}
+							integrationId={slackIntegrationId}
+							workspaceId={workspaceId}
+							value={slackFilterState}
+							onChange={setSlackFilterState}
+						/>
 					)}
 
 					{isInternal && (

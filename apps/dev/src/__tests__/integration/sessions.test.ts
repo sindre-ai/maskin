@@ -103,7 +103,7 @@ function createMockSessionManager(database: Database) {
 				.update(sessions)
 				.set({
 					status: 'paused',
-					snapshotPath: `snapshots/${sessionId}.tar.gz`,
+					snapshotPath: `snapshots/${sessionId}.tar`,
 					containerId: null,
 					updatedAt: new Date(),
 				})
