@@ -83,6 +83,7 @@ function createMockStorageProvider() {
 describe('SessionManager', () => {
 	let manager: SessionManager
 	let mockResults: Record<string, unknown>
+	let calls: { inserts: unknown[]; updates: unknown[] }
 	let storageProvider: ReturnType<typeof createMockStorageProvider>
 
 	beforeEach(() => {
@@ -90,6 +91,7 @@ describe('SessionManager', () => {
 		storageProvider = createMockStorageProvider()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
+		calls = ctx.calls
 		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
 	})
 
@@ -665,6 +667,82 @@ describe('SessionManager', () => {
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			// Watchdog completes without processing the recent session
+		})
+	})
+
+	describe('runWatchdog() — idle auto-pause guards', () => {
+		it('marks a running-but-containerless session failed instead of trying to pause it', async () => {
+			// A `running` row that somehow has no containerId is unrecoverable:
+			// pauseSession would reject on its own `!session.containerId` guard
+			// every minute forever. The watchdog must route it to terminal-failed.
+			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+			const orphan = buildSession({
+				status: 'running',
+				containerId: null,
+				startedAt: twentyMinutesAgo,
+				interactive: false,
+			})
+			const pauseSpy = vi.spyOn(manager, 'pauseSession')
+
+			mockResults.selectQueue = [
+				[], // 1. timedOut
+				[orphan], // 2. runningSessions (idle check)
+				[], // 3. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				// markSessionFailedAfterContainerLoss → drainQueue → hasCapacity:
+				[{ settings: {} }], // 4. drainQueue > workspace lookup
+				[{ count: 0 }], // 5. drainQueue > running count
+				[], // 6. drainQueue > nextQueued (empty = break)
+				[], // 7. expiredPaused
+				[], // 8. stuckPending
+				[], // 9. stuckStarting
+				[], // 10. final queuedSessions
+			]
+
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			expect(pauseSpy).not.toHaveBeenCalled()
+			// markSessionFailedAfterContainerLoss writes status='failed' on the sessions row.
+			const failedUpdate = calls.updates.find(
+				(u): u is { status: string } =>
+					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',
+			)
+			expect(failedUpdate).toBeDefined()
+		})
+
+		it('skips auto-pause when inspect reports the container is no longer running', async () => {
+			// Container died but the exit watcher hasn't noticed yet (e.g., inspect was
+			// transiently failing). The watchdog should leave the session alone this tick
+			// instead of pausing — watchContainerExit / the timeout reaper will catch it.
+			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+			const stale = buildSession({
+				status: 'running',
+				containerId: 'container-dead',
+				startedAt: twentyMinutesAgo,
+				interactive: false,
+			})
+			const pauseSpy = vi.spyOn(manager, 'pauseSession')
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: false, exitCode: 137 })
+
+			mockResults.selectQueue = [
+				[], // 1. timedOut
+				[stale], // 2. runningSessions
+				[], // 3. lastLog (empty → falls back to startedAt, which is >10min old)
+				[], // 4. expiredPaused
+				[], // 5. stuckPending
+				[], // 6. stuckStarting
+				[], // 7. final queuedSessions
+			]
+
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			expect(pauseSpy).not.toHaveBeenCalled()
+			// No 'failed' update should have happened either — we explicitly defer to
+			// watchContainerExit so the session isn't yanked out from under it.
+			const failedUpdate = calls.updates.find(
+				(u): u is { status: string } =>
+					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',
+			)
+			expect(failedUpdate).toBeUndefined()
 		})
 	})
 })

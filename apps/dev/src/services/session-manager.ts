@@ -1257,9 +1257,18 @@ export class SessionManager extends EventEmitter {
 			// idle; if it's still running, leave the reattach loop in
 			// streamContainerLogs to recover and try again next tick.
 			if (!session.containerId) {
-				logger.info(`Auto-pausing idle session: ${session.id}`)
-				this.pauseSession(session.id).catch((err) =>
-					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+				// A `running` row with no containerId is unrecoverable — pauseSession
+				// would reject on the same guard and the watchdog would log-spam
+				// every minute forever. Route to terminal-failed instead.
+				logger.warn('Marking session failed: running with no containerId', {
+					sessionId: session.id,
+				})
+				await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
+					(err) =>
+						logger.error('Failed to mark session failed after container loss', {
+							sessionId: session.id,
+							error: String(err),
+						}),
 				)
 				continue
 			}
