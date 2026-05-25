@@ -1,8 +1,13 @@
 import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { type InfiniteData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-import type { MigrateObjectTypeInput, ObjectResponse } from '../lib/api'
+import type {
+	BulkUpdateObjectsInput,
+	BulkUpdateObjectsResponse,
+	MigrateObjectTypeInput,
+	ObjectResponse,
+} from '../lib/api'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -57,6 +62,103 @@ export function useUpdateObject(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+		},
+	})
+}
+
+type ObjectListCache = ObjectResponse[]
+type ObjectListInfiniteCache = InfiniteData<ObjectResponse[]>
+
+interface BulkUpdateContext {
+	listSnapshots: Array<[readonly unknown[], ObjectListCache | undefined]>
+	listInfiniteSnapshots: Array<[readonly unknown[], ObjectListInfiniteCache | undefined]>
+	detailSnapshots: Array<[readonly unknown[], ObjectResponse | undefined]>
+}
+
+// Optimistically apply a patch to every object whose id appears in `ids`.
+// Touches both the flat list cache and the page-shaped infinite cache, plus
+// any open detail caches, so the data-table re-renders without waiting on the
+// server response. Snapshots are returned so onError can rollback.
+function applyOptimisticBulkPatch(
+	queryClient: ReturnType<typeof useQueryClient>,
+	workspaceId: string,
+	ids: string[],
+	patch: BulkUpdateObjectsInput['patch'],
+): BulkUpdateContext {
+	const idSet = new Set(ids)
+	const stamped = new Date().toISOString()
+	const merge = (obj: ObjectResponse): ObjectResponse => {
+		if (!idSet.has(obj.id)) return obj
+		const next: ObjectResponse = { ...obj, updatedAt: stamped }
+		if (patch.status !== undefined) next.status = patch.status
+		if (patch.owner !== undefined) next.owner = patch.owner
+		if (patch.metadata !== undefined) {
+			next.metadata = { ...(obj.metadata ?? {}), ...patch.metadata }
+		}
+		return next
+	}
+
+	const listSnapshots = queryClient.getQueriesData<ObjectListCache>({
+		queryKey: ['objects', workspaceId, 'list'],
+	})
+	for (const [key, cache] of listSnapshots) {
+		if (!cache) continue
+		queryClient.setQueryData<ObjectListCache>(key, cache.map(merge))
+	}
+
+	const listInfiniteSnapshots = queryClient.getQueriesData<ObjectListInfiniteCache>({
+		queryKey: ['objects', workspaceId, 'listInfinite'],
+	})
+	for (const [key, cache] of listInfiniteSnapshots) {
+		if (!cache) continue
+		queryClient.setQueryData<ObjectListInfiniteCache>(key, {
+			...cache,
+			pages: cache.pages.map((page) => page.map(merge)),
+		})
+	}
+
+	const detailSnapshots: Array<[readonly unknown[], ObjectResponse | undefined]> = []
+	for (const id of ids) {
+		const key = queryKeys.objects.detail(id)
+		const cached = queryClient.getQueryData<ObjectResponse>(key)
+		if (cached) {
+			detailSnapshots.push([key, cached])
+			queryClient.setQueryData<ObjectResponse>(key, merge(cached))
+		}
+	}
+
+	return { listSnapshots, listInfiniteSnapshots, detailSnapshots }
+}
+
+function rollbackBulkPatch(queryClient: ReturnType<typeof useQueryClient>, ctx: BulkUpdateContext) {
+	for (const [key, cache] of ctx.listSnapshots) {
+		queryClient.setQueryData(key, cache)
+	}
+	for (const [key, cache] of ctx.listInfiniteSnapshots) {
+		queryClient.setQueryData(key, cache)
+	}
+	for (const [key, cache] of ctx.detailSnapshots) {
+		queryClient.setQueryData(key, cache)
+	}
+}
+
+export function useBulkUpdateObjects(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<BulkUpdateObjectsResponse, Error, BulkUpdateObjectsInput, BulkUpdateContext>({
+		mutationFn: (body) => api.objects.bulkUpdate(workspaceId, body),
+		onMutate: async ({ ids, patch }) => {
+			await queryClient.cancelQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			return applyOptimisticBulkPatch(queryClient, workspaceId, ids, patch)
+		},
+		onError: (_err, _vars, ctx) => {
+			if (ctx) rollbackBulkPatch(queryClient, ctx)
+		},
+		onSettled: (_data, _err, { ids }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+			for (const id of ids) {
+				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			}
 		},
 	})
 }

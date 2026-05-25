@@ -1,5 +1,6 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
+import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
@@ -12,15 +13,17 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
+import { useBulkUpdateObjects } from '@/hooks/use-objects'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { Filter, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
@@ -243,6 +246,100 @@ function ObjectsPage() {
 		updateSearch({ ids: undefined })
 	}, [updateSearch])
 
+	// Status options for the bulk action bar. Flatten distinct workspace-configured
+	// statuses across visible types so a multi-type selection still has options; the
+	// server validates per-id against each object's own type and reports partial
+	// failure when a chosen status doesn't apply to one of the selected rows.
+	const bulkStatusOptions = useMemo(() => {
+		const seen = new Set<string>()
+		const opts: { value: string; label: string }[] = []
+		for (const statuses of Object.values(statusesByType)) {
+			for (const s of statuses) {
+				if (!seen.has(s)) {
+					seen.add(s)
+					opts.push({ value: s, label: s })
+				}
+			}
+		}
+		return opts
+	}, [statusesByType])
+
+	const bulkOwnerOptions = useMemo(
+		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
+		[actors],
+	)
+
+	const bulkUpdate = useBulkUpdateObjects(workspaceId)
+	const queryClient = useQueryClient()
+
+	const reportBulkResult = useCallback(
+		(
+			response: { results: Array<{ id: string; ok: boolean; error?: string }> },
+			total: number,
+			verb: 'updated' | 'deleted',
+		) => {
+			const okCount = response.results.filter((r) => r.ok).length
+			const failed = total - okCount
+			if (failed === 0) {
+				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} ${verb}`)
+				clearSelection()
+			} else {
+				const firstError = response.results.find((r) => !r.ok)?.error
+				toast.error(`${okCount} of ${total} ${verb}; ${failed} failed`, {
+					description: firstError,
+				})
+			}
+		},
+		[clearSelection],
+	)
+
+	const handleBulkStatusChange = useCallback(
+		(status: string) => {
+			if (selectedIds.length === 0) return
+			const ids = [...selectedIds]
+			bulkUpdate.mutate(
+				{ ids, patch: { status } },
+				{
+					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
+					onError: () => toast.error('Failed to update objects'),
+				},
+			)
+		},
+		[selectedIds, bulkUpdate, reportBulkResult],
+	)
+
+	const handleBulkOwnerChange = useCallback(
+		(ownerId: string) => {
+			if (selectedIds.length === 0) return
+			const ids = [...selectedIds]
+			bulkUpdate.mutate(
+				{ ids, patch: { owner: ownerId } },
+				{
+					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
+					onError: () => toast.error('Failed to update objects'),
+				},
+			)
+		},
+		[selectedIds, bulkUpdate, reportBulkResult],
+	)
+
+	// No bulk-delete endpoint yet — loop through the existing single-object DELETE
+	// so the UX (partial-failure toast + selection-clear on full success) matches
+	// the bulk-update path. See tech-debt insight: add /api/objects/bulk-delete.
+	const handleBulkDelete = useCallback(async () => {
+		if (selectedIds.length === 0) return
+		const ids = [...selectedIds]
+		const settled = await Promise.allSettled(ids.map((id) => api.objects.delete(id)))
+		const results = settled.map((r, i) => ({
+			id: ids[i] as string,
+			ok: r.status === 'fulfilled' && r.value.deleted,
+			error: r.status === 'rejected' ? String(r.reason) : undefined,
+		}))
+		queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+		queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+		reportBulkResult({ results }, ids.length, 'deleted')
+	}, [selectedIds, queryClient, workspaceId, reportBulkResult])
+
 	return (
 		<div className="flex flex-col flex-1 min-h-0">
 			<PageHeader title="Objects" />
@@ -310,6 +407,15 @@ function ObjectsPage() {
 				isError={infiniteQuery.isError}
 				fetchNextPage={infiniteQuery.fetchNextPage}
 				isLoading={infiniteQuery.isLoading}
+			/>
+			<BulkActionBar
+				selectedCount={selectedIds.length}
+				statusOptions={bulkStatusOptions}
+				ownerOptions={bulkOwnerOptions}
+				onStatusChange={handleBulkStatusChange}
+				onOwnerChange={handleBulkOwnerChange}
+				onDelete={handleBulkDelete}
+				onClear={clearSelection}
 			/>
 		</div>
 	)

@@ -177,6 +177,12 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		bulkUpdate: (workspaceId: string, body: BulkUpdateObjectsInput) =>
+			request<BulkUpdateObjectsResponse>('/objects/bulk-update', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 	},
 
 	auth: {
@@ -572,6 +578,25 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	owner?: string | null
+}
+
+export interface BulkUpdateObjectsInput {
+	ids: string[]
+	patch: {
+		status?: string
+		owner?: string | null
+		metadata?: SafeMetadata
+	}
+}
+
+export interface BulkUpdateObjectsResult {
+	id: string
+	ok: boolean
+	error?: string
+}
+
+export interface BulkUpdateObjectsResponse {
+	results: BulkUpdateObjectsResult[]
 }
 
 export interface MigrateObjectTypeInput {
