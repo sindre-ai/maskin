@@ -20,6 +20,7 @@ type Env = {
 const { default: subscriptionsRoutes } = await import('../../routes/subscriptions')
 const { default: objectsRoutes } = await import('../../routes/objects')
 const { default: eventsRoutes } = await import('../../routes/events')
+const { default: graphRoutes } = await import('../../routes/graph')
 
 // Mock session manager — we don't exercise container startup in this test, but
 // the events route reads c.get('sessionManager') for @mention handling. Empty
@@ -61,6 +62,7 @@ function appAs(actorId: string) {
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/events', eventsRoutes)
+	app.route('/api/graph', graphRoutes)
 	return app
 }
 
@@ -252,6 +254,37 @@ describe('Subscriptions Integration', () => {
 			.then((r) => r.json())
 		expect(detail2.is_subscribed).toBe(false)
 		expect(detail2.subscriber_count).toBe(1)
+	})
+
+	it('auto-subscribes the creator to every node created via POST /api/graph', async () => {
+		const appA = appAs(aId)
+		const headersA = { 'x-workspace-id': workspaceId }
+
+		const graphRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/graph',
+				{
+					nodes: [
+						{ $id: 'bet-1', type: 'bet', title: 'Bet via graph', status: 'proposed' },
+						{ $id: 'task-1', type: 'task', title: 'Task via graph', status: 'todo' },
+					],
+					edges: [{ source: 'bet-1', target: 'task-1', type: 'breaks_into' }],
+				},
+				headersA,
+			),
+		)
+		expect(graphRes.status).toBe(201)
+		const { nodes } = await graphRes.json()
+		expect(nodes).toHaveLength(2)
+
+		for (const node of nodes) {
+			const detail = await appA
+				.request(jsonGet(`/api/objects/${node.id}`, headersA))
+				.then((r) => r.json())
+			expect(detail.is_subscribed).toBe(true)
+			expect(detail.subscriber_count).toBe(1)
+		}
 	})
 })
 
