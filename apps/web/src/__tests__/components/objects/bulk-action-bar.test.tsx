@@ -54,17 +54,18 @@ describe('BulkActionBar', () => {
 
 	it('is hidden when selectedCount is 0', () => {
 		renderBar({ selectedCount: 0 })
-		const bar = screen.getByTestId('bulk-action-bar')
+		const bar = screen.getByRole('region', { hidden: true })
+		expect(bar).toHaveAttribute('aria-label', 'Bulk actions')
 		expect(bar).toHaveAttribute('aria-hidden', 'true')
-		expect(bar).toHaveAttribute('data-state', 'closed')
+		expect(bar).toHaveAttribute('inert')
 		expect(bar.className).toMatch(/opacity-0/)
 	})
 
 	it('is visible when selectedCount is ≥ 1', () => {
 		renderBar({ selectedCount: 1 })
-		const bar = screen.getByTestId('bulk-action-bar')
+		const bar = screen.getByRole('region', { name: 'Bulk actions' })
 		expect(bar).toHaveAttribute('aria-hidden', 'false')
-		expect(bar).toHaveAttribute('data-state', 'open')
+		expect(bar).not.toHaveAttribute('inert')
 		expect(within(bar).getByLabelText('1 selected')).toHaveTextContent('1')
 	})
 
@@ -137,8 +138,7 @@ describe('BulkActionBar', () => {
 	it('disables the transition classes when prefers-reduced-motion is set', () => {
 		setMatchMedia(true)
 		renderBar()
-		const bar = screen.getByTestId('bulk-action-bar')
-		expect(bar).toHaveAttribute('data-reduced-motion', 'true')
+		const bar = screen.getByRole('region', { name: 'Bulk actions' })
 		expect(bar.className).not.toMatch(/transition-all/)
 	})
 

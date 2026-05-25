@@ -87,9 +87,7 @@ export function BulkActionBar({
 			<section
 				aria-label="Bulk actions"
 				aria-hidden={!visible}
-				data-testid="bulk-action-bar"
-				data-state={visible ? 'open' : 'closed'}
-				data-reduced-motion={reducedMotion ? 'true' : 'false'}
+				inert={!visible || undefined}
 				className={cn(
 					'fixed left-1/2 bottom-6 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[36rem] items-center gap-2',
