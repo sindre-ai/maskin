@@ -141,6 +141,36 @@ describe('SubscribeToggle', () => {
 		)
 	})
 
+	it('shows a fallback unsubscribe button when current actor is in the overflow', async () => {
+		vi.mocked(api.subscriptions.subscribers).mockResolvedValue({
+			actors: [
+				{ id: 'a2', type: 'human', name: 'Bob' },
+				{ id: 'a3', type: 'human', name: 'Carol' },
+				{ id: 'a4', type: 'human', name: 'Dave' },
+				{ id: 'a5', type: 'human', name: 'Eve' },
+				{ id: 'a1', type: 'human', name: 'Alice' },
+			],
+		})
+		vi.mocked(api.subscriptions.unsubscribe).mockResolvedValue({ unsubscribed: true })
+
+		render(
+			<SubscribeToggle
+				workspaceId="ws-1"
+				entityType="object"
+				entityId="obj-1"
+				isSubscribed={true}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(screen.getByText('+1')).toBeInTheDocument())
+		const button = await screen.findByRole('button', { name: /unsubscribe/i })
+		fireEvent.click(button)
+		await waitFor(() =>
+			expect(api.subscriptions.unsubscribe).toHaveBeenCalledWith('ws-1', 'object', 'obj-1'),
+		)
+	})
+
 	it('does not make other actors clickable', async () => {
 		vi.mocked(api.subscriptions.subscribers).mockResolvedValue({
 			actors: [{ id: 'a2', type: 'human', name: 'Bob' }],

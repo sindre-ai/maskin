@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button'
 import { useSubscribe, useSubscribers, useUnsubscribe } from '@/hooks/use-subscriptions'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { Plus } from 'lucide-react'
+import { BellOff, Plus } from 'lucide-react'
 import { ActorAvatar } from './actor-avatar'
 
 const MAX_VISIBLE = 4
@@ -10,7 +10,9 @@ const MAX_VISIBLE = 4
 /**
  * Watchers UI for any subscribable entity. Renders a stack of subscriber
  * avatars; the current actor's avatar is clickable to unsubscribe. A `+`
- * button appears at the end of the row to subscribe.
+ * button appears at the end of the row to subscribe. When the current
+ * actor is subscribed but their avatar has overflowed past `MAX_VISIBLE`,
+ * a fallback `BellOff` button is rendered so they can still unsubscribe.
  *
  * Entity-agnostic — accepts entityType + entityId so threads, sessions, etc.
  * can reuse this once they become subscribable on the backend.
@@ -37,6 +39,7 @@ export function SubscribeToggle({
 	const visible = list.slice(0, MAX_VISIBLE)
 	const overflow = Math.max(0, list.length - MAX_VISIBLE)
 	const pending = subscribe.isPending || unsubscribe.isPending
+	const currentActorInVisible = !!currentActorId && visible.some((a) => a.id === currentActorId)
 
 	return (
 		<div className={cn('inline-flex items-center gap-1', className)}>
@@ -95,6 +98,19 @@ export function SubscribeToggle({
 					className="h-5 w-5 rounded-full border-dashed bg-transparent p-0 text-text-secondary hover:bg-bg-hover hover:text-text [&_svg]:size-3"
 				>
 					<Plus />
+				</Button>
+			)}
+			{isSubscribed && !currentActorInVisible && currentActorId && (
+				<Button
+					variant="ghost"
+					size="icon"
+					onClick={() => unsubscribe.mutate({ entityType, entityId })}
+					disabled={pending}
+					aria-label={`Unsubscribe from this ${entityType}`}
+					title="Unsubscribe — stop getting unread badges"
+					className="h-5 w-5 rounded-full p-0 text-text-secondary hover:bg-bg-hover hover:text-text [&_svg]:size-3"
+				>
+					<BellOff />
 				</Button>
 			)}
 		</div>
