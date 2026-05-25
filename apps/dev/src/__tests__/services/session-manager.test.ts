@@ -63,6 +63,7 @@ vi.mock('../../services/workspace-briefing', () => ({
 	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
+import { execFile } from 'node:child_process'
 import type { StorageProvider } from '@maskin/storage'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager } from '../../services/session-manager'
@@ -83,6 +84,7 @@ function createMockStorageProvider() {
 describe('SessionManager', () => {
 	let manager: SessionManager
 	let mockResults: Record<string, unknown>
+	let calls: { inserts: unknown[]; updates: unknown[] }
 	let storageProvider: ReturnType<typeof createMockStorageProvider>
 
 	beforeEach(() => {
@@ -90,6 +92,7 @@ describe('SessionManager', () => {
 		storageProvider = createMockStorageProvider()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
+		calls = ctx.calls
 		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
 	})
 
@@ -336,16 +339,14 @@ describe('SessionManager', () => {
 
 			await manager.pauseSession(session.id)
 
-			expect(mockContainerManager.exec).toHaveBeenCalledWith('container-xyz', [
-				'tar',
-				'-czf',
-				'/tmp/snapshot.tar.gz',
-				'/agent/',
-			])
+			// Snapshot is streamed via dockerode's getArchive — no in-container
+			// `tar -czf` exec, no double-wrapping. Stored at `.tar` (uncompressed).
+			expect(mockContainerManager.exec).not.toHaveBeenCalled()
+			expect(mockContainerManager.copyFrom).toHaveBeenCalledWith('container-xyz', '/agent/')
 			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-xyz')
 			expect(mockContainerManager.remove).toHaveBeenCalledWith('container-xyz')
 			expect(storageProvider.put).toHaveBeenCalledWith(
-				`snapshots/${session.id}.tar.gz`,
+				`snapshots/${session.id}.tar`,
 				expect.anything(),
 			)
 		})
@@ -364,9 +365,9 @@ describe('SessionManager', () => {
 			})
 			mockResults.select = [session]
 			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
-			mockContainerManager.exec.mockRejectedValueOnce(new Error('exec failed'))
+			mockContainerManager.copyFrom.mockRejectedValueOnce(new Error('copy failed'))
 
-			await expect(manager.pauseSession(session.id)).rejects.toThrow('exec failed')
+			await expect(manager.pauseSession(session.id)).rejects.toThrow('copy failed')
 			// Status should be reverted to running (via the catch block's db.update call)
 		})
 
@@ -381,7 +382,7 @@ describe('SessionManager', () => {
 			await manager.pauseSession(session.id)
 
 			// Must not attempt snapshot work on a dead container
-			expect(mockContainerManager.exec).not.toHaveBeenCalled()
+			expect(mockContainerManager.copyFrom).not.toHaveBeenCalled()
 			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 			expect(storageProvider.put).not.toHaveBeenCalled()
 			// Should resolve (not throw) so the auto-pause loop doesn't keep retrying
@@ -395,7 +396,7 @@ describe('SessionManager', () => {
 			mockResults.select = [session]
 			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
 			// dockerode-style 409 thrown after we started snapshotting
-			mockContainerManager.exec.mockRejectedValueOnce(
+			mockContainerManager.copyFrom.mockRejectedValueOnce(
 				Object.assign(new Error('(HTTP code 409) container is not running'), {
 					statusCode: 409,
 				}),
@@ -514,6 +515,59 @@ describe('SessionManager', () => {
 			await manager.resumeSession(session.id)
 
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+		})
+
+		it('extracts the snapshot with `tar -xf --strip-components=1` (not `-xzf`)', async () => {
+			// Regression guard for the snapshot round-trip fix: dockerode's
+			// getArchive returns an uncompressed tar rooted at `agent/...`.
+			// Using `-xzf` would fail with "not in gzip format" and silently
+			// lose the workspace (resume's catch block marks the session
+			// failed). `--strip-components=1` is also required so files land at
+			// tempDir/<name> — what the `${tempDir}:/agent` bind mount expects.
+			const session = buildSession({
+				status: 'paused',
+				snapshotPath: 'snapshots/abc.tar',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'Test agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: null,
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullAgentFiles').mockResolvedValue(undefined)
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // resumeSession: load session
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+			]
+
+			await manager.resumeSession(session.id)
+
+			const tarCalls = vi.mocked(execFile).mock.calls.filter((call) => call[0] === 'tar')
+			expect(tarCalls).toHaveLength(1)
+			const [, tarArgs] = tarCalls[0] as [string, string[], ...unknown[]]
+			expect(tarArgs).toEqual([
+				'-xf',
+				expect.stringMatching(/snapshot\.tar$/),
+				'-C',
+				expect.any(String),
+				'--strip-components=1',
+			])
+			// `-xzf` would attempt gzip decompression on an uncompressed tar.
+			expect(tarArgs).not.toContain('-xzf')
 		})
 	})
 
@@ -667,6 +721,171 @@ describe('SessionManager', () => {
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			// Watchdog completes without processing the recent session
+		})
+	})
+
+	describe('runWatchdog() — idle auto-pause guards', () => {
+		it('marks a running-but-containerless session failed instead of trying to pause it', async () => {
+			// A `running` row that somehow has no containerId is unrecoverable:
+			// pauseSession would reject on its own `!session.containerId` guard
+			// every minute forever. The watchdog must route it to terminal-failed.
+			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+			const orphan = buildSession({
+				status: 'running',
+				containerId: null,
+				startedAt: twentyMinutesAgo,
+				interactive: false,
+			})
+			const pauseSpy = vi.spyOn(manager, 'pauseSession')
+
+			mockResults.selectQueue = [
+				[], // 1. timedOut
+				[orphan], // 2. runningSessions (idle check)
+				[], // 3. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
+				// markSessionFailedAfterContainerLoss → drainQueue → hasCapacity:
+				[{ settings: {} }], // 4. drainQueue > workspace lookup
+				[{ count: 0 }], // 5. drainQueue > running count
+				[], // 6. drainQueue > nextQueued (empty = break)
+				[], // 7. expiredPaused
+				[], // 8. stuckPending
+				[], // 9. stuckStarting
+				[], // 10. final queuedSessions
+			]
+
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			expect(pauseSpy).not.toHaveBeenCalled()
+			// markSessionFailedAfterContainerLoss writes status='failed' on the sessions row.
+			const failedUpdate = calls.updates.find(
+				(u): u is { status: string } =>
+					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',
+			)
+			expect(failedUpdate).toBeDefined()
+		})
+
+		it('skips auto-pause when inspect reports the container is no longer running', async () => {
+			// Container died but the exit watcher hasn't noticed yet (e.g., inspect was
+			// transiently failing). The watchdog should leave the session alone this tick
+			// instead of pausing — watchContainerExit / the timeout reaper will catch it.
+			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+			const stale = buildSession({
+				status: 'running',
+				containerId: 'container-dead',
+				startedAt: twentyMinutesAgo,
+				interactive: false,
+			})
+			const pauseSpy = vi.spyOn(manager, 'pauseSession')
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: false, exitCode: 137 })
+
+			mockResults.selectQueue = [
+				[], // 1. timedOut
+				[stale], // 2. runningSessions
+				[], // 3. lastLog (empty → falls back to startedAt, which is >10min old)
+				[], // 4. expiredPaused
+				[], // 5. stuckPending
+				[], // 6. stuckStarting
+				[], // 7. final queuedSessions
+			]
+
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			expect(pauseSpy).not.toHaveBeenCalled()
+			// No 'failed' update should have happened either — we explicitly defer to
+			// watchContainerExit so the session isn't yanked out from under it.
+			const failedUpdate = calls.updates.find(
+				(u): u is { status: string } =>
+					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',
+			)
+			expect(failedUpdate).toBeUndefined()
+		})
+	})
+
+	describe('streamContainerLogs() — reconnect on transient stream drop', () => {
+		it('reattaches with tail:0 after a dropped log stream and does not surface the "interrupted" sentinel', async () => {
+			// Regression guard for the false-positive auto-pause bug: when
+			// dockerode's logs(follow:true) connection drops mid-session,
+			// `session_logs` stops growing and the 10-min idle watchdog
+			// previously mistook the silence for an idle agent and force-paused
+			// a still-running container. The reconnect loop must transparently
+			// recover so the watchdog never sees a stale `lastLog` row, and
+			// must NOT write the "Log stream interrupted" system log on a
+			// single transient drop.
+			const sessionId = 'sess-reconnect'
+
+			// streamContainerLogs only attaches `logsDrained` if there's an
+			// existing activeSessions entry, so seed one.
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; logsDrained?: Promise<void> }>
+				}
+			).activeSessions.set(sessionId, { tempDir: '/tmp/test' })
+
+			// First connect throws (simulating a socket drop), second connect
+			// yields one chunk and ends naturally.
+			mockContainerManager.logs.mockImplementationOnce(() => ({
+				[Symbol.asyncIterator]() {
+					return { next: () => Promise.reject(new Error('socket closed mid-stream')) }
+				},
+			}))
+			mockContainerManager.logs.mockImplementationOnce(() => ({
+				async *[Symbol.asyncIterator]() {
+					yield { stream: 'stdout' as const, data: 'recovered-chunk' }
+				},
+			}))
+			// Container is still alive between attempts — reconnect must proceed.
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
+
+			vi.useFakeTimers()
+			try {
+				;(
+					manager as unknown as {
+						streamContainerLogs(sessionId: string, containerId: string): void
+					}
+				).streamContainerLogs(sessionId, 'container-reconnect')
+
+				const drained = (
+					manager as unknown as {
+						activeSessions: Map<string, { logsDrained?: Promise<void> }>
+					}
+				).activeSessions.get(sessionId)?.logsDrained
+				expect(drained).toBeDefined()
+
+				// Advances the 2s reconnect setTimeout plus any chained microtasks.
+				await vi.runAllTimersAsync()
+				await drained
+			} finally {
+				vi.useRealTimers()
+			}
+
+			// Two calls: first replays history (`{}`), second reattaches from
+			// "now" (`tail: 0`) to avoid duplicating already-persisted rows.
+			expect(mockContainerManager.logs).toHaveBeenCalledTimes(2)
+			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(1, 'container-reconnect', true, {})
+			expect(mockContainerManager.logs).toHaveBeenNthCalledWith(2, 'container-reconnect', true, {
+				tail: 0,
+			})
+
+			// The "Log stream interrupted" sentinel is reserved for genuine
+			// exhaustion of reconnects; a single transient drop must not write it.
+			const interrupted = calls.inserts.find(
+				(i): i is { stream: string; content: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { stream?: string }).stream === 'system' &&
+					String((i as { content?: string }).content ?? '').includes('Log stream interrupted'),
+			)
+			expect(interrupted).toBeUndefined()
+
+			// The recovered chunk from the second attempt is persisted, which
+			// is what keeps the idle watchdog's `lastLog` heuristic honest.
+			const recovered = calls.inserts.find(
+				(i): i is { stream: string; content: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { stream?: string }).stream === 'stdout' &&
+					(i as { content?: string }).content === 'recovered-chunk',
+			)
+			expect(recovered).toBeDefined()
 		})
 	})
 })

@@ -1,4 +1,12 @@
-import { buildCreateTriggerBody, insertActor, insertWorkspace } from '../factories'
+import { sessions, triggers } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
+import {
+	buildCreateTriggerBody,
+	insertActor,
+	insertSession,
+	insertTrigger,
+	insertWorkspace,
+} from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
@@ -63,6 +71,31 @@ describe('Triggers Integration', () => {
 			const listAfterRes = await app.request(jsonGet('/api/triggers', headers))
 			const listAfter = await listAfterRes.json()
 			expect(listAfter.find((t: { id: string }) => t.id === created.id)).toBeUndefined()
+		})
+	})
+
+	describe('delete with linked sessions', () => {
+		it('nulls out sessions.trigger_id and deletes the trigger', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const actorId = getTestActorId()
+
+			const trigger = await insertTrigger(db, workspaceId, actorId, targetActorId)
+			const session = await insertSession(db, workspaceId, targetActorId, actorId, {
+				triggerId: trigger.id,
+			})
+
+			const deleteRes = await app.request(
+				jsonRequest('DELETE', `/api/triggers/${trigger.id}`, undefined, headers),
+			)
+			expect(deleteRes.status).toBe(200)
+
+			const remainingTriggers = await db.select().from(triggers).where(eq(triggers.id, trigger.id))
+			expect(remainingTriggers).toHaveLength(0)
+
+			const [updatedSession] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(updatedSession).toBeDefined()
+			expect(updatedSession.triggerId).toBeNull()
 		})
 	})
 

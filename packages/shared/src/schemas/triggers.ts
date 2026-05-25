@@ -18,6 +18,8 @@ export const conditionOperatorSchema = z.enum([
 	'is_set',
 	'is_not_set',
 	'contains',
+	'in',
+	'not_in',
 ])
 
 export const triggerConditionSchema = z.object({
