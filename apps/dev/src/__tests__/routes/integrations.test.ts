@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { afterAll, beforeAll } from 'vitest'
+import { afterAll, beforeAll, vi } from 'vitest'
 import { buildIntegration, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -466,6 +466,141 @@ describe('Integrations Routes', () => {
 
 			const res = await app.request(
 				jsonDelete(`/api/integrations/${integration.id}`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /api/integrations/:id/slack/conversations', () => {
+		it('returns 200 with normalized list when integration is active Slack', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const { _resetSlackCaches } = await import('../../lib/integrations/providers/slack/client')
+			_resetSlackCaches()
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'slack',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ accessToken: 'xoxb-test' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[integration], [integration]] // route lookup, token lookup
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						channels: [
+							{ id: 'C1', name: 'general', is_channel: true },
+							{ id: 'G1', name: 'leadership', is_private: true },
+						],
+					}),
+				),
+			)
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/slack/conversations`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(2)
+			expect(body[0]).toMatchObject({ id: 'C1', name: 'general', is_channel: true })
+			expect(body[1]).toMatchObject({ id: 'G1', name: 'leadership', is_private: true })
+			fetchSpy.mockRestore()
+		})
+
+		it('returns 404 when integration is not Slack', async () => {
+			const integration = buildIntegration({ workspaceId: wsId, provider: 'github' })
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [] // filter on provider='slack' returns nothing
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/slack/conversations`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 when types query param contains invalid value', async () => {
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'slack',
+				status: 'active',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [integration]
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/${integration.id}/slack/conversations?types=public_channel,nope`,
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+	})
+
+	describe('GET /api/integrations/:id/slack/users', () => {
+		it('returns 200 with filtered active users', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const { _resetSlackCaches } = await import('../../lib/integrations/providers/slack/client')
+			_resetSlackCaches()
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: 'slack',
+				status: 'active',
+				credentials: encrypt(JSON.stringify({ accessToken: 'xoxb-test' })),
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [[integration], [integration]]
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						ok: true,
+						members: [
+							{ id: 'U1', name: 'alice', real_name: 'Alice', is_bot: false },
+							{ id: 'U2', name: 'bob', deleted: true },
+							{ id: 'U3', name: 'botty', real_name: 'Botty', is_bot: true },
+						],
+					}),
+				),
+			)
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/slack/users`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(2) // deleted user filtered out
+			expect(body.map((u: { id: string }) => u.id)).toEqual(['U1', 'U3'])
+			fetchSpy.mockRestore()
+		})
+
+		it('returns 404 when integration is for a different workspace', async () => {
+			const integration = buildIntegration({
+				workspaceId: 'other-workspace-id',
+				provider: 'slack',
+				status: 'active',
+			})
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.select = [] // workspaceId filter excludes it
+
+			const res = await app.request(
+				jsonGet(`/api/integrations/${integration.id}/slack/users`, {
 					'x-workspace-id': wsId,
 				}),
 			)
