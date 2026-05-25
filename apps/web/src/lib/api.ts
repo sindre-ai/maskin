@@ -264,6 +264,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		slackConversations: (id: string, workspaceId: string, types?: string[]) => {
+			const qs = types && types.length > 0 ? `?types=${types.join(',')}` : ''
+			return request<SlackConversation[]>(`/integrations/${id}/slack/conversations${qs}`, {
+				workspaceId,
+			})
+		},
+		slackUsers: (id: string, workspaceId: string) =>
+			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
 	},
 
 	notifications: {
@@ -736,6 +744,22 @@ export interface ProviderInfo {
 	name: string
 	displayName: string
 	events: ProviderEventDefinition[]
+}
+
+export interface SlackConversation {
+	id: string
+	name: string
+	is_private: boolean
+	is_im: boolean
+	is_mpim: boolean
+	is_channel: boolean
+}
+
+export interface SlackUser {
+	id: string
+	name: string
+	real_name: string
+	is_bot: boolean
 }
 
 export interface NotificationResponse {
