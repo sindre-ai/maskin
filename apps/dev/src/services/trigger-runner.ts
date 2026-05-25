@@ -205,8 +205,9 @@ export class TriggerRunner {
 			// the "current" object (i.e. NEW.updated) is the natural root.
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
 				const data = await getEventData()
+				if (!data) continue
 				const { current } = getObjectFromData(data)
-				const conditionRoot = (current ?? data) as Record<string, unknown> | null | undefined
+				const conditionRoot = (current ?? data) as Record<string, unknown>
 				if (!evaluateConditions(config.conditions, conditionRoot)) continue
 			}
 

@@ -57,7 +57,7 @@ function formatUser(u: {
 	real_name: string
 	is_bot: boolean
 }): MultiSelectItem {
-	const label = u.real_name ? `${u.real_name} (@${u.name})` : `@${u.name}` || u.id
+	const label = u.real_name ? `${u.real_name} (@${u.name})` : u.name ? `@${u.name}` : u.id
 	return { id: u.id, label, hint: u.is_bot ? 'bot' : undefined }
 }
 
