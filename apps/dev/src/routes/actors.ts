@@ -5,14 +5,19 @@ import {
 	events,
 	actors,
 	agentFiles,
+	files,
+	imports,
 	integrations,
 	notifications,
 	objects,
+	readState,
 	relationships,
 	sessionLogs,
 	sessions,
+	subscriptions,
 	triggers,
 	workspaceMembers,
+	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
 import {
@@ -628,6 +633,9 @@ app.openapi(deleteActorRoute, (async (c) => {
 			await tx.delete(sessionLogs).where(inArray(sessionLogs.sessionId, sessionIds))
 		}
 		await tx.delete(sessions).where(eq(sessions.actorId, id))
+		// Sessions this agent kicked off for other actors still exist; reassign
+		// the creator so the sessions.created_by FK doesn't block the delete.
+		await tx.update(sessions).set({ createdBy: actorId }).where(eq(sessions.createdBy, id))
 
 		// Delete triggers targeting or created by this actor
 		await tx.delete(triggers).where(or(eq(triggers.targetActorId, id), eq(triggers.createdBy, id)))
@@ -646,9 +654,21 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Delete relationships
 		await tx.delete(relationships).where(eq(relationships.createdBy, id))
 
+		// Delete per-actor feed bookkeeping
+		await tx.delete(subscriptions).where(eq(subscriptions.actorId, id))
+		await tx.delete(readState).where(eq(readState.actorId, id))
+
 		// Reassign objects
 		await tx.update(objects).set({ owner: null }).where(eq(objects.owner, id))
 		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
+
+		// Reassign workspace artifacts authored by this agent
+		await tx.update(files).set({ createdBy: actorId }).where(eq(files.createdBy, id))
+		await tx.update(imports).set({ createdBy: actorId }).where(eq(imports.createdBy, id))
+		await tx
+			.update(workspaceSkills)
+			.set({ createdBy: null })
+			.where(eq(workspaceSkills.createdBy, id))
 
 		// Clean up workspace references
 		await tx.delete(workspaceMembers).where(eq(workspaceMembers.actorId, id))
