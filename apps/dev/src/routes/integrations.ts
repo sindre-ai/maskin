@@ -9,6 +9,12 @@ import { createApiError } from '../lib/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
+import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import {
+	type SlackConversationType,
+	listSlackConversations,
+	listSlackUsers,
+} from '../lib/integrations/providers/slack/client'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
@@ -509,6 +515,165 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
+
+// ── GET /api/integrations/:id/slack/conversations ──────────────────────────
+
+const slackConversationTypeSchema = z.enum(['public_channel', 'private_channel', 'im', 'mpim'])
+
+const slackConversationSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	is_private: z.boolean(),
+	is_im: z.boolean(),
+	is_mpim: z.boolean(),
+	is_channel: z.boolean(),
+})
+
+const listSlackConversationsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/slack/conversations',
+	tags: ['integrations'],
+	summary: 'List Slack conversations visible to the bot',
+	request: {
+		params: idParamSchema,
+		query: z.object({
+			types: z.string().optional().openapi({
+				description: 'Comma-separated list of conversation types',
+				example: 'public_channel,private_channel',
+			}),
+		}),
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'List of conversations',
+			content: { 'application/json': { schema: z.array(slackConversationSchema) } },
+		},
+		400: {
+			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(listSlackConversationsRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { types: typesParam } = c.req.valid('query')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.id, id),
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'slack'),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+	if (!integration) return c.json(createApiError('NOT_FOUND', 'Slack integration not found'), 404)
+
+	let types: SlackConversationType[]
+	if (typesParam) {
+		const parsed = typesParam.split(',').map((t) => t.trim())
+		const validated = z.array(slackConversationTypeSchema).safeParse(parsed)
+		if (!validated.success) {
+			return c.json(createApiError('BAD_REQUEST', 'Invalid conversation types'), 400)
+		}
+		types = validated.data
+	} else {
+		types = ['public_channel', 'private_channel', 'im', 'mpim']
+	}
+
+	try {
+		const provider = getProvider('slack')
+		const tokenManager = new TokenManager()
+		const accessToken = await tokenManager.getValidToken(db, integration.id, provider)
+		const conversations = await listSlackConversations(integration.id, accessToken, types)
+		return c.json(conversations)
+	} catch (err) {
+		logger.warn('Slack conversations.list failed', {
+			integrationId: integration.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('BAD_REQUEST', 'Failed to fetch Slack conversations'), 400)
+	}
+}) as RouteHandler<typeof listSlackConversationsRoute, Env>)
+
+// ── GET /api/integrations/:id/slack/users ──────────────────────────────────
+
+const slackUserSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	real_name: z.string(),
+	is_bot: z.boolean(),
+})
+
+const listSlackUsersRoute = createRoute({
+	method: 'get',
+	path: '/{id}/slack/users',
+	tags: ['integrations'],
+	summary: 'List Slack users in the workspace',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'List of users',
+			content: { 'application/json': { schema: z.array(slackUserSchema) } },
+		},
+		400: {
+			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(listSlackUsersRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.id, id),
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'slack'),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+	if (!integration) return c.json(createApiError('NOT_FOUND', 'Slack integration not found'), 404)
+
+	try {
+		const provider = getProvider('slack')
+		const tokenManager = new TokenManager()
+		const accessToken = await tokenManager.getValidToken(db, integration.id, provider)
+		const users = await listSlackUsers(integration.id, accessToken)
+		return c.json(users)
+	} catch (err) {
+		logger.warn('Slack users.list failed', {
+			integrationId: integration.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('BAD_REQUEST', 'Failed to fetch Slack users'), 400)
+	}
+}) as RouteHandler<typeof listSlackUsersRoute, Env>)
 
 export default app
 
