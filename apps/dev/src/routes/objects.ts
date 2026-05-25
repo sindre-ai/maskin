@@ -915,14 +915,16 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 		workspaceSettings = ws?.settings as WorkspaceSettings | undefined
 	}
 
+	type ResultEntry = { id: string; ok: boolean; error?: string }
 	type Plan = {
 		id: string
 		previous: (typeof existingRows)[number]
 		updateData: Partial<typeof objects.$inferInsert>
 		action: 'updated' | 'status_changed'
+		resultEntry: ResultEntry
 	}
 	const plans: Plan[] = []
-	const results: { id: string; ok: boolean; error?: string }[] = []
+	const results: ResultEntry[] = []
 	const now = new Date()
 
 	for (const id of uniqueIds) {
@@ -953,6 +955,7 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 				: patch.metadata
 		}
 
+		const resultEntry: ResultEntry = { id, ok: true }
 		plans.push({
 			id,
 			previous: existing,
@@ -961,18 +964,29 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 				patch.status !== undefined && patch.status !== existing.status
 					? 'status_changed'
 					: 'updated',
+			resultEntry,
 		})
-		results.push({ id, ok: true })
+		results.push(resultEntry)
 	}
 
 	if (plans.length > 0) {
 		await db.transaction(async (tx) => {
 			for (const plan of plans) {
+				// Re-scope the UPDATE to the planned workspace so a row that moved
+				// workspaces between the SELECT and here doesn't get touched.
 				const [updated] = await tx
 					.update(objects)
 					.set(plan.updateData)
-					.where(eq(objects.id, plan.id))
+					.where(and(eq(objects.id, plan.id), eq(objects.workspaceId, plan.previous.workspaceId)))
 					.returning()
+				// The row was deleted (or moved out of the workspace) between the
+				// initial SELECT and this UPDATE — flip the result to a failure and
+				// skip the event so we don't log a no-op.
+				if (!updated) {
+					plan.resultEntry.ok = false
+					plan.resultEntry.error = 'Object not found'
+					continue
+				}
 				await tx.insert(events).values({
 					workspaceId: plan.previous.workspaceId,
 					actorId,
