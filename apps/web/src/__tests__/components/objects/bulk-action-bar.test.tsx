@@ -147,8 +147,52 @@ describe('BulkActionBar', () => {
 		expect(screen.queryByRole('button', { name: 'Delete selected' })).toBeNull()
 	})
 
-	it('disables the status select when no statusOptions are provided', () => {
+	it('does not render copy/open buttons when their handlers are not provided', () => {
+		renderBar()
+		expect(screen.queryByRole('button', { name: /Copy links?/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /Copy titles?$/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /Copy titles? as links?/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /Open in new tabs?/ })).toBeNull()
+	})
+
+	it('fires onCopyLink, onCopyTitle, onCopyTitleAsLink, and onOpenLinks when their buttons are clicked', () => {
+		const onCopyLink = vi.fn()
+		const onCopyTitle = vi.fn()
+		const onCopyTitleAsLink = vi.fn()
+		const onOpenLinks = vi.fn()
+		renderBar({ onCopyLink, onCopyTitle, onCopyTitleAsLink, onOpenLinks })
+		// selectedCount=3 by default → plural labels
+		fireEvent.click(screen.getByRole('button', { name: 'Copy links' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Copy titles' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Copy titles as links' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Open in new tabs' }))
+		expect(onCopyLink).toHaveBeenCalledTimes(1)
+		expect(onCopyTitle).toHaveBeenCalledTimes(1)
+		expect(onCopyTitleAsLink).toHaveBeenCalledTimes(1)
+		expect(onOpenLinks).toHaveBeenCalledTimes(1)
+	})
+
+	it('uses singular labels when exactly one row is selected', () => {
+		renderBar({
+			selectedCount: 1,
+			onCopyLink: vi.fn(),
+			onCopyTitle: vi.fn(),
+			onCopyTitleAsLink: vi.fn(),
+			onOpenLinks: vi.fn(),
+		})
+		expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Copy title' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Copy title as link' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Open in new tab' })).toBeInTheDocument()
+	})
+
+	it('does not render the status select when no statusOptions are provided', () => {
 		renderBar({ statusOptions: [] })
-		expect(screen.getByRole('combobox', { name: 'Set status' })).toBeDisabled()
+		expect(screen.queryByRole('combobox', { name: 'Set status' })).toBeNull()
+	})
+
+	it('does not render the status select when onStatusChange is omitted', () => {
+		renderBar({ onStatusChange: undefined })
+		expect(screen.queryByRole('combobox', { name: 'Set status' })).toBeNull()
 	})
 })
