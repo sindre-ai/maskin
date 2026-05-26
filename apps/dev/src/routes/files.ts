@@ -6,6 +6,7 @@ import {
 	createFileSchema,
 	fileDetailSchema,
 	fileListItemSchema,
+	isTextMimeType,
 	updateFileSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
@@ -31,10 +32,12 @@ function fileStorageKey(workspaceId: string, fileId: string): string {
 	return `workspaces/${workspaceId}/files/${fileId}`
 }
 
-function buildResponse(row: typeof files.$inferSelect, content: string, frontendUrl: string) {
+function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUrl: string) {
+	const encoding = isTextMimeType(row.mimeType) ? 'utf8' : 'base64'
 	return {
 		...serialize(row),
-		content,
+		content: bytes.toString(encoding),
+		encoding,
 		url: fileViewerUrl(frontendUrl, row.workspaceId, row.id),
 	}
 }
@@ -92,7 +95,7 @@ app.openapi(createFileRoute, (async (c) => {
 
 	const fileId = randomUUID()
 	const storageKey = fileStorageKey(workspaceId, fileId)
-	const bytes = Buffer.from(body.content, 'base64')
+	const bytes = Buffer.from(body.content, body.encoding)
 	const sizeBytes = bytes.byteLength
 
 	// Insert + commit first, then S3 put. Keeping the put outside the tx
@@ -160,10 +163,7 @@ app.openapi(createFileRoute, (async (c) => {
 		})
 	}
 
-	return c.json(
-		buildResponse(created, body.content, frontendUrl) as z.infer<typeof fileDetailSchema>,
-		201,
-	)
+	return c.json(buildResponse(created, bytes, frontendUrl) as z.infer<typeof fileDetailSchema>, 201)
 }) as RouteHandler<typeof createFileRoute, Env>)
 
 // -- GET / — List files -------------------------------------------------------
@@ -224,7 +224,7 @@ const getFileRoute = createRoute({
 	method: 'get',
 	path: '/{id}',
 	tags: ['Files'],
-	summary: 'Get a file (with base64 content)',
+	summary: 'Get a file (content as plain text for text MIME types, base64 for binary)',
 	request: { params: idParamSchema },
 	responses: {
 		200: {
@@ -257,10 +257,9 @@ app.openapi(getFileRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
 	}
 
-	let content = ''
+	let bytes: Buffer
 	try {
-		const bytes = await storage.get(row.storageKey)
-		content = bytes.toString('base64')
+		bytes = await storage.get(row.storageKey)
 	} catch (err) {
 		logger.error('Failed to read file bytes from storage', {
 			fileId: row.id,
@@ -270,7 +269,7 @@ app.openapi(getFileRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to read file bytes'), 500)
 	}
 
-	return c.json(buildResponse(row, content, frontendUrl) as z.infer<typeof fileDetailSchema>, 200)
+	return c.json(buildResponse(row, bytes, frontendUrl) as z.infer<typeof fileDetailSchema>, 200)
 }) as RouteHandler<typeof getFileRoute, Env>)
 
 // -- PATCH /:id — Update file -------------------------------------------------
@@ -321,7 +320,9 @@ app.openapi(updateFileRoute, (async (c) => {
 	}
 
 	const contentChanged = body.content !== undefined
-	const newBytes = contentChanged ? Buffer.from(body.content as string, 'base64') : null
+	const newBytes = contentChanged
+		? Buffer.from(body.content as string, body.encoding ?? 'utf8')
+		: null
 	const newSize = newBytes ? newBytes.byteLength : existing.sizeBytes
 
 	// Metadata update inside a tx with FOR UPDATE to serialize concurrent
@@ -395,19 +396,20 @@ app.openapi(updateFileRoute, (async (c) => {
 	}
 
 	// Re-read latest bytes for the response so the caller sees the post-update content.
-	let contentB64 = ''
-	try {
-		const bytes = newBytes ?? (await storage.get(updated.storageKey))
-		contentB64 = bytes.toString('base64')
-	} catch (err) {
-		logger.error('Failed to read file bytes after update', {
-			fileId: updated.id,
-			error: String(err),
-		})
+	let responseBytes: Buffer = newBytes ?? Buffer.alloc(0)
+	if (!newBytes) {
+		try {
+			responseBytes = await storage.get(updated.storageKey)
+		} catch (err) {
+			logger.error('Failed to read file bytes after update', {
+				fileId: updated.id,
+				error: String(err),
+			})
+		}
 	}
 
 	return c.json(
-		buildResponse(updated, contentB64, frontendUrl) as z.infer<typeof fileDetailSchema>,
+		buildResponse(updated, responseBytes, frontendUrl) as z.infer<typeof fileDetailSchema>,
 		200,
 	)
 }) as RouteHandler<typeof updateFileRoute, Env>)

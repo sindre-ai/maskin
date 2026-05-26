@@ -12,8 +12,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Download } from 'lucide-react'
 
 function downloadFile(file: FileDetail): void {
-	const bytes = base64ToBytes(file.content)
-	const blob = new Blob([bytes.buffer as ArrayBuffer], { type: file.mimeType })
+	const blob =
+		file.encoding === 'utf8'
+			? new Blob([file.content], { type: file.mimeType })
+			: new Blob([base64ToBytes(file.content).buffer as ArrayBuffer], { type: file.mimeType })
 	const url = URL.createObjectURL(blob)
 	const a = document.createElement('a')
 	a.href = url

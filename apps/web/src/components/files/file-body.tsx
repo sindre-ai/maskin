@@ -114,11 +114,15 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 	)
 }
 
+function fileText(file: FileDetail): string {
+	return file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content)
+}
+
 export function FileBody({ file }: { file: FileDetail }) {
 	const [mode, setMode] = useState<ViewMode>('rendered')
 
 	if (isMarkdown(file.mimeType)) {
-		const text = decodeBase64Utf8(file.content)
+		const text = fileText(file)
 		return (
 			<div className="space-y-3">
 				<div className="flex justify-end">
@@ -130,7 +134,7 @@ export function FileBody({ file }: { file: FileDetail }) {
 	}
 
 	if (isHtml(file.mimeType)) {
-		const text = decodeBase64Utf8(file.content)
+		const text = fileText(file)
 		return (
 			<div className="space-y-3">
 				<div className="flex justify-end">
@@ -147,9 +151,11 @@ export function FileBody({ file }: { file: FileDetail }) {
 
 	if (isInlineImage(file.mimeType)) {
 		// Browsers don't send our Bearer token on <img src>, so use a data URI
-		// from the base64 content we already loaded. SVG and other UNSAFE_INLINE
-		// types never reach this branch.
-		const src = `data:${file.mimeType};base64,${file.content}`
+		// from the base64 content. Images always come back with encoding='base64'
+		// since they aren't text-MIME types — but guard anyway in case the
+		// server ever returns utf8 for a binary type.
+		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
+		const src = `data:${file.mimeType};base64,${b64}`
 		return (
 			<div className="rounded-md border border-border bg-bg-surface p-4">
 				<img src={src} alt={file.name} className="max-w-full h-auto rounded" />
@@ -160,7 +166,7 @@ export function FileBody({ file }: { file: FileDetail }) {
 	if (isPlainText(file.mimeType)) {
 		// Preformatted text only — JS/SVG bytes are visible to the reader but
 		// cannot execute in our origin because we never set innerHTML.
-		return <SourceView text={decodeBase64Utf8(file.content)} />
+		return <SourceView text={fileText(file)} />
 	}
 
 	return (

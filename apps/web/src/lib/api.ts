@@ -880,6 +880,7 @@ export interface FileListItem {
 
 export interface FileDetail extends FileListItem {
 	content: string
+	encoding: 'base64' | 'utf8'
 	url: string
 }
 
@@ -888,6 +889,7 @@ export interface CreateFileInput {
 	description?: string | null
 	mime_type: string
 	content: string
+	encoding?: 'base64' | 'utf8'
 }
 
 export interface UpdateFileInput {
@@ -895,6 +897,7 @@ export interface UpdateFileInput {
 	description?: string | null
 	mime_type?: string
 	content?: string
+	encoding?: 'base64' | 'utf8'
 }
 
 export interface SessionConfigInput {

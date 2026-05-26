@@ -380,7 +380,7 @@ export function buildCreateFileBody(overrides?: Record<string, unknown>) {
 		name: `file-${n}.md`,
 		description: `Test file ${n}`,
 		mime_type: 'text/markdown',
-		content: Buffer.from(`# Hello ${n}`).toString('base64'),
+		content: `# Hello ${n}`,
 		...overrides,
 	}
 }
