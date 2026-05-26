@@ -107,7 +107,7 @@ export function BulkActionBar({
 				aria-hidden={!visible}
 				inert={!visible || undefined}
 				className={cn(
-					'fixed left-1/2 bottom-6 z-50 -translate-x-1/2',
+					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
 					'rounded-full border border-border bg-bg-surface px-3 py-2 shadow-lg',
 					transitionClass,
