@@ -1,10 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { KNOWLEDGE_NUDGES } from '@maskin/shared'
 import { createDb } from './connection'
-
-// Inlined to avoid a circular dep with @maskin/auth (which depends on @maskin/db).
-// Mirrors generateApiKey() in packages/auth/src/api-keys.ts.
-const newApiKey = () => `ank_${randomUUID().replace(/-/g, '')}`
 import {
 	actors,
 	notifications,
@@ -14,6 +10,10 @@ import {
 	workspaceMembers,
 	workspaces,
 } from './schema'
+
+// Inlined to avoid a circular dep with @maskin/auth (which depends on @maskin/db).
+// Mirrors generateApiKey() in packages/auth/src/api-keys.ts.
+const newApiKey = () => `ank_${randomUUID().replace(/-/g, '')}`
 
 // biome-ignore lint/style/noNonNullAssertion: required env var for CLI
 const db = createDb(process.env.POSTGRES_URL || process.env.DATABASE_URL!)

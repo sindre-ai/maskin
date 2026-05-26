@@ -17,10 +17,23 @@
 --   3) Promotes api_key to NOT NULL so any future insert site that forgets to
 --      set it fails at the DB layer rather than at runtime inside a container.
 
+-- Each statement is idempotent so a partial-apply re-run (e.g. UNIQUE added
+-- but SET NOT NULL never reached) completes cleanly on the next migration
+-- pass. The migration runner swallows 42710 on constraint-already-exists and
+-- marks the file applied — without the IF NOT EXISTS guard, the SET NOT NULL
+-- would never run.
+
 UPDATE actors
 SET api_key = 'ank_' || replace(gen_random_uuid()::text, '-', '')
 WHERE api_key IS NULL;
 
-ALTER TABLE actors ADD CONSTRAINT actors_api_key_unique UNIQUE (api_key);
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint WHERE conname = 'actors_api_key_unique'
+	) THEN
+		ALTER TABLE actors ADD CONSTRAINT actors_api_key_unique UNIQUE (api_key);
+	END IF;
+END $$;
 
 ALTER TABLE actors ALTER COLUMN api_key SET NOT NULL;

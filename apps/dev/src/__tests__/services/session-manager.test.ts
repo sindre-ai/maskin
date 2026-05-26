@@ -249,6 +249,43 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.attachStdin).not.toHaveBeenCalled()
 		})
 
+		it('refuses to launch when the agent has no apiKey', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				name: 'Orphaned Agent',
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: null,
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup (apiKey is null)
+				[workspace], // launchContainer: workspace lookup (llm keys)
+			]
+
+			await expect(manager.startSession(session.id)).rejects.toThrow(/apiKey is null/)
+			expect(mockContainerManager.create).not.toHaveBeenCalled()
+		})
+
 		it('ignores user-provided INTERACTIVE env var in session config', async () => {
 			const session = buildSession({
 				status: 'pending',
