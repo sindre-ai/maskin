@@ -77,7 +77,16 @@ describe('DataTableControls', () => {
 	it('calls onOwnerFilterChange when owner checkbox is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderControls({
-			actors: [{ id: 'actor-1', name: 'Alice', type: 'human', email: null, isSystem: false }],
+			actors: [
+				{
+					id: 'actor-1',
+					name: 'Alice',
+					type: 'human',
+					email: null,
+					description: null,
+					isSystem: false,
+				},
+			],
 		})
 
 		await user.click(screen.getByRole('button', { name: /controls/i }))

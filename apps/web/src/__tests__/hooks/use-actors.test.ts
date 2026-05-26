@@ -40,6 +40,7 @@ function buildActorListItem(overrides: Partial<ActorListItem> & { id: string }):
 		type: 'human',
 		name: 'Test Actor',
 		email: null,
+		description: null,
 		isSystem: false,
 		...overrides,
 	}
@@ -50,6 +51,7 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		type: 'human',
 		name: 'Test Actor',
 		email: null,
+		description: null,
 		systemPrompt: null,
 		tools: null,
 		memory: null,

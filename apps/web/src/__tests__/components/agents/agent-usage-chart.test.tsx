@@ -32,6 +32,7 @@ const agent: ActorResponse = {
 	type: 'agent',
 	name: 'Test Agent',
 	email: null,
+	description: null,
 	systemPrompt: null,
 	tools: null,
 	memory: null,
