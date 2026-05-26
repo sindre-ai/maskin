@@ -22,7 +22,7 @@ import {
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { asc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -377,6 +377,9 @@ const updateActorRoute = createRoute({
 	summary: 'Update actor',
 	request: {
 		params: idParamSchema,
+		headers: z.object({
+			'x-workspace-id': z.string().uuid().optional(),
+		}),
 		body: {
 			content: {
 				'application/json': {
@@ -399,8 +402,42 @@ const updateActorRoute = createRoute({
 
 app.openapi(updateActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
+
+	const [existing] = await db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, id))
+		.limit(1)
+
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type === 'human' && id !== actorId) {
+		if (!workspaceId) {
+			return c.json(createApiError('FORBIDDEN', 'Workspace context is required'), 403)
+		}
+
+		const [callerMembership] = await db
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.limit(1)
+
+		if (!callerMembership || !['owner', 'admin'].includes(callerMembership.role)) {
+			return c.json(createApiError('FORBIDDEN', 'Only workspace admins can update humans'), 403)
+		}
+
+		if (!(await isWorkspaceMember(db, id, workspaceId))) {
+			return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+		}
+	}
 
 	const [updated] = await db
 		.update(actors)

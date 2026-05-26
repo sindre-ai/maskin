@@ -42,7 +42,7 @@ export function useUpdateActor(workspaceId?: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateActorInput }) =>
-			api.actors.update(id, data),
+			api.actors.update(id, data, workspaceId),
 		onSuccess: (_result, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })

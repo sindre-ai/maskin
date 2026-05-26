@@ -155,14 +155,16 @@ function MembersPage() {
 				</div>
 			)}
 
-			<HumanDetailDialog
-				actorId={activeHumanId}
-				workspaceId={workspaceId}
-				open={activeHumanId !== null}
-				onOpenChange={(open) => {
-					if (!open) setActiveHumanId(null)
-				}}
-			/>
+			{activeHumanId && (
+				<HumanDetailDialog
+					actorId={activeHumanId}
+					workspaceId={workspaceId}
+					open
+					onOpenChange={(open) => {
+						if (!open) setActiveHumanId(null)
+					}}
+				/>
+			)}
 		</div>
 	)
 }

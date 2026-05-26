@@ -189,8 +189,12 @@ export const api = {
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
 		create: (data: CreateActorInput) =>
 			request<ActorWithKey>('/actors', { method: 'POST', body: data }),
-		update: (id: string, data: UpdateActorInput) =>
-			request<ActorResponse>(`/actors/${id}`, { method: 'PATCH', body: data }),
+		update: (id: string, data: UpdateActorInput, workspaceId?: string) =>
+			request<ActorResponse>(`/actors/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
 		regenerateApiKey: (id: string) =>
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
 		reset: (id: string, workspaceId: string) =>

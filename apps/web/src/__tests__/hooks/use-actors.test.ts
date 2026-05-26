@@ -176,7 +176,7 @@ describe('useUpdateActor', () => {
 
 		result.current.mutate({ id: 'actor-1', data: { name: 'Updated' } })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(api.actors.update).toHaveBeenCalledWith('actor-1', { name: 'Updated' })
+		expect(api.actors.update).toHaveBeenCalledWith('actor-1', { name: 'Updated' }, workspaceId)
 	})
 
 	it('exposes error when update fails', async () => {
