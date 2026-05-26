@@ -24,10 +24,6 @@ vi.mock('@/components/shared/subscribe-toggle', () => ({
 	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
 }))
 
-vi.mock('@/components/objects/object-action-banner', () => ({
-	ObjectActionBanner: () => null,
-}))
-
 vi.mock('@/components/objects/metadata-properties', () => ({
 	MetadataProperties: () => <div data-testid="metadata-properties" />,
 }))
