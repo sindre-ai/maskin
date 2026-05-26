@@ -255,10 +255,7 @@ describe('Actors Routes', () => {
 		it('returns 403 when a non-admin updates another human', async () => {
 			const actor = buildActor({ type: 'human' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
-			mockResults.selectQueue = [
-				[{ type: actor.type }],
-				[{ role: 'member' }],
-			]
+			mockResults.selectQueue = [[{ type: actor.type }], [{ role: 'member' }]]
 
 			const res = await app.request(
 				jsonRequest(

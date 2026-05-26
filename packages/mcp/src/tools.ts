@@ -328,7 +328,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			'List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor\'s short `description` (one-liner) — call `get_actor` for the full `systemPrompt`, which is how to pick up context on a human teammate @mentioned in a comment.',
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `systemPrompt`, which is how to pick up context on a human teammate @mentioned in a comment.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()

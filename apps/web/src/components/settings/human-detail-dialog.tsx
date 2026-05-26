@@ -50,10 +50,7 @@ export function HumanDetailDialog({
 			onOpenChange(false)
 			return
 		}
-		updateActor.mutate(
-			{ id: actor.id, data },
-			{ onSuccess: () => onOpenChange(false) },
-		)
+		updateActor.mutate({ id: actor.id, data }, { onSuccess: () => onOpenChange(false) })
 	}
 
 	return (
@@ -65,7 +62,8 @@ export function HumanDetailDialog({
 						{actor?.name ?? 'Member'}
 					</DialogTitle>
 					<DialogDescription>
-						{actor?.email ?? 'Human teammate. Add context that agents can pick up when you are @mentioned.'}
+						{actor?.email ??
+							'Human teammate. Add context that agents can pick up when you are @mentioned.'}
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
