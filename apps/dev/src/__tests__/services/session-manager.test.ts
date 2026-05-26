@@ -176,7 +176,7 @@ describe('SessionManager', () => {
 				systemPrompt: 'You are Sindre.',
 				llmProvider: null,
 				llmConfig: null,
-				apiKey: null,
+				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
@@ -223,7 +223,7 @@ describe('SessionManager', () => {
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
 				llmConfig: null,
-				apiKey: null,
+				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
@@ -263,7 +263,7 @@ describe('SessionManager', () => {
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
 				llmConfig: null,
-				apiKey: null,
+				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
@@ -493,7 +493,7 @@ describe('SessionManager', () => {
 				systemPrompt: 'You are Sindre.',
 				llmProvider: null,
 				llmConfig: null,
-				apiKey: null,
+				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
 			const workspace = { id: session.workspaceId, settings: {} }
@@ -535,7 +535,7 @@ describe('SessionManager', () => {
 				systemPrompt: 'Test agent.',
 				llmProvider: null,
 				llmConfig: null,
-				apiKey: null,
+				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
 			const workspace = { id: session.workspaceId, settings: {} }

@@ -61,6 +61,8 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 		})
 
 		// Seed Sindre — the built-in meta-agent shipped with every workspace.
+		// apiKey is required (see comment in actors.ts) — without it the agent's
+		// container has no identity to authenticate MCP writes with.
 		const [sindre] = await tx
 			.insert(actors)
 			.values({
@@ -71,6 +73,7 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 				llmProvider: SINDRE_DEFAULT.llmProvider,
 				llmConfig: SINDRE_DEFAULT.llmConfig,
 				tools: SINDRE_DEFAULT.tools,
+				apiKey: generateApiKey().key,
 				createdBy: actor.id,
 			})
 			.returning()

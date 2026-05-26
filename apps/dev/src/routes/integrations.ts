@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { events, actors, integrations, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
@@ -340,6 +341,7 @@ app.openapi(callbackRoute, (async (c) => {
 			.values({
 				type: 'system',
 				name: systemActorName,
+				apiKey: generateApiKey().key,
 				createdBy: stateData.actorId,
 			})
 			.returning()
