@@ -63,6 +63,19 @@ build_context() {
 # Configure MCP servers — writes config file and sets MCP_CONFIG_FILE for run_agent
 MCP_CONFIG_FILE=""
 
+# Resolve host.docker.internal → host-gateway IP. Chrome 132+ rejects DevTools
+# WebSocket upgrades unless the Host header is an IP or "localhost" — connecting
+# via the hostname trips that DNS-rebinding defense and 500s. We substitute the
+# IP into BROWSER_CDP_URL and the MCP config so the agent dials by IP, which
+# Chrome accepts as the Host value.
+resolve_host_docker_internal() {
+  local ip
+  ip=$(getent hosts host.docker.internal 2>/dev/null | awk '{ print $1 }' | head -1)
+  if [ -n "$ip" ]; then
+    echo "$ip"
+  fi
+}
+
 setup_mcps() {
   # Skip if no MCP config provided
   if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ]; then
@@ -80,6 +93,15 @@ setup_mcps() {
     { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
   ')
 
+  # Rewrite host.docker.internal → IP. Required by Chrome's DevTools Host header
+  # check; harmless for non-CDP servers since the substitution still reaches the
+  # same Docker host gateway.
+  local host_ip
+  host_ip=$(resolve_host_docker_internal)
+  if [ -n "$host_ip" ]; then
+    merged=$(echo "$merged" | sed "s|host.docker.internal|$host_ip|g")
+  fi
+
   # Only write if there are actual servers configured
   local server_count
   server_count=$(echo "$merged" | jq '.mcpServers | length')
@@ -91,6 +113,9 @@ setup_mcps() {
     echo "$merged" > "$mcp_config"
     MCP_CONFIG_FILE="$mcp_config"
     echo "[system] MCP servers configured ($server_count servers)"
+    if [ -n "$host_ip" ]; then
+      echo "[system] Resolved host.docker.internal → $host_ip for CDP Host header"
+    fi
   fi
 }
 
@@ -190,6 +215,17 @@ echo "[system] Runtime: $RUNTIME"
 
 install_runtime
 build_context
+
+# Substitute host.docker.internal → host-gateway IP in BROWSER_CDP_URL too, so
+# any MCP server that reads it directly from the env (rather than from the
+# resolved mcp-config.json) also gets a Chrome-acceptable Host header.
+if [ -n "$BROWSER_CDP_URL" ] && [[ "$BROWSER_CDP_URL" == *host.docker.internal* ]]; then
+  _host_ip=$(getent hosts host.docker.internal 2>/dev/null | awk '{ print $1 }' | head -1)
+  if [ -n "$_host_ip" ]; then
+    export BROWSER_CDP_URL="${BROWSER_CDP_URL//host.docker.internal/$_host_ip}"
+  fi
+fi
+
 setup_mcps
 setup_claude_credentials
 
