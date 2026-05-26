@@ -252,23 +252,26 @@ function ObjectsPage() {
 		updateSearch({ ids: undefined })
 	}, [updateSearch])
 
-	// Status options for the bulk action bar. Flatten distinct workspace-configured
-	// statuses across visible types so a multi-type selection still has options; the
-	// server validates per-id against each object's own type and reports partial
-	// failure when a chosen status doesn't apply to one of the selected rows.
+	// Status options for the bulk action bar — scoped to the selected objects' type.
+	// When the selection spans multiple types (or any selected row isn't loaded so we
+	// can't verify its type), return [] so the BulkActionBar hides the status control.
 	const bulkStatusOptions = useMemo(() => {
-		const seen = new Set<string>()
-		const opts: { value: string; label: string }[] = []
-		for (const statuses of Object.values(statusesByType)) {
-			for (const s of statuses) {
-				if (!seen.has(s)) {
-					seen.add(s)
-					opts.push({ value: s, label: s })
-				}
+		if (selectedIds.length === 0) return []
+		const idSet = new Set(selectedIds)
+		const types = new Set<string>()
+		let resolved = 0
+		for (const obj of allObjects) {
+			if (idSet.has(obj.id)) {
+				types.add(obj.type)
+				resolved++
+				if (types.size > 1) return []
 			}
 		}
-		return opts
-	}, [statusesByType])
+		if (resolved !== selectedIds.length || types.size !== 1) return []
+		const [type] = types
+		const statuses = statusesByType[type as string] ?? []
+		return statuses.map((s) => ({ value: s, label: s }))
+	}, [selectedIds, allObjects, statusesByType])
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),

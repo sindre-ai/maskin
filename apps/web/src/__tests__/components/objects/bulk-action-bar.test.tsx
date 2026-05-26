@@ -147,8 +147,13 @@ describe('BulkActionBar', () => {
 		expect(screen.queryByRole('button', { name: 'Delete selected' })).toBeNull()
 	})
 
-	it('disables the status select when no statusOptions are provided', () => {
+	it('does not render the status select when no statusOptions are provided', () => {
 		renderBar({ statusOptions: [] })
-		expect(screen.getByRole('combobox', { name: 'Set status' })).toBeDisabled()
+		expect(screen.queryByRole('combobox', { name: 'Set status' })).toBeNull()
+	})
+
+	it('does not render the status select when onStatusChange is omitted', () => {
+		renderBar({ onStatusChange: undefined })
+		expect(screen.queryByRole('combobox', { name: 'Set status' })).toBeNull()
 	})
 })

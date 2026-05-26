@@ -111,25 +111,26 @@ export function BulkActionBar({
 
 				<div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
 
-				<Select
-					key={`status-${statusKey}`}
-					onValueChange={(value) => {
-						if (onStatusChange) onStatusChange(value)
-						setStatusKey((k) => k + 1)
-					}}
-					disabled={statusOptions.length === 0 || !onStatusChange}
-				>
-					<SelectTrigger aria-label="Set status">
-						<SelectValue placeholder="Status" />
-					</SelectTrigger>
-					<SelectContent>
-						{statusOptions.map((opt) => (
-							<SelectItem key={opt.value} value={opt.value}>
-								{opt.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				{onStatusChange && statusOptions.length > 0 && (
+					<Select
+						key={`status-${statusKey}`}
+						onValueChange={(value) => {
+							onStatusChange(value)
+							setStatusKey((k) => k + 1)
+						}}
+					>
+						<SelectTrigger aria-label="Set status">
+							<SelectValue placeholder="Status" />
+						</SelectTrigger>
+						<SelectContent>
+							{statusOptions.map((opt) => (
+								<SelectItem key={opt.value} value={opt.value}>
+									{opt.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				)}
 
 				<Select
 					key={`owner-${ownerKey}`}
