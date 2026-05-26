@@ -314,10 +314,7 @@ function ObjectsPage() {
 	// Build the path the app uses for object detail pages — kept relative so we can
 	// resolve to an absolute URL for clipboard payloads but pass the path directly
 	// to window.open for new-tab navigation.
-	const objectPath = useCallback(
-		(id: string) => `/${workspaceId}/objects/${id}`,
-		[workspaceId],
-	)
+	const objectPath = useCallback((id: string) => `/${workspaceId}/objects/${id}`, [workspaceId])
 
 	// Selected objects we have loaded data for. Titles aren't available for rows
 	// outside the current pages, so copy-title actions warn when any selected id
@@ -354,15 +351,14 @@ function ObjectsPage() {
 
 	const handleCopyTitles = useCallback(async () => {
 		if (selectedObjectsLoaded.length === 0) return
-		const text = selectedObjectsLoaded
-			.map((o) => o.title?.trim() || '(untitled)')
-			.join('\n')
+		const text = selectedObjectsLoaded.map((o) => o.title?.trim() || '(untitled)').join('\n')
 		try {
 			await navigator.clipboard.writeText(text)
 			const n = selectedObjectsLoaded.length
 			const missing = selectedIds.length - n
 			toast.success(`Copied ${n} title${n === 1 ? '' : 's'}`, {
-				description: missing > 0 ? `${missing} not loaded yet — scroll to load them first.` : undefined,
+				description:
+					missing > 0 ? `${missing} not loaded yet — scroll to load them first.` : undefined,
 			})
 		} catch {
 			toast.error('Failed to copy to clipboard')
@@ -382,7 +378,8 @@ function ObjectsPage() {
 			const n = selectedObjectsLoaded.length
 			const missing = selectedIds.length - n
 			toast.success(`Copied ${n} link${n === 1 ? '' : 's'} as Markdown`, {
-				description: missing > 0 ? `${missing} not loaded yet — scroll to load them first.` : undefined,
+				description:
+					missing > 0 ? `${missing} not loaded yet — scroll to load them first.` : undefined,
 			})
 		} catch {
 			toast.error('Failed to copy to clipboard')
