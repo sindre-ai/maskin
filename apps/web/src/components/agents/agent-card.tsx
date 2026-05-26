@@ -20,7 +20,7 @@ export function AgentCard({
 }) {
 	const { workspaceId } = useWorkspace()
 
-	const roleDescription = agent.systemPrompt?.split('\n')[0]?.trim()
+	const description = agent.description?.trim()
 
 	return (
 		<Link
@@ -42,8 +42,8 @@ export function AgentCard({
 				<StatusLabel status={status} />
 			</div>
 
-			{roleDescription && (
-				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{roleDescription}</p>
+			{description && (
+				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{description}</p>
 			)}
 
 			<div className="ml-9">

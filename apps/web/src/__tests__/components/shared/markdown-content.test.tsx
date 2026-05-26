@@ -68,7 +68,16 @@ describe('MarkdownContent', () => {
 	})
 
 	it('renders @mentions as chips inside formatted markdown', () => {
-		const actors = [{ id: 'a1', name: 'Magnus', type: 'human', email: null, isSystem: false }]
+		const actors = [
+			{
+				id: 'a1',
+				name: 'Magnus',
+				type: 'human',
+				email: null,
+				description: null,
+				isSystem: false,
+			},
+		]
 		render(<MarkdownContent content="Hello @Magnus this is **important**" mentionActors={actors} />)
 		const chip = screen.getByText('@Magnus')
 		expect(chip.tagName).toBe('SPAN')

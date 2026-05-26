@@ -27,6 +27,7 @@ export function buildActor(overrides?: Record<string, unknown>) {
 		name: `Actor ${n}`,
 		email: `actor-${n}@test.com`,
 		apiKey: `ank_test${n}`,
+		description: null,
 		systemPrompt: null,
 		tools: null,
 		memory: null,

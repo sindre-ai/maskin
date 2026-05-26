@@ -172,6 +172,7 @@ describe('actorResponseSchema', () => {
 		type: 'agent',
 		name: 'Sindre',
 		email: null,
+		description: null,
 		systemPrompt: 'You are a helper',
 		tools: null,
 		memory: null,

@@ -27,7 +27,7 @@ import {
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { asc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -135,6 +135,7 @@ app.openapi(createActorRoute, async (c) => {
 			email: body.email,
 			apiKey: key,
 			passwordHash,
+			description: body.description,
 			systemPrompt: body.system_prompt,
 			tools,
 			llmProvider: body.llm_provider,
@@ -246,6 +247,7 @@ app.openapi(listActorsRoute, async (c) => {
 				type: actors.type,
 				name: actors.name,
 				email: actors.email,
+				description: actors.description,
 				isSystem: actors.isSystem,
 				role: workspaceMembers.role,
 			})
@@ -275,6 +277,7 @@ app.openapi(listActorsRoute, async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			description: actors.description,
 			isSystem: actors.isSystem,
 			workspaceId: workspaces.id,
 			workspaceName: workspaces.name,
@@ -293,6 +296,7 @@ app.openapi(listActorsRoute, async (c) => {
 			type: string
 			name: string
 			email: string | null
+			description: string | null
 			isSystem: boolean
 			workspaces: { id: string; name: string; role: string }[]
 		}
@@ -308,6 +312,7 @@ app.openapi(listActorsRoute, async (c) => {
 				type: r.type,
 				name: r.name,
 				email: r.email,
+				description: r.description,
 				isSystem: r.isSystem,
 				workspaces: [membership],
 			})
@@ -348,6 +353,7 @@ app.openapi(getActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			description: actors.description,
 			systemPrompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
@@ -376,6 +382,9 @@ const updateActorRoute = createRoute({
 	summary: 'Update actor',
 	request: {
 		params: idParamSchema,
+		headers: z.object({
+			'x-workspace-id': z.string().uuid().optional(),
+		}),
 		body: {
 			content: {
 				'application/json': {
@@ -398,14 +407,49 @@ const updateActorRoute = createRoute({
 
 app.openapi(updateActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
+
+	const [existing] = await db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, id))
+		.limit(1)
+
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type === 'human' && id !== actorId) {
+		if (!workspaceId) {
+			return c.json(createApiError('FORBIDDEN', 'Workspace context is required'), 403)
+		}
+
+		const [callerMembership] = await db
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.limit(1)
+
+		if (!callerMembership || !['owner', 'admin'].includes(callerMembership.role)) {
+			return c.json(createApiError('FORBIDDEN', 'Only workspace admins can update humans'), 403)
+		}
+
+		if (!(await isWorkspaceMember(db, id, workspaceId))) {
+			return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+		}
+	}
 
 	const [updated] = await db
 		.update(actors)
 		.set({
 			...(body.name && { name: body.name }),
 			...(body.email && { email: body.email }),
+			...(body.description !== undefined && { description: body.description }),
 			...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
 			...(body.tools !== undefined && { tools: body.tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
@@ -419,6 +463,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			description: actors.description,
 			systemPrompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
@@ -529,6 +574,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		.update(actors)
 		.set({
 			name: SINDRE_DEFAULT.name,
+			description: null,
 			systemPrompt: SINDRE_DEFAULT.systemPrompt,
 			llmProvider: SINDRE_DEFAULT.llmProvider,
 			llmConfig: SINDRE_DEFAULT.llmConfig,
@@ -542,6 +588,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
+			description: actors.description,
 			systemPrompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,

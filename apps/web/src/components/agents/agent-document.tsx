@@ -61,6 +61,7 @@ interface AgentDocumentViewProps {
 	isLoadingMoreSessions?: boolean
 	onLoadMoreSessions?: () => void
 	onUpdateName: (name: string) => void
+	onUpdateDescription: (description: string) => void
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
@@ -96,6 +97,7 @@ export function AgentDocumentView({
 	isLoadingMoreSessions = false,
 	onLoadMoreSessions,
 	onUpdateName,
+	onUpdateDescription,
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
 	onUpdateLlmConfig,
@@ -104,6 +106,7 @@ export function AgentDocumentView({
 	showSaved = false,
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
+	const [descriptionDraft, setDescriptionDraft] = useState(agent.description ?? '')
 	const [systemPromptDraft, setSystemPromptDraft] = useState(agent.systemPrompt ?? '')
 	const [systemPromptDirty, setSystemPromptDirty] = useState(false)
 	const [modelDraft, setModelDraft] = useState(
@@ -123,6 +126,13 @@ export function AgentDocumentView({
 			onUpdateName(nameDraft.trim())
 		}
 	}, [nameDraft, agent.name, onUpdateName])
+
+	const handleDescriptionBlur = useCallback(() => {
+		const next = descriptionDraft.trim()
+		if (next !== (agent.description ?? '')) {
+			onUpdateDescription(next)
+		}
+	}, [descriptionDraft, agent.description, onUpdateDescription])
 
 	const handleSystemPromptBlur = useCallback(() => {
 		if (systemPromptDirty && systemPromptDraft !== (agent.systemPrompt ?? '')) {
@@ -222,6 +232,18 @@ export function AgentDocumentView({
 					</span>
 				)}
 			</div>
+
+			{/* Description (short one-liner shown on the Agents page card) */}
+			<Input
+				type="text"
+				value={descriptionDraft}
+				onChange={(e) => setDescriptionDraft(e.target.value)}
+				onBlur={handleDescriptionBlur}
+				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+				placeholder="Short description shown on the Agents page"
+				maxLength={80}
+				className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
+			/>
 
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
@@ -659,6 +681,13 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[agent.id, updateActor],
 	)
 
+	const handleUpdateDescription = useCallback(
+		(description: string) => {
+			updateActor.mutate({ id: agent.id, data: { description } })
+		},
+		[agent.id, updateActor],
+	)
+
 	const handleUpdateSystemPrompt = useCallback(
 		(system_prompt: string) => {
 			updateActor.mutate({ id: agent.id, data: { system_prompt } })
@@ -707,6 +736,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				isLoadingMoreSessions={isLoadingMoreSessions}
 				onLoadMoreSessions={() => fetchNextPage()}
 				onUpdateName={handleUpdateName}
+				onUpdateDescription={handleUpdateDescription}
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
 				onUpdateLlmConfig={handleUpdateLlmConfig}

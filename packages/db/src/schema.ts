@@ -26,6 +26,7 @@ export const actors = pgTable('actors', {
 	email: text('email').unique(),
 	apiKey: text('api_key'),
 	passwordHash: text('password_hash'),
+	description: text('description'),
 	systemPrompt: text('system_prompt'),
 	tools: jsonb('tools'),
 	memory: jsonb('memory'),

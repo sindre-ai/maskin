@@ -46,6 +46,7 @@ export function buildActorWithKey(overrides: Partial<ActorWithKey> = {}): ActorW
 		type: 'human',
 		email: 'test@example.com',
 		api_key: 'ank_test123',
+		description: null,
 		systemPrompt: null,
 		tools: null,
 		memory: null,
@@ -65,6 +66,7 @@ export function buildActorResponse(overrides: Partial<ActorResponse> = {}): Acto
 		name: 'Test User',
 		type: 'human',
 		email: 'test@example.com',
+		description: null,
 		systemPrompt: null,
 		tools: null,
 		memory: null,
@@ -84,6 +86,7 @@ export function buildActorListItem(overrides: Partial<ActorListItem> = {}): Acto
 		name: 'Test User',
 		type: 'human',
 		email: 'test@example.com',
+		description: null,
 		isSystem: false,
 		...overrides,
 	}

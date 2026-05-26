@@ -96,6 +96,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 		agent: buildActorResponse({ name: 'Scout', type: 'agent' }),
 		workspaceId: 'ws-1',
 		onUpdateName: vi.fn(),
+		onUpdateDescription: vi.fn(),
 		onUpdateSystemPrompt: vi.fn(),
 		onUpdateLlmProvider: vi.fn(),
 		onUpdateLlmConfig: vi.fn(),

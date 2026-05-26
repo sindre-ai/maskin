@@ -241,11 +241,52 @@ describe('Actors Routes', () => {
 		it('returns 200 when actor updated', async () => {
 			const actor = buildActor()
 			const updated = { ...actor, name: 'Updated Name' }
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+			mockResults.select = [{ type: actor.type }]
 			mockResults.update = [updated]
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/actors/${actor.id}`, { name: 'Updated Name' }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		it('returns 403 when a non-admin updates another human', async () => {
+			const actor = buildActor({ type: 'human' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [[{ type: actor.type }], [{ role: 'member' }]]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/actors/${actor.id}`,
+					{ description: 'Teammate context' },
+					{ 'X-Workspace-Id': '00000000-0000-0000-0000-000000000001' },
+				),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 200 when a workspace admin updates another human in the workspace', async () => {
+			const actor = buildActor({ type: 'human' })
+			const updated = { ...actor, description: 'Teammate context' }
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [
+				[{ type: actor.type }],
+				[{ role: 'admin' }],
+				[{ actorId: actor.id }],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/actors/${actor.id}`,
+					{ description: 'Teammate context' },
+					{ 'X-Workspace-Id': '00000000-0000-0000-0000-000000000001' },
+				),
 			)
 
 			expect(res.status).toBe(200)

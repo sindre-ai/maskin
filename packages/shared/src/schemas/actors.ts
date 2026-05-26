@@ -12,12 +12,15 @@ export const llmConfigSchema = z.object({
 	model: z.string().optional(),
 })
 
+export const ACTOR_DESCRIPTION_MAX_LENGTH = 80
+
 export const createActorSchema = z.object({
 	id: z.string().uuid().optional(),
 	type: actorTypeSchema,
 	name: z.string().min(1),
 	email: z.string().email().optional(),
 	password: z.string().min(8).optional(),
+	description: z.string().max(ACTOR_DESCRIPTION_MAX_LENGTH).optional(),
 	system_prompt: z.string().optional(),
 	tools: actorToolsSchema.optional(),
 	llm_provider: z.string().optional(),
@@ -33,6 +36,7 @@ export const loginSchema = z.object({
 export const updateActorSchema = z.object({
 	name: z.string().min(1).optional(),
 	email: z.string().email().optional(),
+	description: z.string().max(ACTOR_DESCRIPTION_MAX_LENGTH).optional(),
 	system_prompt: z.string().optional(),
 	tools: actorToolsSchema.optional(),
 	memory: z.record(z.unknown()).optional(),
@@ -51,6 +55,7 @@ export const actorResponseSchema = z.object({
 	type: z.string(),
 	name: z.string(),
 	email: z.string().nullable(),
+	description: z.string().nullable(),
 	systemPrompt: z.string().nullable(),
 	tools: z.unknown().nullable(),
 	memory: z.unknown().nullable(),
