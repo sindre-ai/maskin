@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { events as eventsTable, files, integrations } from '@maskin/db/schema'
+import { MAX_FILE_SIZE_BYTES } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
+import { fileStorageKey } from '../../../file-urls'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
 import { TokenManager } from '../../oauth/token-manager'
@@ -26,14 +28,8 @@ interface SlackFile {
 
 /** Cap to keep a single ingest event from blowing up storage if something goes wrong */
 const MAX_FILES_PER_EVENT = 20
-/** Hard cap on bytes per file (matches /api/files create limit) */
-const MAX_FILE_BYTES = 10 * 1024 * 1024
 /** Slack file download timeout */
 const DOWNLOAD_TIMEOUT_MS = 30_000
-
-function fileStorageKey(workspaceId: string, fileId: string): string {
-	return `workspaces/${workspaceId}/files/${fileId}`
-}
 
 function extractSlackFiles(data: Record<string, unknown>): SlackFile[] | null {
 	const event = data.event as Record<string, unknown> | undefined
@@ -60,8 +56,8 @@ async function downloadSlackFile(url: string, accessToken: string): Promise<Buff
 		throw new Error(`Slack file download failed: HTTP ${res.status}`)
 	}
 	const ab = await res.arrayBuffer()
-	if (ab.byteLength > MAX_FILE_BYTES) {
-		throw new Error(`Slack file exceeds ${MAX_FILE_BYTES} byte limit (${ab.byteLength})`)
+	if (ab.byteLength > MAX_FILE_SIZE_BYTES) {
+		throw new Error(`Slack file exceeds ${MAX_FILE_SIZE_BYTES} byte limit (${ab.byteLength})`)
 	}
 	return Buffer.from(ab)
 }
