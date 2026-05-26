@@ -28,6 +28,24 @@ describe('Workspaces Routes', () => {
 			expect(body.name).toBe(ws.name)
 		})
 
+		it('seeds Sindre with a generated apiKey distinct from the creator', async () => {
+			const ws = buildWorkspace()
+			const sindre = buildActor({ type: 'agent', name: 'Sindre', isSystem: true })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = [[ws], [{}], [sindre], [{}]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(201)
+			// inserts: [workspace, owner-member, sindre-actor, sindre-member]
+			const sindreInsert = calls.inserts[2] as { apiKey?: string; type?: string }
+			expect(sindreInsert.type).toBe('agent')
+			expect(sindreInsert.apiKey).toBeDefined()
+			expect(sindreInsert.apiKey).toMatch(/^ank_/)
+		})
+
 		it('returns 500 when workspace insert returns empty', async () => {
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insert = [] // empty — insert failed
