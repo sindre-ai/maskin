@@ -198,17 +198,25 @@ export async function slackWebhookFanOut(ctx: WebhookFanOutContext): Promise<Nor
 		})
 	}
 
+	// Download + persist in parallel — sequential would make a 20-file message hold
+	// the webhook open for up to MAX_FILES_PER_EVENT × DOWNLOAD_TIMEOUT_MS, well past
+	// Slack's 3s ack window. Each persistOne is independent (its own UUID + S3 key).
+	const results = await Promise.allSettled(
+		toPersist.map((slackFile) =>
+			persistOne(db, storage, integration.workspaceId, actorId, accessToken, slackFile),
+		),
+	)
 	const persisted: PersistedFile[] = []
-	for (const slackFile of toPersist) {
-		try {
-			persisted.push(
-				await persistOne(db, storage, integration.workspaceId, actorId, accessToken, slackFile),
-			)
-		} catch (err) {
+	for (let i = 0; i < results.length; i++) {
+		const r = results[i]
+		if (!r) continue
+		if (r.status === 'fulfilled') {
+			persisted.push(r.value)
+		} else {
 			logger.error('Slack fan-out: failed to persist file', {
 				integrationId: ctx.integrationId,
-				slackFileId: slackFile.id,
-				error: err instanceof Error ? err.message : String(err),
+				slackFileId: toPersist[i]?.id,
+				error: r.reason instanceof Error ? r.reason.message : String(r.reason),
 			})
 		}
 	}

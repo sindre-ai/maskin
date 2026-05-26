@@ -295,4 +295,42 @@ describe('slackWebhookFanOut', () => {
 		expect(result).toEqual([normalized])
 		expect(storage.puts).toHaveLength(0)
 	})
+
+	it('downloads files in parallel rather than sequentially', async () => {
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		let inFlight = 0
+		let maxInFlight = 0
+		vi.spyOn(globalThis, 'fetch').mockImplementation((async () => {
+			inFlight++
+			maxInFlight = Math.max(maxInFlight, inFlight)
+			await new Promise((r) => setTimeout(r, 20))
+			inFlight--
+			return {
+				ok: true,
+				status: 200,
+				arrayBuffer: () => Promise.resolve(new TextEncoder().encode('payload').buffer),
+			} as unknown as Response
+		}) as typeof fetch)
+
+		const { db } = makeFakeDb({
+			id: 'int-1',
+			provider: 'slack',
+			workspaceId: 'ws-1',
+			config: { system_actor_id: 'actor-1' },
+		})
+		const storage = makeFakeStorage()
+
+		await slackWebhookFanOut({
+			db: db as never,
+			storage,
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized: makeEvent(fakeFiles()),
+		})
+
+		// Both fetches should overlap — sequential execution would peak at 1.
+		expect(maxInFlight).toBeGreaterThanOrEqual(2)
+	})
 })

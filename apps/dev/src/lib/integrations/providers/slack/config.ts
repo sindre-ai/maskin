@@ -110,17 +110,26 @@ export const resolveExternalId = async (credentials: StoredCredentials): Promise
 }
 
 /**
- * Handle Slack's url_verification challenge.
- * Slack sends this once when the Events API URL is configured.
- * Must respond with the challenge string to complete the handshake.
+ * Handle Slack's url_verification challenge and short-circuit retries.
+ *
+ * - `url_verification`: Slack sends this once when the Events API URL is configured;
+ *   we must echo the challenge to complete the handshake.
+ * - Retries: Slack retries up to 3 times on any non-2xx or slow response. Because
+ *   the webhook handler processes synchronously (downloads files, inserts events),
+ *   reprocessing a retry would download every attachment again under a fresh UUID
+ *   and insert a duplicate event. Ack with 200 instead so the original request
+ *   keeps running to completion.
  */
 export const slackWebhookPreHandler = (
 	payload: unknown,
-	_headers: Record<string, string>,
+	headers: Record<string, string>,
 ): { body: unknown; status?: number } | null => {
 	const data = payload as Record<string, unknown>
 	if (data.type === 'url_verification' && typeof data.challenge === 'string') {
 		return { body: { challenge: data.challenge } }
+	}
+	if (headers['x-slack-retry-num']) {
+		return { body: { ok: true, skipped: 'retry' } }
 	}
 	return null
 }

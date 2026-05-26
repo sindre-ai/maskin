@@ -160,6 +160,15 @@ describe('slackWebhookPreHandler', () => {
 		const response = slackWebhookPreHandler(payload, {})
 		expect(response).toBeNull()
 	})
+
+	it('short-circuits Slack retry deliveries to avoid duplicate processing', () => {
+		const payload = { type: 'event_callback', team_id: 'T123', event: { type: 'message' } }
+		const response = slackWebhookPreHandler(payload, {
+			'x-slack-retry-num': '1',
+			'x-slack-retry-reason': 'http_timeout',
+		})
+		expect(response).toEqual({ body: { ok: true, skipped: 'retry' } })
+	})
 })
 
 describe('slackEventNormalizer', () => {
