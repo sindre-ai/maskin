@@ -94,6 +94,12 @@ export function BulkActionBar({
 
 	const transitionClass = reducedMotion ? '' : 'transition-all duration-200 ease-out'
 
+	const plural = selectedCount === 1 ? '' : 's'
+	const copyLinkLabel = `Copy link${plural}`
+	const copyTitleLabel = `Copy title${plural}`
+	const copyTitleAsLinkLabel = `Copy title${plural} as link${plural}`
+	const openLinksLabel = `Open in new tab${plural}`
+
 	return (
 		<TooltipProvider delayDuration={150}>
 			<section
@@ -177,12 +183,12 @@ export function BulkActionBar({
 									size="icon"
 									className="size-8"
 									onClick={onCopyLink}
-									aria-label="Copy link"
+									aria-label={copyLinkLabel}
 								>
 									<Link className="size-4" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent>Copy link</TooltipContent>
+							<TooltipContent>{copyLinkLabel}</TooltipContent>
 						</Tooltip>
 					)}
 					{onCopyTitle && (
@@ -194,12 +200,12 @@ export function BulkActionBar({
 									size="icon"
 									className="size-8"
 									onClick={onCopyTitle}
-									aria-label="Copy title"
+									aria-label={copyTitleLabel}
 								>
 									<Type className="size-4" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent>Copy title</TooltipContent>
+							<TooltipContent>{copyTitleLabel}</TooltipContent>
 						</Tooltip>
 					)}
 					{onCopyTitleAsLink && (
@@ -211,12 +217,12 @@ export function BulkActionBar({
 									size="icon"
 									className="size-8"
 									onClick={onCopyTitleAsLink}
-									aria-label="Copy title as link"
+									aria-label={copyTitleAsLinkLabel}
 								>
 									<Brackets className="size-4" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent>Copy title as link (Markdown)</TooltipContent>
+							<TooltipContent>{`${copyTitleAsLinkLabel} (Markdown)`}</TooltipContent>
 						</Tooltip>
 					)}
 					{onOpenLinks && (
@@ -228,12 +234,12 @@ export function BulkActionBar({
 									size="icon"
 									className="size-8"
 									onClick={onOpenLinks}
-									aria-label="Open in new tabs"
+									aria-label={openLinksLabel}
 								>
 									<ExternalLink className="size-4" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent>Open in new tabs</TooltipContent>
+							<TooltipContent>{openLinksLabel}</TooltipContent>
 						</Tooltip>
 					)}
 					{onDelete && (
