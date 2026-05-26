@@ -32,7 +32,6 @@ import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
-import { ObjectActionBanner } from './object-action-banner'
 import { ObjectFiles } from './object-files'
 
 interface ObjectDocumentViewProps {
@@ -97,9 +96,6 @@ export function ObjectDocumentView({
 
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
-			{/* Action banner for pending decisions */}
-			<ObjectActionBanner objectId={object.id} workspaceId={workspaceId} />
-
 			{/* Title */}
 			<div className="flex items-start gap-2 mb-2">
 				<textarea
