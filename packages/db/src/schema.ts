@@ -517,3 +517,23 @@ export const files = pgTable(
 
 export type File = typeof files.$inferSelect
 export type NewFile = typeof files.$inferInsert
+
+// ── Webhook Deliveries ──────────────────────────────────────────────────────
+// Idempotency ledger for inbound webhook deliveries. Each row claims a single
+// provider+external_id pair so that retries (which reuse the same external_id)
+// are short-circuited instead of being reprocessed and creating duplicate events
+// or duplicate downloaded files.
+
+export const webhookDeliveries = pgTable(
+	'webhook_deliveries',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		provider: text('provider').notNull(),
+		externalId: text('external_id').notNull(),
+		receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('webhook_deliveries_provider_external_id_uniq').on(t.provider, t.externalId),
+		index('webhook_deliveries_received_at_idx').on(t.receivedAt),
+	],
+)

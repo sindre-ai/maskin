@@ -159,6 +159,14 @@ export interface ResolvedProvider {
 		headers: Record<string, string>,
 	) => { body: unknown; status?: number } | null
 	/**
+	 * Return a stable per-delivery ID extracted from a verified webhook payload
+	 * (and/or headers). Used to deduplicate provider retries: the route claims a
+	 * row in `webhook_deliveries` keyed on (provider, external_id) before
+	 * processing, so a retry with the same ID short-circuits with 200 OK.
+	 * Return null to opt out of dedup for this delivery.
+	 */
+	extractDeliveryId?: (payload: unknown, headers: Record<string, string>) => string | null
+	/**
 	 * Run provider-specific work immediately after OAuth credentials are stored and the
 	 * integration is activated (e.g. Gmail's users.watch call). Failures should be logged
 	 * by the provider; the route catches and surfaces them as a redirect with an error param.

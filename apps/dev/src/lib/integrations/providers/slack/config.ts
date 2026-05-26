@@ -111,26 +111,39 @@ export const resolveExternalId = async (credentials: StoredCredentials): Promise
 }
 
 /**
- * Handle Slack's url_verification challenge and short-circuit retries.
+ * Handle Slack's url_verification challenge.
  *
- * - `url_verification`: Slack sends this once when the Events API URL is configured;
- *   we must echo the challenge to complete the handshake.
- * - Retries: Slack retries up to 3 times on any non-2xx or slow response. Because
- *   the webhook handler processes synchronously (downloads files, inserts events),
- *   reprocessing a retry would download every attachment again under a fresh UUID
- *   and insert a duplicate event. Ack with 200 instead so the original request
- *   keeps running to completion.
+ * Slack sends this once when the Events API URL is configured; we must echo
+ * the challenge to complete the handshake. Retries are handled separately via
+ * `slackExtractDeliveryId` + the generic `webhook_deliveries` dedup table.
  */
 export const slackWebhookPreHandler = (
 	payload: unknown,
-	headers: Record<string, string>,
+	_headers: Record<string, string>,
 ): { body: unknown; status?: number } | null => {
 	const data = payload as Record<string, unknown>
 	if (data.type === 'url_verification' && typeof data.challenge === 'string') {
 		return { body: { challenge: data.challenge } }
 	}
-	if (headers['x-slack-retry-num']) {
-		return { body: { ok: true, skipped: 'retry' } }
-	}
 	return null
+}
+
+/**
+ * Slack puts a stable `event_id` (e.g. `Ev08ABC...`) on the outer envelope of
+ * every `event_callback` and reuses it across retries. The webhook route uses
+ * this to dedupe retries — including retries that happen because the *original*
+ * delivery genuinely failed and Slack is giving us another chance — without
+ * blindly dropping every retry the way an `x-slack-retry-num` short-circuit
+ * would. If we crash mid-processing, the dedup row was never inserted, so the
+ * retry actually gets a chance to run.
+ */
+export const slackExtractDeliveryId = (
+	payload: unknown,
+	_headers: Record<string, string>,
+): string | null => {
+	if (!payload || typeof payload !== 'object') return null
+	const data = payload as Record<string, unknown>
+	if (data.type !== 'event_callback') return null
+	const eventId = data.event_id
+	return typeof eventId === 'string' && eventId.length > 0 ? eventId : null
 }

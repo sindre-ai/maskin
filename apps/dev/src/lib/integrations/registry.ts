@@ -15,6 +15,7 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import {
 	config as slackConfig,
+	slackExtractDeliveryId,
 	parseTokenResponse as slackParseTokenResponse,
 	resolveExternalId as slackResolveExternalId,
 	slackWebhookPreHandler,
@@ -44,6 +45,7 @@ providers.set('slack', {
 	resolveExternalId: slackResolveExternalId,
 	customNormalizer: slackEventNormalizer,
 	webhookPreHandler: slackWebhookPreHandler,
+	extractDeliveryId: slackExtractDeliveryId,
 	webhookFanOut: slackWebhookFanOut,
 })
 

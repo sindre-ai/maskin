@@ -2,7 +2,13 @@ import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { events, actors, integrations, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	integrations,
+	webhookDeliveries,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
@@ -774,6 +780,36 @@ webhookApp.post('/:provider', async (c) => {
 	if (!systemActorId) {
 		logger.warn(`Integration ${integration.id} missing system_actor_id in config`)
 		return c.json({ ok: true, skipped: true })
+	}
+
+	// Deduplicate retries on the provider's per-delivery ID (e.g. Slack reuses
+	// event_id across retries). Claim the row BEFORE doing any work — if the
+	// conflict fires we've already processed this delivery and can ack 200. If
+	// the original delivery crashed before claiming, the retry runs normally,
+	// which is the whole point of dropping the blanket retry short-circuit.
+	if (resolved.extractDeliveryId) {
+		const deliveryId = resolved.extractDeliveryId(payload, headers)
+		if (deliveryId) {
+			try {
+				const claimed = await db
+					.insert(webhookDeliveries)
+					.values({ provider: providerName, externalId: deliveryId })
+					.onConflictDoNothing({
+						target: [webhookDeliveries.provider, webhookDeliveries.externalId],
+					})
+					.returning({ id: webhookDeliveries.id })
+				if (claimed.length === 0) {
+					logger.info(`Skipping duplicate ${providerName} delivery`, { deliveryId })
+					return c.json({ ok: true, skipped: 'duplicate' })
+				}
+			} catch (err) {
+				// Fail open: a dedup-table outage must not stop us from processing the event.
+				logger.error(`Failed to claim ${providerName} delivery; processing without dedup`, {
+					deliveryId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
 	}
 
 	// Some providers (Gmail) deliver pointer-style webhooks where one push expands
