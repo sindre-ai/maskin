@@ -131,11 +131,15 @@ export const slackWebhookPreHandler = (
 /**
  * Slack puts a stable `event_id` (e.g. `Ev08ABC...`) on the outer envelope of
  * every `event_callback` and reuses it across retries. The webhook route uses
- * this to dedupe retries — including retries that happen because the *original*
- * delivery genuinely failed and Slack is giving us another chance — without
- * blindly dropping every retry the way an `x-slack-retry-num` short-circuit
- * would. If we crash mid-processing, the dedup row was never inserted, so the
- * retry actually gets a chance to run.
+ * this to dedupe retries via the `webhook_deliveries` table — preferable to an
+ * `x-slack-retry-num` short-circuit because the latter drops every retry,
+ * including ones triggered by a genuine prior failure.
+ *
+ * Semantics: the route claims the dedup row BEFORE doing any work, so this is
+ * at-most-once. A crash after the claim but before processing finishes means
+ * Slack's retry will be treated as a duplicate and skipped — we accept that
+ * tradeoff to guarantee we never reprocess a delivery (which would create
+ * duplicate insights and duplicate downloaded files).
  */
 export const slackExtractDeliveryId = (
 	payload: unknown,

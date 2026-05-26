@@ -12,6 +12,7 @@ import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
+import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -74,6 +75,10 @@ triggerRunner.start().then(() => {
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
+
+const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
+webhookDeliveriesCleaner.start()
+logger.info('Webhook deliveries cleaner started')
 
 logger.info(`Starting server on port ${port}`)
 
