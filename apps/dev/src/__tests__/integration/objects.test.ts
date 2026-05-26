@@ -354,5 +354,42 @@ describe('Objects Integration', () => {
 			expect(body).toHaveLength(1)
 			expect(body[0].type).toBe('task')
 		})
+
+		it('uses a deterministic secondary sort when the primary column has ties', async () => {
+			// Without a unique tiebreaker, OFFSET/LIMIT pagination over `createdAt DESC`
+			// is non-deterministic for rows that share a timestamp — the same row can
+			// re-appear across pages. We pin the contract here: when the primary sort
+			// ties, rows must come back ordered by `id ASC` so paging stays stable.
+			const app = createApp()
+
+			const sharedCreatedAt = new Date('2026-01-01T00:00:00.000Z')
+			const total = 12
+			for (let i = 0; i < total; i++) {
+				await insertObject(db, workspaceId, getTestActorId(), {
+					type: 'task',
+					status: 'todo',
+					createdAt: sharedCreatedAt,
+					updatedAt: sharedCreatedAt,
+				})
+			}
+
+			const pageSize = 5
+			const pages: { id: string }[][] = []
+			for (let offset = 0; offset < total; offset += pageSize) {
+				const res = await app.request(
+					jsonGet(`/api/objects?limit=${pageSize}&offset=${offset}`, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+				expect(res.status).toBe(200)
+				pages.push((await res.json()) as { id: string }[])
+			}
+
+			const collected = pages.flatMap((p) => p.map((r) => r.id))
+			// All rows surfaced, no duplicates across pages.
+			expect(new Set(collected).size).toBe(total)
+			// Deterministic tiebreaker: ascending id within the tied bucket.
+			expect(collected).toEqual([...collected].sort())
+		})
 	})
 })
