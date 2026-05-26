@@ -176,6 +176,9 @@ app.openapi(createActorRoute, async (c) => {
 			})
 
 			// Seed Sindre — the built-in meta-agent shipped with every workspace.
+			// apiKey is required: without it, Sindre's container boots with an empty
+			// Bearer token and MCP writes either 401 or — worse — fall back to a key
+			// that resolves to a different actor, misattributing every comment.
 			const [sindre] = await tx
 				.insert(actors)
 				.values({
@@ -186,6 +189,7 @@ app.openapi(createActorRoute, async (c) => {
 					llmProvider: SINDRE_DEFAULT.llmProvider,
 					llmConfig: SINDRE_DEFAULT.llmConfig,
 					tools: SINDRE_DEFAULT.tools,
+					apiKey: generateApiKey().key,
 					createdBy: actor.id,
 				})
 				.returning()

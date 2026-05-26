@@ -723,10 +723,16 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Inject agent's API key for Maskin MCP access
-		if (agent.apiKey) {
-			envVars.MASKIN_API_KEY = agent.apiKey
+		// Inject agent's API key for Maskin MCP access. Refuse to launch without
+		// one — an empty Bearer token causes MCP writes to either fail outright
+		// or, when a fallback key is present in the env, get attributed to the
+		// wrong actor (the original "agent comments posted as a human" bug).
+		if (!agent.apiKey) {
+			throw new Error(
+				`Cannot launch session for agent ${agent.id} (${agent.name ?? 'unnamed'}): apiKey is null. Backfill the actor row before retrying.`,
+			)
 		}
+		envVars.MASKIN_API_KEY = agent.apiKey
 
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } })
 		const agentTools = agent.tools as Record<string, unknown> | null
