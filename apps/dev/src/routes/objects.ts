@@ -13,6 +13,8 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	bulkUpdateObjectsResponseSchema,
+	bulkUpdateObjectsSchema,
 	createObjectSchema,
 	formatEventDescription,
 	migrateObjectTypeResponseSchema,
@@ -858,6 +860,155 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 	})
 
 	return c.json({ mode: 'delete' as const, fromType: body.fromType, count: toDelete.length }, 200)
+})
+
+// POST /bulk-update - Update many objects in one call with per-id partial failure
+const bulkUpdateObjectsRoute = createRoute({
+	method: 'post',
+	path: '/bulk-update',
+	tags: ['Objects'],
+	summary: 'Bulk update objects',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: bulkUpdateObjectsSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: bulkUpdateObjectsResponseSchema } },
+			description: 'Bulk update completed (per-id results, including failures)',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+	},
+})
+
+app.openapi(bulkUpdateObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { ids, patch } = c.req.valid('json')
+
+	// Dedup so duplicates in the request don't double-write or double-report.
+	const uniqueIds = Array.from(new Set(ids))
+
+	// Scope the fetch to the header workspace — ids that don't belong here
+	// collapse into "Object not found" without revealing whether they exist
+	// elsewhere. authMiddleware has already verified the caller is a member
+	// of this workspace, so no inline membership check is needed.
+	const existingRows = await db
+		.select()
+		.from(objects)
+		.where(and(inArray(objects.id, uniqueIds), eq(objects.workspaceId, workspaceId)))
+	const existingById = new Map(existingRows.map((row) => [row.id, row]))
+
+	let workspaceSettings: WorkspaceSettings | undefined
+	if (patch.status !== undefined && existingRows.length > 0) {
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+		workspaceSettings = ws?.settings as WorkspaceSettings | undefined
+	}
+
+	type ResultEntry = { id: string; ok: boolean; error?: string }
+	type Plan = {
+		id: string
+		previous: (typeof existingRows)[number]
+		updateData: Partial<typeof objects.$inferInsert>
+		action: 'updated' | 'status_changed'
+		resultEntry: ResultEntry
+	}
+	const plans: Plan[] = []
+	const results: ResultEntry[] = []
+	const now = new Date()
+
+	for (const id of uniqueIds) {
+		const existing = existingById.get(id)
+		if (!existing) {
+			results.push({ id, ok: false, error: 'Object not found' })
+			continue
+		}
+
+		if (patch.status !== undefined) {
+			const validStatuses = workspaceSettings?.statuses?.[existing.type]
+			if (validStatuses && !validStatuses.includes(patch.status)) {
+				results.push({
+					id,
+					ok: false,
+					error: `Invalid status '${patch.status}' for type '${existing.type}'`,
+				})
+				continue
+			}
+		}
+
+		const updateData: Partial<typeof objects.$inferInsert> = { updatedAt: now }
+		if (patch.status !== undefined) updateData.status = patch.status
+		if (patch.owner !== undefined) updateData.owner = patch.owner
+		if (patch.metadata !== undefined) {
+			updateData.metadata = existing.metadata
+				? { ...(existing.metadata as Record<string, unknown>), ...patch.metadata }
+				: patch.metadata
+		}
+
+		const resultEntry: ResultEntry = { id, ok: true }
+		plans.push({
+			id,
+			previous: existing,
+			updateData,
+			action:
+				patch.status !== undefined && patch.status !== existing.status
+					? 'status_changed'
+					: 'updated',
+			resultEntry,
+		})
+		results.push(resultEntry)
+	}
+
+	if (plans.length > 0) {
+		await db.transaction(async (tx) => {
+			for (const plan of plans) {
+				// Re-scope the UPDATE to the planned workspace so a row that moved
+				// workspaces between the SELECT and here doesn't get touched.
+				const [updated] = await tx
+					.update(objects)
+					.set(plan.updateData)
+					.where(and(eq(objects.id, plan.id), eq(objects.workspaceId, plan.previous.workspaceId)))
+					.returning()
+				// The row was deleted (or moved out of the workspace) between the
+				// initial SELECT and this UPDATE — flip the result to a failure and
+				// skip the event so we don't log a no-op.
+				if (!updated) {
+					plan.resultEntry.ok = false
+					plan.resultEntry.error = 'Object not found'
+					continue
+				}
+				await tx.insert(events).values({
+					workspaceId: plan.previous.workspaceId,
+					actorId,
+					action: plan.action,
+					entityType: plan.previous.type,
+					entityId: plan.id,
+					data: { previous: plan.previous, updated },
+				})
+			}
+		})
+	}
+
+	const okCount = results.filter((r) => r.ok).length
+	logger.info('bulk-update objects', {
+		actorId,
+		requested: ids.length,
+		deduped: uniqueIds.length,
+		updated: okCount,
+		failed: uniqueIds.length - okCount,
+	})
+
+	return c.json({ results }, 200)
 })
 
 app.openapi(deleteObjectRoute, async (c) => {

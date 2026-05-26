@@ -56,8 +56,19 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 			fetchNextPage: vi.fn(),
 			isLoading: false,
 		}),
+		useQueryClient: () => ({
+			invalidateQueries: vi.fn(),
+		}),
 	}
 })
+
+vi.mock('@/hooks/use-objects', () => ({
+	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+}))
+
+vi.mock('@/components/objects/bulk-action-bar', () => ({
+	BulkActionBar: () => null,
+}))
 
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
