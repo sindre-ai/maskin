@@ -1,4 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
@@ -94,6 +95,8 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		})
 
 		// Seed Sindre — the built-in meta-agent shipped with every workspace.
+		// apiKey is required (see comment in actors.ts) — without it the agent's
+		// container has no identity to authenticate MCP writes with.
 		const [sindre] = await tx
 			.insert(actors)
 			.values({
@@ -104,6 +107,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 				llmProvider: SINDRE_DEFAULT.llmProvider,
 				llmConfig: SINDRE_DEFAULT.llmConfig,
 				tools: SINDRE_DEFAULT.tools,
+				apiKey: generateApiKey().key,
 				createdBy: actorId,
 			})
 			.returning()

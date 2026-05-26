@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { KNOWLEDGE_NUDGES } from '@maskin/shared'
 import { createDb } from './connection'
 import {
@@ -9,6 +10,10 @@ import {
 	workspaceMembers,
 	workspaces,
 } from './schema'
+
+// Inlined to avoid a circular dep with @maskin/auth (which depends on @maskin/db).
+// Mirrors generateApiKey() in packages/auth/src/api-keys.ts.
+const newApiKey = () => `ank_${randomUUID().replace(/-/g, '')}`
 
 // biome-ignore lint/style/noNonNullAssertion: required env var for CLI
 const db = createDb(process.env.POSTGRES_URL || process.env.DATABASE_URL!)
@@ -26,6 +31,7 @@ const [rawDemoUser] = await db
 		type: 'human',
 		name: 'Demo User',
 		email: 'demo@example.com',
+		apiKey: newApiKey(),
 	})
 	.returning()
 
@@ -85,6 +91,7 @@ Use the update_memory tool to track which insights you've already processed.`,
 				'done',
 			],
 		},
+		apiKey: newApiKey(),
 	})
 	.returning()
 
@@ -113,6 +120,7 @@ Consider the bet's content, any related insights, and what a product team would 
 		tools: {
 			allowed: ['create_object', 'list_objects', 'create_relationship', 'update_memory', 'done'],
 		},
+		apiKey: newApiKey(),
 	})
 	.returning()
 
