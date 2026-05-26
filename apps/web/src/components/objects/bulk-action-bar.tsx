@@ -63,6 +63,11 @@ export function BulkActionBar({
 	const visible = selectedCount > 0
 	const reducedMotion = usePrefersReducedMotion()
 	const [confirmOpen, setConfirmOpen] = React.useState(false)
+	// Bump these keys after each pick so the Selects remount and don't latch onto
+	// the last-chosen value — otherwise re-selecting the same status/owner on a
+	// new row selection wouldn't refire onValueChange.
+	const [statusKey, setStatusKey] = React.useState(0)
+	const [ownerKey, setOwnerKey] = React.useState(0)
 
 	React.useEffect(() => {
 		if (!visible) return
@@ -107,8 +112,10 @@ export function BulkActionBar({
 				<div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
 
 				<Select
+					key={`status-${statusKey}`}
 					onValueChange={(value) => {
 						if (onStatusChange) onStatusChange(value)
+						setStatusKey((k) => k + 1)
 					}}
 					disabled={statusOptions.length === 0 || !onStatusChange}
 				>
@@ -125,8 +132,10 @@ export function BulkActionBar({
 				</Select>
 
 				<Select
+					key={`owner-${ownerKey}`}
 					onValueChange={(value) => {
 						if (onOwnerChange) onOwnerChange(value)
+						setOwnerKey((k) => k + 1)
 					}}
 					disabled={ownerOptions.length === 0 || !onOwnerChange}
 				>

@@ -99,7 +99,7 @@ function applyOptimisticBulkPatch(
 	}
 
 	const listSnapshots = queryClient.getQueriesData<ObjectListCache>({
-		queryKey: ['objects', workspaceId, 'list'],
+		queryKey: queryKeys.objects.listPrefix(workspaceId),
 	})
 	for (const [key, cache] of listSnapshots) {
 		if (!cache) continue
@@ -107,7 +107,7 @@ function applyOptimisticBulkPatch(
 	}
 
 	const listInfiniteSnapshots = queryClient.getQueriesData<ObjectListInfiniteCache>({
-		queryKey: ['objects', workspaceId, 'listInfinite'],
+		queryKey: queryKeys.objects.listInfinitePrefix(workspaceId),
 	})
 	for (const [key, cache] of listInfiniteSnapshots) {
 		if (!cache) continue
@@ -153,10 +153,14 @@ export function useBulkUpdateObjects(workspaceId: string) {
 		onError: (_err, _vars, ctx) => {
 			if (ctx) rollbackBulkPatch(queryClient, ctx)
 		},
-		onSettled: (_data, _err, { ids }) => {
+		onSettled: (data, _err, { ids }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
-			for (const id of ids) {
+			// On network failure (no data) we don't know which rows changed, so
+			// fall back to invalidating every requested id's detail cache. On a
+			// 200, only invalidate details for ids the server reported ok=true.
+			const idsToInvalidate = data ? data.results.filter((r) => r.ok).map((r) => r.id) : ids
+			for (const id of idsToInvalidate) {
 				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			}
 		},

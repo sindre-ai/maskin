@@ -15,10 +15,16 @@ import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
 import { useBulkUpdateObjects } from '@/hooks/use-objects'
 import { api } from '@/lib/api'
+import type { ObjectResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { keepPreviousData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import {
+	type InfiniteData,
+	keepPreviousData,
+	useInfiniteQuery,
+	useQueryClient,
+} from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { Filter, X } from 'lucide-react'
@@ -329,6 +335,35 @@ function ObjectsPage() {
 	const handleBulkDelete = useCallback(async () => {
 		if (selectedIds.length === 0) return
 		const ids = [...selectedIds]
+		const idSet = new Set(ids)
+
+		// Optimistically drop the rows from list caches so the table updates
+		// immediately. The invalidate at the end reconciles with the server, so any
+		// row whose DELETE failed will reappear on the refetch.
+		const listEntries = queryClient.getQueriesData<ObjectResponse[]>({
+			queryKey: queryKeys.objects.listPrefix(workspaceId),
+		})
+		for (const [key, cache] of listEntries) {
+			if (!cache) continue
+			queryClient.setQueryData<ObjectResponse[]>(
+				key,
+				cache.filter((o) => !idSet.has(o.id)),
+			)
+		}
+		const infiniteEntries = queryClient.getQueriesData<InfiniteData<ObjectResponse[]>>({
+			queryKey: queryKeys.objects.listInfinitePrefix(workspaceId),
+		})
+		for (const [key, cache] of infiniteEntries) {
+			if (!cache) continue
+			queryClient.setQueryData<InfiniteData<ObjectResponse[]>>(key, {
+				...cache,
+				pages: cache.pages.map((page) => page.filter((o) => !idSet.has(o.id))),
+			})
+		}
+		for (const id of ids) {
+			queryClient.removeQueries({ queryKey: queryKeys.objects.detail(id) })
+		}
+
 		const settled = await Promise.allSettled(ids.map((id) => api.objects.delete(id)))
 		const results = settled.map((r, i) => ({
 			id: ids[i] as string,
@@ -337,6 +372,20 @@ function ObjectsPage() {
 		}))
 		queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 		queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+
+		// Keep selection only for ids whose DELETE failed, so the bar stays pinned
+		// to the rows that still need attention. reportBulkResult clears selection
+		// on full success; on partial failure we want the failed ids to remain
+		// selected (and the deleted ones removed so their stale ids don't linger).
+		const failedIds = new Set(results.filter((r) => !r.ok).map((r) => r.id))
+		setRowSelection((prev) => {
+			const next: RowSelectionState = {}
+			for (const id of Object.keys(prev)) {
+				if (failedIds.has(id) || !idSet.has(id)) next[id] = prev[id] as boolean
+			}
+			return next
+		})
+
 		reportBulkResult({ results }, ids.length, 'deleted')
 	}, [selectedIds, queryClient, workspaceId, reportBulkResult])
 
