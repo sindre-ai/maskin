@@ -1,6 +1,5 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
-import { BulkSelectionContext } from '@/components/objects/bulk-selection-context'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
@@ -73,10 +72,6 @@ function ObjectsPage() {
 	useEffect(() => {
 		setRowSelection({})
 	}, [workspaceId])
-	const bulkSelection = useMemo(
-		() => ({ selectedIds, clearSelection }),
-		[selectedIds, clearSelection],
-	)
 
 	const searchParamsRef = useRef(searchParams)
 	searchParamsRef.current = searchParams
@@ -249,79 +244,73 @@ function ObjectsPage() {
 	}, [updateSearch])
 
 	return (
-		<BulkSelectionContext.Provider value={bulkSelection}>
-			<div className="flex flex-col flex-1 min-h-0">
-				<PageHeader title="Objects" />
+		<div className="flex flex-col flex-1 min-h-0">
+			<PageHeader title="Objects" />
 
-				{idsFilter && (
-					<div className="flex items-center gap-2 mx-6 mb-3 px-3 py-2 rounded-md bg-muted/50 border text-sm">
-						<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
-						<span className="text-muted-foreground">
-							Showing{' '}
-							<Badge variant="secondary" className="mx-0.5">
-								{idsCount}
-							</Badge>{' '}
-							{idsCount === 1 ? 'object' : 'objects'} from notification
-						</span>
-						<Button
-							variant="ghost"
-							size="sm"
-							className="ml-auto h-6 px-2 text-muted-foreground hover:text-foreground"
-							onClick={clearIdsFilter}
-						>
-							<X className="h-3 w-3 mr-1" />
-							Clear filter
-						</Button>
-					</div>
-				)}
+			{idsFilter && (
+				<div className="flex items-center gap-2 mx-6 mb-3 px-3 py-2 rounded-md bg-muted/50 border text-sm">
+					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
+					<span className="text-muted-foreground">
+						Showing{' '}
+						<Badge variant="secondary" className="mx-0.5">
+							{idsCount}
+						</Badge>{' '}
+						{idsCount === 1 ? 'object' : 'objects'} from notification
+					</span>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="ml-auto h-6 px-2 text-muted-foreground hover:text-foreground"
+						onClick={clearIdsFilter}
+					>
+						<X className="h-3 w-3 mr-1" />
+						Clear filter
+					</Button>
+				</div>
+			)}
 
-				<DataTableToolbar
-					columns={columnInfo}
-					columnVisibility={effectiveVisibility}
-					onColumnVisibilityChange={handleColumnVisibilityChange}
-					tabs={tabs}
-					typeFilter={typeFilter}
-					onTypeFilterChange={(value) => updateSearch({ type: value, status: undefined })}
-					search={q}
-					onSearchChange={(value) => updateSearch({ q: value || undefined })}
-					statusFilter={statusFilter}
-					onStatusFilterChange={(value) => updateSearch({ status: value })}
-					statusesByType={statusesByType}
-					ownerFilter={ownerFilter}
-					onOwnerFilterChange={(value) => updateSearch({ owner: value })}
-					actors={actors}
-					sort={sort}
-					onSortChange={(value) => updateSearch({ sort: value })}
-					order={order}
-					onOrderChange={(value) => updateSearch({ order: value })}
-					groupBy={groupBy}
-					onGroupByChange={(value) => updateSearch({ groupBy: value })}
-					onImportClick={() => setImportOpen(true)}
-				/>
+			<DataTableToolbar
+				columns={columnInfo}
+				columnVisibility={effectiveVisibility}
+				onColumnVisibilityChange={handleColumnVisibilityChange}
+				tabs={tabs}
+				typeFilter={typeFilter}
+				onTypeFilterChange={(value) => updateSearch({ type: value, status: undefined })}
+				search={q}
+				onSearchChange={(value) => updateSearch({ q: value || undefined })}
+				statusFilter={statusFilter}
+				onStatusFilterChange={(value) => updateSearch({ status: value })}
+				statusesByType={statusesByType}
+				ownerFilter={ownerFilter}
+				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
+				actors={actors}
+				sort={sort}
+				onSortChange={(value) => updateSearch({ sort: value })}
+				order={order}
+				onOrderChange={(value) => updateSearch({ order: value })}
+				groupBy={groupBy}
+				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				onImportClick={() => setImportOpen(true)}
+			/>
 
-				<ImportDialog
-					open={importOpen}
-					onOpenChange={setImportOpen}
-					onImportStarted={trackImport}
-				/>
+			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 
-				<DataTable
-					data={allObjects}
-					columns={columns}
-					workspaceId={workspaceId}
-					rowSelection={rowSelection}
-					onRowSelectionChange={setRowSelection}
-					columnVisibility={effectiveVisibility}
-					onColumnVisibilityChange={setColumnVisibility}
-					grouping={groupingState}
-					meta={tableMeta}
-					hasNextPage={infiniteQuery.hasNextPage}
-					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
-					isError={infiniteQuery.isError}
-					fetchNextPage={infiniteQuery.fetchNextPage}
-					isLoading={infiniteQuery.isLoading}
-				/>
-			</div>
-		</BulkSelectionContext.Provider>
+			<DataTable
+				data={allObjects}
+				columns={columns}
+				workspaceId={workspaceId}
+				rowSelection={rowSelection}
+				onRowSelectionChange={setRowSelection}
+				columnVisibility={effectiveVisibility}
+				onColumnVisibilityChange={setColumnVisibility}
+				grouping={groupingState}
+				meta={tableMeta}
+				hasNextPage={infiniteQuery.hasNextPage}
+				isFetchingNextPage={infiniteQuery.isFetchingNextPage}
+				isError={infiniteQuery.isError}
+				fetchNextPage={infiniteQuery.fetchNextPage}
+				isLoading={infiniteQuery.isLoading}
+			/>
+		</div>
 	)
 }
