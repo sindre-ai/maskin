@@ -333,4 +333,35 @@ describe('slackWebhookFanOut', () => {
 		// Both fetches should overlap — sequential execution would peak at 1.
 		expect(maxInFlight).toBeGreaterThanOrEqual(2)
 	})
+
+	it('returns the event unchanged when token refresh throws', async () => {
+		// Regression guard: an unexpected throw (DB lookup, token refresh) must
+		// not drop the entire message — the route swallows fan-out errors and
+		// would otherwise skip the whole event, regressing the text-only ingest
+		// path that worked before this fan-out existed.
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		getValidTokenMock.mockReset().mockRejectedValue(new Error('token refresh boom'))
+
+		const { db } = makeFakeDb({
+			id: 'int-1',
+			provider: 'slack',
+			workspaceId: 'ws-1',
+			config: { system_actor_id: 'actor-1' },
+		})
+		const storage = makeFakeStorage()
+		const normalized = makeEvent(fakeFiles())
+
+		const result = await slackWebhookFanOut({
+			db: db as never,
+			storage,
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized,
+		})
+
+		expect(result).toEqual([normalized])
+		expect(storage.puts).toHaveLength(0)
+	})
 })
