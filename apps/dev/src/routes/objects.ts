@@ -78,11 +78,18 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
 	return null
 }
 
-/** Resolve sort + order into a Drizzle orderBy expression, or null for unknown fields. */
-function resolveOrderBy(query: { sort: string; order: string }): SQL | null {
+/**
+ * Resolve sort + order into Drizzle orderBy expressions, or null for unknown fields.
+ *
+ * Always appends `objects.id` as a tiebreaker so OFFSET/LIMIT pagination stays
+ * stable when the primary sort column has ties — without it, rows sharing a
+ * `createdAt` (or any non-unique sort key) can re-appear across pages.
+ */
+function resolveOrderBy(query: { sort: string; order: string }): SQL[] | null {
 	const sortExpr = resolveSortColumn(query.sort)
 	if (!sortExpr) return null
-	return query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
+	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
+	return [primary, asc(objects.id)]
 }
 
 // POST / - Create object
@@ -262,7 +269,7 @@ app.openapi(listObjectsRoute, async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(orderBy)
+		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
@@ -312,7 +319,7 @@ app.openapi(searchObjectsRoute, async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(orderBy)
+		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
