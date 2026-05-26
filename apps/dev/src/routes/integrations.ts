@@ -3,6 +3,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, actors, integrations, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError } from '../lib/errors'
@@ -35,6 +36,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
+		storageProvider: StorageProvider
 	}
 }
 
@@ -780,6 +782,7 @@ webhookApp.post('/:provider', async (c) => {
 		try {
 			toInsert = await resolved.webhookFanOut({
 				db,
+				storage: c.get('storageProvider'),
 				integrationId: integration.id,
 				workspaceId: integration.workspaceId,
 				normalized,

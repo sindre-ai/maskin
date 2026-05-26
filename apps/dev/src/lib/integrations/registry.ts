@@ -19,6 +19,7 @@ import {
 	resolveExternalId as slackResolveExternalId,
 	slackWebhookPreHandler,
 } from './providers/slack/config'
+import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { slackEventNormalizer } from './providers/slack/webhooks'
 
 const providers = new Map<string, ResolvedProvider>()
@@ -43,6 +44,7 @@ providers.set('slack', {
 	resolveExternalId: slackResolveExternalId,
 	customNormalizer: slackEventNormalizer,
 	webhookPreHandler: slackWebhookPreHandler,
+	webhookFanOut: slackWebhookFanOut,
 })
 
 providers.set('gmail', {

@@ -192,6 +192,8 @@ export interface PostInstallContext {
 
 export interface WebhookFanOutContext {
 	db: unknown
+	/** StorageProvider — typed loosely to avoid pulling @maskin/storage into this package */
+	storage: unknown
 	integrationId: string
 	workspaceId: string
 	normalized: NormalizedEvent
