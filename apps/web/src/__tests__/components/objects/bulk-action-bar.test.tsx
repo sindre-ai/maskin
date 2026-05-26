@@ -147,6 +147,30 @@ describe('BulkActionBar', () => {
 		expect(screen.queryByRole('button', { name: 'Delete selected' })).toBeNull()
 	})
 
+	it('does not render copy/open buttons when their handlers are not provided', () => {
+		renderBar()
+		expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull()
+		expect(screen.queryByRole('button', { name: 'Copy title' })).toBeNull()
+		expect(screen.queryByRole('button', { name: 'Copy title as link' })).toBeNull()
+		expect(screen.queryByRole('button', { name: 'Open in new tabs' })).toBeNull()
+	})
+
+	it('fires onCopyLink, onCopyTitle, onCopyTitleAsLink, and onOpenLinks when their buttons are clicked', () => {
+		const onCopyLink = vi.fn()
+		const onCopyTitle = vi.fn()
+		const onCopyTitleAsLink = vi.fn()
+		const onOpenLinks = vi.fn()
+		renderBar({ onCopyLink, onCopyTitle, onCopyTitleAsLink, onOpenLinks })
+		fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Copy title' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Copy title as link' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Open in new tabs' }))
+		expect(onCopyLink).toHaveBeenCalledTimes(1)
+		expect(onCopyTitle).toHaveBeenCalledTimes(1)
+		expect(onCopyTitleAsLink).toHaveBeenCalledTimes(1)
+		expect(onOpenLinks).toHaveBeenCalledTimes(1)
+	})
+
 	it('does not render the status select when no statusOptions are provided', () => {
 		renderBar({ statusOptions: [] })
 		expect(screen.queryByRole('combobox', { name: 'Set status' })).toBeNull()

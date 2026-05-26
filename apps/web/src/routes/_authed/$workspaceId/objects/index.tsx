@@ -252,27 +252,6 @@ function ObjectsPage() {
 		updateSearch({ ids: undefined })
 	}, [updateSearch])
 
-	// Status options for the bulk action bar — scoped to the selected objects' type.
-	// When the selection spans multiple types (or any selected row isn't loaded so we
-	// can't verify its type), return [] so the BulkActionBar hides the status control.
-	const bulkStatusOptions = useMemo(() => {
-		if (selectedIds.length === 0) return []
-		const idSet = new Set(selectedIds)
-		const types = new Set<string>()
-		let resolved = 0
-		for (const obj of allObjects) {
-			if (idSet.has(obj.id)) {
-				types.add(obj.type)
-				resolved++
-				if (types.size > 1) return []
-			}
-		}
-		if (resolved !== selectedIds.length || types.size !== 1) return []
-		const [type] = types
-		const statuses = statusesByType[type as string] ?? []
-		return statuses.map((s) => ({ value: s, label: s }))
-	}, [selectedIds, allObjects, statusesByType])
-
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
 		[actors],
@@ -331,6 +310,90 @@ function ObjectsPage() {
 		},
 		[selectedIds, bulkUpdate, reportBulkResult],
 	)
+
+	// Build the path the app uses for object detail pages — kept relative so we can
+	// resolve to an absolute URL for clipboard payloads but pass the path directly
+	// to window.open for new-tab navigation.
+	const objectPath = useCallback(
+		(id: string) => `/${workspaceId}/objects/${id}`,
+		[workspaceId],
+	)
+
+	// Selected objects we have loaded data for. Titles aren't available for rows
+	// outside the current pages, so copy-title actions warn when any selected id
+	// hasn't been fetched yet.
+	const selectedObjectsLoaded = useMemo(() => {
+		if (selectedIds.length === 0) return []
+		const idSet = new Set(selectedIds)
+		return allObjects.filter((o) => idSet.has(o.id))
+	}, [selectedIds, allObjects])
+
+	// Status options for the bulk action bar — scoped to the selected objects' type.
+	// When the selection spans multiple types (or any selected row isn't loaded so we
+	// can't verify its type), return [] so the BulkActionBar hides the status control.
+	const bulkStatusOptions = useMemo(() => {
+		if (selectedIds.length === 0) return []
+		if (selectedObjectsLoaded.length !== selectedIds.length) return []
+		const types = new Set(selectedObjectsLoaded.map((o) => o.type))
+		if (types.size !== 1) return []
+		const [type] = types
+		const statuses = statusesByType[type as string] ?? []
+		return statuses.map((s) => ({ value: s, label: s }))
+	}, [selectedIds, selectedObjectsLoaded, statusesByType])
+
+	const handleCopyLinks = useCallback(async () => {
+		if (selectedIds.length === 0) return
+		const text = selectedIds.map((id) => `${window.location.origin}${objectPath(id)}`).join('\n')
+		try {
+			await navigator.clipboard.writeText(text)
+			toast.success(`Copied ${selectedIds.length} link${selectedIds.length === 1 ? '' : 's'}`)
+		} catch {
+			toast.error('Failed to copy to clipboard')
+		}
+	}, [selectedIds, objectPath])
+
+	const handleCopyTitles = useCallback(async () => {
+		if (selectedObjectsLoaded.length === 0) return
+		const text = selectedObjectsLoaded
+			.map((o) => o.title?.trim() || '(untitled)')
+			.join('\n')
+		try {
+			await navigator.clipboard.writeText(text)
+			const n = selectedObjectsLoaded.length
+			const missing = selectedIds.length - n
+			toast.success(`Copied ${n} title${n === 1 ? '' : 's'}`, {
+				description: missing > 0 ? `${missing} not loaded yet — scroll to load them first.` : undefined,
+			})
+		} catch {
+			toast.error('Failed to copy to clipboard')
+		}
+	}, [selectedObjectsLoaded, selectedIds.length])
+
+	const handleCopyTitlesAsLinks = useCallback(async () => {
+		if (selectedObjectsLoaded.length === 0) return
+		const text = selectedObjectsLoaded
+			.map((o) => {
+				const title = o.title?.trim() || '(untitled)'
+				return `[${title}](${window.location.origin}${objectPath(o.id)})`
+			})
+			.join('\n')
+		try {
+			await navigator.clipboard.writeText(text)
+			const n = selectedObjectsLoaded.length
+			const missing = selectedIds.length - n
+			toast.success(`Copied ${n} link${n === 1 ? '' : 's'} as Markdown`, {
+				description: missing > 0 ? `${missing} not loaded yet — scroll to load them first.` : undefined,
+			})
+		} catch {
+			toast.error('Failed to copy to clipboard')
+		}
+	}, [selectedObjectsLoaded, selectedIds.length, objectPath])
+
+	const handleOpenLinks = useCallback(() => {
+		for (const id of selectedIds) {
+			window.open(objectPath(id), '_blank', 'noopener,noreferrer')
+		}
+	}, [selectedIds, objectPath])
 
 	// No bulk-delete endpoint yet — loop through the existing single-object DELETE
 	// so the UX (partial-failure toast + selection-clear on full success) matches
@@ -466,6 +529,10 @@ function ObjectsPage() {
 				ownerOptions={bulkOwnerOptions}
 				onStatusChange={handleBulkStatusChange}
 				onOwnerChange={handleBulkOwnerChange}
+				onCopyLink={handleCopyLinks}
+				onCopyTitle={handleCopyTitles}
+				onCopyTitleAsLink={handleCopyTitlesAsLinks}
+				onOpenLinks={handleOpenLinks}
 				onDelete={handleBulkDelete}
 				onClear={clearSelection}
 			/>

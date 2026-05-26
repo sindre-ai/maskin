@@ -14,8 +14,9 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
-import { Trash2, X } from 'lucide-react'
+import { Brackets, ExternalLink, Link, Trash2, Type, X } from 'lucide-react'
 import * as React from 'react'
 
 export interface BulkActionBarOption {
@@ -34,6 +35,10 @@ export interface BulkActionBarProps {
 	ownerOptions?: BulkActionBarOwnerOption[]
 	onStatusChange?: (status: string) => void
 	onOwnerChange?: (actorId: string) => void
+	onCopyLink?: () => void
+	onCopyTitle?: () => void
+	onCopyTitleAsLink?: () => void
+	onOpenLinks?: () => void
 	onDelete?: () => void
 	onClear: () => void
 }
@@ -57,6 +62,10 @@ export function BulkActionBar({
 	ownerOptions = [],
 	onStatusChange,
 	onOwnerChange,
+	onCopyLink,
+	onCopyTitle,
+	onCopyTitleAsLink,
+	onOpenLinks,
 	onDelete,
 	onClear,
 }: BulkActionBarProps) {
@@ -86,14 +95,14 @@ export function BulkActionBar({
 	const transitionClass = reducedMotion ? '' : 'transition-all duration-200 ease-out'
 
 	return (
-		<>
+		<TooltipProvider delayDuration={150}>
 			<section
 				aria-label="Bulk actions"
 				aria-hidden={!visible}
 				inert={!visible || undefined}
 				className={cn(
 					'fixed left-1/2 bottom-6 z-50 -translate-x-1/2',
-					'flex w-[calc(100%-2rem)] max-w-[36rem] items-center gap-2',
+					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
 					'rounded-full border border-border bg-bg-surface px-3 py-2 shadow-lg',
 					transitionClass,
 					visible
@@ -119,7 +128,10 @@ export function BulkActionBar({
 							setStatusKey((k) => k + 1)
 						}}
 					>
-						<SelectTrigger aria-label="Set status">
+						<SelectTrigger
+							aria-label="Set status"
+							className="text-sm data-[placeholder]:text-text-secondary"
+						>
 							<SelectValue placeholder="Status" />
 						</SelectTrigger>
 						<SelectContent>
@@ -140,7 +152,10 @@ export function BulkActionBar({
 					}}
 					disabled={ownerOptions.length === 0 || !onOwnerChange}
 				>
-					<SelectTrigger aria-label="Set owner">
+					<SelectTrigger
+						aria-label="Set owner"
+						className="text-sm data-[placeholder]:text-text-secondary"
+					>
 						<SelectValue placeholder="Owner" />
 					</SelectTrigger>
 					<SelectContent>
@@ -153,12 +168,80 @@ export function BulkActionBar({
 				</Select>
 
 				<div className="ml-auto flex items-center gap-1">
+					{onCopyLink && (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="outline"
+									size="icon"
+									className="size-8"
+									onClick={onCopyLink}
+									aria-label="Copy link"
+								>
+									<Link className="size-4" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>Copy link</TooltipContent>
+						</Tooltip>
+					)}
+					{onCopyTitle && (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="outline"
+									size="icon"
+									className="size-8"
+									onClick={onCopyTitle}
+									aria-label="Copy title"
+								>
+									<Type className="size-4" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>Copy title</TooltipContent>
+						</Tooltip>
+					)}
+					{onCopyTitleAsLink && (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="outline"
+									size="icon"
+									className="size-8"
+									onClick={onCopyTitleAsLink}
+									aria-label="Copy title as link"
+								>
+									<Brackets className="size-4" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>Copy title as link (Markdown)</TooltipContent>
+						</Tooltip>
+					)}
+					{onOpenLinks && (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="outline"
+									size="icon"
+									className="size-8"
+									onClick={onOpenLinks}
+									aria-label="Open in new tabs"
+								>
+									<ExternalLink className="size-4" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>Open in new tabs</TooltipContent>
+						</Tooltip>
+					)}
 					{onDelete && (
 						<Button
 							type="button"
-							variant="ghost"
+							variant="outline"
 							size="sm"
-							className="rounded-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+							className="text-destructive hover:bg-destructive/10 hover:text-destructive"
 							onClick={() => setConfirmOpen(true)}
 							aria-label="Delete selected"
 						>
@@ -204,6 +287,6 @@ export function BulkActionBar({
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
-		</>
+		</TooltipProvider>
 	)
 }
