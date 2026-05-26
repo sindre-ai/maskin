@@ -21,6 +21,7 @@ export const config: ProviderConfig = {
 				'mpim:read',
 				'mpim:history',
 				'chat:write',
+				'chat:write.customize',
 				'users:read',
 				'app_mentions:read',
 				'reactions:read',
