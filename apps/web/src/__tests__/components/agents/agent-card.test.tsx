@@ -40,17 +40,27 @@ describe('AgentCard', () => {
 		expect(screen.getByText('failed')).toBeInTheDocument()
 	})
 
-	it('shows role description from first line of systemPrompt', () => {
+	it('shows description one-liner when set', () => {
 		const agent = buildActorResponse({
 			type: 'agent',
-			systemPrompt: 'Monitors production alerts\nDoes other things',
+			description: 'Monitors production alerts',
 		})
 		render(<AgentCard agent={agent} status="idle" />)
 		expect(screen.getByText('Monitors production alerts')).toBeInTheDocument()
 	})
 
-	it('does not show role when no systemPrompt', () => {
-		const agent = buildActorResponse({ type: 'agent', systemPrompt: null })
+	it('does not show description when not set', () => {
+		const agent = buildActorResponse({ type: 'agent', description: null })
+		render(<AgentCard agent={agent} status="idle" />)
+		expect(screen.queryByText(/Monitors/)).not.toBeInTheDocument()
+	})
+
+	it('does not fall back to systemPrompt when description is empty', () => {
+		const agent = buildActorResponse({
+			type: 'agent',
+			description: null,
+			systemPrompt: 'Monitors production alerts\nDoes other things',
+		})
 		render(<AgentCard agent={agent} status="idle" />)
 		expect(screen.queryByText(/Monitors/)).not.toBeInTheDocument()
 	})
