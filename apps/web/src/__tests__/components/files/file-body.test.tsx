@@ -22,6 +22,7 @@ function buildFile(overrides: Partial<FileDetail> = {}): FileDetail {
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
 		content: '',
+		encoding: 'utf8',
 		url: 'http://localhost:5173/ws-1/files/file-1',
 		...overrides,
 	}
@@ -74,13 +75,13 @@ describe('FileBody', () => {
 
 	describe('rendering', () => {
 		it('renders markdown content via react-markdown by default', () => {
-			const file = buildFile({ mimeType: 'text/markdown', content: b64('# Hello world') })
+			const file = buildFile({ mimeType: 'text/markdown', content: '# Hello world' })
 			render(<FileBody file={file} />)
 			expect(screen.getByRole('heading', { level: 1, name: 'Hello world' })).toBeInTheDocument()
 		})
 
 		it('switches markdown view to raw source when Source is selected', () => {
-			const file = buildFile({ mimeType: 'text/markdown', content: b64('# Hello world') })
+			const file = buildFile({ mimeType: 'text/markdown', content: '# Hello world' })
 			const { container } = render(<FileBody file={file} />)
 			fireEvent.click(screen.getByRole('button', { name: 'Source' }))
 
@@ -88,6 +89,19 @@ describe('FileBody', () => {
 			expect(pre?.textContent).toBe('# Hello world')
 			// Rendered heading should be gone.
 			expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+		})
+
+		it('still decodes base64 content for text MIME types when encoding=base64', () => {
+			// Defensive: even if a caller (or a binary MIME upload misrouted as text)
+			// sends base64 alongside a text MIME, FileBody should still render the
+			// decoded text rather than the raw base64 string.
+			const file = buildFile({
+				mimeType: 'text/markdown',
+				content: b64('# Hello world'),
+				encoding: 'base64',
+			})
+			render(<FileBody file={file} />)
+			expect(screen.getByRole('heading', { level: 1, name: 'Hello world' })).toBeInTheDocument()
 		})
 
 		it('renders an <img> with a data URI for safe image mime types', () => {
@@ -98,6 +112,7 @@ describe('FileBody', () => {
 				mimeType: 'image/png',
 				name: 'icon.png',
 				content: pngB64,
+				encoding: 'base64',
 			})
 			render(<FileBody file={file} />)
 			const img = screen.getByRole('img', { name: 'icon.png' })
@@ -106,7 +121,7 @@ describe('FileBody', () => {
 
 		it('renders HTML inside a sandboxed iframe via srcDoc', () => {
 			const html = '<script>window.__pwned = true</script><h1>Heading</h1>'
-			const file = buildFile({ mimeType: 'text/html', name: 'page.html', content: b64(html) })
+			const file = buildFile({ mimeType: 'text/html', name: 'page.html', content: html })
 			const { container } = render(<FileBody file={file} />)
 
 			const iframe = container.querySelector('iframe')
@@ -127,7 +142,7 @@ describe('FileBody', () => {
 
 		it('switches HTML view to raw source when Source is selected', () => {
 			const html = '<h1>Heading</h1>'
-			const file = buildFile({ mimeType: 'text/html', name: 'page.html', content: b64(html) })
+			const file = buildFile({ mimeType: 'text/html', name: 'page.html', content: html })
 			const { container } = render(<FileBody file={file} />)
 			fireEvent.click(screen.getByRole('button', { name: 'Source' }))
 
@@ -137,7 +152,14 @@ describe('FileBody', () => {
 
 		it('renders SVG as preformatted text (NOT as an inline image)', () => {
 			const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
-			const file = buildFile({ mimeType: 'image/svg+xml', name: 'icon.svg', content: b64(svg) })
+			// SVG mime is `image/svg+xml` (binary mime), so the server returns it
+			// as base64 — exercise that path.
+			const file = buildFile({
+				mimeType: 'image/svg+xml',
+				name: 'icon.svg',
+				content: b64(svg),
+				encoding: 'base64',
+			})
 			const { container } = render(<FileBody file={file} />)
 
 			expect(container.querySelector('pre')?.textContent).toBe(svg)
@@ -150,7 +172,7 @@ describe('FileBody', () => {
 			const file = buildFile({
 				mimeType: 'application/javascript',
 				name: 'app.js',
-				content: b64(js),
+				content: js,
 			})
 			const { container } = render(<FileBody file={file} />)
 			expect(container.querySelector('pre')?.textContent).toBe(js)

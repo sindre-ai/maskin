@@ -99,19 +99,23 @@ describe('Files Routes', () => {
 			expect(res.status).toBe(500)
 		})
 
-		it('returns 400 on invalid base64 content', async () => {
+		it('returns 400 on invalid base64 content when encoding=base64', async () => {
 			const { app } = createImportTestApp(filesRoutes, '/api/files')
-			const body = { ...buildCreateFileBody(), content: 'not base64!!' }
+			const body = {
+				...buildCreateFileBody(),
+				content: 'not base64!!',
+				encoding: 'base64' as const,
+			}
 
 			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
 
 			expect(res.status).toBe(400)
 		})
 
-		it('returns 400 when content exceeds 10MB', async () => {
+		it('returns 400 when base64 content exceeds 10MB', async () => {
 			const { app } = createImportTestApp(filesRoutes, '/api/files')
 			const oversized = Buffer.alloc(11 * 1024 * 1024).toString('base64')
-			const body = { ...buildCreateFileBody(), content: oversized }
+			const body = { ...buildCreateFileBody(), content: oversized, encoding: 'base64' as const }
 
 			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
 
@@ -121,6 +125,41 @@ describe('Files Routes', () => {
 			// storage layer.
 			expect([400, 500]).toContain(res.status)
 			expect(res.status).not.toBe(201)
+		})
+
+		it('returns 400 when utf8 content exceeds 10MB', async () => {
+			const { app } = createImportTestApp(filesRoutes, '/api/files')
+			const oversized = 'a'.repeat(11 * 1024 * 1024)
+			const body = { ...buildCreateFileBody(), content: oversized }
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect([400, 500]).toContain(res.status)
+			expect(res.status).not.toBe(201)
+		})
+
+		it('accepts base64 content with a binary MIME type', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
+			const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+			const body = {
+				...buildCreateFileBody(),
+				name: 'logo.png',
+				mime_type: 'image/png',
+				content: pngBytes.toString('base64'),
+				encoding: 'base64' as const,
+			}
+			const inserted = buildFile({ workspaceId, name: body.name, mimeType: body.mime_type })
+			mockResults.insertQueue = [[inserted], [{ id: 'evt-1' }]]
+
+			const res = await app.request(jsonRequest('POST', '/api/files', body, authedHeaders()))
+
+			expect(res.status).toBe(201)
+			const json = await res.json()
+			// Binary MIME → response echoes base64-encoded bytes.
+			expect(json.encoding).toBe('base64')
+			expect(json.content).toBe(pngBytes.toString('base64'))
+			const putCall = vi.mocked(storageProvider.put).mock.calls[0]
+			expect(putCall?.[1]).toEqual(pngBytes)
 		})
 
 		it('returns 400 on invalid MIME type', async () => {
@@ -150,9 +189,9 @@ describe('Files Routes', () => {
 	})
 
 	describe('GET /api/files/:id', () => {
-		it('returns 200 with base64 content', async () => {
+		it('returns 200 with utf8 content for text MIME types', async () => {
 			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
-			const file = buildFile({ workspaceId })
+			const file = buildFile({ workspaceId, mimeType: 'text/markdown' })
 			const bytes = Buffer.from('# Hello')
 			vi.mocked(storageProvider.get).mockResolvedValue(bytes)
 			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })]]
@@ -161,8 +200,24 @@ describe('Files Routes', () => {
 
 			expect(res.status).toBe(200)
 			const json = await res.json()
-			expect(json.content).toBe(bytes.toString('base64'))
+			expect(json.encoding).toBe('utf8')
+			expect(json.content).toBe('# Hello')
 			expect(storageProvider.get).toHaveBeenCalledWith(file.storageKey)
+		})
+
+		it('returns 200 with base64 content for binary MIME types', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
+			const file = buildFile({ workspaceId, mimeType: 'image/png' })
+			const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+			vi.mocked(storageProvider.get).mockResolvedValue(bytes)
+			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })]]
+
+			const res = await app.request(jsonGet(`/api/files/${file.id}`))
+
+			expect(res.status).toBe(200)
+			const json = await res.json()
+			expect(json.encoding).toBe('base64')
+			expect(json.content).toBe(bytes.toString('base64'))
 		})
 
 		it('returns 404 when file does not exist', async () => {
@@ -209,19 +264,40 @@ describe('Files Routes', () => {
 			expect(storageProvider.get).toHaveBeenCalledTimes(1) // for the response only
 		})
 
-		it('re-uploads when content changes', async () => {
+		it('re-uploads when content changes (utf8 default)', async () => {
 			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
-			const file = buildFile({ workspaceId })
-			const newContent = Buffer.from('# Updated').toString('base64')
+			const file = buildFile({ workspaceId, mimeType: 'text/markdown' })
 			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })], [file]]
 			mockResults.updateQueue = [[file]]
 
 			const res = await app.request(
-				jsonRequest('PATCH', `/api/files/${file.id}`, { content: newContent }),
+				jsonRequest('PATCH', `/api/files/${file.id}`, { content: '# Updated' }),
 			)
 
 			expect(res.status).toBe(200)
 			expect(storageProvider.put).toHaveBeenCalledTimes(1)
+			const putCall = vi.mocked(storageProvider.put).mock.calls[0]
+			expect(putCall?.[1]).toEqual(Buffer.from('# Updated', 'utf8'))
+		})
+
+		it('re-uploads when content changes (explicit base64 encoding)', async () => {
+			const { app, mockResults, storageProvider } = createImportTestApp(filesRoutes, '/api/files')
+			const file = buildFile({ workspaceId, mimeType: 'image/png' })
+			const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+			mockResults.selectQueue = [[file], [buildWorkspaceMember({ workspaceId })], [file]]
+			mockResults.updateQueue = [[file]]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${file.id}`, {
+					content: bytes.toString('base64'),
+					encoding: 'base64',
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(storageProvider.put).toHaveBeenCalledTimes(1)
+			const putCall = vi.mocked(storageProvider.put).mock.calls[0]
+			expect(putCall?.[1]).toEqual(bytes)
 		})
 	})
 

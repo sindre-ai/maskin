@@ -535,7 +535,7 @@ export const tools = {
 	// ─── Files ───────────────────────────────────────────────
 	create_file: {
 		description:
-			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. Pass `content` as base64-encoded bytes (max 10MB). For text content, base64-encode the UTF-8 bytes. Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
+			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding. Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z
@@ -553,7 +553,17 @@ export const tools = {
 				.describe(
 					'IANA MIME type of the content, e.g. "text/markdown", "text/html", "application/pdf", "image/png".',
 				),
-			content: z.string().describe('File bytes, base64-encoded. Max 10 MB after decoding.'),
+			content: z
+				.string()
+				.describe(
+					'File content. For text/markdown/HTML/JSON, pass the raw string and leave `encoding` at the default. For binary files, set `encoding` to "base64" and pass base64-encoded bytes. Max 10 MB.',
+				),
+			encoding: z
+				.enum(['base64', 'utf8'])
+				.optional()
+				.describe(
+					'Encoding of `content`. Defaults to "utf8" — pass markdown/HTML/JSON as a normal string. Use "base64" for binary files (images, PDFs, archives).',
+				),
 		}),
 	},
 	list_files: {
@@ -567,7 +577,7 @@ export const tools = {
 	},
 	get_file: {
 		description:
-			'Get a single file with its base64-encoded content and a viewer URL. Use this when you need to read, summarise, or hand the URL to a user.',
+			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. Use this when you need to read, summarise, or hand the URL to a user.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -575,14 +585,23 @@ export const tools = {
 	},
 	update_file: {
 		description:
-			'Update a file. Pass any subset of name, description, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. At least one field must be provided.',
+			'Update a file. Pass any subset of name, description, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
 			name: z.string().min(1).max(255).optional(),
 			description: z.string().max(1000).nullable().optional(),
 			mime_type: z.string().optional(),
-			content: z.string().optional().describe('New file bytes, base64-encoded. Max 10 MB.'),
+			content: z
+				.string()
+				.optional()
+				.describe(
+					'New file content. For text, pass the raw string and leave `encoding` at the default. For binary files, set `encoding` to "base64" and pass base64-encoded bytes. Max 10 MB.',
+				),
+			encoding: z
+				.enum(['base64', 'utf8'])
+				.optional()
+				.describe('Encoding of `content`. Defaults to "utf8". Use "base64" for binary files.'),
 		}),
 	},
 	delete_file: {

@@ -153,6 +153,7 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 						name: file.name,
 						mime_type: file.type || 'application/octet-stream',
 						content,
+						encoding: 'base64',
 					},
 					{
 						signal: controller.signal,

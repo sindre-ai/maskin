@@ -65,6 +65,7 @@ export function ObjectFiles({
 						name: file.name,
 						mime_type: file.type || 'application/octet-stream',
 						content,
+						encoding: 'base64',
 					})
 					await createRelationship.mutateAsync({
 						source_type: objectType,
