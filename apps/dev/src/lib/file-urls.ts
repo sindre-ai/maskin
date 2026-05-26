@@ -20,3 +20,7 @@ export function frontendBaseUrl(): string {
 export function fileViewerUrl(frontendUrl: string, workspaceId: string, fileId: string): string {
 	return `${frontendUrl}/${workspaceId}/files/${fileId}`
 }
+
+export function fileStorageKey(workspaceId: string, fileId: string): string {
+	return `workspaces/${workspaceId}/files/${fileId}`
+}

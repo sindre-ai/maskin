@@ -15,10 +15,12 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import {
 	config as slackConfig,
+	slackExtractDeliveryId,
 	parseTokenResponse as slackParseTokenResponse,
 	resolveExternalId as slackResolveExternalId,
 	slackWebhookPreHandler,
 } from './providers/slack/config'
+import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { slackEventNormalizer } from './providers/slack/webhooks'
 
 const providers = new Map<string, ResolvedProvider>()
@@ -43,6 +45,8 @@ providers.set('slack', {
 	resolveExternalId: slackResolveExternalId,
 	customNormalizer: slackEventNormalizer,
 	webhookPreHandler: slackWebhookPreHandler,
+	extractDeliveryId: slackExtractDeliveryId,
+	webhookFanOut: slackWebhookFanOut,
 })
 
 providers.set('gmail', {
