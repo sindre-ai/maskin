@@ -840,16 +840,6 @@ export class SessionManager extends EventEmitter {
 			sessionMcps = { mcpServers }
 		}
 
-		// Expand ${VAR} placeholders in the MCP configs using the final envVars map,
-		// then serialize. JSON.stringify after substitution guarantees correct
-		// escaping of any special characters in the substituted values.
-		if (agentTools && Object.keys(agentTools).length > 0) {
-			envVars.AGENT_MCP_JSON = JSON.stringify(expandEnvRefs(agentTools, envVars))
-		}
-		if (sessionMcps) {
-			envVars.MCP_SERVERS_JSON = JSON.stringify(expandEnvRefs(sessionMcps, envVars))
-		}
-
 		const name = containerName ?? `anko-session-${session.id.slice(0, 8)}`
 		const image = (sessionConfig.base_image as string) ?? 'agent-base:latest'
 
@@ -861,16 +851,19 @@ export class SessionManager extends EventEmitter {
 		// Browser routing: if the MCP config wants a browser, try an idle workspace
 		// browser first (logged-in Chromium shared with the connect modal). On miss
 		// — none available or claim race lost — fall back to a per-session sidecar.
+		// host.docker.internal in the URL works because container-manager sets
+		// ExtraHosts: ['host.docker.internal:host-gateway'] on every container.
+		// Done BEFORE expandEnvRefs so ${BROWSER_CDP_URL} in agentTools/sessionMcps
+		// gets the resolved URL inlined into the serialized MCP config — text-level
+		// re-expansion downstream isn't reliable when values contain quotes.
 		let networkMode: string | undefined
-		if (this.needsBrowserSidecar(envVars)) {
+		if (this.needsBrowserSidecarFromRaw(agentTools, sessionMcps)) {
 			const claimed = await this.tryClaimWorkspaceBrowser(session.id, session.workspaceId)
 			if (claimed) {
-				// host.docker.internal works because container-manager sets
-				// ExtraHosts: ['host.docker.internal:host-gateway'] on every container.
-				envVars.BROWSER_CDP_URL = `ws://host.docker.internal:${claimed.port}`
+				envVars.BROWSER_CDP_URL = claimed.wsUrl
 				await this.insertSystemLog(
 					session.id,
-					`Using workspace browser (logged-in Chromium) on host port ${claimed.port}`,
+					`Using workspace browser (logged-in Chromium) at ${claimed.wsUrl}`,
 				)
 			} else {
 				const prefix = session.id.slice(0, 8)
@@ -880,6 +873,16 @@ export class SessionManager extends EventEmitter {
 					networkMode = result.networkName
 				}
 			}
+		}
+
+		// Expand ${VAR} placeholders in the MCP configs using the final envVars map,
+		// then serialize. JSON.stringify after substitution guarantees correct
+		// escaping of any special characters in the substituted values.
+		if (agentTools && Object.keys(agentTools).length > 0) {
+			envVars.AGENT_MCP_JSON = JSON.stringify(expandEnvRefs(agentTools, envVars))
+		}
+		if (sessionMcps) {
+			envVars.MCP_SERVERS_JSON = JSON.stringify(expandEnvRefs(sessionMcps, envVars))
 		}
 
 		const containerId = await this.containers.create({
@@ -1410,49 +1413,83 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * Check if the MCP config references ${BROWSER_CDP_URL}, indicating a browser sidecar is needed.
+	 * Check if the MCP config references ${BROWSER_CDP_URL} — indicates a
+	 * browser (workspace shared or per-session sidecar) is needed. Operates on
+	 * the raw objects so we can decide before serialization & env expansion.
 	 */
-	private needsBrowserSidecar(envVars: Record<string, string>): boolean {
-		const agentMcp = envVars.AGENT_MCP_JSON ?? ''
-		const sessionMcp = envVars.MCP_SERVERS_JSON ?? ''
-		return agentMcp.includes('${BROWSER_CDP_URL}') || sessionMcp.includes('${BROWSER_CDP_URL}')
+	private needsBrowserSidecarFromRaw(
+		agentTools: Record<string, unknown> | null,
+		sessionMcps: { mcpServers: Record<string, unknown> } | null,
+	): boolean {
+		const haystack = JSON.stringify(agentTools ?? {}) + JSON.stringify(sessionMcps ?? {})
+		return haystack.includes('${BROWSER_CDP_URL}')
 	}
 
 	/**
-	 * Try to claim a logged-in workspace browser for this session. Returns the
-	 * CDP endpoint (on host.docker.internal) if successful, null otherwise.
+	 * Try to claim a logged-in workspace browser for this session. Returns a
+	 * full WebSocket CDP URL the agent can dial, or null if no browser is
+	 * available / a downstream step failed. Tracks the claim so cleanup
+	 * releases it; the caller falls back to a per-session sidecar on null.
 	 *
-	 * Caller is responsible for the fallback path — this never throws on a miss.
-	 * Tracks the claim in activeSessions so cleanup releases the browser.
+	 * Why the full URL (not just host:port):
+	 *   Chrome serves the CDP WebSocket at `/devtools/browser/<UUID>` and only
+	 *   advertises that path via /json/version. If we hand Playwright MCP just
+	 *   `ws://host.docker.internal:<port>`, it dials the root path and Chrome
+	 *   returns 500 on the upgrade. And if Playwright fetches /json/version
+	 *   itself, the response says `ws://127.0.0.1:9223/...` (Chrome's bound
+	 *   address inside the container) which is unreachable from the agent. So
+	 *   we do the discovery here on the backend and rewrite the host part.
 	 *
 	 * NOTE: For now this claims *any* idle browser in the workspace regardless
-	 * of provider. The session-manager doesn't yet know which provider an
-	 * agent's MCP servers need. When we add multiple browser-using providers
-	 * (e.g. Twitter), make this provider-aware via the MCP server name.
+	 * of provider. When we add multiple browser-using providers, make this
+	 * provider-aware via the MCP server name.
 	 */
 	private async tryClaimWorkspaceBrowser(
 		sessionId: string,
 		workspaceId: string,
-	): Promise<{ id: string; port: number } | null> {
+	): Promise<{ id: string; wsUrl: string } | null> {
 		const mgr = this.authBrowserManager
 		if (!mgr) return null
 
 		// Single-provider for now; LinkedIn is the only browser-auth provider.
 		const PROVIDER = 'linkedin'
+		let claimed: Awaited<ReturnType<typeof mgr.claimForAgent>> | null = null
 		try {
-			const claimed = await mgr.claimForAgent(workspaceId, PROVIDER, sessionId)
+			claimed = await mgr.claimForAgent(workspaceId, PROVIDER, sessionId)
 			if (!claimed) return null
+
+			// Discover the actual WS path Chrome serves (the /devtools/browser/<UUID>
+			// suffix is required — the upgrade 500s without it).
+			const versionUrl = `http://${claimed.host}:${claimed.port}/json/version`
+			const res = await fetch(versionUrl, { signal: AbortSignal.timeout(5000) })
+			if (!res.ok) throw new Error(`/json/version returned ${res.status}`)
+			const body = (await res.json()) as { webSocketDebuggerUrl?: string }
+			if (!body.webSocketDebuggerUrl) {
+				throw new Error('/json/version response missing webSocketDebuggerUrl')
+			}
+			const wsPath = new URL(body.webSocketDebuggerUrl).pathname
+			// Rewrite the host: Chrome reports its own bound address (127.0.0.1:9223
+			// inside the container); the agent reaches the same Chrome via the
+			// Docker host gateway on the published port.
+			const wsUrl = `ws://host.docker.internal:${claimed.port}${wsPath}`
 
 			const sessionData = this.activeSessions.get(sessionId)
 			if (sessionData) {
 				sessionData.workspaceBrowserId = claimed.id
 			}
-			return { id: claimed.id, port: claimed.port }
+			return { id: claimed.id, wsUrl }
 		} catch (err) {
 			logger.warn('Workspace browser claim failed; falling back to sidecar', {
 				sessionId,
 				error: String(err),
 			})
+			// Release the claim so the next agent / modal can retry, otherwise the
+			// browser stays stuck in 'driving' until reconcile/idle-reap.
+			if (claimed) {
+				await mgr.releaseFromAgent(claimed.id).catch(() => {})
+				const sessionData = this.activeSessions.get(sessionId)
+				if (sessionData) sessionData.workspaceBrowserId = undefined
+			}
 			return null
 		}
 	}
