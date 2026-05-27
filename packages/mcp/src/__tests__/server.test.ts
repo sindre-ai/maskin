@@ -2013,6 +2013,9 @@ import {
 	GET_FILE_PAYLOAD,
 	GET_LLM_API_KEYS_WORKSPACE_PAYLOAD,
 	GET_OBJECTS_PAYLOAD,
+	GET_SESSION_ACTOR_PAYLOAD,
+	GET_SESSION_PAYLOAD,
+	GET_WORKSPACE_SCHEMA_PAYLOAD,
 	GET_WORKSPACE_SKILL_PAYLOAD,
 	LIST_ACTORS_PAYLOAD,
 	LIST_EXTENSIONS_PAYLOAD_WORKSPACES,
@@ -2138,6 +2141,12 @@ describe('lean format contract — Direction 1', () => {
 		// The single most authoritative payload to compare `content.length`
 		// against for the ≥60% token-reduction regression guard.
 		baselinePayload: unknown
+		// When the formatter wraps an array as `structuredContent.items`, the
+		// brief requires `items.length` to equal the upstream row count —
+		// guards against a future formatter silently truncating
+		// `structuredContent` and breaking the "full untruncated JSON"
+		// contract. Omitted for record-shaped tools.
+		expectedItemCount?: number
 	}> = [
 		{
 			name: 'list_objects — grouped by type, per-item links, no header link',
@@ -2147,6 +2156,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 3,
 			structuredKey: 'items',
 			baselinePayload: LIST_OBJECTS_PAYLOAD,
+			expectedItemCount: LIST_OBJECTS_PAYLOAD.length,
 		},
 		{
 			name: 'get_objects — one block per id (success path)',
@@ -2156,6 +2166,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 2,
 			structuredKey: 'items',
 			baselinePayload: [GET_OBJECTS_PAYLOAD, GET_OBJECTS_PAYLOAD],
+			expectedItemCount: 2,
 		},
 		{
 			name: 'search_objects — header link + one link per hit',
@@ -2165,6 +2176,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1 + SEARCH_OBJECTS_PAYLOAD.length,
 			structuredKey: 'items',
 			baselinePayload: SEARCH_OBJECTS_PAYLOAD,
+			expectedItemCount: SEARCH_OBJECTS_PAYLOAD.length,
 		},
 		{
 			name: 'list_unread — header activity link + one link per thread',
@@ -2174,6 +2186,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1 + LIST_UNREAD_PAYLOAD.length,
 			structuredKey: 'pass-through',
 			baselinePayload: { items: LIST_UNREAD_PAYLOAD },
+			expectedItemCount: LIST_UNREAD_PAYLOAD.length,
 		},
 		{
 			name: 'list_actors — header link + one link per actor',
@@ -2183,6 +2196,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1 + LIST_ACTORS_PAYLOAD.length,
 			structuredKey: 'items',
 			baselinePayload: LIST_ACTORS_PAYLOAD,
+			expectedItemCount: LIST_ACTORS_PAYLOAD.length,
 		},
 		{
 			name: 'list_files — header link only (rows are inline names)',
@@ -2192,6 +2206,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: LIST_FILES_PAYLOAD,
+			expectedItemCount: LIST_FILES_PAYLOAD.length,
 		},
 		{
 			name: 'list_triggers — header link + one link per trigger',
@@ -2201,6 +2216,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1 + LIST_TRIGGERS_PAYLOAD.length,
 			structuredKey: 'items',
 			baselinePayload: LIST_TRIGGERS_PAYLOAD,
+			expectedItemCount: LIST_TRIGGERS_PAYLOAD.length,
 		},
 		{
 			name: 'list_sessions — header link only (rows are inline ids)',
@@ -2213,6 +2229,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: LIST_SESSIONS_PAYLOAD,
+			expectedItemCount: LIST_SESSIONS_PAYLOAD.length,
 		},
 		{
 			name: 'list_relationships — header link only',
@@ -2222,6 +2239,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: LIST_RELATIONSHIPS_PAYLOAD,
+			expectedItemCount: LIST_RELATIONSHIPS_PAYLOAD.length,
 		},
 		{
 			name: 'list_workspace_skills — header link only',
@@ -2231,6 +2249,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: LIST_WORKSPACE_SKILLS_PAYLOAD,
+			expectedItemCount: LIST_WORKSPACE_SKILLS_PAYLOAD.length,
 		},
 		{
 			name: 'get_workspace_skill — H4 + meta + single record link',
@@ -2267,6 +2286,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: GET_EVENTS_PAYLOAD,
+			expectedItemCount: GET_EVENTS_PAYLOAD.length,
 		},
 		{
 			name: 'get_comments — thread link + inline author/snippet rows',
@@ -2276,6 +2296,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: GET_COMMENTS_PAYLOAD,
+			expectedItemCount: GET_COMMENTS_PAYLOAD.length,
 		},
 		{
 			name: 'list_subscribers — entity-object link header, inline rows',
@@ -2285,6 +2306,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: LIST_SUBSCRIBERS_PAYLOAD,
+			expectedItemCount: LIST_SUBSCRIBERS_PAYLOAD.length,
 		},
 		{
 			name: 'list_workspaces — header link to first workspace + per-row link',
@@ -2294,6 +2316,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1 + LIST_WORKSPACES_PAYLOAD.length,
 			structuredKey: 'items',
 			baselinePayload: LIST_WORKSPACES_PAYLOAD,
+			expectedItemCount: LIST_WORKSPACES_PAYLOAD.length,
 		},
 		{
 			name: 'list_integrations — header link only',
@@ -2303,6 +2326,7 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: LIST_INTEGRATIONS_PAYLOAD,
+			expectedItemCount: LIST_INTEGRATIONS_PAYLOAD.length,
 		},
 		{
 			name: 'list_integration_providers — header settings link only',
@@ -2312,6 +2336,25 @@ describe('lean format contract — Direction 1', () => {
 			expectedItemLinkCount: 1,
 			structuredKey: 'items',
 			baselinePayload: LIST_INTEGRATION_PROVIDERS_PAYLOAD,
+			expectedItemCount: LIST_INTEGRATION_PROVIDERS_PAYLOAD.length,
+		},
+		{
+			name: 'get_workspace_schema — H4 + per-type status rows + workspace link',
+			tool: 'get_workspace_schema',
+			args: { workspace_id: WS_ID },
+			mockPayloads: [GET_WORKSPACE_SCHEMA_PAYLOAD],
+			expectedItemLinkCount: 1,
+			structuredKey: 'pass-through',
+			baselinePayload: GET_WORKSPACE_SCHEMA_PAYLOAD,
+		},
+		{
+			name: 'get_session — H4 + actor/status meta + sessions link',
+			tool: 'get_session',
+			args: { id: SESSION_ID_1 },
+			mockPayloads: [GET_SESSION_PAYLOAD, GET_SESSION_ACTOR_PAYLOAD],
+			expectedItemLinkCount: 1,
+			structuredKey: 'pass-through',
+			baselinePayload: GET_SESSION_PAYLOAD,
 		},
 		{
 			name: 'list_extensions — first call gets workspaces, then renders module list',
@@ -2356,6 +2399,15 @@ describe('lean format contract — Direction 1', () => {
 			if (c.structuredKey === 'items') {
 				expect(Array.isArray((result.structuredContent as { items: unknown }).items)).toBe(true)
 			}
+			// Row-count contract for list-shaped tools — the brief promises
+			// "full untruncated JSON in structuredContent", so a future
+			// formatter that silently caps `items` would break the wire
+			// contract. Asserted only when the case opts in (record-shaped
+			// tools omit `expectedItemCount`).
+			if (c.expectedItemCount !== undefined) {
+				const items = (result.structuredContent as { items: unknown[] }).items
+				expect(items.length).toBe(c.expectedItemCount)
+			}
 
 			// `content` is a single text block with non-empty body — the lean
 			// markdown is what the model reads in-chat.
@@ -2370,10 +2422,12 @@ describe('lean format contract — Direction 1', () => {
 			expect(links).toHaveLength(c.expectedItemLinkCount)
 			for (const url of links) {
 				expect(url.startsWith(`${WEB_APP_BASE_URL}/r/`)).toBe(true)
-				// Every deep link carries the tool name as `?t=…` for click
-				// telemetry — guards against the regression where a per-handler
-				// link forgets to thread the tool through.
-				expect(url).toContain(`t=${c.tool}`)
+				// Every deep link carries the tool name as `?t=<tool>` for
+				// click telemetry — guards against the regression where a
+				// per-handler link forgets to thread the tool through, and
+				// against a future formatter appending stray params that would
+				// break URL-parsing of `t` in the click-tracking redirect.
+				expect(new URL(url).searchParams.get('t')).toBe(c.tool)
 			}
 
 			// (d) No prose pagination noise. The lean format paginates via

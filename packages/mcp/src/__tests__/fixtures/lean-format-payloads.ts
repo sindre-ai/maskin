@@ -125,10 +125,38 @@ export const LIST_RELATIONSHIPS_PAYLOAD = [
 	},
 ]
 
-export const GET_WORKSPACE_SCHEMA_PAYLOAD = {
-	workspaces: [{ id: WS_ID, name: 'Test Workspace', settings: {} }],
-	// The handler builds a schema view; just need workspaces fetch + the
-	// handler computes the schema from settings + module defaults.
+// `get_workspace_schema` reads `GET /api/workspaces` (an array, not wrapped)
+// and computes the per-type schema from `settings`. The fixture carries enough
+// real settings — statuses, display names, relationship types — so the
+// formatter actually emits type rows rather than the empty-workspace branch.
+export const GET_WORKSPACE_SCHEMA_PAYLOAD = [
+	{
+		id: WS_ID,
+		name: 'Test Workspace',
+		settings: {
+			statuses: {
+				bet: ['proposed', 'active', 'completed'],
+				task: ['todo', 'in_progress', 'done'],
+			},
+			display_names: { bet: 'Bet', task: 'Task' },
+			relationship_types: ['breaks_into', 'informs'],
+		},
+	},
+]
+
+// `get_session` reads `GET /api/sessions/:id` for the row and then
+// `GET /api/actors/:actorId` to enrich `actorName`. Both fetches are mocked,
+// in order, by the test.
+export const GET_SESSION_PAYLOAD = {
+	id: SESSION_ID_1,
+	actorId: ACTOR_ID_1,
+	status: 'running',
+}
+export const GET_SESSION_ACTOR_PAYLOAD = {
+	id: ACTOR_ID_1,
+	name: 'Senior Developer',
+	type: 'agent' as const,
+	email: null,
 }
 
 export const LIST_WORKSPACE_SKILLS_PAYLOAD = [
