@@ -22,7 +22,7 @@ import { tools } from '../tools'
 const config = {
 	apiBaseUrl: 'http://localhost:3000',
 	apiKey: 'ank_testkey123',
-	defaultWorkspaceId: 'ws-default-123',
+	defaultWorkspaceId: '00000000-0000-4000-8000-000000000001',
 	// Suppress fire-and-forget telemetry POSTs so tests counting fetch calls
 	// see only the tool's own API call.
 	telemetrySink: () => {},
@@ -111,6 +111,24 @@ describe('createMcpServer', () => {
 	})
 })
 
+// Tests pre-date Task 4's lean-results refactor — they used to parse the JSON
+// blob in `content[0].text`. The new wiring puts the raw JSON in
+// `structuredContent` (array payloads wrapped as `{ items: [...] }`), so this
+// helper bridges old assertions to the new shape until Task 5 rewrites them
+// against the lean markdown contract directly.
+// biome-ignore lint/suspicious/noExplicitAny: structuredContent is a heterogenous JSON payload; tests need permissive access without per-tool type plumbing.
+type StructuredResult = any
+function structuredOf(result: unknown): StructuredResult {
+	const sc = (result as { structuredContent?: unknown })?.structuredContent
+	if (sc && typeof sc === 'object' && !Array.isArray(sc)) {
+		const keys = Object.keys(sc as Record<string, unknown>)
+		if (keys.length === 1 && keys[0] === 'items') {
+			return (sc as { items: StructuredResult }).items
+		}
+	}
+	return sc
+}
+
 describe('tool handlers', () => {
 	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
 
@@ -168,12 +186,12 @@ describe('tool handlers', () => {
 					method: 'POST',
 					headers: expect.objectContaining({
 						Authorization: 'Bearer ank_testkey123',
-						'X-Workspace-Id': 'ws-default-123',
+						'X-Workspace-Id': '00000000-0000-4000-8000-000000000001',
 					}),
 				}),
 			)
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed).toEqual(mockResult)
 		})
 
@@ -182,7 +200,7 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('create_objects')
 			await handler({
-				workspace_id: 'ws-custom',
+				workspace_id: '00000000-0000-4000-8000-000000000002',
 				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
 				edges: [],
 			})
@@ -191,7 +209,7 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/graph',
 				expect.objectContaining({
 					headers: expect.objectContaining({
-						'X-Workspace-Id': 'ws-custom',
+						'X-Workspace-Id': '00000000-0000-4000-8000-000000000002',
 					}),
 				}),
 			)
@@ -250,7 +268,7 @@ describe('tool handlers', () => {
 				expect(body.type).toBe('attached')
 			}
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed.file_attachments).toHaveLength(2)
 			expect(parsed.file_attachments.every((a: { success: boolean }) => a.success)).toBe(true)
 		})
@@ -264,31 +282,44 @@ describe('tool handlers', () => {
 				edges: [],
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed.file_attachments).toBeUndefined()
 		})
 	})
 
 	describe('get_objects handler', () => {
 		it('GETs /api/objects/:id/graph for each ID', async () => {
-			mockFetchSuccess({ id: '1', title: 'Test' })
+			// Mock /api/objects/:id/graph — returns the ObjectGraph shape the new
+			// lean formatter expects (object + relationships/events/files).
+			mockFetchSuccess({
+				object: {
+					id: '00000000-0000-4000-8000-aaaaaaaaaaaa',
+					type: 'task',
+					title: 'Test',
+					status: 'todo',
+				},
+				relationships: [],
+				connected_objects: [],
+				events: [],
+				files: [],
+			})
 
 			const handler = getHandler('get_objects')
-			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
-				content: Array<{ text: string }>
-			}
+			const result = (await handler({
+				ids: ['00000000-0000-4000-8000-aaaaaaaaaaaa', '00000000-0000-4000-8000-bbbbbbbbbbbb'],
+			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledTimes(2)
 			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/objects/id-1/graph',
+				'http://localhost:3000/api/objects/00000000-0000-4000-8000-aaaaaaaaaaaa/graph',
 				expect.anything(),
 			)
 			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/objects/id-2/graph',
+				'http://localhost:3000/api/objects/00000000-0000-4000-8000-bbbbbbbbbbbb/graph',
 				expect.anything(),
 			)
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed).toHaveLength(2)
 			expect(parsed[0].success).toBe(true)
 		})
@@ -360,7 +391,7 @@ describe('tool handlers', () => {
 				expect(body.type).toBe('attached')
 			}
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
 			expect(attachments).toHaveLength(2)
 			expect(attachments.every((a: { success: boolean }) => a.success)).toBe(true)
@@ -404,7 +435,7 @@ describe('tool handlers', () => {
 				)
 			expect(relPosts).toHaveLength(0)
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
 			expect(attachments).toHaveLength(1)
 			expect(attachments[0].success).toBe(true)
@@ -484,7 +515,7 @@ describe('tool handlers', () => {
 			expect(calls[1][0]).toBe('http://localhost:3000/api/relationships/rel-99')
 			expect((calls[1][1] as RequestInit).method).toBe('DELETE')
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			const detachments = parsed.filter((e: { type: string }) => e.type === 'file_detachment')
 			expect(detachments).toHaveLength(1)
 			expect(detachments[0].success).toBe(true)
@@ -506,7 +537,7 @@ describe('tool handlers', () => {
 				],
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed[0].type).toBe('file_detachment')
 			expect(parsed[0].success).toBe(false)
 			expect(parsed[0].error).toMatch(/no attached relationship/i)
@@ -555,27 +586,39 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
-				workspace_id: 'ws-123',
+				workspace_id: '00000000-0000-4000-8000-000000000003',
 			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledTimes(2)
 			expect(fetch).toHaveBeenLastCalledWith(
-				'http://localhost:3000/api/workspaces/ws-123/members',
+				'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000003/members',
 				expect.objectContaining({ method: 'POST' }),
 			)
 
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.workspace_id).toBe('ws-123')
+			const parsed = structuredOf(result)
+			expect(parsed.workspace_id).toBe('00000000-0000-4000-8000-000000000003')
 			expect(parsed.role).toBe('member')
 		})
 	})
 
 	describe('get_objects handler (partial failure)', () => {
 		it('returns success false for failed IDs without rejecting', async () => {
+			const okGraph = {
+				object: {
+					id: '00000000-0000-4000-8000-aaaaaaaaaaaa',
+					type: 'task',
+					title: 'OK',
+					status: 'todo',
+				},
+				relationships: [],
+				connected_objects: [],
+				events: [],
+				files: [],
+			}
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ id: 'id-1', title: 'OK' }),
+					json: () => Promise.resolve(okGraph),
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: false,
@@ -584,14 +627,14 @@ describe('tool handlers', () => {
 				} as Response)
 
 			const handler = getHandler('get_objects')
-			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
-				content: Array<{ text: string }>
-			}
+			const result = (await handler({
+				ids: ['00000000-0000-4000-8000-aaaaaaaaaaaa', '00000000-0000-4000-8000-bbbbbbbbbbbb'],
+			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed).toHaveLength(2)
 			expect(parsed[0].success).toBe(true)
-			expect(parsed[0].result).toEqual({ id: 'id-1', title: 'OK' })
+			expect(parsed[0].result).toEqual(okGraph)
 			expect(parsed[1].success).toBe(false)
 			expect(parsed[1].error).toContain('API error 404')
 		})
@@ -654,7 +697,7 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000) // second poll → completed
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 
 			expect(parsed.session.status).toBe('completed')
 			expect(parsed.logs).toEqual([{ message: 'Done' }])
@@ -699,7 +742,7 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000) // past deadline
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 
 			// Session should still show 'running' since it never reached terminal
 			expect(parsed.session.status).toBe('running')
@@ -734,7 +777,7 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed.session.status).toBe('completed')
 		})
 	})
@@ -1062,17 +1105,17 @@ describe('tool handlers', () => {
 				const result = (await handler({})) as { content: Array<{ text: string }> }
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills',
+					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills',
 					expect.objectContaining({
 						method: 'GET',
 						headers: expect.objectContaining({
 							Authorization: 'Bearer ank_testkey123',
-							'X-Workspace-Id': 'ws-default-123',
+							'X-Workspace-Id': '00000000-0000-4000-8000-000000000001',
 						}),
 					}),
 				)
 
-				const parsed = JSON.parse(result.content[0].text)
+				const parsed = structuredOf(result)
 				expect(parsed).toHaveLength(1)
 				expect(parsed[0].name).toBe('bug-fix')
 			})
@@ -1080,12 +1123,14 @@ describe('tool handlers', () => {
 			it('uses workspace_id from args over default', async () => {
 				mockFetchSuccess([])
 				const handler = getHandler('list_workspace_skills')
-				await handler({ workspace_id: 'ws-custom' })
+				await handler({ workspace_id: '00000000-0000-4000-8000-000000000002' })
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-custom/skills',
+					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000002/skills',
 					expect.objectContaining({
-						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+						headers: expect.objectContaining({
+							'X-Workspace-Id': '00000000-0000-4000-8000-000000000002',
+						}),
 					}),
 				)
 			})
@@ -1101,10 +1146,10 @@ describe('tool handlers', () => {
 				}
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
+					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/bug-fix',
 					expect.objectContaining({ method: 'GET' }),
 				)
-				const parsed = JSON.parse(result.content[0].text)
+				const parsed = structuredOf(result)
 				expect(parsed.content).toBe('# Bug fix skill')
 			})
 
@@ -1115,7 +1160,7 @@ describe('tool handlers', () => {
 				// for a name with characters that still need escaping as a path segment.
 				await handler({ name: 'a-b' })
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills/a-b',
+					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/a-b',
 					expect.anything(),
 				)
 			})
@@ -1131,21 +1176,25 @@ describe('tool handlers', () => {
 				}
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills',
+					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills',
 					expect.objectContaining({ method: 'POST' }),
 				)
 				const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)
 				expect(body).toEqual({ name: 'bug-fix', content: '# body' })
-				expect(JSON.parse(result.content[0].text).name).toBe('bug-fix')
+				expect(structuredOf(result).name).toBe('bug-fix')
 			})
 
 			it('uses workspace_id from args when provided', async () => {
 				mockFetchSuccess({})
 				const handler = getHandler('create_workspace_skill')
-				await handler({ workspace_id: 'ws-custom', name: 'my-skill', content: '# x' })
+				await handler({
+					workspace_id: '00000000-0000-4000-8000-000000000002',
+					name: 'my-skill',
+					content: '# x',
+				})
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-custom/skills',
+					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000002/skills',
 					expect.objectContaining({ method: 'POST' }),
 				)
 			})
@@ -1159,7 +1208,7 @@ describe('tool handlers', () => {
 				await handler({ name: 'bug-fix', content: '# updated' })
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
+					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/bug-fix',
 					expect.objectContaining({ method: 'PUT' }),
 				)
 				const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)
@@ -1177,10 +1226,10 @@ describe('tool handlers', () => {
 				}
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
+					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/bug-fix',
 					expect.objectContaining({ method: 'DELETE' }),
 				)
-				expect(JSON.parse(result.content[0].text)).toEqual({ deleted: true })
+				expect(structuredOf(result)).toEqual({ deleted: true })
 			})
 		})
 
@@ -1206,7 +1255,11 @@ describe('tool handlers', () => {
 		// merges llm_keys, so the MCP tool is a straight pass-through — no
 		// read-modify-write. One fetch call per invocation.
 		it('PATCHes only the target provider and returns masked last4', async () => {
-			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
+			mockFetchSuccess({
+				id: '00000000-0000-4000-8000-000000000001',
+				name: 'My Workspace',
+				settings: {},
+			})
 
 			const handler = getHandler('set_llm_api_key')
 			const result = (await handler({
@@ -1216,35 +1269,53 @@ describe('tool handlers', () => {
 
 			expect(fetch).toHaveBeenCalledTimes(1)
 			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
+			expect(patchCall[0]).toBe(
+				'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001',
+			)
 			expect(patchCall[1]?.method).toBe('PATCH')
 			const body = JSON.parse(patchCall[1]?.body as string)
 			expect(body.settings.llm_keys).toEqual({ anthropic: 'sk-ant-new-key-WXYZ' })
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed).toEqual({ success: true, provider: 'anthropic', last4: 'WXYZ' })
 			expect(result.content[0].text).not.toContain('sk-ant-new-key-WXYZ')
 		})
 
 		it('uses workspace_id from args over default', async () => {
-			mockFetchSuccess({ id: 'ws-custom', name: 'Other', settings: {} })
+			mockFetchSuccess({ id: '00000000-0000-4000-8000-000000000002', name: 'Other', settings: {} })
 
 			const handler = getHandler('set_llm_api_key')
-			await handler({ workspace_id: 'ws-custom', provider: 'openai', api_key: 'sk-foo' })
+			await handler({
+				workspace_id: '00000000-0000-4000-8000-000000000002',
+				provider: 'openai',
+				api_key: 'sk-foo',
+			})
 
 			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-custom')
+			expect(patchCall[0]).toBe(
+				'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000002',
+			)
 		})
 
 		it('back-to-back sets for both providers each send only their own delta', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
+					json: () =>
+						Promise.resolve({
+							id: '00000000-0000-4000-8000-000000000001',
+							name: 'My',
+							settings: {},
+						}),
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
+					json: () =>
+						Promise.resolve({
+							id: '00000000-0000-4000-8000-000000000001',
+							name: 'My',
+							settings: {},
+						}),
 				} as Response)
 
 			const handler = getHandler('set_llm_api_key')
@@ -1265,7 +1336,7 @@ describe('tool handlers', () => {
 		it('reads settings.llm_keys and returns masked status per provider', async () => {
 			mockFetchSuccess([
 				{
-					id: 'ws-default-123',
+					id: '00000000-0000-4000-8000-000000000001',
 					name: 'My Workspace',
 					settings: {
 						llm_keys: { anthropic: 'sk-ant-abcdEFGH', openai: 'sk-opq-MNOP' },
@@ -1276,7 +1347,7 @@ describe('tool handlers', () => {
 			const handler = getHandler('get_llm_api_keys')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed).toEqual({
 				anthropic: { set: true, last4: 'EFGH' },
 				openai: { set: true, last4: 'MNOP' },
@@ -1285,12 +1356,18 @@ describe('tool handlers', () => {
 		})
 
 		it('returns { set: false } for missing providers', async () => {
-			mockFetchSuccess([{ id: 'ws-default-123', name: 'My Workspace', settings: { llm_keys: {} } }])
+			mockFetchSuccess([
+				{
+					id: '00000000-0000-4000-8000-000000000001',
+					name: 'My Workspace',
+					settings: { llm_keys: {} },
+				},
+			])
 
 			const handler = getHandler('get_llm_api_keys')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed).toEqual({
 				anthropic: { set: false },
 				openai: { set: false },
@@ -1300,7 +1377,11 @@ describe('tool handlers', () => {
 
 	describe('delete_llm_api_key handler', () => {
 		it('PATCHes the target provider to null so the server strips it', async () => {
-			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
+			mockFetchSuccess({
+				id: '00000000-0000-4000-8000-000000000001',
+				name: 'My Workspace',
+				settings: {},
+			})
 
 			const handler = getHandler('delete_llm_api_key')
 			const result = (await handler({ provider: 'anthropic' })) as {
@@ -1309,11 +1390,13 @@ describe('tool handlers', () => {
 
 			expect(fetch).toHaveBeenCalledTimes(1)
 			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
+			expect(patchCall[0]).toBe(
+				'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001',
+			)
 			expect(patchCall[1]?.method).toBe('PATCH')
 			const body = JSON.parse(patchCall[1]?.body as string)
 			expect(body.settings.llm_keys).toEqual({ anthropic: null })
-			const parsed = JSON.parse(result.content[0].text)
+			const parsed = structuredOf(result)
 			expect(parsed).toEqual({ success: true, provider: 'anthropic' })
 		})
 
@@ -1321,7 +1404,11 @@ describe('tool handlers', () => {
 			// Server-side deep-merge treats null as "delete if present"; deleting
 			// a missing provider is a no-op there, so the MCP tool still returns
 			// success without needing to inspect current state.
-			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
+			mockFetchSuccess({
+				id: '00000000-0000-4000-8000-000000000001',
+				name: 'My Workspace',
+				settings: {},
+			})
 
 			const handler = getHandler('delete_llm_api_key')
 			const result = (await handler({ provider: 'openai' })) as {
@@ -1332,7 +1419,7 @@ describe('tool handlers', () => {
 			const [patchCall] = vi.mocked(fetch).mock.calls
 			const body = JSON.parse(patchCall[1]?.body as string)
 			expect(body.settings.llm_keys).toEqual({ openai: null })
-			expect(JSON.parse(result.content[0].text)).toEqual({ success: true, provider: 'openai' })
+			expect(structuredOf(result)).toEqual({ success: true, provider: 'openai' })
 		})
 	})
 
@@ -1356,7 +1443,7 @@ describe('tool handlers', () => {
 					method: 'POST',
 					headers: expect.objectContaining({
 						Authorization: 'Bearer ank_testkey123',
-						'X-Workspace-Id': 'ws-default-123',
+						'X-Workspace-Id': '00000000-0000-4000-8000-000000000001',
 					}),
 				}),
 			)
@@ -1389,7 +1476,7 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/claude-oauth/status',
 				expect.objectContaining({ method: 'GET' }),
 			)
-			expect(JSON.parse(result.content[0].text)).toEqual(mockResult)
+			expect(structuredOf(result)).toEqual(mockResult)
 		})
 	})
 
@@ -1431,12 +1518,19 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('get_comments')
-			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50, offset: 0 })
+			await handler({
+				entity_id: objectId,
+				workspace_id: '00000000-0000-4000-8000-000000000002',
+				limit: 50,
+				offset: 0,
+			})
 
 			expect(fetch).toHaveBeenCalledWith(
 				expect.any(String),
 				expect.objectContaining({
-					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+					headers: expect.objectContaining({
+						'X-Workspace-Id': '00000000-0000-4000-8000-000000000002',
+					}),
 				}),
 			)
 		})
@@ -1464,7 +1558,7 @@ describe('tool handlers', () => {
 					method: 'POST',
 					headers: expect.objectContaining({
 						Authorization: 'Bearer ank_testkey123',
-						'X-Workspace-Id': 'ws-default-123',
+						'X-Workspace-Id': '00000000-0000-4000-8000-000000000001',
 					}),
 				}),
 			)
@@ -1478,7 +1572,7 @@ describe('tool handlers', () => {
 				parent_event_id: 42,
 			})
 
-			expect(JSON.parse(result.content[0].text)).toEqual(mockResult)
+			expect(structuredOf(result)).toEqual(mockResult)
 		})
 
 		it('strips workspace_id from the POST body', async () => {
@@ -1486,7 +1580,7 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('create_comment')
 			await handler({
-				workspace_id: 'ws-custom',
+				workspace_id: '00000000-0000-4000-8000-000000000002',
 				entity_id: objectId,
 				content: 'hello',
 			})
@@ -1498,7 +1592,9 @@ describe('tool handlers', () => {
 			expect(body.content).toBe('hello')
 
 			expect(call[1]).toMatchObject({
-				headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+				headers: expect.objectContaining({
+					'X-Workspace-Id': '00000000-0000-4000-8000-000000000002',
+				}),
 			})
 		})
 	})
@@ -1515,7 +1611,7 @@ describe('tool handlers', () => {
 			required?: boolean
 			values?: string[]
 		}
-		const wsId = 'ws-default-123'
+		const wsId = '00000000-0000-4000-8000-000000000001'
 		const buildWorkspace = (fields: Record<string, FieldDef[]>) => ({
 			id: wsId,
 			name: 'My Workspace',
@@ -1573,7 +1669,7 @@ describe('tool handlers', () => {
 					{ name: 'priority', type: 'text' },
 					{ name: 'tag', type: 'text', required: true },
 				])
-				const parsed = JSON.parse(result.content[0].text)
+				const parsed = structuredOf(result)
 				expect(parsed.field).toEqual({ name: 'tag', type: 'text', required: true })
 			})
 
@@ -1586,7 +1682,9 @@ describe('tool handlers', () => {
 				const patch = calls.find((c) => (c[1] as RequestInit)?.method === 'PATCH')
 				if (!patch) throw new Error('no PATCH call')
 				const headers = (patch[1] as RequestInit).headers as Record<string, string>
-				expect(headers['Idempotency-Key']).toMatch(/^mcp-schema-ws-default-123-/)
+				expect(headers['Idempotency-Key']).toMatch(
+					/^mcp-schema-00000000-0000-4000-8000-000000000001-/,
+				)
 			})
 
 			it('throws when enum is created without values', async () => {
@@ -1647,7 +1745,7 @@ describe('tool handlers', () => {
 					field_type: 'text',
 				})) as { content: Array<{ text: string }> }
 
-				expect(JSON.parse(result.content[0].text).field).toEqual({ name: 'tag', type: 'text' })
+				expect(structuredOf(result).field).toEqual({ name: 'tag', type: 'text' })
 				const patches = vi
 					.mocked(fetch)
 					.mock.calls.filter((c) => (c[1] as RequestInit)?.method === 'PATCH')
@@ -1742,7 +1840,7 @@ describe('tool handlers', () => {
 				}
 
 				expect(lastPatchBody().settings.field_definitions.task).toEqual(after.task)
-				const parsed = JSON.parse(result.content[0].text)
+				const parsed = structuredOf(result)
 				expect(parsed).toMatchObject({ deleted: 'tag', success: true })
 			})
 		})
