@@ -33,6 +33,7 @@ import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
+	measureToolResponse,
 	recordMutation,
 	recordToolCall,
 } from './telemetry.js'
@@ -894,11 +895,15 @@ export function createMcpServer(config: McpConfig) {
 			const responseHasRichRender =
 				defHasRichRender || Boolean(responseMeta && 'ui' in responseMeta)
 
+			const sizes = measureToolResponse(response)
 			recordToolCall(telemetrySink, telemetryTarget, {
 				tool_name: name,
 				has_rich_render: responseHasRichRender,
 				duration_ms: Date.now() - start,
 				workspace_id: extractWorkspaceId(args),
+				content_bytes: sizes.content_bytes,
+				content_tokens: sizes.content_tokens,
+				structured_content_bytes: sizes.structured_content_bytes,
 			})
 
 			if (mutationKind && isSuccessfulMutationResponse(response)) {
