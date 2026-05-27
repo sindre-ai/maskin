@@ -18,7 +18,7 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { deepLink } from './deep-link.js'
+import { deepLink, isValidWorkspaceId } from './deep-link.js'
 import {
 	type FormattedResult,
 	type FormatterContext,
@@ -136,6 +136,12 @@ const GENERIC_LIST_LIMIT = 25
  * render as a single italic "no X." line. Caller supplies the row count noun
  * (singular `label`) and the deep-link spec so click telemetry attributes back
  * to the originating tool.
+ *
+ * If `linkInput.workspaceId` is not a valid UUID — the case for tools that
+ * accept calls without a default workspace, like `list_actors` over stdio
+ * without `WORKSPACE_ID` — the header is rendered without a link rather than
+ * letting `deepLink` throw. Row callbacks that build their own per-row links
+ * are responsible for the same guard (see e.g. `list_actors`).
  */
 function formatGenericList<T>(
 	rows: T[],
@@ -150,8 +156,8 @@ function formatGenericList<T>(
 	const count = rows.length
 	const noun = count === 1 ? opts.label : `${opts.label}s`
 	const linkText = opts.linkText ?? 'open in Maskin'
-	const url = deepLink(opts.linkInput)
-	const header = `**${count} ${noun}** — [${linkText}](${url})`
+	const url = isValidWorkspaceId(opts.linkInput.workspaceId) ? deepLink(opts.linkInput) : undefined
+	const header = url ? `**${count} ${noun}** — [${linkText}](${url})` : `**${count} ${noun}**`
 	if (count === 0) {
 		const empty = opts.emptyText ?? `_No ${noun}._`
 		return { content: `${header}\n\n${empty}`, structuredContent: { items: rows } }
@@ -167,6 +173,12 @@ function formatGenericList<T>(
  * matching formatter (`get_actor`, `get_file`, `get_session`, `get_workspace_skill`,
  * `get_llm_api_keys`, …). `title` is the H4 headline, `meta` the italic
  * sub-line; both can be empty strings to skip rendering.
+ *
+ * Defensive on two axes the original `formatObject` formatter handles for the
+ * object-graph case: (1) when `linkInput.workspaceId` isn't a valid UUID, the
+ * title renders without a link instead of letting `deepLink` throw — mirrors
+ * `safeTitle` in `formatters.ts`. (2) when `title` is empty/whitespace, fall
+ * back to "Untitled" so the headline never renders as `#### [](url)`.
  */
 function formatGenericRecord(
 	record: unknown,
@@ -176,8 +188,10 @@ function formatGenericRecord(
 		linkInput: Parameters<typeof deepLink>[0]
 	},
 ): FormattedResult {
-	const url = deepLink(opts.linkInput)
-	const lines: string[] = [`#### [${opts.title}](${url})`]
+	const title = (opts.title ?? '').trim() || 'Untitled'
+	const url = isValidWorkspaceId(opts.linkInput.workspaceId) ? deepLink(opts.linkInput) : undefined
+	const headline = url ? `#### [${title}](${url})` : `#### ${title}`
+	const lines: string[] = [headline]
 	if (opts.meta) lines.push(`_${opts.meta}_`)
 	return {
 		content: lines.join('\n'),
@@ -1601,11 +1615,15 @@ export function createMcpServer(config: McpConfig) {
 				role?: string
 			}>
 			const ctx = buildFormatterContext('list_actors', config, args.workspace_id)
+			const canLink = isValidWorkspaceId(ctx.workspaceId)
 			return leanReply(
 				'list_actors',
 				formatGenericList(result, {
 					label: 'actor',
 					row: (a) => {
+						const tag = a.email ? `${a.type} • ${a.email}` : a.type
+						const name = a.name || a.id.slice(0, 8)
+						if (!canLink) return `- ${name} — ${tag}`
 						const url = deepLink({
 							workspaceId: ctx.workspaceId,
 							kind: 'actor',
@@ -1613,8 +1631,7 @@ export function createMcpServer(config: McpConfig) {
 							tool: 'list_actors',
 							baseUrl: ctx.baseUrl,
 						})
-						const tag = a.email ? `${a.type} • ${a.email}` : a.type
-						return `- [${a.name || a.id.slice(0, 8)}](${url}) — ${tag}`
+						return `- [${name}](${url}) — ${tag}`
 					},
 					linkInput: {
 						workspaceId: ctx.workspaceId,
@@ -1718,7 +1735,11 @@ export function createMcpServer(config: McpConfig) {
 					formatMutationConfirm(
 						{
 							verb: 'Rotated API key',
-							results: [{ type: 'actor', id: args.id, success: true, result: { id: args.id } }],
+							// Omit `result.id` so `formatMutationConfirm` follows the section
+							// branch and lands on the workspace API-keys page rather than
+							// generating an object-detail URL for the actor id.
+							results: [{ type: 'actor', id: args.id, success: true }],
+							section: 'keys',
 						},
 						ctx,
 					),

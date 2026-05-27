@@ -12,7 +12,7 @@
  * client, or HTTP — just the data shapes and how to render them.
  */
 
-import { type DeepLinkSettingsSection, deepLink } from './deep-link.js'
+import { type DeepLinkSettingsSection, deepLink, isValidWorkspaceId } from './deep-link.js'
 
 /**
  * Return shape every formatter produces. Task 4 wraps this into the MCP
@@ -359,28 +359,35 @@ export function formatMutationConfirm(
 	const failed = input.results.length - ok
 
 	const firstSuccess = input.results.find((r) => r.success && r.result?.id)?.result
-	const link = firstSuccess?.id
-		? deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'object',
-				id: firstSuccess.id,
-				tool: ctx.tool,
-				sessionId: ctx.sessionId,
-				baseUrl: ctx.baseUrl,
-			})
-		: input.section
+	// Tools that may operate without a default workspace (the actor tools call
+	// these via `skipWorkspace: true`) pass an empty ctx.workspaceId — render
+	// without a deep link rather than letting `deepLink` throw.
+	const link = !isValidWorkspaceId(ctx.workspaceId)
+		? undefined
+		: firstSuccess?.id
 			? deepLink({
 					workspaceId: ctx.workspaceId,
-					kind: 'settings',
-					section: input.section,
+					kind: 'object',
+					id: firstSuccess.id,
 					tool: ctx.tool,
 					sessionId: ctx.sessionId,
 					baseUrl: ctx.baseUrl,
 				})
-			: workspaceLink(ctx)
+			: input.section
+				? deepLink({
+						workspaceId: ctx.workspaceId,
+						kind: 'settings',
+						section: input.section,
+						tool: ctx.tool,
+						sessionId: ctx.sessionId,
+						baseUrl: ctx.baseUrl,
+					})
+				: workspaceLink(ctx)
 
 	const status = failed === 0 ? '✅' : ok === 0 ? '❌' : '⚠️'
-	const summary = `${status} **${input.verb}**: ${ok} succeeded${failed ? `, ${failed} failed` : ''} — [open in Maskin](${link})`
+	const summary = link
+		? `${status} **${input.verb}**: ${ok} succeeded${failed ? `, ${failed} failed` : ''} — [open in Maskin](${link})`
+		: `${status} **${input.verb}**: ${ok} succeeded${failed ? `, ${failed} failed` : ''}`
 
 	const lines: string[] = [summary]
 	if (failed > 0) {
