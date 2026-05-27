@@ -802,6 +802,11 @@ function isSuccessfulMutationResponse(response: unknown): boolean {
 			return (entry as { success?: unknown }).success === true
 		})
 	}
+	// Graph response (`create_objects`): the full graph payload replaces the
+	// items wrapper, so check the `nodes` array as the success signal. Without
+	// this branch the most-common write tool's telemetry silently drops to zero.
+	const nodes = (sc as { nodes?: unknown }).nodes
+	if (Array.isArray(nodes)) return nodes.length > 0
 	// Single-record payload.
 	const obj = sc as { success?: unknown; error?: unknown; id?: unknown; skipped?: unknown }
 	if (obj.success === true) return true
