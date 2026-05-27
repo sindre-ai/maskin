@@ -756,8 +756,12 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
-	// Find integration by provider + installation ID
-	const [integration] = await db
+	// Find ALL matching active integrations. A single external install (e.g. one
+	// Slack team) can be connected to multiple Maskin workspaces, and each one
+	// needs its own copy of the event so per-workspace triggers fire correctly.
+	// `.limit(1)` here used to silently starve every workspace except whichever
+	// row Postgres returned first.
+	const matchingIntegrations = await db
 		.select()
 		.from(integrations)
 		.where(
@@ -767,18 +771,22 @@ webhookApp.post('/:provider', async (c) => {
 				eq(integrations.status, 'active'),
 			),
 		)
-		.limit(1)
 
-	if (!integration) {
+	if (matchingIntegrations.length === 0) {
 		// No matching integration — might be uninstalled
 		return c.json({ ok: true, skipped: true })
 	}
 
-	const config = integration.config as IntegrationConfig
-	const systemActorId = config?.system_actor_id
+	const eligible = matchingIntegrations.filter((integration) => {
+		const config = integration.config as IntegrationConfig
+		if (!config?.system_actor_id) {
+			logger.warn(`Integration ${integration.id} missing system_actor_id in config`)
+			return false
+		}
+		return true
+	})
 
-	if (!systemActorId) {
-		logger.warn(`Integration ${integration.id} missing system_actor_id in config`)
+	if (eligible.length === 0) {
 		return c.json({ ok: true, skipped: true })
 	}
 
@@ -787,6 +795,12 @@ webhookApp.post('/:provider', async (c) => {
 	// conflict fires we've already processed this delivery and can ack 200. If
 	// the original delivery crashed before claiming, the retry runs normally,
 	// which is the whole point of dropping the blanket retry short-circuit.
+	//
+	// Note: the dedup key is per-(provider, delivery_id), not per-workspace.
+	// A single Slack delivery fans out to every matching workspace in one pass;
+	// retries of the same delivery are skipped wholesale. If processing crashes
+	// after the claim, some workspaces may miss the event — that's the
+	// at-most-once tradeoff we already had for the single-workspace path.
 	if (resolved.extractDeliveryId) {
 		const deliveryId = resolved.extractDeliveryId(payload, headers)
 		if (deliveryId) {
@@ -814,46 +828,71 @@ webhookApp.post('/:provider', async (c) => {
 
 	// Some providers (Gmail) deliver pointer-style webhooks where one push expands
 	// into N concrete events. webhookFanOut returns the list to insert; if absent
-	// we insert the single normalized event as-is.
-	let toInsert = [normalized]
-	if (resolved.webhookFanOut) {
-		try {
-			toInsert = await resolved.webhookFanOut({
-				db,
-				storage: c.get('storageProvider'),
-				integrationId: integration.id,
-				workspaceId: integration.workspaceId,
-				normalized,
-			})
-		} catch (err) {
-			logger.error(`webhookFanOut failed for ${providerName}`, {
-				integrationId: integration.id,
-				error: err instanceof Error ? err.message : String(err),
-			})
-			return c.json({ ok: true, skipped: true })
-		}
-	}
+	// we insert the single normalized event as-is. Run fan-out per integration so
+	// each workspace gets its own copy and a slow/failing fan-out for one workspace
+	// doesn't drop another workspace's event.
+	const storageProvider = c.get('storageProvider')
+	const perWorkspaceResults = await Promise.all(
+		eligible.map(async (integration) => {
+			const config = integration.config as IntegrationConfig
+			const systemActorId = config.system_actor_id as string
 
-	if (toInsert.length === 0) {
+			let toInsert = [normalized]
+			if (resolved.webhookFanOut) {
+				try {
+					toInsert = await resolved.webhookFanOut({
+						db,
+						storage: storageProvider,
+						integrationId: integration.id,
+						workspaceId: integration.workspaceId,
+						normalized,
+					})
+				} catch (err) {
+					logger.error(`webhookFanOut failed for ${providerName}`, {
+						integrationId: integration.id,
+						workspaceId: integration.workspaceId,
+						error: err instanceof Error ? err.message : String(err),
+					})
+					return 0
+				}
+			}
+
+			if (toInsert.length === 0) return 0
+
+			try {
+				await db.insert(events).values(
+					toInsert.map((e) => ({
+						workspaceId: integration.workspaceId,
+						actorId: systemActorId,
+						action: e.action,
+						entityType: e.entityType,
+						entityId: integration.id,
+						data: e.data,
+					})),
+				)
+				return toInsert.length
+			} catch (err) {
+				logger.error(`Webhook event insert failed for ${providerName}`, {
+					integrationId: integration.id,
+					workspaceId: integration.workspaceId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+				return 0
+			}
+		}),
+	)
+
+	const totalInserted = perWorkspaceResults.reduce((sum, n) => sum + n, 0)
+
+	if (totalInserted === 0) {
 		return c.json({ ok: true, skipped: true })
 	}
 
-	await db.insert(events).values(
-		toInsert.map((e) => ({
-			workspaceId: integration.workspaceId,
-			actorId: systemActorId,
-			action: e.action,
-			entityType: e.entityType,
-			entityId: integration.id,
-			data: e.data,
-		})),
-	)
-
 	logger.info(
-		`Webhook processed: ${toInsert.length} event(s) for ${providerName} workspace ${integration.workspaceId}`,
+		`Webhook processed: ${totalInserted} event(s) for ${providerName} across ${eligible.length} workspace(s)`,
 	)
 
-	return c.json({ ok: true, count: toInsert.length })
+	return c.json({ ok: true, count: totalInserted, workspaces: eligible.length })
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────

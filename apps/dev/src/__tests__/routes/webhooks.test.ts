@@ -186,7 +186,7 @@ describe('Webhook Routes', () => {
 				installationId: integration.externalId,
 				data: { ref: 'refs/heads/main' },
 			})
-			const { app, mockResults } = createWebhookTestApp()
+			const { app, mockResults, calls } = createWebhookTestApp()
 			mockResults.select = [integration]
 			mockResults.insert = [{}] // event insert
 
@@ -196,6 +196,106 @@ describe('Webhook Routes', () => {
 			const body = await res.json()
 			expect(body.ok).toBe(true)
 			expect(body.skipped).toBeUndefined()
+			expect(body.count).toBe(1)
+			expect(body.workspaces).toBe(1)
+			expect(calls.inserts).toHaveLength(1)
+			expect((calls.inserts[0] as { workspaceId: string }[])[0]?.workspaceId).toBe(
+				integration.workspaceId,
+			)
+		})
+
+		// Regression: a single external install (e.g. one Slack team) can be connected
+		// to multiple Maskin workspaces. The webhook router used to `.limit(1)` and
+		// silently starve every workspace except whichever row Postgres returned first.
+		it('fans out one delivery to every matching active integration', async () => {
+			const externalId = 'shared-install-123'
+			const int1 = buildIntegration({
+				externalId,
+				config: { system_actor_id: 'actor-ws1' },
+			})
+			const int2 = buildIntegration({
+				externalId,
+				config: { system_actor_id: 'actor-ws2' },
+			})
+			expect(int1.workspaceId).not.toBe(int2.workspaceId)
+
+			mockGetProvider.mockReturnValue({
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
+			})
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue({
+				action: 'push',
+				entityType: 'repository',
+				installationId: externalId,
+				data: { ref: 'refs/heads/main' },
+			})
+			const { app, mockResults, calls } = createWebhookTestApp()
+			mockResults.select = [int1, int2]
+			mockResults.insert = [{}]
+
+			const res = await app.request(jsonRequest('POST', '/api/webhooks/github', { action: 'push' }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.ok).toBe(true)
+			expect(body.count).toBe(2)
+			expect(body.workspaces).toBe(2)
+			expect(calls.inserts).toHaveLength(2)
+			const insertedWorkspaceIds = (calls.inserts as { workspaceId: string }[][]).map(
+				(values) => values[0]?.workspaceId,
+			)
+			expect(insertedWorkspaceIds).toEqual(
+				expect.arrayContaining([int1.workspaceId, int2.workspaceId]),
+			)
+		})
+
+		it('still records other workspaces when one integration is missing system_actor_id', async () => {
+			const externalId = 'shared-install-456'
+			const bad = buildIntegration({ externalId, config: {} })
+			const good = buildIntegration({
+				externalId,
+				config: { system_actor_id: 'actor-good' },
+			})
+
+			mockGetProvider.mockReturnValue({
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
+			})
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue({
+				action: 'push',
+				entityType: 'repository',
+				installationId: externalId,
+				data: { ref: 'refs/heads/main' },
+			})
+			const { app, mockResults, calls } = createWebhookTestApp()
+			mockResults.select = [bad, good]
+			mockResults.insert = [{}]
+
+			const res = await app.request(jsonRequest('POST', '/api/webhooks/github', { action: 'push' }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.ok).toBe(true)
+			expect(body.count).toBe(1)
+			expect(body.workspaces).toBe(1)
+			expect(calls.inserts).toHaveLength(1)
+			expect((calls.inserts[0] as { workspaceId: string }[])[0]?.workspaceId).toBe(good.workspaceId)
 		})
 	})
 })
