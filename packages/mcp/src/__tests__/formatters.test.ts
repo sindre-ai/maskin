@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
 	type FormatterContext,
+	escapeMd,
 	formatMutationConfirm,
 	formatObject,
 	formatObjectBatch,
@@ -292,6 +293,136 @@ describe('formatters', () => {
 		it('handles a schema with no types gracefully', () => {
 			const out = formatWorkspaceSummary({ workspace_id: WS, workspace_name: 'Bare' }, baseCtx())
 			expect(out.content).toContain('#### [Bare]')
+		})
+	})
+
+	describe('escapeMd', () => {
+		it('escapes link-syntax brackets and code-span backticks', () => {
+			expect(escapeMd('foo](evil) [bar')).toBe('foo\\](evil) \\[bar')
+			expect(escapeMd('a`b`c')).toBe('a\\`b\\`c')
+		})
+
+		it('escapes backslashes before other passes so escapes do not collapse', () => {
+			expect(escapeMd('a\\b')).toBe('a\\\\b')
+			expect(escapeMd('a\\]b')).toBe('a\\\\\\]b')
+		})
+
+		it('collapses CR/LF to a single space so smuggled lines stay on one row', () => {
+			expect(escapeMd('one\ntwo')).toBe('one two')
+			expect(escapeMd('one\r\ntwo')).toBe('one two')
+			expect(escapeMd('one\n\n\ntwo')).toBe('one two')
+		})
+
+		it('leaves common punctuation alone', () => {
+			expect(escapeMd('foo (bar) *baz* _qux_ #1')).toBe('foo (bar) *baz* _qux_ #1')
+		})
+
+		it('passes ordinary titles through unchanged', () => {
+			expect(escapeMd('Ship the formatter')).toBe('Ship the formatter')
+		})
+	})
+
+	describe('markdown-injection defenses', () => {
+		// A malicious title that, if interpolated raw into `[${title}](url)`,
+		// breaks out of the link text and creates a second `[bar](url)` link.
+		// We check that every `](` in the rendered output is preceded by `\`
+		// (escaped) so no extra link target survives.
+		const malicious = 'foo](http://evil) [bar'
+		const noUnescapedLinkClose = (s: string) => {
+			// Look for `](` not preceded by a backslash. URL-encoded `%5D(` and
+			// our escape `\](` are both fine. The only intact `](` should be
+			// the legitimate deep-link's closing one — strip those before the
+			// check so the assertion is about user-text breakouts.
+			const stripped = s.replaceAll(/\]\(https:\/\/maskin\.app\/[^)]*\)/g, '<DEEPLINK>')
+			return !/(?<!\\)\]\(/.test(stripped)
+		}
+
+		it('keeps the deep link intact when an object title carries link syntax', () => {
+			const out = formatObject(
+				{
+					object: { id: OID, type: 'task', title: malicious, status: 'todo' },
+					events: [],
+				},
+				baseCtx({ tool: 'get_objects' }),
+			)
+			expect(out.content).toContain(
+				`#### [foo\\](http://evil) \\[bar](https://maskin.app/r/${WS}/objects/${OID}?t=get_objects)`,
+			)
+			expect(noUnescapedLinkClose(out.content)).toBe(true)
+		})
+
+		it('keeps the deep link intact in batch rendering with a malicious title', () => {
+			const out = formatObjectBatch(
+				[
+					{
+						id: OID,
+						success: true,
+						result: {
+							object: { id: OID, type: 'task', title: malicious, status: 'todo' },
+							events: [],
+						},
+					},
+				],
+				baseCtx({ tool: 'get_objects' }),
+			)
+			expect(out.content).toContain(`/objects/${OID}?t=get_objects`)
+			expect(noUnescapedLinkClose(out.content)).toBe(true)
+		})
+
+		it('defangs malicious content in the search query header', () => {
+			const out = formatSearchHits({ q: malicious, hits: [] }, baseCtx({ tool: 'search_objects' }))
+			expect(out.content).toContain('foo\\](http://evil) \\[bar')
+			expect(noUnescapedLinkClose(out.content)).toBe(true)
+		})
+
+		it('defangs a malicious workspace_name', () => {
+			const out = formatWorkspaceSummary(
+				{ workspace_id: WS, workspace_name: malicious },
+				baseCtx({ tool: 'get_workspace_schema' }),
+			)
+			expect(out.content).toContain('foo\\](http://evil) \\[bar')
+			expect(noUnescapedLinkClose(out.content)).toBe(true)
+		})
+
+		it('defangs preview snippets with backticks and newlines', () => {
+			const out = formatObject(
+				{
+					object: {
+						id: OID,
+						type: 'task',
+						title: 'ok',
+						status: 'todo',
+						content: 'pre `evil` post\nsecond line',
+					},
+					events: [],
+				},
+				baseCtx(),
+			)
+			expect(out.content).toContain('pre \\`evil\\` post second line')
+		})
+
+		it('defangs event descriptions in the Last activity line', () => {
+			const out = formatObject(
+				{
+					object: { id: OID, type: 'task', title: 'ok', status: 'todo' },
+					events: [{ id: 1, action: 'commented', description: malicious }],
+				},
+				baseCtx(),
+			)
+			expect(out.content).toContain('Last activity: foo\\](http://evil) \\[bar')
+			expect(noUnescapedLinkClose(out.content)).toBe(true)
+		})
+
+		it('defangs error strings in formatMutationConfirm rows', () => {
+			const out = formatMutationConfirm(
+				{
+					verb: 'delete_object',
+					results: [{ id: OID, success: false, error: malicious }],
+				},
+				baseCtx({ tool: 'delete_object' }),
+			)
+			expect(out.content).toContain('foo\\](http://evil) \\[bar')
+			expect(noUnescapedLinkClose(out.content)).toBe(true)
 		})
 	})
 

@@ -22,6 +22,7 @@ import { deepLink } from './deep-link.js'
 import {
 	type FormattedResult,
 	type FormatterContext,
+	escapeMd,
 	formatMutationConfirm,
 	formatObjectBatch,
 	formatObjectList,
@@ -177,8 +178,8 @@ function formatGenericRecord(
 	},
 ): FormattedResult {
 	const url = deepLink(opts.linkInput)
-	const lines: string[] = [`#### [${opts.title}](${url})`]
-	if (opts.meta) lines.push(`_${opts.meta}_`)
+	const lines: string[] = [`#### [${escapeMd(opts.title)}](${url})`]
+	if (opts.meta) lines.push(`_${escapeMd(opts.meta)}_`)
 	return {
 		content: lines.join('\n'),
 		structuredContent: asStructuredContent(record),
@@ -1467,9 +1468,9 @@ export function createMcpServer(config: McpConfig) {
 				formatGenericList(result, {
 					label: 'relationship',
 					row: (r) => {
-						const s = r.sourceTitle?.trim() || r.sourceId.slice(0, 8)
-						const t = r.targetTitle?.trim() || r.targetId.slice(0, 8)
-						return `- ${s} → \`${r.type}\` → ${t}`
+						const s = escapeMd(r.sourceTitle?.trim() || r.sourceId.slice(0, 8))
+						const t = escapeMd(r.targetTitle?.trim() || r.targetId.slice(0, 8))
+						return `- ${s} → \`${escapeMd(r.type)}\` → ${t}`
 					},
 					linkInput: {
 						workspaceId: ctx.workspaceId,
@@ -1613,8 +1614,8 @@ export function createMcpServer(config: McpConfig) {
 							tool: 'list_actors',
 							baseUrl: ctx.baseUrl,
 						})
-						const tag = a.email ? `${a.type} • ${a.email}` : a.type
-						return `- [${a.name || a.id.slice(0, 8)}](${url}) — ${tag}`
+						const tag = a.email ? `${escapeMd(a.type)} • ${escapeMd(a.email)}` : escapeMd(a.type)
+						return `- [${escapeMd(a.name || a.id.slice(0, 8))}](${url}) — ${tag}`
 					},
 					linkInput: {
 						workspaceId: ctx.workspaceId,
@@ -2354,7 +2355,7 @@ export function createMcpServer(config: McpConfig) {
 				'list_workspace_skills',
 				formatGenericList(result, {
 					label: 'skill',
-					row: (s) => `- \`${s.name}\``,
+					row: (s) => `- \`${escapeMd(s.name)}\``,
 					linkInput: {
 						workspaceId: ctx.workspaceId,
 						kind: 'settings',
@@ -2584,8 +2585,8 @@ export function createMcpServer(config: McpConfig) {
 				formatGenericList(result, {
 					label: 'file',
 					row: (f) => {
-						const mime = f.mimeType ? ` • ${f.mimeType}` : ''
-						return `- \`${f.name}\`${mime}`
+						const mime = f.mimeType ? ` • ${escapeMd(f.mimeType)}` : ''
+						return `- \`${escapeMd(f.name)}\`${mime}`
 					},
 					linkInput: {
 						workspaceId: ctx.workspaceId,
@@ -2736,9 +2737,10 @@ export function createMcpServer(config: McpConfig) {
 				formatGenericList(result, {
 					label: 'event',
 					row: (e) => {
-						const desc =
-							e.description?.trim() || `${e.action ?? 'event'} ${e.entityType ?? ''}`.trim()
-						const when = e.createdAt ? ` _(${e.createdAt})_` : ''
+						const desc = escapeMd(
+							e.description?.trim() || `${e.action ?? 'event'} ${e.entityType ?? ''}`.trim(),
+						)
+						const when = e.createdAt ? ` _(${escapeMd(e.createdAt)})_` : ''
 						return `- ${desc}${when}`
 					},
 					linkInput: {
@@ -2786,7 +2788,9 @@ export function createMcpServer(config: McpConfig) {
 					label: 'comment',
 					row: (c) => {
 						const text = c.data?.content?.replace(/\s+/g, ' ').trim() ?? ''
-						const snippet = text.length > 100 ? `${text.slice(0, 99)}…` : text || '(empty)'
+						const snippet = escapeMd(
+							text.length > 100 ? `${text.slice(0, 99)}…` : text || '(empty)',
+						)
 						const author = c.actorId ? c.actorId.slice(0, 8) : 'unknown'
 						return `- **${author}**: ${snippet}`
 					},
@@ -2872,7 +2876,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `✅ **Created trigger${args.name ? ` "${args.name}"` : ''}** — [open in Maskin](${link})`,
+						text: `✅ **Created trigger${args.name ? ` "${escapeMd(args.name)}"` : ''}** — [open in Maskin](${link})`,
 					},
 				],
 				structuredContent: asStructuredContent(result),
@@ -2906,7 +2910,8 @@ export function createMcpServer(config: McpConfig) {
 							baseUrl: ctx.baseUrl,
 						})
 						const state = t.enabled ? 'enabled' : 'disabled'
-						return `- [${t.name || `Trigger ${t.id.slice(0, 8)}`}](${url}) — ${t.type} • ${state}`
+						const label = escapeMd(t.name || `Trigger ${t.id.slice(0, 8)}`)
+						return `- [${label}](${url}) — ${escapeMd(t.type)} • ${state}`
 					},
 					linkInput: {
 						workspaceId: ctx.workspaceId,
@@ -3236,8 +3241,11 @@ export function createMcpServer(config: McpConfig) {
 				'list_subscribers',
 				formatGenericList(result, {
 					label: 'subscriber',
-					row: (s) =>
-						`- ${s.name?.trim() || s.actorId.slice(0, 8)}${s.email ? ` • ${s.email}` : ''}`,
+					row: (s) => {
+						const who = escapeMd(s.name?.trim() || s.actorId.slice(0, 8))
+						const email = s.email ? ` • ${escapeMd(s.email)}` : ''
+						return `- ${who}${email}`
+					},
 					linkInput:
 						args.entity_type === 'object'
 							? {
@@ -3359,7 +3367,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `✅ **Started session** \`${result.id?.slice(0, 8) ?? '?'}\` (${result.status ?? 'pending'}) — [open in Maskin](${link})`,
+						text: `✅ **Started session** \`${result.id?.slice(0, 8) ?? '?'}\` (${escapeMd(result.status ?? 'pending')}) — [open in Maskin](${link})`,
 					},
 				],
 				structuredContent: asStructuredContent(enriched),
@@ -3395,9 +3403,9 @@ export function createMcpServer(config: McpConfig) {
 				formatGenericList(enriched as Array<SessionRow & { actorName?: string; status?: string }>, {
 					label: 'session',
 					row: (s) => {
-						const who = s.actorName ?? s.actorId?.slice(0, 8) ?? 'agent'
+						const who = escapeMd(s.actorName ?? s.actorId?.slice(0, 8) ?? 'agent')
 						const status = (s as { status?: string }).status ?? 'pending'
-						return `- \`${s.id?.slice(0, 8) ?? '?'}\` • ${who} • ${status}`
+						return `- \`${s.id?.slice(0, 8) ?? '?'}\` • ${who} • ${escapeMd(status)}`
 					},
 					linkInput: {
 						workspaceId: ctx.workspaceId,
@@ -3495,7 +3503,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `🛑 **Stopped session** \`${args.id.slice(0, 8)}\` (${result.status ?? 'stopped'}) — [open in Maskin](${link})`,
+						text: `🛑 **Stopped session** \`${args.id.slice(0, 8)}\` (${escapeMd(result.status ?? 'stopped')}) — [open in Maskin](${link})`,
 					},
 				],
 				structuredContent: asStructuredContent(enriched),
@@ -3532,7 +3540,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `⏸ **Paused session** \`${args.id.slice(0, 8)}\` (${result.status ?? 'paused'}) — [open in Maskin](${link})`,
+						text: `⏸ **Paused session** \`${args.id.slice(0, 8)}\` (${escapeMd(result.status ?? 'paused')}) — [open in Maskin](${link})`,
 					},
 				],
 				structuredContent: asStructuredContent(enriched),
@@ -3569,7 +3577,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `▶ **Resumed session** \`${args.id.slice(0, 8)}\` (${result.status ?? 'running'}) — [open in Maskin](${link})`,
+						text: `▶ **Resumed session** \`${args.id.slice(0, 8)}\` (${escapeMd(result.status ?? 'running')}) — [open in Maskin](${link})`,
 					},
 				],
 				structuredContent: asStructuredContent(enriched),
@@ -3660,7 +3668,11 @@ export function createMcpServer(config: McpConfig) {
 				'list_integrations',
 				formatGenericList(result, {
 					label: 'integration',
-					row: (i) => `- ${i.name?.trim() || i.provider}${i.status ? ` • ${i.status}` : ''}`,
+					row: (i) => {
+						const name = escapeMd(i.name?.trim() || i.provider)
+						const status = i.status ? ` • ${escapeMd(i.status)}` : ''
+						return `- ${name}${status}`
+					},
 					linkInput: {
 						workspaceId: ctx.workspaceId,
 						kind: 'settings',
@@ -3705,7 +3717,7 @@ export function createMcpServer(config: McpConfig) {
 				: `**${result.length} provider${result.length === 1 ? '' : 's'}**`
 			const rows = result
 				.slice(0, GENERIC_LIST_LIMIT)
-				.map((p) => `- ${p.displayName ?? p.name ?? p.id ?? 'unknown'}`)
+				.map((p) => `- ${escapeMd(p.displayName ?? p.name ?? p.id ?? 'unknown')}`)
 			const more =
 				result.length > GENERIC_LIST_LIMIT
 					? [`…and ${result.length - GENERIC_LIST_LIMIT} more`]
@@ -4123,8 +4135,12 @@ export function createMcpServer(config: McpConfig) {
 				'list_extensions',
 				formatGenericList(result, {
 					label: 'extension',
-					row: (ext) =>
-						`- **${ext.name || ext.id}** — ${ext.enabled ? 'enabled' : 'disabled'} • ${ext.object_types.length} type${ext.object_types.length === 1 ? '' : 's'}`,
+					row: (ext) => {
+						const name = escapeMd(ext.name || ext.id)
+						const state = ext.enabled ? 'enabled' : 'disabled'
+						const types = `${ext.object_types.length} type${ext.object_types.length === 1 ? '' : 's'}`
+						return `- **${name}** — ${state} • ${types}`
+					},
 					linkInput: {
 						workspaceId: ctx.workspaceId,
 						kind: 'workspace',
@@ -4171,7 +4187,7 @@ export function createMcpServer(config: McpConfig) {
 						content: [
 							{
 								type: 'text' as const,
-								text: `Extension "${args.id}" is already enabled.`,
+								text: `Extension "${escapeMd(args.id)}" is already enabled.`,
 							},
 						],
 						structuredContent: { skipped: true, reason: 'already_enabled', id: args.id },
@@ -4356,7 +4372,7 @@ export function createMcpServer(config: McpConfig) {
 								content: [
 									{
 										type: 'text' as const,
-										text: `Extension "${args.id}" is already enabled.`,
+										text: `Extension "${escapeMd(args.id)}" is already enabled.`,
 									},
 								],
 								structuredContent: { skipped: true, reason: 'already_enabled', id: args.id },
@@ -4403,7 +4419,7 @@ export function createMcpServer(config: McpConfig) {
 						content: [
 							{
 								type: 'text' as const,
-								text: `Extension "${args.id}" is not currently enabled.`,
+								text: `Extension "${escapeMd(args.id)}" is not currently enabled.`,
 							},
 						],
 						structuredContent: { skipped: true, reason: 'not_enabled', id: args.id },
