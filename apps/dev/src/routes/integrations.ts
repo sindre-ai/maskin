@@ -795,12 +795,6 @@ webhookApp.post('/:provider', async (c) => {
 	// we insert the single normalized event as-is. Run fan-out per integration so
 	// each workspace gets its own copy and a slow/failing fan-out for one workspace
 	// doesn't drop another workspace's event.
-	//
-	// Dedup is per-(provider, delivery_id, workspace_id): each workspace claims
-	// its own copy of the delivery before doing work. If one workspace's claim+
-	// insert crashes, retries from the provider can still succeed for that
-	// workspace because its claim never landed — while workspaces that already
-	// succeeded short-circuit on conflict.
 	const deliveryId = resolved.extractDeliveryId?.(payload, headers)
 	const storageProvider = c.get('storageProvider')
 
@@ -810,42 +804,6 @@ webhookApp.post('/:provider', async (c) => {
 		eligible.map(async (integration): Promise<Outcome> => {
 			const config = integration.config as IntegrationConfig
 			const systemActorId = config.system_actor_id as string
-
-			// Claim per-workspace BEFORE doing any work. Fail open on claim error
-			// (e.g. dedup-table outage) — better to risk a duplicate event than
-			// to drop a real one.
-			if (deliveryId) {
-				try {
-					const claimed = await db
-						.insert(webhookDeliveries)
-						.values({
-							provider: providerName,
-							externalId: deliveryId,
-							workspaceId: integration.workspaceId,
-						})
-						.onConflictDoNothing({
-							target: [
-								webhookDeliveries.provider,
-								webhookDeliveries.externalId,
-								webhookDeliveries.workspaceId,
-							],
-						})
-						.returning({ id: webhookDeliveries.id })
-					if (claimed.length === 0) {
-						logger.info(`Skipping duplicate ${providerName} delivery for workspace`, {
-							deliveryId,
-							workspaceId: integration.workspaceId,
-						})
-						return { kind: 'duplicate' }
-					}
-				} catch (err) {
-					logger.error(`Failed to claim ${providerName} delivery; processing without dedup`, {
-						deliveryId,
-						workspaceId: integration.workspaceId,
-						error: err instanceof Error ? err.message : String(err),
-					})
-				}
-			}
 
 			let toInsert = [normalized]
 			if (resolved.webhookFanOut) {
@@ -869,20 +827,53 @@ webhookApp.post('/:provider', async (c) => {
 
 			if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
 
+			// Claim + event insert MUST be atomic. Postgres triggers on the events
+			// table can reject the row (e.g. PG NOTIFY's 8KB payload limit, see
+			// .claude/rules/known-pitfalls.md) — without the transaction, a thrown
+			// event insert would leave the dedup claim committed and permanently
+			// starve retries for that workspace.
 			try {
-				await db.insert(events).values(
-					toInsert.map((e) => ({
+				const isDuplicate = await db.transaction(async (tx) => {
+					if (deliveryId) {
+						const claimed = await tx
+							.insert(webhookDeliveries)
+							.values({
+								provider: providerName,
+								externalId: deliveryId,
+								workspaceId: integration.workspaceId,
+							})
+							.onConflictDoNothing({
+								target: [
+									webhookDeliveries.provider,
+									webhookDeliveries.externalId,
+									webhookDeliveries.workspaceId,
+								],
+							})
+							.returning({ id: webhookDeliveries.id })
+						if (claimed.length === 0) return true
+					}
+					await tx.insert(events).values(
+						toInsert.map((e) => ({
+							workspaceId: integration.workspaceId,
+							actorId: systemActorId,
+							action: e.action,
+							entityType: e.entityType,
+							entityId: integration.id,
+							data: e.data,
+						})),
+					)
+					return false
+				})
+				if (isDuplicate) {
+					logger.info(`Skipping duplicate ${providerName} delivery for workspace`, {
+						deliveryId,
 						workspaceId: integration.workspaceId,
-						actorId: systemActorId,
-						action: e.action,
-						entityType: e.entityType,
-						entityId: integration.id,
-						data: e.data,
-					})),
-				)
+					})
+					return { kind: 'duplicate' }
+				}
 				return { kind: 'inserted', count: toInsert.length }
 			} catch (err) {
-				logger.error(`Webhook event insert failed for ${providerName}`, {
+				logger.error(`Webhook claim+insert failed for ${providerName}`, {
 					integrationId: integration.id,
 					workspaceId: integration.workspaceId,
 					error: err instanceof Error ? err.message : String(err),

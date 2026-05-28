@@ -416,6 +416,66 @@ describe('Webhook Routes', () => {
 			expect(eventInsert[0]?.workspaceId).toBe(int1.workspaceId)
 		})
 
+		// Regression: simulates a post-claim event-insert failure (e.g. the PG NOTIFY
+		// 8KB rejection in .claude/rules/known-pitfalls.md). The claim and the event
+		// insert must run inside a single db.transaction() so a thrown event insert
+		// rolls the claim back too — otherwise the dedup row would survive and
+		// starve provider retries for that workspace forever.
+		it('rolls back the dedup claim when the event insert throws after a successful claim', async () => {
+			const externalId = 'shared-install-rollback'
+			const int1 = buildIntegration({
+				externalId,
+				config: { system_actor_id: 'actor-ws1' },
+			})
+			const int2 = buildIntegration({
+				externalId,
+				config: { system_actor_id: 'actor-ws2' },
+			})
+
+			mockGetProvider.mockReturnValue({
+				config: {
+					name: 'github',
+					webhook: {
+						signatureHeader: 'x-hub-signature-256',
+						signatureScheme: 'hmac-sha256',
+						signaturePrefix: 'sha256=',
+						secretEnv: 'GITHUB_APP_WEBHOOK_SECRET',
+					},
+				},
+				extractDeliveryId: () => 'delivery-rollback',
+			})
+			mockVerify.mockReturnValue(true)
+			mockNormalizeEvent.mockReturnValue({
+				action: 'push',
+				entityType: 'repository',
+				installationId: externalId,
+				data: { ref: 'refs/heads/main' },
+			})
+			const { app, mockResults, calls } = createWebhookTestApp()
+			mockResults.select = [int1, int2]
+			// Both claims succeed (insert calls 1 & 2). int1's event insert (call 3)
+			// succeeds; int2's event insert (call 4) throws — under the transaction
+			// wrap, int2's claim rolls back with it.
+			mockResults.insertQueue = [[{ id: 'claim-1' }], [{ id: 'claim-2' }]]
+			mockResults.insertErrorQueue = [
+				undefined,
+				undefined,
+				undefined,
+				new Error('events trigger rejected payload'),
+			]
+
+			const res = await app.request(jsonRequest('POST', '/api/webhooks/github', { action: 'push' }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.ok).toBe(true)
+			// int1 lands its event; int2's whole transaction (claim + event) aborts.
+			expect(body.count).toBe(1)
+			expect(body.workspaces).toBe(2)
+			// 4 inserts attempted: 2 claims + 2 event inserts (int2's threw).
+			expect(calls.inserts).toHaveLength(4)
+		})
+
 		it('returns skipped=duplicate only when every workspace claim conflicts', async () => {
 			const externalId = 'shared-install-all-dup'
 			const int1 = buildIntegration({
