@@ -202,6 +202,35 @@ describe('UnreadThreadCard', () => {
 		expect(mockMarkReadMutate).not.toHaveBeenCalled()
 	})
 
+	it('keeps the title row on its own line at mobile breakpoints', () => {
+		// The title cell carries `basis-full` (with `sm:basis-auto`) so a long
+		// title at ≤640px gets the full card width and the time/badge/button
+		// flow onto the next row. Removing `basis-full` would re-introduce the
+		// 375px header overflow that the responsive bet's first-test slice
+		// explicitly targets.
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({
+					object: buildObjectResponse({
+						id: 'obj-1',
+						title: 'A very long onboarding bet title that would overflow at 375px',
+						type: 'bet',
+					}),
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const titleLink = screen.getByText(/A very long onboarding bet/)
+		const titleCell = titleLink.parentElement
+		expect(titleCell?.className).toMatch(/basis-full/)
+		expect(titleCell?.className).toMatch(/sm:basis-auto/)
+		// And the header row itself wraps rather than nowrap-ing into overflow.
+		const headerRow = container.querySelector('.border-b')
+		expect(headerRow?.className).toMatch(/flex-wrap/)
+	})
+
 	it('marks the thread as read when the "Mark as read" button is clicked', async () => {
 		const user = userEvent.setup()
 		mockUseEntityEvents.mockReturnValue({
