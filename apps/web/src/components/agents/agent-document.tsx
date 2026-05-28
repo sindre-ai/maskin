@@ -530,11 +530,11 @@ function SessionRow({
 		<div>
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
 			<div
-				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 hover:bg-secondary/50 transition-colors cursor-pointer"
+				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
 				onClick={() => onSelect?.(session)}
 			>
 				<SessionStatusIcon status={session.status} />
-				<span className={`text-sm truncate flex-1 ${isFailed ? 'text-error' : ''}`}>
+				<span className={`text-sm truncate flex-1 min-w-0 ${isFailed ? 'text-error' : ''}`}>
 					{session.actionPrompt || 'Untitled session'}
 				</span>
 				{isFailed && (

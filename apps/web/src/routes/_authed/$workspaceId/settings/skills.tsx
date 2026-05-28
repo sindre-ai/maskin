@@ -20,6 +20,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { Textarea } from '@/components/ui/textarea'
 import {
 	useCreateWorkspaceSkill,
@@ -150,7 +158,7 @@ function SkillsPage() {
 	}
 
 	const headerActions = (
-		<div className="flex items-center gap-2">
+		<div className="flex items-center gap-2 shrink-0">
 			<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
 				<FileUp size={14} className="mr-1" />
 				Browse files
@@ -164,8 +172,8 @@ function SkillsPage() {
 
 	return (
 		<div>
-			<div className="flex items-center justify-between mb-4">
-				<p className="text-sm text-muted-foreground">
+			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
+				<p className="text-sm text-muted-foreground min-w-0">
 					Shared skills available to agents in this workspace.
 				</p>
 				{headerActions}
@@ -385,17 +393,17 @@ function SkillDialog({
 	}
 
 	return (
-		<Dialog open onOpenChange={(v) => !v && onClose()}>
-			<DialogContent className="sm:max-w-2xl">
-				<DialogHeader>
-					<DialogTitle>{isEdit ? 'Edit skill' : 'Create skill'}</DialogTitle>
-					<DialogDescription>
+		<ResponsiveDialog open onOpenChange={(v) => !v && onClose()}>
+			<ResponsiveDialogContent className="sm:max-w-2xl">
+				<ResponsiveDialogHeader>
+					<ResponsiveDialogTitle>{isEdit ? 'Edit skill' : 'Create skill'}</ResponsiveDialogTitle>
+					<ResponsiveDialogDescription>
 						Skills are shared across this workspace. Agents only receive the skills attached to
 						them.
-					</DialogDescription>
-				</DialogHeader>
+					</ResponsiveDialogDescription>
+				</ResponsiveDialogHeader>
 
-				<div className="space-y-3">
+				<div className="space-y-3 flex-1 min-h-0 overflow-y-auto">
 					<div>
 						<Label htmlFor="skill-name">Name</Label>
 						<Input
@@ -426,16 +434,16 @@ function SkillDialog({
 					<FormError error={error ?? undefined} />
 				</div>
 
-				<DialogFooter>
+				<ResponsiveDialogFooter>
 					<Button variant="ghost" onClick={onClose} disabled={pending}>
 						Cancel
 					</Button>
 					<Button onClick={handleSave} disabled={!canSave}>
 						{pending ? 'Saving...' : 'Save'}
 					</Button>
-				</DialogFooter>
-			</DialogContent>
-		</Dialog>
+				</ResponsiveDialogFooter>
+			</ResponsiveDialogContent>
+		</ResponsiveDialog>
 	)
 }
 

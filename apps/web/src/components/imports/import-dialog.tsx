@@ -1,12 +1,12 @@
 import { Button } from '@/components/ui/button'
 import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from '@/components/ui/dialog'
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import {
 	Select,
 	SelectContent,
@@ -116,16 +116,16 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 	const importRecord = importData ?? createImport.data
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-				<DialogHeader>
-					<DialogTitle>Import Objects</DialogTitle>
-					<DialogDescription>
+		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+			<ResponsiveDialogContent className="overflow-y-auto md:max-w-2xl md:max-h-[80vh]">
+				<ResponsiveDialogHeader>
+					<ResponsiveDialogTitle>Import Objects</ResponsiveDialogTitle>
+					<ResponsiveDialogDescription>
 						{step === 'upload' &&
 							'Upload a CSV or JSON file to import objects into your workspace.'}
 						{step === 'mapping' && 'Review and adjust how columns map to object fields.'}
-					</DialogDescription>
-				</DialogHeader>
+					</ResponsiveDialogDescription>
+				</ResponsiveDialogHeader>
 
 				{step === 'upload' && (
 					<UploadStep onFileUpload={handleFileUpload} isLoading={createImport.isPending} />
@@ -142,8 +142,8 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 						isUpdating={updateMapping.isPending}
 					/>
 				)}
-			</DialogContent>
-		</Dialog>
+			</ResponsiveDialogContent>
+		</ResponsiveDialog>
 	)
 }
 
@@ -660,7 +660,7 @@ function MappingStep({
 				<Loader2 size={12} className="animate-spin" /> Saving mapping...
 			</p>
 
-			<DialogFooter>
+			<ResponsiveDialogFooter>
 				<Button onClick={handleConfirmClick} disabled={isUpdating || isConfirming}>
 					{isConfirming ? (
 						<>
@@ -674,7 +674,7 @@ function MappingStep({
 						</>
 					)}
 				</Button>
-			</DialogFooter>
+			</ResponsiveDialogFooter>
 		</div>
 	)
 }

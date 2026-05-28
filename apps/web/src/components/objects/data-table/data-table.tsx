@@ -8,6 +8,8 @@ import {
 	TableHeader,
 	TableRow,
 } from '@/components/ui/table'
+import { useActors } from '@/hooks/use-actors'
+import { useIsMobile } from '@/hooks/use-mobile'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
@@ -27,6 +29,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { ObjectsTableMeta } from './columns'
+import { ObjectCard } from './object-card'
 
 interface DataTableProps {
 	data: ObjectResponse[]
@@ -62,6 +65,8 @@ export function DataTable({
 	isLoading,
 }: DataTableProps) {
 	const navigate = useNavigate()
+	const isMobile = useIsMobile()
+	const { data: actors } = useActors(workspaceId, { enabled: isMobile })
 	const parentRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 
@@ -89,8 +94,8 @@ export function DataTable({
 	const virtualizer = useVirtualizer({
 		count: rows.length,
 		getScrollElement: () => parentRef.current,
-		estimateSize: () => 48,
-		overscan: 20,
+		estimateSize: () => (isMobile ? 96 : 48),
+		overscan: isMobile ? 10 : 20,
 	})
 
 	// Infinite scroll sentinel — skip when fetching or errored to avoid retry loops
@@ -134,6 +139,81 @@ export function DataTable({
 	const totalSize = virtualizer.getTotalSize()
 	const paddingTop = virtualItems[0]?.start ?? 0
 	const paddingBottom = virtualItems.length > 0 ? totalSize - (virtualItems.at(-1)?.end ?? 0) : 0
+
+	if (isMobile) {
+		return (
+			<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
+				{virtualItems.length === 0 ? (
+					<div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
+						No results.
+					</div>
+				) : (
+					<ul
+						aria-label="Objects"
+						className="m-0 list-none p-0"
+						style={{ height: totalSize, position: 'relative' }}
+					>
+						{virtualItems.map((virtualItem) => {
+							const row = rows[virtualItem.index]
+							if (!row) return null
+
+							const isGrouped = row.getIsGrouped()
+
+							if (isGrouped) {
+								return (
+									<li
+										key={row.id}
+										data-index={virtualItem.index}
+										ref={virtualizer.measureElement}
+										className="absolute left-0 right-0"
+										style={{ transform: `translateY(${virtualItem.start}px)` }}
+									>
+										<button
+											type="button"
+											onClick={() => row.toggleExpanded()}
+											className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 text-left hover:bg-muted/50"
+										>
+											<ChevronRight
+												size={14}
+												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
+											/>
+											<span className="font-medium text-sm">{String(row.groupingValue)}</span>
+											<span className="text-muted-foreground text-xs">({row.subRows.length})</span>
+										</button>
+									</li>
+								)
+							}
+
+							return (
+								<li
+									key={row.id}
+									data-index={virtualItem.index}
+									ref={virtualizer.measureElement}
+									className="absolute left-0 right-0"
+									style={{ transform: `translateY(${virtualItem.start}px)` }}
+								>
+									<ObjectCard
+										object={row.original}
+										workspaceId={workspaceId}
+										actors={actors}
+										isSelected={row.getIsSelected()}
+										onSelect={(selected) => row.toggleSelected(selected)}
+										onClick={() => handleRowClick(row.original.id)}
+									/>
+								</li>
+							)
+						})}
+					</ul>
+				)}
+				<div ref={sentinelRef} className="h-1" />
+				{isFetchingNextPage && (
+					<div className="flex items-center justify-center py-4">
+						<Spinner />
+					</div>
+				)}
+			</div>
+		)
+	}
 
 	return (
 		<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">

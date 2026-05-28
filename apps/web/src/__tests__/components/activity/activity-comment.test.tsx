@@ -128,6 +128,21 @@ describe('ActivityComment', () => {
 		expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument()
 	})
 
+	it('keeps the Reply action visible by default on mobile (hover-revealed only on sm+)', () => {
+		// The Reply icon used to be `opacity-0 group-hover:opacity-100` — invisible
+		// on touch. The contract is: visible by default, fades behind hover only
+		// at sm+. Encoded here so a future refactor can't silently re-hide it.
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'Test' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const reply = screen.getByRole('button', { name: 'Reply' })
+		expect(reply.className).toMatch(/(^|\s)opacity-100($|\s)/)
+		expect(reply.className).toMatch(/sm:opacity-0/)
+		expect(reply.className).toMatch(/sm:group-hover:opacity-100/)
+	})
+
 	it('shows the Reply action button only on the last reply when replies exist', () => {
 		const event = buildEventResponse({
 			id: 1,
