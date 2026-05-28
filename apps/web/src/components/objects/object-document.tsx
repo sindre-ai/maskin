@@ -1,5 +1,13 @@
 import { Button } from '@/components/ui/button'
 import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog'
+import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -282,38 +290,30 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
 	const deleteActions = useMemo(
-		() =>
-			confirmDelete ? (
-				<div className="flex items-center gap-2 flex-wrap">
-					<span className="text-xs text-error">Delete this {object.type}?</span>
-					<Button
-						variant="destructive"
-						size="sm"
-						onClick={handleDelete}
-						disabled={deleteObject.isPending}
-					>
-						{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
-					</Button>
-					<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
-						Cancel
-					</Button>
-				</div>
-			) : (
-				<Button
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 text-muted-foreground hover:text-error"
-					onClick={() => setConfirmDelete(true)}
-				>
-					<Trash2 size={15} />
-				</Button>
-			),
-		[confirmDelete, handleDelete, deleteObject.isPending, object.type],
+		() => (
+			<Button
+				variant="ghost"
+				size="icon"
+				className="h-7 w-7 text-muted-foreground hover:text-error"
+				onClick={() => setConfirmDelete(true)}
+				aria-label={`Delete ${object.type}`}
+			>
+				<Trash2 size={15} />
+			</Button>
+		),
+		[object.type],
 	)
 
 	return (
 		<>
 			<PageHeader actions={deleteActions} />
+			<DeleteConfirmDialog
+				open={confirmDelete}
+				onOpenChange={setConfirmDelete}
+				objectType={object.type}
+				onConfirm={handleDelete}
+				isPending={deleteObject.isPending}
+			/>
 			<ObjectDocumentView
 				object={object}
 				workspaceId={workspaceId}
@@ -331,6 +331,39 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				isDeleting={deleteObject.isPending}
 			/>
 		</>
+	)
+}
+
+export function DeleteConfirmDialog({
+	open,
+	onOpenChange,
+	objectType,
+	onConfirm,
+	isPending,
+}: {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	objectType: string
+	onConfirm: () => void
+	isPending: boolean
+}) {
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent className="max-w-sm">
+				<DialogHeader>
+					<DialogTitle>Delete this {objectType}?</DialogTitle>
+					<DialogDescription>This action cannot be undone.</DialogDescription>
+				</DialogHeader>
+				<DialogFooter className="gap-2 sm:gap-0">
+					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
+						Cancel
+					</Button>
+					<Button variant="destructive" onClick={onConfirm} disabled={isPending}>
+						{isPending ? 'Deleting...' : 'Delete'}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	)
 }
 
