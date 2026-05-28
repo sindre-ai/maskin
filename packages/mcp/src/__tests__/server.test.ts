@@ -347,6 +347,34 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('list_workspaces handler', () => {
+		// The row builder runs inline (this is the only tool that operates without
+		// a default workspace), so escape coverage has to be asserted on the tool
+		// output directly — `formatGenericList`-level tests don't cover it.
+		it('escapes link-syntax in workspace name so the deep link stays intact', async () => {
+			const wsId = '00000000-0000-4000-8000-aaaaaaaaaaaa'
+			mockFetchSuccess([{ id: wsId, name: 'foo](http://evil) [bar' }])
+
+			const handler = getHandler('list_workspaces')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			const text = result.content[0].text
+			// The malicious bracket pair is escaped — the substring `](http://evil)`
+			// never appears unescaped, so Claude won't parse it as a second link.
+			expect(text).not.toMatch(/[^\\]\]\(http:\/\/evil\)/)
+			expect(text).toContain('foo\\](http://evil) \\[bar')
+			// The legitimate deep link survives intact: the escaped name is followed
+			// by exactly one `](…)` pair pointing at the redirect for this workspace.
+			// Base URL is left flexible so the test doesn't depend on WEB_APP_URL /
+			// FRONTEND_URL env state.
+			expect(text).toMatch(
+				new RegExp(
+					`- \\[foo\\\\\\]\\(http://evil\\) \\\\\\[bar\\]\\([^()\\s]+/r/${wsId}\\?t=list_workspaces\\)`,
+				),
+			)
+		})
+	})
+
 	describe('update_objects handler — file attachments', () => {
 		it('attaches files via `attach_file_ids` as `attached` relationships', async () => {
 			// PATCH the object, GET (per file, returns empty → not yet attached),

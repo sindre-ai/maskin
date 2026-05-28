@@ -1841,7 +1841,7 @@ export function createMcpServer(config: McpConfig) {
 					tool: 'list_workspaces',
 					baseUrl: config.webAppBaseUrl,
 				})
-				return `- [${w.name}](${link})`
+				return `- [${escapeMd(w.name)}](${link})`
 			})
 			const more =
 				result.length > GENERIC_LIST_LIMIT
