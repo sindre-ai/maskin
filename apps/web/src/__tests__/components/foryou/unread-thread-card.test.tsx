@@ -231,6 +231,20 @@ describe('UnreadThreadCard', () => {
 		expect(headerRow?.className).toMatch(/flex-wrap/)
 	})
 
+	// Regression: at 375px a long thread title used to push the unread badge and
+	// Mark-as-read button off-screen. `min-w-0 flex-1 truncate` on the title link
+	// is what keeps the right-side controls in-frame.
+	it('title link is min-w-0 flex-1 truncate so siblings stay in-frame on mobile', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem()} />, {
+			wrapper: TestWrapper,
+		})
+		const titleLink = screen.getByText('Onboarding A/B')
+		expect(titleLink.className).toMatch(/min-w-0/)
+		expect(titleLink.className).toMatch(/flex-1/)
+		expect(titleLink.className).toMatch(/truncate/)
+	})
+
 	it('marks the thread as read when the "Mark as read" button is clicked', async () => {
 		const user = userEvent.setup()
 		mockUseEntityEvents.mockReturnValue({
