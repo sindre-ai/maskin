@@ -66,7 +66,7 @@ export function DataTable({
 }: DataTableProps) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
-	const { data: actors } = useActors(workspaceId)
+	const { data: actors } = useActors(workspaceId, { enabled: isMobile })
 	const parentRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 
