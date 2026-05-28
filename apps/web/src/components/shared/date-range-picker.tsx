@@ -1,6 +1,10 @@
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+	ResponsivePopover,
+	ResponsivePopoverContent,
+	ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover'
 import { format } from 'date-fns'
 import { CalendarIcon } from 'lucide-react'
 import { useState } from 'react'
@@ -32,14 +36,18 @@ export function DateRangePicker({
 	}
 
 	return (
-		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger asChild>
+		<ResponsivePopover open={open} onOpenChange={setOpen}>
+			<ResponsivePopoverTrigger asChild>
 				<Button variant="outline" size="sm" className={className}>
 					<CalendarIcon size={14} />
 					<span className="ml-1.5">{label}</span>
 				</Button>
-			</PopoverTrigger>
-			<PopoverContent align="end" className="w-auto p-0">
+			</ResponsivePopoverTrigger>
+			<ResponsivePopoverContent
+				align="end"
+				accessibleTitle="Date range"
+				className="md:w-auto md:p-0"
+			>
 				<Calendar
 					mode="range"
 					numberOfMonths={2}
@@ -55,7 +63,7 @@ export function DateRangePicker({
 							: undefined
 					}
 				/>
-			</PopoverContent>
-		</Popover>
+			</ResponsivePopoverContent>
+		</ResponsivePopover>
 	)
 }
