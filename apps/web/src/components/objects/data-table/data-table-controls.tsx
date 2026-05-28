@@ -104,7 +104,7 @@ export function DataTableControls({
 				)}
 			</ResponsivePopoverTrigger>
 			<ResponsivePopoverContent align="end" accessibleTitle="Controls" className="md:w-64 md:p-0">
-				<div className="max-h-[420px] overflow-y-auto">
+				<div className="max-h-[420px] overflow-y-auto text-left">
 					{/* Filter by Type */}
 					{showTypeFilter && (
 						<>
