@@ -144,6 +144,28 @@ describe('TriggerForm', () => {
 		expect(screen.getByText('Something broke')).toBeInTheDocument()
 	})
 
+	it('stacks the status-transition row on mobile breakpoints', async () => {
+		const user = userEvent.setup()
+		const workspaceWithStatuses = buildWorkspaceWithRole({
+			settings: { statuses: { insight: ['new', 'reviewed', 'done'] } },
+		})
+
+		render(<TriggerForm {...defaultProps} workspace={workspaceWithStatuses} />, {
+			wrapper: TestWrapper,
+		})
+
+		// The default trigger is event/created — switch action to status_changed
+		// to reveal the transition row. The action select is the second combobox.
+		const comboboxes = screen.getAllByRole('combobox')
+		await user.click(comboboxes[1])
+		await user.click(screen.getByRole('option', { name: 'status_changed' }))
+
+		const transitionLabel = screen.getByText('Status transition')
+		const transitionRow = transitionLabel.parentElement?.querySelector('div')
+		expect(transitionRow?.className).toMatch(/flex-col/)
+		expect(transitionRow?.className).toMatch(/sm:flex-row/)
+	})
+
 	it('calls onAutoCreate when form becomes valid', async () => {
 		const user = userEvent.setup()
 		const onAutoCreate = vi.fn()
