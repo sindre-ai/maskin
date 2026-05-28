@@ -1,5 +1,51 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TelemetryEvent, TelemetrySink } from '../telemetry'
+import { type TelemetryEvent, type TelemetrySink, measureToolResponse } from '../telemetry'
+
+describe('measureToolResponse', () => {
+	it('sums content[].text bytes and computes a token estimate of ceil(bytes/4)', () => {
+		const r = measureToolResponse({
+			content: [
+				{ type: 'text', text: 'hello' }, // 5 bytes
+				{ type: 'text', text: 'world!' }, // 6 bytes
+			],
+			structuredContent: { items: [1, 2, 3] },
+		})
+		expect(r.content_bytes).toBe(11)
+		expect(r.content_tokens).toBe(3) // ceil(11/4) = 3
+		expect(r.structured_content_bytes).toBe(JSON.stringify({ items: [1, 2, 3] }).length)
+	})
+
+	it('counts utf-8 byte length, not character count', () => {
+		const r = measureToolResponse({ content: [{ type: 'text', text: '€' }] })
+		// '€' is 3 bytes in UTF-8.
+		expect(r.content_bytes).toBe(3)
+		expect(r.content_tokens).toBe(1) // ceil(3/4)
+	})
+
+	it('returns empty object for non-object responses', () => {
+		expect(measureToolResponse(null)).toEqual({})
+		expect(measureToolResponse('foo')).toEqual({})
+		expect(measureToolResponse(42)).toEqual({})
+	})
+
+	it('omits content fields when content is not an array', () => {
+		const r = measureToolResponse({ structuredContent: { ok: true } })
+		expect(r.content_bytes).toBeUndefined()
+		expect(r.content_tokens).toBeUndefined()
+		expect(r.structured_content_bytes).toBeGreaterThan(0)
+	})
+
+	it('survives a structuredContent with circular references', () => {
+		const circular: Record<string, unknown> = { name: 'demo' }
+		circular.self = circular
+		const r = measureToolResponse({
+			content: [{ type: 'text', text: 'x' }],
+			structuredContent: circular,
+		})
+		expect(r.content_bytes).toBe(1)
+		expect(r.structured_content_bytes).toBeUndefined()
+	})
+})
 
 // Hoisted mocks for ext-apps + sdk + node:fs so we can spin up the real
 // createMcpServer wiring without any side effects, then drive the registered
@@ -78,6 +124,23 @@ describe('MCP telemetry wrapper', () => {
 		expect(toolCalls[0].has_rich_render).toBe(true)
 		expect(typeof toolCalls[0].duration_ms).toBe('number')
 		expect(typeof toolCalls[0].session_id).toBe('string')
+	})
+
+	it('attaches content/token/structured size fields to tool_call events', async () => {
+		const handler = getHandler('list_workspaces')
+		await handler({})
+
+		const toolCalls = recorded.filter((r) => r.event_type === 'tool_call')
+		expect(toolCalls).toHaveLength(1)
+		const call = toolCalls[0]
+		// Every formatter-routed handler attaches both surfaces; the wrapper
+		// must measure them and record bytes >= 0 and tokens = ceil(bytes/4).
+		expect(typeof call.content_bytes).toBe('number')
+		expect(call.content_bytes).toBeGreaterThanOrEqual(0)
+		expect(typeof call.content_tokens).toBe('number')
+		expect(call.content_tokens).toBe(Math.ceil((call.content_bytes ?? 0) / 4))
+		expect(typeof call.structured_content_bytes).toBe('number')
+		expect(call.structured_content_bytes).toBeGreaterThanOrEqual(0)
 	})
 
 	it('reports has_rich_render=true when the tool definition declares _meta.ui', () => {
