@@ -347,7 +347,9 @@ export function SessionDetailPanel({
 
 						{/* Session ID */}
 						<div className="mt-6 pt-4 border-t border-border">
-							<p className="text-[11px] text-muted-foreground font-mono">Session: {session.id}</p>
+							<p className="text-[11px] text-muted-foreground font-mono break-all">
+								Session: {session.id}
+							</p>
 						</div>
 					</>
 				)}
