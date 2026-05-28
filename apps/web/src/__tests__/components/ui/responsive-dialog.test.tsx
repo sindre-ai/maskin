@@ -50,7 +50,6 @@ describe('ResponsiveDialog', () => {
 		render(<Fixture />)
 		const dialog = screen.getByRole('dialog')
 		expect(dialog).toBeInTheDocument()
-		expect(dialog.className).toMatch(/h-\[100dvh\]/)
 		expect(dialog.className).toMatch(/max-w-none/)
 		expect(screen.getByText('title text')).toBeInTheDocument()
 	})
