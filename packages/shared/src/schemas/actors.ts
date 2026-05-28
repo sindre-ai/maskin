@@ -50,17 +50,21 @@ export const actorParamsSchema = z.object({
 
 // Server-assigned read-only fields (e.g. isSystem) live on response shapes only.
 // Intentionally absent from createActorSchema/updateActorSchema — clients cannot set them.
+//
+// Field naming must match the corresponding write-schema keys so that agents doing
+// read-modify-write via MCP can pass response fields straight back into update_actor
+// without Zod silently stripping camelCase keys.
 export const actorResponseSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),
 	name: z.string(),
 	email: z.string().nullable(),
 	description: z.string().nullable(),
-	systemPrompt: z.string().nullable(),
+	system_prompt: z.string().nullable(),
 	tools: z.unknown().nullable(),
 	memory: z.unknown().nullable(),
-	llmProvider: z.string().nullable(),
-	llmConfig: z.unknown().nullable(),
+	llm_provider: z.string().nullable(),
+	llm_config: z.unknown().nullable(),
 	isSystem: z.boolean(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),

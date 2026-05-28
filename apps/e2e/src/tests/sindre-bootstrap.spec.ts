@@ -12,7 +12,7 @@ test.describe('Sindre: workspace bootstrap + delete guard + reset', () => {
 
 		const mcpServers = (sindre.tools as { mcpServers?: Record<string, unknown> } | null)?.mcpServers
 		expect(mcpServers?.maskin, 'Sindre should ship with the Maskin MCP preconfigured').toBeDefined()
-		expect(sindre.systemPrompt ?? '').toContain('You are Sindre')
+		expect(sindre.system_prompt ?? '').toContain('You are Sindre')
 	})
 
 	test('DELETE on Sindre returns 403 and leaves the actor intact', async ({ account }) => {
@@ -35,7 +35,7 @@ test.describe('Sindre: workspace bootstrap + delete guard + reset', () => {
 		const sindreMember = await findSindre(account.api, workspace.id)
 
 		const original = await account.api.getActor(sindreMember.id)
-		const originalPrompt = original.systemPrompt
+		const originalPrompt = original.system_prompt
 		expect(originalPrompt).toBeTruthy()
 
 		// Edit Sindre: custom prompt + remove Maskin MCP
@@ -46,20 +46,20 @@ test.describe('Sindre: workspace bootstrap + delete guard + reset', () => {
 		})
 
 		const afterEdit = await account.api.getActor(sindreMember.id)
-		expect(afterEdit.systemPrompt).toBe(customPrompt)
+		expect(afterEdit.system_prompt).toBe(customPrompt)
 		const editedMcp = (afterEdit.tools as { mcpServers?: Record<string, unknown> } | null)
 			?.mcpServers
 		expect(editedMcp?.maskin).toBeUndefined()
 
 		// Reset to factory defaults
 		const reset = await account.api.resetActor(sindreMember.id, workspace.id)
-		expect(reset.systemPrompt).toBe(originalPrompt)
+		expect(reset.system_prompt).toBe(originalPrompt)
 		const resetMcp = (reset.tools as { mcpServers?: Record<string, unknown> } | null)?.mcpServers
 		expect(resetMcp?.maskin, 'Reset should restore the Maskin MCP server').toBeDefined()
 
 		// Re-fetch to confirm persistence
 		const afterReset = await account.api.getActor(sindreMember.id)
-		expect(afterReset.systemPrompt).toBe(originalPrompt)
+		expect(afterReset.system_prompt).toBe(originalPrompt)
 		const persistedMcp = (afterReset.tools as { mcpServers?: Record<string, unknown> } | null)
 			?.mcpServers
 		expect(persistedMcp?.maskin).toBeDefined()

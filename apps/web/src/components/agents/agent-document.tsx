@@ -107,10 +107,10 @@ export function AgentDocumentView({
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
 	const [descriptionDraft, setDescriptionDraft] = useState(agent.description ?? '')
-	const [systemPromptDraft, setSystemPromptDraft] = useState(agent.systemPrompt ?? '')
+	const [systemPromptDraft, setSystemPromptDraft] = useState(agent.system_prompt ?? '')
 	const [systemPromptDirty, setSystemPromptDirty] = useState(false)
 	const [modelDraft, setModelDraft] = useState(
-		((agent.llmConfig as Record<string, unknown>)?.model as string) ?? '',
+		((agent.llm_config as Record<string, unknown>)?.model as string) ?? '',
 	)
 	const [memoryDraft, setMemoryDraft] = useState(
 		agent.memory ? JSON.stringify(agent.memory, null, 2) : '{}',
@@ -135,18 +135,18 @@ export function AgentDocumentView({
 	}, [descriptionDraft, agent.description, onUpdateDescription])
 
 	const handleSystemPromptBlur = useCallback(() => {
-		if (systemPromptDirty && systemPromptDraft !== (agent.systemPrompt ?? '')) {
+		if (systemPromptDirty && systemPromptDraft !== (agent.system_prompt ?? '')) {
 			onUpdateSystemPrompt(systemPromptDraft)
 		}
 		setSystemPromptDirty(false)
-	}, [systemPromptDraft, systemPromptDirty, agent.systemPrompt, onUpdateSystemPrompt])
+	}, [systemPromptDraft, systemPromptDirty, agent.system_prompt, onUpdateSystemPrompt])
 
 	const handleModelBlur = useCallback(() => {
-		const currentModel = ((agent.llmConfig as Record<string, unknown>)?.model as string) ?? ''
+		const currentModel = ((agent.llm_config as Record<string, unknown>)?.model as string) ?? ''
 		if (modelDraft !== currentModel) {
-			onUpdateLlmConfig({ ...(agent.llmConfig ?? {}), model: modelDraft || undefined })
+			onUpdateLlmConfig({ ...(agent.llm_config ?? {}), model: modelDraft || undefined })
 		}
-	}, [modelDraft, agent.llmConfig, onUpdateLlmConfig])
+	}, [modelDraft, agent.llm_config, onUpdateLlmConfig])
 
 	const handleMemorySave = useCallback(() => {
 		try {
@@ -254,8 +254,8 @@ export function AgentDocumentView({
 					/>
 					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
 				</span>
-				{agent.llmProvider && (
-					<span className="text-[11px] text-muted-foreground">{agent.llmProvider}</span>
+				{agent.llm_provider && (
+					<span className="text-[11px] text-muted-foreground">{agent.llm_provider}</span>
 				)}
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
@@ -349,7 +349,7 @@ export function AgentDocumentView({
 							<div className="flex-1">
 								<Label>Provider</Label>
 								<Select
-									value={agent.llmProvider ?? 'anthropic'}
+									value={agent.llm_provider ?? 'anthropic'}
 									onValueChange={onUpdateLlmProvider}
 								>
 									<SelectTrigger>
