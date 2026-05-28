@@ -627,11 +627,11 @@ export interface ActorListItem {
 }
 
 export interface ActorResponse extends ActorListItem {
-	systemPrompt: string | null
+	system_prompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
-	llmProvider: string | null
-	llmConfig: Record<string, unknown> | null
+	llm_provider: string | null
+	llm_config: Record<string, unknown> | null
 	createdAt: string | null
 	updatedAt: string | null
 }
