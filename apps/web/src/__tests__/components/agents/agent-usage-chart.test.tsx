@@ -108,4 +108,16 @@ describe('AgentUsageChart', () => {
 		expect(screen.getByRole('button', { name: '30d' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'All time' })).toBeInTheDocument()
 	})
+
+	it('lays the stats out single-column below sm and three-column above', async () => {
+		vi.mocked(api.sessions.usage).mockResolvedValue(emptyUsage)
+		const { container } = render(<AgentUsageChart agent={agent} workspaceId="ws-1" />, {
+			wrapper: TestWrapper,
+		})
+		await screen.findByText('Total cost')
+		const grid = container.querySelector('.grid-cols-1')
+		expect(grid).not.toBeNull()
+		expect(grid?.className).toMatch(/\bgrid-cols-1\b/)
+		expect(grid?.className).toMatch(/\bsm:grid-cols-3\b/)
+	})
 })

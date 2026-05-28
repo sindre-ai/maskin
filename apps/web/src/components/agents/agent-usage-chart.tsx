@@ -135,7 +135,7 @@ export function AgentUsageChart({
 				/>
 			</div>
 
-			<div className="grid grid-cols-3 gap-4 mb-4">
+			<div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
 				<Stat
 					label="Total cost"
 					value={totals ? currency.format(totals.total_cost_usd) : '—'}
