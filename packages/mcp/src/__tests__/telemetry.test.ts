@@ -180,4 +180,32 @@ describe('MCP telemetry wrapper', () => {
 		const mutations = recorded.filter((r) => r.event_type === 'mutation')
 		expect(mutations).toHaveLength(0)
 	})
+
+	it('emits a mutation event after a successful create_objects call', async () => {
+		// create_objects overrides structuredContent with the raw graph response
+		// ({ nodes, edges }), which the items/single-record branches don't match.
+		// The graph branch must catch it — otherwise the most-common write tool's
+		// telemetry silently drops to zero.
+		const nodeId = '22222222-2222-2222-2222-222222222222'
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			return new Response(
+				JSON.stringify({
+					nodes: [{ id: nodeId, type: 'task', title: 'demo' }],
+					edges: [],
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			)
+		})
+
+		const handler = getHandler('create_objects')
+		await handler({
+			workspace_id: wsId,
+			nodes: [{ type: 'task', title: 'demo' }],
+		})
+
+		const mutations = recorded.filter((r) => r.event_type === 'mutation')
+		expect(mutations).toHaveLength(1)
+		expect(mutations[0].tool_name).toBe('create_objects')
+		expect(mutations[0].mutation_kind).toBe('create')
+	})
 })
