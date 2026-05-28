@@ -120,12 +120,14 @@ export function RelatedObjectsTable({
 					<Button
 						variant="ghost"
 						size="icon"
-						className="h-7 w-7 text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
+						/* Always visible on touch; fades behind row hover on sm+. */
+						className="h-7 w-7 text-muted-foreground hover:text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
 						onClick={(e) => {
 							e.stopPropagation()
 							onDeleteRelationship(row.original.rel.id)
 						}}
 						title="Remove link"
+						aria-label="Remove link"
 					>
 						<X className="h-3 w-3" />
 					</Button>
