@@ -55,11 +55,11 @@ describe('AgentCard', () => {
 		expect(screen.queryByText(/Monitors/)).not.toBeInTheDocument()
 	})
 
-	it('does not fall back to systemPrompt when description is empty', () => {
+	it('does not fall back to system_prompt when description is empty', () => {
 		const agent = buildActorResponse({
 			type: 'agent',
 			description: null,
-			systemPrompt: 'Monitors production alerts\nDoes other things',
+			system_prompt: 'Monitors production alerts\nDoes other things',
 		})
 		render(<AgentCard agent={agent} status="idle" />)
 		expect(screen.queryByText(/Monitors/)).not.toBeInTheDocument()

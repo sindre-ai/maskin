@@ -39,11 +39,11 @@ interface ActorResponse {
 	type: string
 	name: string
 	email: string | null
-	systemPrompt: string | null
+	system_prompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
-	llmProvider: string | null
-	llmConfig: Record<string, unknown> | null
+	llm_provider: string | null
+	llm_config: Record<string, unknown> | null
 	isSystem: boolean
 	createdAt: string | null
 	updatedAt: string | null

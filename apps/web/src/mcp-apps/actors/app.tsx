@@ -134,18 +134,18 @@ function ActorDetailView({ actor }: { actor: ActorResponse }) {
 					<span className="text-muted-foreground">Email:</span> {actor.email}
 				</div>
 			)}
-			{actor.systemPrompt && (
+			{actor.system_prompt && (
 				<div className="border-t border-border pt-3 mt-3">
 					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
 						System Prompt
 					</h3>
-					<p className="text-sm text-muted-foreground whitespace-pre-wrap">{actor.systemPrompt}</p>
+					<p className="text-sm text-muted-foreground whitespace-pre-wrap">{actor.system_prompt}</p>
 				</div>
 			)}
-			{actor.llmProvider && (
+			{actor.llm_provider && (
 				<div className="text-sm text-muted-foreground mt-2">
-					<span className="text-muted-foreground">LLM:</span> {actor.llmProvider}
-					{actor.llmConfig?.model ? ` / ${String(actor.llmConfig.model)}` : null}
+					<span className="text-muted-foreground">LLM:</span> {actor.llm_provider}
+					{actor.llm_config?.model ? ` / ${String(actor.llm_config.model)}` : null}
 				</div>
 			)}
 		</div>
