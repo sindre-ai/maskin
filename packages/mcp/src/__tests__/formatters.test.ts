@@ -354,5 +354,23 @@ describe('formatters', () => {
 			)
 			expect(out.content).toContain('/settings/keys?t=set_llm_api_key')
 		})
+
+		it('omits the deep link when the context has no valid workspace id', () => {
+			// Actor-scoped tools (regenerate_api_key, update_actor, …) feed this
+			// formatter through `skipWorkspace: true` apiCalls, so an stdio MCP
+			// running without `WORKSPACE_ID` lands here with workspaceId=''. Skip
+			// the link rather than letting `deepLink` throw on the invalid UUID.
+			const out = formatMutationConfirm(
+				{
+					verb: 'Rotated API key',
+					results: [{ type: 'actor', id: OID, success: true }],
+					section: 'keys',
+				},
+				baseCtx({ workspaceId: '', tool: 'regenerate_api_key' }),
+			)
+			expect(out.content).toMatch(/^✅ \*\*Rotated API key\*\*: 1 succeeded$/)
+			expect(out.content).not.toContain('http')
+			expect(out.content).not.toContain('open in Maskin')
+		})
 	})
 })

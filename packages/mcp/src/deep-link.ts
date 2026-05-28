@@ -31,6 +31,16 @@
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
+ * Whether a string is a valid UUID — the same shape `deepLink` requires for
+ * `workspaceId`. Callers that operate without a default workspace (stdio
+ * without `WORKSPACE_ID`, hosted MCP without `X-Workspace-Id`) use this to
+ * branch into a no-link rendering path instead of letting `deepLink` throw.
+ */
+export function isValidWorkspaceId(id: string | null | undefined): id is string {
+	return typeof id === 'string' && UUID_RE.test(id)
+}
+
+/**
  * Canonical kinds an MCP tool result can deep-link to. Aligned with the kinds
  * the Task 1 redirect classifier emits so the click-log surface column stays
  * consistent end-to-end. `comments` is intentionally MCP-only — it maps to an

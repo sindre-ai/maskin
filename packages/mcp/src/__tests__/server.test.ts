@@ -601,6 +601,104 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('regenerate_api_key handler', () => {
+		it('renders a settings/keys deep link, not an object-page link for the actor id', async () => {
+			// Regression guard from Task 4 review: formatMutationConfirm was
+			// passing `result: { id: args.id }`, producing `/objects/<actorId>`
+			// instead of the workspace API-keys settings page.
+			mockFetchSuccess({ apiKey: 'ank_new', actor_id: 'a1' })
+
+			const handler = getHandler('regenerate_api_key')
+			const result = (await handler({ id: 'a1' })) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+			expect(text).toContain('/settings/keys?t=regenerate_api_key')
+			expect(text).not.toMatch(/\/objects\/a1\?/)
+		})
+	})
+
+	describe('actor tools without a default workspace', () => {
+		// stdio MCP without `WORKSPACE_ID` env (and without `args.workspace_id`)
+		// resolves `ctx.workspaceId` to '' on actor tools (they use
+		// `skipWorkspace: true` because actors aren't workspace-scoped). Prior
+		// to this fix the formatters called `deepLink` unconditionally and threw
+		// on the invalid UUID. Each tool must now render without a link instead.
+		function createNoWsHandlers() {
+			vi.clearAllMocks()
+			const local = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				local.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+			return local
+		}
+
+		it('list_actors renders without throwing and without a deep link', async () => {
+			const local = createNoWsHandlers()
+			mockFetchSuccess([{ id: 'a1', type: 'agent', name: 'Bot', email: 'bot@x.com' }])
+
+			const handler = local.get('list_actors')
+			if (!handler) throw new Error('list_actors not registered')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+			expect(text).toContain('1 actor')
+			expect(text).toContain('Bot')
+			expect(text).not.toContain('http')
+			expect(text).not.toContain('](')
+		})
+
+		it('get_actor renders without throwing and without a deep link', async () => {
+			const local = createNoWsHandlers()
+			mockFetchSuccess({ id: 'a1', type: 'agent', name: 'Bot', email: 'bot@x.com' })
+
+			const handler = local.get('get_actor')
+			if (!handler) throw new Error('get_actor not registered')
+			const result = (await handler({ id: 'a1' })) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+			expect(text).toContain('Bot')
+			expect(text).not.toContain('](')
+		})
+
+		it('update_actor renders without throwing and without a deep link', async () => {
+			const local = createNoWsHandlers()
+			mockFetchSuccess({ id: 'a1', name: 'Renamed', type: 'agent' })
+
+			const handler = local.get('update_actor')
+			if (!handler) throw new Error('update_actor not registered')
+			const result = (await handler({ id: 'a1', name: 'Renamed' })) as {
+				content: Array<{ text: string }>
+			}
+			const text = result.content[0].text
+			expect(text).toMatch(/^✅ \*\*Updated actor\*\*: 1 succeeded$/)
+			expect(text).not.toContain('http')
+		})
+
+		it('regenerate_api_key renders without throwing and without a deep link', async () => {
+			const local = createNoWsHandlers()
+			mockFetchSuccess({ apiKey: 'ank_new' })
+
+			const handler = local.get('regenerate_api_key')
+			if (!handler) throw new Error('regenerate_api_key not registered')
+			const result = (await handler({ id: 'a1' })) as { content: Array<{ text: string }> }
+			const text = result.content[0].text
+			expect(text).toMatch(/^✅ \*\*Rotated API key\*\*: 1 succeeded$/)
+			expect(text).not.toContain('http')
+		})
+
+		it('create_actor without a workspace renders without throwing and without a deep link', async () => {
+			const local = createNoWsHandlers()
+			mockFetchSuccess({ id: 'a-new', name: 'NewBot', type: 'agent' })
+
+			const handler = local.get('create_actor')
+			if (!handler) throw new Error('create_actor not registered')
+			const result = (await handler({ type: 'agent', name: 'NewBot' })) as {
+				content: Array<{ text: string }>
+			}
+			const text = result.content[0].text
+			expect(text).toMatch(/^✅ \*\*Created actor\*\*: 1 succeeded$/)
+			expect(text).not.toContain('http')
+		})
+	})
+
 	describe('get_objects handler (partial failure)', () => {
 		it('returns success false for failed IDs without rejecting', async () => {
 			const okGraph = {
@@ -1163,6 +1261,19 @@ describe('tool handlers', () => {
 					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/a-b',
 					expect.anything(),
 				)
+			})
+
+			it('falls back to "Untitled" when the API record has an empty name', async () => {
+				// Guard against `formatGenericRecord` rendering `#### [](url)` for
+				// records with a blank title (Task 4 CTO review polish item).
+				mockFetchSuccess({ id: 's1', name: '   ', description: 'desc' })
+				const handler = getHandler('get_workspace_skill')
+				const result = (await handler({ name: 'placeholder' })) as {
+					content: Array<{ text: string }>
+				}
+				const text = result.content[0].text
+				expect(text).toContain('Untitled')
+				expect(text).not.toMatch(/####\s*\[\s*\]/)
 			})
 		})
 
