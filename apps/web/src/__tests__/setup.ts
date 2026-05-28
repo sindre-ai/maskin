@@ -63,6 +63,22 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
 		IntersectionObserverStub as unknown as typeof IntersectionObserver
 }
 
+// jsdom doesn't ship matchMedia; useIsMobile() reads it on every mount.
+// Default to a non-matching desktop viewport; tests can override locally.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+	window.matchMedia = (query: string) =>
+		({
+			matches: false,
+			media: query,
+			onchange: null,
+			addListener: () => {},
+			removeListener: () => {},
+			addEventListener: () => {},
+			removeEventListener: () => {},
+			dispatchEvent: () => false,
+		}) as MediaQueryList
+}
+
 export function createTestQueryClient() {
 	return new QueryClient({
 		defaultOptions: {
