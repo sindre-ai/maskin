@@ -546,3 +546,45 @@ export const webhookDeliveries = pgTable(
 		index('webhook_deliveries_received_at_idx').on(t.receivedAt),
 	],
 )
+
+// ── User Display Settings ───────────────────────────────────────────────────
+//
+// Per-actor, per-workspace, per-object-type display preferences for the
+// objects page (sort, filter, view, column visibility, etc.). v1 only ever
+// writes/reads the `'default'` row per (actor, object_type) — the `name`
+// column is a forward-compatible carve-out for the Board View bet's named
+// saved views, which land as additive rows without a migration.
+//
+// `settings` is opaque JSONB on purpose: the persistence layer is decoupled
+// from the display panel's evolving shape. The toolbar (Task 6) owns the
+// concrete `{sort, filter, view, viewConfig}` schema.
+
+export const userDisplaySettings = pgTable(
+	'user_display_settings',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		objectType: text('object_type').notNull(),
+		name: text('name').notNull().default('default'),
+		settings: jsonb('settings').notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('user_display_settings_ws_actor_type_name_uniq').on(
+			t.workspaceId,
+			t.actorId,
+			t.objectType,
+			t.name,
+		),
+		index('user_display_settings_ws_actor_type_idx').on(t.workspaceId, t.actorId, t.objectType),
+	],
+)
+
+export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
+export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert

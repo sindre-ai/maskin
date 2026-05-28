@@ -446,6 +446,21 @@ export const api = {
 		},
 	},
 
+	userDisplaySettings: {
+		list: (workspaceId: string) =>
+			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),
+		get: (workspaceId: string, objectType: string) =>
+			request<UserDisplaySettingsResponse>(
+				`/user-display-settings/${encodeURIComponent(objectType)}`,
+				{ workspaceId },
+			),
+		upsert: (workspaceId: string, objectType: string, settings: Record<string, unknown>) =>
+			request<UserDisplaySettingsResponse>(
+				`/user-display-settings/${encodeURIComponent(objectType)}`,
+				{ method: 'PUT', body: { settings }, workspaceId },
+			),
+	},
+
 	workspaceSkills: {
 		list: (workspaceId: string) =>
 			request<WorkspaceSkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
@@ -564,6 +579,17 @@ export interface UnreadItem {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+export interface UserDisplaySettingsResponse {
+	object_type: string
+	name: string
+	settings: Record<string, unknown>
+	updated_at: string
+}
+
+export interface UserDisplaySettingsListResponse {
+	items: UserDisplaySettingsResponse[]
 }
 
 export interface CreateObjectInput {
