@@ -31,6 +31,22 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 	globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver
 }
 
+// jsdom doesn't ship matchMedia; useIsMobile() and the ResponsivePopover /
+// ResponsiveDialog primitives call it. Default to desktop (no match) so tests
+// land in popover/dialog mode; tests that need mobile mode should stub locally.
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'undefined') {
+	window.matchMedia = ((query: string) => ({
+		matches: false,
+		media: query,
+		onchange: null,
+		addEventListener: () => {},
+		removeEventListener: () => {},
+		addListener: () => {},
+		removeListener: () => {},
+		dispatchEvent: () => false,
+	})) as unknown as typeof window.matchMedia
+}
+
 // jsdom doesn't ship IntersectionObserver; stub a no-op so lazy-load and
 // visibility-gated hooks don't crash. Tests that need to drive intersections
 // should override this global locally.

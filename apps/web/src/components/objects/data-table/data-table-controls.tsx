@@ -1,6 +1,10 @@
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+	ResponsivePopover,
+	ResponsivePopoverContent,
+	ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover'
 import { Separator } from '@/components/ui/separator'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -70,8 +74,8 @@ export function DataTableControls({
 	const showColumns = !!onColumnVisibilityChange && hideableColumns.length > 0
 
 	return (
-		<Popover>
-			<PopoverTrigger asChild>
+		<ResponsivePopover>
+			<ResponsivePopoverTrigger asChild>
 				{iconOnly ? (
 					<Button
 						variant="ghost"
@@ -98,8 +102,8 @@ export function DataTableControls({
 						)}
 					</Button>
 				)}
-			</PopoverTrigger>
-			<PopoverContent align="end" className="w-[calc(100vw-2rem)] sm:w-64 p-0">
+			</ResponsivePopoverTrigger>
+			<ResponsivePopoverContent align="end" accessibleTitle="Controls" className="w-64 p-0">
 				<div className="max-h-[420px] overflow-y-auto">
 					{/* Filter by Type */}
 					{showTypeFilter && (
@@ -292,7 +296,7 @@ export function DataTableControls({
 						</div>
 					)}
 				</div>
-			</PopoverContent>
-		</Popover>
+			</ResponsivePopoverContent>
+		</ResponsivePopover>
 	)
 }
