@@ -41,6 +41,14 @@ type Env = {
  * ]
  * ```
  *
+ * **Per-call errors** — make a specific Nth call throw while others succeed
+ * (e.g. to test failure isolation across parallel inserts). `undefined` slots
+ * fall through to the normal queue/static result:
+ * ```ts
+ * mockResults.insertErrorQueue = [undefined, new Error('boom')]
+ * // 1st db.insert() → resolves normally; 2nd db.insert() → throws 'boom'
+ * ```
+ *
  * **Transactions** — `db.transaction(fn)` passes the same mock `db` into the
  * callback so the same `mockResults` apply inside the transaction.
  *
@@ -50,6 +58,7 @@ export function createTestContext() {
 	const mockResults: Record<string, unknown[]> = {}
 	const queues: Record<string, unknown[][]> = {}
 	const errors: Record<string, Error | undefined> = {}
+	const errorQueues: Record<string, (Error | undefined)[]> = {}
 	// Captures the most recent argument passed to chain methods like .values() and .set(),
 	// keyed by the top-level operation ('insert' → values, 'update' → set). Lets tests
 	// assert what the route actually wrote, not just what the mock returned.
@@ -68,6 +77,15 @@ export function createTestContext() {
 				const key = prop === 'selectDistinct' ? 'select' : (prop as string)
 				const captureKey = prop === 'insert' ? 'inserts' : prop === 'update' ? 'updates' : undefined
 				return () => {
+					// Per-call error queue takes precedence over the static error so tests can
+					// simulate "Nth call throws, others succeed" (e.g. one parallel insert fails).
+					// An `undefined` slot in the queue falls through to the normal result path.
+					const errorQueueKey = `${key}ErrorQueue`
+					const errorQueue = errorQueues[errorQueueKey]
+					if (errorQueue && errorQueue.length > 0) {
+						const err = errorQueue.shift()
+						if (err) return createChain(undefined, err, captureKey, calls)
+					}
 					const errorKey = `${key}Error`
 					if (errors[errorKey]) {
 						return createChain(undefined, errors[errorKey])
@@ -92,6 +110,12 @@ export function createTestContext() {
 	const results = new Proxy(mockResults, {
 		set: (target, prop, value) => {
 			const key = String(prop)
+			// Order matters: 'insertErrorQueue' ends with both 'Queue' and 'ErrorQueue',
+			// so check the more specific suffix first.
+			if (key.endsWith('ErrorQueue')) {
+				errorQueues[key] = value as (Error | undefined)[]
+				return true
+			}
 			if (key.endsWith('Queue')) {
 				queues[key] = value as unknown[][]
 				return true
@@ -105,6 +129,9 @@ export function createTestContext() {
 		},
 		get: (target, prop) => {
 			const key = String(prop)
+			if (key.endsWith('ErrorQueue')) {
+				return errorQueues[key]
+			}
 			if (key.endsWith('Queue')) {
 				return queues[key]
 			}
