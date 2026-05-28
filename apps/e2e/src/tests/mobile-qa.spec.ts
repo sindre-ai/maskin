@@ -19,6 +19,33 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 	).toBeLessThanOrEqual(innerWidth + HORIZONTAL_OVERFLOW_TOLERANCE_PX)
 }
 
+// Critical controls that must remain visible at every ship-gate viewport on the
+// For You → object → comment surface. The horizontal-overflow gate caught
+// layout regressions but missed "control is rendered transparently" or
+// "control was hidden behind a hover-only modifier on a touch device" — both
+// of which silently fail the parity constraint ("no functionality hidden on
+// iPad"). Each control is asserted by its accessible role/name + the
+// Playwright `toBeVisible` opacity check (ignores opacity:0 and visibility:hidden).
+async function assertReplyButtonVisibleOnObjectDetail(
+	page: Page,
+	surface: string,
+	viewport: NamedViewport,
+) {
+	const replyButton = page.getByRole('button', { name: 'Reply' }).first()
+	await expect(
+		replyButton,
+		`${surface}: reply-to-thread button must be visible at ${viewport.label}`,
+	).toBeVisible({ timeout: 5000 })
+}
+
+async function assertCommentComposerVisible(page: Page, surface: string, viewport: NamedViewport) {
+	const composer = page.getByPlaceholder('Write a comment... Use @ to mention an agent').first()
+	await expect(
+		composer,
+		`${surface}: comment composer must be visible at ${viewport.label}`,
+	).toBeVisible({ timeout: 5000 })
+}
+
 interface Surface {
 	name: string
 	path: (workspaceId: string, ids: SeedIds) => string
@@ -140,6 +167,36 @@ test.describe('Mobile + iPad QA — viewport overflow ship gate', () => {
 				if (surface.waitFor) await surface.waitFor(page)
 				await assertNoHorizontalOverflow(page, surface.name, viewport)
 			}
+		})
+	}
+})
+
+test.describe('Mobile + iPad QA — critical controls ship gate', () => {
+	// Brief: at every ship-gate viewport (375 / 768 / 1024), the comment composer
+	// and the reply-to-thread button must be visible on object detail. The
+	// horizontal-overflow gate caught layout regressions but missed cases where a
+	// control was rendered with opacity:0 and a hover-only reveal — invisible on
+	// touch devices like iPad portrait. Asserting accessible-role visibility here
+	// catches "functionality hidden on iPad" before it ships.
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`reply button + composer visible on object detail @ ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			const ids = await seedObjects(account)
+			// Seed a root comment so the Reply button surfaces (only rendered on root
+			// comments without replies; an empty thread has nothing to reply to).
+			await account.api.createComment(account.workspaceId, {
+				entity_id: ids.betId,
+				content: 'Seeded root comment for control-visibility ship gate',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
+			await expect(page.getByText('Mobile QA Bet')).toBeVisible({ timeout: 10000 })
+
+			await assertCommentComposerVisible(page, 'Object detail', viewport)
+			await assertReplyButtonVisibleOnObjectDetail(page, 'Object detail', viewport)
 		})
 	}
 })
