@@ -24,10 +24,10 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
 
-// Switches Dialog to a full-screen bottom Sheet at <768px. Pick this for any
-// dialog whose content is tall enough to want the whole viewport — import
-// flows, multi-step forms, anything where the desktop Dialog would clip on
-// phones. Small confirm dialogs should keep using <Dialog> directly.
+// Switches Dialog to a bottom Sheet at <768px (content-sized, capped at 85dvh
+// with rounded top corners). Pick this for any dialog whose content would clip
+// on a phone — import flows, multi-step forms, larger forms. Small confirm
+// dialogs should keep using <Dialog> directly.
 
 const ResponsiveDialogModeContext = React.createContext<'dialog' | 'sheet'>('dialog')
 
@@ -73,7 +73,10 @@ const ResponsiveDialogContent = React.forwardRef<
 			<SheetContent
 				ref={ref}
 				side="bottom"
-				className={cn('flex h-[100dvh] w-full max-w-none flex-col rounded-none', className)}
+				className={cn(
+					'flex max-h-[85dvh] w-full max-w-none flex-col rounded-t-lg rounded-b-none',
+					className,
+				)}
 				{...props}
 			>
 				{children}

@@ -143,7 +143,7 @@ Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-
 - Use `min-w-0` on flex children that hold ellipsis-truncated text (already the pattern in `object-document.tsx`).
 
 **Dialogs, sheets, popovers.** On mobile, large dialogs feel wrong and popovers miss the thumb zone. Conventions (implemented progressively across the bet):
-- A `Dialog` whose content is taller than ~75vh on mobile becomes a `Sheet` (full-screen on mobile). Small confirm dialogs stay as `Dialog`.
+- A `Dialog` whose content would clip on mobile becomes a `Sheet` (bottom on mobile, content-sized up to 85dvh, rounded top corners) via `ResponsiveDialog` from `@/components/ui/responsive-dialog`. Small confirm dialogs stay as `Dialog`.
 - A `Popover` used as a *form control* (date picker, multi-select) becomes a bottom `Sheet` on mobile. A `Popover` used as a hover/info card stays a `Popover`.
 - A `DropdownMenu` is fine on mobile — it auto-positions and doesn't claim too much space.
 - Any dialog/sheet with horizontally-scrolling content inside (like the import preview table) must wrap that content in `overflow-x-auto`, not extend the dialog body itself.

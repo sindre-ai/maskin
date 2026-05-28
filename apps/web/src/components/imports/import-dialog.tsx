@@ -117,7 +117,7 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 
 	return (
 		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-			<ResponsiveDialogContent className="md:max-w-2xl md:max-h-[80vh] md:overflow-y-auto">
+			<ResponsiveDialogContent className="overflow-y-auto md:max-w-2xl md:max-h-[80vh]">
 				<ResponsiveDialogHeader>
 					<ResponsiveDialogTitle>Import Objects</ResponsiveDialogTitle>
 					<ResponsiveDialogDescription>
