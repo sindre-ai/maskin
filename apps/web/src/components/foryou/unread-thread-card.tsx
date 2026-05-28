@@ -197,11 +197,11 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 	return (
 		<div ref={cardRef} className="rounded-lg border border-border bg-card">
 			<div className="flex items-center gap-2 border-b border-border px-4 py-3">
-				{objectType && <TypeBadge type={objectType} />}
+				{objectType && <TypeBadge className="shrink-0" type={objectType} />}
 				<Link
 					to="/$workspaceId/objects/$objectId"
 					params={{ workspaceId, objectId }}
-					className="text-sm font-medium truncate hover:underline"
+					className="min-w-0 flex-1 text-sm font-medium truncate hover:underline"
 					title={title}
 				>
 					{title}
@@ -209,7 +209,7 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 				{item.latest_activity_at && (
 					<RelativeTime
 						date={item.latest_activity_at}
-						className="text-xs text-muted-foreground ml-auto"
+						className="shrink-0 text-xs text-muted-foreground"
 					/>
 				)}
 				<UnreadBadge count={item.unread_count} className="shrink-0" />
