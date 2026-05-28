@@ -38,6 +38,30 @@ export interface FormatterContext {
 const PREVIEW_MAX = 140
 const LIST_TRUNCATE_THRESHOLD = 25
 
+/**
+ * Defang user-controlled text before splicing into markdown. We escape the
+ * characters that would let a malicious title / name / comment break out of
+ * the surrounding `[text](url)` link or `` `code` `` span, and collapse CR/LF
+ * so a multi-line value can't smuggle a heading or list bullet onto its own
+ * line:
+ *
+ *   `\\`        — escaped first so the subsequent passes don't double-collapse
+ *   `[` / `]`   — both halves of link-text syntax
+ *   `` ` ``     — opens / closes inline code spans
+ *   CR/LF       — collapsed to a single space
+ *
+ * We deliberately leave `*` / `_` / `#` / `(` / `)` alone: they don't open a
+ * link or smuggle a click target in our render shapes, and over-escaping
+ * turns common human punctuation into a noisy `\*foo\*` everywhere.
+ */
+export function escapeMd(s: string | null | undefined): string {
+	if (!s) return ''
+	return s
+		.replace(/\\/g, '\\\\')
+		.replace(/[`[\]]/g, '\\$&')
+		.replace(/[\r\n]+/g, ' ')
+}
+
 interface ObjectSummary {
 	id: string
 	type?: string | null
@@ -97,7 +121,7 @@ function preview(text: string | null | undefined): string | null {
 	if (!text) return null
 	const trimmed = text.trim()
 	if (!trimmed) return null
-	return truncate(trimmed)
+	return escapeMd(truncate(trimmed))
 }
 
 function objectLink(o: ObjectSummary, ctx: FormatterContext): string {
@@ -123,15 +147,15 @@ function workspaceLink(ctx: FormatterContext): string {
 
 function safeTitle(o: ObjectSummary): string {
 	const t = (o.title ?? '').trim()
-	if (t) return t
+	if (t) return escapeMd(t)
 	const typeLabel = (o.type ?? 'object').toString()
-	return `Untitled ${typeLabel}`
+	return `Untitled ${escapeMd(typeLabel)}`
 }
 
 function metaLine(o: ObjectSummary): string | null {
 	const parts: string[] = []
-	if (o.type) parts.push(o.type)
-	if (o.status) parts.push(o.status)
+	if (o.type) parts.push(escapeMd(o.type))
+	if (o.status) parts.push(escapeMd(o.status))
 	if (parts.length === 0) return null
 	return `_${parts.join(' • ')}_`
 }
@@ -140,7 +164,7 @@ function lastActivity(events: EventSummary[] | undefined): string | null {
 	if (!events?.length) return null
 	const first = events[0]
 	if (!first?.description) return null
-	return truncate(first.description, 120)
+	return escapeMd(truncate(first.description, 120))
 }
 
 /**
@@ -257,7 +281,7 @@ export function formatSearchHits(
 		sessionId: ctx.sessionId,
 		baseUrl: ctx.baseUrl,
 	})
-	const header = `**${input.hits.length} result${input.hits.length === 1 ? '' : 's'}** for "${input.q}" — [open in Maskin](${searchUrl})`
+	const header = `**${input.hits.length} result${input.hits.length === 1 ? '' : 's'}** for "${escapeMd(input.q)}" — [open in Maskin](${searchUrl})`
 	if (input.hits.length === 0) {
 		return { content: `${header}\n\n_No matches._`, structuredContent: input.hits }
 	}
@@ -318,18 +342,20 @@ export function formatWorkspaceSummary(
 ): FormattedResult {
 	const url = workspaceLink(ctx)
 	const lines: string[] = []
-	lines.push(`#### [${schema.workspace_name ?? 'Workspace'}](${url})`)
+	lines.push(`#### [${escapeMd(schema.workspace_name ?? 'Workspace')}](${url})`)
 	const types = schema.types ? Object.entries(schema.types) : []
 	if (types.length > 0) {
 		for (const [type, def] of types) {
-			const label = def.display_name ?? type
-			const statuses = def.statuses?.length ? ` — statuses: ${def.statuses.join(', ')}` : ''
+			const label = escapeMd(def.display_name ?? type)
+			const statuses = def.statuses?.length
+				? ` — statuses: ${def.statuses.map(escapeMd).join(', ')}`
+				: ''
 			lines.push(`- **${label}**${statuses}`)
 		}
 	}
 	if (schema.relationship_types?.length) {
 		lines.push('')
-		lines.push(`Relationship types: ${schema.relationship_types.join(', ')}`)
+		lines.push(`Relationship types: ${schema.relationship_types.map(escapeMd).join(', ')}`)
 	}
 	return { content: lines.join('\n'), structuredContent: schema }
 }
@@ -380,13 +406,15 @@ export function formatMutationConfirm(
 			: workspaceLink(ctx)
 
 	const status = failed === 0 ? '✅' : ok === 0 ? '❌' : '⚠️'
-	const summary = `${status} **${input.verb}**: ${ok} succeeded${failed ? `, ${failed} failed` : ''} — [open in Maskin](${link})`
+	const summary = `${status} **${escapeMd(input.verb)}**: ${ok} succeeded${failed ? `, ${failed} failed` : ''} — [open in Maskin](${link})`
 
 	const lines: string[] = [summary]
 	if (failed > 0) {
 		lines.push('')
 		for (const r of input.results.filter((x) => !x.success).slice(0, 10)) {
-			lines.push(`- ❌ \`${r.id ?? r.type ?? 'item'}\` — ${r.error ?? 'unknown error'}`)
+			const label = escapeMd(r.id ?? r.type ?? 'item')
+			const err = escapeMd(r.error ?? 'unknown error')
+			lines.push(`- ❌ \`${label}\` — ${err}`)
 		}
 	}
 	return { content: lines.join('\n'), structuredContent: input.results }
