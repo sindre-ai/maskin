@@ -557,6 +557,7 @@ export interface UnreadItem {
 	entity_type: string
 	entity_id: string
 	unread_count: number
+	mentions_you: boolean
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
