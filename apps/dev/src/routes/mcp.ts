@@ -1,4 +1,5 @@
 import { createMcpServer } from '@maskin/mcp'
+import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
@@ -13,6 +14,7 @@ app.post('/', async (c) => {
 			c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? '',
 		defaultWorkspaceId: c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? '',
 		transport: 'http' as const,
+		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({

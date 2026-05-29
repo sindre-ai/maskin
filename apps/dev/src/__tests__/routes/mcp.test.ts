@@ -213,6 +213,23 @@ describe('MCP Routes', () => {
 			)
 		})
 
+		it('populates webAppBaseUrl with the production default when env vars are unset', async () => {
+			vi.stubEnv('WEB_APP_URL', '')
+			vi.stubEnv('FRONTEND_URL', '')
+			try {
+				const app = await createApp()
+				const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
+
+				await app.request(jsonPostRequest('/mcp', body), undefined, env)
+
+				expect(mockCreateMcpServer).toHaveBeenCalledWith(
+					expect.objectContaining({ webAppBaseUrl: 'https://maskin.sindre.ai' }),
+				)
+			} finally {
+				vi.unstubAllEnvs()
+			}
+		})
+
 		it('marks the MCP config as http transport so error hints reference headers', async () => {
 			const app = await createApp()
 			const body = { jsonrpc: '2.0', method: 'initialize', id: 1 }
