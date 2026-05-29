@@ -636,6 +636,25 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('update_actor handler', () => {
+		it('emits a workspace link, not an object-page link for the actor id', async () => {
+			// Regression guard: passing `result: { id, type: 'actor' }` to
+			// formatMutationConfirm drove the success path down the `firstSuccess.id`
+			// branch and produced `/objects/<actorId>` — but actors aren't
+			// object-graph objects, so the link 404s. Fix mirrors regenerate_api_key:
+			// drop `result.id` and let the formatter fall through to workspaceLink.
+			mockFetchSuccess({ id: 'a1', name: 'Renamed', type: 'agent' })
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({ id: 'a1', name: 'Renamed' })) as {
+				content: Array<{ text: string }>
+			}
+			const text = result.content[0].text
+			expect(text).not.toMatch(/\/objects\/a1\?/)
+			expect(text).toContain('/00000000-0000-4000-8000-000000000001?t=update_actor')
+		})
+	})
+
 	describe('get_objects handler (partial failure)', () => {
 		it('returns success false for failed IDs without rejecting', async () => {
 			const okGraph = {
