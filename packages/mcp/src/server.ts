@@ -10,6 +10,7 @@ import {
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
 	buildWebAppHref,
+	resolveWebAppBaseUrl,
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
@@ -4050,7 +4051,7 @@ async function main() {
 		apiKey: process.env.API_KEY || '',
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 		transport: 'stdio',
-		webAppBaseUrl: process.env.WEB_APP_URL || process.env.FRONTEND_URL,
+		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
 	}
 
 	const server = createMcpServer(config)
