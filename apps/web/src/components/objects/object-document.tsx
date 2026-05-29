@@ -293,10 +293,14 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
-			if ((e.metaKey || e.ctrlKey) && e.key === '.') {
-				e.preventDefault()
-				setMenuOpen(true)
+			if (!((e.metaKey || e.ctrlKey) && e.key === '.')) return
+			const target = e.target as HTMLElement | null
+			if (target) {
+				const tag = target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
 			}
+			e.preventDefault()
+			setMenuOpen(true)
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
@@ -306,7 +310,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		<AuxiliaryActionMenu
 			object={object}
 			onDeleteRequest={() => setConfirmDelete(true)}
-			isDeleting={deleteObject.isPending}
 			workspaceId={workspaceId}
 			open={menuOpen}
 			onOpenChange={setMenuOpen}

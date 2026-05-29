@@ -7,13 +7,14 @@ import {
 	DropdownMenuShortcut,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Separator } from '@/components/ui/separator'
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Bell, BellOff, Copy, ExternalLink, FileText, MoreHorizontal, Trash2 } from 'lucide-react'
-import { useCallback, useMemo } from 'react'
+import { Fragment, useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
 
 type Visibility = 'hide' | 'disable'
@@ -33,7 +34,6 @@ interface MenuItemDef {
 export interface AuxiliaryActionMenuProps {
 	object: ObjectResponse
 	onDeleteRequest: () => void
-	isDeleting?: boolean
 	workspaceId: string
 	open?: boolean
 	onOpenChange?: (open: boolean) => void
@@ -42,7 +42,6 @@ export interface AuxiliaryActionMenuProps {
 export function AuxiliaryActionMenu({
 	object,
 	onDeleteRequest,
-	isDeleting = false,
 	workspaceId,
 	open,
 	onOpenChange,
@@ -130,26 +129,18 @@ export function AuxiliaryActionMenu({
 	if (isMobile) {
 		return (
 			<Sheet open={open} onOpenChange={handleOpenChange}>
-				{trigger}
+				<SheetTrigger asChild>{trigger}</SheetTrigger>
 				<SheetContent side="bottom" className="rounded-t-xl px-0 pb-6">
 					<SheetHeader className="px-4">
 						<SheetTitle>Actions</SheetTitle>
 					</SheetHeader>
 					<div className="mt-2 flex flex-col">
-						{visibleItems.map((item) =>
-							item.separatorBefore ? (
-								<div key={item.id}>
-									<div className="my-1 h-px bg-border" />
-									<SheetMenuItemImpl item={item} closeSheet={() => onOpenChange?.(false)} />
-								</div>
-							) : (
-								<SheetMenuItemImpl
-									key={item.id}
-									item={item}
-									closeSheet={() => onOpenChange?.(false)}
-								/>
-							),
-						)}
+						{visibleItems.map((item) => (
+							<Fragment key={item.id}>
+								{item.separatorBefore && <Separator className="my-1" />}
+								<SheetMenuItemImpl item={item} closeSheet={() => onOpenChange?.(false)} />
+							</Fragment>
+						))}
 					</div>
 				</SheetContent>
 			</Sheet>
@@ -160,16 +151,12 @@ export function AuxiliaryActionMenu({
 		<DropdownMenu open={open} onOpenChange={handleOpenChange}>
 			<DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="min-w-[200px]">
-				{visibleItems.map((item) =>
-					item.separatorBefore ? (
-						<div key={item.id}>
-							<DropdownMenuSeparator />
-							<DropdownMenuItemImpl item={item} isMobile={isMobile} />
-						</div>
-					) : (
-						<DropdownMenuItemImpl key={item.id} item={item} isMobile={isMobile} />
-					),
-				)}
+				{visibleItems.map((item) => (
+					<Fragment key={item.id}>
+						{item.separatorBefore && <DropdownMenuSeparator />}
+						<DropdownMenuItemImpl item={item} isMobile={isMobile} />
+					</Fragment>
+				))}
 			</DropdownMenuContent>
 		</DropdownMenu>
 	)
