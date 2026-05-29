@@ -1,8 +1,8 @@
 import { ObjectDocument } from '@/components/objects/object-document'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TestWrapper } from '../../setup'
 import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
+import { TestWrapper } from '../../setup'
 
 const mutateMock = vi.fn()
 const trackEventMock = vi.fn()
