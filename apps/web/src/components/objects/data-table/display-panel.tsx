@@ -1,8 +1,11 @@
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
+	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -27,13 +30,14 @@ export interface DisplayPanelProps {
 	columns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
 	onColumnVisibilityChange?: (columnId: string, visible: boolean) => void
-	// Filters
+	// Filters — comma-separated strings for multi-select
 	statusFilter?: string
 	onStatusFilterChange?: (value: string | undefined) => void
-	statuses?: string[]
+	statusesByType?: Record<string, string[]>
 	ownerFilter?: string
 	onOwnerFilterChange?: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	onResetFilters?: () => void
 	// Ordering
 	sort?: string
 	onSortChange?: (value: string) => void
@@ -111,16 +115,19 @@ function PickerRow({
 	)
 }
 
+const DROPDOWN_CLS = 'min-w-[10rem] max-h-64 overflow-y-auto'
+
 export function DisplayPanel({
 	columns = [],
 	columnVisibility,
 	onColumnVisibilityChange,
 	statusFilter,
 	onStatusFilterChange,
-	statuses = [],
+	statusesByType = {},
 	ownerFilter,
 	onOwnerFilterChange,
 	actors,
+	onResetFilters,
 	sort,
 	onSortChange,
 	order,
@@ -129,7 +136,9 @@ export function DisplayPanel({
 	onGroupByChange,
 	iconOnly = false,
 }: DisplayPanelProps) {
-	const activeFilterCount = (statusFilter ? 1 : 0) + (ownerFilter ? 1 : 0)
+	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
+	const activeOwners = ownerFilter ? ownerFilter.split(',').filter(Boolean) : []
+	const activeFilterCount = (activeStatuses.length > 0 ? 1 : 0) + (activeOwners.length > 0 ? 1 : 0)
 	const hasActiveFilters = activeFilterCount > 0
 
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
@@ -140,6 +149,40 @@ export function DisplayPanel({
 
 	const sortLabel = columns.find((c) => c.id === sort)?.label
 	const groupLabel = columns.find((c) => c.id === groupBy)?.label
+
+	const typeEntries = Object.entries(statusesByType).filter(([, statuses]) => statuses.length > 0)
+	const hasStatuses = typeEntries.length > 0
+
+	const ownerOptions = actors ?? []
+	const hasOwners = ownerOptions.length > 0
+
+	function toggleStatus(status: string) {
+		const next = activeStatuses.includes(status)
+			? activeStatuses.filter((s) => s !== status)
+			: [...activeStatuses, status]
+		onStatusFilterChange?.(next.length > 0 ? next.join(',') : undefined)
+	}
+
+	function toggleOwner(ownerId: string) {
+		const next = activeOwners.includes(ownerId)
+			? activeOwners.filter((id) => id !== ownerId)
+			: [...activeOwners, ownerId]
+		onOwnerFilterChange?.(next.length > 0 ? next.join(',') : undefined)
+	}
+
+	const statusTriggerLabel =
+		activeStatuses.length === 0
+			? '+ Status'
+			: activeStatuses.length === 1
+				? activeStatuses[0]?.replace(/_/g, ' ')
+				: `${activeStatuses.length} statuses`
+
+	const ownerTriggerLabel =
+		activeOwners.length === 0
+			? '+ Owner'
+			: activeOwners.length === 1
+				? (ownerOptions.find((a) => a.id === activeOwners[0])?.name ?? '1 owner')
+				: `${activeOwners.length} owners`
 
 	return (
 		<ResponsivePopover>
@@ -206,7 +249,7 @@ export function DisplayPanel({
 												<ChevronDown size={12} className="shrink-0 opacity-60" />
 											</Button>
 										</DropdownMenuTrigger>
-										<DropdownMenuContent align="start" className="min-w-[10rem]">
+										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
 											{columns.map((col) => (
 												<DropdownMenuItem
 													key={col.id}
@@ -251,7 +294,7 @@ export function DisplayPanel({
 												<ChevronDown size={12} className="shrink-0 opacity-60" />
 											</Button>
 										</DropdownMenuTrigger>
-										<DropdownMenuContent align="start" className="min-w-[10rem]">
+										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
 											<DropdownMenuItem onClick={() => onGroupByChange?.(undefined)}>
 												<span className="flex-1">None</span>
 												{!groupBy && <Check size={12} className="opacity-60" />}
@@ -285,8 +328,12 @@ export function DisplayPanel({
 											type="button"
 											className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
 											onClick={() => {
-												onStatusFilterChange?.(undefined)
-												onOwnerFilterChange?.(undefined)
+												if (onResetFilters) {
+													onResetFilters()
+												} else {
+													onStatusFilterChange?.(undefined)
+													onOwnerFilterChange?.(undefined)
+												}
 											}}
 										>
 											Reset
@@ -294,26 +341,103 @@ export function DisplayPanel({
 									)}
 								</div>
 
-								{/* Status */}
+								{/* Status — grouped by type with separators, multi-select */}
 								{onStatusFilterChange && (
-									<FilterRow
-										label="Status"
-										current={statusFilter}
-										options={statuses.map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))}
-										onChange={onStatusFilterChange}
-										emptyHint="No statuses available"
-									/>
+									<div className="flex items-center gap-2">
+										<span className="w-16 shrink-0 text-xs text-text-secondary">Status</span>
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild disabled={!hasStatuses}>
+												<Button
+													variant={activeStatuses.length > 0 ? 'outline' : 'ghost'}
+													size="sm"
+													className={cn(
+														'h-7 gap-1.5 px-2 text-xs',
+														activeStatuses.length === 0 &&
+															'text-text-secondary hover:text-foreground',
+													)}
+												>
+													<span className="truncate capitalize">{statusTriggerLabel}</span>
+													{hasStatuses && <ChevronDown size={12} className="shrink-0 opacity-60" />}
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
+												{typeEntries.map(([type, statuses], i) => (
+													<div key={type}>
+														{i > 0 && <DropdownMenuSeparator />}
+														<DropdownMenuLabel className="capitalize text-xs font-medium text-text-secondary py-1">
+															{type}
+														</DropdownMenuLabel>
+														{statuses.map((status) => (
+															<DropdownMenuCheckboxItem
+																key={status}
+																checked={activeStatuses.includes(status)}
+																onCheckedChange={() => toggleStatus(status)}
+																className="capitalize"
+															>
+																{status.replace(/_/g, ' ')}
+															</DropdownMenuCheckboxItem>
+														))}
+													</div>
+												))}
+											</DropdownMenuContent>
+										</DropdownMenu>
+										{activeStatuses.length > 0 && (
+											<button
+												type="button"
+												aria-label="Clear Status filter"
+												title="Clear Status filter"
+												onClick={() => onStatusFilterChange?.(undefined)}
+												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+											>
+												Clear
+											</button>
+										)}
+									</div>
 								)}
 
-								{/* Owner */}
+								{/* Owner — flat multi-select */}
 								{onOwnerFilterChange && (
-									<FilterRow
-										label="Owner"
-										current={ownerFilter}
-										options={(actors ?? []).map((a) => ({ value: a.id, label: a.name }))}
-										onChange={onOwnerFilterChange}
-										emptyHint="No owners"
-									/>
+									<div className="flex items-center gap-2">
+										<span className="w-16 shrink-0 text-xs text-text-secondary">Owner</span>
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild disabled={!hasOwners}>
+												<Button
+													variant={activeOwners.length > 0 ? 'outline' : 'ghost'}
+													size="sm"
+													className={cn(
+														'h-7 gap-1.5 px-2 text-xs',
+														activeOwners.length === 0 &&
+															'text-text-secondary hover:text-foreground',
+													)}
+												>
+													<span className="truncate">{ownerTriggerLabel}</span>
+													{hasOwners && <ChevronDown size={12} className="shrink-0 opacity-60" />}
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
+												{ownerOptions.map((actor) => (
+													<DropdownMenuCheckboxItem
+														key={actor.id}
+														checked={activeOwners.includes(actor.id)}
+														onCheckedChange={() => toggleOwner(actor.id)}
+													>
+														{actor.name}
+													</DropdownMenuCheckboxItem>
+												))}
+											</DropdownMenuContent>
+										</DropdownMenu>
+										{activeOwners.length > 0 && (
+											<button
+												type="button"
+												aria-label="Clear Owner filter"
+												title="Clear Owner filter"
+												onClick={() => onOwnerFilterChange?.(undefined)}
+												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+											>
+												Clear
+											</button>
+										)}
+									</div>
 								)}
 							</div>
 							<Separator />
@@ -343,63 +467,5 @@ export function DisplayPanel({
 				</div>
 			</ResponsivePopoverContent>
 		</ResponsivePopover>
-	)
-}
-
-interface FilterRowProps {
-	label: string
-	current: string | undefined
-	options: Array<{ value: string; label: string }>
-	onChange: (value: string | undefined) => void
-	emptyHint: string
-}
-
-function FilterRow({ label, current, options, onChange, emptyHint }: FilterRowProps) {
-	const currentLabel = options.find((o) => o.value === current)?.label
-	const triggerText = currentLabel ?? `+ ${label}`
-	return (
-		<div className="flex items-center gap-2">
-			<span className="w-16 shrink-0 text-xs text-text-secondary">{label}</span>
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild disabled={options.length === 0}>
-					<Button
-						variant={current ? 'outline' : 'ghost'}
-						size="sm"
-						className={cn(
-							'h-7 gap-1.5 px-2 text-xs',
-							!current && 'text-text-secondary hover:text-foreground',
-						)}
-					>
-						<span className="truncate capitalize">
-							{options.length === 0 ? emptyHint : triggerText}
-						</span>
-						{options.length > 0 && <ChevronDown size={12} className="shrink-0 opacity-60" />}
-					</Button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent align="start" className="min-w-[10rem]">
-					{options.map((opt) => (
-						<DropdownMenuItem
-							key={opt.value}
-							onClick={() => onChange(current === opt.value ? undefined : opt.value)}
-							className="capitalize"
-						>
-							<span className="flex-1">{opt.label}</span>
-							{current === opt.value && <Check size={12} className="opacity-60" />}
-						</DropdownMenuItem>
-					))}
-				</DropdownMenuContent>
-			</DropdownMenu>
-			{current && (
-				<button
-					type="button"
-					aria-label={`Clear ${label} filter`}
-					title={`Clear ${label} filter`}
-					onClick={() => onChange(undefined)}
-					className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
-				>
-					Clear
-				</button>
-			)}
-		</div>
 	)
 }

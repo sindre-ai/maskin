@@ -584,6 +584,7 @@ function ObjectsPage() {
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
 				actors={actors}
+				onResetFilters={() => updateSearch({ status: undefined, owner: undefined })}
 				sort={sort}
 				onSortChange={(value) => updateSearch({ sort: value })}
 				order={order}
@@ -599,6 +600,7 @@ function ObjectsPage() {
 				data={allObjects}
 				columns={columns}
 				workspaceId={workspaceId}
+				actors={actors}
 				rowSelection={rowSelection}
 				onRowSelectionChange={setRowSelection}
 				columnVisibility={effectiveVisibility}

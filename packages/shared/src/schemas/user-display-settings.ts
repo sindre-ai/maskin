@@ -6,7 +6,7 @@ import { objectTypeSchema } from './objects'
 // `settings` to this shape caps the JSON payload size at the boundary —
 // closes the unbounded-record finding from Task 5's review on the upsert
 // route.
-const filterStringSchema = z.string().min(1).max(128)
+const filterStringSchema = z.string().min(1).max(512)
 // Column ids include dynamic `metadata.<field_name>` keys, so the cap is
 // looser than a filter value but still finite.
 const columnIdSchema = z.string().min(1).max(256)

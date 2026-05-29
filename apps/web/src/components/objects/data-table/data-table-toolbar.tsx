@@ -4,7 +4,7 @@ import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
 import { Search, Upload } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ColumnInfo } from './data-table-controls'
 import { DisplayPanel } from './display-panel'
 
@@ -32,6 +32,7 @@ interface DataTableToolbarProps {
 	ownerFilter?: string
 	onOwnerFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	onResetFilters?: () => void
 	sort: string
 	onSortChange: (value: string) => void
 	order: 'asc' | 'desc'
@@ -57,6 +58,7 @@ export function DataTableToolbar({
 	ownerFilter,
 	onOwnerFilterChange,
 	actors,
+	onResetFilters,
 	sort,
 	onSortChange,
 	order,
@@ -83,15 +85,6 @@ export function DataTableToolbar({
 			onSearchChange(value || '')
 		}, 300)
 	}
-
-	// Flatten the per-type status map into a single list scoped to whatever
-	// types the current tab admits. When a single type is active this is the
-	// statuses for that type; when All is active it is the union of every
-	// enabled type's statuses, deduped, so the user can still filter.
-	const flatStatuses = useMemo(() => {
-		const all = Object.values(statusesByType).flat()
-		return Array.from(new Set(all))
-	}, [statusesByType])
 
 	return (
 		<div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
@@ -135,17 +128,17 @@ export function DataTableToolbar({
 				onColumnVisibilityChange={onColumnVisibilityChange}
 				statusFilter={statusFilter}
 				onStatusFilterChange={onStatusFilterChange}
-				statuses={flatStatuses}
+				statusesByType={statusesByType}
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={onOwnerFilterChange}
 				actors={actors}
+				onResetFilters={onResetFilters}
 				sort={sort}
 				onSortChange={onSortChange}
 				order={order}
 				onOrderChange={onOrderChange}
 				groupBy={groupBy}
 				onGroupByChange={onGroupByChange}
-				analyticsSource="objects-page"
 			/>
 
 			{/* Import */}
