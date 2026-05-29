@@ -1,3 +1,5 @@
+import { stripTrailingSlash } from '@maskin/shared'
+
 // The file URL is the whole point of attached files: agents paste it into
 // Slack, emails, comments. Shipping a `http://localhost:5173/...` link from
 // prod would silently break every share, so require `FRONTEND_URL` outside of
@@ -17,22 +19,10 @@ export function frontendBaseUrl(): string {
 	return DEV_FRONTEND_FALLBACK
 }
 
-function stripTrailingSlash(s: string): string {
-	return s.endsWith('/') ? s.slice(0, -1) : s
-}
-
 export function fileViewerUrl(frontendUrl: string, workspaceId: string, fileId: string): string {
 	return `${stripTrailingSlash(frontendUrl)}/${workspaceId}/files/${fileId}`
 }
 
 export function fileStorageKey(workspaceId: string, fileId: string): string {
 	return `workspaces/${workspaceId}/files/${fileId}`
-}
-
-// Canonical URL agents should emit when referencing an object in a comment,
-// notification, or description. Agents otherwise hallucinate the host (the
-// `app.maskin.ai` bug) — route every agent-facing object link through this
-// helper so the host + workspace segment stay in lockstep with the web app.
-export function agentObjectUrl(frontendUrl: string, workspaceId: string, objectId: string): string {
-	return `${stripTrailingSlash(frontendUrl)}/${workspaceId}/objects/${objectId}`
 }

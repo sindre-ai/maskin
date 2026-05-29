@@ -6,9 +6,28 @@ import {
 	buildWebAppHref,
 	buildWebAppPath,
 	resolveWebAppBaseUrl,
+	stripTrailingSlash,
 } from '../web-app-urls'
 
 const ws = 'ws-123'
+
+describe('stripTrailingSlash', () => {
+	it('removes exactly one trailing slash when present', () => {
+		expect(stripTrailingSlash('https://maskin.sindre.ai/')).toBe('https://maskin.sindre.ai')
+	})
+
+	it('returns the input unchanged when there is no trailing slash', () => {
+		expect(stripTrailingSlash('https://maskin.sindre.ai')).toBe('https://maskin.sindre.ai')
+	})
+
+	it('preserves the empty string', () => {
+		expect(stripTrailingSlash('')).toBe('')
+	})
+
+	it('strips only a single slash so callers can detect over-trimmed input themselves', () => {
+		expect(stripTrailingSlash('https://maskin.sindre.ai//')).toBe('https://maskin.sindre.ai/')
+	})
+})
 
 describe('WEB_APP_OBJECT_TYPES', () => {
 	it('covers every object-table type currently exposed by MCP', () => {

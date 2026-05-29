@@ -1,8 +1,8 @@
 import type { Database } from '@maskin/db'
 import { objects, relationships, workspaces } from '@maskin/db/schema'
+import { buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq, gte, inArray, ne } from 'drizzle-orm'
-import { agentObjectUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
@@ -29,7 +29,10 @@ export function buildWorkspaceStartupBlock(args: {
 	workspaceId: string
 	frontendUrl: string
 }): string {
-	const exampleUrl = agentObjectUrl(args.frontendUrl, args.workspaceId, '<id>')
+	const exampleUrl = buildWebAppHref(stripTrailingSlash(args.frontendUrl), args.workspaceId, {
+		kind: 'object',
+		id: '<id>',
+	})
 	return `## This workspace
 
 This workspace works through bets — shaped, time-boxed outcomes.

@@ -130,6 +130,16 @@ export type WebAppTarget =
 export const DEFAULT_WEB_APP_BASE_URL = 'https://maskin.sindre.ai'
 
 /**
+ * Remove a single trailing `/` from `s` if present. The single source of truth
+ * for base-URL normalisation across the web-app, MCP server, and agent-facing
+ * link builders — every site that used to inline `.replace(/\/$/, '')` should
+ * call this instead so the behaviour stays in lockstep.
+ */
+export function stripTrailingSlash(s: string): string {
+	return s.endsWith('/') ? s.slice(0, -1) : s
+}
+
+/**
  * Resolve the web-app base URL from an environment-like record. Resolution
  * order — `WEB_APP_URL` (explicit override) → `FRONTEND_URL` (the historical
  * env var) → `DEFAULT_WEB_APP_BASE_URL`. The returned string is
@@ -142,7 +152,7 @@ export function resolveWebAppBaseUrl(
 	env: Partial<Record<'WEB_APP_URL' | 'FRONTEND_URL', string | undefined>> = {},
 ): string {
 	const candidate = env.WEB_APP_URL?.trim() || env.FRONTEND_URL?.trim() || DEFAULT_WEB_APP_BASE_URL
-	return candidate.replace(/\/$/, '')
+	return stripTrailingSlash(candidate)
 }
 
 /**
