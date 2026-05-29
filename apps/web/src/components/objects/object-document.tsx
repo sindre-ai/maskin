@@ -18,6 +18,7 @@ import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
+import { trackEvent } from '@/lib/analytics'
 import type {
 	ActorResponse,
 	EventResponse,
@@ -28,7 +29,7 @@ import type {
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, Trash2 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
@@ -288,6 +289,37 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	}, [object.id, deleteObject, navigate, workspaceId])
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	// Set when the user clicks Delete inside the dialog, so the dismissal that
+	// follows (mutation success → navigation, or any close) isn't counted as a
+	// cancel. Reset every time the dialog reopens.
+	const confirmedDeleteRef = useRef(false)
+
+	const openDeleteConfirm = useCallback(() => {
+		confirmedDeleteRef.current = false
+		trackEvent('delete_confirmation_shown', {
+			object_type: object.type,
+			object_id: object.id,
+		})
+		setConfirmDelete(true)
+	}, [object.type, object.id])
+
+	const handleDeleteOpenChange = useCallback(
+		(open: boolean) => {
+			if (!open && !confirmedDeleteRef.current) {
+				trackEvent('delete_confirmation_cancelled', {
+					object_type: object.type,
+					object_id: object.id,
+				})
+			}
+			setConfirmDelete(open)
+		},
+		[object.type, object.id],
+	)
+
+	const handleConfirmDelete = useCallback(() => {
+		confirmedDeleteRef.current = true
+		handleDelete()
+	}, [handleDelete])
 
 	const deleteActions = useMemo(
 		() => (
@@ -295,13 +327,13 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				variant="ghost"
 				size="icon"
 				className="h-7 w-7 text-muted-foreground hover:text-error"
-				onClick={() => setConfirmDelete(true)}
+				onClick={openDeleteConfirm}
 				aria-label={`Delete ${object.type}`}
 			>
 				<Trash2 size={15} />
 			</Button>
 		),
-		[object.type],
+		[object.type, openDeleteConfirm],
 	)
 
 	return (
@@ -309,9 +341,10 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 			<PageHeader actions={deleteActions} />
 			<DeleteConfirmDialog
 				open={confirmDelete}
-				onOpenChange={setConfirmDelete}
+				onOpenChange={handleDeleteOpenChange}
 				objectType={object.type}
-				onConfirm={handleDelete}
+				objectTitle={object.title}
+				onConfirm={handleConfirmDelete}
 				isPending={deleteObject.isPending}
 			/>
 			<ObjectDocumentView
@@ -338,21 +371,26 @@ export function DeleteConfirmDialog({
 	open,
 	onOpenChange,
 	objectType,
+	objectTitle,
 	onConfirm,
 	isPending,
 }: {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	objectType: string
+	objectTitle: string | null
 	onConfirm: () => void
 	isPending: boolean
 }) {
+	const description = objectTitle
+		? `This will permanently delete the ${objectType} '${objectTitle}'. This can't be undone.`
+		: `This will permanently delete this ${objectType}. This can't be undone.`
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-w-sm">
 				<DialogHeader>
 					<DialogTitle>Delete this {objectType}?</DialogTitle>
-					<DialogDescription>This action cannot be undone.</DialogDescription>
+					<DialogDescription>{description}</DialogDescription>
 				</DialogHeader>
 				<DialogFooter className="gap-2 sm:gap-0">
 					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
