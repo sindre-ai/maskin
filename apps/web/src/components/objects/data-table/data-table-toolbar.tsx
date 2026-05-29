@@ -4,8 +4,9 @@ import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
 import { Search, Upload } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
-import { type ColumnInfo, DataTableControls } from './data-table-controls'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ColumnInfo } from './data-table-controls'
+import { DisplayPanel } from './display-panel'
 
 interface Tab {
 	label: string
@@ -24,7 +25,7 @@ interface DataTableToolbarProps {
 	// Search
 	search?: string
 	onSearchChange: (value: string) => void
-	// Controls props
+	// Display panel props
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
 	statusesByType: Record<string, string[]>
@@ -83,6 +84,15 @@ export function DataTableToolbar({
 		}, 300)
 	}
 
+	// Flatten the per-type status map into a single list scoped to whatever
+	// types the current tab admits. When a single type is active this is the
+	// statuses for that type; when All is active it is the union of every
+	// enabled type's statuses, deduped, so the user can still filter.
+	const flatStatuses = useMemo(() => {
+		const all = Object.values(statusesByType).flat()
+		return Array.from(new Set(all))
+	}, [statusesByType])
+
 	return (
 		<div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
 			{/* Type tabs */}
@@ -118,14 +128,14 @@ export function DataTableToolbar({
 				/>
 			</div>
 
-			{/* Controls popover */}
-			<DataTableControls
+			{/* Display panel */}
+			<DisplayPanel
 				columns={columns}
 				columnVisibility={columnVisibility}
 				onColumnVisibilityChange={onColumnVisibilityChange}
 				statusFilter={statusFilter}
 				onStatusFilterChange={onStatusFilterChange}
-				statusesByType={statusesByType}
+				statuses={flatStatuses}
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={onOwnerFilterChange}
 				actors={actors}

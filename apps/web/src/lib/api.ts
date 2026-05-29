@@ -454,7 +454,7 @@ export const api = {
 				`/user-display-settings/${encodeURIComponent(objectType)}`,
 				{ workspaceId },
 			),
-		upsert: (workspaceId: string, objectType: string, settings: Record<string, unknown>) =>
+		upsert: (workspaceId: string, objectType: string, settings: DisplaySettingsBody) =>
 			request<UserDisplaySettingsResponse>(
 				`/user-display-settings/${encodeURIComponent(objectType)}`,
 				{ method: 'PUT', body: { settings }, workspaceId },
@@ -581,10 +581,22 @@ export interface UnreadResponse {
 	items: UnreadItem[]
 }
 
+export interface DisplaySettingsBody {
+	view?: 'list' | 'board'
+	sort?: string
+	order?: 'asc' | 'desc'
+	groupBy?: string | null
+	filters?: {
+		status?: string
+		owner?: string
+	}
+	columnVisibility?: Record<string, boolean>
+}
+
 export interface UserDisplaySettingsResponse {
 	object_type: string
 	name: string
-	settings: Record<string, unknown>
+	settings: DisplaySettingsBody
 	updated_at: string
 }
 

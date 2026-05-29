@@ -14,8 +14,12 @@ import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
 import { useBulkUpdateObjects } from '@/hooks/use-objects'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
 import { api } from '@/lib/api'
-import type { ObjectResponse } from '@/lib/api'
+import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
@@ -245,6 +249,91 @@ function ObjectsPage() {
 	const handleColumnVisibilityChange = useCallback((columnId: string, visible: boolean) => {
 		setColumnVisibility((prev) => ({ ...prev, [columnId]: visible }))
 	}, [])
+
+	// Per-actor display settings (persistence layer from Task 5).
+	// Hydration policy: when the user lands on a tab with persisted settings
+	// and the URL is in its default shape, apply the saved view. Once any
+	// tracked field changes we write the whole blob back. The All tab is not
+	// persisted because the persistence row is keyed by `object_type` —
+	// there is no slot for "all types".
+	const displaySettingsQuery = useUserDisplaySettings(workspaceId, typeFilter ?? '')
+	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
+	const hydratedTypesRef = useRef<Set<string>>(new Set())
+
+	const urlIsInDefaultShape = useMemo(
+		() =>
+			(!searchParams.sort || searchParams.sort === 'createdAt') &&
+			(!searchParams.order || searchParams.order === 'desc') &&
+			!searchParams.groupBy &&
+			!searchParams.status &&
+			!searchParams.owner,
+		[
+			searchParams.sort,
+			searchParams.order,
+			searchParams.groupBy,
+			searchParams.status,
+			searchParams.owner,
+		],
+	)
+
+	useEffect(() => {
+		if (!typeFilter) return
+		if (hydratedTypesRef.current.has(typeFilter)) return
+		if (!displaySettingsQuery.isSuccess) return
+		// Mark hydrated even if there are no persisted settings yet — that lets
+		// the write-through effect start tracking once the user makes their
+		// first change, without re-running this hydrate block.
+		hydratedTypesRef.current.add(typeFilter)
+		const persisted = displaySettingsQuery.data
+		if (!persisted || !urlIsInDefaultShape) return
+		const s = persisted.settings
+		const updates: Record<string, string | undefined> = {}
+		if (s.sort) updates.sort = s.sort
+		if (s.order) updates.order = s.order
+		if (s.groupBy) updates.groupBy = s.groupBy
+		if (s.filters?.status) updates.status = s.filters.status
+		if (s.filters?.owner) updates.owner = s.filters.owner
+		if (Object.keys(updates).length > 0) updateSearch(updates)
+		if (s.columnVisibility) setColumnVisibility(s.columnVisibility)
+	}, [
+		typeFilter,
+		displaySettingsQuery.isSuccess,
+		displaySettingsQuery.data,
+		urlIsInDefaultShape,
+		updateSearch,
+	])
+
+	// Write-through. Only fires after this type has been hydrated so the
+	// initial apply doesn't immediately re-write the same blob back.
+	useEffect(() => {
+		if (!typeFilter) return
+		if (!hydratedTypesRef.current.has(typeFilter)) return
+		const settings: DisplaySettingsBody = {
+			view: 'list',
+			sort,
+			order,
+			groupBy: groupBy ?? null,
+			columnVisibility,
+		}
+		const filters: { status?: string; owner?: string } = {}
+		if (statusFilter) filters.status = statusFilter
+		if (ownerFilter) filters.owner = ownerFilter
+		if (filters.status || filters.owner) settings.filters = filters
+
+		const handle = setTimeout(() => {
+			updateDisplaySettings.mutate({ objectType: typeFilter, settings })
+		}, 500)
+		return () => clearTimeout(handle)
+	}, [
+		typeFilter,
+		sort,
+		order,
+		groupBy,
+		statusFilter,
+		ownerFilter,
+		columnVisibility,
+		updateDisplaySettings,
+	])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 

@@ -1,4 +1,9 @@
-import { ApiError, type UserDisplaySettingsResponse, api } from '@/lib/api'
+import {
+	ApiError,
+	type DisplaySettingsBody,
+	type UserDisplaySettingsResponse,
+	api,
+} from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -35,7 +40,7 @@ export function useUpdateUserDisplaySettings(workspaceId: string) {
 			settings,
 		}: {
 			objectType: string
-			settings: Record<string, unknown>
+			settings: DisplaySettingsBody
 		}) => api.userDisplaySettings.upsert(workspaceId, objectType, settings),
 		onMutate: async ({ objectType, settings }) => {
 			const detailKey = queryKeys.userDisplaySettings.detail(workspaceId, objectType)
