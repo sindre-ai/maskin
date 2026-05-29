@@ -1,6 +1,7 @@
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { type AffectedObject, useSessionAffectedObjects } from '@/hooks/use-events'
-import { useSessionLogs } from '@/hooks/use-sessions'
+import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
+import { trackEvent } from '@/lib/analytics'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
@@ -195,6 +196,36 @@ function RawLogsView({ logs }: { logs: SessionLogResponse[] }) {
 
 type LogView = 'transcript' | 'raw'
 
+const RESTARTABLE_STATUSES = new Set(['failed', 'timeout', 'completed'])
+
+function RestartSessionButton({
+	session,
+	workspaceId,
+}: { session: SessionResponse; workspaceId: string }) {
+	const createSession = useCreateSession(workspaceId)
+	return (
+		<button
+			type="button"
+			className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+			disabled={createSession.isPending}
+			onClick={() => {
+				trackEvent('session_restart_clicked', {
+					source: 'session-detail-panel',
+					session_id: session.id,
+					actor_id: session.actorId,
+					prior_status: session.status,
+				})
+				createSession.mutate({
+					actor_id: session.actorId,
+					action_prompt: session.actionPrompt,
+				})
+			}}
+		>
+			{createSession.isPending ? 'Restarting…' : 'Restart'}
+		</button>
+	)
+}
+
 export function SessionDetailPanel({
 	session,
 	workspaceId,
@@ -247,6 +278,9 @@ export function SessionDetailPanel({
 						<div className="mt-4 space-y-3">
 							<div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm">
 								<SessionStatusBadge status={displayStatus} />
+								{RESTARTABLE_STATUSES.has(session.status) && (
+									<RestartSessionButton session={session} workspaceId={workspaceId} />
+								)}
 								{duration && (
 									<span className="text-muted-foreground flex items-center gap-1">
 										<Clock size={13} />
