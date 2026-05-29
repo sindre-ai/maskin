@@ -122,4 +122,25 @@ describe('ObjectDocument delete-confirmation instrumentation', () => {
 			expect.anything(),
 		)
 	})
+
+	it('fires delete_confirmation_cancelled when the user cancels after a failed delete', async () => {
+		// Without the onError reset, confirmedDeleteRef stays true after a
+		// failed mutation and the subsequent cancel is silently dropped.
+		mutateMock.mockImplementation((_id, options) => {
+			options?.onError?.(new Error('boom'))
+		})
+		const user = userEvent.setup()
+		const object = buildObjectResponse({ id: 'obj-d', type: 'bet', title: 'A bet' })
+		render(<ObjectDocument object={object} />)
+
+		await user.click(screen.getByRole('button', { name: /delete bet/i }))
+		await user.click(screen.getByRole('button', { name: /^delete$/i }))
+		trackEventMock.mockClear()
+		await user.click(screen.getByRole('button', { name: /cancel/i }))
+
+		expect(trackEventMock).toHaveBeenCalledWith('delete_confirmation_cancelled', {
+			object_type: 'bet',
+			object_id: 'obj-d',
+		})
+	})
 })
