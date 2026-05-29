@@ -267,6 +267,13 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
+	const [confirmDelete, setConfirmDelete] = useState(false)
+	// Set when the user clicks Delete inside the dialog, so the dismissal that
+	// follows (mutation success → navigation, or any close) isn't counted as a
+	// cancel. Reset every time the dialog reopens and on mutation error, so a
+	// cancel after a failed delete still emits the event.
+	const confirmedDeleteRef = useRef(false)
+
 	const handleDelete = useCallback(() => {
 		deleteObject.mutate(object.id, {
 			onSuccess: () => {
@@ -285,14 +292,11 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					}),
 				})
 			},
+			onError: () => {
+				confirmedDeleteRef.current = false
+			},
 		})
 	}, [object.id, deleteObject, navigate, workspaceId])
-
-	const [confirmDelete, setConfirmDelete] = useState(false)
-	// Set when the user clicks Delete inside the dialog, so the dismissal that
-	// follows (mutation success → navigation, or any close) isn't counted as a
-	// cancel. Reset every time the dialog reopens.
-	const confirmedDeleteRef = useRef(false)
 
 	const openDeleteConfirm = useCallback(() => {
 		confirmedDeleteRef.current = false
