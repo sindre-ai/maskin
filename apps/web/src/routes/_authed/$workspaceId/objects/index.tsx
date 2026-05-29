@@ -302,6 +302,9 @@ function ObjectsPage() {
 		if (s.filters?.status) updates.status = s.filters.status
 		if (s.filters?.owner) updates.owner = s.filters.owner
 		if (Object.keys(updates).length > 0) updateSearch(updates)
+		// Persisted blob wins: the saved map REPLACES the route's initial
+		// columnVisibility defaults (e.g. `{ createdBy: false }`). The user's
+		// last toggle is canonical — never merge old defaults back on top.
 		if (s.columnVisibility) setColumnVisibility(s.columnVisibility)
 	}, [
 		typeFilter,
