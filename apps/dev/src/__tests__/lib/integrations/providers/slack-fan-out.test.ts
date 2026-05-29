@@ -334,6 +334,56 @@ describe('slackWebhookFanOut', () => {
 		expect(maxInFlight).toBeGreaterThanOrEqual(2)
 	})
 
+	it('rejects files whose host is not on the Slack allow-list and persists the rest', async () => {
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			status: 200,
+			arrayBuffer: () => Promise.resolve(new TextEncoder().encode('ok').buffer),
+		} as unknown as Response)
+
+		const { db } = makeFakeDb({
+			id: 'int-1',
+			provider: 'slack',
+			workspaceId: 'ws-1',
+			config: { system_actor_id: 'actor-1' },
+		})
+		const storage = makeFakeStorage()
+
+		const result = await slackWebhookFanOut({
+			db: db as never,
+			storage,
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized: makeEvent([
+				{
+					id: 'F-EVIL',
+					name: 'evil.png',
+					mimetype: 'image/png',
+					url_private: 'https://attacker.example.com/files-pri/T1-F-EVIL/evil.png',
+				},
+				{
+					id: 'F-OK',
+					name: 'ok.png',
+					mimetype: 'image/png',
+					url_private: 'https://files.slack.com/files-pri/T1-F-OK/ok.png',
+				},
+			]),
+		})
+
+		const data = result[0]?.data as Record<string, unknown>
+		const fileIds = data.maskin_file_ids as string[]
+		expect(fileIds).toHaveLength(1)
+		expect(storage.puts).toHaveLength(1)
+
+		// The off-allow-list URL must never reach fetch — that's the whole point.
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
+		const calledUrl = fetchSpy.mock.calls[0]?.[0]
+		expect(String(calledUrl)).toContain('files.slack.com')
+	})
+
 	it('returns the event unchanged when token refresh throws', async () => {
 		// Regression guard: an unexpected throw (DB lookup, token refresh) must
 		// not drop the entire message — the route swallows fan-out errors and
