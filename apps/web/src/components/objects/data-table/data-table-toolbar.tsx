@@ -135,6 +135,7 @@ export function DataTableToolbar({
 				onOrderChange={onOrderChange}
 				groupBy={groupBy}
 				onGroupByChange={onGroupByChange}
+				analyticsSource="objects-page"
 			/>
 
 			{/* Import */}

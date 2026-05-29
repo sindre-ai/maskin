@@ -4,7 +4,7 @@ import {
 } from '@/components/objects/data-table/data-table-controls'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const defaultColumns: ColumnInfo[] = [
 	{ id: 'title', label: 'Title', canHide: false },
@@ -145,5 +145,73 @@ describe('DataTableControls', () => {
 		await user.click(screen.getByRole('button', { name: /controls/i }))
 		await user.click(screen.getByRole('button', { name: 'None' }))
 		expect(props.onGroupByChange).toHaveBeenCalledWith(undefined)
+	})
+
+	describe('analytics instrumentation', () => {
+		beforeEach(() => {
+			vi.spyOn(console, 'info').mockImplementation(() => {})
+		})
+
+		afterEach(() => {
+			vi.restoreAllMocks()
+		})
+
+		function lastTrackedPayload() {
+			const calls = vi.mocked(console.info).mock.calls
+			return calls[calls.length - 1]?.[1] as Record<string, unknown> | undefined
+		}
+
+		it('emits no events when analyticsSource is not set', async () => {
+			const user = userEvent.setup()
+			renderControls({ statusesByType: { bet: ['active'] } })
+
+			await user.click(screen.getByRole('button', { name: /controls/i }))
+			const checkboxes = screen.getAllByRole('checkbox')
+			await user.click(checkboxes[0])
+
+			expect(console.info).not.toHaveBeenCalled()
+		})
+
+		it('emits a tagged event on status filter change', async () => {
+			const user = userEvent.setup()
+			renderControls({
+				analyticsSource: 'objects-page',
+				statusesByType: { bet: ['active'] },
+			})
+
+			await user.click(screen.getByRole('button', { name: /controls/i }))
+			await user.click(screen.getAllByRole('checkbox')[0])
+
+			expect(lastTrackedPayload()).toMatchObject({
+				name: 'objects_control_changed',
+				source: 'objects-page',
+				control: 'status_filter',
+				value: 'active',
+			})
+		})
+
+		it('emits on sort_by, sort_order, group_by, and column_visibility', async () => {
+			const user = userEvent.setup()
+			renderControls({ analyticsSource: 'objects-page', order: 'desc' })
+
+			await user.click(screen.getByRole('button', { name: /controls/i }))
+
+			const statusButtons = screen.getAllByRole('button', { name: 'Status' })
+			await user.click(statusButtons[0])
+			expect(lastTrackedPayload()).toMatchObject({ control: 'sort_by', value: 'status' })
+
+			await user.click(screen.getByRole('button', { name: /descending/i }))
+			expect(lastTrackedPayload()).toMatchObject({ control: 'sort_order', value: 'asc' })
+
+			await user.click(statusButtons[1])
+			expect(lastTrackedPayload()).toMatchObject({ control: 'group_by', value: 'status' })
+
+			const checkboxes = screen.getAllByRole('checkbox')
+			await user.click(checkboxes[0])
+			expect(lastTrackedPayload()).toMatchObject({
+				control: 'column_visibility',
+				value: 'status:hide',
+			})
+		})
 	})
 })
