@@ -30,14 +30,6 @@ export interface ToolCallEvent {
 	session_id: string
 	has_rich_render: boolean
 	duration_ms: number
-	// Response size fields powering the bet's secondary metric
-	// (tokens-per-tool-result, target ≥60% reduction). `content_tokens` is an
-	// estimate via `Math.ceil(content_bytes / 4)` — Anthropic's docs put a token
-	// at ~4 chars for English/code; good enough for trend comparison, not exact
-	// billing. Omitted when the wrapper could not measure (e.g. tool threw).
-	content_bytes?: number
-	content_tokens?: number
-	structured_content_bytes?: number
 }
 
 export interface MutationEvent {
@@ -95,9 +87,6 @@ export function recordToolCall(
 		has_rich_render: boolean
 		duration_ms: number
 		workspace_id?: string
-		content_bytes?: number
-		content_tokens?: number
-		structured_content_bytes?: number
 	},
 ): void {
 	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
@@ -108,68 +97,9 @@ export function recordToolCall(
 			session_id: SESSION_ID,
 			has_rich_render: event.has_rich_render,
 			duration_ms: Math.max(0, Math.round(event.duration_ms)),
-			...(event.content_bytes !== undefined && {
-				content_bytes: Math.max(0, Math.round(event.content_bytes)),
-			}),
-			...(event.content_tokens !== undefined && {
-				content_tokens: Math.max(0, Math.round(event.content_tokens)),
-			}),
-			...(event.structured_content_bytes !== undefined && {
-				structured_content_bytes: Math.max(0, Math.round(event.structured_content_bytes)),
-			}),
 		},
 		cfg,
 	)
-}
-
-/**
- * Measure the byte cost of an MCP tool response and the rough token cost of
- * the in-chat `content` surface. Token estimate is `Math.ceil(bytes / 4)` —
- * the long-standing Anthropic rule-of-thumb for English/code text. Good for
- * trend comparison (e.g. "did the lean format cut tokens by 60%?"), not for
- * exact billing.
- *
- * Returns `undefined` fields when the response shape can't be measured (e.g.
- * non-array content, missing structuredContent) so the wrapper records the
- * call without polluting averages with zeros.
- */
-export function measureToolResponse(response: unknown): {
-	content_bytes?: number
-	content_tokens?: number
-	structured_content_bytes?: number
-} {
-	const result: {
-		content_bytes?: number
-		content_tokens?: number
-		structured_content_bytes?: number
-	} = {}
-	if (!response || typeof response !== 'object') return result
-	const r = response as { content?: unknown; structuredContent?: unknown }
-	if (Array.isArray(r.content)) {
-		let bytes = 0
-		for (const part of r.content) {
-			if (
-				part &&
-				typeof part === 'object' &&
-				typeof (part as { text?: unknown }).text === 'string'
-			) {
-				bytes += Buffer.byteLength((part as { text: string }).text, 'utf8')
-			}
-		}
-		result.content_bytes = bytes
-		result.content_tokens = Math.ceil(bytes / 4)
-	}
-	if (r.structuredContent && typeof r.structuredContent === 'object') {
-		try {
-			result.structured_content_bytes = Buffer.byteLength(
-				JSON.stringify(r.structuredContent),
-				'utf8',
-			)
-		} catch {
-			// Circular references — leave the field unset rather than crash.
-		}
-	}
-	return result
 }
 
 export function recordMutation(

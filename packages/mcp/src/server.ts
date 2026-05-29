@@ -18,23 +18,10 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { deepLink } from './deep-link.js'
-import {
-	type FormattedResult,
-	type FormatterContext,
-	escapeMd,
-	formatMutationConfirm,
-	formatObjectBatch,
-	formatObjectList,
-	formatSearchHits,
-	formatUnreadDigest,
-	formatWorkspaceSummary,
-} from './formatters.js'
 import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
-	measureToolResponse,
 	recordMutation,
 	recordToolCall,
 } from './telemetry.js'
@@ -76,115 +63,6 @@ function meta(toolName: string, config: McpConfig, workspaceId?: string): Record
 	const ws = workspaceId ?? config.defaultWorkspaceId
 	if (ws) m.workspaceId = ws
 	return m
-}
-
-/**
- * Build the formatter context for the current tool invocation. Resolves the
- * effective workspace id (caller-passed → DEFAULT_WORKSPACE_ID) and threads the
- * web-app base URL so every deep link the formatter emits routes through the
- * Task 1 click-tracking redirect at `<base>/r/...`.
- */
-function buildFormatterContext(
-	toolName: string,
-	config: McpConfig,
-	workspaceId: string | undefined,
-): FormatterContext {
-	return {
-		workspaceId: workspaceId ?? config.defaultWorkspaceId,
-		tool: toolName,
-		baseUrl: config.webAppBaseUrl,
-	}
-}
-
-/**
- * MCP `structuredContent` must be a JSON object (`Record<string, unknown>`).
- * Formatter outputs can be arrays (lists, search hits, batches) — wrap those in
- * `{ items: ... }` so the SDK accepts the payload without losing the raw JSON.
- * Object payloads pass through unchanged; arrays become `{ items: [...] }`,
- * which matches the convention used by every list-shaped tool's wire format.
- */
-function asStructuredContent(value: unknown): { [k: string]: unknown } {
-	if (value && typeof value === 'object' && !Array.isArray(value)) {
-		return value as { [k: string]: unknown }
-	}
-	return { items: value }
-}
-
-/**
- * Wrap a `FormattedResult` into the MCP `CallToolResult` shape: lean markdown
- * in `content[0].text`, raw JSON in `structuredContent`, `_meta` carrying the
- * tool name + workspace for the rich-render card runtime.
- */
-function leanReply(
-	toolName: string,
-	formatted: FormattedResult,
-	config: McpConfig,
-	workspaceId: string | undefined,
-) {
-	return {
-		_meta: meta(toolName, config, workspaceId),
-		content: [{ type: 'text' as const, text: formatted.content }],
-		structuredContent: asStructuredContent(formatted.structuredContent),
-	}
-}
-
-const GENERIC_LIST_LIMIT = 25
-
-/**
- * Render an array of API rows as a lean `FormattedResult` for tools without a
- * purpose-built formatter (actors, files, triggers, sessions, …). Header names
- * the count and links into the appropriate maskin.app surface; up to 25 rows
- * follow as one-liners produced by the supplied `row` renderer. Empty lists
- * render as a single italic "no X." line. Caller supplies the row count noun
- * (singular `label`) and the deep-link spec so click telemetry attributes back
- * to the originating tool.
- */
-function formatGenericList<T>(
-	rows: T[],
-	opts: {
-		label: string
-		row: (item: T) => string
-		linkInput: Parameters<typeof deepLink>[0]
-		linkText?: string
-		emptyText?: string
-	},
-): FormattedResult {
-	const count = rows.length
-	const noun = count === 1 ? opts.label : `${opts.label}s`
-	const linkText = opts.linkText ?? 'open in Maskin'
-	const url = deepLink(opts.linkInput)
-	const header = `**${count} ${noun}** — [${linkText}](${url})`
-	if (count === 0) {
-		const empty = opts.emptyText ?? `_No ${noun}._`
-		return { content: `${header}\n\n${empty}`, structuredContent: { items: rows } }
-	}
-	const shown = rows.slice(0, GENERIC_LIST_LIMIT)
-	const lines = [header, ...shown.map(opts.row)]
-	if (rows.length > shown.length) lines.push(`…and ${rows.length - shown.length} more`)
-	return { content: lines.join('\n'), structuredContent: { items: rows } }
-}
-
-/**
- * Single-record `FormattedResult` for tools that return one row without a
- * matching formatter (`get_actor`, `get_file`, `get_session`, `get_workspace_skill`,
- * `get_llm_api_keys`, …). `title` is the H4 headline, `meta` the italic
- * sub-line; both can be empty strings to skip rendering.
- */
-function formatGenericRecord(
-	record: unknown,
-	opts: {
-		title: string
-		meta?: string
-		linkInput: Parameters<typeof deepLink>[0]
-	},
-): FormattedResult {
-	const url = deepLink(opts.linkInput)
-	const lines: string[] = [`#### [${escapeMd(opts.title)}](${url})`]
-	if (opts.meta) lines.push(`_${escapeMd(opts.meta)}_`)
-	return {
-		content: lines.join('\n'),
-		structuredContent: asStructuredContent(record),
-	}
 }
 
 function authSetupHint(config: McpConfig): string {
@@ -784,39 +662,42 @@ function extractWorkspaceId(args: unknown): string | undefined {
  * count one mutation event per call when at least one inner item explicitly
  * reports success.
  *
- * Reads from `structuredContent` (the lean-results JSON payload added in Task 4)
- * since `content[0].text` is now markdown, not JSON. Arrays of per-target
- * results live under `structuredContent.items`; single-record payloads are the
- * object itself. Defaults to `false` for unrecognised shapes — over-counting
- * biases the bet's "20% of sessions include at least one mutation" metric
- * upward, so unknown responses are treated as "not a confirmed mutation".
+ * Defaults to `false` for unrecognised shapes. Over-counting biases the bet's
+ * "20% of sessions include at least one mutation" metric upward, so unknown
+ * responses are treated as "not a confirmed mutation" rather than assuming
+ * success.
  */
 function isSuccessfulMutationResponse(response: unknown): boolean {
 	if (!response || typeof response !== 'object') return false
 	if ((response as { isError?: unknown }).isError === true) return false
-	const sc = (response as { structuredContent?: unknown }).structuredContent
-	if (!sc || typeof sc !== 'object') return false
-	// Per-target aggregation (update_objects-style) — array under `items`.
-	const items = (sc as { items?: unknown }).items
-	if (Array.isArray(items)) {
-		return items.some((entry) => {
+	const content = (response as { content?: unknown }).content
+	if (!Array.isArray(content) || content.length === 0) return false
+	const first = content[0] as { type?: string; text?: string } | undefined
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return false
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(first.text)
+	} catch {
+		return false
+	}
+	if (Array.isArray(parsed)) {
+		// Per-target aggregation (update_objects-style). The call counts when
+		// at least one entry explicitly reports success === true.
+		return parsed.some((entry) => {
 			if (!entry || typeof entry !== 'object') return false
 			return (entry as { success?: unknown }).success === true
 		})
 	}
-	// Graph response (`create_objects`): the full graph payload replaces the
-	// items wrapper, so check the `nodes` array as the success signal. Without
-	// this branch the most-common write tool's telemetry silently drops to zero.
-	const nodes = (sc as { nodes?: unknown }).nodes
-	if (Array.isArray(nodes)) return nodes.length > 0
-	// Single-record payload.
-	const obj = sc as { success?: unknown; error?: unknown; id?: unknown; skipped?: unknown }
-	if (obj.success === true) return true
-	if (obj.success === false) return false
-	// No explicit success flag — count if the payload has no `error` and looks
-	// like a record (has an `id`). Skipped no-ops report `skipped: true`.
-	if (obj.skipped === true) return false
-	return obj.error == null && typeof obj.id === 'string'
+	if (parsed && typeof parsed === 'object') {
+		const obj = parsed as { success?: unknown; error?: unknown; id?: unknown }
+		if (obj.success === true) return true
+		if (obj.success === false) return false
+		// No explicit success flag — accept as confirmed only if the payload has
+		// no `error` field and looks like a record (has an `id`). Anything else
+		// stays uncounted.
+		return obj.error == null && typeof obj.id === 'string'
+	}
+	return false
 }
 
 /** Best-effort object_type label for the mutation event. */
@@ -896,15 +777,11 @@ export function createMcpServer(config: McpConfig) {
 			const responseHasRichRender =
 				defHasRichRender || Boolean(responseMeta && 'ui' in responseMeta)
 
-			const sizes = measureToolResponse(response)
 			recordToolCall(telemetrySink, telemetryTarget, {
 				tool_name: name,
 				has_rich_render: responseHasRichRender,
 				duration_ms: Date.now() - start,
 				workspace_id: extractWorkspaceId(args),
-				content_bytes: sizes.content_bytes,
-				content_tokens: sizes.content_tokens,
-				structured_content_bytes: sizes.structured_content_bytes,
 			})
 
 			if (mutationKind && isSuccessfulMutationResponse(response)) {
@@ -1027,40 +904,9 @@ export function createMcpServer(config: McpConfig) {
 				? { ...graphResult, file_attachments: fileAttachments }
 				: graphResult
 
-			const ctx = buildFormatterContext('create_objects', config, workspace_id)
-			const createdNodes = graphResult.nodes ?? []
-			const confirmResults: Parameters<typeof formatMutationConfirm>[0]['results'] =
-				createdNodes.map((n) => ({
-					type: n.type,
-					id: n.id,
-					success: true,
-					result: { id: n.id, type: n.type },
-				}))
-			for (const a of fileAttachments) {
-				confirmResults.push({
-					type: a.type,
-					id: a.id,
-					success: a.success,
-					error: a.error,
-				})
-			}
 			return {
-				...leanReply(
-					'create_objects',
-					formatMutationConfirm(
-						{
-							verb: `Created ${createdNodes.length} object${createdNodes.length === 1 ? '' : 's'}`,
-							results: confirmResults,
-						},
-						ctx,
-					),
-					config,
-					workspace_id,
-				),
-				// Override structuredContent so callers still get the full graph response
-				// (nodes + edges + per-file attachments) instead of just the verbal
-				// confirm list.
-				structuredContent: asStructuredContent(responseBody),
+				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
 			}
 		},
 	)
@@ -1081,18 +927,16 @@ export function createMcpServer(config: McpConfig) {
 						const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
 							workspaceId: workspace_id,
 						})
-						return {
-							id,
-							success: true,
-							result: result as Parameters<typeof formatObjectBatch>[0][number]['result'],
-						}
+						return { id, success: true, result }
 					} catch (error) {
 						return { id, success: false, error: String(error) }
 					}
 				}),
 			)
-			const ctx = buildFormatterContext('get_objects', config, workspace_id)
-			return leanReply('get_objects', formatObjectBatch(results, ctx), config, workspace_id)
+			return {
+				_meta: meta('get_objects', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+			}
 		},
 	)
 
@@ -1331,28 +1175,9 @@ export function createMcpServer(config: McpConfig) {
 				results.push(...edgeResults)
 			}
 
-			const ctx = buildFormatterContext('update_objects', config, workspace_id)
-			// `results` carries `result: unknown` from the API call, which the
-			// mutation-confirm formatter's stricter shape rejects — strip it before
-			// handing off. The full untyped payload still flows through
-			// structuredContent below.
-			const confirmResults: Parameters<typeof formatMutationConfirm>[0]['results'] = results.map(
-				(r) => ({
-					type: r.type,
-					id: r.id,
-					success: r.success,
-					skipped: r.skipped,
-					error: r.error,
-				}),
-			)
 			return {
-				...leanReply(
-					'update_objects',
-					formatMutationConfirm({ verb: 'Updated objects', results: confirmResults }, ctx),
-					config,
-					workspace_id,
-				),
-				structuredContent: asStructuredContent({ items: results }),
+				_meta: meta('update_objects', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
 			}
 		},
 	)
@@ -1369,26 +1194,10 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'DELETE', `/api/objects/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
-			const ctx = buildFormatterContext('delete_object', config, args.workspace_id)
-			return leanReply(
-				'delete_object',
-				formatMutationConfirm(
-					{
-						verb: 'Deleted object',
-						results: [
-							{
-								type: 'object',
-								id: args.id,
-								success: true,
-								result: result as Record<string, unknown>,
-							},
-						],
-					},
-					ctx,
-				),
-				config,
-				args.workspace_id,
-			)
+			return {
+				_meta: meta('delete_object', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -1406,11 +1215,13 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Parameters<typeof formatObjectList>[0]
-			const ctx = buildFormatterContext('list_objects', config, args.workspace_id)
-			return leanReply('list_objects', formatObjectList(result, ctx), config, args.workspace_id)
+			})
+			return {
+				_meta: meta('list_objects', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -1429,16 +1240,13 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Parameters<typeof formatObjectList>[0]
-			const ctx = buildFormatterContext('search_objects', config, args.workspace_id)
-			return leanReply(
-				'search_objects',
-				formatSearchHits({ q: args.q, hits: result, type: args.type }, ctx),
-				config,
-				args.workspace_id,
-			)
+			})
+			return {
+				_meta: meta('search_objects', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -1457,36 +1265,13 @@ export function createMcpServer(config: McpConfig) {
 			if (args.source_id) params.set('source_id', args.source_id)
 			if (args.target_id) params.set('target_id', args.target_id)
 			if (args.type) params.set('type', args.type)
-			const result = (await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/relationships?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Array<{
-				id: string
-				sourceTitle?: string | null
-				targetTitle?: string | null
-				type: string
-				sourceId: string
-				targetId: string
-			}>
-			const ctx = buildFormatterContext('list_relationships', config, args.workspace_id)
-			return leanReply(
-				'list_relationships',
-				formatGenericList(result, {
-					label: 'relationship',
-					row: (r) => {
-						const s = escapeMd(r.sourceTitle?.trim() || r.sourceId.slice(0, 8))
-						const t = escapeMd(r.targetTitle?.trim() || r.targetId.slice(0, 8))
-						return `- ${s} → \`${escapeMd(r.type)}\` → ${t}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'workspace',
-						tool: 'list_relationships',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				args.workspace_id,
-			)
+			})
+			return {
+				_meta: meta('list_relationships', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -1502,26 +1287,14 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'DELETE', `/api/relationships/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
-			const ctx = buildFormatterContext('delete_relationship', config, args.workspace_id)
-			return leanReply(
-				'delete_relationship',
-				formatMutationConfirm(
-					{
-						verb: 'Deleted relationship',
-						results: [
-							{
-								type: 'relationship',
-								id: args.id,
-								success: true,
-								result: result as Record<string, unknown>,
-							},
-						],
-					},
-					ctx,
+			return {
+				_meta: meta(
+					'delete_relationship',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				config,
-				args.workspace_id,
-			)
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -1556,30 +1329,9 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
-			const ctx = buildFormatterContext('create_actor', config, workspace_id)
-			const actorId = typeof result.id === 'string' ? result.id : undefined
 			return {
-				...leanReply(
-					'create_actor',
-					formatMutationConfirm(
-						{
-							verb: 'Created actor',
-							results: [
-								{
-									type: 'actor',
-									id: actorId,
-									success: true,
-									result: { id: actorId, type: 'actor' } as Record<string, unknown>,
-								},
-							],
-							section: targetWorkspace ? 'members' : undefined,
-						},
-						ctx,
-					),
-					config,
-					workspace_id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -1593,45 +1345,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const result = (
-				args.workspace_id
-					? await apiCall(config, 'GET', '/api/actors', undefined, {
-							workspaceId: args.workspace_id,
-						})
-					: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
-			) as Array<{
-				id: string
-				type: 'human' | 'agent'
-				name: string
-				email?: string | null
-				role?: string
-			}>
-			const ctx = buildFormatterContext('list_actors', config, args.workspace_id)
-			return leanReply(
-				'list_actors',
-				formatGenericList(result, {
-					label: 'actor',
-					row: (a) => {
-						const url = deepLink({
-							workspaceId: ctx.workspaceId,
-							kind: 'actor',
-							id: a.id,
-							tool: 'list_actors',
-							baseUrl: ctx.baseUrl,
-						})
-						const tag = a.email ? `${escapeMd(a.type)} • ${escapeMd(a.email)}` : escapeMd(a.type)
-						return `- [${escapeMd(a.name || a.id.slice(0, 8))}](${url}) — ${tag}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'actor',
-						tool: 'list_actors',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				args.workspace_id,
-			)
+			const result = args.workspace_id
+				? await apiCall(config, 'GET', '/api/actors', undefined, {
+						workspaceId: args.workspace_id,
+					})
+				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
+			return {
+				_meta: meta('list_actors', config),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -1644,30 +1366,13 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
 				skipWorkspace: true,
-			})) as { id: string; name?: string | null; type: 'human' | 'agent'; email?: string | null }
-			// get_actor's schema doesn't declare `workspace_id` (actors aren't
-			// workspace-scoped), so we read it through a structural cast for the
-			// deep-link context — same pattern the surrounding handlers use.
-			const wsHint = (args as { workspace_id?: string }).workspace_id
-			const ctx = buildFormatterContext('get_actor', config, wsHint)
-			return leanReply(
-				'get_actor',
-				formatGenericRecord(result, {
-					title: result.name?.trim() || `${result.type} ${result.id.slice(0, 8)}`,
-					meta: result.email ? `${result.type} • ${result.email}` : result.type,
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'actor',
-						id: result.id,
-						tool: 'get_actor',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				wsHint,
-			)
+			})
+			return {
+				_meta: meta('get_actor', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -1681,25 +1386,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { id, ...body } = args
-			const result = (await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
+			const result = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
 				skipWorkspace: true,
-			})) as Record<string, unknown>
-			const wsHint = (args as { workspace_id?: string }).workspace_id
-			const ctx = buildFormatterContext('update_actor', config, wsHint)
+			})
 			return {
-				...leanReply(
-					'update_actor',
-					formatMutationConfirm(
-						{
-							verb: 'Updated actor',
-							results: [{ type: 'actor', id, success: true, result: { id, type: 'actor' } }],
-						},
-						ctx,
-					),
-					config,
-					wsHint,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -1713,27 +1405,12 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'POST', `/api/actors/${args.id}/api-keys`, undefined, {
+			const result = await apiCall(config, 'POST', `/api/actors/${args.id}/api-keys`, undefined, {
 				skipWorkspace: true,
-			})) as Record<string, unknown>
-			const wsHint = (args as { workspace_id?: string }).workspace_id
-			const ctx = buildFormatterContext('regenerate_api_key', config, wsHint)
+			})
 			return {
-				...leanReply(
-					'regenerate_api_key',
-					formatMutationConfirm(
-						{
-							verb: 'Rotated API key',
-							results: [{ type: 'actor', id: args.id, success: true, result: { id: args.id } }],
-						},
-						ctx,
-					),
-					config,
-					wsHint,
-				),
-				// The new API key only ever exists in this response — preserve the full
-				// payload so callers can still read `apiKey` from structuredContent.
-				structuredContent: asStructuredContent(result),
+				_meta: meta('regenerate_api_key', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -1748,28 +1425,12 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'POST', '/api/workspaces', args, {
+			const result = await apiCall(config, 'POST', '/api/workspaces', args, {
 				skipWorkspace: true,
-			})) as { id?: string; name?: string }
-			const wsId = result.id
-			const ctx = buildFormatterContext('create_workspace', config, wsId)
+			})
 			return {
-				...leanReply(
-					'create_workspace',
-					formatMutationConfirm(
-						{
-							verb: 'Created workspace',
-							// `formatMutationConfirm` links to the first successful object via
-							// its `object` deep-link; for workspaces we want the workspace
-							// link instead, so we leave `results[0].result.id` unset.
-							results: [{ type: 'workspace', id: result.id, success: true }],
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('create_workspace', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -1784,24 +1445,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { id, ...body } = args
-			const result = (await apiCall(config, 'PATCH', `/api/workspaces/${id}`, body, {
+			const result = await apiCall(config, 'PATCH', `/api/workspaces/${id}`, body, {
 				skipWorkspace: true,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('update_workspace', config, id)
+			})
 			return {
-				...leanReply(
-					'update_workspace',
-					formatMutationConfirm(
-						{
-							verb: 'Updated workspace',
-							results: [{ type: 'workspace', id, success: true }],
-						},
-						ctx,
-					),
-					config,
-					id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('update_workspace', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -1815,48 +1464,13 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async () => {
-			const result = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+			const result = await apiCall(config, 'GET', '/api/workspaces', undefined, {
 				skipWorkspace: true,
-			})) as Array<{ id: string; name: string }>
-			// `list_workspaces` is the only tool that may operate without a default
-			// workspace (it's how callers find one). Skip the formatter context, which
-			// would otherwise blow up on an empty workspaceId. The header link goes
-			// to the first workspace in the list, falling back to a relative path.
-			const fallback = result[0]
-			const url = fallback
-				? deepLink({
-						workspaceId: fallback.id,
-						kind: 'workspace',
-						tool: 'list_workspaces',
-						baseUrl: config.webAppBaseUrl,
-					})
-				: undefined
-			const header = url
-				? `**${result.length} workspace${result.length === 1 ? '' : 's'}** — [open in Maskin](${url})`
-				: `**${result.length} workspace${result.length === 1 ? '' : 's'}**`
-			const rows = result.slice(0, GENERIC_LIST_LIMIT).map((w) => {
-				const link = deepLink({
-					workspaceId: w.id,
-					kind: 'workspace',
-					tool: 'list_workspaces',
-					baseUrl: config.webAppBaseUrl,
-				})
-				return `- [${escapeMd(w.name)}](${link})`
 			})
-			const more =
-				result.length > GENERIC_LIST_LIMIT
-					? [`…and ${result.length - GENERIC_LIST_LIMIT} more`]
-					: []
-			const content =
-				result.length === 0
-					? `${header}\n\n_No workspaces._`
-					: [header, ...rows, ...more].join('\n')
-			return leanReply(
-				'list_workspaces',
-				{ content, structuredContent: { items: result } },
-				config,
-				undefined,
-			)
+			return {
+				_meta: meta('list_workspaces', config),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -1915,28 +1529,14 @@ export function createMcpServer(config: McpConfig) {
 
 			schema.types = typeSchemas
 
-			const ctx = buildFormatterContext('get_workspace_schema', config, workspace.id)
-			return leanReply(
-				'get_workspace_schema',
-				formatWorkspaceSummary(
-					{
-						workspace_id: workspace.id,
-						workspace_name: workspace.name,
-						relationship_types: relationshipTypes,
-						types: typeSchemas as Record<
-							string,
-							{
-								display_name?: string
-								statuses?: string[]
-								fields?: Array<{ name: string; type: string }>
-							}
-						>,
-					},
-					ctx,
+			return {
+				_meta: meta(
+					'get_workspace_schema',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				config,
-				workspace.id,
-			)
+				content: [{ type: 'text' as const, text: JSON.stringify(schema, null, 2) }],
+			}
 		},
 	)
 
@@ -1949,29 +1549,20 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(
+			const result = await apiCall(
 				config,
 				'POST',
 				`/api/workspaces/${args.workspace_id}/members`,
 				{ actor_id: args.actor_id, role: args.role },
 				{ skipWorkspace: true },
-			)) as Record<string, unknown>
-			const ctx = buildFormatterContext('add_workspace_member', config, args.workspace_id)
+			)
 			return {
-				...leanReply(
+				_meta: meta(
 					'add_workspace_member',
-					formatMutationConfirm(
-						{
-							verb: 'Added member',
-							results: [{ type: 'member', id: args.actor_id, success: true }],
-							section: 'members',
-						},
-						ctx,
-					),
 					config,
-					args.workspace_id,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				structuredContent: asStructuredContent(result),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2109,26 +1700,14 @@ export function createMcpServer(config: McpConfig) {
 				return [...current, next]
 			})
 			const created = updatedFields.find((f) => f.name === args.name)
-			const ctx = buildFormatterContext('create_workspace_field', config, wsId)
 			return {
-				...leanReply(
-					'create_workspace_field',
-					formatMutationConfirm(
-						{
-							verb: `Created field "${args.name}"`,
-							results: [{ type: 'field', id: args.name, success: true }],
-							section: 'objects',
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent({
-					workspace_id: wsId,
-					type: args.type,
-					field: created,
-				}),
+				_meta: meta('create_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: created }, null, 2),
+					},
+				],
 			}
 		},
 	)
@@ -2178,26 +1757,14 @@ export function createMcpServer(config: McpConfig) {
 			})
 			const renamed = args.new_name ?? args.name
 			const updated = updatedFields.find((f) => f.name === renamed)
-			const ctx = buildFormatterContext('update_workspace_field', config, wsId)
 			return {
-				...leanReply(
-					'update_workspace_field',
-					formatMutationConfirm(
-						{
-							verb: `Updated field "${args.name}"`,
-							results: [{ type: 'field', id: renamed, success: true }],
-							section: 'objects',
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent({
-					workspace_id: wsId,
-					type: args.type,
-					field: updated,
-				}),
+				_meta: meta('update_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
 			}
 		},
 	)
@@ -2214,27 +1781,18 @@ export function createMcpServer(config: McpConfig) {
 			const { wsId } = await patchFieldDefinitions(args, (current) =>
 				current.filter((f) => f.name !== args.name),
 			)
-			const ctx = buildFormatterContext('delete_workspace_field', config, wsId)
 			return {
-				...leanReply(
-					'delete_workspace_field',
-					formatMutationConfirm(
-						{
-							verb: `Deleted field "${args.name}"`,
-							results: [{ type: 'field', id: args.name, success: true }],
-							section: 'objects',
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent({
-					workspace_id: wsId,
-					type: args.type,
-					deleted: args.name,
-					success: true,
-				}),
+				_meta: meta('delete_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{ workspace_id: wsId, type: args.type, deleted: args.name, success: true },
+							null,
+							2,
+						),
+					},
+				],
 			}
 		},
 	)
@@ -2261,26 +1819,14 @@ export function createMcpServer(config: McpConfig) {
 				return copy
 			})
 			const updated = updatedFields.find((f) => f.name === args.name)
-			const ctx = buildFormatterContext('add_workspace_enum_value', config, wsId)
 			return {
-				...leanReply(
-					'add_workspace_enum_value',
-					formatMutationConfirm(
-						{
-							verb: `Added enum value "${args.value}"`,
-							results: [{ type: 'enum_value', id: args.value, success: true }],
-							section: 'objects',
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent({
-					workspace_id: wsId,
-					type: args.type,
-					field: updated,
-				}),
+				_meta: meta('add_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
 			}
 		},
 	)
@@ -2307,26 +1853,14 @@ export function createMcpServer(config: McpConfig) {
 				return copy
 			})
 			const updated = updatedFields.find((f) => f.name === args.name)
-			const ctx = buildFormatterContext('remove_workspace_enum_value', config, wsId)
 			return {
-				...leanReply(
-					'remove_workspace_enum_value',
-					formatMutationConfirm(
-						{
-							verb: `Removed enum value "${args.value}"`,
-							results: [{ type: 'enum_value', id: args.value, success: true }],
-							section: 'objects',
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent({
-					workspace_id: wsId,
-					type: args.type,
-					field: updated,
-				}),
+				_meta: meta('remove_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
 			}
 		},
 	)
@@ -2352,26 +1886,17 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = (await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
 				workspaceId: wsId,
-			})) as Array<{ name: string; description?: string | null }>
-			const ctx = buildFormatterContext('list_workspace_skills', config, wsId)
-			return leanReply(
-				'list_workspace_skills',
-				formatGenericList(result, {
-					label: 'skill',
-					row: (s) => `- \`${escapeMd(s.name)}\``,
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'settings',
-						section: 'skills',
-						tool: 'list_workspace_skills',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				wsId,
-			)
+			})
+			return {
+				_meta: meta(
+					'list_workspace_skills',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -2385,30 +1910,21 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = (await apiCall(
+			const result = await apiCall(
 				config,
 				'GET',
 				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
 				undefined,
 				{ workspaceId: wsId },
-			)) as { name: string; description?: string | null; content?: string }
-			const ctx = buildFormatterContext('get_workspace_skill', config, wsId)
-			return leanReply(
-				'get_workspace_skill',
-				formatGenericRecord(result, {
-					title: result.name,
-					meta: result.description ?? undefined,
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'settings',
-						section: 'skills',
-						tool: 'get_workspace_skill',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				wsId,
 			)
+			return {
+				_meta: meta(
+					'get_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -2422,29 +1938,20 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = (await apiCall(
+			const result = await apiCall(
 				config,
 				'POST',
 				`/api/workspaces/${wsId}/skills`,
 				{ name: args.name, content: args.content },
 				{ workspaceId: wsId },
-			)) as Record<string, unknown>
-			const ctx = buildFormatterContext('create_workspace_skill', config, wsId)
+			)
 			return {
-				...leanReply(
+				_meta: meta(
 					'create_workspace_skill',
-					formatMutationConfirm(
-						{
-							verb: `Created skill "${args.name}"`,
-							results: [{ type: 'skill', id: args.name, success: true }],
-							section: 'skills',
-						},
-						ctx,
-					),
 					config,
-					wsId,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				structuredContent: asStructuredContent(result),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2459,29 +1966,20 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = (await apiCall(
+			const result = await apiCall(
 				config,
 				'PUT',
 				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
 				{ content: args.content },
 				{ workspaceId: wsId },
-			)) as Record<string, unknown>
-			const ctx = buildFormatterContext('update_workspace_skill', config, wsId)
+			)
 			return {
-				...leanReply(
+				_meta: meta(
 					'update_workspace_skill',
-					formatMutationConfirm(
-						{
-							verb: `Updated skill "${args.name}"`,
-							results: [{ type: 'skill', id: args.name, success: true }],
-							section: 'skills',
-						},
-						ctx,
-					),
 					config,
-					wsId,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				structuredContent: asStructuredContent(result),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2496,29 +1994,20 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = (await apiCall(
+			const result = await apiCall(
 				config,
 				'DELETE',
 				`/api/workspaces/${wsId}/skills/${encodeURIComponent(args.name)}`,
 				undefined,
 				{ workspaceId: wsId },
-			)) as Record<string, unknown>
-			const ctx = buildFormatterContext('delete_workspace_skill', config, wsId)
+			)
 			return {
-				...leanReply(
+				_meta: meta(
 					'delete_workspace_skill',
-					formatMutationConfirm(
-						{
-							verb: `Deleted skill "${args.name}"`,
-							results: [{ type: 'skill', id: args.name, success: true }],
-							section: 'skills',
-						},
-						ctx,
-					),
 					config,
-					wsId,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				structuredContent: asStructuredContent(result),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2534,7 +2023,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = (await apiCall(
+			const result = await apiCall(
 				config,
 				'POST',
 				'/api/files',
@@ -2546,22 +2035,10 @@ export function createMcpServer(config: McpConfig) {
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
 				},
 				{ workspaceId: wsId },
-			)) as { id?: string }
-			const ctx = buildFormatterContext('create_file', config, wsId)
+			)
 			return {
-				...leanReply(
-					'create_file',
-					formatMutationConfirm(
-						{
-							verb: `Created file "${args.name}"`,
-							results: [{ type: 'file', id: result.id, success: true }],
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('create_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2581,28 +2058,13 @@ export function createMcpServer(config: McpConfig) {
 			if (args.limit !== undefined) params.set('limit', String(args.limit))
 			if (args.offset !== undefined) params.set('offset', String(args.offset))
 			const qs = params.toString()
-			const result = (await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
 				workspaceId: wsId,
-			})) as Array<{ id: string; name: string; mimeType?: string | null; sizeBytes?: number }>
-			const ctx = buildFormatterContext('list_files', config, wsId)
-			return leanReply(
-				'list_files',
-				formatGenericList(result, {
-					label: 'file',
-					row: (f) => {
-						const mime = f.mimeType ? ` • ${escapeMd(f.mimeType)}` : ''
-						return `- \`${escapeMd(f.name)}\`${mime}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'workspace',
-						tool: 'list_files',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				wsId,
-			)
+			})
+			return {
+				_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -2616,28 +2078,13 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = (await apiCall(config, 'GET', `/api/files/${args.id}`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/files/${args.id}`, undefined, {
 				workspaceId: wsId,
-			})) as { id: string; name?: string; mimeType?: string | null; sizeBytes?: number }
-			const ctx = buildFormatterContext('get_file', config, wsId)
-			const mime = result.mimeType ?? 'unknown type'
-			const size =
-				typeof result.sizeBytes === 'number' ? `${(result.sizeBytes / 1024).toFixed(1)} KB` : ''
-			return leanReply(
-				'get_file',
-				formatGenericRecord(result, {
-					title: result.name?.trim() || `File ${result.id.slice(0, 8)}`,
-					meta: size ? `${mime} • ${size}` : mime,
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'workspace',
-						tool: 'get_file',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				wsId,
-			)
+			})
+			return {
+				_meta: meta('get_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -2657,24 +2104,12 @@ export function createMcpServer(config: McpConfig) {
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
-			const result = (await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
+			const result = await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
 				workspaceId: wsId,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('update_file', config, wsId)
+			})
 			return {
-				...leanReply(
-					'update_file',
-					formatMutationConfirm(
-						{
-							verb: 'Updated file',
-							results: [{ type: 'file', id: args.id, success: true }],
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('update_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2689,24 +2124,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = (await apiCall(config, 'DELETE', `/api/files/${args.id}`, undefined, {
+			const result = await apiCall(config, 'DELETE', `/api/files/${args.id}`, undefined, {
 				workspaceId: wsId,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('delete_file', config, wsId)
+			})
 			return {
-				...leanReply(
-					'delete_file',
-					formatMutationConfirm(
-						{
-							verb: 'Deleted file',
-							results: [{ type: 'file', id: args.id, success: true }],
-						},
-						ctx,
-					),
-					config,
-					wsId,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('delete_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2726,39 +2149,13 @@ export function createMcpServer(config: McpConfig) {
 			if (args.entity_type) params.set('entity_type', args.entity_type)
 			if (args.action) params.set('action', args.action)
 			if (args.limit) params.set('limit', String(args.limit))
-			const result = (await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Array<{
-				id?: number
-				action?: string
-				entityType?: string
-				entityId?: string
-				description?: string | null
-				createdAt?: string | null
-			}>
-			const ctx = buildFormatterContext('get_events', config, args.workspace_id)
-			return leanReply(
-				'get_events',
-				formatGenericList(result, {
-					label: 'event',
-					row: (e) => {
-						const desc = escapeMd(
-							e.description?.trim() || `${e.action ?? 'event'} ${e.entityType ?? ''}`.trim(),
-						)
-						const when = e.createdAt ? ` _(${escapeMd(e.createdAt)})_` : ''
-						return `- ${desc}${when}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'unread',
-						tool: 'get_events',
-						baseUrl: ctx.baseUrl,
-					},
-					linkText: 'open activity',
-				}),
-				config,
-				args.workspace_id,
-			)
+			})
+			return {
+				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -2778,39 +2175,13 @@ export function createMcpServer(config: McpConfig) {
 			params.set('action', 'commented')
 			params.set('limit', String(args.limit))
 			params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
+			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Array<{
-				id?: number
-				actorId?: string
-				data?: { content?: string }
-				createdAt?: string | null
-			}>
-			const ctx = buildFormatterContext('get_comments', config, args.workspace_id)
-			return leanReply(
-				'get_comments',
-				formatGenericList(result, {
-					label: 'comment',
-					row: (c) => {
-						const text = c.data?.content?.replace(/\s+/g, ' ').trim() ?? ''
-						const snippet = escapeMd(
-							text.length > 100 ? `${text.slice(0, 99)}…` : text || '(empty)',
-						)
-						const author = c.actorId ? c.actorId.slice(0, 8) : 'unknown'
-						return `- **${author}**: ${snippet}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'comments',
-						id: args.entity_id,
-						tool: 'get_comments',
-						baseUrl: ctx.baseUrl,
-					},
-					linkText: 'open thread',
-				}),
-				config,
-				args.workspace_id,
-			)
+			})
+			return {
+				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -2824,32 +2195,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
-			const result = (await apiCall(config, 'POST', '/api/events', body, {
+			const result = await apiCall(config, 'POST', '/api/events', body, {
 				workspaceId: workspace_id,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('create_comment', config, workspace_id)
+			})
 			return {
-				...leanReply(
-					'create_comment',
-					formatMutationConfirm(
-						{
-							verb: 'Posted comment',
-							// Link to the object the comment was posted on, not the event itself.
-							results: [
-								{
-									type: 'object',
-									id: args.entity_id,
-									success: true,
-									result: { id: args.entity_id, type: 'object' } as Record<string, unknown>,
-								},
-							],
-						},
-						ctx,
-					),
-					config,
-					workspace_id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('create_comment', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2865,26 +2216,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
-			const result = (await apiCall(config, 'POST', '/api/triggers', body, {
+			const result = await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
-			})) as { id?: string; name?: string }
-			const ctx = buildFormatterContext('create_trigger', config, workspace_id)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: result.id ? 'trigger' : 'workspace',
-				id: result.id,
-				tool: 'create_trigger',
-				baseUrl: ctx.baseUrl,
 			})
 			return {
-				_meta: meta('create_trigger', config, workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: `✅ **Created trigger${args.name ? ` "${escapeMd(args.name)}"` : ''}** — [open in Maskin](${link})`,
-					},
-				],
-				structuredContent: asStructuredContent(result),
+				_meta: meta('create_trigger', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2898,36 +2235,13 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+			const result = await apiCall(config, 'GET', '/api/triggers', undefined, {
 				workspaceId: args.workspace_id,
-			})) as Array<{ id: string; name: string; type: string; enabled: boolean }>
-			const ctx = buildFormatterContext('list_triggers', config, args.workspace_id)
-			return leanReply(
-				'list_triggers',
-				formatGenericList(result, {
-					label: 'trigger',
-					row: (t) => {
-						const url = deepLink({
-							workspaceId: ctx.workspaceId,
-							kind: 'trigger',
-							id: t.id,
-							tool: 'list_triggers',
-							baseUrl: ctx.baseUrl,
-						})
-						const state = t.enabled ? 'enabled' : 'disabled'
-						const label = escapeMd(t.name || `Trigger ${t.id.slice(0, 8)}`)
-						return `- [${label}](${url}) — ${escapeMd(t.type)} • ${state}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'trigger',
-						tool: 'list_triggers',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				args.workspace_id,
-			)
+			})
+			return {
+				_meta: meta('list_triggers', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -2941,26 +2255,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { id, workspace_id, ...body } = args
-			const result = (await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
+			const result = await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
 				workspaceId: workspace_id,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('update_trigger', config, workspace_id)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'trigger',
-				id,
-				tool: 'update_trigger',
-				baseUrl: ctx.baseUrl,
 			})
 			return {
-				_meta: meta('update_trigger', config, workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: `✅ **Updated trigger** — [open in Maskin](${link})`,
-					},
-				],
-				structuredContent: asStructuredContent(result),
+				_meta: meta('update_trigger', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -2974,22 +2274,12 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'DELETE', `/api/triggers/${args.id}`, undefined, {
+			const result = await apiCall(config, 'DELETE', `/api/triggers/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('delete_trigger', config, args.workspace_id)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'trigger',
-				tool: 'delete_trigger',
-				baseUrl: ctx.baseUrl,
 			})
 			return {
-				_meta: meta('delete_trigger', config, args.workspace_id),
-				content: [
-					{ type: 'text' as const, text: `✅ **Deleted trigger** — [open in Maskin](${link})` },
-				],
-				structuredContent: asStructuredContent(result),
+				_meta: meta('delete_trigger', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -3147,34 +2437,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
-			const result = (await apiCall(config, 'POST', '/api/subscriptions', body, {
+			const result = await apiCall(config, 'POST', '/api/subscriptions', body, {
 				workspaceId: workspace_id,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('subscribe', config, workspace_id)
+			})
 			return {
-				...leanReply(
-					'subscribe',
-					formatMutationConfirm(
-						{
-							verb: 'Subscribed',
-							results: [
-								{
-									type: args.entity_type,
-									id: args.entity_id,
-									success: true,
-									result:
-										args.entity_type === 'object'
-											? ({ id: args.entity_id, type: 'object' } as Record<string, unknown>)
-											: undefined,
-								},
-							],
-						},
-						ctx,
-					),
-					config,
-					workspace_id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('subscribe', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -3189,34 +2457,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
-			const result = (await apiCall(config, 'DELETE', '/api/subscriptions', body, {
+			const result = await apiCall(config, 'DELETE', '/api/subscriptions', body, {
 				workspaceId: workspace_id,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('unsubscribe', config, workspace_id)
+			})
 			return {
-				...leanReply(
-					'unsubscribe',
-					formatMutationConfirm(
-						{
-							verb: 'Unsubscribed',
-							results: [
-								{
-									type: args.entity_type,
-									id: args.entity_id,
-									success: true,
-									result:
-										args.entity_type === 'object'
-											? ({ id: args.entity_id, type: 'object' } as Record<string, unknown>)
-											: undefined,
-								},
-							],
-						},
-						ctx,
-					),
-					config,
-					workspace_id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('unsubscribe', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -3234,42 +2480,17 @@ export function createMcpServer(config: McpConfig) {
 				entity_type: args.entity_type,
 				entity_id: args.entity_id,
 			})
-			const result = (await apiCall(
+			const result = await apiCall(
 				config,
 				'GET',
 				`/api/subscriptions/subscribers?${params}`,
 				undefined,
 				{ workspaceId: args.workspace_id },
-			)) as Array<{ actorId: string; name?: string | null; email?: string | null }>
-			const ctx = buildFormatterContext('list_subscribers', config, args.workspace_id)
-			return leanReply(
-				'list_subscribers',
-				formatGenericList(result, {
-					label: 'subscriber',
-					row: (s) => {
-						const who = escapeMd(s.name?.trim() || s.actorId.slice(0, 8))
-						const email = s.email ? ` • ${escapeMd(s.email)}` : ''
-						return `- ${who}${email}`
-					},
-					linkInput:
-						args.entity_type === 'object'
-							? {
-									workspaceId: ctx.workspaceId,
-									kind: 'object',
-									id: args.entity_id,
-									tool: 'list_subscribers',
-									baseUrl: ctx.baseUrl,
-								}
-							: {
-									workspaceId: ctx.workspaceId,
-									kind: 'workspace',
-									tool: 'list_subscribers',
-									baseUrl: ctx.baseUrl,
-								},
-				}),
-				config,
-				args.workspace_id,
 			)
+			return {
+				_meta: meta('list_subscribers', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -3283,34 +2504,12 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
-			const result = (await apiCall(config, 'POST', '/api/subscriptions/read', body, {
+			const result = await apiCall(config, 'POST', '/api/subscriptions/read', body, {
 				workspaceId: workspace_id,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('mark_read', config, workspace_id)
+			})
 			return {
-				...leanReply(
-					'mark_read',
-					formatMutationConfirm(
-						{
-							verb: 'Marked read',
-							results: [
-								{
-									type: args.entity_type,
-									id: args.entity_id,
-									success: true,
-									result:
-										args.entity_type === 'object'
-											? ({ id: args.entity_id, type: 'object' } as Record<string, unknown>)
-											: undefined,
-								},
-							],
-						},
-						ctx,
-					),
-					config,
-					workspace_id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('mark_read', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -3328,16 +2527,13 @@ export function createMcpServer(config: McpConfig) {
 			if (args.entity_type) params.set('entity_type', args.entity_type)
 			const qs = params.toString()
 			const path = qs ? `/api/subscriptions/unread?${qs}` : '/api/subscriptions/unread'
-			const result = (await apiCall(config, 'GET', path, undefined, {
+			const result = await apiCall(config, 'GET', path, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Parameters<typeof formatUnreadDigest>[0]['items']
-			const ctx = buildFormatterContext('list_unread', config, args.workspace_id)
-			return leanReply(
-				'list_unread',
-				formatUnreadDigest({ items: result }, ctx),
-				config,
-				args.workspace_id,
-			)
+			})
+			return {
+				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -3354,28 +2550,15 @@ export function createMcpServer(config: McpConfig) {
 			const { workspace_id, ...body } = args
 			const result = (await apiCall(config, 'POST', '/api/sessions', body, {
 				workspaceId: workspace_id,
-			})) as SessionRow & { status?: string }
+			})) as SessionRow
 			const enriched = await enrichSessionActorName(
 				config,
 				workspace_id ?? config.defaultWorkspaceId,
 				result,
 			)
-			const ctx = buildFormatterContext('create_session', config, workspace_id)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'workspace',
-				tool: 'create_session',
-				baseUrl: ctx.baseUrl,
-			})
 			return {
-				_meta: meta('create_session', config, workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: `✅ **Started session** \`${result.id?.slice(0, 8) ?? '?'}\` (${escapeMd(result.status ?? 'pending')}) — [open in Maskin](${link})`,
-					},
-				],
-				structuredContent: asStructuredContent(enriched),
+				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -3402,26 +2585,10 @@ export function createMcpServer(config: McpConfig) {
 				wsId ? fetchActorNameMap(config, wsId) : Promise.resolve({} as Record<string, string>),
 			])
 			const enriched = result.map((s) => attachActorName(s, names))
-			const ctx = buildFormatterContext('list_sessions', config, args.workspace_id)
-			return leanReply(
-				'list_sessions',
-				formatGenericList(enriched as Array<SessionRow & { actorName?: string; status?: string }>, {
-					label: 'session',
-					row: (s) => {
-						const who = escapeMd(s.actorName ?? s.actorId?.slice(0, 8) ?? 'agent')
-						const status = (s as { status?: string }).status ?? 'pending'
-						return `- \`${s.id?.slice(0, 8) ?? '?'}\` • ${who} • ${escapeMd(status)}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'workspace',
-						tool: 'list_sessions',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				args.workspace_id,
-			)
+			return {
+				_meta: meta('list_sessions', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+			}
 		},
 	)
 
@@ -3442,40 +2609,31 @@ export function createMcpServer(config: McpConfig) {
 				`/api/sessions/${args.id}`,
 				undefined,
 				wsOpts,
-			)) as SessionRow & { status?: string; actorName?: string }
+			)) as SessionRow
 			const enriched = await enrichSessionActorName(config, wsId, session)
 
-			const ctx = buildFormatterContext('get_session', config, args.workspace_id)
-			const who = enriched.actorName ?? enriched.actorId?.slice(0, 8) ?? 'agent'
-			const status = enriched.status ?? 'unknown'
-
-			let logs: unknown
 			if (args.include_logs) {
 				const params = new URLSearchParams()
 				if (args.log_limit) params.set('limit', String(args.log_limit))
-				logs = await apiCall(
+				const logs = await apiCall(
 					config,
 					'GET',
 					`/api/sessions/${args.id}/logs?${params}`,
 					undefined,
 					wsOpts,
 				)
+				return {
+					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
+					content: [
+						{ type: 'text' as const, text: JSON.stringify({ session: enriched, logs }, null, 2) },
+					],
+				}
 			}
 
-			const summary = formatGenericRecord(
-				args.include_logs ? { session: enriched, logs } : enriched,
-				{
-					title: `Session ${args.id.slice(0, 8)}`,
-					meta: `${who} • ${status}`,
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'workspace',
-						tool: 'get_session',
-						baseUrl: ctx.baseUrl,
-					},
-				},
-			)
-			return leanReply('get_session', summary, config, args.workspace_id)
+			return {
+				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
+			}
 		},
 	)
 
@@ -3490,28 +2648,15 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as SessionRow & { status?: string }
+			})) as SessionRow
 			const enriched = await enrichSessionActorName(
 				config,
 				args.workspace_id ?? config.defaultWorkspaceId,
 				result,
 			)
-			const ctx = buildFormatterContext('stop_session', config, args.workspace_id)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'workspace',
-				tool: 'stop_session',
-				baseUrl: ctx.baseUrl,
-			})
 			return {
-				_meta: meta('stop_session', config, args.workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: `🛑 **Stopped session** \`${args.id.slice(0, 8)}\` (${escapeMd(result.status ?? 'stopped')}) — [open in Maskin](${link})`,
-					},
-				],
-				structuredContent: asStructuredContent(enriched),
+				_meta: meta('stop_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -3527,28 +2672,15 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as SessionRow & { status?: string }
+			})) as SessionRow
 			const enriched = await enrichSessionActorName(
 				config,
 				args.workspace_id ?? config.defaultWorkspaceId,
 				result,
 			)
-			const ctx = buildFormatterContext('pause_session', config, args.workspace_id)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'workspace',
-				tool: 'pause_session',
-				baseUrl: ctx.baseUrl,
-			})
 			return {
-				_meta: meta('pause_session', config, args.workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: `⏸ **Paused session** \`${args.id.slice(0, 8)}\` (${escapeMd(result.status ?? 'paused')}) — [open in Maskin](${link})`,
-					},
-				],
-				structuredContent: asStructuredContent(enriched),
+				_meta: meta('pause_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -3564,28 +2696,15 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as SessionRow & { status?: string }
+			})) as SessionRow
 			const enriched = await enrichSessionActorName(
 				config,
 				args.workspace_id ?? config.defaultWorkspaceId,
 				result,
 			)
-			const ctx = buildFormatterContext('resume_session', config, args.workspace_id)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'workspace',
-				tool: 'resume_session',
-				baseUrl: ctx.baseUrl,
-			})
 			return {
-				_meta: meta('resume_session', config, args.workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: `▶ **Resumed session** \`${args.id.slice(0, 8)}\` (${escapeMd(result.status ?? 'running')}) — [open in Maskin](${link})`,
-					},
-				],
-				structuredContent: asStructuredContent(enriched),
+				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -3646,11 +2765,10 @@ export function createMcpServer(config: McpConfig) {
 			)
 
 			return {
-				_meta: meta('run_agent', config, args.workspace_id),
+				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
 					{ type: 'text' as const, text: JSON.stringify({ session: current, logs }, null, 2) },
 				],
-				structuredContent: asStructuredContent({ session: current, logs }),
 			}
 		},
 	)
@@ -3665,30 +2783,13 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
+			const result = await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
-			})) as Array<{ id: string; provider: string; name?: string | null; status?: string }>
-			const ctx = buildFormatterContext('list_integrations', config, args.workspace_id)
-			return leanReply(
-				'list_integrations',
-				formatGenericList(result, {
-					label: 'integration',
-					row: (i) => {
-						const name = escapeMd(i.name?.trim() || i.provider)
-						const status = i.status ? ` • ${escapeMd(i.status)}` : ''
-						return `- ${name}${status}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'settings',
-						section: 'integrations',
-						tool: 'list_integrations',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				args.workspace_id,
-			)
+			})
+			return {
+				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -3701,40 +2802,13 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async () => {
-			const result = (await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
+			const result = await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
 				skipWorkspace: true,
-			})) as Array<{ id?: string; name?: string; displayName?: string }>
-			// `list_integration_providers` is workspace-agnostic; if there's no
-			// default workspace we can't build a deep link, so just render the list
-			// without a header link.
-			const wsId = config.defaultWorkspaceId
-			const headerUrl = wsId
-				? deepLink({
-						workspaceId: wsId,
-						kind: 'settings',
-						section: 'integrations',
-						tool: 'list_integration_providers',
-						baseUrl: config.webAppBaseUrl,
-					})
-				: undefined
-			const header = headerUrl
-				? `**${result.length} provider${result.length === 1 ? '' : 's'}** — [open in Maskin](${headerUrl})`
-				: `**${result.length} provider${result.length === 1 ? '' : 's'}**`
-			const rows = result
-				.slice(0, GENERIC_LIST_LIMIT)
-				.map((p) => `- ${escapeMd(p.displayName ?? p.name ?? p.id ?? 'unknown')}`)
-			const more =
-				result.length > GENERIC_LIST_LIMIT
-					? [`…and ${result.length - GENERIC_LIST_LIMIT} more`]
-					: []
-			const content =
-				result.length === 0 ? `${header}\n\n_No providers._` : [header, ...rows, ...more].join('\n')
-			return leanReply(
-				'list_integration_providers',
-				{ content, structuredContent: { items: result } },
-				config,
-				undefined,
-			)
+			})
+			return {
+				_meta: meta('list_integration_providers', config),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -3757,16 +2831,17 @@ export function createMcpServer(config: McpConfig) {
 				install_url: string
 			}
 			return {
-				_meta: meta('connect_integration', config, args.workspace_id),
-				// Install URL is the action the user needs — keep it the literal first
-				// thing they see. Not a deep link; this is a third-party OAuth URL.
+				_meta: meta(
+					'connect_integration',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [
 					{
 						type: 'text' as const,
-						text: `Open this URL in your browser to complete the installation:\n\n${result.install_url}`,
+						text: `Open this URL in your browser to complete the installation:\n\n${result.install_url}\n\n${JSON.stringify(result, null, 2)}`,
 					},
 				],
-				structuredContent: asStructuredContent(result),
 			}
 		},
 	)
@@ -3780,25 +2855,16 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'DELETE', `/api/integrations/${args.id}`, undefined, {
+			const result = await apiCall(config, 'DELETE', `/api/integrations/${args.id}`, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('disconnect_integration', config, args.workspace_id)
+			})
 			return {
-				...leanReply(
+				_meta: meta(
 					'disconnect_integration',
-					formatMutationConfirm(
-						{
-							verb: 'Disconnected integration',
-							results: [{ type: 'integration', id: args.id, success: true }],
-							section: 'integrations',
-						},
-						ctx,
-					),
 					config,
-					args.workspace_id,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				structuredContent: asStructuredContent(result),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -3826,22 +2892,9 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: args.workspace_id },
 			)
 			const result = { success: true, provider: args.provider, last4: last4(args.api_key) }
-			const ctx = buildFormatterContext('set_llm_api_key', config, args.workspace_id)
 			return {
-				...leanReply(
-					'set_llm_api_key',
-					formatMutationConfirm(
-						{
-							verb: `Saved ${args.provider} key`,
-							results: [{ type: 'llm_key', id: args.provider, success: true }],
-							section: 'keys',
-						},
-						ctx,
-					),
-					config,
-					args.workspace_id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('set_llm_api_key', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -3865,25 +2918,10 @@ export function createMcpServer(config: McpConfig) {
 				anthropic: providerStatus(llmKeys.anthropic),
 				openai: providerStatus(llmKeys.openai),
 			}
-			const ctx = buildFormatterContext('get_llm_api_keys', config, wsId)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'settings',
-				section: 'keys',
-				tool: 'get_llm_api_keys',
-				baseUrl: ctx.baseUrl,
-			})
-			const lines = [
-				`#### [LLM API keys](${link})`,
-				`- anthropic: ${result.anthropic.set ? `set (…${result.anthropic.last4})` : 'not set'}`,
-				`- openai: ${result.openai.set ? `set (…${result.openai.last4})` : 'not set'}`,
-			]
-			return leanReply(
-				'get_llm_api_keys',
-				{ content: lines.join('\n'), structuredContent: result },
-				config,
-				wsId,
-			)
+			return {
+				_meta: meta('get_llm_api_keys', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -3904,22 +2942,9 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: args.workspace_id },
 			)
 			const result = { success: true, provider: args.provider }
-			const ctx = buildFormatterContext('delete_llm_api_key', config, args.workspace_id)
 			return {
-				...leanReply(
-					'delete_llm_api_key',
-					formatMutationConfirm(
-						{
-							verb: `Deleted ${args.provider} key`,
-							results: [{ type: 'llm_key', id: args.provider, success: true }],
-							section: 'keys',
-						},
-						ctx,
-					),
-					config,
-					args.workspace_id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('delete_llm_api_key', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -3934,7 +2959,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = (await apiCall(
+			const result = await apiCall(
 				config,
 				'POST',
 				'/api/claude-oauth/import',
@@ -3946,23 +2971,14 @@ export function createMcpServer(config: McpConfig) {
 					scopes: args.scopes,
 				},
 				{ workspaceId: args.workspace_id },
-			)) as Record<string, unknown>
-			const ctx = buildFormatterContext('import_claude_subscription', config, args.workspace_id)
+			)
 			return {
-				...leanReply(
+				_meta: meta(
 					'import_claude_subscription',
-					formatMutationConfirm(
-						{
-							verb: 'Imported Claude subscription',
-							results: [{ type: 'claude_oauth', success: true }],
-							section: 'keys',
-						},
-						ctx,
-					),
 					config,
-					args.workspace_id,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				structuredContent: asStructuredContent(result),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -3976,31 +2992,17 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
+			const result = await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
 				workspaceId: args.workspace_id,
-			})) as { connected?: boolean; valid?: boolean }
-			const ctx = buildFormatterContext('get_claude_subscription_status', config, args.workspace_id)
-			const link = deepLink({
-				workspaceId: ctx.workspaceId,
-				kind: 'settings',
-				section: 'keys',
-				tool: 'get_claude_subscription_status',
-				baseUrl: ctx.baseUrl,
 			})
-			const state = result.connected
-				? result.valid
-					? 'connected · valid'
-					: 'connected · expired'
-				: 'not connected'
-			return leanReply(
-				'get_claude_subscription_status',
-				{
-					content: `#### [Claude subscription](${link})\n_${state}_`,
-					structuredContent: result,
-				},
-				config,
-				args.workspace_id,
-			)
+			return {
+				_meta: meta(
+					'get_claude_subscription_status',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -4013,25 +3015,16 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'DELETE', '/api/claude-oauth', undefined, {
+			const result = await apiCall(config, 'DELETE', '/api/claude-oauth', undefined, {
 				workspaceId: args.workspace_id,
-			})) as Record<string, unknown>
-			const ctx = buildFormatterContext('disconnect_claude_subscription', config, args.workspace_id)
+			})
 			return {
-				...leanReply(
+				_meta: meta(
 					'disconnect_claude_subscription',
-					formatMutationConfirm(
-						{
-							verb: 'Disconnected Claude subscription',
-							results: [{ type: 'claude_oauth', success: true }],
-							section: 'keys',
-						},
-						ctx,
-					),
 					config,
-					args.workspace_id,
+					(args as { workspace_id?: string }).workspace_id,
 				),
-				structuredContent: asStructuredContent(result),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -4135,27 +3128,11 @@ export function createMcpServer(config: McpConfig) {
 					: []
 
 			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
-			const ctx = buildFormatterContext('list_extensions', config, args.workspace_id)
-			return leanReply(
-				'list_extensions',
-				formatGenericList(result, {
-					label: 'extension',
-					row: (ext) => {
-						const name = escapeMd(ext.name || ext.id)
-						const state = ext.enabled ? 'enabled' : 'disabled'
-						const types = `${ext.object_types.length} type${ext.object_types.length === 1 ? '' : 's'}`
-						return `- **${name}** — ${state} • ${types}`
-					},
-					linkInput: {
-						workspaceId: ctx.workspaceId,
-						kind: 'workspace',
-						tool: 'list_extensions',
-						baseUrl: ctx.baseUrl,
-					},
-				}),
-				config,
-				args.workspace_id,
-			)
+
+			return {
+				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
 		},
 	)
 
@@ -4188,14 +3165,17 @@ export function createMcpServer(config: McpConfig) {
 
 				if (enabledModules.includes(args.id)) {
 					return {
-						_meta: meta('create_extension', config, args.workspace_id),
+						_meta: meta(
+							'create_extension',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
 						content: [
 							{
 								type: 'text' as const,
-								text: `Extension "${escapeMd(args.id)}" is already enabled.`,
+								text: `Extension "${args.id}" is already enabled.`,
 							},
 						],
-						structuredContent: { skipped: true, reason: 'already_enabled', id: args.id },
 					}
 				}
 
@@ -4209,21 +3189,9 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: args.workspace_id },
 				)
 
-				const ctx = buildFormatterContext('create_extension', config, args.workspace_id)
 				return {
-					...leanReply(
-						'create_extension',
-						formatMutationConfirm(
-							{
-								verb: `Enabled extension "${args.id}"`,
-								results: [{ type: 'extension', id: args.id, success: true }],
-							},
-							ctx,
-						),
-						config,
-						args.workspace_id,
-					),
-					structuredContent: asStructuredContent(result),
+					_meta: meta('create_extension', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
 
@@ -4290,21 +3258,9 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: args.workspace_id },
 			)
 
-			const ctx = buildFormatterContext('create_extension', config, args.workspace_id)
 			return {
-				...leanReply(
-					'create_extension',
-					formatMutationConfirm(
-						{
-							verb: `Created custom extension "${args.id}"`,
-							results: [{ type: 'extension', id: args.id, success: true }],
-						},
-						ctx,
-					),
-					config,
-					args.workspace_id,
-				),
-				structuredContent: asStructuredContent(result),
+				_meta: meta('create_extension', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -4348,21 +3304,13 @@ export function createMcpServer(config: McpConfig) {
 						{ workspaceId: args.workspace_id },
 					)
 
-					const ctx = buildFormatterContext('update_extension', config, args.workspace_id)
 					return {
-						...leanReply(
+						_meta: meta(
 							'update_extension',
-							formatMutationConfirm(
-								{
-									verb: `${args.enabled ? 'Enabled' : 'Disabled'} extension "${args.id}"`,
-									results: [{ type: 'extension', id: args.id, success: true }],
-								},
-								ctx,
-							),
 							config,
-							args.workspace_id,
+							(args as { workspace_id?: string }).workspace_id,
 						),
-						structuredContent: asStructuredContent(result),
+						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 					}
 				}
 
@@ -4373,14 +3321,17 @@ export function createMcpServer(config: McpConfig) {
 					if (mod) {
 						if (enabledModules.includes(args.id)) {
 							return {
-								_meta: meta('update_extension', config, args.workspace_id),
+								_meta: meta(
+									'update_extension',
+									config,
+									(args as { workspace_id?: string }).workspace_id,
+								),
 								content: [
 									{
 										type: 'text' as const,
-										text: `Extension "${escapeMd(args.id)}" is already enabled.`,
+										text: `Extension "${args.id}" is already enabled.`,
 									},
 								],
-								structuredContent: { skipped: true, reason: 'already_enabled', id: args.id },
 							}
 						}
 
@@ -4394,21 +3345,18 @@ export function createMcpServer(config: McpConfig) {
 							{ workspaceId: args.workspace_id },
 						)
 
-						const ctx = buildFormatterContext('update_extension', config, args.workspace_id)
 						return {
-							...leanReply(
+							_meta: meta(
 								'update_extension',
-								formatMutationConfirm(
-									{
-										verb: `Enabled extension "${args.id}"`,
-										results: [{ type: 'extension', id: args.id, success: true }],
-									},
-									ctx,
-								),
 								config,
-								args.workspace_id,
+								(args as { workspace_id?: string }).workspace_id,
 							),
-							structuredContent: asStructuredContent(result),
+							content: [
+								{
+									type: 'text' as const,
+									text: JSON.stringify(result, null, 2),
+								},
+							],
 						}
 					}
 
@@ -4420,14 +3368,17 @@ export function createMcpServer(config: McpConfig) {
 
 				if (!enabledModules.includes(args.id)) {
 					return {
-						_meta: meta('update_extension', config, args.workspace_id),
+						_meta: meta(
+							'update_extension',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
 						content: [
 							{
 								type: 'text' as const,
-								text: `Extension "${escapeMd(args.id)}" is not currently enabled.`,
+								text: `Extension "${args.id}" is not currently enabled.`,
 							},
 						],
-						structuredContent: { skipped: true, reason: 'not_enabled', id: args.id },
 					}
 				}
 
@@ -4443,21 +3394,9 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: args.workspace_id },
 				)
 
-				const ctx = buildFormatterContext('update_extension', config, args.workspace_id)
 				return {
-					...leanReply(
-						'update_extension',
-						formatMutationConfirm(
-							{
-								verb: `Disabled extension "${args.id}"`,
-								results: [{ type: 'extension', id: args.id, success: true }],
-							},
-							ctx,
-						),
-						config,
-						args.workspace_id,
-					),
-					structuredContent: asStructuredContent(result),
+					_meta: meta('update_extension', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
 
@@ -4531,21 +3470,9 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: args.workspace_id },
 				)
 
-				const ctx = buildFormatterContext('update_extension', config, args.workspace_id)
 				return {
-					...leanReply(
-						'update_extension',
-						formatMutationConfirm(
-							{
-								verb: `Updated extension "${args.id}"`,
-								results: [{ type: 'extension', id: args.id, success: true }],
-							},
-							ctx,
-						),
-						config,
-						args.workspace_id,
-					),
-					structuredContent: asStructuredContent(result),
+					_meta: meta('update_extension', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
 
@@ -4613,21 +3540,14 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: args.workspace_id },
 				)
 
-				const ctx = buildFormatterContext('delete_extension', config, args.workspace_id)
 				return {
-					...leanReply(
-						'delete_extension',
-						formatMutationConfirm(
-							{
-								verb: `Deleted extension "${args.id}"`,
-								results: [{ type: 'extension', id: args.id, success: true }],
-							},
-							ctx,
-						),
-						config,
-						args.workspace_id,
-					),
-					structuredContent: asStructuredContent({ removed, workspace: result }),
+					_meta: meta('delete_extension', config, (args as { workspace_id?: string }).workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ removed, workspace: result }, null, 2),
+						},
+					],
 				}
 			}
 
@@ -4674,21 +3594,9 @@ export function createMcpServer(config: McpConfig) {
 					{ workspaceId: args.workspace_id },
 				)
 
-				const ctx = buildFormatterContext('delete_extension', config, args.workspace_id)
 				return {
-					...leanReply(
-						'delete_extension',
-						formatMutationConfirm(
-							{
-								verb: `Deleted type "${args.id}"`,
-								results: [{ type: 'extension', id: args.id, success: true }],
-							},
-							ctx,
-						),
-						config,
-						args.workspace_id,
-					),
-					structuredContent: asStructuredContent(result),
+					_meta: meta('delete_extension', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
 
