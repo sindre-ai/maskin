@@ -18,6 +18,7 @@ import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
+import { trackEvent } from '@/lib/analytics'
 import type {
 	ActorResponse,
 	EventResponse,
@@ -27,8 +28,8 @@ import type {
 } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, Trash2 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { Check } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
@@ -38,6 +39,7 @@ import { RelativeTime } from '../shared/relative-time'
 import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
+import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectFiles } from './object-files'
@@ -266,6 +268,13 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
+	const [confirmDelete, setConfirmDelete] = useState(false)
+	// Set when the user clicks Delete inside the dialog, so the dismissal that
+	// follows (mutation success → navigation, or any close) isn't counted as a
+	// cancel. Reset every time the dialog reopens and on mutation error, so a
+	// cancel after a failed delete still emits the event.
+	const confirmedDeleteRef = useRef(false)
+
 	const handleDelete = useCallback(() => {
 		deleteObject.mutate(object.id, {
 			onSuccess: () => {
@@ -284,34 +293,75 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					}),
 				})
 			},
+			onError: () => {
+				confirmedDeleteRef.current = false
+			},
 		})
 	}, [object.id, deleteObject, navigate, workspaceId])
 
-	const [confirmDelete, setConfirmDelete] = useState(false)
+	const openDeleteConfirm = useCallback(() => {
+		confirmedDeleteRef.current = false
+		trackEvent('delete_confirmation_shown', {
+			object_type: object.type,
+			object_id: object.id,
+		})
+		setConfirmDelete(true)
+	}, [object.type, object.id])
 
-	const deleteActions = useMemo(
-		() => (
-			<Button
-				variant="ghost"
-				size="icon"
-				className="h-7 w-7 text-muted-foreground hover:text-error"
-				onClick={() => setConfirmDelete(true)}
-				aria-label={`Delete ${object.type}`}
-			>
-				<Trash2 size={15} />
-			</Button>
-		),
-		[object.type],
+	const handleDeleteOpenChange = useCallback(
+		(open: boolean) => {
+			if (!open && !confirmedDeleteRef.current) {
+				trackEvent('delete_confirmation_cancelled', {
+					object_type: object.type,
+					object_id: object.id,
+				})
+			}
+			setConfirmDelete(open)
+		},
+		[object.type, object.id],
+	)
+
+	const handleConfirmDelete = useCallback(() => {
+		confirmedDeleteRef.current = true
+		handleDelete()
+	}, [handleDelete])
+
+	const [menuOpen, setMenuOpen] = useState(false)
+
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (!((e.metaKey || e.ctrlKey) && e.key === '.')) return
+			const target = e.target as HTMLElement | null
+			if (target) {
+				const tag = target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+			}
+			e.preventDefault()
+			setMenuOpen(true)
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [])
+
+	const menuActions = (
+		<AuxiliaryActionMenu
+			object={object}
+			onDeleteRequest={openDeleteConfirm}
+			workspaceId={workspaceId}
+			open={menuOpen}
+			onOpenChange={setMenuOpen}
+		/>
 	)
 
 	return (
 		<>
-			<PageHeader actions={deleteActions} />
+			<PageHeader actions={menuActions} />
 			<DeleteConfirmDialog
 				open={confirmDelete}
-				onOpenChange={setConfirmDelete}
+				onOpenChange={handleDeleteOpenChange}
 				objectType={object.type}
-				onConfirm={handleDelete}
+				objectTitle={object.title}
+				onConfirm={handleConfirmDelete}
 				isPending={deleteObject.isPending}
 			/>
 			<ObjectDocumentView
@@ -338,21 +388,26 @@ export function DeleteConfirmDialog({
 	open,
 	onOpenChange,
 	objectType,
+	objectTitle,
 	onConfirm,
 	isPending,
 }: {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	objectType: string
+	objectTitle: string | null
 	onConfirm: () => void
 	isPending: boolean
 }) {
+	const description = objectTitle
+		? `This will permanently delete the ${objectType} '${objectTitle}'. This can't be undone.`
+		: `This will permanently delete this ${objectType}. This can't be undone.`
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-w-sm">
 				<DialogHeader>
 					<DialogTitle>Delete this {objectType}?</DialogTitle>
-					<DialogDescription>This action cannot be undone.</DialogDescription>
+					<DialogDescription>{description}</DialogDescription>
 				</DialogHeader>
 				<DialogFooter className="gap-2 sm:gap-0">
 					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
