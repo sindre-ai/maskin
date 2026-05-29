@@ -3,14 +3,31 @@ import { Spinner } from '@/components/ui/spinner'
 
 const DATE_GROUP_RE = /^\d{4}-\d{2}-\d{2}$/
 const MONTHS = [
-	'January', 'February', 'March', 'April', 'May', 'June',
-	'July', 'August', 'September', 'October', 'November', 'December',
+	'January',
+	'February',
+	'March',
+	'April',
+	'May',
+	'June',
+	'July',
+	'August',
+	'September',
+	'October',
+	'November',
+	'December',
 ]
 
 function formatGroupDate(dateKey: string): string {
 	if (!DATE_GROUP_RE.test(dateKey)) return dateKey
 	const [y, m, d] = dateKey.split('-').map(Number) as [number, number, number]
-	const suffix = d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th'
+	const suffix =
+		d % 10 === 1 && d !== 11
+			? 'st'
+			: d % 10 === 2 && d !== 12
+				? 'nd'
+				: d % 10 === 3 && d !== 13
+					? 'rd'
+					: 'th'
 	return `${d}${suffix} ${MONTHS[m - 1]} ${y}`
 }
 
