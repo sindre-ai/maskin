@@ -427,6 +427,110 @@ describe('Events Routes', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
+		it('auto-subscribes each @-mentioned actor to the commented object', async () => {
+			const objectId = randomUUID()
+			const humanId = randomUUID()
+			const agentId = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Hey @human @agent', mentions: [humanId, agentId] },
+			})
+			const { app, mockResults, calls } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }],
+				// resolve mentioned actors for notification fan-out
+				[
+					{ id: humanId, type: 'human', name: 'Alice' },
+					{ id: agentId, type: 'agent', name: 'Bot' },
+				],
+			]
+			mockResults.insert = [commentEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'Hey @human @agent', mentions: [humanId, agentId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			// The route should have called insert(subscriptions).values(...) once with
+			// a batch of mentioned actor rows, all carrying source='mentioned'.
+			const mentionedInserts = (calls.inserts as unknown[]).filter((arg) => {
+				if (!Array.isArray(arg)) return false
+				return arg.every(
+					(row): row is { source: string; actorId: string } =>
+						typeof row === 'object' &&
+						row !== null &&
+						'source' in row &&
+						row.source === 'mentioned',
+				)
+			})
+			expect(mentionedInserts).toHaveLength(1)
+			const mentionedRows = mentionedInserts[0] as Array<{ actorId: string; entityId: string }>
+			expect(mentionedRows).toHaveLength(2)
+			expect(mentionedRows.map((r) => r.actorId).sort()).toEqual([humanId, agentId].sort())
+			for (const row of mentionedRows) {
+				expect(row.entityId).toBe(objectId)
+			}
+		})
+
+		it('does not auto-subscribe the commenter under the mentioned source even if they self-mention', async () => {
+			const objectId = randomUUID()
+			const selfId = randomUUID()
+			const otherId = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: {
+					content: 'I @myself and @other',
+					mentions: [selfId, otherId],
+				},
+			})
+			const { app, mockResults, calls } = createSessionTestApp(eventsRoutes, '/api/events', selfId)
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }],
+				[{ id: otherId, type: 'human', name: 'Other' }],
+			]
+			mockResults.insert = [commentEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{
+						entity_id: objectId,
+						content: 'I @myself and @other',
+						mentions: [selfId, otherId],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const mentionedInserts = (calls.inserts as unknown[]).filter((arg) => {
+				if (!Array.isArray(arg)) return false
+				return arg.every(
+					(row): row is { source: string } =>
+						typeof row === 'object' &&
+						row !== null &&
+						'source' in row &&
+						row.source === 'mentioned',
+				)
+			})
+			expect(mentionedInserts).toHaveLength(1)
+			const rows = mentionedInserts[0] as Array<{ actorId: string }>
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.actorId).toBe(otherId)
+		})
+
 		it('keeps parent_event_id when parent is already a top-level comment', async () => {
 			const objectId = randomUUID()
 			const rootCommentId = 76660
