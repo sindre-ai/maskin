@@ -1,6 +1,7 @@
 import { ObjectDocument } from '@/components/objects/object-document'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { TestWrapper } from '../../setup'
 import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
 
 const mutateMock = vi.fn()
@@ -35,6 +36,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	useObjectGraph: () => ({ data: undefined }),
 	useUpdateObject: () => ({ mutate: vi.fn() }),
 	useDeleteObject: () => ({ mutate: mutateMock, isPending: false }),
+}))
+
+vi.mock('@/hooks/use-subscriptions', () => ({
+	useSubscribe: () => ({ mutate: vi.fn() }),
+	useUnsubscribe: () => ({ mutate: vi.fn() }),
 }))
 
 vi.mock('@/components/shared/agent-working-badge', () => ({
@@ -74,6 +80,11 @@ beforeEach(() => {
 	mutateMock.mockClear()
 })
 
+async function openDeleteDialog(user: ReturnType<typeof userEvent.setup>) {
+	await user.click(screen.getByRole('button', { name: /more actions/i }))
+	await user.click(screen.getByRole('menuitem', { name: /delete/i }))
+}
+
 describe('ObjectDocument delete-confirmation instrumentation', () => {
 	// First-test telemetry for the auxiliary action menu bet — one week of
 	// `delete_confirmation_cancelled` events tells us whether misclicked
@@ -82,9 +93,9 @@ describe('ObjectDocument delete-confirmation instrumentation', () => {
 	it('fires delete_confirmation_shown when the trash icon is clicked', async () => {
 		const user = userEvent.setup()
 		const object = buildObjectResponse({ id: 'obj-a', type: 'bet', title: 'A bet' })
-		render(<ObjectDocument object={object} />)
+		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /delete bet/i }))
+		await openDeleteDialog(user)
 
 		expect(trackEventMock).toHaveBeenCalledWith('delete_confirmation_shown', {
 			object_type: 'bet',
@@ -95,9 +106,9 @@ describe('ObjectDocument delete-confirmation instrumentation', () => {
 	it('fires delete_confirmation_cancelled when the dialog is dismissed via Cancel', async () => {
 		const user = userEvent.setup()
 		const object = buildObjectResponse({ id: 'obj-b', type: 'task', title: 'A task' })
-		render(<ObjectDocument object={object} />)
+		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /delete task/i }))
+		await openDeleteDialog(user)
 		trackEventMock.mockClear()
 		await user.click(screen.getByRole('button', { name: /cancel/i }))
 
@@ -110,9 +121,9 @@ describe('ObjectDocument delete-confirmation instrumentation', () => {
 	it('does not fire delete_confirmation_cancelled when the user confirms', async () => {
 		const user = userEvent.setup()
 		const object = buildObjectResponse({ id: 'obj-c', type: 'insight', title: 'An insight' })
-		render(<ObjectDocument object={object} />)
+		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /delete insight/i }))
+		await openDeleteDialog(user)
 		trackEventMock.mockClear()
 		await user.click(screen.getByRole('button', { name: /^delete$/i }))
 
@@ -131,9 +142,9 @@ describe('ObjectDocument delete-confirmation instrumentation', () => {
 		})
 		const user = userEvent.setup()
 		const object = buildObjectResponse({ id: 'obj-d', type: 'bet', title: 'A bet' })
-		render(<ObjectDocument object={object} />)
+		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /delete bet/i }))
+		await openDeleteDialog(user)
 		await user.click(screen.getByRole('button', { name: /^delete$/i }))
 		trackEventMock.mockClear()
 		await user.click(screen.getByRole('button', { name: /cancel/i }))
