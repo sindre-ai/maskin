@@ -1,4 +1,6 @@
-import type { SafeMetadata } from '@maskin/shared'
+import type { DisplaySettingsBody, SafeMetadata } from '@maskin/shared'
+
+export type { DisplaySettingsBody }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -579,18 +581,6 @@ export interface UnreadItem {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
-}
-
-export interface DisplaySettingsBody {
-	view?: 'list' | 'board'
-	sort?: string
-	order?: 'asc' | 'desc'
-	groupBy?: string | null
-	filters?: {
-		status?: string
-		owner?: string
-	}
-	columnVisibility?: Record<string, boolean>
 }
 
 export interface UserDisplaySettingsResponse {
