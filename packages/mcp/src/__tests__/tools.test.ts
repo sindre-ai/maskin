@@ -975,7 +975,7 @@ describe('workspace skill tools — end-to-end round-trip', () => {
 		createMcpServer({
 			apiBaseUrl: 'http://localhost:3000',
 			apiKey: 'ank_testkey123',
-			defaultWorkspaceId: 'ws-e2e-123',
+			defaultWorkspaceId: '00000000-0000-4000-8000-000000000004',
 		})
 	})
 
@@ -1062,14 +1062,16 @@ describe('workspace skill tools — end-to-end round-trip', () => {
 		const createRes = (await create({
 			name: 'deploy-prod',
 			content: '---\nname: deploy-prod\ndescription: Ship to prod\n---\n\nBody',
-		})) as { content: Array<{ text: string }> }
-		const created = JSON.parse(createRes.content[0].text)
+		})) as { structuredContent: { name?: string; id?: string } }
+		const created = createRes.structuredContent
 		expect(created.name).toBe('deploy-prod')
 		expect(created.id).toBe('skill-1')
 
 		const get = getHandler('get_workspace_skill')
-		const getRes = (await get({ name: 'deploy-prod' })) as { content: Array<{ text: string }> }
-		const fetched = JSON.parse(getRes.content[0].text)
+		const getRes = (await get({ name: 'deploy-prod' })) as {
+			structuredContent: { id?: string; content?: string }
+		}
+		const fetched = getRes.structuredContent
 
 		// Round-trip: id and content match what was created.
 		expect(fetched.id).toBe(created.id)

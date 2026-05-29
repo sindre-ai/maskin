@@ -384,6 +384,12 @@ export const mcpTelemetry = pgTable(
 		durationMs: integer('duration_ms'),
 		objectType: text('object_type'),
 		mutationKind: text('mutation_kind'),
+		// Set on `tool_call` rows when the wrapper measured the response. Powers
+		// the bet's tokens-per-result secondary metric. `contentTokens` is an
+		// estimate (~`bytes / 4`) — see packages/mcp/src/telemetry.ts.
+		contentBytes: integer('content_bytes'),
+		contentTokens: integer('content_tokens'),
+		structuredContentBytes: integer('structured_content_bytes'),
 		data: jsonb('data'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
