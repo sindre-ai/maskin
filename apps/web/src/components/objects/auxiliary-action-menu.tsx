@@ -14,7 +14,7 @@ import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Bell, BellOff, Copy, ExternalLink, FileText, MoreHorizontal, Trash2 } from 'lucide-react'
-import { Fragment, useCallback, useMemo } from 'react'
+import { Fragment, useCallback, useEffect, useMemo } from 'react'
 import { toast } from 'sonner'
 
 type Visibility = 'hide' | 'disable'
@@ -109,6 +109,34 @@ export function AuxiliaryActionMenu({
 	)
 
 	const visibleItems = items.filter((item) => item.visibility !== 'hide')
+
+	useEffect(() => {
+		if (!open) return
+
+		const handleKeyDown = (e: KeyboardEvent) => {
+			const isMeta = e.metaKey || e.ctrlKey
+			let itemId: string | null = null
+
+			if (e.key === 'e' && !e.shiftKey && !isMeta) itemId = 'copy-link'
+			else if (e.key === 'T' && e.shiftKey && !isMeta) itemId = 'copy-title'
+			else if (e.key === 'C' && e.shiftKey && !isMeta) itemId = 'copy-content'
+			else if (e.key === 's' && !e.shiftKey && !isMeta) itemId = 'subscribe'
+			else if (e.key === 'Backspace' && isMeta) itemId = 'delete'
+
+			if (!itemId) return
+
+			const item = visibleItems.find((i) => i.id === itemId)
+			if (!item || item.visibility === 'disable') return
+
+			e.preventDefault()
+			e.stopPropagation()
+			item.onSelect()
+			onOpenChange?.(false)
+		}
+
+		document.addEventListener('keydown', handleKeyDown, true)
+		return () => document.removeEventListener('keydown', handleKeyDown, true)
+	}, [open, visibleItems, onOpenChange])
 
 	const handleOpenChange = (next: boolean) => {
 		if (next) console.log('menu_opened', { objectType: object.type, objectId: object.id })
