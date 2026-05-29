@@ -10,6 +10,10 @@ const filterStringSchema = z.string().min(1).max(128)
 // Column ids include dynamic `metadata.<field_name>` keys, so the cap is
 // looser than a filter value but still finite.
 const columnIdSchema = z.string().min(1).max(256)
+// Worst-case payload size: 200 * (256 key + 5 value + JSON quoting) ≈ 53 KB.
+// Comfortably under any reasonable body limit and well above the realistic
+// upper bound (the objects table has a few dozen columns at most).
+const COLUMN_VISIBILITY_MAX_ENTRIES = 200
 
 export const displaySettingsBodySchema = z
 	.object({
@@ -24,7 +28,12 @@ export const displaySettingsBodySchema = z
 			})
 			.strict()
 			.optional(),
-		columnVisibility: z.record(columnIdSchema, z.boolean()).optional(),
+		columnVisibility: z
+			.record(columnIdSchema, z.boolean())
+			.refine((v) => Object.keys(v).length <= COLUMN_VISIBILITY_MAX_ENTRIES, {
+				message: `columnVisibility may have at most ${COLUMN_VISIBILITY_MAX_ENTRIES} entries`,
+			})
+			.optional(),
 	})
 	.strict()
 
