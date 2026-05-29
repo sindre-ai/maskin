@@ -1692,7 +1692,10 @@ export function createMcpServer(config: McpConfig) {
 					formatMutationConfirm(
 						{
 							verb: 'Updated actor',
-							results: [{ type: 'actor', id, success: true, result: { id, type: 'actor' } }],
+							// Omit `result.id` so `formatMutationConfirm` falls through to
+							// `workspaceLink(ctx)` instead of building `/objects/<actorId>`
+							// — actors aren't object-graph objects and have no settings page.
+							results: [{ type: 'actor', id, success: true }],
 						},
 						ctx,
 					),
