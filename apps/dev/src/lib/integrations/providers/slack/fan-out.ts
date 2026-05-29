@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events as eventsTable, files, integrations } from '@maskin/db/schema'
 import { MAX_FILE_SIZE_BYTES } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { fileStorageKey } from '../../../file-urls'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
@@ -69,6 +69,42 @@ interface PersistedFile {
 	mimeType: string
 }
 
+/**
+ * Look up a previously persisted Slack file by its Slack file ID. We key off
+ * the audit event we write below — every persisted Slack file gets an event
+ * row with `data.slack_file_id` — which keeps the dedup contract in one place
+ * without a schema migration. Returns the existing Maskin file when found so
+ * we can skip both the download and the S3 write on retries / re-shares of
+ * the same file across messages.
+ */
+async function findPersistedBySlackFileId(
+	db: Database,
+	workspaceId: string,
+	slackFileId: string,
+): Promise<PersistedFile | null> {
+	const rows = await db
+		.select({ id: files.id, name: files.name, mimeType: files.mimeType })
+		.from(files)
+		.innerJoin(eventsTable, eq(eventsTable.entityId, files.id))
+		.where(
+			and(
+				eq(files.workspaceId, workspaceId),
+				eq(eventsTable.entityType, 'file'),
+				eq(eventsTable.action, 'created'),
+				sql`${eventsTable.data}->>'slack_file_id' = ${slackFileId}`,
+			),
+		)
+		.limit(1)
+	const row = rows[0]
+	if (!row) return null
+	return {
+		slackFileId,
+		maskinFileId: row.id,
+		name: row.name,
+		mimeType: row.mimeType,
+	}
+}
+
 async function persistOne(
 	db: Database,
 	storage: StorageProvider,
@@ -77,6 +113,16 @@ async function persistOne(
 	accessToken: string,
 	slackFile: SlackFile,
 ): Promise<PersistedFile> {
+	const existing = await findPersistedBySlackFileId(db, workspaceId, slackFile.id)
+	if (existing) {
+		logger.info('Slack fan-out: reusing existing file for Slack file id', {
+			workspaceId,
+			slackFileId: slackFile.id,
+			maskinFileId: existing.maskinFileId,
+		})
+		return existing
+	}
+
 	const downloadUrl = slackFile.url_private_download ?? slackFile.url_private
 	if (!downloadUrl) throw new Error(`Slack file ${slackFile.id} has no url_private`)
 

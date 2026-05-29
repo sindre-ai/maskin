@@ -33,17 +33,39 @@ function tableName(table: unknown): string {
 	return 'unknown'
 }
 
-function makeFakeDb(integration: FakeIntegrationRow | null) {
+interface PreExistingFile {
+	id: string
+	name: string
+	mimeType: string
+}
+
+function makeFakeDb(
+	integration: FakeIntegrationRow | null,
+	preExistingFiles: PreExistingFile[] = [],
+) {
 	const inserted: Array<{ table: string; values: unknown }> = []
 	const deleted: Array<{ table: string }> = []
 
 	const db = {
-		select: () => ({
-			from: () => ({
-				where: () => ({
-					limit: () => Promise.resolve(integration ? [integration] : []),
-				}),
-			}),
+		select: (_cols?: unknown) => ({
+			from: (table: unknown) => {
+				const name = tableName(table)
+				if (name === 'files') {
+					// Dedup lookup: select(...).from(files).innerJoin(events, ...).where(...).limit(1)
+					return {
+						innerJoin: () => ({
+							where: () => ({
+								limit: () => Promise.resolve(preExistingFiles),
+							}),
+						}),
+					}
+				}
+				return {
+					where: () => ({
+						limit: () => Promise.resolve(integration ? [integration] : []),
+					}),
+				}
+			},
 		}),
 		insert: (table: unknown) => ({
 			values: (values: unknown) => {
@@ -332,6 +354,53 @@ describe('slackWebhookFanOut', () => {
 
 		// Both fetches should overlap — sequential execution would peak at 1.
 		expect(maxInFlight).toBeGreaterThanOrEqual(2)
+	})
+
+	it('reuses an existing Maskin file when the same Slack file id has already been persisted', async () => {
+		// Regression: if Slack re-delivers an event (different event_id, same file)
+		// or the same file is shared in a second message, we must not redownload it
+		// or create a duplicate files row + S3 object. The fan-out looks up the
+		// audit event we wrote on the original persist and reuses the existing
+		// maskin file id.
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+		const { db, inserted } = makeFakeDb(
+			{
+				id: 'int-1',
+				provider: 'slack',
+				workspaceId: 'ws-1',
+				config: { system_actor_id: 'actor-1' },
+			},
+			[{ id: 'existing-maskin-file', name: 'screenshot.png', mimeType: 'image/png' }],
+		)
+		const storage = makeFakeStorage()
+
+		const result = await slackWebhookFanOut({
+			db: db as never,
+			storage,
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized: makeEvent([
+				{
+					id: 'F123',
+					name: 'screenshot.png',
+					mimetype: 'image/png',
+					url_private: 'https://files.slack.com/files-pri/T1-F123/screenshot.png',
+				},
+			]),
+		})
+
+		const data = result[0]?.data as Record<string, unknown>
+		expect(data.maskin_file_ids).toEqual(['existing-maskin-file'])
+
+		// No download, no S3 write, no new files row, no extra audit event
+		expect(fetchSpy).not.toHaveBeenCalled()
+		expect(storage.puts).toHaveLength(0)
+		expect(inserted.filter((i) => i.table === 'files')).toHaveLength(0)
+		expect(inserted.filter((i) => i.table === 'events')).toHaveLength(0)
 	})
 
 	it('returns the event unchanged when token refresh throws', async () => {
