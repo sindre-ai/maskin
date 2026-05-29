@@ -1,4 +1,7 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async () => {
@@ -19,7 +22,8 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { ApiError, api } from '@/lib/api'
+import { ApiError, type UserDisplaySettingsResponse, api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { TestWrapper } from '../setup'
 
 describe('useUserDisplaySettings', () => {
@@ -91,5 +95,54 @@ describe('useUpdateUserDisplaySettings', () => {
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.userDisplaySettings.upsert).toHaveBeenCalledWith('ws-1', 'task', row.settings)
+	})
+
+	it('rolls the cache back to the previous row when the upsert rejects', async () => {
+		// Seed cache with the persisted row so onMutate captures it as `previous`,
+		// then make the upsert reject so onError fires. Cache should restore.
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+
+		const previous: UserDisplaySettingsResponse = {
+			object_type: 'task',
+			name: 'default',
+			settings: { sort: 'title', order: 'asc' },
+			updated_at: '2026-05-28T10:00:00.000Z',
+		}
+		const detailKey = queryKeys.userDisplaySettings.detail('ws-1', 'task')
+		queryClient.setQueryData(detailKey, previous)
+
+		// Deferred rejection lets us observe the optimistic write before the
+		// mutation finishes, then confirm the rollback after it rejects.
+		let rejectUpsert!: (err: Error) => void
+		vi.mocked(api.userDisplaySettings.upsert).mockReturnValue(
+			new Promise((_resolve, reject) => {
+				rejectUpsert = reject
+			}),
+		)
+
+		const { result } = renderHook(() => useUpdateUserDisplaySettings('ws-1'), {
+			wrapper: Wrapper,
+		})
+		const nextSettings = { sort: 'created', order: 'desc' as const }
+		result.current.mutate({ objectType: 'task', settings: nextSettings })
+
+		// Optimistic write lands first while the upsert promise is still pending.
+		await waitFor(() => {
+			const optimistic = queryClient.getQueryData<UserDisplaySettingsResponse>(detailKey)
+			expect(optimistic?.settings).toEqual(nextSettings)
+		})
+
+		rejectUpsert(new ApiError(500, 'boom'))
+
+		// Once the mutation errors, the cache should be back to `previous`.
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(queryClient.getQueryData<UserDisplaySettingsResponse>(detailKey)).toEqual(previous)
 	})
 })
