@@ -10,17 +10,29 @@ function isProduction(): boolean {
 
 export function frontendBaseUrl(): string {
 	const url = process.env.FRONTEND_URL
-	if (url) return url
+	if (url) return stripTrailingSlash(url)
 	if (isProduction()) {
 		throw new Error('FRONTEND_URL must be set in production to mint shareable file URLs')
 	}
 	return DEV_FRONTEND_FALLBACK
 }
 
+function stripTrailingSlash(s: string): string {
+	return s.endsWith('/') ? s.slice(0, -1) : s
+}
+
 export function fileViewerUrl(frontendUrl: string, workspaceId: string, fileId: string): string {
-	return `${frontendUrl}/${workspaceId}/files/${fileId}`
+	return `${stripTrailingSlash(frontendUrl)}/${workspaceId}/files/${fileId}`
 }
 
 export function fileStorageKey(workspaceId: string, fileId: string): string {
 	return `workspaces/${workspaceId}/files/${fileId}`
+}
+
+// Canonical URL agents should emit when referencing an object in a comment,
+// notification, or description. Agents otherwise hallucinate the host (the
+// `app.maskin.ai` bug) — route every agent-facing object link through this
+// helper so the host + workspace segment stay in lockstep with the web app.
+export function agentObjectUrl(frontendUrl: string, workspaceId: string, objectId: string): string {
+	return `${stripTrailingSlash(frontendUrl)}/${workspaceId}/objects/${objectId}`
 }

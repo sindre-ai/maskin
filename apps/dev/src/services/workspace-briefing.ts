@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { objects, relationships, workspaces } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq, gte, inArray, ne } from 'drizzle-orm'
+import { agentObjectUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
@@ -19,8 +20,17 @@ const EXCERPT_MAX = 180
  * Briefing block prepended to every session's ACTION_PROMPT. Describes the
  * workspace terrain rather than prescribing steps — agentic models do better
  * with outcome-oriented context than with imperative checklists.
+ *
+ * Parameterised on the live `workspaceId` + `frontendUrl` so the agent sees
+ * the exact host + workspace-scoped path it should emit when referencing an
+ * object. Without this, agents hallucinate hosts like `app.maskin.ai`.
  */
-export const WORKSPACE_STARTUP_BLOCK = `## This workspace
+export function buildWorkspaceStartupBlock(args: {
+	workspaceId: string
+	frontendUrl: string
+}): string {
+	const exampleUrl = agentObjectUrl(args.frontendUrl, args.workspaceId, '<id>')
+	return `## This workspace
 
 This workspace works through bets — shaped, time-boxed outcomes.
 
@@ -30,11 +40,16 @@ This workspace works through bets — shaped, time-boxed outcomes.
 - Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
 - A one-line note in \`/agent/workspace/SESSION_LEARNING.md\` rolls up into the next session's briefing.
 
+When you reference an object in a comment, notification, or description, emit a markdown link with this exact format — do not guess the host or drop the workspace segment:
+
+\`[title](${exampleUrl})\`
+
 You decide how to achieve the goal. This is just the terrain.
 
 ---
 
 `
+}
 
 export function workspaceLedgerKey(workspaceId: string): string {
 	return `agents/${workspaceId}/_workspace/learnings.md`
