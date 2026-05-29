@@ -213,7 +213,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
-	const { comment, agentMentions } = await db.transaction(async (tx) => {
+	const { comment, agentMentions, mentionedSubscriberCount } = await db.transaction(async (tx) => {
 		const results = await tx
 			.insert(events)
 			.values({
@@ -305,8 +305,43 @@ app.openapi(createCommentRoute, (async (c) => {
 				target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
 			})
 
-		return { comment: created, agentMentions: mentions }
+		// Auto-subscribe @-mentioned actors so the comment reaches their For You
+		// page even if they weren't already subscribed. Dedup the mention list
+		// and skip the commenter (they were just auto-subscribed above).
+		// onConflictDoNothing preserves any existing source — a mention never
+		// downgrades manual/author/commenter.
+		let mentionedSubscriberCount = 0
+		if (body.mentions?.length) {
+			const uniqueMentioned = Array.from(new Set(body.mentions)).filter((id) => id !== actorId)
+			if (uniqueMentioned.length > 0) {
+				await tx
+					.insert(subscriptions)
+					.values(
+						uniqueMentioned.map((mentionedActorId) => ({
+							workspaceId,
+							actorId: mentionedActorId,
+							entityType: created.entityType,
+							entityId: created.entityId,
+							source: 'mentioned' as const,
+						})),
+					)
+					.onConflictDoNothing({
+						target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
+					})
+				mentionedSubscriberCount = uniqueMentioned.length
+			}
+		}
+
+		return { comment: created, agentMentions: mentions, mentionedSubscriberCount }
 	})
+
+	if (mentionedSubscriberCount > 0) {
+		logger.info('Auto-subscribed @-mentioned actors to commented object', {
+			objectId: body.entity_id,
+			commentEventId: comment.id,
+			mentionedSubscriberCount,
+		})
+	}
 
 	// Fire-and-forget: spawn an agent session per @mentioned agent so the agent
 	// can read the comment and reply. Session creation happens after the
