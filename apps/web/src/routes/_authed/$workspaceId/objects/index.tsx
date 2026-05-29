@@ -258,6 +258,14 @@ function ObjectsPage() {
 	// there is no slot for "all types".
 	const displaySettingsQuery = useUserDisplaySettings(workspaceId, typeFilter ?? '')
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
+	// `useMutation` returns a new object reference on every render, but the
+	// `mutate` function itself is stable. Pinning the stable callable into a
+	// ref keeps the write-through effect's deps from changing on every render
+	// — without that, the effect would re-arm its 500 ms timeout indefinitely
+	// after the first write, producing a write-every-500 ms loop while the
+	// page is open.
+	const updateMutateRef = useRef(updateDisplaySettings.mutate)
+	updateMutateRef.current = updateDisplaySettings.mutate
 	const hydratedTypesRef = useRef<Set<string>>(new Set())
 
 	const urlIsInDefaultShape = useMemo(
@@ -321,19 +329,10 @@ function ObjectsPage() {
 		if (filters.status || filters.owner) settings.filters = filters
 
 		const handle = setTimeout(() => {
-			updateDisplaySettings.mutate({ objectType: typeFilter, settings })
+			updateMutateRef.current({ objectType: typeFilter, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [
-		typeFilter,
-		sort,
-		order,
-		groupBy,
-		statusFilter,
-		ownerFilter,
-		columnVisibility,
-		updateDisplaySettings,
-	])
+	}, [typeFilter, sort, order, groupBy, statusFilter, ownerFilter, columnVisibility])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
