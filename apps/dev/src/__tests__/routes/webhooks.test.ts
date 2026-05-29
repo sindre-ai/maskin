@@ -401,6 +401,10 @@ describe('Webhook Routes', () => {
 				[], // int2 claim → conflict (already processed for that workspace)
 				[{}], // int1 event insert
 			]
+			// Gated processed_at UPDATE inside the events+update txn must report 1
+			// matched row, otherwise the helper treats the claim as reconciler-released
+			// and aborts.
+			mockResults.update = [{ id: 'claim-1' }]
 
 			const res = await app.request(jsonRequest('POST', '/api/webhooks/github', { action: 'push' }))
 
@@ -464,6 +468,10 @@ describe('Webhook Routes', () => {
 				undefined,
 				new Error('events trigger rejected payload'),
 			]
+			// int1 commits cleanly so its gated processed_at UPDATE must report 1
+			// matched row. int2's event insert throws before it would UPDATE, so a
+			// static result suffices for both paths.
+			mockResults.update = [{ id: 'claim-1' }]
 
 			const res = await app.request(jsonRequest('POST', '/api/webhooks/github', { action: 'push' }))
 

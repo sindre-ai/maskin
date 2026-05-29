@@ -25,6 +25,7 @@ import {
 } from '../lib/integrations/providers/slack/client'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
+import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { logger } from '../lib/logger'
 import {
@@ -894,35 +895,42 @@ webhookApp.post('/:provider', async (c) => {
 					}
 				}
 
-				// Mark the claim processed in the SAME transaction as the events insert.
-				// The reconciler keys off `processed_at IS NULL` to identify orphans —
-				// without atomicity an event row could exist while the claim still reads
-				// as unprocessed (or vice versa), and the next reconciler tick would
-				// either re-release a completed delivery (producing duplicate events on
-				// retry) or leave a real orphan in the table.
+				// Mark the claim processed in the SAME transaction as the events insert,
+				// gated on the claim row still existing and being unprocessed. Without
+				// the gate, a long fan-out (>STALE_THRESHOLD_MS) could race the
+				// reconciler: the reconciler deletes the orphan, the route's UPDATE
+				// matches 0 rows but the txn commits anyway, and an events row lands
+				// without its provenance claim. Throwing on a 0-row UPDATE aborts the
+				// txn so neither side commits — the provider's next retry reprocesses
+				// cleanly.
 				try {
-					await db.transaction(async (tx) => {
-						if (toInsert.length > 0) {
-							await tx.insert(events).values(
-								toInsert.map((e) => ({
-									workspaceId: integration.workspaceId,
-									actorId: systemActorId,
-									action: e.action,
-									entityType: e.entityType,
-									entityId: integration.id,
-									data: e.data,
-								})),
-							)
-						}
-						if (claimRowId) {
-							await tx
-								.update(webhookDeliveries)
-								.set({ processedAt: new Date() })
-								.where(eq(webhookDeliveries.id, claimRowId))
-						}
+					await commitWebhookDelivery(db, {
+						eventRows: toInsert.map((e) => ({
+							workspaceId: integration.workspaceId,
+							actorId: systemActorId,
+							action: e.action,
+							entityType: e.entityType,
+							entityId: integration.id,
+							data: e.data,
+						})),
+						claimRowId,
 					})
 					return { kind: 'inserted', count: toInsert.length }
 				} catch (err) {
+					if (err instanceof ClaimReleasedError) {
+						// Claim was already deleted by the reconciler — no row to release.
+						// The provider's next retry will reclaim and reprocess the delivery.
+						logger.warn(
+							`Webhook claim released by reconciler mid-processing for ${providerName}; txn aborted`,
+							{
+								integrationId: integration.id,
+								workspaceId: integration.workspaceId,
+								deliveryId,
+								claimRowId: err.claimRowId,
+							},
+						)
+						return { kind: 'failed' }
+					}
 					logger.error(`Event insert failed for ${providerName}`, {
 						integrationId: integration.id,
 						workspaceId: integration.workspaceId,
