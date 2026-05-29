@@ -817,7 +817,7 @@ webhookApp.post('/:provider', async (c) => {
 			// claim caught it. The schema comment on webhook_deliveries calls this out
 			// directly — the ledger is meant to prevent duplicate downloaded files too,
 			// not just duplicate events.
-			let claimed = false
+			let claimRowId: string | null = null
 			if (deliveryId) {
 				try {
 					const rows = await db
@@ -842,7 +842,7 @@ webhookApp.post('/:provider', async (c) => {
 						})
 						return { kind: 'duplicate' }
 					}
-					claimed = true
+					claimRowId = rows[0]?.id ?? null
 				} catch (err) {
 					// Fail open: a dedup-table outage must not stop us from processing.
 					logger.error(`Failed to claim ${providerName} delivery; processing without dedup`, {
@@ -858,20 +858,12 @@ webhookApp.post('/:provider', async (c) => {
 			// .claude/rules/known-pitfalls.md) would leave the claim committed and
 			// permanently starve provider retries for this workspace.
 			const releaseClaim = async () => {
-				if (!claimed || !deliveryId) return
+				if (!claimRowId) return
 				try {
-					await db
-						.delete(webhookDeliveries)
-						.where(
-							and(
-								eq(webhookDeliveries.provider, providerName),
-								eq(webhookDeliveries.externalId, deliveryId),
-								eq(webhookDeliveries.workspaceId, integration.workspaceId),
-							),
-						)
+					await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
 				} catch (err) {
-					// Best-effort: if this fails, the next retry will be deduplicated
-					// and the workspace loses this event. Surfaced loudly so on-call sees it.
+					// Best-effort: if this fails the reconciler will pick the orphan up
+					// after the stale threshold elapses. Logged loudly so on-call sees it.
 					logger.error(`Failed to release webhook delivery claim for ${providerName}`, {
 						deliveryId,
 						workspaceId: integration.workspaceId,
@@ -902,19 +894,33 @@ webhookApp.post('/:provider', async (c) => {
 					}
 				}
 
-				if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
-
+				// Mark the claim processed in the SAME transaction as the events insert.
+				// The reconciler keys off `processed_at IS NULL` to identify orphans —
+				// without atomicity an event row could exist while the claim still reads
+				// as unprocessed (or vice versa), and the next reconciler tick would
+				// either re-release a completed delivery (producing duplicate events on
+				// retry) or leave a real orphan in the table.
 				try {
-					await db.insert(events).values(
-						toInsert.map((e) => ({
-							workspaceId: integration.workspaceId,
-							actorId: systemActorId,
-							action: e.action,
-							entityType: e.entityType,
-							entityId: integration.id,
-							data: e.data,
-						})),
-					)
+					await db.transaction(async (tx) => {
+						if (toInsert.length > 0) {
+							await tx.insert(events).values(
+								toInsert.map((e) => ({
+									workspaceId: integration.workspaceId,
+									actorId: systemActorId,
+									action: e.action,
+									entityType: e.entityType,
+									entityId: integration.id,
+									data: e.data,
+								})),
+							)
+						}
+						if (claimRowId) {
+							await tx
+								.update(webhookDeliveries)
+								.set({ processedAt: new Date() })
+								.where(eq(webhookDeliveries.id, claimRowId))
+						}
+					})
 					return { kind: 'inserted', count: toInsert.length }
 				} catch (err) {
 					logger.error(`Event insert failed for ${providerName}`, {

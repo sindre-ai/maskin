@@ -536,6 +536,11 @@ export const webhookDeliveries = pgTable(
 		externalId: text('external_id').notNull(),
 		workspaceId: uuid('workspace_id').notNull(),
 		receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+		// Set when downstream work (events insert + any fan-out side effects) commits.
+		// NULL means the claim was committed but its work never finished — either
+		// still in flight (within threshold) or orphaned by a restart (past threshold).
+		// The reconciler releases orphans so the provider's retry can reprocess them.
+		processedAt: timestamp('processed_at', { withTimezone: true }),
 	},
 	(t) => [
 		unique('webhook_deliveries_provider_external_id_workspace_id_uniq').on(
