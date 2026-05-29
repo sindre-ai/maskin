@@ -22,6 +22,7 @@ export const config: ProviderConfig = {
 			tokenUrl: 'https://oauth2.googleapis.com/token',
 			revokeUrl: 'https://oauth2.googleapis.com/revoke',
 			scopes: [
+				'https://www.googleapis.com/auth/gmail.readonly',
 				'https://www.googleapis.com/auth/gmail.modify',
 				'https://www.googleapis.com/auth/gmail.compose',
 				'https://www.googleapis.com/auth/userinfo.email',

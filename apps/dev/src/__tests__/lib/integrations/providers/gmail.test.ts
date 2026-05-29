@@ -23,6 +23,7 @@ describe('Gmail provider config', () => {
 			expect(config.auth.config.clientIdEnv).toBe('GMAIL_CLIENT_ID')
 			expect(config.auth.config.clientSecretEnv).toBe('GMAIL_CLIENT_SECRET')
 			expect(config.auth.config.pkce).toBe(true)
+			expect(config.auth.config.scopes).toContain('https://www.googleapis.com/auth/gmail.readonly')
 			expect(config.auth.config.scopes).toContain('https://www.googleapis.com/auth/gmail.modify')
 			expect(config.auth.config.scopes).toContain('https://www.googleapis.com/auth/gmail.compose')
 			expect(config.auth.config.scopes).toContain('https://www.googleapis.com/auth/userinfo.email')

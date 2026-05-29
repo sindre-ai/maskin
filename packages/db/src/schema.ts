@@ -403,8 +403,9 @@ export const mcpTelemetry = pgTable(
 //
 // Polymorphic per-actor subscriptions keyed on (entity_type, entity_id).
 // `source` tracks how the row was created — 'author' (creator), 'commenter'
-// (auto-attached when they comment), or 'manual' (explicit subscribe).
-// Manual/author should never be downgraded by a later auto-subscribe.
+// (auto-attached when they comment), 'mentioned' (auto-attached when they are
+// @-mentioned in a comment), or 'manual' (explicit subscribe). Manual/author
+// should never be downgraded by a later auto-subscribe.
 
 export const subscriptions = pgTable(
 	'subscriptions',
@@ -425,7 +426,10 @@ export const subscriptions = pgTable(
 		unique('subscriptions_actor_entity_uniq').on(t.actorId, t.entityType, t.entityId),
 		index('subscriptions_ws_actor_idx').on(t.workspaceId, t.actorId),
 		index('subscriptions_entity_idx').on(t.entityType, t.entityId),
-		check('subscriptions_source_check', sql`${t.source} IN ('manual', 'author', 'commenter')`),
+		check(
+			'subscriptions_source_check',
+			sql`${t.source} IN ('manual', 'author', 'commenter', 'mentioned')`,
+		),
 	],
 )
 
@@ -526,9 +530,13 @@ export type NewFile = typeof files.$inferInsert
 
 // ── Webhook Deliveries ──────────────────────────────────────────────────────
 // Idempotency ledger for inbound webhook deliveries. Each row claims a single
-// provider+external_id pair so that retries (which reuse the same external_id)
-// are short-circuited instead of being reprocessed and creating duplicate events
-// or duplicate downloaded files.
+// (provider, external_id, workspace_id) tuple so that retries (which reuse the
+// same external_id) are short-circuited per workspace instead of being
+// reprocessed and creating duplicate events or duplicate downloaded files.
+// The key is per-workspace because a single external install (e.g. one Slack
+// team) can be connected to multiple Maskin workspaces, and a failed insert
+// for one workspace must not block retries for that workspace while still
+// deduping workspaces that already succeeded.
 
 export const webhookDeliveries = pgTable(
 	'webhook_deliveries',
@@ -536,10 +544,15 @@ export const webhookDeliveries = pgTable(
 		id: uuid('id').defaultRandom().primaryKey(),
 		provider: text('provider').notNull(),
 		externalId: text('external_id').notNull(),
+		workspaceId: uuid('workspace_id').notNull(),
 		receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		unique('webhook_deliveries_provider_external_id_uniq').on(t.provider, t.externalId),
+		unique('webhook_deliveries_provider_external_id_workspace_id_uniq').on(
+			t.provider,
+			t.externalId,
+			t.workspaceId,
+		),
 		index('webhook_deliveries_received_at_idx').on(t.receivedAt),
 	],
 )

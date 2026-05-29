@@ -55,6 +55,7 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		entity_type: 'object',
 		entity_id: 'obj-1',
 		unread_count: 1,
+		mentions_you: false,
 		latest_event_id: 20,
 		latest_activity_at: '2026-01-01T00:00:00Z',
 		object: buildObjectResponse({ id: 'obj-1', title: 'Onboarding A/B', type: 'bet' }),
@@ -86,6 +87,22 @@ describe('UnreadThreadCard', () => {
 		})
 		expect(screen.getByText('Onboarding A/B')).toBeInTheDocument()
 		expect(screen.getByLabelText('3 unread')).toBeInTheDocument()
+	})
+
+	it('renders a "Mentioned" badge when the unread thread mentions the viewer', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem({ mentions_you: true })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByLabelText('Mentioned')).toBeInTheDocument()
+	})
+
+	it('omits the "Mentioned" badge when mentions_you is false', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem({ mentions_you: false })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.queryByLabelText('Mentioned')).not.toBeInTheDocument()
 	})
 
 	it('renders a "New" divider before the first thread containing unread activity', () => {
@@ -200,6 +217,49 @@ describe('UnreadThreadCard', () => {
 			wrapper: TestWrapper,
 		})
 		expect(mockMarkReadMutate).not.toHaveBeenCalled()
+	})
+
+	it('keeps the title row on its own line at mobile breakpoints', () => {
+		// The title cell carries `basis-full` (with `sm:basis-auto`) so a long
+		// title at ≤640px gets the full card width and the time/badge/button
+		// flow onto the next row. Removing `basis-full` would re-introduce the
+		// 375px header overflow that the responsive bet's first-test slice
+		// explicitly targets.
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard
+				workspaceId="ws-1"
+				item={buildItem({
+					object: buildObjectResponse({
+						id: 'obj-1',
+						title: 'A very long onboarding bet title that would overflow at 375px',
+						type: 'bet',
+					}),
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const titleLink = screen.getByText(/A very long onboarding bet/)
+		const titleCell = titleLink.parentElement
+		expect(titleCell?.className).toMatch(/basis-full/)
+		expect(titleCell?.className).toMatch(/sm:basis-auto/)
+		// And the header row itself wraps rather than nowrap-ing into overflow.
+		const headerRow = container.querySelector('.border-b')
+		expect(headerRow?.className).toMatch(/flex-wrap/)
+	})
+
+	// Regression: at 375px a long thread title used to push the unread badge and
+	// Mark-as-read button off-screen. `min-w-0 flex-1 truncate` on the title link
+	// is what keeps the right-side controls in-frame.
+	it('title link is min-w-0 flex-1 truncate so siblings stay in-frame on mobile', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(<UnreadThreadCard workspaceId="ws-1" item={buildItem()} />, {
+			wrapper: TestWrapper,
+		})
+		const titleLink = screen.getByText('Onboarding A/B')
+		expect(titleLink.className).toMatch(/min-w-0/)
+		expect(titleLink.className).toMatch(/flex-1/)
+		expect(titleLink.className).toMatch(/truncate/)
 	})
 
 	it('marks the thread as read when the "Mark as read" button is clicked', async () => {

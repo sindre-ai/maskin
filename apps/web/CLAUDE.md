@@ -121,6 +121,76 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - Page headers via `src/components/layout/page-header.tsx`
 - Command palette (cmdk) available globally
 
+### Responsive (mobile + iPad)
+The app is targeted at three reference viewports: **375px** (iPhone portrait), **768px** (iPad portrait), **1024px** (iPad landscape). Every surface must work at all three.
+
+**Breakpoints — Tailwind defaults only.**
+| Token | Min width | Use for |
+|-------|-----------|---------|
+| (none) | 0 | Single-column mobile (≤640px) — the default |
+| `sm:` | 640px | Large phones |
+| `md:` | 768px | iPad portrait — desktop layout starts here |
+| `lg:` | 1024px | iPad landscape, small laptops |
+| `xl:` | 1280px | Standard desktop |
+
+Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-mobile.tsx` (boundary: 768px = Tailwind `md`) is the single source of truth when JS needs to know the viewport class — never read `window.innerWidth` directly.
+
+**The single-column rule.** Below `md` (≤767px) every surface collapses to one column. Multi-column grids opt *in* to additional columns with `md:` / `lg:` — never opt out of mobile collapse. Pattern: `grid gap-4 md:grid-cols-2` ✅, `grid grid-cols-3` ❌. The bet's chosen direction is full feature parity in a single column on mobile — no bespoke mobile variants.
+
+**Never overflow the viewport horizontally.** Content that scrolls horizontally must do so *inside its own contained box* (e.g. a table with `overflow-auto` on its wrapper, a tab strip with `overflow-x-auto`). The page itself must never produce a horizontal scrollbar. Specifically:
+- Avoid `min-w-[...px]` on direct children of the page body. If a table needs a minimum width, wrap it in `overflow-x-auto` so the overflow is contained.
+- `w-[Npx]` and `min-w-[Npx]` literals are smells — prefer `w-full sm:w-[Npx]` so mobile gets fluid width.
+- Use `min-w-0` on flex children that hold ellipsis-truncated text (already the pattern in `object-document.tsx`).
+
+**Dialogs, sheets, popovers.** On mobile, large dialogs feel wrong and popovers miss the thumb zone. Conventions (implemented progressively across the bet):
+- A `Dialog` whose content would clip on mobile becomes a `Sheet` (bottom on mobile, content-sized up to 85dvh, rounded top corners) via `ResponsiveDialog` from `@/components/ui/responsive-dialog`. Small confirm dialogs stay as `Dialog`.
+- A `Popover` used as a *form control* (date picker, multi-select) becomes a bottom `Sheet` on mobile. A `Popover` used as a hover/info card stays a `Popover`.
+- A `DropdownMenu` is fine on mobile — it auto-positions and doesn't claim too much space.
+- Any dialog/sheet with horizontally-scrolling content inside (like the import preview table) must wrap that content in `overflow-x-auto`, not extend the dialog body itself.
+
+**Sidebars are drawers on mobile.** The app sidebar (left) and the Sindre panel (right) both use the shadcn `Sidebar` primitive, which auto-becomes a Radix `Sheet` below 768px. Don't add a second mobile-only sidebar implementation — extend the primitive.
+
+**Headers, breadcrumbs, dense rows.** Breadcrumbs and other long-text rows are hidden below `md:` (see `header.tsx`); replace with a single-level page label if mobile needs context. Action button clusters in the header use the same `h-7 w-7` ghost-icon sizing — touch targets land at 28px which is borderline; pair them with `aria-label` and don't shrink further.
+
+**Tables.** Tables live inside `overflow-auto` wrappers (see `data-table.tsx`, `related-objects-table.tsx`). Column widths use truncate + `max-w-[150px] sm:max-w-[300px]` so cells get more space on larger screens. Don't add `table-fixed` without explicit need.
+
+**Viewport meta** is set in `apps/web/index.html` (`width=device-width, initial-scale=1.0`). Do not change it without a product reason.
+
+### Responsive (mobile + iPad)
+The app is targeted at three reference viewports: **375px** (iPhone portrait), **768px** (iPad portrait), **1024px** (iPad landscape). Every surface must work at all three.
+
+**Breakpoints — Tailwind defaults only.**
+| Token | Min width | Use for |
+|-------|-----------|---------|
+| (none) | 0 | Single-column mobile (≤640px) — the default |
+| `sm:` | 640px | Large phones |
+| `md:` | 768px | iPad portrait — desktop layout starts here |
+| `lg:` | 1024px | iPad landscape, small laptops |
+| `xl:` | 1280px | Standard desktop |
+
+Do not introduce custom breakpoints. The `useIsMobile()` hook in `src/hooks/use-mobile.tsx` (boundary: 768px = Tailwind `md`) is the single source of truth when JS needs to know the viewport class — never read `window.innerWidth` directly.
+
+**The single-column rule.** Below `md` (≤767px) every surface collapses to one column. Multi-column grids opt *in* to additional columns with `md:` / `lg:` — never opt out of mobile collapse. Pattern: `grid gap-4 md:grid-cols-2` ✅, `grid grid-cols-3` ❌. The bet's chosen direction is full feature parity in a single column on mobile — no bespoke mobile variants.
+
+**Never overflow the viewport horizontally.** Content that scrolls horizontally must do so *inside its own contained box* (e.g. a table with `overflow-auto` on its wrapper, a tab strip with `overflow-x-auto`). The page itself must never produce a horizontal scrollbar. Specifically:
+- Avoid `min-w-[...px]` on direct children of the page body. If a table needs a minimum width, wrap it in `overflow-x-auto` so the overflow is contained.
+- `w-[Npx]` and `min-w-[Npx]` literals are smells — prefer `w-full sm:w-[Npx]` so mobile gets fluid width.
+- Use `min-w-0` on flex children that hold ellipsis-truncated text (already the pattern in `object-document.tsx`).
+
+**Dialogs, sheets, popovers.** On mobile, large dialogs feel wrong and popovers miss the thumb zone. Conventions (implemented progressively across the bet):
+- A `Dialog` whose content is taller than ~75vh on mobile becomes a `Sheet` (full-screen on mobile). Small confirm dialogs stay as `Dialog`.
+- A `Popover` used as a *form control* (date picker, multi-select) becomes a bottom `Sheet` on mobile. A `Popover` used as a hover/info card stays a `Popover`.
+- A `DropdownMenu` is fine on mobile — it auto-positions and doesn't claim too much space.
+- Any dialog/sheet with horizontally-scrolling content inside (like the import preview table) must wrap that content in `overflow-x-auto`, not extend the dialog body itself.
+
+**Sidebars are drawers on mobile.** The app sidebar (left) and the Sindre panel (right) both use the shadcn `Sidebar` primitive, which auto-becomes a Radix `Sheet` below 768px. Don't add a second mobile-only sidebar implementation — extend the primitive.
+
+**Headers, breadcrumbs, dense rows.** Breadcrumbs and other long-text rows are hidden below `md:` (see `header.tsx`); replace with a single-level page label if mobile needs context. Action button clusters in the header use the same `h-7 w-7` ghost-icon sizing — touch targets land at 28px which is borderline; pair them with `aria-label` and don't shrink further.
+
+**Tables.** Tables live inside `overflow-auto` wrappers (see `data-table.tsx`, `related-objects-table.tsx`). Column widths use truncate + `max-w-[150px] sm:max-w-[300px]` so cells get more space on larger screens. Don't add `table-fixed` without explicit need.
+
+**Viewport meta** is set in `apps/web/index.html` (`width=device-width, initial-scale=1.0`). Do not change it without a product reason.
+
 ## File Organization
 ```
 src/

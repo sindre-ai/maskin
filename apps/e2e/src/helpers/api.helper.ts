@@ -34,16 +34,27 @@ interface ActorListItem {
 	role?: string
 }
 
+interface EventResponse {
+	id: number
+	workspaceId: string
+	actorId: string
+	action: string
+	entityType: string
+	entityId: string
+	data: Record<string, unknown> | null
+	createdAt: string | null
+}
+
 interface ActorResponse {
 	id: string
 	type: string
 	name: string
 	email: string | null
-	systemPrompt: string | null
+	system_prompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
-	llmProvider: string | null
-	llmConfig: Record<string, unknown> | null
+	llm_provider: string | null
+	llm_config: Record<string, unknown> | null
 	isSystem: boolean
 	createdAt: string | null
 	updatedAt: string | null
@@ -99,6 +110,19 @@ export class TestAPI {
 			headers: this.headers(workspaceId),
 		})
 		if (!res.ok) throw new Error(`deleteObject failed: ${res.status}`)
+	}
+
+	async createComment(
+		workspaceId: string,
+		data: { entity_id: string; content: string; parent_event_id?: number },
+	): Promise<EventResponse> {
+		const res = await fetch(`${this.baseURL}/api/events`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`createComment failed: ${res.status}`)
+		return res.json()
 	}
 
 	async createWorkspace(name: string): Promise<WorkspaceResponse> {

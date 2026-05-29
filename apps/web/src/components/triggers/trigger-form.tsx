@@ -707,9 +707,9 @@ export function TriggerForm({
 					{action === 'status_changed' && statuses.length > 0 && (
 						<div className="space-y-2">
 							<p className="text-xs font-medium text-muted-foreground">Status transition</p>
-							<div className="flex gap-2">
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 								<Select value={fromStatus} onValueChange={setFromStatus}>
-									<SelectTrigger className="flex-1">
+									<SelectTrigger className="w-full sm:flex-1">
 										<SelectValue placeholder="From status (any)" />
 									</SelectTrigger>
 									<SelectContent>
@@ -721,9 +721,14 @@ export function TriggerForm({
 										))}
 									</SelectContent>
 								</Select>
-								<span className="flex items-center text-xs text-muted-foreground">→</span>
+								<span
+									aria-hidden="true"
+									className="hidden text-xs text-muted-foreground sm:inline-flex sm:items-center"
+								>
+									→
+								</span>
 								<Select value={toStatus} onValueChange={setToStatus}>
-									<SelectTrigger className="flex-1">
+									<SelectTrigger className="w-full sm:flex-1">
 										<SelectValue placeholder="To status (any)" />
 									</SelectTrigger>
 									<SelectContent>
@@ -1061,7 +1066,7 @@ function CronScheduleBuilder({
 }) {
 	return (
 		<div className="space-y-3">
-			<div className="flex gap-2">
+			<div className="flex flex-wrap gap-2">
 				{(['hourly', 'daily', 'weekly', 'monthly'] as const).map((f) => (
 					<Button
 						key={f}

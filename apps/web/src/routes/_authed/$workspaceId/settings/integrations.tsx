@@ -69,10 +69,12 @@ function ProviderRow({
 
 	return (
 		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
-			<div className={`h-3 w-3 rounded-full ${isConnected ? 'bg-success' : 'bg-zinc-600'}`} />
-			<div className="flex-1">
-				<p className="text-sm font-medium text-foreground">{provider.displayName}</p>
-				<p className="text-xs text-muted-foreground">
+			<div
+				className={`h-3 w-3 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-zinc-600'}`}
+			/>
+			<div className="flex-1 min-w-0">
+				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
+				<p className="text-xs text-muted-foreground truncate">
 					{isConnected
 						? `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
 						: `${provider.events.length} event types available`}
@@ -82,7 +84,7 @@ function ProviderRow({
 				<Button
 					variant="ghost"
 					size="sm"
-					className="text-muted-foreground hover:text-error"
+					className="shrink-0 text-muted-foreground hover:text-error"
 					onClick={() => disconnect.mutate(integration.id)}
 					disabled={disconnect.isPending}
 				>
@@ -91,6 +93,7 @@ function ProviderRow({
 			) : (
 				<Button
 					size="sm"
+					className="shrink-0"
 					onClick={() => connect.mutate(provider.name)}
 					disabled={connect.isPending}
 				>

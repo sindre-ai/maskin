@@ -208,11 +208,16 @@ app.openapi(createActorRoute, async (c) => {
 		if (created) workspaceId = created.id
 	}
 
-	// Return actor WITHOUT api_key, but WITH it in the expected response field
-	const { apiKey: _, ...actorWithoutKey } = actor
+	// Return actor WITHOUT api_key, but WITH it in the expected response field.
+	// Field names must be snake_case to match actorResponseSchema so MCP read→update
+	// round trips don't get keys stripped.
+	const { apiKey: _, systemPrompt, llmProvider, llmConfig, ...actorWithoutKey } = actor
 	return c.json(
 		{
 			...serialize(actorWithoutKey),
+			system_prompt: systemPrompt,
+			llm_provider: llmProvider,
+			llm_config: llmConfig,
 			api_key: key,
 			...(workspaceId && { workspace_id: workspaceId }),
 		} as z.infer<typeof actorWithKeySchema>,
@@ -358,11 +363,11 @@ app.openapi(getActorRoute, (async (c) => {
 			name: actors.name,
 			email: actors.email,
 			description: actors.description,
-			systemPrompt: actors.systemPrompt,
+			system_prompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
-			llmProvider: actors.llmProvider,
-			llmConfig: actors.llmConfig,
+			llm_provider: actors.llmProvider,
+			llm_config: actors.llmConfig,
 			isSystem: actors.isSystem,
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
@@ -468,11 +473,11 @@ app.openapi(updateActorRoute, (async (c) => {
 			name: actors.name,
 			email: actors.email,
 			description: actors.description,
-			systemPrompt: actors.systemPrompt,
+			system_prompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
-			llmProvider: actors.llmProvider,
-			llmConfig: actors.llmConfig,
+			llm_provider: actors.llmProvider,
+			llm_config: actors.llmConfig,
 			isSystem: actors.isSystem,
 			updatedAt: actors.updatedAt,
 		})
@@ -593,11 +598,11 @@ app.openapi(resetActorRoute, (async (c) => {
 			name: actors.name,
 			email: actors.email,
 			description: actors.description,
-			systemPrompt: actors.systemPrompt,
+			system_prompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
-			llmProvider: actors.llmProvider,
-			llmConfig: actors.llmConfig,
+			llm_provider: actors.llmProvider,
+			llm_config: actors.llmConfig,
 			isSystem: actors.isSystem,
 			updatedAt: actors.updatedAt,
 		})

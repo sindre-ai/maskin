@@ -557,6 +557,7 @@ export interface UnreadItem {
 	entity_type: string
 	entity_id: string
 	unread_count: number
+	mentions_you: boolean
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
@@ -627,11 +628,11 @@ export interface ActorListItem {
 }
 
 export interface ActorResponse extends ActorListItem {
-	systemPrompt: string | null
+	system_prompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
-	llmProvider: string | null
-	llmConfig: Record<string, unknown> | null
+	llm_provider: string | null
+	llm_config: Record<string, unknown> | null
 	createdAt: string | null
 	updatedAt: string | null
 }

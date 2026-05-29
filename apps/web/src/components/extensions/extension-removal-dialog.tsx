@@ -1,14 +1,14 @@
 import { Button } from '@/components/ui/button'
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import {
 	Select,
 	SelectContent,
@@ -137,16 +137,16 @@ export function ExtensionRemovalDialog({
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-xl">
-				<DialogHeader>
-					<DialogTitle>Remove extension</DialogTitle>
-					<DialogDescription>
+		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+			<ResponsiveDialogContent className="md:max-w-xl">
+				<ResponsiveDialogHeader>
+					<ResponsiveDialogTitle>Remove extension</ResponsiveDialogTitle>
+					<ResponsiveDialogDescription>
 						{affectedTypes.length === 1
 							? 'This extension defines an object type that has existing data. Choose what to do with it.'
 							: 'This extension defines object types that have existing data. Choose what to do with each.'}
-					</DialogDescription>
-				</DialogHeader>
+					</ResponsiveDialogDescription>
+				</ResponsiveDialogHeader>
 
 				<div className="space-y-4 max-h-[60vh] overflow-y-auto">
 					{affectedTypes.map((type, idx) => {
@@ -291,15 +291,15 @@ export function ExtensionRemovalDialog({
 					})}
 				</div>
 
-				<DialogFooter>
+				<ResponsiveDialogFooter>
 					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
 						Cancel
 					</Button>
 					<Button onClick={handleConfirm} disabled={!allResolved || submitting || stillCounting}>
 						{submitting ? <Spinner /> : 'Confirm removal'}
 					</Button>
-				</DialogFooter>
-			</DialogContent>
-		</Dialog>
+				</ResponsiveDialogFooter>
+			</ResponsiveDialogContent>
+		</ResponsiveDialog>
 	)
 }

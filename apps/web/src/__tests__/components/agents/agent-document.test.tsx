@@ -139,8 +139,8 @@ describe('AgentDocumentView', () => {
 		expect(screen.queryByText('Saved')).not.toBeInTheDocument()
 	})
 
-	it('shows llmProvider when set on agent', () => {
-		const agent = buildActorResponse({ name: 'Scout', type: 'agent', llmProvider: 'anthropic' })
+	it('shows llm_provider when set on agent', () => {
+		const agent = buildActorResponse({ name: 'Scout', type: 'agent', llm_provider: 'anthropic' })
 		render(<AgentDocumentView {...baseProps({ agent })} />)
 		expect(screen.getByText('anthropic')).toBeInTheDocument()
 	})

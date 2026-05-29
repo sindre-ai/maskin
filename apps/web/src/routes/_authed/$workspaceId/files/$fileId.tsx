@@ -74,13 +74,13 @@ function FileViewerPage() {
 			<PageHeader />
 			<div className="max-w-3xl mx-auto space-y-6">
 				<header className="space-y-2">
-					<h1 className="text-2xl font-semibold text-text">{file.name}</h1>
+					<h1 className="text-2xl font-semibold text-text break-words">{file.name}</h1>
 					{file.description && <p className="text-sm text-text-secondary">{file.description}</p>}
-					<div className="flex items-center gap-3 text-xs text-text-muted">
-						<span className="font-mono">{file.mimeType}</span>
-						<span>·</span>
+					<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
+						<span className="font-mono break-all">{file.mimeType}</span>
+						<span aria-hidden="true">·</span>
 						<span>{formatSize(file.sizeBytes)}</span>
-						<span>·</span>
+						<span aria-hidden="true">·</span>
 						<RelativeTime date={file.createdAt} />
 					</div>
 				</header>
