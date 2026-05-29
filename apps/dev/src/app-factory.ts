@@ -17,7 +17,6 @@ import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
-import deepLinkRoutes from './routes/deep-link'
 import eventsRoutes from './routes/events'
 import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
@@ -226,9 +225,6 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	}
 
 	app.route('/mcp', mcpRoutes)
-	// Click-tracking redirect for MCP-emitted deep links — must mount before
-	// the SPA catch-all so `/r/...` is not swallowed by the static handler.
-	app.route('/r', deepLinkRoutes)
 
 	app.doc31('/api/openapi.json', getOpenApiConfig(port))
 

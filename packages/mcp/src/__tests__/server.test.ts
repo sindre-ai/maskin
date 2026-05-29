@@ -8,13 +8,7 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 }))
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	// `registerResource` is called by `registerObjectResources` when the test
-	// config sets `webAppBaseUrl` (the lean-format-contract block pins a fake
-	// base URL for deterministic deep-link snapshots). The default per-handler
-	// tests pass `webAppBaseUrl: undefined`, which skips that branch — but the
-	// stub still has to satisfy the call signature when it does run.
-	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn() })),
-	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn().mockImplementation(() => ({})),
 }))
 
 vi.mock('node:fs', () => ({
@@ -22,14 +16,13 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { createMcpServer } from '../server'
 import { tools } from '../tools'
 
 const config = {
 	apiBaseUrl: 'http://localhost:3000',
 	apiKey: 'ank_testkey123',
-	defaultWorkspaceId: '00000000-0000-4000-8000-000000000001',
+	defaultWorkspaceId: 'ws-default-123',
 	// Suppress fire-and-forget telemetry POSTs so tests counting fetch calls
 	// see only the tool's own API call.
 	telemetrySink: () => {},
@@ -118,24 +111,6 @@ describe('createMcpServer', () => {
 	})
 })
 
-// Tests pre-date Task 4's lean-results refactor — they used to parse the JSON
-// blob in `content[0].text`. The new wiring puts the raw JSON in
-// `structuredContent` (array payloads wrapped as `{ items: [...] }`), so this
-// helper bridges old assertions to the new shape until Task 5 rewrites them
-// against the lean markdown contract directly.
-// biome-ignore lint/suspicious/noExplicitAny: structuredContent is a heterogenous JSON payload; tests need permissive access without per-tool type plumbing.
-type StructuredResult = any
-function structuredOf(result: unknown): StructuredResult {
-	const sc = (result as { structuredContent?: unknown })?.structuredContent
-	if (sc && typeof sc === 'object' && !Array.isArray(sc)) {
-		const keys = Object.keys(sc as Record<string, unknown>)
-		if (keys.length === 1 && keys[0] === 'items') {
-			return (sc as { items: StructuredResult }).items
-		}
-	}
-	return sc
-}
-
 describe('tool handlers', () => {
 	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
 
@@ -193,12 +168,12 @@ describe('tool handlers', () => {
 					method: 'POST',
 					headers: expect.objectContaining({
 						Authorization: 'Bearer ank_testkey123',
-						'X-Workspace-Id': '00000000-0000-4000-8000-000000000001',
+						'X-Workspace-Id': 'ws-default-123',
 					}),
 				}),
 			)
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual(mockResult)
 		})
 
@@ -207,7 +182,7 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('create_objects')
 			await handler({
-				workspace_id: '00000000-0000-4000-8000-000000000002',
+				workspace_id: 'ws-custom',
 				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
 				edges: [],
 			})
@@ -216,7 +191,7 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/graph',
 				expect.objectContaining({
 					headers: expect.objectContaining({
-						'X-Workspace-Id': '00000000-0000-4000-8000-000000000002',
+						'X-Workspace-Id': 'ws-custom',
 					}),
 				}),
 			)
@@ -275,7 +250,7 @@ describe('tool handlers', () => {
 				expect(body.type).toBe('attached')
 			}
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.file_attachments).toHaveLength(2)
 			expect(parsed.file_attachments.every((a: { success: boolean }) => a.success)).toBe(true)
 		})
@@ -289,44 +264,31 @@ describe('tool handlers', () => {
 				edges: [],
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.file_attachments).toBeUndefined()
 		})
 	})
 
 	describe('get_objects handler', () => {
 		it('GETs /api/objects/:id/graph for each ID', async () => {
-			// Mock /api/objects/:id/graph — returns the ObjectGraph shape the new
-			// lean formatter expects (object + relationships/events/files).
-			mockFetchSuccess({
-				object: {
-					id: '00000000-0000-4000-8000-aaaaaaaaaaaa',
-					type: 'task',
-					title: 'Test',
-					status: 'todo',
-				},
-				relationships: [],
-				connected_objects: [],
-				events: [],
-				files: [],
-			})
+			mockFetchSuccess({ id: '1', title: 'Test' })
 
 			const handler = getHandler('get_objects')
-			const result = (await handler({
-				ids: ['00000000-0000-4000-8000-aaaaaaaaaaaa', '00000000-0000-4000-8000-bbbbbbbbbbbb'],
-			})) as { content: Array<{ text: string }> }
+			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
+				content: Array<{ text: string }>
+			}
 
 			expect(fetch).toHaveBeenCalledTimes(2)
 			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/objects/00000000-0000-4000-8000-aaaaaaaaaaaa/graph',
+				'http://localhost:3000/api/objects/id-1/graph',
 				expect.anything(),
 			)
 			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/objects/00000000-0000-4000-8000-bbbbbbbbbbbb/graph',
+				'http://localhost:3000/api/objects/id-2/graph',
 				expect.anything(),
 			)
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toHaveLength(2)
 			expect(parsed[0].success).toBe(true)
 		})
@@ -344,34 +306,6 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('type=task')
 			expect(calledUrl).toContain('limit=10')
 			expect(calledUrl).toContain('offset=5')
-		})
-	})
-
-	describe('list_workspaces handler', () => {
-		// The row builder runs inline (this is the only tool that operates without
-		// a default workspace), so escape coverage has to be asserted on the tool
-		// output directly — `formatGenericList`-level tests don't cover it.
-		it('escapes link-syntax in workspace name so the deep link stays intact', async () => {
-			const wsId = '00000000-0000-4000-8000-aaaaaaaaaaaa'
-			mockFetchSuccess([{ id: wsId, name: 'foo](http://evil) [bar' }])
-
-			const handler = getHandler('list_workspaces')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
-
-			const text = result.content[0].text
-			// The malicious bracket pair is escaped — the substring `](http://evil)`
-			// never appears unescaped, so Claude won't parse it as a second link.
-			expect(text).not.toMatch(/[^\\]\]\(http:\/\/evil\)/)
-			expect(text).toContain('foo\\](http://evil) \\[bar')
-			// The legitimate deep link survives intact: the escaped name is followed
-			// by exactly one `](…)` pair pointing at the redirect for this workspace.
-			// Base URL is left flexible so the test doesn't depend on WEB_APP_URL /
-			// FRONTEND_URL env state.
-			expect(text).toMatch(
-				new RegExp(
-					`- \\[foo\\\\\\]\\(http://evil\\) \\\\\\[bar\\]\\([^()\\s]+/r/${wsId}\\?t=list_workspaces\\)`,
-				),
-			)
 		})
 	})
 
@@ -426,7 +360,7 @@ describe('tool handlers', () => {
 				expect(body.type).toBe('attached')
 			}
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
 			expect(attachments).toHaveLength(2)
 			expect(attachments.every((a: { success: boolean }) => a.success)).toBe(true)
@@ -470,7 +404,7 @@ describe('tool handlers', () => {
 				)
 			expect(relPosts).toHaveLength(0)
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
 			expect(attachments).toHaveLength(1)
 			expect(attachments[0].success).toBe(true)
@@ -550,7 +484,7 @@ describe('tool handlers', () => {
 			expect(calls[1][0]).toBe('http://localhost:3000/api/relationships/rel-99')
 			expect((calls[1][1] as RequestInit).method).toBe('DELETE')
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			const detachments = parsed.filter((e: { type: string }) => e.type === 'file_detachment')
 			expect(detachments).toHaveLength(1)
 			expect(detachments[0].success).toBe(true)
@@ -572,7 +506,7 @@ describe('tool handlers', () => {
 				],
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed[0].type).toBe('file_detachment')
 			expect(parsed[0].success).toBe(false)
 			expect(parsed[0].error).toMatch(/no attached relationship/i)
@@ -621,39 +555,27 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
-				workspace_id: '00000000-0000-4000-8000-000000000003',
+				workspace_id: 'ws-123',
 			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledTimes(2)
 			expect(fetch).toHaveBeenLastCalledWith(
-				'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000003/members',
+				'http://localhost:3000/api/workspaces/ws-123/members',
 				expect.objectContaining({ method: 'POST' }),
 			)
 
-			const parsed = structuredOf(result)
-			expect(parsed.workspace_id).toBe('00000000-0000-4000-8000-000000000003')
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.workspace_id).toBe('ws-123')
 			expect(parsed.role).toBe('member')
 		})
 	})
 
 	describe('get_objects handler (partial failure)', () => {
 		it('returns success false for failed IDs without rejecting', async () => {
-			const okGraph = {
-				object: {
-					id: '00000000-0000-4000-8000-aaaaaaaaaaaa',
-					type: 'task',
-					title: 'OK',
-					status: 'todo',
-				},
-				relationships: [],
-				connected_objects: [],
-				events: [],
-				files: [],
-			}
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve(okGraph),
+					json: () => Promise.resolve({ id: 'id-1', title: 'OK' }),
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: false,
@@ -662,14 +584,14 @@ describe('tool handlers', () => {
 				} as Response)
 
 			const handler = getHandler('get_objects')
-			const result = (await handler({
-				ids: ['00000000-0000-4000-8000-aaaaaaaaaaaa', '00000000-0000-4000-8000-bbbbbbbbbbbb'],
-			})) as { content: Array<{ text: string }> }
+			const result = (await handler({ ids: ['id-1', 'id-2'] })) as {
+				content: Array<{ text: string }>
+			}
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toHaveLength(2)
 			expect(parsed[0].success).toBe(true)
-			expect(parsed[0].result).toEqual(okGraph)
+			expect(parsed[0].result).toEqual({ id: 'id-1', title: 'OK' })
 			expect(parsed[1].success).toBe(false)
 			expect(parsed[1].error).toContain('API error 404')
 		})
@@ -732,7 +654,7 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000) // second poll → completed
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 
 			expect(parsed.session.status).toBe('completed')
 			expect(parsed.logs).toEqual([{ message: 'Done' }])
@@ -777,7 +699,7 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000) // past deadline
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 
 			// Session should still show 'running' since it never reached terminal
 			expect(parsed.session.status).toBe('running')
@@ -812,7 +734,7 @@ describe('tool handlers', () => {
 			await vi.advanceTimersByTimeAsync(5000)
 
 			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.session.status).toBe('completed')
 		})
 	})
@@ -1140,17 +1062,17 @@ describe('tool handlers', () => {
 				const result = (await handler({})) as { content: Array<{ text: string }> }
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills',
+					'http://localhost:3000/api/workspaces/ws-default-123/skills',
 					expect.objectContaining({
 						method: 'GET',
 						headers: expect.objectContaining({
 							Authorization: 'Bearer ank_testkey123',
-							'X-Workspace-Id': '00000000-0000-4000-8000-000000000001',
+							'X-Workspace-Id': 'ws-default-123',
 						}),
 					}),
 				)
 
-				const parsed = structuredOf(result)
+				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed).toHaveLength(1)
 				expect(parsed[0].name).toBe('bug-fix')
 			})
@@ -1158,14 +1080,12 @@ describe('tool handlers', () => {
 			it('uses workspace_id from args over default', async () => {
 				mockFetchSuccess([])
 				const handler = getHandler('list_workspace_skills')
-				await handler({ workspace_id: '00000000-0000-4000-8000-000000000002' })
+				await handler({ workspace_id: 'ws-custom' })
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000002/skills',
+					'http://localhost:3000/api/workspaces/ws-custom/skills',
 					expect.objectContaining({
-						headers: expect.objectContaining({
-							'X-Workspace-Id': '00000000-0000-4000-8000-000000000002',
-						}),
+						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 					}),
 				)
 			})
@@ -1181,10 +1101,10 @@ describe('tool handlers', () => {
 				}
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/bug-fix',
+					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
 					expect.objectContaining({ method: 'GET' }),
 				)
-				const parsed = structuredOf(result)
+				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed.content).toBe('# Bug fix skill')
 			})
 
@@ -1195,7 +1115,7 @@ describe('tool handlers', () => {
 				// for a name with characters that still need escaping as a path segment.
 				await handler({ name: 'a-b' })
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/a-b',
+					'http://localhost:3000/api/workspaces/ws-default-123/skills/a-b',
 					expect.anything(),
 				)
 			})
@@ -1211,25 +1131,21 @@ describe('tool handlers', () => {
 				}
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills',
+					'http://localhost:3000/api/workspaces/ws-default-123/skills',
 					expect.objectContaining({ method: 'POST' }),
 				)
 				const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)
 				expect(body).toEqual({ name: 'bug-fix', content: '# body' })
-				expect(structuredOf(result).name).toBe('bug-fix')
+				expect(JSON.parse(result.content[0].text).name).toBe('bug-fix')
 			})
 
 			it('uses workspace_id from args when provided', async () => {
 				mockFetchSuccess({})
 				const handler = getHandler('create_workspace_skill')
-				await handler({
-					workspace_id: '00000000-0000-4000-8000-000000000002',
-					name: 'my-skill',
-					content: '# x',
-				})
+				await handler({ workspace_id: 'ws-custom', name: 'my-skill', content: '# x' })
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000002/skills',
+					'http://localhost:3000/api/workspaces/ws-custom/skills',
 					expect.objectContaining({ method: 'POST' }),
 				)
 			})
@@ -1243,7 +1159,7 @@ describe('tool handlers', () => {
 				await handler({ name: 'bug-fix', content: '# updated' })
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/bug-fix',
+					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
 					expect.objectContaining({ method: 'PUT' }),
 				)
 				const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)
@@ -1261,10 +1177,10 @@ describe('tool handlers', () => {
 				}
 
 				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001/skills/bug-fix',
+					'http://localhost:3000/api/workspaces/ws-default-123/skills/bug-fix',
 					expect.objectContaining({ method: 'DELETE' }),
 				)
-				expect(structuredOf(result)).toEqual({ deleted: true })
+				expect(JSON.parse(result.content[0].text)).toEqual({ deleted: true })
 			})
 		})
 
@@ -1290,11 +1206,7 @@ describe('tool handlers', () => {
 		// merges llm_keys, so the MCP tool is a straight pass-through — no
 		// read-modify-write. One fetch call per invocation.
 		it('PATCHes only the target provider and returns masked last4', async () => {
-			mockFetchSuccess({
-				id: '00000000-0000-4000-8000-000000000001',
-				name: 'My Workspace',
-				settings: {},
-			})
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
 
 			const handler = getHandler('set_llm_api_key')
 			const result = (await handler({
@@ -1304,53 +1216,35 @@ describe('tool handlers', () => {
 
 			expect(fetch).toHaveBeenCalledTimes(1)
 			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe(
-				'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001',
-			)
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
 			expect(patchCall[1]?.method).toBe('PATCH')
 			const body = JSON.parse(patchCall[1]?.body as string)
 			expect(body.settings.llm_keys).toEqual({ anthropic: 'sk-ant-new-key-WXYZ' })
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual({ success: true, provider: 'anthropic', last4: 'WXYZ' })
 			expect(result.content[0].text).not.toContain('sk-ant-new-key-WXYZ')
 		})
 
 		it('uses workspace_id from args over default', async () => {
-			mockFetchSuccess({ id: '00000000-0000-4000-8000-000000000002', name: 'Other', settings: {} })
+			mockFetchSuccess({ id: 'ws-custom', name: 'Other', settings: {} })
 
 			const handler = getHandler('set_llm_api_key')
-			await handler({
-				workspace_id: '00000000-0000-4000-8000-000000000002',
-				provider: 'openai',
-				api_key: 'sk-foo',
-			})
+			await handler({ workspace_id: 'ws-custom', provider: 'openai', api_key: 'sk-foo' })
 
 			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe(
-				'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000002',
-			)
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-custom')
 		})
 
 		it('back-to-back sets for both providers each send only their own delta', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () =>
-						Promise.resolve({
-							id: '00000000-0000-4000-8000-000000000001',
-							name: 'My',
-							settings: {},
-						}),
+					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () =>
-						Promise.resolve({
-							id: '00000000-0000-4000-8000-000000000001',
-							name: 'My',
-							settings: {},
-						}),
+					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
 				} as Response)
 
 			const handler = getHandler('set_llm_api_key')
@@ -1371,7 +1265,7 @@ describe('tool handlers', () => {
 		it('reads settings.llm_keys and returns masked status per provider', async () => {
 			mockFetchSuccess([
 				{
-					id: '00000000-0000-4000-8000-000000000001',
+					id: 'ws-default-123',
 					name: 'My Workspace',
 					settings: {
 						llm_keys: { anthropic: 'sk-ant-abcdEFGH', openai: 'sk-opq-MNOP' },
@@ -1382,7 +1276,7 @@ describe('tool handlers', () => {
 			const handler = getHandler('get_llm_api_keys')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual({
 				anthropic: { set: true, last4: 'EFGH' },
 				openai: { set: true, last4: 'MNOP' },
@@ -1391,18 +1285,12 @@ describe('tool handlers', () => {
 		})
 
 		it('returns { set: false } for missing providers', async () => {
-			mockFetchSuccess([
-				{
-					id: '00000000-0000-4000-8000-000000000001',
-					name: 'My Workspace',
-					settings: { llm_keys: {} },
-				},
-			])
+			mockFetchSuccess([{ id: 'ws-default-123', name: 'My Workspace', settings: { llm_keys: {} } }])
 
 			const handler = getHandler('get_llm_api_keys')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual({
 				anthropic: { set: false },
 				openai: { set: false },
@@ -1412,11 +1300,7 @@ describe('tool handlers', () => {
 
 	describe('delete_llm_api_key handler', () => {
 		it('PATCHes the target provider to null so the server strips it', async () => {
-			mockFetchSuccess({
-				id: '00000000-0000-4000-8000-000000000001',
-				name: 'My Workspace',
-				settings: {},
-			})
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
 
 			const handler = getHandler('delete_llm_api_key')
 			const result = (await handler({ provider: 'anthropic' })) as {
@@ -1425,13 +1309,11 @@ describe('tool handlers', () => {
 
 			expect(fetch).toHaveBeenCalledTimes(1)
 			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe(
-				'http://localhost:3000/api/workspaces/00000000-0000-4000-8000-000000000001',
-			)
+			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
 			expect(patchCall[1]?.method).toBe('PATCH')
 			const body = JSON.parse(patchCall[1]?.body as string)
 			expect(body.settings.llm_keys).toEqual({ anthropic: null })
-			const parsed = structuredOf(result)
+			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual({ success: true, provider: 'anthropic' })
 		})
 
@@ -1439,11 +1321,7 @@ describe('tool handlers', () => {
 			// Server-side deep-merge treats null as "delete if present"; deleting
 			// a missing provider is a no-op there, so the MCP tool still returns
 			// success without needing to inspect current state.
-			mockFetchSuccess({
-				id: '00000000-0000-4000-8000-000000000001',
-				name: 'My Workspace',
-				settings: {},
-			})
+			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
 
 			const handler = getHandler('delete_llm_api_key')
 			const result = (await handler({ provider: 'openai' })) as {
@@ -1454,7 +1332,7 @@ describe('tool handlers', () => {
 			const [patchCall] = vi.mocked(fetch).mock.calls
 			const body = JSON.parse(patchCall[1]?.body as string)
 			expect(body.settings.llm_keys).toEqual({ openai: null })
-			expect(structuredOf(result)).toEqual({ success: true, provider: 'openai' })
+			expect(JSON.parse(result.content[0].text)).toEqual({ success: true, provider: 'openai' })
 		})
 	})
 
@@ -1478,7 +1356,7 @@ describe('tool handlers', () => {
 					method: 'POST',
 					headers: expect.objectContaining({
 						Authorization: 'Bearer ank_testkey123',
-						'X-Workspace-Id': '00000000-0000-4000-8000-000000000001',
+						'X-Workspace-Id': 'ws-default-123',
 					}),
 				}),
 			)
@@ -1511,7 +1389,7 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/claude-oauth/status',
 				expect.objectContaining({ method: 'GET' }),
 			)
-			expect(structuredOf(result)).toEqual(mockResult)
+			expect(JSON.parse(result.content[0].text)).toEqual(mockResult)
 		})
 	})
 
@@ -1553,19 +1431,12 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('get_comments')
-			await handler({
-				entity_id: objectId,
-				workspace_id: '00000000-0000-4000-8000-000000000002',
-				limit: 50,
-				offset: 0,
-			})
+			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50, offset: 0 })
 
 			expect(fetch).toHaveBeenCalledWith(
 				expect.any(String),
 				expect.objectContaining({
-					headers: expect.objectContaining({
-						'X-Workspace-Id': '00000000-0000-4000-8000-000000000002',
-					}),
+					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 				}),
 			)
 		})
@@ -1593,7 +1464,7 @@ describe('tool handlers', () => {
 					method: 'POST',
 					headers: expect.objectContaining({
 						Authorization: 'Bearer ank_testkey123',
-						'X-Workspace-Id': '00000000-0000-4000-8000-000000000001',
+						'X-Workspace-Id': 'ws-default-123',
 					}),
 				}),
 			)
@@ -1607,7 +1478,7 @@ describe('tool handlers', () => {
 				parent_event_id: 42,
 			})
 
-			expect(structuredOf(result)).toEqual(mockResult)
+			expect(JSON.parse(result.content[0].text)).toEqual(mockResult)
 		})
 
 		it('strips workspace_id from the POST body', async () => {
@@ -1615,7 +1486,7 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('create_comment')
 			await handler({
-				workspace_id: '00000000-0000-4000-8000-000000000002',
+				workspace_id: 'ws-custom',
 				entity_id: objectId,
 				content: 'hello',
 			})
@@ -1627,9 +1498,7 @@ describe('tool handlers', () => {
 			expect(body.content).toBe('hello')
 
 			expect(call[1]).toMatchObject({
-				headers: expect.objectContaining({
-					'X-Workspace-Id': '00000000-0000-4000-8000-000000000002',
-				}),
+				headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 			})
 		})
 	})
@@ -1646,7 +1515,7 @@ describe('tool handlers', () => {
 			required?: boolean
 			values?: string[]
 		}
-		const wsId = '00000000-0000-4000-8000-000000000001'
+		const wsId = 'ws-default-123'
 		const buildWorkspace = (fields: Record<string, FieldDef[]>) => ({
 			id: wsId,
 			name: 'My Workspace',
@@ -1704,7 +1573,7 @@ describe('tool handlers', () => {
 					{ name: 'priority', type: 'text' },
 					{ name: 'tag', type: 'text', required: true },
 				])
-				const parsed = structuredOf(result)
+				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed.field).toEqual({ name: 'tag', type: 'text', required: true })
 			})
 
@@ -1717,9 +1586,7 @@ describe('tool handlers', () => {
 				const patch = calls.find((c) => (c[1] as RequestInit)?.method === 'PATCH')
 				if (!patch) throw new Error('no PATCH call')
 				const headers = (patch[1] as RequestInit).headers as Record<string, string>
-				expect(headers['Idempotency-Key']).toMatch(
-					/^mcp-schema-00000000-0000-4000-8000-000000000001-/,
-				)
+				expect(headers['Idempotency-Key']).toMatch(/^mcp-schema-ws-default-123-/)
 			})
 
 			it('throws when enum is created without values', async () => {
@@ -1780,7 +1647,7 @@ describe('tool handlers', () => {
 					field_type: 'text',
 				})) as { content: Array<{ text: string }> }
 
-				expect(structuredOf(result).field).toEqual({ name: 'tag', type: 'text' })
+				expect(JSON.parse(result.content[0].text).field).toEqual({ name: 'tag', type: 'text' })
 				const patches = vi
 					.mocked(fetch)
 					.mock.calls.filter((c) => (c[1] as RequestInit)?.method === 'PATCH')
@@ -1875,7 +1742,7 @@ describe('tool handlers', () => {
 				}
 
 				expect(lastPatchBody().settings.field_definitions.task).toEqual(after.task)
-				const parsed = structuredOf(result)
+				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed).toMatchObject({ deleted: 'tag', success: true })
 			})
 		})
@@ -2014,688 +1881,5 @@ describe('tool handlers', () => {
 				expect(finalBody.settings.field_definitions.task).toEqual(taskAfter)
 			})
 		})
-	})
-})
-
-// ─────────────────────────────────────────────────────────────────────
-// Lean format contract — Direction 1 of bet `mcp-lean-results`.
-//
-// These tests are the implementer's surface contract for Task 4's wiring:
-// every read-style tool returns lean markdown in `content[0].text` plus the
-// full untruncated JSON in `structuredContent`. The four DOD criteria from
-// the Task 5 brief are asserted uniformly per-tool, plus golden inline
-// snapshots lock the rendered shape for a representative payload per
-// formatter family. The intent is regression-guard, not character-perfect
-// snapshotting — readers who need to change the format should update the
-// snapshot deliberately and re-confirm the contract still holds.
-// ─────────────────────────────────────────────────────────────────────
-
-import {
-	ACTOR_ID_1,
-	ACTOR_ID_2,
-	FILE_ID_1,
-	GET_ACTOR_PAYLOAD,
-	GET_CLAUDE_SUBSCRIPTION_STATUS_PAYLOAD,
-	GET_COMMENTS_PAYLOAD,
-	GET_EVENTS_PAYLOAD,
-	GET_FILE_PAYLOAD,
-	GET_LLM_API_KEYS_WORKSPACE_PAYLOAD,
-	GET_OBJECTS_PAYLOAD,
-	GET_SESSION_ACTOR_PAYLOAD,
-	GET_SESSION_PAYLOAD,
-	GET_WORKSPACE_SCHEMA_PAYLOAD,
-	GET_WORKSPACE_SKILL_PAYLOAD,
-	LIST_ACTORS_PAYLOAD,
-	LIST_EXTENSIONS_PAYLOAD_WORKSPACES,
-	LIST_FILES_PAYLOAD,
-	LIST_INTEGRATIONS_PAYLOAD,
-	LIST_INTEGRATION_PROVIDERS_PAYLOAD,
-	LIST_OBJECTS_PAYLOAD,
-	LIST_RELATIONSHIPS_PAYLOAD,
-	LIST_SESSIONS_PAYLOAD,
-	LIST_SUBSCRIBERS_PAYLOAD,
-	LIST_TRIGGERS_PAYLOAD,
-	LIST_UNREAD_PAYLOAD,
-	LIST_WORKSPACES_PAYLOAD,
-	LIST_WORKSPACE_SKILLS_PAYLOAD,
-	OBJECT_ID_1,
-	OBJECT_ID_2,
-	SEARCH_OBJECTS_PAYLOAD,
-	SESSION_ID_1,
-	TRIGGER_ID_1,
-	WEB_APP_BASE_URL,
-	WS_ID,
-} from './fixtures/lean-format-payloads'
-
-// The lean format puts the workspace UUID in every deep link. Pinning the
-// web-app base URL on the config (instead of relying on env vars) keeps
-// snapshots byte-stable across machines and CI.
-const FORMAT_CONFIG = {
-	apiBaseUrl: 'http://localhost:3000',
-	apiKey: 'ank_testkey123',
-	defaultWorkspaceId: WS_ID,
-	webAppBaseUrl: WEB_APP_BASE_URL,
-	telemetrySink: () => {},
-}
-
-type CallToolResult = {
-	content: Array<{ type: string; text: string }>
-	structuredContent?: Record<string, unknown>
-}
-
-/** All HTTPS links inside Markdown link syntax `[…](url)`. */
-function extractHttpsLinks(text: string): string[] {
-	return [...text.matchAll(/\]\((https:\/\/[^)\s]+)\)/g)].map((m) => m[1])
-}
-
-/**
- * The lean format intentionally avoids prose pagination cues — the model
- * paginates by calling the tool again with a new offset, and the truncation
- * indicator is the single "…and N more" line, not "page X of Y" or a
- * "Showing 1–25 of N" header. This guard fails loudly if any pagination
- * boilerplate sneaks back into a tool's `content`.
- */
-function hasPaginationNoise(text: string): boolean {
-	return /\b(page \d+ of \d+|next page|previous page|showing \d+\s*[–-]\s*\d+ of)\b/i.test(text)
-}
-
-describe('lean format contract — Direction 1', () => {
-	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
-
-	beforeEach(() => {
-		vi.clearAllMocks()
-		// The `tool handlers` describe above calls `vi.restoreAllMocks()` in
-		// its afterEach, which strips the McpServer + ResourceTemplate
-		// implementations declared at the top of the file. Re-stub here so
-		// `registerObjectResources` can call `server.registerResource(...)`
-		// without crashing when this block sets `webAppBaseUrl` on the config.
-		vi.mocked(McpServer).mockImplementation(
-			() => ({ registerResource: vi.fn() }) as unknown as McpServer,
-		)
-		handlers = new Map()
-		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
-			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
-		})
-		createMcpServer(FORMAT_CONFIG)
-	})
-
-	function getHandler(name: string) {
-		const handler = handlers.get(name)
-		if (!handler) throw new Error(`Handler ${name} not registered`)
-		return handler
-	}
-
-	function mockSequence(payloads: unknown[]) {
-		const spy = vi.spyOn(globalThis, 'fetch')
-		for (const payload of payloads) {
-			spy.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve(payload),
-			} as Response)
-		}
-	}
-
-	function mockSuccess(payload: unknown) {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-			ok: true,
-			json: () => Promise.resolve(payload),
-		} as Response)
-	}
-
-	/**
-	 * Table-driven test cases. Each row exercises one read-style handler
-	 * against a representative API payload from the fixtures file and
-	 * declares the format-contract guarantees we expect.
-	 *
-	 * `expectedItemLinkCount` — exact number of `[…](https://…)` Markdown
-	 * links in the rendered `content`. For object-link tools that's
-	 * `headerLink ? 1 : 0 + perItemLink * itemCount`; for tools whose
-	 * generic-list row has no per-item link the count is just the header.
-	 * `structuredKey` — `'items'` when the formatter wraps an array (Task 4
-	 * normalises arrays as `{ items: [...] }` to satisfy the MCP SDK's
-	 * `Record<string, unknown>` constraint); otherwise the structured body
-	 * should pass through as-is (object payloads).
-	 */
-	const CASES: Array<{
-		name: string
-		tool: string
-		args: Record<string, unknown>
-		// API call sequence the handler will make. For most handlers this is
-		// just one fetch; a few (`get_objects`, `list_sessions`, `list_extensions`,
-		// `get_llm_api_keys`) call out more than once.
-		mockPayloads: unknown[]
-		expectedItemLinkCount: number
-		structuredKey: 'items' | 'pass-through'
-		// The single most authoritative payload to compare `content.length`
-		// against for the ≥60% token-reduction regression guard.
-		baselinePayload: unknown
-		// When the formatter wraps an array as `structuredContent.items`, the
-		// brief requires `items.length` to equal the upstream row count —
-		// guards against a future formatter silently truncating
-		// `structuredContent` and breaking the "full untruncated JSON"
-		// contract. Omitted for record-shaped tools.
-		expectedItemCount?: number
-	}> = [
-		{
-			name: 'list_objects — grouped by type, per-item links, no header link',
-			tool: 'list_objects',
-			args: {},
-			mockPayloads: [LIST_OBJECTS_PAYLOAD],
-			expectedItemLinkCount: 3,
-			structuredKey: 'items',
-			baselinePayload: LIST_OBJECTS_PAYLOAD,
-			expectedItemCount: LIST_OBJECTS_PAYLOAD.length,
-		},
-		{
-			name: 'get_objects — one block per id (success path)',
-			tool: 'get_objects',
-			args: { ids: [OBJECT_ID_1, OBJECT_ID_2] },
-			mockPayloads: [GET_OBJECTS_PAYLOAD, GET_OBJECTS_PAYLOAD],
-			expectedItemLinkCount: 2,
-			structuredKey: 'items',
-			baselinePayload: [GET_OBJECTS_PAYLOAD, GET_OBJECTS_PAYLOAD],
-			expectedItemCount: 2,
-		},
-		{
-			name: 'search_objects — header link + one link per hit',
-			tool: 'search_objects',
-			args: { q: 'lean' },
-			mockPayloads: [SEARCH_OBJECTS_PAYLOAD],
-			expectedItemLinkCount: 1 + SEARCH_OBJECTS_PAYLOAD.length,
-			structuredKey: 'items',
-			baselinePayload: SEARCH_OBJECTS_PAYLOAD,
-			expectedItemCount: SEARCH_OBJECTS_PAYLOAD.length,
-		},
-		{
-			name: 'list_unread — header activity link + one link per thread',
-			tool: 'list_unread',
-			args: {},
-			mockPayloads: [LIST_UNREAD_PAYLOAD],
-			expectedItemLinkCount: 1 + LIST_UNREAD_PAYLOAD.length,
-			structuredKey: 'pass-through',
-			baselinePayload: { items: LIST_UNREAD_PAYLOAD },
-			expectedItemCount: LIST_UNREAD_PAYLOAD.length,
-		},
-		{
-			name: 'list_actors — header link + one link per actor',
-			tool: 'list_actors',
-			args: { workspace_id: WS_ID },
-			mockPayloads: [LIST_ACTORS_PAYLOAD],
-			expectedItemLinkCount: 1 + LIST_ACTORS_PAYLOAD.length,
-			structuredKey: 'items',
-			baselinePayload: LIST_ACTORS_PAYLOAD,
-			expectedItemCount: LIST_ACTORS_PAYLOAD.length,
-		},
-		{
-			name: 'list_files — header link only (rows are inline names)',
-			tool: 'list_files',
-			args: {},
-			mockPayloads: [LIST_FILES_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: LIST_FILES_PAYLOAD,
-			expectedItemCount: LIST_FILES_PAYLOAD.length,
-		},
-		{
-			name: 'list_triggers — header link + one link per trigger',
-			tool: 'list_triggers',
-			args: {},
-			mockPayloads: [LIST_TRIGGERS_PAYLOAD],
-			expectedItemLinkCount: 1 + LIST_TRIGGERS_PAYLOAD.length,
-			structuredKey: 'items',
-			baselinePayload: LIST_TRIGGERS_PAYLOAD,
-			expectedItemCount: LIST_TRIGGERS_PAYLOAD.length,
-		},
-		{
-			name: 'list_sessions — header link only (rows are inline ids)',
-			tool: 'list_sessions',
-			args: {},
-			// Two parallel fetches: sessions list + actor-name lookup for
-			// enrichment. Order is parallel; both resolve to the same mock so we
-			// don't depend on Promise.all's call order.
-			mockPayloads: [LIST_SESSIONS_PAYLOAD, [{ id: ACTOR_ID_1, name: 'Senior Developer' }]],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: LIST_SESSIONS_PAYLOAD,
-			expectedItemCount: LIST_SESSIONS_PAYLOAD.length,
-		},
-		{
-			name: 'list_relationships — header link only',
-			tool: 'list_relationships',
-			args: {},
-			mockPayloads: [LIST_RELATIONSHIPS_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: LIST_RELATIONSHIPS_PAYLOAD,
-			expectedItemCount: LIST_RELATIONSHIPS_PAYLOAD.length,
-		},
-		{
-			name: 'list_workspace_skills — header link only',
-			tool: 'list_workspace_skills',
-			args: { workspace_id: WS_ID },
-			mockPayloads: [LIST_WORKSPACE_SKILLS_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: LIST_WORKSPACE_SKILLS_PAYLOAD,
-			expectedItemCount: LIST_WORKSPACE_SKILLS_PAYLOAD.length,
-		},
-		{
-			name: 'get_workspace_skill — H4 + meta + single record link',
-			tool: 'get_workspace_skill',
-			args: { name: 'spec-brief', workspace_id: WS_ID },
-			mockPayloads: [GET_WORKSPACE_SKILL_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'pass-through',
-			baselinePayload: GET_WORKSPACE_SKILL_PAYLOAD,
-		},
-		{
-			name: 'get_actor — H4 + meta + actor link',
-			tool: 'get_actor',
-			args: { id: ACTOR_ID_1 },
-			mockPayloads: [GET_ACTOR_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'pass-through',
-			baselinePayload: GET_ACTOR_PAYLOAD,
-		},
-		{
-			name: 'get_file — H4 + meta + file link',
-			tool: 'get_file',
-			args: { id: FILE_ID_1 },
-			mockPayloads: [GET_FILE_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'pass-through',
-			baselinePayload: GET_FILE_PAYLOAD,
-		},
-		{
-			name: 'get_events — header link only (event rows are inline descriptions)',
-			tool: 'get_events',
-			args: {},
-			mockPayloads: [GET_EVENTS_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: GET_EVENTS_PAYLOAD,
-			expectedItemCount: GET_EVENTS_PAYLOAD.length,
-		},
-		{
-			name: 'get_comments — thread link + inline author/snippet rows',
-			tool: 'get_comments',
-			args: { entity_id: OBJECT_ID_1, limit: 50, offset: 0 },
-			mockPayloads: [GET_COMMENTS_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: GET_COMMENTS_PAYLOAD,
-			expectedItemCount: GET_COMMENTS_PAYLOAD.length,
-		},
-		{
-			name: 'list_subscribers — entity-object link header, inline rows',
-			tool: 'list_subscribers',
-			args: { entity_type: 'object', entity_id: OBJECT_ID_1 },
-			mockPayloads: [LIST_SUBSCRIBERS_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: LIST_SUBSCRIBERS_PAYLOAD,
-			expectedItemCount: LIST_SUBSCRIBERS_PAYLOAD.length,
-		},
-		{
-			name: 'list_workspaces — header link to first workspace + per-row link',
-			tool: 'list_workspaces',
-			args: {},
-			mockPayloads: [LIST_WORKSPACES_PAYLOAD],
-			expectedItemLinkCount: 1 + LIST_WORKSPACES_PAYLOAD.length,
-			structuredKey: 'items',
-			baselinePayload: LIST_WORKSPACES_PAYLOAD,
-			expectedItemCount: LIST_WORKSPACES_PAYLOAD.length,
-		},
-		{
-			name: 'list_integrations — header link only',
-			tool: 'list_integrations',
-			args: {},
-			mockPayloads: [LIST_INTEGRATIONS_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: LIST_INTEGRATIONS_PAYLOAD,
-			expectedItemCount: LIST_INTEGRATIONS_PAYLOAD.length,
-		},
-		{
-			name: 'list_integration_providers — header settings link only',
-			tool: 'list_integration_providers',
-			args: {},
-			mockPayloads: [LIST_INTEGRATION_PROVIDERS_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			baselinePayload: LIST_INTEGRATION_PROVIDERS_PAYLOAD,
-			expectedItemCount: LIST_INTEGRATION_PROVIDERS_PAYLOAD.length,
-		},
-		{
-			name: 'get_workspace_schema — H4 + per-type status rows + workspace link',
-			tool: 'get_workspace_schema',
-			args: { workspace_id: WS_ID },
-			mockPayloads: [GET_WORKSPACE_SCHEMA_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'pass-through',
-			baselinePayload: GET_WORKSPACE_SCHEMA_PAYLOAD,
-		},
-		{
-			name: 'get_session — H4 + actor/status meta + sessions link',
-			tool: 'get_session',
-			args: { id: SESSION_ID_1 },
-			mockPayloads: [GET_SESSION_PAYLOAD, GET_SESSION_ACTOR_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'pass-through',
-			baselinePayload: GET_SESSION_PAYLOAD,
-		},
-		{
-			name: 'list_extensions — first call gets workspaces, then renders module list',
-			tool: 'list_extensions',
-			args: { workspace_id: WS_ID },
-			mockPayloads: [LIST_EXTENSIONS_PAYLOAD_WORKSPACES],
-			expectedItemLinkCount: 1,
-			structuredKey: 'items',
-			// list_extensions' structured payload is computed from module
-			// defaults + workspace settings, so the JSON baseline is the
-			// workspace settings input (still the dominant size driver).
-			baselinePayload: LIST_EXTENSIONS_PAYLOAD_WORKSPACES,
-		},
-		{
-			name: 'get_llm_api_keys — header settings link + status lines, no JSON dump',
-			tool: 'get_llm_api_keys',
-			args: { workspace_id: WS_ID },
-			mockPayloads: [[GET_LLM_API_KEYS_WORKSPACE_PAYLOAD]],
-			expectedItemLinkCount: 1,
-			structuredKey: 'pass-through',
-			baselinePayload: GET_LLM_API_KEYS_WORKSPACE_PAYLOAD,
-		},
-		{
-			name: 'get_claude_subscription_status — H4 + state line + settings link',
-			tool: 'get_claude_subscription_status',
-			args: {},
-			mockPayloads: [GET_CLAUDE_SUBSCRIPTION_STATUS_PAYLOAD],
-			expectedItemLinkCount: 1,
-			structuredKey: 'pass-through',
-			baselinePayload: GET_CLAUDE_SUBSCRIPTION_STATUS_PAYLOAD,
-		},
-	]
-
-	for (const c of CASES) {
-		it(c.name, async () => {
-			mockSequence(c.mockPayloads)
-			const handler = getHandler(c.tool)
-			const result = (await handler(c.args)) as CallToolResult
-
-			// (c) structuredContent set and matches the prior JSON shape.
-			expect(result.structuredContent).toBeDefined()
-			if (c.structuredKey === 'items') {
-				expect(Array.isArray((result.structuredContent as { items: unknown }).items)).toBe(true)
-			}
-			// Row-count contract for list-shaped tools — the brief promises
-			// "full untruncated JSON in structuredContent", so a future
-			// formatter that silently caps `items` would break the wire
-			// contract. Asserted only when the case opts in (record-shaped
-			// tools omit `expectedItemCount`).
-			if (c.expectedItemCount !== undefined) {
-				const items = (result.structuredContent as { items: unknown[] }).items
-				expect(items.length).toBe(c.expectedItemCount)
-			}
-
-			// `content` is a single text block with non-empty body — the lean
-			// markdown is what the model reads in-chat.
-			expect(result.content).toHaveLength(1)
-			expect(result.content[0].type).toBe('text')
-			const text = result.content[0].text
-			expect(text.length).toBeGreaterThan(0)
-
-			// (b) Exact count of HTTPS deep links — every link is HTTPS and goes
-			// through the click-tracking `/r/` redirect at WEB_APP_BASE_URL.
-			const links = extractHttpsLinks(text)
-			expect(links).toHaveLength(c.expectedItemLinkCount)
-			for (const url of links) {
-				expect(url.startsWith(`${WEB_APP_BASE_URL}/r/`)).toBe(true)
-				// Every deep link carries the tool name as `?t=<tool>` for
-				// click telemetry — guards against the regression where a
-				// per-handler link forgets to thread the tool through, and
-				// against a future formatter appending stray params that would
-				// break URL-parsing of `t` in the click-tracking redirect.
-				expect(new URL(url).searchParams.get('t')).toBe(c.tool)
-			}
-
-			// (d) No prose pagination noise. The lean format paginates via
-			// caller-supplied `offset` and a single "…and N more" truncation
-			// line, not "page X of Y" or "Showing 1–25 of N" boilerplate.
-			expect(hasPaginationNoise(text)).toBe(false)
-
-			// (a) JSON-dump regression guard. The old failure mode embedded the
-			// raw API payload into `content` verbatim; the lean format
-			// summarises it instead, so the JSON dump should never appear in
-			// the rendered markdown. We match only on dumps of ≥40 chars so
-			// that legitimate single-value substrings (titles, statuses) don't
-			// trigger a false positive. The per-payload ≥60% token-reduction
-			// guarantee is asserted separately on a realistic-sized list
-			// payload below, where the property actually holds — tiny payloads
-			// are dominated by the deep-link URL, not their JSON size.
-			const jsonDump = JSON.stringify(c.baselinePayload)
-			if (jsonDump.length > 40) {
-				expect(text).not.toContain(jsonDump)
-			}
-		})
-	}
-
-	// ─────────────────────────────────────────────────────────────────
-	// Token-reduction regression guard. The bet's primary win is in
-	// truncating large `content` fields — every formatter's content
-	// preview is capped at PREVIEW_MAX (140 chars). If a future change
-	// removed that cap and started embedding full content into the
-	// lean markdown, `content.length` would scale linearly with payload
-	// size rather than item count. Anchored at the truncation contract.
-	// ─────────────────────────────────────────────────────────────────
-
-	describe('token-reduction regression guard', () => {
-		it('list_objects truncates per-item content previews regardless of payload size', async () => {
-			// 5 objects each carrying a 2000-char content body — well over the
-			// 140-char preview cap. The lean format must truncate, so the
-			// rendered text shouldn't grow linearly with payload bytes.
-			const heavyList = Array.from({ length: 5 }, (_, i) => ({
-				id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
-				type: 'bet' as const,
-				title: `Heavy object ${i}`,
-				status: 'active' as const,
-				content: 'x'.repeat(2000),
-			}))
-			mockSuccess(heavyList)
-			const handler = getHandler('list_objects')
-			const result = (await handler({})) as CallToolResult
-			const text = result.content[0].text
-			// Lean content carries 5 short previews (≤140 chars each) plus
-			// structural overhead — well under the raw payload size of 10000+
-			// content chars. Anchored at ½ of the payload-content size to give
-			// PREVIEW_MAX changes a generous margin before this fails.
-			const totalContentBytes = heavyList.reduce((sum, o) => sum + o.content.length, 0)
-			expect(text.length).toBeLessThan(totalContentBytes / 2)
-		})
-
-		it('get_objects truncates the per-object content preview', async () => {
-			// One object with a multi-KB body. The lean H4 block must summarise,
-			// not embed the body in full — the failure mode the bet exists to
-			// fix.
-			const heavyGraph = {
-				object: {
-					id: OBJECT_ID_1,
-					type: 'bet' as const,
-					title: 'Heavy bet',
-					status: 'active' as const,
-					content: 'y'.repeat(5000),
-				},
-				relationships: [],
-				connected_objects: [],
-				events: [],
-				files: [],
-			}
-			mockSequence([heavyGraph])
-			const handler = getHandler('get_objects')
-			const result = (await handler({ ids: [OBJECT_ID_1] })) as CallToolResult
-			const text = result.content[0].text
-			// `content.length` must be a small fraction of the body it
-			// summarised — that's the truncation contract holding.
-			expect(text.length).toBeLessThan(heavyGraph.object.content.length / 5)
-			// And the raw body must NOT appear verbatim — that catches a
-			// regression where a future formatter drops the truncation.
-			expect(text).not.toContain(heavyGraph.object.content)
-		})
-	})
-
-	// ─────────────────────────────────────────────────────────────────
-	// Golden snapshots — one per formatter family, locking the rendered
-	// shape so any future format change is a deliberate test edit, not a
-	// silent behaviour drift.
-	//
-	// These also serve as documentation of what the lean format actually
-	// looks like to readers who skim the test file.
-	// ─────────────────────────────────────────────────────────────────
-
-	describe('golden snapshots', () => {
-		it('list_objects (formatObjectList) groups by type with per-item links', async () => {
-			mockSuccess(LIST_OBJECTS_PAYLOAD)
-			const handler = getHandler('list_objects')
-			const result = (await handler({})) as CallToolResult
-			expect(result.content[0].text).toMatchInlineSnapshot(`
-				"**1 bet**
-
-				#### [Ship MCP lean results](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects/00000000-0000-4000-8000-aaaaaaaaaaa1?t=list_objects)
-				_bet • active_
-				Redesign Maskin MCP tool results for a simple, elegant Claude experience.
-
-				**2 tasks**
-
-				#### [Task 5 — Update MCP tests for new result format](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects/00000000-0000-4000-8000-aaaaaaaaaaa2?t=list_objects)
-				_task • in_progress_
-				Replace assertions on the old prose format with format-contract guards.
-
-				#### [Task 4 — Wire formatter into all MCP read tools](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects/00000000-0000-4000-8000-aaaaaaaaaaa3?t=list_objects)
-				_task • done_
-				Done."
-			`)
-		})
-
-		it('get_objects (formatObjectBatch) renders one H4 block per id', async () => {
-			mockSequence([GET_OBJECTS_PAYLOAD])
-			const handler = getHandler('get_objects')
-			const result = (await handler({ ids: [OBJECT_ID_1] })) as CallToolResult
-			expect(result.content[0].text).toMatchInlineSnapshot(`
-				"#### [Ship MCP lean results](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects/00000000-0000-4000-8000-aaaaaaaaaaa1?t=get_objects)
-				_bet • active_
-				Redesign Maskin MCP tool results for a simple, elegant Claude experience. Engages anchors #3 (execution) and #6 (coherence).
-				Last activity: changed status from Proposed to Active"
-			`)
-		})
-
-		it('search_objects (formatSearchHits) renders a header link + per-hit blocks', async () => {
-			mockSuccess(SEARCH_OBJECTS_PAYLOAD)
-			const handler = getHandler('search_objects')
-			const result = (await handler({ q: 'lean' })) as CallToolResult
-			expect(result.content[0].text).toMatchInlineSnapshot(`
-				"**2 results** for "lean" — [open in Maskin](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects?q=lean&t=search_objects)
-
-				#### [Ship MCP lean results](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects/00000000-0000-4000-8000-aaaaaaaaaaa1?t=search_objects)
-				_bet • active_
-
-				#### [Task 5 — tests](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects/00000000-0000-4000-8000-aaaaaaaaaaa2?t=search_objects)
-				_task • in_progress_"
-			`)
-		})
-
-		it('list_unread (formatUnreadDigest) renders an activity header + one-line rows', async () => {
-			mockSuccess(LIST_UNREAD_PAYLOAD)
-			const handler = getHandler('list_unread')
-			const result = (await handler({})) as CallToolResult
-			expect(result.content[0].text).toMatchInlineSnapshot(`
-				"**4 unread** across 2 threads — [open activity](https://maskin.app/r/00000000-0000-4000-8000-000000000001/activity?t=list_unread)
-
-				- [Ship MCP lean results](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects/00000000-0000-4000-8000-aaaaaaaaaaa1?t=list_unread) — 3 unread
-				- [Task 5](https://maskin.app/r/00000000-0000-4000-8000-000000000001/objects/00000000-0000-4000-8000-aaaaaaaaaaa2?t=list_unread) — 1 unread"
-			`)
-		})
-
-		it('list_actors (formatGenericList with per-item links) — locks the generic-list shape', async () => {
-			mockSuccess(LIST_ACTORS_PAYLOAD)
-			const handler = getHandler('list_actors')
-			const result = (await handler({ workspace_id: WS_ID })) as CallToolResult
-			expect(result.content[0].text).toMatchInlineSnapshot(`
-				"**2 actors** — [open in Maskin](https://maskin.app/r/00000000-0000-4000-8000-000000000001/agents?t=list_actors)
-				- [Senior Developer](https://maskin.app/r/00000000-0000-4000-8000-000000000001/agents/00000000-0000-4000-8000-bbbbbbbbbbb1?t=list_actors) — agent
-				- [Operator](https://maskin.app/r/00000000-0000-4000-8000-000000000001/agents/00000000-0000-4000-8000-bbbbbbbbbbb2?t=list_actors) — human • op@example.com"
-			`)
-		})
-
-		it('get_workspace_skill (formatGenericRecord) — locks the single-record shape', async () => {
-			mockSuccess(GET_WORKSPACE_SKILL_PAYLOAD)
-			const handler = getHandler('get_workspace_skill')
-			const result = (await handler({
-				name: 'spec-brief',
-				workspace_id: WS_ID,
-			})) as CallToolResult
-			expect(result.content[0].text).toMatchInlineSnapshot(`
-				"#### [spec-brief](https://maskin.app/r/00000000-0000-4000-8000-000000000001/settings/skills?t=get_workspace_skill)
-				_Enforces the minimum brief contract_"
-			`)
-		})
-
-		it('list_triggers (formatGenericList with custom per-row link) — locks trigger row shape', async () => {
-			mockSuccess(LIST_TRIGGERS_PAYLOAD)
-			const handler = getHandler('list_triggers')
-			const result = (await handler({})) as CallToolResult
-			expect(result.content[0].text).toMatchInlineSnapshot(`
-				"**1 trigger** — [open in Maskin](https://maskin.app/r/00000000-0000-4000-8000-000000000001/triggers?t=list_triggers)
-				- [Weekly digest](https://maskin.app/r/00000000-0000-4000-8000-000000000001/triggers/00000000-0000-4000-8000-dddddddddddd?t=list_triggers) — cron • enabled"
-			`)
-		})
-	})
-
-	// ─────────────────────────────────────────────────────────────────
-	// Empty-result guards. Empty lists must still produce a non-empty
-	// `content` with the header link intact — the failure mode is the
-	// model getting back a literally empty string and not knowing whether
-	// the call succeeded.
-	// ─────────────────────────────────────────────────────────────────
-
-	describe('empty results', () => {
-		it('list_objects on empty result renders a single _No objects matched._ line', async () => {
-			mockSuccess([])
-			const handler = getHandler('list_objects')
-			const result = (await handler({})) as CallToolResult
-			expect(result.content[0].text).toBe('_No objects matched._')
-			expect(result.structuredContent).toEqual({ items: [] })
-		})
-
-		it('list_actors on empty result keeps the header link', async () => {
-			mockSuccess([])
-			const handler = getHandler('list_actors')
-			const result = (await handler({ workspace_id: WS_ID })) as CallToolResult
-			expect(extractHttpsLinks(result.content[0].text)).toHaveLength(1)
-			expect(result.content[0].text).toContain('0 actors')
-			expect(result.content[0].text).toContain('_No actors._')
-		})
-
-		it('list_unread on empty result still shows the activity link + "Inbox zero."', async () => {
-			mockSuccess([])
-			const handler = getHandler('list_unread')
-			const result = (await handler({})) as CallToolResult
-			expect(extractHttpsLinks(result.content[0].text)).toHaveLength(1)
-			expect(result.content[0].text).toContain('Inbox zero.')
-		})
-
-		it('search_objects on empty result keeps the search header link + "No matches."', async () => {
-			mockSuccess([])
-			const handler = getHandler('search_objects')
-			const result = (await handler({ q: 'nothing-matches' })) as CallToolResult
-			expect(extractHttpsLinks(result.content[0].text)).toHaveLength(1)
-			expect(result.content[0].text).toContain('No matches.')
-		})
-	})
-
-	// Reference unused fixtures so tree-shaking checks stay satisfied if a
-	// future test rewrites the table — keeps the fixture file's exports
-	// stable across edits without dangling no-op imports.
-	it('fixture sentinels — guards against drift in shared payload constants', () => {
-		expect(SESSION_ID_1.length).toBeGreaterThan(0)
-		expect(TRIGGER_ID_1.length).toBeGreaterThan(0)
 	})
 })

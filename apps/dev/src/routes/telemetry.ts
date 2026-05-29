@@ -21,10 +21,6 @@ type Env = {
 
 const RICH_RENDER_TARGET_PCT = 50
 const MUTATION_SESSION_TARGET_PCT = 20
-// Lean-MCP-results bet (`09ea5321-…`) — primary success metric, target ≥30%
-// of MCP sessions include at least one deep-link click. Set here so it ships
-// alongside the rich-render / mutation targets the dashboard already exposes.
-const CLICK_SESSION_TARGET_PCT = 30
 const DEFAULT_WINDOW_DAYS = 30
 
 const app = new OpenAPIHono<Env>()
@@ -73,9 +69,6 @@ app.openapi(recordRoute, (async (c) => {
 			sessionId: body.session_id ?? null,
 			hasRichRender: body.has_rich_render,
 			durationMs: body.duration_ms,
-			contentBytes: body.content_bytes ?? null,
-			contentTokens: body.content_tokens ?? null,
-			structuredContentBytes: body.structured_content_bytes ?? null,
 		})
 	} else {
 		await db.insert(mcpTelemetry).values({
@@ -152,16 +145,14 @@ app.openapi(summaryRoute, (async (c) => {
 	const richPct = toolCallsTotal > 0 ? (toolCallsRich / toolCallsTotal) * 100 : 0
 
 	// Sessions: distinct session_id with at least one tool_call (denominator)
-	// and distinct session_id with at least one mutation / deep_link_click
-	// (numerators). The HAVING clause enforces "produced at least one tool_call"
-	// so a session that recorded only mutations or only clicks (a bug /
-	// out-of-order delivery / a click on a stale link) doesn't inflate either
-	// numerator without contributing to the denominator.
+	// and distinct session_id with at least one mutation (numerator). The
+	// HAVING clause enforces "produced at least one tool_call" so a session
+	// that recorded only mutations (a bug / out-of-order delivery) doesn't
+	// inflate the numerator without contributing to the denominator.
 	const sessionRows = await db
 		.select({
 			session_id: mcpTelemetry.sessionId,
 			has_mutation: sql<boolean>`bool_or(${mcpTelemetry.eventType} = 'mutation')`,
-			has_click: sql<boolean>`bool_or(${mcpTelemetry.eventType} = 'deep_link_click')`,
 		})
 		.from(mcpTelemetry)
 		.where(and(eq(mcpTelemetry.workspaceId, workspaceId), gte(mcpTelemetry.createdAt, windowStart)))
@@ -170,15 +161,12 @@ app.openapi(summaryRoute, (async (c) => {
 
 	let sessionsTotal = 0
 	let sessionsWithMutation = 0
-	let sessionsWithClick = 0
 	for (const row of sessionRows) {
 		if (!row.session_id) continue
 		sessionsTotal++
 		if (row.has_mutation) sessionsWithMutation++
-		if (row.has_click) sessionsWithClick++
 	}
 	const mutationSessionPct = sessionsTotal > 0 ? (sessionsWithMutation / sessionsTotal) * 100 : 0
-	const clickSessionPct = sessionsTotal > 0 ? (sessionsWithClick / sessionsTotal) * 100 : 0
 
 	// Mutation total — independent counter, useful for raw activity.
 	const mutationCountRows = await db
@@ -192,51 +180,6 @@ app.openapi(summaryRoute, (async (c) => {
 			),
 		)
 	const mutationsTotal = mutationCountRows[0]?.total ?? 0
-
-	// Deep-link clicks total — counts every redirect served by /r/:ws (Task 1).
-	const clickCountRows = await db
-		.select({ total: sql<number>`count(*)::int` })
-		.from(mcpTelemetry)
-		.where(
-			and(
-				eq(mcpTelemetry.workspaceId, workspaceId),
-				eq(mcpTelemetry.eventType, 'deep_link_click'),
-				gte(mcpTelemetry.createdAt, windowStart),
-			),
-		)
-	const clicksTotal = clickCountRows[0]?.total ?? 0
-
-	// Tokens-per-tool-result (bet's secondary success metric, target ≥60%
-	// reduction vs. baseline). The averages are restricted to rows where the
-	// MCP wrapper actually measured the response, so older clients that don't
-	// emit the size fields don't pull the mean down with NULL→0.
-	const sizeRows = await db
-		.select({
-			samples: sql<number>`count(${mcpTelemetry.contentBytes})::int`,
-			avg_content_bytes: sql<string | null>`avg(${mcpTelemetry.contentBytes})`,
-			avg_content_tokens: sql<string | null>`avg(${mcpTelemetry.contentTokens})`,
-			avg_structured_content_bytes: sql<string | null>`avg(${mcpTelemetry.structuredContentBytes})`,
-		})
-		.from(mcpTelemetry)
-		.where(
-			and(
-				eq(mcpTelemetry.workspaceId, workspaceId),
-				eq(mcpTelemetry.eventType, 'tool_call'),
-				gte(mcpTelemetry.createdAt, windowStart),
-			),
-		)
-	const sizeRow = sizeRows[0]
-	const toolCallSizeSamples = sizeRow?.samples ?? 0
-	// pg's avg() returns a numeric string; coerce to number for the JSON
-	// response. Null when there are zero samples.
-	const numericOrNull = (v: string | null): number | null => {
-		if (v == null) return null
-		const n = Number(v)
-		return Number.isFinite(n) ? n : null
-	}
-	const avgContentBytes = numericOrNull(sizeRow?.avg_content_bytes ?? null)
-	const avgContentTokens = numericOrNull(sizeRow?.avg_content_tokens ?? null)
-	const avgStructuredContentBytes = numericOrNull(sizeRow?.avg_structured_content_bytes ?? null)
 
 	// Per-day rich-render breakdown (UTC day buckets).
 	const perDayRows = await db
@@ -279,15 +222,6 @@ app.openapi(summaryRoute, (async (c) => {
 		mutation_session_target_met: mutationSessionPct >= MUTATION_SESSION_TARGET_PCT,
 		mutations_total: mutationsTotal,
 		rich_render_by_day: richRenderByDay,
-		clicks_total: clicksTotal,
-		sessions_with_click: sessionsWithClick,
-		click_session_pct: clickSessionPct,
-		click_session_target_pct: CLICK_SESSION_TARGET_PCT,
-		click_session_target_met: clickSessionPct >= CLICK_SESSION_TARGET_PCT,
-		avg_content_bytes: avgContentBytes,
-		avg_content_tokens: avgContentTokens,
-		avg_structured_content_bytes: avgStructuredContentBytes,
-		tool_call_size_samples: toolCallSizeSamples,
 	})
 }) as RouteHandler<typeof summaryRoute, Env>)
 

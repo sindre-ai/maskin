@@ -116,25 +116,8 @@ describe('Telemetry Routes', () => {
 	describe('GET /api/telemetry/mcp/summary', () => {
 		it('returns zero counters and zero ratios when no telemetry exists', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
-			// Select order: 1) membership, 2) tool_call totals, 3) sessions group,
-			// 4) mutations total, 5) clicks total, 6) tool_call size averages,
-			// 7) per-day rows.
-			mockResults.selectQueue = [
-				[memberRow],
-				[{ total: 0, rich: 0 }],
-				[],
-				[{ total: 0 }],
-				[{ total: 0 }],
-				[
-					{
-						samples: 0,
-						avg_content_bytes: null,
-						avg_content_tokens: null,
-						avg_structured_content_bytes: null,
-					},
-				],
-				[],
-			]
+			// 1) workspace membership check, 2) tool_call totals, 3) sessions group, 4) mutations total, 5) per-day rows
+			mockResults.selectQueue = [[memberRow], [{ total: 0, rich: 0 }], [], [{ total: 0 }], []]
 
 			const res = await app.request(
 				jsonGet('/api/telemetry/mcp/summary?days=30', { 'x-workspace-id': wsId }),
@@ -154,42 +137,23 @@ describe('Telemetry Routes', () => {
 			expect(body.mutation_session_target_met).toBe(false)
 			expect(body.mutations_total).toBe(0)
 			expect(body.rich_render_by_day).toEqual([])
-			expect(body.clicks_total).toBe(0)
-			expect(body.sessions_with_click).toBe(0)
-			expect(body.click_session_pct).toBe(0)
-			expect(body.click_session_target_pct).toBe(30)
-			expect(body.click_session_target_met).toBe(false)
-			expect(body.avg_content_bytes).toBeNull()
-			expect(body.avg_content_tokens).toBeNull()
-			expect(body.avg_structured_content_bytes).toBeNull()
-			expect(body.tool_call_size_samples).toBe(0)
 		})
 
-		it('computes rich-render, mutation, click, and token rollups', async () => {
+		it('computes rich-render and mutation-session percentages from telemetry rows', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			// Tool calls: 6 of 10 rich → 60%
-			// Sessions: 3 valid (s1, s2, s3), 2 with mutation, 2 with click → 66.66% each
-			// (a session with only deep_link_click + no tool_call is excluded by the HAVING).
-			// Avg content bytes 400, tokens 100 (=400/4), structured 1200 across 8 samples.
+			// Sessions: 3 distinct, 2 with mutation → 66.66...%
+			// Mutations total: 4
 			mockResults.selectQueue = [
 				[memberRow],
 				[{ total: 10, rich: 6 }],
 				[
-					{ session_id: 's1', has_mutation: true, has_click: false },
-					{ session_id: 's2', has_mutation: false, has_click: true },
-					{ session_id: 's3', has_mutation: true, has_click: true },
-					{ session_id: null, has_mutation: false, has_click: false },
+					{ session_id: 's1', has_mutation: true },
+					{ session_id: 's2', has_mutation: false },
+					{ session_id: 's3', has_mutation: true },
+					{ session_id: null, has_mutation: false },
 				],
 				[{ total: 4 }],
-				[{ total: 7 }],
-				[
-					{
-						samples: 8,
-						avg_content_bytes: '400.0000000000000000',
-						avg_content_tokens: '100.0000000000000000',
-						avg_structured_content_bytes: '1200.0000000000000000',
-					},
-				],
 				[
 					{ day: '2026-04-25', total: 4, rich: 2 },
 					{ day: '2026-04-26', total: 6, rich: 4 },
@@ -217,63 +181,6 @@ describe('Telemetry Routes', () => {
 				rich_calls: 2,
 				rich_pct: 50,
 			})
-			// Lean-MCP-results bet additions.
-			expect(body.clicks_total).toBe(7)
-			expect(body.sessions_with_click).toBe(2)
-			expect(body.click_session_pct).toBeCloseTo(66.66666, 1)
-			expect(body.click_session_target_met).toBe(true)
-			expect(body.avg_content_bytes).toBe(400)
-			expect(body.avg_content_tokens).toBe(100)
-			expect(body.avg_structured_content_bytes).toBe(1200)
-			expect(body.tool_call_size_samples).toBe(8)
-		})
-
-		it('accepts a tool_call event with content/token size fields', async () => {
-			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
-			mockResults.select = [memberRow]
-			mockResults.insert = [{}]
-
-			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/telemetry/mcp',
-					{
-						event_type: 'tool_call',
-						tool_name: 'list_objects',
-						has_rich_render: true,
-						duration_ms: 17,
-						session_id: 'mcp-test-sized',
-						content_bytes: 480,
-						content_tokens: 120,
-						structured_content_bytes: 5120,
-					},
-					{ 'x-workspace-id': wsId },
-				),
-			)
-
-			expect(res.status).toBe(202)
-		})
-
-		it('rejects negative size fields', async () => {
-			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
-			mockResults.select = [memberRow]
-
-			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/telemetry/mcp',
-					{
-						event_type: 'tool_call',
-						tool_name: 'list_objects',
-						has_rich_render: false,
-						duration_ms: 5,
-						content_bytes: -1,
-					},
-					{ 'x-workspace-id': wsId },
-				),
-			)
-
-			expect(res.status).toBe(400)
 		})
 
 		it('returns 403 when the actor is not a workspace member', async () => {
