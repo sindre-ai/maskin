@@ -494,11 +494,7 @@ describe('Events Routes', () => {
 					mentions: [selfId, otherId],
 				},
 			})
-			const { app, mockResults, calls } = createSessionTestApp(
-				eventsRoutes,
-				'/api/events',
-				selfId,
-			)
+			const { app, mockResults, calls } = createSessionTestApp(eventsRoutes, '/api/events', selfId)
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[{ id: otherId, type: 'human', name: 'Other' }],
