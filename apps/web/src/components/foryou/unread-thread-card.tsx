@@ -216,6 +216,15 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 						className="shrink-0 text-xs text-muted-foreground"
 					/>
 				)}
+				{item.mentions_you && (
+					<span
+						aria-label="Mentioned"
+						title="You were @-mentioned in an unread comment"
+						className="shrink-0 rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-foreground"
+					>
+						@you
+					</span>
+				)}
 				<UnreadBadge count={item.unread_count} className="shrink-0" />
 				<Button
 					size="sm"
