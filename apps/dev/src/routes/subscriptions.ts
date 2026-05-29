@@ -79,6 +79,9 @@ const unreadItemSchema = z.object({
 	entity_type: z.string(),
 	entity_id: z.string().uuid(),
 	unread_count: z.number(),
+	// True when at least one unread comment on the entity @-mentions the
+	// current actor — drives the "Mentioned" badge on the For You card.
+	mentions_you: z.boolean(),
 	latest_event_id: z.number().nullable(),
 	latest_activity_at: z.string().nullable(),
 	object: objectResponseSchema.optional(),
@@ -289,11 +292,19 @@ app.openapi(listUnreadRoute, (async (c) => {
 	]
 	if (entity_type) subConditions.push(eq(subscriptions.entityType, entity_type))
 
+	// Aggregate flag: does any unread comment on the entity contain the
+	// current actor in its data->'mentions' array? Uses @> with a jsonb
+	// array of the actor id (the stable form), and coalesces to false for
+	// rows where the left-join produced no events (defensive — the HAVING
+	// clause filters those out, but bool_or on an empty set is NULL).
+	const mentionsYouExpr = sql<boolean>`coalesce(bool_or(${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), false)`
+
 	const rows = await db
 		.select({
 			entityType: subscriptions.entityType,
 			entityId: subscriptions.entityId,
 			unreadCount: count(events.id),
+			mentionsYou: mentionsYouExpr,
 			latestEventId: max(events.id),
 			latestActivityAt: max(events.createdAt),
 		})
@@ -334,6 +345,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 			entity_type: r.entityType,
 			entity_id: r.entityId,
 			unread_count: r.unreadCount,
+			mentions_you: Boolean(r.mentionsYou),
 			latest_event_id: r.latestEventId,
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,

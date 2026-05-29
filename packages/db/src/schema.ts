@@ -397,8 +397,9 @@ export const mcpTelemetry = pgTable(
 //
 // Polymorphic per-actor subscriptions keyed on (entity_type, entity_id).
 // `source` tracks how the row was created — 'author' (creator), 'commenter'
-// (auto-attached when they comment), or 'manual' (explicit subscribe).
-// Manual/author should never be downgraded by a later auto-subscribe.
+// (auto-attached when they comment), 'mentioned' (auto-attached when they are
+// @-mentioned in a comment), or 'manual' (explicit subscribe). Manual/author
+// should never be downgraded by a later auto-subscribe.
 
 export const subscriptions = pgTable(
 	'subscriptions',
@@ -419,7 +420,10 @@ export const subscriptions = pgTable(
 		unique('subscriptions_actor_entity_uniq').on(t.actorId, t.entityType, t.entityId),
 		index('subscriptions_ws_actor_idx').on(t.workspaceId, t.actorId),
 		index('subscriptions_entity_idx').on(t.entityType, t.entityId),
-		check('subscriptions_source_check', sql`${t.source} IN ('manual', 'author', 'commenter')`),
+		check(
+			'subscriptions_source_check',
+			sql`${t.source} IN ('manual', 'author', 'commenter', 'mentioned')`,
+		),
 	],
 )
 

@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { events, actors, readState, subscriptions } from '@maskin/db/schema'
 import { and, count, eq, gt, ne, sql } from 'drizzle-orm'
 
-export type SubscriptionSource = 'manual' | 'author' | 'commenter'
+export type SubscriptionSource = 'manual' | 'author' | 'commenter' | 'mentioned'
 
 export interface EntityRef {
 	entityType: string
