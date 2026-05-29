@@ -575,7 +575,24 @@ function ObjectsPage() {
 				onColumnVisibilityChange={handleColumnVisibilityChange}
 				tabs={tabs}
 				typeFilter={typeFilter}
-				onTypeFilterChange={(value) => updateSearch({ type: value, status: undefined })}
+				onTypeFilterChange={(value) => {
+					if (typeFilter) hydratedTypesRef.current.delete(typeFilter)
+					navigate({
+						to: '/$workspaceId/objects',
+						params: { workspaceId },
+						search: {
+							type: value || undefined,
+							sort: 'createdAt',
+							order: 'desc',
+							status: undefined,
+							owner: undefined,
+							q: undefined,
+							groupBy: undefined,
+							ids: undefined,
+						},
+						replace: true,
+					})
+				}}
 				search={q}
 				onSearchChange={(value) => updateSearch({ q: value || undefined })}
 				statusFilter={statusFilter}
