@@ -27,8 +27,8 @@ import type {
 } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, Trash2 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { Check } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
@@ -38,6 +38,7 @@ import { RelativeTime } from '../shared/relative-time'
 import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
+import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectFiles } from './object-files'
@@ -288,25 +289,33 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	}, [object.id, deleteObject, navigate, workspaceId])
 
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [menuOpen, setMenuOpen] = useState(false)
 
-	const deleteActions = useMemo(
-		() => (
-			<Button
-				variant="ghost"
-				size="icon"
-				className="h-7 w-7 text-muted-foreground hover:text-error"
-				onClick={() => setConfirmDelete(true)}
-				aria-label={`Delete ${object.type}`}
-			>
-				<Trash2 size={15} />
-			</Button>
-		),
-		[object.type],
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && e.key === '.') {
+				e.preventDefault()
+				setMenuOpen(true)
+			}
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [])
+
+	const menuActions = (
+		<AuxiliaryActionMenu
+			object={object}
+			onDeleteRequest={() => setConfirmDelete(true)}
+			isDeleting={deleteObject.isPending}
+			workspaceId={workspaceId}
+			open={menuOpen}
+			onOpenChange={setMenuOpen}
+		/>
 	)
 
 	return (
 		<>
-			<PageHeader actions={deleteActions} />
+			<PageHeader actions={menuActions} />
 			<DeleteConfirmDialog
 				open={confirmDelete}
 				onOpenChange={setConfirmDelete}
