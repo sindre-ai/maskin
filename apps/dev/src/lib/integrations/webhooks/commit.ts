@@ -6,13 +6,16 @@ export type WebhookEventRow = typeof events.$inferInsert
 
 /**
  * Thrown when the gated UPDATE on `webhook_deliveries.processed_at` matches 0
- * rows — i.e. the reconciler released the claim while the route's fan-out was
- * still in flight. The transaction is aborted by the throw so the events
- * insert never commits.
+ * rows. Two cases land here:
+ *   - the reconciler deleted the claim while fan-out was still in flight, or
+ *   - another writer already set `processed_at` (a duplicate delivery raced
+ *     past the dedup-table check and reached the commit step concurrently).
+ * Either way the transaction is aborted by the throw so the events insert
+ * never commits — the provider's next retry will reprocess cleanly.
  */
 export class ClaimReleasedError extends Error {
 	constructor(public readonly claimRowId: string) {
-		super(`webhook_deliveries claim ${claimRowId} was released before processing committed`)
+		super(`webhook_deliveries claim ${claimRowId} was gone or already processed at commit time`)
 		this.name = 'ClaimReleasedError'
 	}
 }

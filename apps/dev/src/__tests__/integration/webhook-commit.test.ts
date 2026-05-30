@@ -22,7 +22,7 @@ describe('commitWebhookDelivery Integration', () => {
 	 * matches 0 rows in that case; the helper must throw and roll back the
 	 * events insert so we never leave an event row dangling without its claim.
 	 */
-	it('aborts the transaction when the claim was released before processing committed', async () => {
+	it('aborts the transaction when the reconciler deleted the claim mid-processing', async () => {
 		const action = `slack.race.${randomUUID()}`
 
 		const [claim] = await db
@@ -97,7 +97,7 @@ describe('commitWebhookDelivery Integration', () => {
 		expect(landed).toHaveLength(1)
 	})
 
-	it('does not re-mark a claim that another writer already processed', async () => {
+	it('aborts the transaction when another writer already processed the claim', async () => {
 		const action = `slack.double.${randomUUID()}`
 
 		const earlier = new Date(Date.now() - 60_000)

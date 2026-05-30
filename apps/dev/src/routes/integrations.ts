@@ -920,10 +920,13 @@ webhookApp.post('/:provider', async (c) => {
 					return { kind: 'inserted', count: toInsert.length }
 				} catch (err) {
 					if (err instanceof ClaimReleasedError) {
-						// Claim was already deleted by the reconciler — no row to release.
-						// The provider's next retry will reclaim and reprocess the delivery.
+						// Two cases land here: the reconciler deleted the claim during
+						// fan-out, or another writer already set processed_at on it. Log
+						// neutrally so on-call doesn't mis-attribute a double-processed
+						// delivery to a reconciler race — claimRowId + deliveryId in the
+						// structured fields are enough to tell them apart from logs.
 						logger.warn(
-							`Webhook claim released by reconciler mid-processing for ${providerName}; txn aborted`,
+							`Webhook claim gone or already processed for ${providerName} at commit time; txn aborted`,
 							{
 								integrationId: integration.id,
 								workspaceId: integration.workspaceId,
