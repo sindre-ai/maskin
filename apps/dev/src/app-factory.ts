@@ -15,6 +15,7 @@ import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
+import analyticsRoutes from './routes/analytics'
 import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
@@ -207,6 +208,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/files', filesRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
+	app.route('/api/analytics', analyticsRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 
 	if (options.includeExtensions !== false) {
