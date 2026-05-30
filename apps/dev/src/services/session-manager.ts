@@ -17,7 +17,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
+import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
@@ -567,7 +567,7 @@ export class SessionManager extends EventEmitter {
 		const [result] = await this.db
 			.select({ count: countFn() })
 			.from(sessions)
-			.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'running')))
+			.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.status, ['starting', 'running'])))
 
 		return !result || result.count < maxConcurrent
 	}
