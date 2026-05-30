@@ -114,14 +114,16 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
-		it('returns 400 for invalid sort field', async () => {
+		it('returns 200 (fallback sort) for invalid sort field with special chars', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
 			const res = await app.request(
 				jsonGet('/api/objects?sort=;DROP TABLE', { 'x-workspace-id': wsId }),
 			)
 
-			expect(res.status).toBe(400)
+			// Unknown/unsafe sort fields fall back to createdAt rather than returning 400,
+			// so objects are always shown even when a custom field name is unsortable.
+			expect(res.status).toBe(200)
 		})
 
 		it('returns 200 for metadata sort field', async () => {
@@ -136,22 +138,22 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
-		it('returns 400 for unknown sort field', async () => {
+		it('returns 200 (fallback sort) for unknown sort field', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
 			const res = await app.request(jsonGet('/api/objects?sort=foobar', { 'x-workspace-id': wsId }))
 
-			expect(res.status).toBe(400)
+			expect(res.status).toBe(200)
 		})
 
-		it('returns 400 for metadata sort field with dots', async () => {
+		it('returns 200 (fallback sort) for metadata sort field with dots', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
 			const res = await app.request(
 				jsonGet('/api/objects?sort=metadata.a.b', { 'x-workspace-id': wsId }),
 			)
 
-			expect(res.status).toBe(400)
+			expect(res.status).toBe(200)
 		})
 
 		it('returns 400 for invalid order value', async () => {

@@ -86,18 +86,15 @@ export const KNOWN_SORT_COLUMNS = [
 ] as const
 
 /** Sort field: a built-in column or metadata.<field_name>.
- * Server-side validation in resolveSortColumn rejects unknown fields with 400.
+ * Security is enforced server-side in resolveSortColumn — unknown or unsafe fields
+ * fall back to the default sort rather than returning 400, so objects never disappear.
  * Avoid .refine() here — ZodEffects breaks @hono/zod-openapi query param extraction. */
-const sortFieldSchema = z
-	.string()
-	.max(100)
-	.regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)?$/)
-	.default('createdAt')
+const sortFieldSchema = z.string().max(200).default('createdAt')
 
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
-	owner: z.string().uuid().optional(),
+	owner: z.string().optional(),
 	ids: z.string().optional(),
 	sort: sortFieldSchema,
 	order: z.enum(['asc', 'desc']).default('desc'),

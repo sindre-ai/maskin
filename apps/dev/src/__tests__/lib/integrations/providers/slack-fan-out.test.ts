@@ -1,3 +1,4 @@
+import { MAX_FILE_SIZE_BYTES } from '@maskin/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NormalizedEvent } from '../../../../lib/integrations/types'
 
@@ -94,6 +95,32 @@ function fakeFiles() {
 	]
 }
 
+function makeOkResponse(
+	payload: ArrayBuffer | Uint8Array,
+	init?: { contentLength?: string | null },
+): Response {
+	const u8 = payload instanceof Uint8Array ? payload : new Uint8Array(payload as ArrayBuffer)
+	const headerStore = new Map<string, string>()
+	if (init?.contentLength === undefined) {
+		headerStore.set('content-length', String(u8.byteLength))
+	} else if (init.contentLength !== null) {
+		headerStore.set('content-length', init.contentLength)
+	}
+	return {
+		ok: true,
+		status: 200,
+		headers: { get: (name: string) => headerStore.get(name.toLowerCase()) ?? null },
+		body: new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(u8)
+				controller.close()
+			},
+		}),
+		arrayBuffer: () =>
+			Promise.resolve(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)),
+	} as unknown as Response
+}
+
 function makeEvent(files: unknown[] | null): NormalizedEvent {
 	const event: Record<string, unknown> = { type: 'message', text: 'hi', user: 'U1', channel: 'C1' }
 	if (files) event.files = files
@@ -159,11 +186,9 @@ describe('slackWebhookFanOut', () => {
 		const { slackWebhookFanOut } = await import(
 			'../../../../lib/integrations/providers/slack/fan-out'
 		)
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-			ok: true,
-			status: 200,
-			arrayBuffer: () => Promise.resolve(new TextEncoder().encode('payload').buffer),
-		} as unknown as Response)
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async () => makeOkResponse(new TextEncoder().encode('payload')))
 
 		const { db, inserted } = makeFakeDb({
 			id: 'int-1',
@@ -221,11 +246,7 @@ describe('slackWebhookFanOut', () => {
 				status: 403,
 				arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
 			} as unknown as Response)
-			.mockResolvedValueOnce({
-				ok: true,
-				status: 200,
-				arrayBuffer: () => Promise.resolve(new TextEncoder().encode('ok').buffer),
-			} as unknown as Response)
+			.mockResolvedValueOnce(makeOkResponse(new TextEncoder().encode('ok')))
 
 		const { db } = makeFakeDb({
 			id: 'int-1',
@@ -307,11 +328,7 @@ describe('slackWebhookFanOut', () => {
 			maxInFlight = Math.max(maxInFlight, inFlight)
 			await new Promise((r) => setTimeout(r, 20))
 			inFlight--
-			return {
-				ok: true,
-				status: 200,
-				arrayBuffer: () => Promise.resolve(new TextEncoder().encode('payload').buffer),
-			} as unknown as Response
+			return makeOkResponse(new TextEncoder().encode('payload'))
 		}) as typeof fetch)
 
 		const { db } = makeFakeDb({
@@ -413,5 +430,122 @@ describe('slackWebhookFanOut', () => {
 
 		expect(result).toEqual([normalized])
 		expect(storage.puts).toHaveLength(0)
+	})
+
+	it('rejects a file whose Content-Length header exceeds the cap, without buffering the body', async () => {
+		// Regression guard: prior to this check, downloadSlackFile awaited
+		// res.arrayBuffer() before inspecting size, so a 1 GB response would be
+		// fully buffered into memory before the cap fired. The header pre-check
+		// must short-circuit before the body stream is touched.
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		const getReaderMock = vi.fn()
+		const oversized = String(MAX_FILE_SIZE_BYTES + 1)
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: {
+				get: (name: string) => (name.toLowerCase() === 'content-length' ? oversized : null),
+			},
+			body: { getReader: getReaderMock },
+		} as unknown as Response)
+
+		const { db, inserted } = makeFakeDb({
+			id: 'int-1',
+			provider: 'slack',
+			workspaceId: 'ws-1',
+			config: { system_actor_id: 'actor-1' },
+		})
+		const storage = makeFakeStorage()
+		const normalized = makeEvent([
+			{
+				id: 'F999',
+				name: 'huge.bin',
+				mimetype: 'application/octet-stream',
+				url_private: 'https://files.slack.com/files-pri/T1-F999/huge.bin',
+			},
+		])
+
+		const result = await slackWebhookFanOut({
+			db: db as never,
+			storage,
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized,
+		})
+
+		// The header pre-check short-circuits before the body stream is touched
+		// — the reader is never even constructed, so no bytes can land in memory.
+		expect(getReaderMock).not.toHaveBeenCalled()
+		expect(storage.puts).toHaveLength(0)
+		const fileInserts = inserted.filter((i) => i.table === 'files')
+		expect(fileInserts).toHaveLength(0)
+		// Whole file rejected → no maskin_file_ids enrichment, event passes through.
+		expect(result).toEqual([normalized])
+	})
+
+	it('rejects a file whose streamed body exceeds the cap when Content-Length is missing', async () => {
+		// Belt-and-suspenders guard: untrusted upstreams may omit or lie about
+		// Content-Length. The streaming counter must abort once accumulated
+		// bytes exceed the cap.
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		const chunkSize = 1024 * 1024 // 1 MiB
+		const chunksToFillCap = Math.ceil(MAX_FILE_SIZE_BYTES / chunkSize)
+		// Long simulated stream — if the streaming guard didn't bail, the test
+		// would emit far more chunks than the cap allows.
+		const streamRunway = chunksToFillCap * 10
+		let chunksEmitted = 0
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: { get: () => null },
+			body: new ReadableStream<Uint8Array>({
+				pull(controller) {
+					if (chunksEmitted >= streamRunway) {
+						controller.close()
+						return
+					}
+					chunksEmitted++
+					controller.enqueue(new Uint8Array(chunkSize))
+				},
+			}),
+		} as unknown as Response)
+
+		const { db, inserted } = makeFakeDb({
+			id: 'int-1',
+			provider: 'slack',
+			workspaceId: 'ws-1',
+			config: { system_actor_id: 'actor-1' },
+		})
+		const storage = makeFakeStorage()
+		const normalized = makeEvent([
+			{
+				id: 'F999',
+				name: 'lying.bin',
+				mimetype: 'application/octet-stream',
+				url_private: 'https://files.slack.com/files-pri/T1-F999/lying.bin',
+			},
+		])
+
+		const result = await slackWebhookFanOut({
+			db: db as never,
+			storage,
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized,
+		})
+
+		// Streaming bails as soon as bytes exceed the cap — never drains the
+		// full simulated stream. Allow a small backpressure-induced slack
+		// beyond the strict cap.
+		expect(chunksEmitted).toBeLessThan(chunksToFillCap + 5)
+		expect(storage.puts).toHaveLength(0)
+		const fileInserts = inserted.filter((i) => i.table === 'files')
+		expect(fileInserts).toHaveLength(0)
+		expect(result).toEqual([normalized])
 	})
 })

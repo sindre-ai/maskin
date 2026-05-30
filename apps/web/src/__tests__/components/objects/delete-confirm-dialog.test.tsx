@@ -19,6 +19,7 @@ describe('DeleteConfirmDialog', () => {
 				open
 				onOpenChange={vi.fn()}
 				objectType="bet"
+				objectTitle="My Bet"
 				onConfirm={vi.fn()}
 				isPending={false}
 			/>,
@@ -28,12 +29,47 @@ describe('DeleteConfirmDialog', () => {
 		expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
 	})
 
+	it('names the object type and title in the body and warns it cannot be undone', () => {
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="Auxiliary action menu in top nav"
+				onConfirm={vi.fn()}
+				isPending={false}
+			/>,
+		)
+		expect(
+			screen.getByText(
+				"This will permanently delete the bet 'Auxiliary action menu in top nav'. This can't be undone.",
+			),
+		).toBeInTheDocument()
+	})
+
+	it('falls back to a generic body when the object has no title', () => {
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="insight"
+				objectTitle={null}
+				onConfirm={vi.fn()}
+				isPending={false}
+			/>,
+		)
+		expect(
+			screen.getByText("This will permanently delete this insight. This can't be undone."),
+		).toBeInTheDocument()
+	})
+
 	it('renders nothing when closed', () => {
 		render(
 			<DeleteConfirmDialog
 				open={false}
 				onOpenChange={vi.fn()}
 				objectType="bet"
+				objectTitle="My Bet"
 				onConfirm={vi.fn()}
 				isPending={false}
 			/>,
@@ -49,6 +85,7 @@ describe('DeleteConfirmDialog', () => {
 				open
 				onOpenChange={vi.fn()}
 				objectType="task"
+				objectTitle="Some task"
 				onConfirm={onConfirm}
 				isPending={false}
 			/>,
@@ -63,6 +100,7 @@ describe('DeleteConfirmDialog', () => {
 				open
 				onOpenChange={vi.fn()}
 				objectType="insight"
+				objectTitle="Some insight"
 				onConfirm={vi.fn()}
 				isPending
 			/>,
