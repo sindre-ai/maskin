@@ -10,6 +10,8 @@ import {
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
 	buildWebAppHref,
+	resolveWebAppBaseUrl,
+	stripTrailingSlash,
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
@@ -59,7 +61,7 @@ interface McpConfig {
  */
 function meta(toolName: string, config: McpConfig, workspaceId?: string): Record<string, unknown> {
 	const m: Record<string, unknown> = { toolName }
-	if (config.webAppBaseUrl) m.webAppBaseUrl = config.webAppBaseUrl.replace(/\/$/, '')
+	if (config.webAppBaseUrl) m.webAppBaseUrl = stripTrailingSlash(config.webAppBaseUrl)
 	const ws = workspaceId ?? config.defaultWorkspaceId
 	if (ws) m.workspaceId = ws
 	return m
@@ -460,7 +462,7 @@ async function enrichSessionActorName<T extends SessionRow>(
  * don't resolve in the web app.
  */
 function registerObjectResources(server: McpServer, config: McpConfig) {
-	const baseUrl = config.webAppBaseUrl?.replace(/\/$/, '')
+	const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
 	if (!baseUrl) return
 
 	// ─── Unified objects (insight / bet / task / meeting / ...) ───
@@ -3899,7 +3901,7 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				seedSummary += ` Created ${agentsCreated} agents and ${triggersCreated} triggers that drive the pipeline.`
 			}
 
-			const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
+			const frontendUrl = stripTrailingSlash(process.env.FRONTEND_URL ?? 'http://localhost:5173')
 			// Magic-link auto-auth is only safe on localhost: the URL carries the raw
 			// API key in its fragment, so it must not end up in shared browser history,
 			// agent transcripts, or forwarded links. For any non-local frontend, emit a
@@ -4050,7 +4052,7 @@ async function main() {
 		apiKey: process.env.API_KEY || '',
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 		transport: 'stdio',
-		webAppBaseUrl: process.env.WEB_APP_URL || process.env.FRONTEND_URL,
+		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
 	}
 
 	const server = createMcpServer(config)

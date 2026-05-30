@@ -66,6 +66,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
 }))
 
+vi.mock('@/hooks/use-user-display-settings', () => ({
+	useUserDisplaySettings: () => ({ data: null, isSuccess: true }),
+	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn() }),
+}))
+
 vi.mock('@/components/objects/bulk-action-bar', () => ({
 	BulkActionBar: () => null,
 }))
@@ -110,6 +115,14 @@ vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
 		objects: { listInfinite: () => ['objects'] },
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
+		userDisplaySettings: {
+			detail: (workspaceId: string, objectType: string) => [
+				'user-display-settings',
+				workspaceId,
+				objectType,
+			],
+			list: (workspaceId: string) => ['user-display-settings', workspaceId],
+		},
 	},
 }))
 

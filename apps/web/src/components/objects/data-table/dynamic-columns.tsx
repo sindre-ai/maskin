@@ -46,10 +46,11 @@ export function getDynamicColumns(
 	return fields.map((field) => {
 		const columnId = `metadata.${field.name}`
 		const label = field.name.replace(/_/g, ' ')
+		const accessorFn = (row: ObjectResponse) =>
+			(row.metadata as Record<string, unknown> | null)?.[field.name] ?? null
 		return {
 			id: columnId,
-			accessorFn: (row: ObjectResponse) =>
-				(row.metadata as Record<string, unknown> | null)?.[field.name] ?? null,
+			accessorFn,
 			header: ({ table }: { table: Table<ObjectResponse> }) => {
 				const meta = table.options.meta as ObjectsTableMeta | undefined
 				return (
@@ -63,6 +64,14 @@ export function getDynamicColumns(
 				)
 			},
 			cell: ({ getValue }: { getValue: () => unknown }) => renderFieldValue(getValue(), field.type),
+			...(field.type === 'date' && {
+				getGroupingValue: (row: ObjectResponse) => {
+					const val = accessorFn(row)
+					if (!val) return ''
+					const d = new Date(String(val))
+					return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+				},
+			}),
 			enableSorting: false,
 			enableHiding: true,
 			meta: { fieldType: field.type, isDynamic: true },

@@ -1,5 +1,46 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Spinner } from '@/components/ui/spinner'
+
+const DATE_GROUP_RE = /^\d{4}-\d{2}-\d{2}$/
+const MONTHS = [
+	'January',
+	'February',
+	'March',
+	'April',
+	'May',
+	'June',
+	'July',
+	'August',
+	'September',
+	'October',
+	'November',
+	'December',
+]
+
+function formatGroupDate(dateKey: string): string {
+	if (!DATE_GROUP_RE.test(dateKey)) return dateKey
+	const [y, m, d] = dateKey.split('-').map(Number) as [number, number, number]
+	const suffix =
+		d % 10 === 1 && d !== 11
+			? 'st'
+			: d % 10 === 2 && d !== 12
+				? 'nd'
+				: d % 10 === 3 && d !== 13
+					? 'rd'
+					: 'th'
+	return `${d}${suffix} ${MONTHS[m - 1]} ${y}`
+}
+
+function resolveGroupLabel(
+	groupingColumn: string | undefined,
+	rawValue: string,
+	actors: ActorListItem[] | undefined,
+): string {
+	if (groupingColumn === 'owner' || groupingColumn === 'createdBy') {
+		return actors?.find((a) => a.id === rawValue)?.name ?? rawValue
+	}
+	return formatGroupDate(rawValue)
+}
 import {
 	Table,
 	TableBody,
@@ -10,7 +51,7 @@ import {
 } from '@/components/ui/table'
 import { useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
-import type { ObjectResponse } from '@/lib/api'
+import type { ActorListItem, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -35,6 +76,7 @@ interface DataTableProps {
 	data: ObjectResponse[]
 	columns: ColumnDef<ObjectResponse>[]
 	workspaceId: string
+	actors?: ActorListItem[]
 	rowSelection: RowSelectionState
 	onRowSelectionChange: OnChangeFn<RowSelectionState>
 	columnVisibility: VisibilityState
@@ -52,6 +94,7 @@ export function DataTable({
 	data,
 	columns,
 	workspaceId,
+	actors: actorsProp,
 	rowSelection,
 	onRowSelectionChange,
 	columnVisibility,
@@ -66,7 +109,9 @@ export function DataTable({
 }: DataTableProps) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
-	const { data: actors } = useActors(workspaceId, { enabled: isMobile })
+	const { data: actorsFetched } = useActors(workspaceId, { enabled: isMobile })
+	// On mobile, fetch actors locally for the ObjectCard. On desktop, use actors passed from parent.
+	const actors = isMobile ? actorsFetched : actorsProp
 	const parentRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 
@@ -160,6 +205,9 @@ export function DataTable({
 							const isGrouped = row.getIsGrouped()
 
 							if (isGrouped) {
+								const groupingColumn = grouping?.[0]
+								const rawValue = String(row.groupingValue)
+								const displayValue = resolveGroupLabel(groupingColumn, rawValue, actors)
 								return (
 									<li
 										key={row.id}
@@ -177,7 +225,7 @@ export function DataTable({
 												size={14}
 												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
 											/>
-											<span className="font-medium text-sm">{String(row.groupingValue)}</span>
+											<span className="font-medium text-sm">{displayValue}</span>
 											<span className="text-muted-foreground text-xs">({row.subRows.length})</span>
 										</button>
 									</li>
@@ -255,6 +303,12 @@ export function DataTable({
 								const isGrouped = row.getIsGrouped()
 
 								if (isGrouped) {
+									const groupingColumn = grouping?.[0]
+									const rawValue = String(row.groupingValue)
+									const displayValue =
+										groupingColumn === 'owner' || groupingColumn === 'createdBy'
+											? (actors?.find((a) => a.id === rawValue)?.name ?? rawValue)
+											: rawValue
 									return (
 										<TableRow
 											key={row.id}
@@ -272,7 +326,7 @@ export function DataTable({
 															row.getIsExpanded() && 'rotate-90',
 														)}
 													/>
-													<span className="font-medium text-sm">{String(row.groupingValue)}</span>
+													<span className="font-medium text-sm">{displayValue}</span>
 													<span className="text-muted-foreground text-xs">
 														({row.subRows.length})
 													</span>

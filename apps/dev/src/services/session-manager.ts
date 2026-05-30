@@ -18,6 +18,7 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
+import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
@@ -26,7 +27,7 @@ import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
-import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
+import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
 
 export interface CreateSessionParams {
 	actorId: string
@@ -656,7 +657,14 @@ export class SessionManager extends EventEmitter {
 		if (session.interactive) {
 			envVars.INTERACTIVE = '1'
 		} else {
-			envVars.ACTION_PROMPT = `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`
+			// frontendBaseUrl falls back to the dev value outside production; it
+			// only throws on a missing FRONTEND_URL in prod, which is the same
+			// failure mode as fileViewerUrl and is intentional.
+			const startupBlock = buildWorkspaceStartupBlock({
+				workspaceId: session.workspaceId,
+				frontendUrl: frontendBaseUrl(),
+			})
+			envVars.ACTION_PROMPT = `${startupBlock}${session.actionPrompt}`
 		}
 
 		// Resolve LLM credentials in priority order:
