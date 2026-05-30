@@ -92,4 +92,9 @@ export const queryKeys = {
 		unread: (workspaceId: string, entityType?: string) =>
 			['subscriptions', 'unread', workspaceId, entityType ?? 'all'] as const,
 	},
+	userDisplaySettings: {
+		list: (workspaceId: string) => ['user-display-settings', workspaceId, 'list'] as const,
+		detail: (workspaceId: string, objectType: string) =>
+			['user-display-settings', workspaceId, 'detail', objectType] as const,
+	},
 } as const

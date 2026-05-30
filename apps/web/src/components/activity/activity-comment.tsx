@@ -84,8 +84,8 @@ function CommentRow({ event, actors, workspaceId, onReply }: CommentRowProps) {
 					type="button"
 					onClick={onReply}
 					aria-label="Reply"
-					/* Always visible on touch (mobile has no hover); fades behind hover/focus on sm+. */
-					className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1"
+					/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
+					className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1"
 				>
 					<Reply size={14} />
 				</button>

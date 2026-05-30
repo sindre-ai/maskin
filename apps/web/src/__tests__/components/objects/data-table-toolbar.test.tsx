@@ -3,8 +3,8 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/components/objects/data-table/data-table-controls', () => ({
-	DataTableControls: () => <button type="button">MockControls</button>,
+vi.mock('@/components/objects/data-table/display-panel', () => ({
+	DisplayPanel: () => <button type="button">MockDisplay</button>,
 }))
 
 function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableToolbar>> = {}) {
@@ -81,9 +81,9 @@ describe('DataTableToolbar', () => {
 		expect(props.onImportClick).toHaveBeenCalledOnce()
 	})
 
-	it('renders the mocked Controls component', () => {
+	it('renders the mocked Display panel', () => {
 		renderToolbar()
-		expect(screen.getByRole('button', { name: 'MockControls' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'MockDisplay' })).toBeInTheDocument()
 	})
 
 	it('shows current search value in input', () => {

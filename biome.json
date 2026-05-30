@@ -21,6 +21,14 @@
 		}
 	},
 	"files": {
-		"ignore": ["node_modules", "dist", "drizzle", ".turbo", "coverage", "routeTree.gen.ts"]
+		"ignore": [
+			"node_modules",
+			"dist",
+			"drizzle",
+			".turbo",
+			"coverage",
+			"routeTree.gen.ts",
+			".claude"
+		]
 	}
 }
