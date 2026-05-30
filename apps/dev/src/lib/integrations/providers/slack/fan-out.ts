@@ -31,6 +31,22 @@ const MAX_FILES_PER_EVENT = 20
 /** Slack file download timeout */
 const DOWNLOAD_TIMEOUT_MS = 30_000
 
+// Defense-in-depth: refuse to send the bot token to anything but a Slack-owned host.
+// Node fetch already strips Authorization on cross-origin redirects, so token exfil via
+// a malicious url_private is bounded today — this guard removes a class of regressions
+// if that behaviour ever changes.
+function isAllowedSlackHost(url: string): boolean {
+	let parsed: URL
+	try {
+		parsed = new URL(url)
+	} catch {
+		return false
+	}
+	if (parsed.protocol !== 'https:') return false
+	const host = parsed.hostname.toLowerCase()
+	return host === 'slack.com' || host.endsWith('.slack.com')
+}
+
 function extractSlackFiles(data: Record<string, unknown>): SlackFile[] | null {
 	const event = data.event as Record<string, unknown> | undefined
 	if (!event) return null
@@ -47,6 +63,9 @@ function extractSlackFiles(data: Record<string, unknown>): SlackFile[] | null {
 }
 
 async function downloadSlackFile(url: string, accessToken: string): Promise<Buffer> {
+	if (!isAllowedSlackHost(url)) {
+		throw new Error(`Slack file download rejected: host not in allow-list (${url})`)
+	}
 	const res = await fetch(url, {
 		headers: { Authorization: `Bearer ${accessToken}` },
 		signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
@@ -55,11 +74,40 @@ async function downloadSlackFile(url: string, accessToken: string): Promise<Buff
 	if (!res.ok) {
 		throw new Error(`Slack file download failed: HTTP ${res.status}`)
 	}
-	const ab = await res.arrayBuffer()
-	if (ab.byteLength > MAX_FILE_SIZE_BYTES) {
-		throw new Error(`Slack file exceeds ${MAX_FILE_SIZE_BYTES} byte limit (${ab.byteLength})`)
+
+	// Bail before buffering when the server advertises a too-large response.
+	// `res.arrayBuffer()` would otherwise pull the whole body into memory before
+	// any size check, OOM-ing the process on a multi-GB response.
+	const declared = Number(res.headers.get('content-length'))
+	if (Number.isFinite(declared) && declared > MAX_FILE_SIZE_BYTES) {
+		throw new Error(`Slack file exceeds ${MAX_FILE_SIZE_BYTES} byte limit (${declared})`)
 	}
-	return Buffer.from(ab)
+
+	// Belt-and-suspenders: stream the body and bail as soon as the accumulated
+	// bytes exceed the cap, in case Content-Length is missing or lies.
+	const body = res.body
+	if (!body) {
+		throw new Error('Slack file download returned no body')
+	}
+	const reader = body.getReader()
+	const chunks: Uint8Array[] = []
+	let received = 0
+	try {
+		while (true) {
+			const { value, done } = await reader.read()
+			if (done) break
+			if (!value) continue
+			received += value.byteLength
+			if (received > MAX_FILE_SIZE_BYTES) {
+				throw new Error(`Slack file exceeds ${MAX_FILE_SIZE_BYTES} byte limit (${received})`)
+			}
+			chunks.push(value)
+		}
+	} catch (err) {
+		await reader.cancel().catch(() => {})
+		throw err
+	}
+	return Buffer.concat(chunks, received)
 }
 
 interface PersistedFile {

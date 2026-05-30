@@ -551,7 +551,7 @@ function SessionRow({
 						</button>
 						<button
 							type="button"
-							className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer"
+							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
 							onClick={(e) => {
 								e.stopPropagation()
 								createSession.mutate({

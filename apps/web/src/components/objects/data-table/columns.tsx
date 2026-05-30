@@ -9,6 +9,13 @@ import { Link } from '@tanstack/react-router'
 import type { ColumnDef, Table } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 
+/** Returns a YYYY-MM-DD string for grouping by day */
+function toDateKey(iso: string | null | undefined): string {
+	if (!iso) return ''
+	const d = new Date(iso)
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 /** Sort state passed via table.options.meta to avoid re-creating columns on every sort change */
 export interface ObjectsTableMeta {
 	[key: string]: unknown
@@ -160,6 +167,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			cell: ({ row }) => (
 				<RelativeTime date={row.getValue('createdAt')} className="text-sm text-muted-foreground" />
 			),
+			getGroupingValue: (row) => toDateKey(row.createdAt),
 		},
 		{
 			accessorKey: 'updatedAt',
@@ -167,6 +175,7 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			cell: ({ row }) => (
 				<RelativeTime date={row.getValue('updatedAt')} className="text-sm text-muted-foreground" />
 			),
+			getGroupingValue: (row) => toDateKey(row.updatedAt),
 		},
 	]
 }
