@@ -895,6 +895,8 @@ webhookApp.post('/:provider', async (c) => {
 					}
 				}
 
+				if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
+
 				// Mark the claim processed in the SAME transaction as the events insert,
 				// gated on the claim row still existing and being unprocessed. Without
 				// the gate, a long fan-out (>STALE_THRESHOLD_MS) could race the
