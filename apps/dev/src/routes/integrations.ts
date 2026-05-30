@@ -798,7 +798,13 @@ webhookApp.post('/:provider', async (c) => {
 	const deliveryId = resolved.extractDeliveryId?.(payload, headers)
 	const storageProvider = c.get('storageProvider')
 
-	type Outcome = { kind: 'inserted'; count: number } | { kind: 'duplicate' } | { kind: 'failed' }
+	type Outcome =
+		| { kind: 'inserted'; count: number }
+		| { kind: 'duplicate' }
+		| { kind: 'failed' }
+		| { kind: 'queued' }
+
+	const asyncProcessing = resolved.asyncProcessing === true
 
 	const perWorkspaceResults: Outcome[] = await Promise.all(
 		eligible.map(async (integration): Promise<Outcome> => {
@@ -874,18 +880,44 @@ webhookApp.post('/:provider', async (c) => {
 				}
 			}
 
-			let toInsert = [normalized]
-			if (resolved.webhookFanOut) {
+			const runFanOutAndInsert = async (): Promise<Outcome> => {
+				let toInsert = [normalized]
+				if (resolved.webhookFanOut) {
+					try {
+						toInsert = await resolved.webhookFanOut({
+							db,
+							storage: storageProvider,
+							integrationId: integration.id,
+							workspaceId: integration.workspaceId,
+							normalized,
+						})
+					} catch (err) {
+						logger.error(`webhookFanOut failed for ${providerName}`, {
+							integrationId: integration.id,
+							workspaceId: integration.workspaceId,
+							error: err instanceof Error ? err.message : String(err),
+						})
+						await releaseClaim()
+						return { kind: 'failed' }
+					}
+				}
+
+				if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
+
 				try {
-					toInsert = await resolved.webhookFanOut({
-						db,
-						storage: storageProvider,
-						integrationId: integration.id,
-						workspaceId: integration.workspaceId,
-						normalized,
-					})
+					await db.insert(events).values(
+						toInsert.map((e) => ({
+							workspaceId: integration.workspaceId,
+							actorId: systemActorId,
+							action: e.action,
+							entityType: e.entityType,
+							entityId: integration.id,
+							data: e.data,
+						})),
+					)
+					return { kind: 'inserted', count: toInsert.length }
 				} catch (err) {
-					logger.error(`webhookFanOut failed for ${providerName}`, {
+					logger.error(`Event insert failed for ${providerName}`, {
 						integrationId: integration.id,
 						workspaceId: integration.workspaceId,
 						error: err instanceof Error ? err.message : String(err),
@@ -895,29 +927,23 @@ webhookApp.post('/:provider', async (c) => {
 				}
 			}
 
-			if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
-
-			try {
-				await db.insert(events).values(
-					toInsert.map((e) => ({
+			if (asyncProcessing) {
+				// Hand fan-out + event insert off to the event loop so the route can ack
+				// inside Slack's 3s budget regardless of file count or download latency.
+				// The delivery claim above already committed, so a Slack retry that
+				// arrives while this background task is still running is recognised as
+				// a duplicate and skipped.
+				void runFanOutAndInsert().catch((err) => {
+					logger.error(`Async ${providerName} processing crashed`, {
+						integrationId: integration.id,
 						workspaceId: integration.workspaceId,
-						actorId: systemActorId,
-						action: e.action,
-						entityType: e.entityType,
-						entityId: integration.id,
-						data: e.data,
-					})),
-				)
-				return { kind: 'inserted', count: toInsert.length }
-			} catch (err) {
-				logger.error(`Event insert failed for ${providerName}`, {
-					integrationId: integration.id,
-					workspaceId: integration.workspaceId,
-					error: err instanceof Error ? err.message : String(err),
+						error: err instanceof Error ? err.message : String(err),
+					})
 				})
-				await releaseClaim()
-				return { kind: 'failed' }
+				return { kind: 'queued' }
 			}
+
+			return runFanOutAndInsert()
 		}),
 	)
 
@@ -925,11 +951,19 @@ webhookApp.post('/:provider', async (c) => {
 		(sum, r) => sum + (r.kind === 'inserted' ? r.count : 0),
 		0,
 	)
+	const totalQueued = perWorkspaceResults.filter((r) => r.kind === 'queued').length
 	const allDuplicate =
 		perWorkspaceResults.length > 0 && perWorkspaceResults.every((r) => r.kind === 'duplicate')
 
 	if (allDuplicate) {
 		return c.json({ ok: true, skipped: 'duplicate' })
+	}
+
+	if (totalQueued > 0) {
+		logger.info(
+			`Webhook queued: ${totalQueued} delivery(ies) for ${providerName} across ${eligible.length} workspace(s)`,
+		)
+		return c.json({ ok: true, queued: totalQueued, workspaces: eligible.length })
 	}
 
 	if (totalInserted === 0) {

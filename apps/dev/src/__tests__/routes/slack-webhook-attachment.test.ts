@@ -160,7 +160,12 @@ describe('POST /api/webhooks/slack — file attachment persistence', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.ok).toBe(true)
-		expect(body.count).toBe(1)
+		expect(body.queued).toBe(1)
+
+		// The fan-out runs off the hot path (asyncProcessing: true). Yield to the
+		// event loop so all its chained microtasks (fetch, S3, DB inserts) settle
+		// before we assert the DB effects.
+		await new Promise<void>((resolve) => setImmediate(resolve))
 
 		// Find the events insert the route makes after fan-out: it's the only
 		// insert whose values is an array (the route batches normalized events).
