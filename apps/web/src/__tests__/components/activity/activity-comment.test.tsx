@@ -128,10 +128,14 @@ describe('ActivityComment', () => {
 		expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument()
 	})
 
-	it('keeps the Reply action visible by default on mobile (hover-revealed only on sm+)', () => {
+	it('keeps the Reply action visible by default on touch (hover-revealed only on hover-capable devices)', () => {
 		// The Reply icon used to be `opacity-0 group-hover:opacity-100` — invisible
-		// on touch. The contract is: visible by default, fades behind hover only
-		// at sm+. Encoded here so a future refactor can't silently re-hide it.
+		// on touch. A later attempt used `sm:opacity-0 sm:group-hover:opacity-100`
+		// which left iPad portrait (≥640px, touch, no hover) permanently invisible.
+		// The contract is: visible by default; fades behind hover only on devices
+		// that actually have hover (the `can-hover` variant maps to
+		// `@media (hover: hover)`). Encoded here so a future refactor can't
+		// silently re-hide it on touch again.
 		const event = buildEventResponse({
 			action: 'commented',
 			data: { content: 'Test' },
@@ -139,8 +143,10 @@ describe('ActivityComment', () => {
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 		const reply = screen.getByRole('button', { name: 'Reply' })
 		expect(reply.className).toMatch(/(^|\s)opacity-100($|\s)/)
-		expect(reply.className).toMatch(/sm:opacity-0/)
-		expect(reply.className).toMatch(/sm:group-hover:opacity-100/)
+		expect(reply.className).toMatch(/can-hover:opacity-0/)
+		expect(reply.className).toMatch(/can-hover:group-hover:opacity-100/)
+		// Guard against re-introducing a viewport-only gate that breaks touch tablets.
+		expect(reply.className).not.toMatch(/\bsm:opacity-0\b/)
 	})
 
 	it('shows the Reply action button only on the last reply when replies exist', () => {

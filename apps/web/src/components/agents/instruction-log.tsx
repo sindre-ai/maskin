@@ -345,7 +345,7 @@ function MessageBubble({
 						{message.actionPrompt && (
 							<button
 								type="button"
-								className="flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer disabled:opacity-50"
+								className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
 								onClick={() => onRetry(message.actionPrompt as string)}
 								disabled={isStreaming}
 							>

@@ -67,11 +67,12 @@ const sortColumns: Record<string, Column | SQL> = {
 	createdBy: objects.createdBy,
 }
 
-/** Resolve sort expression — built-in column or metadata->>'field_name'. Returns null for unknown fields. */
+/** Resolve sort expression — built-in column or metadata->>'field_name'. Returns null for unknown/unsafe fields. */
 function resolveSortColumn(sortField: string): Column | SQL | null {
 	if (sortColumns[sortField]) return sortColumns[sortField]
 	if (sortField.startsWith('metadata.')) {
 		const fieldName = sortField.slice(9)
+		// Safety check: only allow alphanumeric + underscore field names to prevent SQL injection via sql.raw
 		if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) return null
 		return sql`${objects.metadata}->>'${sql.raw(fieldName)}'`
 	}
@@ -79,15 +80,15 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
 }
 
 /**
- * Resolve sort + order into Drizzle orderBy expressions, or null for unknown fields.
+ * Resolve sort + order into Drizzle orderBy expressions.
+ * Falls back to createdAt desc for unknown/unsafe sort fields so objects never disappear.
  *
  * Always appends `objects.id` as a tiebreaker so OFFSET/LIMIT pagination stays
  * stable when the primary sort column has ties — without it, rows sharing a
  * `createdAt` (or any non-unique sort key) can re-appear across pages.
  */
-function resolveOrderBy(query: { sort: string; order: string }): SQL[] | null {
-	const sortExpr = resolveSortColumn(query.sort)
-	if (!sortExpr) return null
+function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
+	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
 }
@@ -252,16 +253,22 @@ app.openapi(listObjectsRoute, async (c) => {
 
 	const conditions = [eq(objects.workspaceId, workspaceId)]
 	if (query.type) conditions.push(eq(objects.type, query.type))
-	if (query.status) conditions.push(eq(objects.status, query.status))
-	if (query.owner) conditions.push(eq(objects.owner, query.owner))
+	if (query.status) {
+		const statuses = query.status.split(',').filter(Boolean)
+		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
+		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
+	}
+	if (query.owner) {
+		const owners = query.owner.split(',').filter((id) => UUID_RE.test(id))
+		if (owners.length === 1) conditions.push(eq(objects.owner, owners[0] as string))
+		else if (owners.length > 1) conditions.push(inArray(objects.owner, owners))
+	}
 	if (query.ids) {
 		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
 		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
 	}
 
 	const orderBy = resolveOrderBy(query)
-	if (!orderBy)
-		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
 
 	const results = await db
 		.select()
@@ -307,11 +314,13 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const conditions = [eq(objects.workspaceId, workspaceId)]
 	if (textMatch) conditions.push(textMatch)
 	if (query.type) conditions.push(eq(objects.type, query.type))
-	if (query.status) conditions.push(eq(objects.status, query.status))
+	if (query.status) {
+		const statuses = query.status.split(',').filter(Boolean)
+		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
+		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
+	}
 
 	const orderBy = resolveOrderBy(query)
-	if (!orderBy)
-		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
 
 	const results = await db
 		.select()
