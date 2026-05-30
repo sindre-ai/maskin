@@ -137,6 +137,11 @@ async function findPersistedBySlackFileId(
 		.where(
 			and(
 				eq(files.workspaceId, workspaceId),
+				// Repeat the workspace constraint on the events side so the planner
+				// can drive the join with `events_ws_entity_id_idx (workspace_id,
+				// entity_id, id)` instead of falling back to a workspace-wide scan
+				// to evaluate the JSONB predicate.
+				eq(eventsTable.workspaceId, workspaceId),
 				eq(eventsTable.entityType, 'file'),
 				eq(eventsTable.action, 'created'),
 				sql`${eventsTable.data}->>'slack_file_id' = ${slackFileId}`,
