@@ -523,7 +523,7 @@ describe('Webhook Routes', () => {
 			})
 			mockVerify.mockReturnValue(true)
 			mockNormalizeEvent.mockReturnValue(normalized)
-			const { app, mockResults } = createWebhookTestApp()
+			const { app, mockResults, calls } = createWebhookTestApp()
 			mockResults.select = [int1, int2]
 			// int1 claim succeeds, int2 claim conflicts. int1 then runs fan-out + event;
 			// int2 must skip fan-out entirely.
@@ -532,12 +532,25 @@ describe('Webhook Routes', () => {
 				[], // int2 claim → conflict
 				[{}], // int1 event insert
 			]
+			// Gated processed_at UPDATE inside the events+update txn must report 1
+			// matched row, otherwise the helper throws ClaimReleasedError, the int1
+			// commit rolls back, and body.count silently drops to 0 — making the
+			// fan-out assertion above pass vacuously over a no-op transaction.
+			mockResults.update = [{ id: 'claim-1' }]
 
 			const res = await app.request(jsonRequest('POST', '/api/webhooks/github', { action: 'push' }))
 
 			expect(res.status).toBe(200)
 			expect(fanOut).toHaveBeenCalledTimes(1)
 			expect(fanOut.mock.calls[0]?.[0]?.workspaceId).toBe(int1.workspaceId)
+			// int1's commit must actually land — body.count comes from the route's
+			// `'inserted'` aggregator, so a rolled-back txn shows 0 here even though
+			// the mock recorded the events insert call.
+			const body = await res.json()
+			expect(body.count).toBe(1)
+			expect(body.workspaces).toBe(2)
+			const eventInsert = calls.inserts[2] as { workspaceId: string }[]
+			expect(eventInsert[0]?.workspaceId).toBe(int1.workspaceId)
 		})
 
 		it('returns skipped=duplicate only when every workspace claim conflicts', async () => {
