@@ -20,7 +20,7 @@ Plain `CREATE INDEX` takes a `SHARE` lock for the duration of the build, which b
 
 ### How to write the migration
 
-`CREATE INDEX CONCURRENTLY` **cannot run inside a transaction block**, and our migrator (`packages/db/src/migrate.ts`) feeds each `.sql` file to `postgres.unsafe(...)` as one multi-statement query — Postgres wraps that in an implicit transaction. So a CONCURRENTLY index must be the **only** statement in its migration file. No `ALTER TABLE`, no `UPDATE`, no second `CREATE INDEX`, no `--> statement-breakpoint`. Split anything else into its own preceding migration.
+`CREATE INDEX CONCURRENTLY` **cannot run inside a transaction block**. Our migrator uses `postgres.unsafe(...)` which runs each statement in autocommit mode (no implicit `BEGIN`/`COMMIT` wrapper), so technically CONCURRENTLY can coexist with other statements today — but keep it as the **only** statement in its migration file anyway. If another statement in the same file ever introduces an explicit `BEGIN`, the CONCURRENTLY silently errors or leaves an invalid index. Isolation eliminates that risk. No `ALTER TABLE`, no `UPDATE`, no second `CREATE INDEX`, no `--> statement-breakpoint`.
 
 ```sql
 -- 00XX_webhook_deliveries_unprocessed_idx.sql
@@ -41,11 +41,12 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS "webhook_deliveries_unprocessed_received
 
 ### How to write the migration
 
-Drive the backfill in chunks of ~5,000 rows, each in its own transaction, until no rows remain. The migrator runs each `.sql` file as a single batch, so put a non-trivial backfill in a dedicated migration file using a `DO` block:
+Drive the backfill in chunks of ~5,000 rows, each in its own transaction, until no rows remain. PL/pgSQL `DO` blocks cannot issue `COMMIT` — only stored procedures can. Use `CREATE PROCEDURE` + `CALL` + `DROP PROCEDURE` so mid-loop commits work:
 
 ```sql
 -- 00XX_backfill_webhook_deliveries_processed_at.sql
-DO $$
+CREATE OR REPLACE PROCEDURE backfill_webhook_deliveries_processed_at()
+LANGUAGE plpgsql AS $$
 DECLARE
 	updated_count integer;
 BEGIN
@@ -66,9 +67,13 @@ BEGIN
 		COMMIT;
 	END LOOP;
 END $$;
+
+CALL backfill_webhook_deliveries_processed_at();
+
+DROP PROCEDURE backfill_webhook_deliveries_processed_at();
 ```
 
-`FOR UPDATE SKIP LOCKED` keeps the backfill out of the way of the live writer. `COMMIT` inside the `DO` block requires the migrator's autocommit context — the existing `postgres.unsafe(...)` path provides it. Key the loop predicate on something that distinguishes backfilled rows (e.g. `WHERE processed_at IS NULL`) so a partial run can resume idempotently.
+`FOR UPDATE SKIP LOCKED` keeps the backfill out of the way of the live writer. Key the loop predicate on something that distinguishes backfilled rows (e.g. `WHERE processed_at IS NULL`) so a partial run can resume idempotently. The `DROP PROCEDURE` at the end cleans up — the procedure has no use after the migration runs.
 
 For a one-off small backfill that the hot-tables threshold doesn't really need (e.g. the table has < 10k rows and 24h retention), call it out in a SQL comment and in the PR description rather than skipping the recipe silently. The next reviewer should not have to re-derive the call.
 
