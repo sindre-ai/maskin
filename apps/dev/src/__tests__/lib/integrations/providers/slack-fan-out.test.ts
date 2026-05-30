@@ -468,7 +468,6 @@ describe('slackWebhookFanOut', () => {
 		expect(String(calledUrl)).toContain('files.slack.com')
 	})
 
-
 	it('returns the event unchanged when token refresh throws', async () => {
 		// Regression guard: an unexpected throw (DB lookup, token refresh) must
 		// not drop the entire message — the route swallows fan-out errors and
