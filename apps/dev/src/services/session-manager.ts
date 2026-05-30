@@ -567,7 +567,12 @@ export class SessionManager extends EventEmitter {
 		const [result] = await this.db
 			.select({ count: countFn() })
 			.from(sessions)
-			.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.status, ['starting', 'running'])))
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					inArray(sessions.status, ['starting', 'running']),
+				),
+			)
 
 		return !result || result.count < maxConcurrent
 	}
