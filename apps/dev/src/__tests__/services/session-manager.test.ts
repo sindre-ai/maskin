@@ -688,6 +688,50 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('hasCapacity()', () => {
+		it('returns false when starting sessions fill the workspace capacity', async () => {
+			// Regression guard for the fix in PR #511: before the fix only 'running'
+			// sessions were counted, so containers allocated in the 'starting' state
+			// were invisible to the limiter and drainQueue could bypass the per-workspace cap.
+			mockResults.selectQueue = [
+				[{ settings: { max_concurrent_sessions: 2 } }], // workspace lookup
+				[{ count: 2 }], // starting + running = at cap
+			]
+
+			const result = await (
+				manager as unknown as { hasCapacity(workspaceId: string): Promise<boolean> }
+			).hasCapacity('ws-1')
+
+			expect(result).toBe(false)
+		})
+
+		it('returns true when there is remaining capacity', async () => {
+			mockResults.selectQueue = [
+				[{ settings: { max_concurrent_sessions: 3 } }], // workspace lookup
+				[{ count: 1 }], // one session active, two slots free
+			]
+
+			const result = await (
+				manager as unknown as { hasCapacity(workspaceId: string): Promise<boolean> }
+			).hasCapacity('ws-1')
+
+			expect(result).toBe(true)
+		})
+
+		it('uses the default cap of 3 when workspace has no max_concurrent_sessions setting', async () => {
+			mockResults.selectQueue = [
+				[{ settings: {} }], // workspace with no cap setting
+				[{ count: 3 }], // three sessions active = at default cap
+			]
+
+			const result = await (
+				manager as unknown as { hasCapacity(workspaceId: string): Promise<boolean> }
+			).hasCapacity('ws-1')
+
+			expect(result).toBe(false)
+		})
+	})
+
 	describe('start() and stop()', () => {
 		it('starts and stops watchdog without error', async () => {
 			await manager.start()
