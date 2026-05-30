@@ -597,3 +597,38 @@ export const userDisplaySettings = pgTable(
 
 export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
 export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert
+
+// ── Analytics Events ──────────────────────────────────────────────────────
+//
+// First-party UI analytics from apps/web's trackEvent helper. Each row is a
+// single named event with free-form jsonb props. Distinct from `mcp_telemetry`,
+// which is purpose-shaped for MCP tool_call / mutation aggregates; reusing it
+// would force per-event nullable columns and tangle the bet KPI query with MCP
+// aggregates. Keeping this table narrow makes queries like "≥1 menu_opened per
+// active user per workday" a one-liner against (ws, actor, name, day).
+
+export const analyticsEvents = pgTable(
+	'analytics_events',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		name: text('name').notNull(),
+		props: jsonb('props').notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('analytics_events_ws_name_created_at_idx').on(t.workspaceId, t.name, t.createdAt),
+		index('analytics_events_ws_actor_name_created_at_idx').on(
+			t.workspaceId,
+			t.actorId,
+			t.name,
+			t.createdAt,
+		),
+	],
+)
+
+export type AnalyticsEvent = typeof analyticsEvents.$inferSelect
+export type NewAnalyticsEvent = typeof analyticsEvents.$inferInsert
