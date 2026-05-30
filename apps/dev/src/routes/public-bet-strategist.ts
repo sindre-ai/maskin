@@ -1,0 +1,276 @@
+import { OpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { objects, sessions } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
+import { streamSSE } from 'hono/streaming'
+import { z } from 'zod'
+import {
+	BET_STRATEGIST_SYSTEM_PROMPT,
+	extractDraftTitle,
+	isMalformedDraft,
+} from '../lib/bet-strategist-prompt'
+import { createApiError } from '../lib/errors'
+import {
+	GUEST_COOKIE_NAME,
+	buildGuestCookieHeader,
+	generateGuestSessionId,
+	parseGuestCookie,
+	signGuestSessionId,
+	verifyGuestCookieValue,
+} from '../lib/guest-session'
+import { checkGuestThrottle } from '../lib/guest-throttle'
+import { AnthropicAdapter } from '../lib/llm/anthropic'
+import { logger } from '../lib/logger'
+
+// Public, no-auth endpoint that powers the landing-page prompt bar. Per A1's
+// ADR (Option C):
+//   - HttpOnly signed cookie carries `guestSessionId`
+//   - Throttle: 3 drafts per cookie + 5/min · 30/day per IP
+//   - Drafts persist as objects (type=bet_draft, createdBy=LANDING_GUEST_ACTOR_ID,
+//     metadata.guestSessionId)
+//   - Cost flows through real `sessions` rows
+//   - SSE matches apps/web/src/lib/sse.ts (data: JSON per event)
+//   - Malformed-output telemetry keyed on guestSessionId for the 10%-in-48h
+//     rolling kill metric.
+//
+// The route is added to the auth allowlist in app-factory.ts.
+
+export const LANDING_GUEST_ACTOR_ID = '00000000-0000-0000-0001-000000000001'
+export const LANDING_GUESTS_WORKSPACE_ID = '00000000-0000-0000-0001-000000000002'
+
+const MODEL = 'claude-opus-4-7'
+const MAX_PROMPT_CHARS = 4000
+
+type Env = {
+	Variables: {
+		db: Database
+	}
+}
+
+const draftBodySchema = z.object({
+	prompt: z.string().min(1).max(MAX_PROMPT_CHARS),
+})
+
+const app = new OpenAPIHono<Env>()
+
+app.post('/drafts', async (c) => {
+	const db = c.get('db')
+
+	let body: { prompt: string }
+	try {
+		const parsed = draftBodySchema.safeParse(await c.req.json())
+		if (!parsed.success) {
+			return c.json(
+				createApiError('VALIDATION_ERROR', 'prompt must be a non-empty string under 4000 chars'),
+				400,
+			)
+		}
+		body = parsed.data
+	} catch {
+		return c.json(
+			createApiError('VALIDATION_ERROR', 'Body must be JSON with a `prompt` field'),
+			400,
+		)
+	}
+
+	const anthropicKey = process.env.ANTHROPIC_API_KEY
+	if (!anthropicKey) {
+		logger.error('public-bet-strategist: ANTHROPIC_API_KEY missing')
+		return c.json(createApiError('INTERNAL_ERROR', 'Bet Strategist is unavailable'), 503)
+	}
+
+	const ip = extractClientIp(c.req.raw, c.req.header('X-Forwarded-For'))
+
+	const cookieHeader = c.req.header('Cookie')
+	const rawCookie = parseGuestCookie(cookieHeader)
+	let guestSessionId: string | null = rawCookie ? verifyGuestCookieValue(rawCookie) : null
+	const isFreshCookie = !guestSessionId
+	if (!guestSessionId) guestSessionId = generateGuestSessionId()
+
+	const verdict = await checkGuestThrottle(db, {
+		workspaceId: LANDING_GUESTS_WORKSPACE_ID,
+		guestSessionId,
+		ip,
+	})
+
+	if (!verdict.allowed) {
+		logger.info('public-bet-strategist: throttled', { reason: verdict.reason, guestSessionId, ip })
+		c.header('Retry-After', verdict.reason === 'cookie_quota' ? '0' : '60')
+		return c.json(
+			createApiError('RATE_LIMITED', throttleMessage(verdict.reason), undefined, throttleHint()),
+			429,
+		)
+	}
+
+	const [draft] = await db
+		.insert(objects)
+		.values({
+			workspaceId: LANDING_GUESTS_WORKSPACE_ID,
+			type: 'bet_draft',
+			status: 'streaming',
+			title: 'Draft in progress',
+			content: '',
+			metadata: { guestSessionId, ip, isMalformed: false, prompt: body.prompt },
+			createdBy: LANDING_GUEST_ACTOR_ID,
+		})
+		.returning({ id: objects.id })
+
+	const draftId = draft?.id
+	if (!draftId) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create draft'), 500)
+	}
+
+	const [session] = await db
+		.insert(sessions)
+		.values({
+			workspaceId: LANDING_GUESTS_WORKSPACE_ID,
+			actorId: LANDING_GUEST_ACTOR_ID,
+			createdBy: LANDING_GUEST_ACTOR_ID,
+			status: 'running',
+			actionPrompt: body.prompt,
+			startedAt: new Date(),
+			config: { kind: 'guest_bet_strategist_draft', draftId, guestSessionId },
+		})
+		.returning({ id: sessions.id })
+
+	const sessionId = session?.id
+
+	const signed = signGuestSessionId(guestSessionId)
+	const secure = (process.env.NODE_ENV ?? 'development') === 'production'
+	c.header('Set-Cookie', buildGuestCookieHeader(signed, { secure }))
+
+	logger.info('public-bet-strategist: draft started', {
+		draftId,
+		sessionId,
+		guestSessionId,
+		isFreshCookie,
+	})
+
+	return streamSSE(c, async (stream) => {
+		const adapter = new AnthropicAdapter(anthropicKey)
+		const started = Date.now()
+		let buffer = ''
+		let inputTokens = 0
+		let outputTokens = 0
+		let failed = false
+
+		await stream.writeSSE({ event: 'draft_started', data: JSON.stringify({ draftId }) })
+
+		try {
+			for await (const chunk of adapter.chatStream({
+				model: MODEL,
+				system: BET_STRATEGIST_SYSTEM_PROMPT,
+				userPrompt: body.prompt,
+				temperature: 0.4,
+				maxTokens: 1024,
+			})) {
+				if (chunk.type === 'text' && chunk.text) {
+					buffer += chunk.text
+					await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: chunk.text }) })
+				} else if (chunk.type === 'usage') {
+					inputTokens = chunk.inputTokens ?? 0
+					outputTokens = chunk.outputTokens ?? 0
+				}
+			}
+		} catch (err) {
+			failed = true
+			logger.error('public-bet-strategist: stream error', {
+				err: err instanceof Error ? err.message : String(err),
+				draftId,
+			})
+			await stream.writeSSE({
+				event: 'error',
+				data: JSON.stringify({ message: 'Stream failed' }),
+			})
+		}
+
+		const malformed = failed || isMalformedDraft(buffer)
+		const durationMs = Date.now() - started
+
+		await db
+			.update(objects)
+			.set({
+				content: buffer,
+				title: extractDraftTitle(buffer),
+				status: failed ? 'failed' : malformed ? 'malformed' : 'completed',
+				metadata: {
+					guestSessionId,
+					ip,
+					isMalformed: malformed,
+					prompt: body.prompt,
+					inputTokens,
+					outputTokens,
+					durationMs,
+				},
+				updatedAt: new Date(),
+			})
+			.where(eq(objects.id, draftId))
+
+		if (sessionId) {
+			await db
+				.update(sessions)
+				.set({
+					status: failed ? 'failed' : 'completed',
+					completedAt: new Date(),
+					inputTokens,
+					outputTokens,
+					durationMs,
+				})
+				.where(eq(sessions.id, sessionId))
+		}
+
+		logger.info('public-bet-strategist: draft completed', {
+			draftId,
+			sessionId,
+			guestSessionId,
+			isMalformed: malformed,
+			failed,
+			durationMs,
+			inputTokens,
+			outputTokens,
+		})
+
+		await stream.writeSSE({
+			event: 'done',
+			data: JSON.stringify({ draftId, isMalformed: malformed, failed }),
+		})
+	})
+})
+
+app.onError((err, c) => {
+	logger.error('public-bet-strategist: unhandled error', {
+		err: err instanceof Error ? err.message : String(err),
+		stack: err instanceof Error ? err.stack : undefined,
+	})
+	return c.json(createApiError('INTERNAL_ERROR', 'An unexpected error occurred'), 500)
+})
+
+function throttleMessage(reason: 'cookie_quota' | 'ip_rate' | 'ip_daily'): string {
+	switch (reason) {
+		case 'cookie_quota':
+			return 'Guest quota reached. Sign up to keep drafting.'
+		case 'ip_rate':
+			return 'Too many drafts in the last minute. Try again shortly.'
+		case 'ip_daily':
+			return 'Daily limit reached for this network. Sign up to keep drafting.'
+	}
+}
+
+function throttleHint(): string {
+	return 'Landing-page guests can draft up to 3 bets before signing up; per-network limits apply.'
+}
+
+// X-Forwarded-For is set by our edge; fall back to socket remoteAddress in dev.
+// We take the *first* hop because anything later is a chained proxy we don't trust.
+function extractClientIp(req: Request, fwd: string | undefined): string {
+	if (fwd) {
+		const first = fwd.split(',')[0]?.trim()
+		if (first) return first
+	}
+	// Hono Request types don't expose remoteAddress directly — env-specific.
+	const remote = (req as unknown as { remoteAddress?: string }).remoteAddress
+	return remote || 'unknown'
+}
+
+export { GUEST_COOKIE_NAME }
+export default app

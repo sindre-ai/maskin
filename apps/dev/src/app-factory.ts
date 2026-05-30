@@ -25,6 +25,7 @@ import integrationsRoutes, { webhookApp } from './routes/integrations'
 import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
+import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
 import subscriptionsRoutes from './routes/subscriptions'
@@ -172,6 +173,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/auth/login: pre-auth credential exchange
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
+	//   - /api/public/*: landing-page guest endpoints (HMAC cookie + throttle in handler)
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -180,6 +182,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
+		if (path.startsWith('/api/public/')) return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)
@@ -188,6 +191,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', idempotencyMiddleware)
 
 	app.route('/api/objects', objectsRoutes)
+	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
