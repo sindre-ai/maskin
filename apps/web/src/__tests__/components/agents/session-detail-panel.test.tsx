@@ -99,9 +99,15 @@ describe('SessionDetailPanel Restart button', () => {
 		})
 	})
 
-	it('shows pending label while the mutation is in flight', () => {
+	it('shows pending label while the mutation is in flight and ignores clicks', async () => {
+		const user = userEvent.setup()
 		createSessionIsPending = true
 		renderPanel(buildSessionResponse({ status: 'failed' }))
-		expect(screen.getByRole('button', { name: 'Restarting…' })).toBeDisabled()
+
+		const button = screen.getByRole('button', { name: 'Restarting…' })
+		expect(button).toBeDisabled()
+
+		await user.click(button)
+		expect(createSessionMutate).not.toHaveBeenCalled()
 	})
 })
