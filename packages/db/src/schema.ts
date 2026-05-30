@@ -393,6 +393,44 @@ export const mcpTelemetry = pgTable(
 	],
 )
 
+// ── Analytics Events ──────────────────────────────────────────────────────
+//
+// First-party product analytics sink. Frontend `trackEvent` (apps/web/src/lib/
+// analytics.ts) fires one row per event so bet KPIs can be answered by a plain
+// DB query (e.g. "≥1 menu_opened per active user per workday averaged over the
+// final two weeks"). Distinct from `mcp_telemetry`, which is shaped for the
+// MCP server's tool_call/mutation aggregates — mixing the two would force
+// per-event nullable columns and tangle the bet KPI query.
+//
+// `actor_id` is nullable so anonymous events (no stored actor) still land — the
+// bet KPIs we care about today are per-actor-per-day, but we don't want to
+// drop pre-auth pageview-style signal on the floor.
+export const analyticsEvents = pgTable(
+	'analytics_events',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		name: text('name').notNull(),
+		props: jsonb('props').notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('analytics_events_ws_name_created_at_idx').on(t.workspaceId, t.name, t.createdAt),
+		index('analytics_events_ws_actor_name_created_at_idx').on(
+			t.workspaceId,
+			t.actorId,
+			t.name,
+			t.createdAt,
+		),
+	],
+)
+
+export type AnalyticsEvent = typeof analyticsEvents.$inferSelect
+export type NewAnalyticsEvent = typeof analyticsEvents.$inferInsert
+
 // ── Subscriptions ─────────────────────────────────────────────────────────
 //
 // Polymorphic per-actor subscriptions keyed on (entity_type, entity_id).
