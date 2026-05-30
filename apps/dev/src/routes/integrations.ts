@@ -25,6 +25,7 @@ import {
 } from '../lib/integrations/providers/slack/client'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
+import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { logger } from '../lib/logger'
 import {
@@ -817,7 +818,7 @@ webhookApp.post('/:provider', async (c) => {
 			// claim caught it. The schema comment on webhook_deliveries calls this out
 			// directly — the ledger is meant to prevent duplicate downloaded files too,
 			// not just duplicate events.
-			let claimed = false
+			let claimRowId: string | null = null
 			if (deliveryId) {
 				try {
 					const rows = await db
@@ -842,7 +843,7 @@ webhookApp.post('/:provider', async (c) => {
 						})
 						return { kind: 'duplicate' }
 					}
-					claimed = true
+					claimRowId = rows[0]?.id ?? null
 				} catch (err) {
 					// Fail open: a dedup-table outage must not stop us from processing.
 					logger.error(`Failed to claim ${providerName} delivery; processing without dedup`, {
@@ -858,20 +859,12 @@ webhookApp.post('/:provider', async (c) => {
 			// .claude/rules/known-pitfalls.md) would leave the claim committed and
 			// permanently starve provider retries for this workspace.
 			const releaseClaim = async () => {
-				if (!claimed || !deliveryId) return
+				if (!claimRowId) return
 				try {
-					await db
-						.delete(webhookDeliveries)
-						.where(
-							and(
-								eq(webhookDeliveries.provider, providerName),
-								eq(webhookDeliveries.externalId, deliveryId),
-								eq(webhookDeliveries.workspaceId, integration.workspaceId),
-							),
-						)
+					await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
 				} catch (err) {
-					// Best-effort: if this fails, the next retry will be deduplicated
-					// and the workspace loses this event. Surfaced loudly so on-call sees it.
+					// Best-effort: if this fails the reconciler will pick the orphan up
+					// after the stale threshold elapses. Logged loudly so on-call sees it.
 					logger.error(`Failed to release webhook delivery claim for ${providerName}`, {
 						deliveryId,
 						workspaceId: integration.workspaceId,
@@ -904,9 +897,17 @@ webhookApp.post('/:provider', async (c) => {
 
 				if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
 
+				// Mark the claim processed in the SAME transaction as the events insert,
+				// gated on the claim row still existing and being unprocessed. Without
+				// the gate, a long fan-out (>STALE_THRESHOLD_MS) could race the
+				// reconciler: the reconciler deletes the orphan, the route's UPDATE
+				// matches 0 rows but the txn commits anyway, and an events row lands
+				// without its provenance claim. Throwing on a 0-row UPDATE aborts the
+				// txn so neither side commits — the provider's next retry reprocesses
+				// cleanly.
 				try {
-					await db.insert(events).values(
-						toInsert.map((e) => ({
+					await commitWebhookDelivery(db, {
+						eventRows: toInsert.map((e) => ({
 							workspaceId: integration.workspaceId,
 							actorId: systemActorId,
 							action: e.action,
@@ -914,9 +915,24 @@ webhookApp.post('/:provider', async (c) => {
 							entityId: integration.id,
 							data: e.data,
 						})),
-					)
+						claimRowId,
+					})
 					return { kind: 'inserted', count: toInsert.length }
 				} catch (err) {
+					if (err instanceof ClaimReleasedError) {
+						// Claim was already deleted by the reconciler — no row to release.
+						// The provider's next retry will reclaim and reprocess the delivery.
+						logger.warn(
+							`Webhook claim released by reconciler mid-processing for ${providerName}; txn aborted`,
+							{
+								integrationId: integration.id,
+								workspaceId: integration.workspaceId,
+								deliveryId,
+								claimRowId: err.claimRowId,
+							},
+						)
+						return { kind: 'failed' }
+					}
 					logger.error(`Event insert failed for ${providerName}`, {
 						integrationId: integration.id,
 						workspaceId: integration.workspaceId,
