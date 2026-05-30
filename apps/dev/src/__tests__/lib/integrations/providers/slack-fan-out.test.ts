@@ -355,11 +355,9 @@ describe('slackWebhookFanOut', () => {
 		const { slackWebhookFanOut } = await import(
 			'../../../../lib/integrations/providers/slack/fan-out'
 		)
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-			ok: true,
-			status: 200,
-			arrayBuffer: () => Promise.resolve(new TextEncoder().encode('ok').buffer),
-		} as unknown as Response)
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(makeOkResponse(new TextEncoder().encode('ok')))
 
 		const { db } = makeFakeDb({
 			id: 'int-1',
