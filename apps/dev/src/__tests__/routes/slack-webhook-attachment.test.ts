@@ -85,10 +85,26 @@ describe('POST /api/webhooks/slack — file attachment persistence', () => {
 	// data.maskin_file_ids is non-empty. This is the route → fan-out → events
 	// hop that the unit test in slack-fan-out.test.ts cannot exercise.
 	it('persists maskin_file_ids onto the inserted event when the message carries files', async () => {
+		const fileBytes = new TextEncoder().encode('payload')
+		let streamDone = false
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 			ok: true,
 			status: 200,
-			arrayBuffer: () => Promise.resolve(new TextEncoder().encode('payload').buffer),
+			headers: { get: (_name: string) => null } as unknown as Headers,
+			body: {
+				getReader() {
+					return {
+						read(): Promise<ReadableStreamReadResult<Uint8Array>> {
+							if (!streamDone) {
+								streamDone = true
+								return Promise.resolve({ value: fileBytes, done: false as const })
+							}
+							return Promise.resolve({ value: undefined, done: true as const })
+						},
+						cancel: () => Promise.resolve(),
+					}
+				},
+			} as unknown as ReadableStream<Uint8Array>,
 		} as unknown as Response)
 
 		const persistedFileId = randomUUID()
