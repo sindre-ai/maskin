@@ -12,6 +12,15 @@ vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => <span>working</span>,
 }))
 
+const isMobileMock = vi.fn(() => false)
+vi.mock('@/hooks/use-mobile', () => ({
+	useIsMobile: () => isMobileMock(),
+}))
+
+beforeEach(() => {
+	isMobileMock.mockReturnValue(false)
+})
+
 function buildRow(
 	objectOverrides: Parameters<typeof buildObjectResponse>[0] = {},
 	relOverrides: Parameters<typeof buildRelationshipResponse>[0] = {},
@@ -102,5 +111,58 @@ describe('RelatedObjectsTable', () => {
 		expect(within(bodyRows[0]).getByText('Alpha')).toBeInTheDocument()
 		expect(within(bodyRows[1]).getByText('Bravo')).toBeInTheDocument()
 		expect(within(bodyRows[2]).getByText('Charlie')).toBeInTheDocument()
+	})
+
+	describe('on mobile (<768px)', () => {
+		beforeEach(() => {
+			isMobileMock.mockReturnValue(true)
+		})
+
+		it('renders a list of cards instead of a table', () => {
+			const rows = [
+				buildRow({ title: 'Alpha', status: 'active' }, { type: 'blocks' }),
+				buildRow({ title: 'Beta', status: 'done' }, { type: 'relates_to' }),
+			]
+
+			render(<RelatedObjectsTable {...baseProps} rows={rows} />)
+
+			expect(screen.queryByRole('table')).not.toBeInTheDocument()
+			const list = screen.getByRole('list', { name: /related objects/i })
+			expect(within(list).getAllByRole('listitem')).toHaveLength(2)
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+			expect(screen.getByText('Beta')).toBeInTheDocument()
+			expect(screen.getByText('blocks')).toBeInTheDocument()
+			expect(screen.getByText('relates to')).toBeInTheDocument()
+		})
+
+		it('keeps the Remove link button visible without hover', () => {
+			render(<RelatedObjectsTable {...baseProps} rows={[buildRow()]} />)
+
+			const removeButton = screen.getByRole('button', { name: /remove link/i })
+			expect(removeButton.className).not.toMatch(/opacity-0/)
+			expect(removeButton.className).not.toMatch(/group-hover/)
+		})
+
+		it('calls onNavigate when a card is tapped', async () => {
+			const user = userEvent.setup()
+			const onNavigate = vi.fn()
+			const row = buildRow({ id: 'obj-target', title: 'Target' }, { type: 'relates_to' })
+
+			render(<RelatedObjectsTable {...baseProps} rows={[row]} onNavigate={onNavigate} />)
+
+			await user.click(screen.getByText('relates to'))
+			expect(onNavigate).toHaveBeenCalledWith('ws-1', 'obj-target')
+		})
+
+		it('calls onDeleteRelationship when the Remove link button is tapped', async () => {
+			const user = userEvent.setup()
+			const onDelete = vi.fn()
+			const row = buildRow({}, { id: 'rel-99' })
+
+			render(<RelatedObjectsTable {...baseProps} rows={[row]} onDeleteRelationship={onDelete} />)
+
+			await user.click(screen.getByRole('button', { name: /remove link/i }))
+			expect(onDelete).toHaveBeenCalledWith('rel-99')
+		})
 	})
 })

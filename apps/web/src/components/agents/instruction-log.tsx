@@ -296,7 +296,7 @@ function MessageBubble({
 				)}
 
 				{message.logs.length > 0 && (
-					<pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
+					<pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
 						{message.content}
 					</pre>
 				)}
@@ -345,7 +345,7 @@ function MessageBubble({
 						{message.actionPrompt && (
 							<button
 								type="button"
-								className="flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer disabled:opacity-50"
+								className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
 								onClick={() => onRetry(message.actionPrompt as string)}
 								disabled={isStreaming}
 							>

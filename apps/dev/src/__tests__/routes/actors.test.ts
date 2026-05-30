@@ -531,7 +531,7 @@ describe('Actors Routes', () => {
 	describe('POST /api/actors/:id/reset', () => {
 		const wsId = randomUUID()
 
-		it('returns 200 and restores systemPrompt, llmProvider, llmConfig, tools for a system actor', async () => {
+		it('returns 200 and restores system_prompt, llm_provider, llm_config, tools for a system actor', async () => {
 			const systemActor = buildActor({
 				type: 'agent',
 				isSystem: true,
@@ -540,11 +540,12 @@ describe('Actors Routes', () => {
 				llmConfig: { model: 'gpt-4' },
 				tools: { mcpServers: {} },
 			})
+			// Matches the .returning({ system_prompt: actors.systemPrompt, ... }) shape.
 			const resetActor = {
 				...systemActor,
-				systemPrompt: SINDRE_DEFAULT.systemPrompt,
-				llmProvider: SINDRE_DEFAULT.llmProvider,
-				llmConfig: SINDRE_DEFAULT.llmConfig,
+				system_prompt: SINDRE_DEFAULT.systemPrompt,
+				llm_provider: SINDRE_DEFAULT.llmProvider,
+				llm_config: SINDRE_DEFAULT.llmConfig,
 				tools: SINDRE_DEFAULT.tools,
 			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
@@ -563,9 +564,9 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.systemPrompt).toBe(SINDRE_DEFAULT.systemPrompt)
-			expect(body.llmProvider).toBe(SINDRE_DEFAULT.llmProvider)
-			expect(body.llmConfig).toEqual(SINDRE_DEFAULT.llmConfig)
+			expect(body.system_prompt).toBe(SINDRE_DEFAULT.systemPrompt)
+			expect(body.llm_provider).toBe(SINDRE_DEFAULT.llmProvider)
+			expect(body.llm_config).toEqual(SINDRE_DEFAULT.llmConfig)
 			expect(body.tools).toEqual(SINDRE_DEFAULT.tools)
 		})
 
@@ -648,12 +649,12 @@ describe('Actors Routes', () => {
 				tools: { mcpServers: {} },
 				memory: { notes: 'user preference: concise replies' },
 			})
-			// Drizzle returns the post-update row; memory and identity must be preserved.
+			// Drizzle returns the post-update row in the .returning() shape (snake_case).
 			const resetActor = {
 				...systemActor,
-				systemPrompt: SINDRE_DEFAULT.systemPrompt,
-				llmProvider: SINDRE_DEFAULT.llmProvider,
-				llmConfig: SINDRE_DEFAULT.llmConfig,
+				system_prompt: SINDRE_DEFAULT.systemPrompt,
+				llm_provider: SINDRE_DEFAULT.llmProvider,
+				llm_config: SINDRE_DEFAULT.llmConfig,
 				tools: SINDRE_DEFAULT.tools,
 			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')

@@ -227,9 +227,11 @@ function PropertyRow({
 			<Button
 				variant="ghost"
 				size="icon"
-				className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+				/* Always tappable on touch; fades behind hover on sm+. */
+				className="text-muted-foreground hover:text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0"
 				onClick={onRemove}
 				title="Remove property"
+				aria-label={`Remove ${name}`}
 			>
 				<X className="h-3 w-3" />
 			</Button>
@@ -401,7 +403,7 @@ function AddPropertyMenu({
 	}
 
 	return (
-		<div className="rounded border border-border bg-card p-2 text-xs space-y-1 w-fit">
+		<div className="rounded border border-border bg-card p-2 text-xs space-y-1 w-full sm:w-fit">
 			{unsetFields.length > 0 && (
 				<>
 					<p className="text-muted-foreground px-1 text-[10px] uppercase tracking-wider">

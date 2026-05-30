@@ -34,8 +34,8 @@ export function HumanDetailDialog({
 
 	useEffect(() => {
 		setDescriptionDraft(actor?.description ?? '')
-		setSystemPromptDraft(actor?.systemPrompt ?? '')
-	}, [actor?.description, actor?.systemPrompt])
+		setSystemPromptDraft(actor?.system_prompt ?? '')
+	}, [actor?.description, actor?.system_prompt])
 
 	if (!actorId) return null
 
@@ -45,7 +45,7 @@ export function HumanDetailDialog({
 		const systemPrompt = systemPromptDraft
 		const data: { description?: string; system_prompt?: string } = {}
 		if (description !== (actor.description ?? '')) data.description = description
-		if (systemPrompt !== (actor.systemPrompt ?? '')) data.system_prompt = systemPrompt
+		if (systemPrompt !== (actor.system_prompt ?? '')) data.system_prompt = systemPrompt
 		if (Object.keys(data).length === 0) {
 			onOpenChange(false)
 			return

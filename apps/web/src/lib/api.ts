@@ -1,4 +1,6 @@
-import type { SafeMetadata } from '@maskin/shared'
+import type { DisplaySettingsBody, SafeMetadata } from '@maskin/shared'
+
+export type { DisplaySettingsBody }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -446,6 +448,21 @@ export const api = {
 		},
 	},
 
+	userDisplaySettings: {
+		list: (workspaceId: string) =>
+			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),
+		get: (workspaceId: string, objectType: string) =>
+			request<UserDisplaySettingsResponse>(
+				`/user-display-settings/${encodeURIComponent(objectType)}`,
+				{ workspaceId },
+			),
+		upsert: (workspaceId: string, objectType: string, settings: DisplaySettingsBody) =>
+			request<UserDisplaySettingsResponse>(
+				`/user-display-settings/${encodeURIComponent(objectType)}`,
+				{ method: 'PUT', body: { settings }, workspaceId },
+			),
+	},
+
 	workspaceSkills: {
 		list: (workspaceId: string) =>
 			request<WorkspaceSkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
@@ -557,6 +574,7 @@ export interface UnreadItem {
 	entity_type: string
 	entity_id: string
 	unread_count: number
+	mentions_you: boolean
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
@@ -564,6 +582,17 @@ export interface UnreadItem {
 
 export interface UnreadResponse {
 	items: UnreadItem[]
+}
+
+export interface UserDisplaySettingsResponse {
+	object_type: string
+	name: string
+	settings: DisplaySettingsBody
+	updated_at: string
+}
+
+export interface UserDisplaySettingsListResponse {
+	items: UserDisplaySettingsResponse[]
 }
 
 export interface CreateObjectInput {
@@ -627,11 +656,11 @@ export interface ActorListItem {
 }
 
 export interface ActorResponse extends ActorListItem {
-	systemPrompt: string | null
+	system_prompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
-	llmProvider: string | null
-	llmConfig: Record<string, unknown> | null
+	llm_provider: string | null
+	llm_config: Record<string, unknown> | null
 	createdAt: string | null
 	updatedAt: string | null
 }

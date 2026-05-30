@@ -5,7 +5,8 @@ import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
 import { Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { type ColumnInfo, DataTableControls } from './data-table-controls'
+import type { ColumnInfo } from './data-table-controls'
+import { DisplayPanel } from './display-panel'
 
 interface Tab {
 	label: string
@@ -24,13 +25,14 @@ interface DataTableToolbarProps {
 	// Search
 	search?: string
 	onSearchChange: (value: string) => void
-	// Controls props
+	// Display panel props
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
 	statusesByType: Record<string, string[]>
 	ownerFilter?: string
 	onOwnerFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
+	onResetFilters?: () => void
 	sort: string
 	onSortChange: (value: string) => void
 	order: 'asc' | 'desc'
@@ -56,6 +58,7 @@ export function DataTableToolbar({
 	ownerFilter,
 	onOwnerFilterChange,
 	actors,
+	onResetFilters,
 	sort,
 	onSortChange,
 	order,
@@ -118,8 +121,8 @@ export function DataTableToolbar({
 				/>
 			</div>
 
-			{/* Controls popover */}
-			<DataTableControls
+			{/* Display panel */}
+			<DisplayPanel
 				columns={columns}
 				columnVisibility={columnVisibility}
 				onColumnVisibilityChange={onColumnVisibilityChange}
@@ -129,6 +132,7 @@ export function DataTableToolbar({
 				ownerFilter={ownerFilter}
 				onOwnerFilterChange={onOwnerFilterChange}
 				actors={actors}
+				onResetFilters={onResetFilters}
 				sort={sort}
 				onSortChange={onSortChange}
 				order={order}

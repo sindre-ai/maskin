@@ -29,10 +29,10 @@ export function BetCard({
 			className="block rounded-lg border border-border bg-card p-4 shadow-md hover:border-border hover:bg-accent/30 hover:shadow-lg transition-all"
 		>
 			<div className="flex items-start justify-between gap-2">
-				<h3 className="text-sm font-medium text-foreground leading-tight">
+				<h3 className="min-w-0 flex-1 text-sm font-medium text-foreground leading-tight truncate">
 					{bet.title || 'Untitled bet'}
 				</h3>
-				<StatusBadge status={bet.status} />
+				<StatusBadge status={bet.status} className="shrink-0" />
 			</div>
 			{hint && <p className="mt-1.5 text-[11px] text-muted-foreground/70 italic">{hint}</p>}
 			<div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">

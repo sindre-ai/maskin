@@ -226,7 +226,7 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-text-secondary hover:bg-bg-hover cursor-pointer"
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 min-w-0 text-left text-text-secondary hover:bg-bg-hover cursor-pointer"
 				aria-expanded={open}
 			>
 				{open ? (
@@ -235,8 +235,10 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 					<ChevronRight size={14} className="shrink-0 text-text-muted" />
 				)}
 				<Wrench size={12} className="shrink-0 text-text-muted" />
-				<span className="font-mono text-text">{name}</span>
-				{preview && !open && <span className="truncate font-mono text-text-muted">{preview}</span>}
+				<span className="font-mono text-text shrink-0">{name}</span>
+				{preview && !open && (
+					<span className="truncate font-mono text-text-muted min-w-0 flex-1">{preview}</span>
+				)}
 			</button>
 			{open && (
 				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-text-secondary text-xs whitespace-pre-wrap break-words">

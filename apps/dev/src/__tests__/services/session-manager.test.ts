@@ -56,7 +56,7 @@ vi.mock('../../lib/integrations/registry', () => ({
 }))
 
 vi.mock('../../services/workspace-briefing', () => ({
-	WORKSPACE_STARTUP_BLOCK: '',
+	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
 	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
 	appendToLedger: vi.fn().mockResolvedValue(undefined),
 	readLedgerTail: vi.fn().mockResolvedValue([]),

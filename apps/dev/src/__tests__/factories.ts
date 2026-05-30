@@ -165,6 +165,20 @@ export function buildReadState(overrides?: Record<string, unknown>) {
 	}
 }
 
+export function buildUserDisplaySettings(overrides?: Record<string, unknown>) {
+	return {
+		id: randomUUID(),
+		workspaceId: randomUUID(),
+		actorId: randomUUID(),
+		objectType: 'task',
+		name: 'default',
+		settings: { sort: 'created', order: 'desc' } as Record<string, unknown>,
+		createdAt: new Date(),
+		updatedAt: new Date('2026-05-28T10:00:00.000Z'),
+		...overrides,
+	}
+}
+
 // ── API Request Body Builders ───────────────────────────────────────────────
 
 export function buildCreateActorBody(overrides?: Record<string, unknown>) {

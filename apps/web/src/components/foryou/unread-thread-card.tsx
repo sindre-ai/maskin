@@ -196,21 +196,34 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 
 	return (
 		<div ref={cardRef} className="rounded-lg border border-border bg-card">
-			<div className="flex items-center gap-2 border-b border-border px-4 py-3">
-				{objectType && <TypeBadge type={objectType} />}
-				<Link
-					to="/$workspaceId/objects/$objectId"
-					params={{ workspaceId, objectId }}
-					className="text-sm font-medium truncate hover:underline"
-					title={title}
-				>
-					{title}
-				</Link>
+			<div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-4 py-3">
+				{/* Title row: takes the full row on mobile so a long title gets room
+				    to breathe; on sm+ collapses back to a single inline cell. */}
+				<div className="flex min-w-0 basis-full items-center gap-2 sm:basis-auto sm:flex-1">
+					{objectType && <TypeBadge type={objectType} />}
+					<Link
+						to="/$workspaceId/objects/$objectId"
+						params={{ workspaceId, objectId }}
+						className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+						title={title}
+					>
+						{title}
+					</Link>
+				</div>
 				{item.latest_activity_at && (
 					<RelativeTime
 						date={item.latest_activity_at}
-						className="text-xs text-muted-foreground ml-auto"
+						className="shrink-0 text-xs text-muted-foreground"
 					/>
+				)}
+				{item.mentions_you && (
+					<span
+						aria-label="Mentioned"
+						title="You were @-mentioned in an unread comment"
+						className="shrink-0 rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-foreground"
+					>
+						@you
+					</span>
 				)}
 				<UnreadBadge count={item.unread_count} className="shrink-0" />
 				<Button
@@ -224,7 +237,7 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 				</Button>
 			</div>
 
-			<div ref={scrollBodyRef} className="h-96 overflow-y-auto px-4 py-3">
+			<div ref={scrollBodyRef} className="h-72 overflow-y-auto px-4 py-3 sm:h-96">
 				{nodes.length === 0 ? (
 					<p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
 				) : (

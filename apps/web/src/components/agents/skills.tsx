@@ -8,7 +8,11 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+	ResponsivePopover,
+	ResponsivePopoverContent,
+	ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover'
 import {
 	Select,
 	SelectContent,
@@ -149,8 +153,8 @@ function WorkspaceSkillsSection({
 				</p>
 			) : (
 				<>
-					<Popover open={open} onOpenChange={setOpen}>
-						<PopoverTrigger asChild>
+					<ResponsivePopover open={open} onOpenChange={setOpen}>
+						<ResponsivePopoverTrigger asChild>
 							<Button
 								size="sm"
 								variant="outline"
@@ -160,8 +164,12 @@ function WorkspaceSkillsSection({
 								<Plus className="h-3.5 w-3.5 mr-1" />
 								Attach workspace skill
 							</Button>
-						</PopoverTrigger>
-						<PopoverContent className="w-72 p-0" align="start">
+						</ResponsivePopoverTrigger>
+						<ResponsivePopoverContent
+							className="md:w-72 md:p-0"
+							align="start"
+							accessibleTitle="Attach workspace skill"
+						>
 							<Command>
 								<Command.Input
 									placeholder="Search workspace skills..."
@@ -205,8 +213,8 @@ function WorkspaceSkillsSection({
 									})}
 								</Command.List>
 							</Command>
-						</PopoverContent>
-					</Popover>
+						</ResponsivePopoverContent>
+					</ResponsivePopover>
 
 					{attached.length > 0 && (
 						<div className="mt-2 space-y-2">

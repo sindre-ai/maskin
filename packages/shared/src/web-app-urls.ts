@@ -121,6 +121,41 @@ export type WebAppTarget =
 	| { kind: 'settings'; section?: WebAppSettingsSection }
 
 /**
+ * Production web-app origin. Used as the final fallback when neither
+ * `WEB_APP_URL` nor `FRONTEND_URL` is set. The MCP server previously dropped
+ * deep-link registration entirely when both were unset, which left agents
+ * inventing URLs (`https://app.maskin.ai/objects/<id>`) from training-data
+ * priors. A real production default keeps every link surface honest.
+ */
+export const DEFAULT_WEB_APP_BASE_URL = 'https://maskin.sindre.ai'
+
+/**
+ * Remove a single trailing `/` from `s` if present. The single source of truth
+ * for base-URL normalisation across the web-app, MCP server, and agent-facing
+ * link builders — every site that used to inline `.replace(/\/$/, '')` should
+ * call this instead so the behaviour stays in lockstep.
+ */
+export function stripTrailingSlash(s: string): string {
+	return s.endsWith('/') ? s.slice(0, -1) : s
+}
+
+/**
+ * Resolve the web-app base URL from an environment-like record. Resolution
+ * order — `WEB_APP_URL` (explicit override) → `FRONTEND_URL` (the historical
+ * env var) → `DEFAULT_WEB_APP_BASE_URL`. The returned string is
+ * trailing-slash-normalised so callers can append paths directly.
+ *
+ * Empty strings are treated as unset (an env injection that produces `""`
+ * shouldn't silently route every link to the workspace root).
+ */
+export function resolveWebAppBaseUrl(
+	env: Partial<Record<'WEB_APP_URL' | 'FRONTEND_URL', string | undefined>> = {},
+): string {
+	const candidate = env.WEB_APP_URL?.trim() || env.FRONTEND_URL?.trim() || DEFAULT_WEB_APP_BASE_URL
+	return stripTrailingSlash(candidate)
+}
+
+/**
  * Build the URL **path** (no origin) for a deep link into the web app for
  * the given target, scoped to the workspace `workspaceId`. Always returns a
  * leading-slash path; combine with `_meta.webAppBaseUrl` (which is itself

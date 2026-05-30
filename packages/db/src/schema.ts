@@ -397,8 +397,9 @@ export const mcpTelemetry = pgTable(
 //
 // Polymorphic per-actor subscriptions keyed on (entity_type, entity_id).
 // `source` tracks how the row was created — 'author' (creator), 'commenter'
-// (auto-attached when they comment), or 'manual' (explicit subscribe).
-// Manual/author should never be downgraded by a later auto-subscribe.
+// (auto-attached when they comment), 'mentioned' (auto-attached when they are
+// @-mentioned in a comment), or 'manual' (explicit subscribe). Manual/author
+// should never be downgraded by a later auto-subscribe.
 
 export const subscriptions = pgTable(
 	'subscriptions',
@@ -419,7 +420,10 @@ export const subscriptions = pgTable(
 		unique('subscriptions_actor_entity_uniq').on(t.actorId, t.entityType, t.entityId),
 		index('subscriptions_ws_actor_idx').on(t.workspaceId, t.actorId),
 		index('subscriptions_entity_idx').on(t.entityType, t.entityId),
-		check('subscriptions_source_check', sql`${t.source} IN ('manual', 'author', 'commenter')`),
+		check(
+			'subscriptions_source_check',
+			sql`${t.source} IN ('manual', 'author', 'commenter', 'mentioned')`,
+		),
 	],
 )
 
@@ -520,9 +524,13 @@ export type NewFile = typeof files.$inferInsert
 
 // ── Webhook Deliveries ──────────────────────────────────────────────────────
 // Idempotency ledger for inbound webhook deliveries. Each row claims a single
-// provider+external_id pair so that retries (which reuse the same external_id)
-// are short-circuited instead of being reprocessed and creating duplicate events
-// or duplicate downloaded files.
+// (provider, external_id, workspace_id) tuple so that retries (which reuse the
+// same external_id) are short-circuited per workspace instead of being
+// reprocessed and creating duplicate events or duplicate downloaded files.
+// The key is per-workspace because a single external install (e.g. one Slack
+// team) can be connected to multiple Maskin workspaces, and a failed insert
+// for one workspace must not block retries for that workspace while still
+// deduping workspaces that already succeeded.
 
 export const webhookDeliveries = pgTable(
 	'webhook_deliveries',
@@ -530,10 +538,57 @@ export const webhookDeliveries = pgTable(
 		id: uuid('id').defaultRandom().primaryKey(),
 		provider: text('provider').notNull(),
 		externalId: text('external_id').notNull(),
+		workspaceId: uuid('workspace_id').notNull(),
 		receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		unique('webhook_deliveries_provider_external_id_uniq').on(t.provider, t.externalId),
+		unique('webhook_deliveries_provider_external_id_workspace_id_uniq').on(
+			t.provider,
+			t.externalId,
+			t.workspaceId,
+		),
 		index('webhook_deliveries_received_at_idx').on(t.receivedAt),
 	],
 )
+
+// ── User Display Settings ───────────────────────────────────────────────────
+//
+// Per-actor, per-workspace, per-object-type display preferences for the
+// objects page (sort, filter, view, column visibility, etc.). v1 only ever
+// writes/reads the `'default'` row per (actor, object_type) — the `name`
+// column is a forward-compatible carve-out for the Board View bet's named
+// saved views, which land as additive rows without a migration.
+//
+// `settings` is opaque JSONB on purpose: the persistence layer is decoupled
+// from the display panel's evolving shape. The toolbar (Task 6) owns the
+// concrete `{sort, filter, view, viewConfig}` schema.
+
+export const userDisplaySettings = pgTable(
+	'user_display_settings',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		objectType: text('object_type').notNull(),
+		name: text('name').notNull().default('default'),
+		settings: jsonb('settings').notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('user_display_settings_ws_actor_type_name_uniq').on(
+			t.workspaceId,
+			t.actorId,
+			t.objectType,
+			t.name,
+		),
+		index('user_display_settings_ws_actor_type_idx').on(t.workspaceId, t.actorId, t.objectType),
+	],
+)
+
+export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
+export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert

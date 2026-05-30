@@ -1,7 +1,11 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+	ResponsivePopover,
+	ResponsivePopoverContent,
+	ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover'
 import { cn } from '@/lib/cn'
 import { Check, ChevronDown, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -77,8 +81,8 @@ export function SearchableMultiSelect({
 					})}
 				</div>
 			)}
-			<Popover open={open} onOpenChange={setOpen}>
-				<PopoverTrigger asChild>
+			<ResponsivePopover open={open} onOpenChange={setOpen}>
+				<ResponsivePopoverTrigger asChild>
 					<Button
 						type="button"
 						variant="outline"
@@ -89,8 +93,8 @@ export function SearchableMultiSelect({
 						+ Add
 						<ChevronDown size={12} />
 					</Button>
-				</PopoverTrigger>
-				<PopoverContent align="start" className="w-72 p-0">
+				</ResponsivePopoverTrigger>
+				<ResponsivePopoverContent align="start" className="w-72 p-0" accessibleTitle={placeholder}>
 					<div className="border-b border-border p-2">
 						<Input
 							autoFocus
@@ -130,8 +134,8 @@ export function SearchableMultiSelect({
 							})
 						)}
 					</div>
-				</PopoverContent>
-			</Popover>
+				</ResponsivePopoverContent>
+			</ResponsivePopover>
 		</div>
 	)
 }

@@ -1,7 +1,12 @@
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+	ResponsivePopover,
+	ResponsivePopoverContent,
+	ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover'
 import { Separator } from '@/components/ui/separator'
+import { trackEvent } from '@/lib/analytics'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
@@ -38,6 +43,8 @@ interface DataTableControlsProps {
 	onGroupByChange?: (value: string | undefined) => void
 	// Trigger appearance
 	iconOnly?: boolean
+	// Analytics — when set, control changes emit a tracked event tagged with this source
+	analyticsSource?: string
 }
 
 export function DataTableControls({
@@ -60,7 +67,17 @@ export function DataTableControls({
 	groupBy,
 	onGroupByChange,
 	iconOnly = false,
+	analyticsSource,
 }: DataTableControlsProps) {
+	const track = (control: string, value: string | undefined) => {
+		if (!analyticsSource) return
+		trackEvent('objects_control_changed', {
+			source: analyticsSource,
+			control,
+			value: value ?? null,
+		})
+	}
+
 	const hasActiveFilters = !!statusFilter || !!ownerFilter || !!typeFilter
 	const activeFilterCount = (statusFilter ? 1 : 0) + (ownerFilter ? 1 : 0) + (typeFilter ? 1 : 0)
 	const showTypeFilter = !!onTypeFilterChange && !!typeCounts && Object.keys(typeCounts).length > 0
@@ -70,8 +87,8 @@ export function DataTableControls({
 	const showColumns = !!onColumnVisibilityChange && hideableColumns.length > 0
 
 	return (
-		<Popover>
-			<PopoverTrigger asChild>
+		<ResponsivePopover>
+			<ResponsivePopoverTrigger asChild>
 				{iconOnly ? (
 					<Button
 						variant="ghost"
@@ -98,9 +115,9 @@ export function DataTableControls({
 						)}
 					</Button>
 				)}
-			</PopoverTrigger>
-			<PopoverContent align="end" className="w-[calc(100vw-2rem)] sm:w-64 p-0">
-				<div className="max-h-[420px] overflow-y-auto">
+			</ResponsivePopoverTrigger>
+			<ResponsivePopoverContent align="end" accessibleTitle="Controls" className="md:w-64 md:p-0">
+				<div className="max-h-[420px] overflow-y-auto text-left">
 					{/* Filter by Type */}
 					{showTypeFilter && (
 						<>
@@ -114,9 +131,11 @@ export function DataTableControls({
 										>
 											<Checkbox
 												checked={typeFilter === type}
-												onCheckedChange={(checked) =>
-													onTypeFilterChange?.(checked ? type : undefined)
-												}
+												onCheckedChange={(checked) => {
+													const next = checked ? type : undefined
+													track('type_filter', next)
+													onTypeFilterChange?.(next)
+												}}
 											/>
 											<span className="flex-1">{type}</span>
 											<span className="text-xs text-muted-foreground">{count}</span>
@@ -150,9 +169,11 @@ export function DataTableControls({
 													>
 														<Checkbox
 															checked={statusFilter === s}
-															onCheckedChange={(checked) =>
-																onStatusFilterChange?.(checked ? s : undefined)
-															}
+															onCheckedChange={(checked) => {
+																const next = checked ? s : undefined
+																track('status_filter', next)
+																onStatusFilterChange?.(next)
+															}}
 														/>
 														{s.replace(/_/g, ' ')}
 													</div>
@@ -179,9 +200,11 @@ export function DataTableControls({
 										>
 											<Checkbox
 												checked={ownerFilter === a.id}
-												onCheckedChange={(checked) =>
-													onOwnerFilterChange(checked ? a.id : undefined)
-												}
+												onCheckedChange={(checked) => {
+													const next = checked ? a.id : undefined
+													track('owner_filter', next)
+													onOwnerFilterChange(next)
+												}}
 											/>
 											{a.name}
 										</div>
@@ -201,7 +224,11 @@ export function DataTableControls({
 									<button
 										type="button"
 										className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-										onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
+										onClick={() => {
+											const next = order === 'asc' ? 'desc' : 'asc'
+											track('sort_order', next)
+											onOrderChange?.(next)
+										}}
 									>
 										{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
 										{order === 'asc' ? 'Ascending' : 'Descending'}
@@ -218,7 +245,10 @@ export function DataTableControls({
 													? 'bg-muted text-foreground font-medium'
 													: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
 											)}
-											onClick={() => onSortChange?.(col.id)}
+											onClick={() => {
+												track('sort_by', col.id)
+												onSortChange?.(col.id)
+											}}
 										>
 											{col.label}
 										</button>
@@ -243,7 +273,10 @@ export function DataTableControls({
 												? 'bg-muted text-foreground font-medium'
 												: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
 										)}
-										onClick={() => onGroupByChange?.(undefined)}
+										onClick={() => {
+											track('group_by', undefined)
+											onGroupByChange?.(undefined)
+										}}
 									>
 										None
 									</button>
@@ -257,7 +290,10 @@ export function DataTableControls({
 													? 'bg-muted text-foreground font-medium'
 													: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
 											)}
-											onClick={() => onGroupByChange?.(col.id)}
+											onClick={() => {
+												track('group_by', col.id)
+												onGroupByChange?.(col.id)
+											}}
 										>
 											{col.label}
 										</button>
@@ -282,7 +318,11 @@ export function DataTableControls({
 										>
 											<Checkbox
 												checked={isVisible}
-												onCheckedChange={(value) => onColumnVisibilityChange?.(col.id, !!value)}
+												onCheckedChange={(value) => {
+													const visible = !!value
+													track('column_visibility', `${col.id}:${visible ? 'show' : 'hide'}`)
+													onColumnVisibilityChange?.(col.id, visible)
+												}}
 											/>
 											{col.label}
 										</div>
@@ -292,7 +332,7 @@ export function DataTableControls({
 						</div>
 					)}
 				</div>
-			</PopoverContent>
-		</Popover>
+			</ResponsivePopoverContent>
+		</ResponsivePopover>
 	)
 }

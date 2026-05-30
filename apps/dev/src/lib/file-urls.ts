@@ -1,3 +1,5 @@
+import { stripTrailingSlash } from '@maskin/shared'
+
 // The file URL is the whole point of attached files: agents paste it into
 // Slack, emails, comments. Shipping a `http://localhost:5173/...` link from
 // prod would silently break every share, so require `FRONTEND_URL` outside of
@@ -10,7 +12,7 @@ function isProduction(): boolean {
 
 export function frontendBaseUrl(): string {
 	const url = process.env.FRONTEND_URL
-	if (url) return url
+	if (url) return stripTrailingSlash(url)
 	if (isProduction()) {
 		throw new Error('FRONTEND_URL must be set in production to mint shareable file URLs')
 	}
@@ -18,7 +20,7 @@ export function frontendBaseUrl(): string {
 }
 
 export function fileViewerUrl(frontendUrl: string, workspaceId: string, fileId: string): string {
-	return `${frontendUrl}/${workspaceId}/files/${fileId}`
+	return `${stripTrailingSlash(frontendUrl)}/${workspaceId}/files/${fileId}`
 }
 
 export function fileStorageKey(workspaceId: string, fileId: string): string {
