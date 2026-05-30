@@ -76,7 +76,7 @@ describe('POST /api/webhooks/slack — file attachment persistence', () => {
 	})
 
 	afterEach(() => {
-		if (prevSecret === undefined) process.env.SLACK_SIGNING_SECRET = undefined
+		if (prevSecret === undefined) delete process.env.SLACK_SIGNING_SECRET
 		else process.env.SLACK_SIGNING_SECRET = prevSecret
 		vi.restoreAllMocks()
 	})
