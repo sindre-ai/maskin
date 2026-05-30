@@ -11,6 +11,7 @@ import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
+import { trackEvent } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Bell, BellOff, Copy, ExternalLink, FileText, MoreHorizontal, Trash2 } from 'lucide-react'
@@ -51,6 +52,10 @@ export function AuxiliaryActionMenu({
 	const unsubscribe = useUnsubscribe(workspaceId)
 
 	const handleClipboard = useCallback((text: string, label: string) => {
+		if (!navigator.clipboard) {
+			toast.error(`Failed to copy ${label.toLowerCase()}`)
+			return
+		}
 		navigator.clipboard.writeText(text).then(
 			() => toast.success(`${label} copied`),
 			() => toast.error(`Failed to copy ${label.toLowerCase()}`),
@@ -139,7 +144,7 @@ export function AuxiliaryActionMenu({
 	}, [open, visibleItems, onOpenChange])
 
 	const handleOpenChange = (next: boolean) => {
-		if (next) console.log('menu_opened', { objectType: object.type, objectId: object.id })
+		if (next) trackEvent('menu_opened', { object_type: object.type, object_id: object.id })
 		onOpenChange?.(next)
 	}
 
@@ -201,10 +206,7 @@ function DropdownMenuItemImpl({
 		<DropdownMenuItem
 			disabled={item.visibility === 'disable'}
 			title={item.visibility === 'disable' ? item.disabledReason : undefined}
-			onClick={(e) => {
-				e.preventDefault()
-				item.onSelect()
-			}}
+			onSelect={item.onSelect}
 			className={cn(
 				item.variant === 'destructive' && 'text-error focus:bg-error/10 focus:text-error',
 			)}
