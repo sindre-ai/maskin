@@ -23,6 +23,13 @@ A living registry of bugs that have been fixed before and should be checked for 
 - **Fix pattern**: Always check `Number.isFinite()` after parsing and fall back to a sensible default. Also validate range (e.g., no negative values for pagination `limit` or `offset`). See `.claude/rules/input-validation.md` for the safe parsing pattern.
 - **History**: `NaN` propagation to SQL query in `GET /sessions` route, fixed in PR #235.
 
+## `text-accent` Used as a Text Color (Invisible in Light Mode)
+
+- **What**: `--accent` is a near-white background token in light mode — using `text-accent` on a white surface makes text nearly invisible. `accent-hover` is not defined, so `hover:text-accent-hover` silently does nothing.
+- **When to check**: Any time you add a styled text button or inline action element.
+- **Fix pattern**: Use `text-muted-foreground hover:text-foreground` for inline action buttons. Only use `accent` as a background (paired with `text-accent-foreground`).
+- **History**: Introduced on Restart/Retry buttons in PR #503, fixed on `bet/session-restart`.
+
 ## Adding New Entries
 
 This file should be updated whenever a new recurring bug pattern is identified. Each entry must include:

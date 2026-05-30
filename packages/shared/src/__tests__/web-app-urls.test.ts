@@ -1,12 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import {
+	DEFAULT_WEB_APP_BASE_URL,
 	WEB_APP_OBJECT_TYPES,
 	type WebAppTarget,
 	buildWebAppHref,
 	buildWebAppPath,
+	resolveWebAppBaseUrl,
+	stripTrailingSlash,
 } from '../web-app-urls'
 
 const ws = 'ws-123'
+
+describe('stripTrailingSlash', () => {
+	it('removes exactly one trailing slash when present', () => {
+		expect(stripTrailingSlash('https://maskin.sindre.ai/')).toBe('https://maskin.sindre.ai')
+	})
+
+	it('returns the input unchanged when there is no trailing slash', () => {
+		expect(stripTrailingSlash('https://maskin.sindre.ai')).toBe('https://maskin.sindre.ai')
+	})
+
+	it('preserves the empty string', () => {
+		expect(stripTrailingSlash('')).toBe('')
+	})
+
+	it('strips only a single slash so callers can detect over-trimmed input themselves', () => {
+		expect(stripTrailingSlash('https://maskin.sindre.ai//')).toBe('https://maskin.sindre.ai/')
+	})
+})
 
 describe('WEB_APP_OBJECT_TYPES', () => {
 	it('covers every object-table type currently exposed by MCP', () => {
@@ -144,6 +165,61 @@ describe('buildWebAppHref', () => {
 		// which is already normalised. Asserting the behaviour pins the contract.
 		expect(buildWebAppHref('https://maskin.example.com/', ws, { kind: 'pulse' })).toBe(
 			'https://maskin.example.com//ws-123',
+		)
+	})
+})
+
+describe('resolveWebAppBaseUrl', () => {
+	it('falls back to the production host when no env vars are set', () => {
+		expect(resolveWebAppBaseUrl({})).toBe('https://maskin.sindre.ai')
+		expect(DEFAULT_WEB_APP_BASE_URL).toBe('https://maskin.sindre.ai')
+	})
+
+	it('produces the workspace-scoped object URL when joined with the path builder', () => {
+		// This is the contract the bug report cares about: the helper must yield
+		// `https://maskin.sindre.ai/<workspaceId>/objects/<id>` by default,
+		// not `https://app.maskin.ai/objects/<id>`.
+		const base = resolveWebAppBaseUrl({})
+		expect(buildWebAppHref(base, ws, { kind: 'object', id: 'obj-1' })).toBe(
+			'https://maskin.sindre.ai/ws-123/objects/obj-1',
+		)
+	})
+
+	it('prefers WEB_APP_URL over FRONTEND_URL and the default', () => {
+		expect(
+			resolveWebAppBaseUrl({
+				WEB_APP_URL: 'https://override.example.com',
+				FRONTEND_URL: 'https://other.example.com',
+			}),
+		).toBe('https://override.example.com')
+	})
+
+	it('falls back to FRONTEND_URL when WEB_APP_URL is unset', () => {
+		expect(resolveWebAppBaseUrl({ FRONTEND_URL: 'https://other.example.com' })).toBe(
+			'https://other.example.com',
+		)
+	})
+
+	it('strips a single trailing slash so callers can append paths directly', () => {
+		expect(resolveWebAppBaseUrl({ WEB_APP_URL: 'https://override.example.com/' })).toBe(
+			'https://override.example.com',
+		)
+	})
+
+	it('treats empty strings as unset', () => {
+		// An env injection that produces `WEB_APP_URL=""` shouldn't silently
+		// shadow the FRONTEND_URL fallback or the production default.
+		expect(resolveWebAppBaseUrl({ WEB_APP_URL: '', FRONTEND_URL: '' })).toBe(
+			'https://maskin.sindre.ai',
+		)
+		expect(
+			resolveWebAppBaseUrl({ WEB_APP_URL: '', FRONTEND_URL: 'https://other.example.com' }),
+		).toBe('https://other.example.com')
+	})
+
+	it('accepts undefined env values', () => {
+		expect(resolveWebAppBaseUrl({ WEB_APP_URL: undefined, FRONTEND_URL: undefined })).toBe(
+			'https://maskin.sindre.ai',
 		)
 	})
 })

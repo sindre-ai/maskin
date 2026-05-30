@@ -1,9 +1,25 @@
 import { randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, vi } from 'vitest'
+import type { ResolvedProvider } from '../../lib/integrations/types'
 import { buildIntegration, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
+vi.mock('../../lib/integrations/registry', async () => {
+	const actual = await vi.importActual<typeof import('../../lib/integrations/registry')>(
+		'../../lib/integrations/registry',
+	)
+	// Default behavior delegates to the real registry so the rest of this file's
+	// tests keep hitting the real provider configs. Per-test mockReturnValueOnce
+	// swaps in a substitute when needed.
+	return {
+		...actual,
+		getProvider: vi.fn(actual.getProvider),
+		listProviders: vi.fn(actual.listProviders),
+	}
+})
+
+const { getProvider } = await import('../../lib/integrations/registry')
 const { default: integrationsRoutes, webhookApp } = await import('../../routes/integrations')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
@@ -622,6 +638,94 @@ describe('Webhook Routes', () => {
 			expect(res.status).toBe(400)
 			const body = await res.json()
 			expect(body.error.message).toContain('Unknown provider')
+		})
+
+		// Guards DOD #1 of PR #492: when a provider opts into asyncProcessing, the
+		// route must ack the webhook before the fan-out work finishes. If a regression
+		// puts fan-out back on the hot path, the response would block on `fanOutGate`
+		// and this test would time out.
+		it('with asyncProcessing returns before webhookFanOut settles and acks { queued, workspaces }', async () => {
+			const providerName = 'test-async-provider'
+			const installationId = 'inst-async'
+
+			let resolveFanOut!: () => void
+			const fanOutGate = new Promise<void>((resolve) => {
+				resolveFanOut = resolve
+			})
+			let fanOutStarted = false
+
+			const normalizedEvent = {
+				entityType: 'test.event',
+				action: 'created' as const,
+				installationId,
+				data: { hello: 'world' },
+			}
+
+			const testProvider: ResolvedProvider = {
+				config: {
+					name: providerName,
+					displayName: 'Test Async Provider',
+					auth: {
+						type: 'oauth2',
+						config: {
+							authorizationUrl: 'http://example.test/auth',
+							tokenUrl: 'http://example.test/token',
+							scopes: [],
+							clientIdEnv: 'TEST_CLIENT_ID',
+							clientSecretEnv: 'TEST_CLIENT_SECRET',
+						},
+					},
+					webhook: { type: 'custom' },
+				},
+				customWebhookVerifier: () => true,
+				customNormalizer: () => normalizedEvent,
+				asyncProcessing: true,
+				webhookFanOut: async () => {
+					fanOutStarted = true
+					await fanOutGate
+					return [normalizedEvent]
+				},
+			}
+
+			vi.mocked(getProvider).mockReturnValueOnce(testProvider)
+
+			const integration = buildIntegration({
+				workspaceId: wsId,
+				provider: providerName,
+				status: 'active',
+				externalId: installationId,
+				config: { system_actor_id: 'system-actor-id' },
+			})
+
+			const { app, mockResults } = createTestApp(webhookApp, '/api/webhooks')
+			mockResults.select = [integration]
+
+			const responsePromise = app.request(
+				jsonRequest('POST', `/api/webhooks/${providerName}`, { hello: 'world' }),
+			)
+
+			const timeoutHandle = { id: undefined as ReturnType<typeof setTimeout> | undefined }
+			const timeoutPromise = new Promise<'timeout'>((resolve) => {
+				timeoutHandle.id = setTimeout(() => resolve('timeout'), 1000)
+			})
+
+			const winner = await Promise.race([
+				responsePromise.then(() => 'response' as const),
+				fanOutGate.then(() => 'fan-out-settled' as const),
+				timeoutPromise,
+			])
+			if (timeoutHandle.id) clearTimeout(timeoutHandle.id)
+			expect(winner).toBe('response')
+
+			const res = await responsePromise
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ ok: true, queued: 1, workspaces: 1 })
+			expect(fanOutStarted).toBe(true)
+
+			// Let the queued background work complete so it doesn't bleed into other tests.
+			resolveFanOut()
+			await new Promise<void>((r) => setImmediate(r))
 		})
 	})
 })

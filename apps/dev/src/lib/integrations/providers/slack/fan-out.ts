@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events as eventsTable, files, integrations } from '@maskin/db/schema'
 import { MAX_FILE_SIZE_BYTES } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { fileStorageKey } from '../../../file-urls'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
@@ -31,6 +31,22 @@ const MAX_FILES_PER_EVENT = 20
 /** Slack file download timeout */
 const DOWNLOAD_TIMEOUT_MS = 30_000
 
+// Defense-in-depth: refuse to send the bot token to anything but a Slack-owned host.
+// Node fetch already strips Authorization on cross-origin redirects, so token exfil via
+// a malicious url_private is bounded today — this guard removes a class of regressions
+// if that behaviour ever changes.
+function isAllowedSlackHost(url: string): boolean {
+	let parsed: URL
+	try {
+		parsed = new URL(url)
+	} catch {
+		return false
+	}
+	if (parsed.protocol !== 'https:') return false
+	const host = parsed.hostname.toLowerCase()
+	return host === 'slack.com' || host.endsWith('.slack.com')
+}
+
 function extractSlackFiles(data: Record<string, unknown>): SlackFile[] | null {
 	const event = data.event as Record<string, unknown> | undefined
 	if (!event) return null
@@ -47,6 +63,9 @@ function extractSlackFiles(data: Record<string, unknown>): SlackFile[] | null {
 }
 
 async function downloadSlackFile(url: string, accessToken: string): Promise<Buffer> {
+	if (!isAllowedSlackHost(url)) {
+		throw new Error(`Slack file download rejected: host not in allow-list (${url})`)
+	}
 	const res = await fetch(url, {
 		headers: { Authorization: `Bearer ${accessToken}` },
 		signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
@@ -55,11 +74,40 @@ async function downloadSlackFile(url: string, accessToken: string): Promise<Buff
 	if (!res.ok) {
 		throw new Error(`Slack file download failed: HTTP ${res.status}`)
 	}
-	const ab = await res.arrayBuffer()
-	if (ab.byteLength > MAX_FILE_SIZE_BYTES) {
-		throw new Error(`Slack file exceeds ${MAX_FILE_SIZE_BYTES} byte limit (${ab.byteLength})`)
+
+	// Bail before buffering when the server advertises a too-large response.
+	// `res.arrayBuffer()` would otherwise pull the whole body into memory before
+	// any size check, OOM-ing the process on a multi-GB response.
+	const declared = Number(res.headers.get('content-length'))
+	if (Number.isFinite(declared) && declared > MAX_FILE_SIZE_BYTES) {
+		throw new Error(`Slack file exceeds ${MAX_FILE_SIZE_BYTES} byte limit (${declared})`)
 	}
-	return Buffer.from(ab)
+
+	// Belt-and-suspenders: stream the body and bail as soon as the accumulated
+	// bytes exceed the cap, in case Content-Length is missing or lies.
+	const body = res.body
+	if (!body) {
+		throw new Error('Slack file download returned no body')
+	}
+	const reader = body.getReader()
+	const chunks: Uint8Array[] = []
+	let received = 0
+	try {
+		while (true) {
+			const { value, done } = await reader.read()
+			if (done) break
+			if (!value) continue
+			received += value.byteLength
+			if (received > MAX_FILE_SIZE_BYTES) {
+				throw new Error(`Slack file exceeds ${MAX_FILE_SIZE_BYTES} byte limit (${received})`)
+			}
+			chunks.push(value)
+		}
+	} catch (err) {
+		await reader.cancel().catch(() => {})
+		throw err
+	}
+	return Buffer.concat(chunks, received)
 }
 
 interface PersistedFile {
@@ -67,6 +115,47 @@ interface PersistedFile {
 	maskinFileId: string
 	name: string
 	mimeType: string
+}
+
+/**
+ * Look up a previously persisted Slack file by its Slack file ID. We key off
+ * the audit event we write below — every persisted Slack file gets an event
+ * row with `data.slack_file_id` — which keeps the dedup contract in one place
+ * without a schema migration. Returns the existing Maskin file when found so
+ * we can skip both the download and the S3 write on retries / re-shares of
+ * the same file across messages.
+ */
+async function findPersistedBySlackFileId(
+	db: Database,
+	workspaceId: string,
+	slackFileId: string,
+): Promise<PersistedFile | null> {
+	const rows = await db
+		.select({ id: files.id, name: files.name, mimeType: files.mimeType })
+		.from(files)
+		.innerJoin(eventsTable, eq(eventsTable.entityId, files.id))
+		.where(
+			and(
+				eq(files.workspaceId, workspaceId),
+				// Repeat the workspace constraint on the events side so the planner
+				// can drive the join with `events_ws_entity_id_idx (workspace_id,
+				// entity_id, id)` instead of falling back to a workspace-wide scan
+				// to evaluate the JSONB predicate.
+				eq(eventsTable.workspaceId, workspaceId),
+				eq(eventsTable.entityType, 'file'),
+				eq(eventsTable.action, 'created'),
+				sql`${eventsTable.data}->>'slack_file_id' = ${slackFileId}`,
+			),
+		)
+		.limit(1)
+	const row = rows[0]
+	if (!row) return null
+	return {
+		slackFileId,
+		maskinFileId: row.id,
+		name: row.name,
+		mimeType: row.mimeType,
+	}
 }
 
 async function persistOne(
@@ -77,6 +166,16 @@ async function persistOne(
 	accessToken: string,
 	slackFile: SlackFile,
 ): Promise<PersistedFile> {
+	const existing = await findPersistedBySlackFileId(db, workspaceId, slackFile.id)
+	if (existing) {
+		logger.info('Slack fan-out: reusing existing file for Slack file id', {
+			workspaceId,
+			slackFileId: slackFile.id,
+			maskinFileId: existing.maskinFileId,
+		})
+		return existing
+	}
+
 	const downloadUrl = slackFile.url_private_download ?? slackFile.url_private
 	if (!downloadUrl) throw new Error(`Slack file ${slackFile.id} has no url_private`)
 
