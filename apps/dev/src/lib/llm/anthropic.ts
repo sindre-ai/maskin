@@ -103,7 +103,9 @@ export class AnthropicAdapter implements LLMAdapter {
 		userPrompt: string
 		maxTokens?: number
 		temperature?: number
+		signal?: AbortSignal
 	}): AsyncGenerator<AnthropicStreamChunk> {
+		const { signal } = options
 		const body = {
 			model: options.model || 'claude-opus-4-7',
 			max_tokens: options.maxTokens ?? 2048,
@@ -121,6 +123,7 @@ export class AnthropicAdapter implements LLMAdapter {
 				'anthropic-version': '2023-06-01',
 			},
 			body: JSON.stringify(body),
+			signal,
 		})
 
 		if (!response.ok || !response.body) {
@@ -133,38 +136,65 @@ export class AnthropicAdapter implements LLMAdapter {
 		let buffer = ''
 		let inputTokens = 0
 		let outputTokens = 0
+		let aborted = false
 
-		while (true) {
-			const { done, value } = await reader.read()
-			if (done) break
-			buffer += decoder.decode(value, { stream: true })
-			const events = buffer.split('\n\n')
-			buffer = events.pop() ?? ''
-			for (const evt of events) {
-				const dataLine = evt.split('\n').find((l) => l.startsWith('data:'))
-				if (!dataLine) continue
-				const payload = dataLine.slice(5).trim()
-				if (!payload || payload === '[DONE]') continue
-				let parsed: Record<string, unknown>
-				try {
-					parsed = JSON.parse(payload) as Record<string, unknown>
-				} catch {
-					continue
+		try {
+			while (true) {
+				if (signal?.aborted) {
+					aborted = true
+					break
 				}
-				if (parsed.type === 'content_block_delta') {
-					const delta = parsed.delta as { type?: string; text?: string } | undefined
-					if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-						yield { type: 'text', text: delta.text }
+				let chunk: ReadableStreamReadResult<Uint8Array>
+				try {
+					chunk = await reader.read()
+				} catch (err) {
+					// `fetch` aborts surface as AbortError/DOMException with name='AbortError'.
+					// Treat them as clean cancels rather than upstream failures.
+					if (signal?.aborted || (err as { name?: string })?.name === 'AbortError') {
+						aborted = true
+						break
 					}
-				} else if (parsed.type === 'message_start') {
-					const usage = (parsed.message as { usage?: { input_tokens?: number } } | undefined)?.usage
-					if (usage?.input_tokens) inputTokens = usage.input_tokens
-				} else if (parsed.type === 'message_delta') {
-					const usage = parsed.usage as { output_tokens?: number } | undefined
-					if (usage?.output_tokens) outputTokens = usage.output_tokens
+					throw err
+				}
+				if (chunk.done) break
+				buffer += decoder.decode(chunk.value, { stream: true })
+				const events = buffer.split('\n\n')
+				buffer = events.pop() ?? ''
+				for (const evt of events) {
+					const dataLine = evt.split('\n').find((l) => l.startsWith('data:'))
+					if (!dataLine) continue
+					const payload = dataLine.slice(5).trim()
+					if (!payload || payload === '[DONE]') continue
+					let parsed: Record<string, unknown>
+					try {
+						parsed = JSON.parse(payload) as Record<string, unknown>
+					} catch {
+						continue
+					}
+					if (parsed.type === 'content_block_delta') {
+						const delta = parsed.delta as { type?: string; text?: string } | undefined
+						if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+							yield { type: 'text', text: delta.text }
+						}
+					} else if (parsed.type === 'message_start') {
+						const usage = (parsed.message as { usage?: { input_tokens?: number } } | undefined)
+							?.usage
+						if (usage?.input_tokens) inputTokens = usage.input_tokens
+					} else if (parsed.type === 'message_delta') {
+						const usage = parsed.usage as { output_tokens?: number } | undefined
+						if (usage?.output_tokens) outputTokens = usage.output_tokens
+					}
 				}
 			}
+		} finally {
+			if (aborted) {
+				try {
+					await reader.cancel()
+				} catch {}
+			}
 		}
+
+		if (aborted) return
 
 		yield { type: 'usage', inputTokens, outputTokens }
 		yield { type: 'done' }

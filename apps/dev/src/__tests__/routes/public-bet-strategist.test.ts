@@ -196,4 +196,58 @@ describe('POST /api/public/bet-strategist/drafts', () => {
 		)
 		expect(res.status).toBe(503)
 	})
+
+	it('persists a partial draft as failed with metadata.aborted when the client disconnects', async () => {
+		const { app, mockResults, calls } = createTestApp(
+			publicBetStrategistRoutes,
+			'/api/public/bet-strategist',
+		)
+		mockResults.selectQueue = [[{ count: 0 }], [{ count: 0 }], [{ count: 0 }]]
+		mockResults.insertQueue = [
+			[{ id: '00000000-0000-0000-0000-000000000eee' }],
+			[{ id: '00000000-0000-0000-0000-000000000fff' }],
+		]
+
+		const ac = new AbortController()
+		// First chunk yields, second chunk waits until aborted then completes;
+		// the route's aborted check between yields drops the second.
+		streamMock.mockImplementation(async function* () {
+			yield { type: 'text', text: 'partial start' }
+			ac.abort()
+			yield { type: 'text', text: 'never seen by route' }
+			yield { type: 'usage', inputTokens: 50, outputTokens: 80 }
+			yield { type: 'done' }
+		})
+
+		const res = await app.request(
+			new Request('http://localhost/api/public/bet-strategist/drafts', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ prompt: 'hi' }),
+				signal: ac.signal,
+			}),
+		)
+
+		// Drain whatever the stream produced before abort kicked in.
+		const reader = res.body?.getReader()
+		if (reader) {
+			try {
+				while (true) {
+					const { done } = await reader.read()
+					if (done) break
+				}
+			} catch {
+				// Aborted reads can throw; we don't care about the wire output here.
+			}
+		}
+
+		const updates = calls.updates as Array<{
+			status?: string
+			metadata?: { isMalformed?: boolean; aborted?: boolean }
+		}>
+		const draftUpdate = updates.find((u) => u.metadata?.aborted === true)
+		expect(draftUpdate).toBeDefined()
+		expect(draftUpdate?.status).toBe('failed')
+		expect(draftUpdate?.metadata?.isMalformed).toBe(false)
+	})
 })

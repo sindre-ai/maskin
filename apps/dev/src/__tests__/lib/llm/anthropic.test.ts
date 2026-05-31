@@ -220,4 +220,87 @@ describe('AnthropicAdapter', () => {
 			}),
 		).rejects.toThrow('Anthropic API error: 429 Rate limited')
 	})
+
+	describe('chatStream signal', () => {
+		function mockStreamResponse(chunks: string[], opts?: { hang?: boolean }) {
+			const encoder = new TextEncoder()
+			let controllerRef: ReadableStreamDefaultController<Uint8Array> | undefined
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controllerRef = controller
+					for (const c of chunks) controller.enqueue(encoder.encode(c))
+					if (!opts?.hang) controller.close()
+				},
+			})
+			mockFetch.mockResolvedValue({ ok: true, body })
+			return { controller: () => controllerRef }
+		}
+
+		it('forwards the signal to fetch', async () => {
+			const ac = new AbortController()
+			mockStreamResponse([])
+			const gen = adapter.chatStream({
+				model: 'claude-opus-4-7',
+				userPrompt: 'hi',
+				signal: ac.signal,
+			})
+			for await (const _chunk of gen) {
+				// drain
+			}
+			expect(mockFetch).toHaveBeenCalledWith(
+				'https://api.anthropic.com/v1/messages',
+				expect.objectContaining({ signal: ac.signal }),
+			)
+		})
+
+		it('exits cleanly without yielding usage/done when the signal aborts mid-stream', async () => {
+			const ac = new AbortController()
+			const sse =
+				'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}\n\n'
+			const { controller } = mockStreamResponse([sse], { hang: true })
+
+			const gen = adapter.chatStream({
+				model: 'claude-opus-4-7',
+				userPrompt: 'q',
+				signal: ac.signal,
+			})
+
+			const first = await gen.next()
+			expect(first.value).toEqual({ type: 'text', text: 'hi' })
+
+			ac.abort()
+			// Push another chunk so the reader wakes; the loop's signal check should
+			// short-circuit before parsing or yielding it.
+			controller()?.enqueue(
+				new TextEncoder().encode(
+					'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"never"}}\n\n',
+				),
+			)
+			controller()?.close()
+
+			const next = await gen.next()
+			expect(next.done).toBe(true)
+			expect(next.value).toBeUndefined()
+		})
+
+		it('treats fetch AbortError as a clean cancel', async () => {
+			const ac = new AbortController()
+			const body = new ReadableStream<Uint8Array>({
+				start(c) {
+					// Simulate fetch abort: next read() rejects with AbortError.
+					c.error(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+				},
+			})
+			mockFetch.mockResolvedValue({ ok: true, body })
+
+			ac.abort()
+			const gen = adapter.chatStream({
+				model: 'claude-opus-4-7',
+				userPrompt: 'q',
+				signal: ac.signal,
+			})
+			const result = await gen.next()
+			expect(result.done).toBe(true)
+		})
+	})
 })

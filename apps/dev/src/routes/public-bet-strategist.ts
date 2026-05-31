@@ -146,6 +146,8 @@ app.post('/drafts', async (c) => {
 		isFreshCookie,
 	})
 
+	const clientSignal = c.req.raw.signal
+
 	return streamSSE(c, async (stream) => {
 		const adapter = new AnthropicAdapter(anthropicKey)
 		const started = Date.now()
@@ -163,7 +165,9 @@ app.post('/drafts', async (c) => {
 				userPrompt: body.prompt,
 				temperature: 0.4,
 				maxTokens: 1024,
+				signal: clientSignal,
 			})) {
+				if (clientSignal?.aborted) break
 				if (chunk.type === 'text' && chunk.text) {
 					buffer += chunk.text
 					await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: chunk.text }) })
@@ -173,18 +177,27 @@ app.post('/drafts', async (c) => {
 				}
 			}
 		} catch (err) {
-			failed = true
-			logger.error('public-bet-strategist: stream error', {
-				err: err instanceof Error ? err.message : String(err),
-				draftId,
-			})
-			await stream.writeSSE({
-				event: 'error',
-				data: JSON.stringify({ message: 'Stream failed' }),
-			})
+			if (clientSignal?.aborted) {
+				// Client disconnected mid-stream; treat as a clean cancel.
+			} else {
+				failed = true
+				logger.error('public-bet-strategist: stream error', {
+					err: err instanceof Error ? err.message : String(err),
+					draftId,
+				})
+				try {
+					await stream.writeSSE({
+						event: 'error',
+						data: JSON.stringify({ message: 'Stream failed' }),
+					})
+				} catch {}
+			}
 		}
 
-		const malformed = failed || isMalformedDraft(buffer)
+		const aborted = clientSignal?.aborted ?? false
+		// An aborted partial isn't malformed by the LLM — exclude it from the
+		// 10%-in-48h rolling-kill metric.
+		const malformed = !aborted && (failed || isMalformedDraft(buffer))
 		const durationMs = Date.now() - started
 
 		await db
@@ -192,7 +205,7 @@ app.post('/drafts', async (c) => {
 			.set({
 				content: buffer,
 				title: extractDraftTitle(buffer),
-				status: failed ? 'failed' : malformed ? 'malformed' : 'completed',
+				status: failed || aborted ? 'failed' : malformed ? 'malformed' : 'completed',
 				metadata: {
 					guestSessionId,
 					ip,
@@ -201,6 +214,7 @@ app.post('/drafts', async (c) => {
 					inputTokens,
 					outputTokens,
 					durationMs,
+					...(aborted ? { aborted: true } : {}),
 				},
 				updatedAt: new Date(),
 			})
@@ -210,7 +224,7 @@ app.post('/drafts', async (c) => {
 			await db
 				.update(sessions)
 				.set({
-					status: failed ? 'failed' : 'completed',
+					status: failed || aborted ? 'failed' : 'completed',
 					completedAt: new Date(),
 					inputTokens,
 					outputTokens,
@@ -225,15 +239,20 @@ app.post('/drafts', async (c) => {
 			guestSessionId,
 			isMalformed: malformed,
 			failed,
+			aborted,
 			durationMs,
 			inputTokens,
 			outputTokens,
 		})
 
-		await stream.writeSSE({
-			event: 'done',
-			data: JSON.stringify({ draftId, isMalformed: malformed, failed }),
-		})
+		if (!aborted) {
+			try {
+				await stream.writeSSE({
+					event: 'done',
+					data: JSON.stringify({ draftId, isMalformed: malformed, failed }),
+				})
+			} catch {}
+		}
 	})
 })
 
