@@ -1,4 +1,3 @@
-import { PageHeader } from '@/components/layout/page-header'
 import { RouteError } from '@/components/shared/route-error'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { trackEvent } from '@/lib/analytics'
@@ -12,6 +11,15 @@ export const Route = createFileRoute('/_authed/$workspaceId/profile')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
+const identityRows = ['Avatar', 'Display name', 'Bio']
+const accountRows = ['Email', 'Password']
+const notificationRows = [
+	'Mentions and replies',
+	'Subscribed objects',
+	'Bet status changes',
+	'Weekly digest',
+]
+
 function ProfilePage() {
 	useEffect(() => {
 		trackEvent('profile.viewed')
@@ -19,7 +27,6 @@ function ProfilePage() {
 
 	return (
 		<div className="mx-auto w-full max-w-2xl">
-			<PageHeader title="Profile" />
 			<header className="mb-6">
 				<h1 className="text-lg font-semibold text-foreground">Profile</h1>
 				<p className="mt-1 text-sm text-muted-foreground">
@@ -27,45 +34,37 @@ function ProfilePage() {
 				</p>
 			</header>
 
-			<Section label="Identity">
-				<PlaceholderRow rowKey="Avatar" comingIn="T5" />
-				<PlaceholderRow rowKey="Display name" comingIn="T6" />
-				<PlaceholderRow rowKey="Bio" comingIn="T6" />
-			</Section>
-
-			<Section label="Account">
-				<PlaceholderRow rowKey="Email" comingIn="T9" />
-				<PlaceholderRow rowKey="Password" comingIn="T7" />
-			</Section>
-
-			<Section label="Notifications">
-				<PlaceholderRow rowKey="Preferences" comingIn="T8" />
-			</Section>
-
+			<Section label="Identity" rows={identityRows} />
+			<Section label="Account" rows={accountRows} />
+			<Section label="Notifications" rows={notificationRows} />
 			<DangerZone />
 		</div>
 	)
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({ label, rows }: { label: string; rows: readonly string[] }) {
 	return (
 		<section className="mt-7 first:mt-0">
 			<h2 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
 				{label}
 			</h2>
-			<div className="divide-y divide-border border-t border-border">{children}</div>
+			<div className="divide-y divide-border border-t border-border">
+				{rows.map((row) => (
+					<PlaceholderRow key={row} rowKey={row} />
+				))}
+			</div>
 		</section>
 	)
 }
 
-function PlaceholderRow({ rowKey, comingIn }: { rowKey: string; comingIn: string }) {
+function PlaceholderRow({ rowKey }: { rowKey: string }) {
 	return (
 		<div
 			data-row={rowKey.toLowerCase().replace(/\s+/g, '-')}
-			className="grid grid-cols-[140px_1fr] items-center gap-4 py-3.5 sm:grid-cols-[160px_1fr]"
+			className="grid grid-cols-1 gap-1 py-3.5 md:grid-cols-[160px_1fr] md:items-center md:gap-4"
 		>
 			<div className="text-sm font-medium text-muted-foreground">{rowKey}</div>
-			<div className="text-sm text-muted-foreground">Coming in {comingIn}</div>
+			<div className="text-sm italic text-muted-foreground/70">Coming soon</div>
 		</div>
 	)
 }
@@ -86,8 +85,8 @@ function DangerZone() {
 						className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-90')}
 					/>
 				</CollapsibleTrigger>
-				<CollapsibleContent className="px-4 pb-4 text-sm text-muted-foreground">
-					Coming in T10.
+				<CollapsibleContent className="px-4 pb-4 text-sm italic text-muted-foreground/70">
+					Coming soon
 				</CollapsibleContent>
 			</div>
 		</Collapsible>
