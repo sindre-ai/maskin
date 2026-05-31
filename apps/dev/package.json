@@ -16,6 +16,8 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@hono/node-server": "^1.19.13",
+		"@hono/zod-openapi": "^0.18.0",
 		"@maskin/auth": "workspace:*",
 		"@maskin/db": "workspace:*",
 		"@maskin/ext-crm": "workspace:*",
@@ -27,8 +29,6 @@
 		"@maskin/realtime": "workspace:*",
 		"@maskin/shared": "workspace:*",
 		"@maskin/storage": "workspace:*",
-		"@hono/node-server": "^1.19.13",
-		"@hono/zod-openapi": "^0.18.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"bcryptjs": "^3.0.3",
 		"croner": "^10.0.1",
@@ -38,6 +38,7 @@
 		"google-auth-library": "^9.15.0",
 		"hono": "^4.12.14",
 		"postgres": "^3.4.9",
+		"stripe": "17.x",
 		"tar-stream": "^3.1.0",
 		"zod": "^3.24.0"
 	},

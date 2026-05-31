@@ -65,6 +65,22 @@ export const workspaceSettingsSchema = z.object({
 			small_fast_model: z.string().nullable().optional(),
 		})
 		.optional(),
+	// Native Maskin LLM subscription state. Set by the Stripe checkout +
+	// webhook handlers; consumed by the LLM router to branch on plan and by
+	// the settings UI to render the current plan + usage. Mutual exclusion
+	// with custom_llm/claude_oauth is the router's responsibility, not the
+	// schema's — keeping the slots independent lets a single workspace
+	// toggle between plans without losing state.
+	billing: z
+		.object({
+			plan: z.enum(['trial', 'starter', 'pro', 'byollm']),
+			stripe_customer_id: z.string().nullable().optional(),
+			stripe_subscription_id: z.string().nullable().optional(),
+			period_start: z.number().nullable().optional(),
+			hard_cap_tokens: z.number().nullable().optional(),
+			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']),
+		})
+		.optional(),
 })
 
 export const createWorkspaceSchema = z.object({
