@@ -127,7 +127,9 @@ function WorkspaceSkillsSection({
 	const [open, setOpen] = useState(false)
 
 	const isLoading = isLoadingWorkspace || isLoadingAttachments
-	const available = workspaceSkills ?? []
+	const available = [...(workspaceSkills ?? [])].sort((a, b) =>
+		a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+	)
 	const attached = attachments ?? []
 	const attachedIds = new Set(attached.map((s) => s.id))
 

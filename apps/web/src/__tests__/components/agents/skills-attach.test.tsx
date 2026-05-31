@@ -142,6 +142,29 @@ describe('Skills — Workspace Skills section', () => {
 		expect(screen.getByText('Review code')).toBeInTheDocument()
 	})
 
+	it('renders workspace skills in alphabetical order regardless of input order', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [
+				buildWorkspaceSkill({ id: 'a', name: 'zeta', description: '' }),
+				buildWorkspaceSkill({ id: 'b', name: 'Alpha', description: '' }),
+				buildWorkspaceSkill({ id: 'c', name: 'mango', description: '' }),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		await user.click(screen.getByRole('button', { name: 'Attach workspace skill' }))
+
+		const labels = screen.getAllByRole('option').map((el) => el.textContent?.trim())
+		expect(labels).toEqual(['Alpha', 'mango', 'zeta'])
+	})
+
 	it('calls attach mutation with workspaceSkillId when an unattached skill is selected', async () => {
 		const user = userEvent.setup()
 		mockUseWorkspaceSkills.mockReturnValue({
