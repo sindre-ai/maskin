@@ -155,6 +155,11 @@ app.post('/drafts', async (c) => {
 		let inputTokens = 0
 		let outputTokens = 0
 		let failed = false
+		// Set only when the in-loop check observes the client signal aborted.
+		// Re-reading the signal at end-of-stream would also flip true for
+		// server-side aborts (timeout middleware, process shutdown), which would
+		// silently exclude real failures from the rolling-kill metric.
+		let clientAborted = false
 
 		await stream.writeSSE({ event: 'draft_started', data: JSON.stringify({ draftId }) })
 
@@ -167,7 +172,10 @@ app.post('/drafts', async (c) => {
 				maxTokens: 1024,
 				signal: clientSignal,
 			})) {
-				if (clientSignal?.aborted) break
+				if (clientSignal?.aborted) {
+					clientAborted = true
+					break
+				}
 				if (chunk.type === 'text' && chunk.text) {
 					buffer += chunk.text
 					await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: chunk.text }) })
@@ -177,8 +185,9 @@ app.post('/drafts', async (c) => {
 				}
 			}
 		} catch (err) {
-			if (clientSignal?.aborted) {
-				// Client disconnected mid-stream; treat as a clean cancel.
+			if (clientAborted) {
+				// Already observed the client disconnect from the in-loop check;
+				// nothing more to record.
 			} else {
 				failed = true
 				logger.error('public-bet-strategist: stream error', {
@@ -194,7 +203,7 @@ app.post('/drafts', async (c) => {
 			}
 		}
 
-		const aborted = clientSignal?.aborted ?? false
+		const aborted = clientAborted
 		// An aborted partial isn't malformed by the LLM — exclude it from the
 		// 10%-in-48h rolling-kill metric.
 		const malformed = !aborted && (failed || isMalformedDraft(buffer))

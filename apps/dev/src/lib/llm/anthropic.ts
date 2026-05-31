@@ -1,3 +1,4 @@
+import { logger } from '../logger'
 import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './adapter'
 
 export interface AnthropicStreamChunk {
@@ -148,11 +149,18 @@ export class AnthropicAdapter implements LLMAdapter {
 				try {
 					chunk = await reader.read()
 				} catch (err) {
-					// `fetch` aborts surface as AbortError/DOMException with name='AbortError'.
-					// Treat them as clean cancels rather than upstream failures.
-					if (signal?.aborted || (err as { name?: string })?.name === 'AbortError') {
+					// Only treat as a clean cancel when the caller's signal explicitly
+					// aborted. A bare AbortError without an aborted signal (e.g. undici
+					// tearing the socket down) must surface so the route records the
+					// failure instead of dropping it from the rolling-kill metric.
+					if (signal?.aborted) {
 						aborted = true
 						break
+					}
+					if ((err as { name?: string })?.name === 'AbortError') {
+						logger.info('anthropic chatStream: AbortError without aborted signal', {
+							err: err instanceof Error ? err.message : String(err),
+						})
 					}
 					throw err
 				}

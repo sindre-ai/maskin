@@ -302,5 +302,26 @@ describe('AnthropicAdapter', () => {
 			const result = await gen.next()
 			expect(result.done).toBe(true)
 		})
+
+		it('throws when AbortError surfaces with no aborted signal (undici teardown)', async () => {
+			// Signal never aborts; the read rejects with AbortError on its own
+			// (e.g. undici tearing the socket down). Must surface to the caller so
+			// the route counts it toward the rolling-kill metric.
+			const ac = new AbortController()
+			const body = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.error(Object.assign(new Error('socket torn down'), { name: 'AbortError' }))
+				},
+			})
+			mockFetch.mockResolvedValue({ ok: true, body })
+
+			const gen = adapter.chatStream({
+				model: 'claude-opus-4-7',
+				userPrompt: 'q',
+				signal: ac.signal,
+			})
+
+			await expect(gen.next()).rejects.toThrow('socket torn down')
+		})
 	})
 })

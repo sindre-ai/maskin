@@ -6,10 +6,12 @@ import { createTestApp } from '../setup'
 
 // Mock the LLM adapter so tests never reach Anthropic.
 const streamMock = vi.fn<[], AsyncGenerator<AnthropicStreamChunk>>()
+const chatStreamCalls: Array<{ signal?: AbortSignal }> = []
 
 vi.mock('../../lib/llm/anthropic', () => {
 	class AnthropicAdapter {
-		async *chatStream(): AsyncGenerator<AnthropicStreamChunk> {
+		async *chatStream(options: { signal?: AbortSignal }): AsyncGenerator<AnthropicStreamChunk> {
+			chatStreamCalls.push({ signal: options?.signal })
 			yield* streamMock()
 		}
 	}
@@ -66,6 +68,7 @@ describe('POST /api/public/bet-strategist/drafts', () => {
 		process.env.GUEST_SESSION_SECRET = SECRET
 		process.env.ANTHROPIC_API_KEY = 'test-key'
 		streamMock.mockReset()
+		chatStreamCalls.length = 0
 	})
 
 	afterEach(() => {
@@ -195,6 +198,38 @@ describe('POST /api/public/bet-strategist/drafts', () => {
 			jsonRequest('POST', '/api/public/bet-strategist/drafts', { prompt: 'hi' }),
 		)
 		expect(res.status).toBe(503)
+	})
+
+	it('forwards the request AbortSignal into chatStream so the adapter can stop early', async () => {
+		const { app, mockResults } = createTestApp(
+			publicBetStrategistRoutes,
+			'/api/public/bet-strategist',
+		)
+		mockResults.selectQueue = [[{ count: 0 }], [{ count: 0 }], [{ count: 0 }]]
+		mockResults.insertQueue = [
+			[{ id: '00000000-0000-0000-0000-000000000111' }],
+			[{ id: '00000000-0000-0000-0000-000000000222' }],
+		]
+		streamMock.mockImplementation(happyPathStream(VALID_DRAFT))
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/public/bet-strategist/drafts', { prompt: 'hi' }),
+		)
+		const reader = res.body?.getReader()
+		if (reader) {
+			while (true) {
+				const { done } = await reader.read()
+				if (done) break
+			}
+		}
+
+		// The route must wire the request's AbortSignal through to the adapter so
+		// a client disconnect propagates into the fetch and stops the upstream
+		// stream. If a regression drops `signal: clientSignal` from chatStream(...),
+		// the adapter unit test would still pass but real production traffic would
+		// silently leak streams — this assertion catches that at the route layer.
+		expect(chatStreamCalls).toHaveLength(1)
+		expect(chatStreamCalls[0]?.signal).toBeInstanceOf(AbortSignal)
 	})
 
 	it('persists a partial draft as failed with metadata.aborted when the client disconnects', async () => {
