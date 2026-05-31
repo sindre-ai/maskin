@@ -34,7 +34,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { parseSkillMd } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Command } from 'cmdk'
-import { BookOpen, Check, FileText, Pencil, Plus, Trash2 } from 'lucide-react'
+import { BookOpen, Check, FileText, Library, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 interface SkillsProps {
@@ -67,8 +67,12 @@ export function Skills({ actorId }: SkillsProps) {
 		<div>
 			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} />
 
+			<h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 mt-4">
+				Personal Skills
+			</h3>
+
 			{skillList.length > 0 ? (
-				<div className="space-y-2 mb-3 mt-4">
+				<div className="space-y-2 mb-3">
 					{skillList.map((skill) =>
 						editingSkill === skill.name ? (
 							<SkillForm
@@ -88,8 +92,8 @@ export function Skills({ actorId }: SkillsProps) {
 					)}
 				</div>
 			) : (
-				<p className="text-xs text-muted-foreground mb-3 mt-4">
-					No skills configured. Add skills to extend what this agent can do.
+				<p className="text-xs text-muted-foreground mb-3">
+					No personal skills configured. Add skills to extend what this agent can do.
 				</p>
 			)}
 
@@ -131,17 +135,19 @@ function WorkspaceSkillsSection({
 	const attached = attachments ?? []
 	const attachedIds = new Set(attached.map((s) => s.id))
 
+	const showEmptyState = !isLoading && available.length === 0 && attached.length === 0
+
 	return (
 		<div>
 			<h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
 				Workspace Skills
 			</h3>
 
-			{isLoading ? (
-				<p className="text-xs text-muted-foreground">Loading workspace skills...</p>
-			) : available.length === 0 ? (
+			{isLoading && <p className="text-xs text-muted-foreground">Loading workspace skills...</p>}
+
+			{showEmptyState && (
 				<p className="text-xs text-muted-foreground">
-					No workspace skills attached. Create workspace skills in{' '}
+					No workspace skills in this workspace yet. Create one in{' '}
 					<Link
 						to="/$workspaceId/settings/skills"
 						params={{ workspaceId }}
@@ -151,83 +157,83 @@ function WorkspaceSkillsSection({
 					</Link>
 					.
 				</p>
-			) : (
-				<>
-					<ResponsivePopover open={open} onOpenChange={setOpen}>
-						<ResponsivePopoverTrigger asChild>
-							<Button
-								size="sm"
-								variant="outline"
-								aria-label="Attach workspace skill"
-								aria-expanded={open}
-							>
-								<Plus className="h-3.5 w-3.5 mr-1" />
-								Attach workspace skill
-							</Button>
-						</ResponsivePopoverTrigger>
-						<ResponsivePopoverContent
-							className="md:w-72 md:p-0"
-							align="start"
-							accessibleTitle="Attach workspace skill"
-						>
-							<Command>
-								<Command.Input
-									placeholder="Search workspace skills..."
-									className="w-full border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none"
-								/>
-								<Command.List className="max-h-60 overflow-auto p-1">
-									<Command.Empty className="py-4 text-center text-xs text-muted-foreground">
-										No workspace skills match.
-									</Command.Empty>
-									{available.map((skill) => {
-										const isAttached = attachedIds.has(skill.id)
-										return (
-											<Command.Item
-												key={skill.id}
-												value={`${skill.name} ${skill.description ?? ''}`}
-												onSelect={() => {
-													if (isAttached) {
-														detachSkill.mutate(skill.id)
-													} else {
-														attachSkill.mutate(skill.id)
-													}
-													setOpen(false)
-												}}
-												className="flex items-center gap-2 rounded px-2 py-1.5 text-sm cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-											>
-												<Check
-													className={`h-3.5 w-3.5 shrink-0 ${
-														isAttached ? 'opacity-100' : 'opacity-0'
-													}`}
-												/>
-												<div className="flex-1 min-w-0">
-													<p className="text-sm font-medium truncate">{skill.name}</p>
-													{skill.description && (
-														<p className="text-xs text-muted-foreground truncate">
-															{skill.description}
-														</p>
-													)}
-												</div>
-											</Command.Item>
-										)
-									})}
-								</Command.List>
-							</Command>
-						</ResponsivePopoverContent>
-					</ResponsivePopover>
+			)}
 
-					{attached.length > 0 && (
-						<div className="mt-2 space-y-2">
-							{attached.map((skill) => (
-								<AttachedSkillRow
-									key={skill.id}
-									skill={skill}
-									onRemove={() => detachSkill.mutate(skill.id)}
-								/>
-							))}
-						</div>
-					)}
-				</>
+			{!isLoading && available.length > 0 && (
+				<ResponsivePopover open={open} onOpenChange={setOpen}>
+					<ResponsivePopoverTrigger asChild>
+						<Button
+							size="sm"
+							variant="outline"
+							aria-label="Attach workspace skill"
+							aria-expanded={open}
+						>
+							<Plus className="h-3.5 w-3.5 mr-1" />
+							Attach workspace skill
+						</Button>
+					</ResponsivePopoverTrigger>
+					<ResponsivePopoverContent
+						className="md:w-72 md:p-0"
+						align="start"
+						accessibleTitle="Attach workspace skill"
+					>
+						<Command>
+							<Command.Input
+								placeholder="Search workspace skills..."
+								className="w-full border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none"
+							/>
+							<Command.List className="max-h-60 overflow-auto p-1">
+								<Command.Empty className="py-4 text-center text-xs text-muted-foreground">
+									No workspace skills match.
+								</Command.Empty>
+								{available.map((skill) => {
+									const isAttached = attachedIds.has(skill.id)
+									return (
+										<Command.Item
+											key={skill.id}
+											value={`${skill.name} ${skill.description ?? ''}`}
+											onSelect={() => {
+												if (isAttached) {
+													detachSkill.mutate(skill.id)
+												} else {
+													attachSkill.mutate(skill.id)
+												}
+												setOpen(false)
+											}}
+											className="flex items-center gap-2 rounded px-2 py-1.5 text-sm cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+										>
+											<Check
+												className={`h-3.5 w-3.5 shrink-0 ${
+													isAttached ? 'opacity-100' : 'opacity-0'
+												}`}
+											/>
+											<div className="flex-1 min-w-0">
+												<p className="text-sm font-medium truncate">{skill.name}</p>
+												{skill.description && (
+													<p className="text-xs text-muted-foreground truncate">
+														{skill.description}
+													</p>
+												)}
+											</div>
+										</Command.Item>
+									)
+								})}
+							</Command.List>
+						</Command>
+					</ResponsivePopoverContent>
+				</ResponsivePopover>
+			)}
+
+			{!isLoading && attached.length > 0 && (
+				<div className="mt-2 space-y-2">
+					{attached.map((skill) => (
+						<AttachedSkillRow
+							key={skill.id}
+							skill={skill}
+							onRemove={() => detachSkill.mutate(skill.id)}
+						/>
+					))}
+				</div>
 			)}
 		</div>
 	)
@@ -242,7 +248,7 @@ function AttachedSkillRow({
 }) {
 	return (
 		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
-			<BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+			<Library className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground">{skill.name}</p>
 				{skill.description && (

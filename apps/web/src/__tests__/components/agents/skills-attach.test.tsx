@@ -88,7 +88,7 @@ describe('Skills — Workspace Skills section', () => {
 			</TestWrapper>,
 		)
 
-		expect(screen.getByText(/No workspace skills attached/)).toBeInTheDocument()
+		expect(screen.getByText(/No workspace skills in this workspace yet/)).toBeInTheDocument()
 		const link = screen.getByRole('link', { name: /Settings → Skills/ })
 		expect(link).toHaveAttribute('href', '/$workspaceId/settings/skills')
 	})
@@ -101,6 +101,27 @@ describe('Skills — Workspace Skills section', () => {
 		)
 
 		expect(screen.queryByRole('button', { name: 'Attach workspace skill' })).not.toBeInTheDocument()
+	})
+
+	it('renders attached rows even when the workspace skill list is empty', () => {
+		// Guards the case where the attachments endpoint returns rows but the
+		// workspace-skills list endpoint is empty (deleted skill, transient
+		// permission filter, stale cache). The attached skills must still appear.
+		mockUseWorkspaceSkills.mockReturnValue({ data: [], isLoading: false })
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [buildAttachedSkill({ id: 'skill-orphan', name: 'deploy', description: 'Ship it' })],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByRole('button', { name: 'Remove deploy' })).toBeInTheDocument()
+		expect(screen.getByText('Ship it')).toBeInTheDocument()
+		expect(screen.queryByText(/No workspace skills in this workspace yet/)).not.toBeInTheDocument()
 	})
 
 	it('shows attach dropdown trigger when workspace skills exist', () => {
