@@ -119,6 +119,31 @@ app.post('/', async (c) => {
 
 	try {
 		await applyEvent(db, workspaceId, event, stripeEnv)
+		if (claimRowId) {
+			// Mark the claim processed so the reconciler doesn't release it after the
+			// 15m stale threshold. Without this, every successful Stripe delivery
+			// would become re-processable within ~20m, but Stripe retries old events
+			// for up to ~3 days — replaying a stale subscription.updated over current
+			// state would regress the workspace (e.g. resurrect a canceled sub). If
+			// the UPDATE itself fails we still ack the event: the work is done, the
+			// dedup metadata is best-effort, and on-call has the log line.
+			try {
+				await db
+					.update(webhookDeliveries)
+					.set({ processedAt: new Date() })
+					.where(eq(webhookDeliveries.id, claimRowId))
+			} catch (markErr) {
+				logger.error(
+					'Failed to mark Stripe webhook delivery as processed; reconciler may release the claim prematurely',
+					{
+						eventId: event.id,
+						workspaceId,
+						claimRowId,
+						error: markErr instanceof Error ? markErr.message : String(markErr),
+					},
+				)
+			}
+		}
 		logger.info('Stripe webhook applied', {
 			eventId: event.id,
 			workspaceId,

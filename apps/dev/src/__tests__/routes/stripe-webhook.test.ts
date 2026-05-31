@@ -47,6 +47,16 @@ function postWebhook(app: { request: (req: Request) => Promise<Response> }, body
 	)
 }
 
+type WorkspaceUpdate = { settings: { billing: Record<string, unknown> } }
+function findWorkspaceUpdate(updates: unknown[]): WorkspaceUpdate {
+	const match = updates.find(
+		(u): u is WorkspaceUpdate =>
+			!!u && typeof u === 'object' && 'settings' in (u as Record<string, unknown>),
+	)
+	if (!match) throw new Error('expected a workspace settings update; got none')
+	return match
+}
+
 describe('POST /api/webhooks/stripe', () => {
 	it('returns 401 when stripe-signature header is missing', async () => {
 		const { app } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
@@ -115,7 +125,7 @@ describe('POST /api/webhooks/stripe', () => {
 
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
-		const update = calls.updates.at(-1) as { settings: { billing: Record<string, unknown> } }
+		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({
 			stripe_customer_id: 'cus_42',
 			stripe_subscription_id: 'sub_42',
@@ -146,7 +156,7 @@ describe('POST /api/webhooks/stripe', () => {
 
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
-		const update = calls.updates.at(-1) as { settings: { billing: Record<string, unknown> } }
+		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({
 			plan: 'pro',
 			stripe_customer_id: 'cus_99',
@@ -189,7 +199,7 @@ describe('POST /api/webhooks/stripe', () => {
 
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
-		const update = calls.updates.at(-1) as { settings: { billing: Record<string, unknown> } }
+		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({
 			plan: 'byollm',
 			stripe_subscription_id: null,
@@ -218,8 +228,33 @@ describe('POST /api/webhooks/stripe', () => {
 
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
-		const update = calls.updates.at(-1) as { settings: { billing: Record<string, unknown> } }
+		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({ plan: 'starter', status: 'past_due' })
+	})
+
+	it('marks the webhook_deliveries claim as processed on success', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-mark' }]]
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_mark',
+			type: 'invoice.paid',
+			data: { object: { metadata: { workspace_id: workspaceId } } },
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		// Without marking processedAt, the WebhookDeliveriesReconciler deletes the
+		// claim 15m after receipt, collapsing the idempotency window from Stripe's
+		// ~3-day retry envelope down to 15m and letting late retries re-apply
+		// stale state mutations.
+		const claimUpdate = calls.updates.find(
+			(u): u is { processedAt: Date } =>
+				!!u && typeof u === 'object' && 'processedAt' in (u as Record<string, unknown>),
+		)
+		expect(claimUpdate?.processedAt).toBeInstanceOf(Date)
 	})
 
 	it('short-circuits duplicate deliveries via webhook_deliveries dedup', async () => {
