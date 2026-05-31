@@ -21,6 +21,24 @@ export const jsonbField = z
 
 export const errorSchema = apiErrorSchema
 
+/**
+ * Response body for HTTP 402 when a workspace on a Maskin-hosted plan is at or
+ * over its current-period token cap. Frontend keys off
+ * `error.code === 'PLAN_CAP_EXCEEDED'` and renders the over-cap banner from
+ * `plan`, `used`, `cap`, and `period_end` (nullable for trial — trial doesn't
+ * auto-reset; the only way out is upgrading).
+ */
+export const planCapExceededErrorSchema = z.object({
+	error: z.object({
+		code: z.literal('PLAN_CAP_EXCEEDED'),
+		message: z.string(),
+		plan: z.enum(['trial', 'starter', 'pro']),
+		used: z.number().int().nonnegative(),
+		cap: z.number().int().nonnegative(),
+		period_end: z.number().int().nonnegative().nullable(),
+	}),
+})
+
 export const idParamSchema = z.object({ id: z.string().uuid() })
 
 export const workspaceIdHeader = z.object({

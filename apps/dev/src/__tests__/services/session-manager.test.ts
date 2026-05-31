@@ -129,6 +129,42 @@ describe('SessionManager', () => {
 				}),
 			).rejects.toThrow('Failed to create session')
 		})
+
+		it('refuses with PlanCapExceededError when workspace is over its plan cap', async () => {
+			// First select: workspace row carrying a starter plan + period_start + cap.
+			// Second select: maskin_plan usage rows summing past the cap.
+			mockResults.selectQueue = [
+				[
+					{
+						settings: {
+							billing: {
+								plan: 'starter',
+								period_start: 1_700_000_000,
+								hard_cap_tokens: 1_000_000,
+							},
+						},
+					},
+				],
+				[{ inputTokens: 1_100_000, outputTokens: 0 }],
+			]
+
+			await expect(
+				manager.createSession('ws-1', {
+					actorId: 'actor-1',
+					actionPrompt: 'Do the thing',
+					createdBy: 'creator-1',
+					autoStart: false,
+				}),
+			).rejects.toMatchObject({
+				name: 'PlanCapExceededError',
+				plan: 'starter',
+				used: 1_100_000,
+				cap: 1_000_000,
+			})
+
+			// Session row must not be inserted when pre-flight rejects.
+			expect(calls.inserts).toHaveLength(0)
+		})
 	})
 
 	describe('createSession() — interactive', () => {

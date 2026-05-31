@@ -13,9 +13,11 @@ import {
 import { and, asc, desc, eq, gt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, formatZodError } from '../lib/errors'
+import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
+	planCapExceededErrorSchema,
 	sessionLogResponseSchema,
 	sessionResponseSchema,
 	workspaceIdHeader,
@@ -79,6 +81,10 @@ const createSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		402: {
+			content: { 'application/json': { schema: planCapExceededErrorSchema } },
+			description: 'Workspace is at or over its Maskin plan cap for the current period',
+		},
 	},
 })
 
@@ -88,16 +94,37 @@ app.openapi(createSessionRoute, (async (c) => {
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const session = await sessionManager.createSession(workspaceId, {
-		actorId: body.actor_id,
-		actionPrompt: body.action_prompt,
-		config: body.config,
-		triggerId: body.trigger_id,
-		createdBy: actorId,
-		autoStart: body.auto_start,
-	})
-
-	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
+	try {
+		const session = await sessionManager.createSession(workspaceId, {
+			actorId: body.actor_id,
+			actionPrompt: body.action_prompt,
+			config: body.config,
+			triggerId: body.trigger_id,
+			createdBy: actorId,
+			autoStart: body.auto_start,
+		})
+		return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
+	} catch (err) {
+		if (err instanceof PlanCapExceededError) {
+			// HTTP 402 with {plan, used, cap, period_end} so the over-cap banner
+			// can render an ETA and the right upgrade CTA. Frontend keys off
+			// `error.code === 'PLAN_CAP_EXCEEDED'`.
+			return c.json(
+				{
+					error: {
+						code: err.code,
+						message: err.message,
+						plan: err.plan,
+						used: err.used,
+						cap: err.cap,
+						period_end: err.periodEndSeconds,
+					},
+				},
+				402,
+			)
+		}
+		throw err
+	}
 }) as RouteHandler<typeof createSessionRoute, Env>)
 
 // GET / - List sessions

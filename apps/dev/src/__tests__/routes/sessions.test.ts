@@ -1,3 +1,4 @@
+import { PlanCapExceededError } from '../../lib/llm-routing'
 import { buildCreateSessionBody, buildSession, buildSessionLog } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp } from '../setup'
@@ -23,6 +24,45 @@ describe('Sessions Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(session.id)
 			expect(body.status).toBe('running')
+		})
+
+		it('returns 402 with PLAN_CAP_EXCEEDED payload when workspace is over cap', async () => {
+			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new PlanCapExceededError('starter', 1_200_000, 1_000_000, 1_733_592_000),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/sessions', buildCreateSessionBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(402)
+			const body = await res.json()
+			expect(body.error.code).toBe('PLAN_CAP_EXCEEDED')
+			expect(body.error.plan).toBe('starter')
+			expect(body.error.used).toBe(1_200_000)
+			expect(body.error.cap).toBe(1_000_000)
+			expect(body.error.period_end).toBe(1_733_592_000)
+		})
+
+		it('returns 402 with period_end=null for trial plans', async () => {
+			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new PlanCapExceededError('trial', 100_000, 100_000, null),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/sessions', buildCreateSessionBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(402)
+			const body = await res.json()
+			expect(body.error.plan).toBe('trial')
+			expect(body.error.period_end).toBeNull()
 		})
 	})
 

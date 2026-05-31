@@ -21,7 +21,13 @@ import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
-import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
+import {
+	FallbackQuotaExceededError,
+	type LlmRoute,
+	PlanCapExceededError,
+	assertWithinMaskinPlanCap,
+	resolveLlmRoute,
+} from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
@@ -141,6 +147,18 @@ export class SessionManager extends EventEmitter {
 	): Promise<typeof sessions.$inferSelect> {
 		const config = params.config ?? {}
 		const interactive = config.interactive === true
+
+		// Pre-flight: if the workspace is on a hosted plan and over its
+		// current-period cap, refuse before the row is inserted. Without this,
+		// startSession would fail asynchronously and the caller would see a 201
+		// for a session that immediately died.
+		const [ws] = await this.db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+		const wsSettings = (ws?.settings as WorkspaceSettings | undefined) ?? undefined
+		await assertWithinMaskinPlanCap(this.db, workspaceId, wsSettings?.billing)
 
 		const [session] = await this.db
 			.insert(sessions)
@@ -703,6 +721,14 @@ export class SessionManager extends EventEmitter {
 					actorId: session.actorId,
 					used: err.used,
 					limit: err.limit,
+				})
+			} else if (err instanceof PlanCapExceededError) {
+				logger.warn('Maskin plan cap exceeded', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					plan: err.plan,
+					used: err.used,
+					cap: err.cap,
 				})
 			}
 			throw err
