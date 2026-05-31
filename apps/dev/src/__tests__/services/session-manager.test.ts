@@ -129,6 +129,41 @@ describe('SessionManager', () => {
 				}),
 			).rejects.toThrow('Failed to create session')
 		})
+
+		it('rejects pre-insert when the workspace is over its plan cap', async () => {
+			// Workspace select returns a starter plan at cap; the cap query then
+			// returns rows that sum to ≥ hard_cap_tokens. The session insert mock
+			// is intentionally left configured so we can prove the insert is never
+			// reached.
+			mockResults.selectQueue = [
+				[
+					{
+						id: 'ws-1',
+						settings: {
+							billing: { plan: 'starter', hard_cap_tokens: 100, period_start: 0 },
+						},
+					},
+				],
+				[{ inputTokens: 100, outputTokens: 0 }],
+			]
+			const sessionRow = buildSession({ status: 'pending' })
+			mockResults.insertQueue = [[sessionRow], []]
+
+			await expect(
+				manager.createSession('ws-1', {
+					actorId: 'actor-1',
+					actionPrompt: 'Do the thing',
+					createdBy: 'creator-1',
+					autoStart: false,
+				}),
+			).rejects.toMatchObject({
+				name: 'PlanCapExceededError',
+				plan: 'starter',
+				used: 100,
+				cap: 100,
+			})
+			expect(calls.inserts).toHaveLength(0)
+		})
 	})
 
 	describe('createSession() — interactive', () => {

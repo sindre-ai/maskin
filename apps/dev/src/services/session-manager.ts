@@ -21,7 +21,12 @@ import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
-import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
+import {
+	FallbackQuotaExceededError,
+	type LlmRoute,
+	checkPlanCap,
+	resolveLlmRoute,
+} from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
@@ -141,6 +146,18 @@ export class SessionManager extends EventEmitter {
 	): Promise<typeof sessions.$inferSelect> {
 		const config = params.config ?? {}
 		const interactive = config.interactive === true
+
+		// Pre-flight billing cap. Throws PlanCapExceededError → 402 on
+		// maskin_plan workspaces over their hard_cap_tokens. Reading settings
+		// here keeps the cap visible to the HTTP caller before we create the
+		// session row (cf. resolveLlmRoute, which guards background paths).
+		const [ws] = await this.db
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+		await checkPlanCap({ db: this.db, workspaceId, wsSettings })
 
 		const [session] = await this.db
 			.insert(sessions)

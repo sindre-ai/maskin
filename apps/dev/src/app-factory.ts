@@ -10,6 +10,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
+import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
@@ -112,6 +113,27 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	})
 
 	app.onError((err, c) => {
+		if (err instanceof PlanCapExceededError) {
+			logger.warn('Plan cap exceeded', {
+				plan: err.plan,
+				used: err.used,
+				cap: err.cap,
+				periodEnd: err.periodEnd,
+			})
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.PLAN_CAP_EXCEEDED,
+						message: err.message,
+						plan: err.plan,
+						used: err.used,
+						cap: err.cap,
+						period_end: err.periodEnd,
+					},
+				},
+				402,
+			)
+		}
 		if ('status' in err && typeof err.status === 'number') {
 			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
 		}

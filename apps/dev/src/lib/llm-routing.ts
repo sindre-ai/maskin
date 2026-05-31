@@ -23,8 +23,18 @@ export type LlmRoute =
 	| typeof LLM_ROUTE_AGENT
 	| typeof LLM_ROUTE_MASKIN_PLAN
 
-/** Workspaces on these plans are routed through Maskin's funded OR account. */
-const MASKIN_PLAN_PAID_PLANS = new Set(['starter', 'pro'])
+/**
+ * Workspaces on these plans are routed through Maskin's funded OR account.
+ * Trial is included so BYOLLM-less users can try the product without their
+ * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_TOKENS`.
+ */
+const MASKIN_PLAN_ROUTED_PLANS = new Set(['starter', 'pro', 'trial'])
+
+/** Approx 50 messages at ~2k tokens each — see Task 803dcf11 brief. */
+const TRIAL_DEFAULT_CAP_TOKENS = 100_000
+
+/** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
+const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
 
 export interface LlmRoutingResult {
 	route: LlmRoute
@@ -99,6 +109,129 @@ export async function getActorFallbackTokenUsage24h(
 	return total
 }
 
+/**
+ * Sums input+output tokens across the workspace's maskin_plan sessions since
+ * `periodStart` (or all-time when undefined — used for trial buckets that don't
+ * have a billing period yet). The route filter is what makes paid + trial usage
+ * cheap to query, even as the sessions table grows.
+ */
+export async function getWorkspacePlanTokenUsage(
+	db: Database,
+	workspaceId: string,
+	periodStartMs?: number,
+): Promise<number> {
+	const conds = [
+		eq(sessions.workspaceId, workspaceId),
+		sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
+	]
+	if (periodStartMs !== undefined) {
+		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))
+	}
+	const rows = await db
+		.select({
+			inputTokens: sessions.inputTokens,
+			outputTokens: sessions.outputTokens,
+		})
+		.from(sessions)
+		.where(and(...conds))
+
+	let total = 0
+	for (const row of rows) {
+		total += row.inputTokens ?? 0
+		total += row.outputTokens ?? 0
+	}
+	return total
+}
+
+export type MaskinPlan = 'trial' | 'starter' | 'pro'
+
+export interface PlanCapContext {
+	plan: MaskinPlan
+	used: number
+	cap: number
+	periodEnd: number | null
+}
+
+/**
+ * Surfaces as HTTP 402 with `{ code: 'PLAN_CAP_EXCEEDED', plan, used, cap,
+ * period_end }`. The frontend (Task dcfe3afe) reads `period_end` to render a
+ * reset ETA and a typed upgrade CTA.
+ */
+export class PlanCapExceededError extends Error {
+	readonly plan: MaskinPlan
+	readonly used: number
+	readonly cap: number
+	readonly periodEnd: number | null
+
+	constructor(ctx: PlanCapContext) {
+		super(
+			`${ctx.plan} plan cap exceeded: ${ctx.used.toLocaleString()} of ${ctx.cap.toLocaleString()} tokens used this period.`,
+		)
+		this.name = 'PlanCapExceededError'
+		this.plan = ctx.plan
+		this.used = ctx.used
+		this.cap = ctx.cap
+		this.periodEnd = ctx.periodEnd
+	}
+}
+
+function readTrialDefaultCap(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = Number(env.MASKIN_TRIAL_HARD_CAP_TOKENS)
+	return Number.isFinite(raw) && raw > 0 ? raw : TRIAL_DEFAULT_CAP_TOKENS
+}
+
+/**
+ * Returns the configured cap for a maskin_plan workspace, or `null` when no cap
+ * applies (paid plan whose Stripe webhook hasn't written `hard_cap_tokens` yet
+ * — we fail open until Task 5 lands).
+ */
+function effectivePlanCap(plan: MaskinPlan, hardCap: number | undefined): number | null {
+	if (typeof hardCap === 'number' && hardCap >= 0) return hardCap
+	if (plan === 'trial') return readTrialDefaultCap()
+	return null
+}
+
+function effectivePeriodEnd(
+	periodStartMs: number | undefined,
+	periodEndMs: number | undefined,
+): number | null {
+	if (typeof periodEndMs === 'number') return periodEndMs
+	if (typeof periodStartMs === 'number') return periodStartMs + DEFAULT_PERIOD_LENGTH_MS
+	return null
+}
+
+/**
+ * Pre-flight check on the maskin_plan route. Called from `createSession` so the
+ * HTTP caller gets a 402 *before* a session row is created (the v1 contract
+ * with the over-cap banner). Also invoked at route-resolution time as
+ * defense-in-depth against background calls that skipped the pre-check.
+ *
+ * No-op when the workspace is not on a maskin-plan-routed plan or when no cap
+ * applies (e.g., paid plan pre-Stripe). Throws `PlanCapExceededError` otherwise.
+ */
+export async function checkPlanCap(params: {
+	db: Database
+	workspaceId: string
+	wsSettings: WorkspaceSettings
+}): Promise<void> {
+	const billing = params.wsSettings.billing
+	if (!billing || !MASKIN_PLAN_ROUTED_PLANS.has(billing.plan)) return
+
+	const plan = billing.plan as MaskinPlan
+	const cap = effectivePlanCap(plan, billing.hard_cap_tokens)
+	if (cap === null) return
+
+	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, billing.period_start)
+	if (used < cap) return
+
+	throw new PlanCapExceededError({
+		plan,
+		used,
+		cap,
+		periodEnd: effectivePeriodEnd(billing.period_start, billing.period_end),
+	})
+}
+
 export class FallbackQuotaExceededError extends Error {
 	constructor(
 		readonly used: number,
@@ -148,7 +281,7 @@ function buildMaskinPlanEnv(
 	billing: WorkspaceSettings['billing'],
 	fallback: FallbackConfig,
 ): Record<string, string> | null {
-	if (!billing || !MASKIN_PLAN_PAID_PLANS.has(billing.plan)) return null
+	if (!billing || !MASKIN_PLAN_ROUTED_PLANS.has(billing.plan)) return null
 	if (!fallback.apiKey) return null
 	return {
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
@@ -201,12 +334,15 @@ export async function resolveLlmRoute(params: {
 	// Read once and share with the system-fallback branch below.
 	const fallback = readFallbackConfig()
 
-	// 2. Maskin paid plan — starter/pro workspaces are routed through Maskin's
-	//    funded OR account; the route tag is what makes per-period usage
-	//    queryable downstream (hard-cap enforcement and the credits banner
-	//    both read `sessions.config.llm_route = 'maskin_plan'`).
+	// 2. Maskin plan (starter/pro/trial) — routed through Maskin's funded OR
+	//    account; the route tag is what makes per-period usage queryable
+	//    downstream (hard-cap enforcement and the credits banner both read
+	//    `sessions.config.llm_route = 'maskin_plan'`). The cap re-check here is
+	//    defense-in-depth — the pre-flight in `createSession` is what surfaces
+	//    402 to the user; this guards background callers that skipped it.
 	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
 	if (maskinPlanEnv) {
+		await checkPlanCap({ db, workspaceId, wsSettings })
 		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
 	}
 
