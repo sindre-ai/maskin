@@ -23,12 +23,14 @@ A living registry of bugs that have been fixed before and should be checked for 
 - **Fix pattern**: Always check `Number.isFinite()` after parsing and fall back to a sensible default. Also validate range (e.g., no negative values for pagination `limit` or `offset`). See `.claude/rules/input-validation.md` for the safe parsing pattern.
 - **History**: `NaN` propagation to SQL query in `GET /sessions` route, fixed in PR #235.
 
-## `text-accent` Used as a Text Color (Invisible in Light Mode)
+## Inline Action Buttons Need a CTA Affordance, Not Just Text Color
 
-- **What**: `--accent` is a near-white background token in light mode — using `text-accent` on a white surface makes text nearly invisible. `accent-hover` is not defined, so `hover:text-accent-hover` silently does nothing.
-- **When to check**: Any time you add a styled text button or inline action element.
-- **Fix pattern**: Use `text-muted-foreground hover:text-foreground` for inline action buttons. Only use `accent` as a background (paired with `text-accent-foreground`).
-- **History**: Introduced on Restart/Retry buttons in PR #503, fixed on `bet/session-restart`.
+- **What**: An action button styled as plain colored text (no border, no background, no underline, no icon) reads as a metadata label when it sits next to other muted-foreground chips (status badges, durations, timestamps). Two failure modes hit this surface so far:
+  1. `text-accent` — invisible in light mode because `--accent` is a near-white background token, and `hover:text-accent-hover` silently does nothing (no `accent-hover` token defined).
+  2. `text-muted-foreground hover:text-foreground` — visible in both themes but indistinguishable from the adjacent muted metadata, so it reads as a label rather than an action.
+- **When to check**: Any time you add an action element inline with metadata (status badges, durations, timestamps) — especially inside a `flex-wrap` row of text-only chips.
+- **Fix pattern**: Use the shadcn `Button` primitive from `@/components/ui/button` with a stock variant. `variant="outline"` is the default fit for an inline action — it ships with border + padding + hover state that work in both themes by construction. Don't hand-roll a `bg-accent` chip or override the variant's height/padding. If a stock variant genuinely doesn't fit, file an insight rather than inventing one inline.
+- **History**: Introduced on Restart/Retry buttons in PR #503 (`text-accent`), the first fix on `bet/session-restart` (`text-muted-foreground`) made it visible but it still read as a label, then fixed for real by swapping the raw `<button>` for the `Button` primitive with `variant="outline" size="sm"` on `session-detail-panel.tsx`.
 
 ## Adding New Entries
 
