@@ -950,7 +950,12 @@ export function createMcpServer(config: McpConfig) {
 	// pass-through so giving up the wrapper's signature is safe.
 	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
 	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
-		const defHasRichRender = Boolean(definition?._meta?.ui)
+		// `has_rich_render` is the bet's rich-render-rate numerator — it counts
+		// tool calls whose response loads a UI resource. Visibility-only tools
+		// (e.g. `record_widget_event`) carry `_meta.ui` for the channel-attribute
+		// gate but render nothing, so the rich-render signal must key on
+		// `resourceUri` specifically, not the presence of any `_meta.ui`.
+		const defHasRichRender = Boolean(definition?._meta?.ui?.resourceUri)
 		const mutationKind = MUTATION_TOOL_KINDS[name]
 
 		const wrappedHandler = async (args: unknown, extra: unknown) => {
@@ -968,9 +973,9 @@ export function createMcpServer(config: McpConfig) {
 				throw err
 			}
 
-			const responseMeta = (response as { _meta?: { ui?: unknown } } | undefined)?._meta
-			const responseHasRichRender =
-				defHasRichRender || Boolean(responseMeta && 'ui' in responseMeta)
+			const responseMeta = (response as { _meta?: { ui?: { resourceUri?: unknown } } } | undefined)
+				?._meta
+			const responseHasRichRender = defHasRichRender || Boolean(responseMeta?.ui?.resourceUri)
 
 			recordToolCall(telemetrySink, telemetryTarget, {
 				tool_name: name,
@@ -3852,13 +3857,19 @@ export function createMcpServer(config: McpConfig) {
 	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
 	// the 48h rolling render-error kill criterion. Intentionally NOT in
 	// MUTATION_TOOL_KINDS — it's an instrumentation channel, not a write.
+	//
+	// `_meta.ui.visibility: ["app"]` restricts this to widget callers: a
+	// compliant MCP Apps host omits it from the model's tool list. Without
+	// this gate any authenticated agent could inject `click_through` or
+	// `render_error` events and pollute the bet's success metric / falsely
+	// trip the 48h render-error kill-switch.
 	registerAppTool(
 		server,
 		'record_widget_event',
 		{
 			description: tools.record_widget_event.description,
 			inputSchema: tools.record_widget_event.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { visibility: ['app'] } },
 		},
 		async (args) => {
 			recordWidgetEvent(telemetrySink, telemetryTarget, {

@@ -21,7 +21,7 @@ const wsId = '00000000-0000-0000-0000-0000000000aa'
 describe('MCP telemetry wrapper', () => {
 	let recorded: TelemetryEvent[]
 	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
-	let definitions: Map<string, { _meta?: { ui?: unknown } }>
+	let definitions: Map<string, { _meta?: { ui?: { resourceUri?: string; visibility?: string[] } } }>
 
 	beforeEach(async () => {
 		vi.clearAllMocks()
@@ -33,7 +33,10 @@ describe('MCP telemetry wrapper', () => {
 		const { registerAppTool } = await import('@modelcontextprotocol/ext-apps/server')
 		vi.mocked(registerAppTool).mockImplementation((_server, name, def, handler) => {
 			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
-			definitions.set(name as string, def as { _meta?: { ui?: unknown } })
+			definitions.set(
+				name as string,
+				def as { _meta?: { ui?: { resourceUri?: string; visibility?: string[] } } },
+			)
 		})
 
 		// Original tool handlers call fetch via apiCall. Stub a generic success
@@ -80,13 +83,36 @@ describe('MCP telemetry wrapper', () => {
 		expect(typeof toolCalls[0].session_id).toBe('string')
 	})
 
-	it('reports has_rich_render=true when the tool definition declares _meta.ui', () => {
-		// All built-in tools register with _meta.ui; sample a few to assert the
-		// signal we read at registration time matches what cards see.
+	it('reports has_rich_render=true when the tool definition declares a UI resourceUri', () => {
+		// All UI-rendering tools register with _meta.ui.resourceUri; sample a
+		// few to assert the registration signal still flags them as rich.
 		for (const name of ['create_objects', 'update_objects', 'delete_object', 'list_objects']) {
 			const def = definitions.get(name)
-			expect(def?._meta?.ui).toBeTruthy()
+			expect(def?._meta?.ui?.resourceUri).toBeTruthy()
 		}
+	})
+
+	it('does not flag visibility-only telemetry tools as rich-render', async () => {
+		// `record_widget_event` carries `_meta.ui.visibility: ["app"]` to gate
+		// it to widget callers, but it doesn't load a UI resource — its
+		// tool_call telemetry must not inflate the rich-render rate.
+		const def = definitions.get('record_widget_event')
+		expect(def?._meta?.ui?.visibility).toEqual(['app'])
+		expect(def?._meta?.ui?.resourceUri).toBeUndefined()
+
+		const handler = getHandler('record_widget_event')
+		await handler({
+			widget_name: 'hero-card',
+			event: 'click_through',
+			tool_name: 'get_objects',
+			card_kind: 'single',
+			object_type: 'bet',
+			object_id: 'bet-1',
+		})
+
+		const toolCalls = recorded.filter((r) => r.event_type === 'tool_call')
+		const widgetCall = toolCalls.find((c) => c.tool_name === 'record_widget_event')
+		expect(widgetCall?.has_rich_render).toBe(false)
 	})
 
 	it('emits a mutation telemetry event after a successful update_objects call', async () => {

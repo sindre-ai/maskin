@@ -2007,5 +2007,14 @@ describe('tool handlers', () => {
 				widget_name: 'hero-card',
 			})
 		})
+
+		it('registers with visibility: ["app"] so the host hides it from the model', () => {
+			vi.mocked(registerAppTool).mockReset()
+			createMcpServer(config)
+			const call = vi.mocked(registerAppTool).mock.calls.find((c) => c[1] === 'record_widget_event')
+			expect(call).toBeDefined()
+			const def = call?.[2] as { _meta?: { ui?: { visibility?: string[] } } }
+			expect(def._meta?.ui?.visibility).toEqual(['app'])
+		})
 	})
 })
