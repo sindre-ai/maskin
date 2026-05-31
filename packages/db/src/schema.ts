@@ -418,7 +418,6 @@ export const analyticsEvents = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		index('analytics_events_ws_name_created_at_idx').on(t.workspaceId, t.name, t.createdAt),
 		index('analytics_events_ws_actor_name_created_at_idx').on(
 			t.workspaceId,
 			t.actorId,
