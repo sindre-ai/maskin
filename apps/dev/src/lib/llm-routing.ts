@@ -13,6 +13,7 @@ export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
 export const LLM_ROUTE_API_KEY = 'workspace_api_key'
 export const LLM_ROUTE_AGENT = 'agent_api_key'
+export const LLM_ROUTE_MASKIN_PLAN = 'maskin_plan'
 
 export type LlmRoute =
 	| typeof LLM_ROUTE_SYSTEM_FALLBACK
@@ -20,6 +21,10 @@ export type LlmRoute =
 	| typeof LLM_ROUTE_OAUTH
 	| typeof LLM_ROUTE_API_KEY
 	| typeof LLM_ROUTE_AGENT
+	| typeof LLM_ROUTE_MASKIN_PLAN
+
+/** Workspaces on these plans are routed through Maskin's funded OR account. */
+const MASKIN_PLAN_PAID_PLANS = new Set(['starter', 'pro'])
 
 export interface LlmRoutingResult {
 	route: LlmRoute
@@ -133,15 +138,39 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 }
 
 /**
+ * Builds the env vars for the Maskin-funded OpenRouter route — same shape as
+ * the system fallback (we reuse the operator's MASKIN_FALLBACK_* config so a
+ * single OR account underwrites both the trial bucket and paid plans). Returns
+ * null when the workspace is not on a paid plan or the operator hasn't
+ * configured the OR key.
+ */
+function buildMaskinPlanEnv(
+	billing: WorkspaceSettings['billing'],
+	fallback: FallbackConfig,
+): Record<string, string> | null {
+	if (!billing || !MASKIN_PLAN_PAID_PLANS.has(billing.plan)) return null
+	if (!fallback.apiKey) return null
+	return {
+		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
+		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
+		ANTHROPIC_API_KEY: '',
+		ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4-flash',
+		ANTHROPIC_SMALL_FAST_MODEL:
+			fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
+	}
+}
+
+/**
  * Resolves which LLM the session should use, in priority order:
  *
  *   1. Agent-level api_key (caller-injected override)
- *   2. Workspace custom_llm (BYO endpoint — OpenRouter, Ollama, vLLM, …)
- *   3. Workspace Claude OAuth (Pro/Max/Teams subscription)
- *   4. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
- *   5. System fallback (MASKIN_FALLBACK_OPENROUTER_KEY) with daily quota
+ *   2. Maskin paid plan (`settings.billing.plan ∈ {starter, pro}`)
+ *   3. Workspace custom_llm (BYO endpoint — OpenRouter, Ollama, vLLM, …)
+ *   4. Workspace Claude OAuth (Pro/Max/Teams subscription)
+ *   5. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
+ *   6. System fallback (MASKIN_FALLBACK_OPENROUTER_KEY) with daily quota
  *
- * Throws FallbackQuotaExceededError if route #5 is selected and the actor has
+ * Throws FallbackQuotaExceededError if route #6 is selected and the actor has
  * already burned through their 24h budget.
  *
  * Returns null if the agent uses a non-anthropic provider (e.g. OpenAI native);
@@ -169,13 +198,25 @@ export async function resolveLlmRoute(params: {
 		return null
 	}
 
-	// 2. Workspace custom_llm
+	// Read once and share with the system-fallback branch below.
+	const fallback = readFallbackConfig()
+
+	// 2. Maskin paid plan — starter/pro workspaces are routed through Maskin's
+	//    funded OR account; the route tag is what makes per-period usage
+	//    queryable downstream (hard-cap enforcement and the credits banner
+	//    both read `sessions.config.llm_route = 'maskin_plan'`).
+	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
+	if (maskinPlanEnv) {
+		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
+	}
+
+	// 3. Workspace custom_llm
 	const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
 	if (customEnv) {
 		return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
 	}
 
-	// 3. Claude OAuth subscription
+	// 4. Claude OAuth subscription
 	try {
 		const oauthResult = await getValidOAuthToken(db, workspaceId)
 		if (oauthResult) {
@@ -197,7 +238,7 @@ export async function resolveLlmRoute(params: {
 		// is logged by the caller for parity with the previous behavior.
 	}
 
-	// 4. Workspace anthropic api key
+	// 5. Workspace anthropic api key
 	const wsAnthropic = wsSettings.llm_keys?.anthropic
 	if (wsAnthropic) {
 		return {
@@ -206,8 +247,7 @@ export async function resolveLlmRoute(params: {
 		}
 	}
 
-	// 5. System fallback
-	const fallback = readFallbackConfig()
+	// 6. System fallback (re-uses the `fallback` config already read above)
 	if (!fallback.apiKey) return null
 	const used = await getActorFallbackTokenUsage24h(db, actorId)
 	if (used >= fallback.dailyTokenLimit) {

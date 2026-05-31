@@ -15,6 +15,7 @@ import {
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
+	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LLM_ROUTE_SYSTEM_FALLBACK,
 	getActorFallbackTokenUsage24h,
@@ -285,6 +286,116 @@ describe('resolveLlmRoute priority order', () => {
 				agent: {},
 			}),
 		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
+	})
+
+	describe('maskin_plan route', () => {
+		beforeEach(() => {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+			process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
+			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
+		})
+
+		it.each(['starter', 'pro'] as const)(
+			'%s plan routes through Maskin OR + Deepseek v4 Flash',
+			async (plan) => {
+				getValidOAuthTokenMock.mockResolvedValue(null)
+				const settings = emptySettings()
+				settings.billing = { plan }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					wsSettings: settings,
+					agent: {},
+				})
+				expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
+				expect(result?.envVars).toMatchObject({
+					ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+					ANTHROPIC_AUTH_TOKEN: 'sk-or-maskin',
+					ANTHROPIC_API_KEY: '',
+					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
+					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
+				})
+			},
+		)
+
+		it('paid plan wins over custom_llm, OAuth, and workspace api_key', async () => {
+			getValidOAuthTokenMock.mockResolvedValue({
+				tokens: {
+					accessToken: 'oauth-access',
+					refreshToken: 'oauth-refresh',
+					expiresAt: Date.now() + 60_000,
+				},
+			})
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			settings.custom_llm = {
+				enabled: true,
+				base_url: 'https://example.com',
+				api_key: 'sk-cust',
+				model: 'mod',
+			}
+			settings.llm_keys = { anthropic: 'sk-ant-x' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
+			expect(result?.envVars.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-maskin')
+		})
+
+		it('agent anthropic api_key still wins over paid plan', async () => {
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				wsSettings: settings,
+				agent: { provider: 'anthropic', apiKey: 'sk-agent' },
+			})
+			expect(result?.route).toBe(LLM_ROUTE_AGENT)
+		})
+
+		it.each(['trial', 'byollm'] as const)(
+			'%s plan does NOT route through maskin_plan',
+			async (plan) => {
+				getValidOAuthTokenMock.mockResolvedValue(null)
+				const settings = emptySettings()
+				settings.billing = { plan }
+				settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					wsSettings: settings,
+					agent: {},
+				})
+				expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+				expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
+			},
+		)
+
+		it('falls through when paid plan is set but operator OR key is missing', async () => {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = ''
+			getValidOAuthTokenMock.mockResolvedValue(null)
+			const settings = emptySettings()
+			settings.billing = { plan: 'starter' }
+			settings.llm_keys = { anthropic: 'sk-ant-recover' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		})
+
+		it('workspace with no billing block behaves like before this change', async () => {
+			getValidOAuthTokenMock.mockResolvedValue(null)
+			const settings = emptySettings()
+			settings.llm_keys = { anthropic: 'sk-ant-untouched' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		})
 	})
 
 	it('does NOT consume the fallback when usage is exactly at the limit', async () => {

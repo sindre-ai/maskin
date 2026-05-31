@@ -65,6 +65,24 @@ export const workspaceSettingsSchema = z.object({
 			small_fast_model: z.string().nullable().optional(),
 		})
 		.optional(),
+	// Maskin-funded LLM subscription. When `plan` is `starter` or `pro` the
+	// session routes through Maskin's OpenRouter account (Deepseek v4 Flash),
+	// and usage is attributed to the current billing period via
+	// `sessions.config.llm_route = 'maskin_plan'`. Mutually exclusive with
+	// `custom_llm` / Claude OAuth / workspace `llm_keys.anthropic` at the
+	// write layer; the router enforces the precedence at read time.
+	// `period_start` and `hard_cap_tokens` are written by the Stripe webhook;
+	// `status` mirrors the Stripe subscription status string.
+	billing: z
+		.object({
+			plan: z.enum(['trial', 'starter', 'pro', 'byollm']),
+			stripe_customer_id: z.string().nullable().optional(),
+			stripe_subscription_id: z.string().nullable().optional(),
+			period_start: z.number().int().nonnegative().optional(),
+			hard_cap_tokens: z.number().int().nonnegative().optional(),
+			status: z.string().optional(),
+		})
+		.optional(),
 })
 
 export const createWorkspaceSchema = z.object({
