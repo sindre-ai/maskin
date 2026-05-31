@@ -5,6 +5,7 @@ import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { createApiError } from '../lib/errors'
+import { settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
 	getStripeClient,
@@ -289,7 +290,15 @@ async function applyEvent(
 		}
 	}
 
-	const merged = { ...(workspace.settings ?? {}), billing: next }
+	// BYOLLM ↔ paid plan mutex: when this event leaves the workspace in an
+	// active paid state, drop every BYOLLM source (custom_llm, claude_oauth,
+	// llm_keys.anthropic) in the same update. The .deleted/payment_failed
+	// branches leave BYO slots alone — those are already non-active plans
+	// and the workspace is free to fall back to BYO without losing it.
+	const baseSettings = (workspace.settings ?? {}) as Record<string, unknown>
+	const carrierSettings =
+		next.status === 'active' ? settingsAfterPaidPlanActivation(baseSettings) : baseSettings
+	const merged = { ...carrierSettings, billing: next }
 	await db
 		.update(workspaces)
 		.set({ settings: merged, updatedAt: new Date() })
