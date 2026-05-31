@@ -1129,7 +1129,7 @@ export const tools = {
 	// ─── Widget telemetry ─────────────────────────────────────
 	record_widget_event: {
 		description:
-			'INTERNAL — called by rendered MCP widgets (Hero Card) to report click-through, render success, and render failure events. Powers the bet success metric (click-through rate on Open in Maskin) and the 48h rolling render-error kill criterion. Do not call from an agent directly.',
+			'Widget-only telemetry channel — invoked by rendered MCP widgets (Hero Card) via the host AppBridge to report click-through, render success, and render failure events. Restricted to widget callers via `_meta.ui.visibility: ["app"]`, so a compliant host hides it from the model. Powers the bet success metric (click-through rate on Open in Maskin) and the 48h rolling render-error kill criterion.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			widget_name: z.string().describe('Widget bundle name, e.g. "hero-card".'),
