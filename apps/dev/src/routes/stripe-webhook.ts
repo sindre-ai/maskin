@@ -265,6 +265,7 @@ async function applyEvent(
 			const sub = event.data.object as Stripe.Subscription
 			next = {
 				...next,
+				// Paid sub ended → workspace falls back to BYOLLM (the no-paid-plan tier).
 				plan: 'byollm',
 				stripe_subscription_id: null,
 				status: 'canceled',
