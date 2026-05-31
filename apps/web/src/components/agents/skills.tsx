@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -43,12 +44,16 @@ interface SkillsProps {
 
 export function Skills({ actorId }: SkillsProps) {
 	const { workspaceId } = useWorkspace()
-	const { data: skills, isLoading } = useSkills(actorId, workspaceId)
+	const { data: skills, isLoading: isLoadingPersonal } = useSkills(actorId, workspaceId)
+	const { data: workspaceSkills, isLoading: isLoadingWorkspace } = useWorkspaceSkills(workspaceId)
+	const { data: attachments, isLoading: isLoadingAttachments } = useAgentSkillAttachments(actorId)
 	const deleteSkill = useDeleteSkill(actorId, workspaceId)
+	const detachSkill = useDetachSkill(actorId)
 
 	const [addingSkill, setAddingSkill] = useState(false)
 	const [editingSkill, setEditingSkill] = useState<string | null>(null)
 	const [importOpen, setImportOpen] = useState(false)
+	const [attachOpen, setAttachOpen] = useState(false)
 
 	const handleDelete = useCallback(
 		(name: string) => {
@@ -57,19 +62,30 @@ export function Skills({ actorId }: SkillsProps) {
 		[deleteSkill],
 	)
 
+	const isLoading = isLoadingPersonal || isLoadingAttachments
+
 	if (isLoading) {
 		return <p className="text-xs text-muted-foreground">Loading skills...</p>
 	}
 
-	const skillList = skills ?? []
+	const personalSkills = skills ?? []
+	const attachedSkills = attachments ?? []
+	const availableWorkspaceSkills = workspaceSkills ?? []
+	const hasAnySkills = personalSkills.length > 0 || attachedSkills.length > 0
+	const hasWorkspaceSkillsLibrary = availableWorkspaceSkills.length > 0
 
 	return (
 		<div>
-			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} />
-
-			{skillList.length > 0 ? (
-				<div className="space-y-2 mb-3 mt-4">
-					{skillList.map((skill) =>
+			{hasAnySkills ? (
+				<div className="space-y-2 mb-3">
+					{attachedSkills.map((skill) => (
+						<AttachedSkillRow
+							key={`workspace-${skill.id}`}
+							skill={skill}
+							onRemove={() => detachSkill.mutate(skill.id)}
+						/>
+					))}
+					{personalSkills.map((skill) =>
 						editingSkill === skill.name ? (
 							<SkillForm
 								key={skill.name}
@@ -88,8 +104,22 @@ export function Skills({ actorId }: SkillsProps) {
 					)}
 				</div>
 			) : (
-				<p className="text-xs text-muted-foreground mb-3 mt-4">
+				<p className="text-xs text-muted-foreground mb-3">
 					No skills configured. Add skills to extend what this agent can do.
+					{!hasWorkspaceSkillsLibrary && !isLoadingWorkspace && (
+						<>
+							{' '}
+							Create reusable skills in{' '}
+							<Link
+								to="/$workspaceId/settings/skills"
+								params={{ workspaceId }}
+								className="text-foreground underline underline-offset-2 hover:opacity-80"
+							>
+								Settings → Skills
+							</Link>
+							.
+						</>
+					)}
 				</p>
 			)}
 
@@ -105,6 +135,15 @@ export function Skills({ actorId }: SkillsProps) {
 						<FileText className="h-3.5 w-3.5 mr-1" />
 						Import SKILL.md
 					</Button>
+					{hasWorkspaceSkillsLibrary && (
+						<AttachWorkspaceSkillButton
+							actorId={actorId}
+							open={attachOpen}
+							onOpenChange={setAttachOpen}
+							workspaceSkills={availableWorkspaceSkills}
+							attachedSkills={attachedSkills}
+						/>
+					)}
 				</div>
 			)}
 
@@ -113,123 +152,82 @@ export function Skills({ actorId }: SkillsProps) {
 	)
 }
 
-function WorkspaceSkillsSection({
+function AttachWorkspaceSkillButton({
 	actorId,
-	workspaceId,
+	open,
+	onOpenChange,
+	workspaceSkills,
+	attachedSkills,
 }: {
 	actorId: string
-	workspaceId: string
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	workspaceSkills: WorkspaceSkillListItem[]
+	attachedSkills: AttachedWorkspaceSkill[]
 }) {
-	const { data: workspaceSkills, isLoading: isLoadingWorkspace } = useWorkspaceSkills(workspaceId)
-	const { data: attachments, isLoading: isLoadingAttachments } = useAgentSkillAttachments(actorId)
 	const attachSkill = useAttachSkill(actorId)
 	const detachSkill = useDetachSkill(actorId)
-	const [open, setOpen] = useState(false)
-
-	const isLoading = isLoadingWorkspace || isLoadingAttachments
-	const available = workspaceSkills ?? []
-	const attached = attachments ?? []
-	const attachedIds = new Set(attached.map((s) => s.id))
+	const attachedIds = new Set(attachedSkills.map((s) => s.id))
 
 	return (
-		<div>
-			<h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-				Workspace Skills
-			</h3>
-
-			{isLoading ? (
-				<p className="text-xs text-muted-foreground">Loading workspace skills...</p>
-			) : available.length === 0 ? (
-				<p className="text-xs text-muted-foreground">
-					No workspace skills attached. Create workspace skills in{' '}
-					<Link
-						to="/$workspaceId/settings/skills"
-						params={{ workspaceId }}
-						className="text-primary underline underline-offset-2 hover:opacity-80"
-					>
-						Settings → Skills
-					</Link>
-					.
-				</p>
-			) : (
-				<>
-					<ResponsivePopover open={open} onOpenChange={setOpen}>
-						<ResponsivePopoverTrigger asChild>
-							<Button
-								size="sm"
-								variant="outline"
-								aria-label="Attach workspace skill"
-								aria-expanded={open}
-							>
-								<Plus className="h-3.5 w-3.5 mr-1" />
-								Attach workspace skill
-							</Button>
-						</ResponsivePopoverTrigger>
-						<ResponsivePopoverContent
-							className="md:w-72 md:p-0"
-							align="start"
-							accessibleTitle="Attach workspace skill"
-						>
-							<Command>
-								<Command.Input
-									placeholder="Search workspace skills..."
-									className="w-full border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none"
-								/>
-								<Command.List className="max-h-60 overflow-auto p-1">
-									<Command.Empty className="py-4 text-center text-xs text-muted-foreground">
-										No workspace skills match.
-									</Command.Empty>
-									{available.map((skill) => {
-										const isAttached = attachedIds.has(skill.id)
-										return (
-											<Command.Item
-												key={skill.id}
-												value={`${skill.name} ${skill.description ?? ''}`}
-												onSelect={() => {
-													if (isAttached) {
-														detachSkill.mutate(skill.id)
-													} else {
-														attachSkill.mutate(skill.id)
-													}
-													setOpen(false)
-												}}
-												className="flex items-center gap-2 rounded px-2 py-1.5 text-sm cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-											>
-												<Check
-													className={`h-3.5 w-3.5 shrink-0 ${
-														isAttached ? 'opacity-100' : 'opacity-0'
-													}`}
-												/>
-												<div className="flex-1 min-w-0">
-													<p className="text-sm font-medium truncate">{skill.name}</p>
-													{skill.description && (
-														<p className="text-xs text-muted-foreground truncate">
-															{skill.description}
-														</p>
-													)}
-												</div>
-											</Command.Item>
-										)
-									})}
-								</Command.List>
-							</Command>
-						</ResponsivePopoverContent>
-					</ResponsivePopover>
-
-					{attached.length > 0 && (
-						<div className="mt-2 space-y-2">
-							{attached.map((skill) => (
-								<AttachedSkillRow
+		<ResponsivePopover open={open} onOpenChange={onOpenChange}>
+			<ResponsivePopoverTrigger asChild>
+				<Button
+					size="sm"
+					variant="outline"
+					aria-label="Attach workspace skill"
+					aria-expanded={open}
+				>
+					<Plus className="h-3.5 w-3.5 mr-1" />
+					Attach workspace skill
+				</Button>
+			</ResponsivePopoverTrigger>
+			<ResponsivePopoverContent
+				className="md:w-72 md:p-0"
+				align="start"
+				accessibleTitle="Attach workspace skill"
+			>
+				<Command>
+					<Command.Input
+						placeholder="Search workspace skills..."
+						className="w-full border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none"
+					/>
+					<Command.List className="max-h-60 overflow-auto p-1">
+						<Command.Empty className="py-4 text-center text-xs text-muted-foreground">
+							No workspace skills match.
+						</Command.Empty>
+						{workspaceSkills.map((skill) => {
+							const isAttached = attachedIds.has(skill.id)
+							return (
+								<Command.Item
 									key={skill.id}
-									skill={skill}
-									onRemove={() => detachSkill.mutate(skill.id)}
-								/>
-							))}
-						</div>
-					)}
-				</>
-			)}
-		</div>
+									value={`${skill.name} ${skill.description ?? ''}`}
+									onSelect={() => {
+										if (isAttached) {
+											detachSkill.mutate(skill.id)
+										} else {
+											attachSkill.mutate(skill.id)
+										}
+										onOpenChange(false)
+									}}
+									className="flex items-center gap-2 rounded px-2 py-1.5 text-sm cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+								>
+									<Check
+										className={`h-3.5 w-3.5 shrink-0 ${isAttached ? 'opacity-100' : 'opacity-0'}`}
+									/>
+									<div className="flex-1 min-w-0">
+										<p className="text-sm font-medium truncate">{skill.name}</p>
+										{skill.description && (
+											<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
+										)}
+									</div>
+								</Command.Item>
+							)
+						})}
+					</Command.List>
+				</Command>
+			</ResponsivePopoverContent>
+		</ResponsivePopover>
 	)
 }
 
@@ -244,7 +242,12 @@ function AttachedSkillRow({
 		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
 			<BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground">{skill.name}</p>
+				<div className="flex items-center gap-2">
+					<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+					<Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium uppercase">
+						Workspace
+					</Badge>
+				</div>
 				{skill.description && (
 					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
 				)}

@@ -81,19 +81,19 @@ describe('Skills — Workspace Skills section', () => {
 		mockUseAgentSkillAttachments.mockReturnValue({ data: [], isLoading: false })
 	})
 
-	it('renders empty state with settings link when no workspace skills exist', () => {
+	it('renders empty state pointing to Settings → Skills when no skills exist', () => {
 		render(
 			<TestWrapper>
 				<Skills actorId="agent-1" />
 			</TestWrapper>,
 		)
 
-		expect(screen.getByText(/No workspace skills attached/)).toBeInTheDocument()
+		expect(screen.getByText(/No skills configured/)).toBeInTheDocument()
 		const link = screen.getByRole('link', { name: /Settings → Skills/ })
 		expect(link).toHaveAttribute('href', '/$workspaceId/settings/skills')
 	})
 
-	it('does not show the attach dropdown trigger in empty state', () => {
+	it('does not show the attach dropdown trigger when no workspace skills library exists', () => {
 		render(
 			<TestWrapper>
 				<Skills actorId="agent-1" />
@@ -116,6 +116,28 @@ describe('Skills — Workspace Skills section', () => {
 		)
 
 		expect(screen.getByRole('button', { name: 'Attach workspace skill' })).toBeInTheDocument()
+	})
+
+	it('renders an attached workspace skill in the unified skills list with a Workspace badge', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildWorkspaceSkill({ id: 'skill-abc', name: 'deploy' })],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [buildAttachedSkill({ id: 'skill-abc', name: 'deploy', description: 'Ship it' })],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.queryByText(/No skills configured/)).not.toBeInTheDocument()
+		expect(screen.getByText('deploy')).toBeInTheDocument()
+		expect(screen.getByText('Workspace')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Remove deploy' })).toBeInTheDocument()
 	})
 
 	it('populates dropdown with all workspace skills when opened', async () => {
