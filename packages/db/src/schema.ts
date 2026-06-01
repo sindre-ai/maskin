@@ -155,7 +155,9 @@ export const integrations = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [unique('integrations_ws_provider_uniq').on(t.workspaceId, t.provider)],
+	(t) => [
+		unique('integrations_ws_provider_external_uniq').on(t.workspaceId, t.provider, t.externalId),
+	],
 )
 
 // ── Triggers ────────────────────────────────────────────────────────────────
