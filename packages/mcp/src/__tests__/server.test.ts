@@ -2102,7 +2102,7 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.object?.status).toBe('enabled')
 			expect(result.structuredContent.heroCard.object?.title).toBe('Nightly sweep')
 			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
-				'enabled · 0 0 * * * · next in 1d',
+				'enabled · 0 0 * * * (UTC) · next in 1d',
 			)
 			expect(result.structuredContent.heroCard.object?.owner?.name).toBe('Observer')
 		})

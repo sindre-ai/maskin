@@ -197,7 +197,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the trigger var
     <p
       class="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1"
     >
-      enabled · 0 0 * * * · next in 6h
+      enabled · 0 0 * * * (UTC) · next in 6h
     </p>
     <div
       class="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5"
