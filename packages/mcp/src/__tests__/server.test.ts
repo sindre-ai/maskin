@@ -1882,4 +1882,87 @@ describe('tool handlers', () => {
 			})
 		})
 	})
+
+	describe('get_bet_widget_metrics handler', () => {
+		it('GETs /api/telemetry/mcp/summary and returns only the bet-first window', async () => {
+			const fullSummary = {
+				workspace_id: 'ws-default-123',
+				window_start: '2026-05-01T00:00:00.000Z',
+				window_end: '2026-05-31T00:00:00.000Z',
+				tool_calls_total: 100,
+				rich_render_pct: 60,
+				widget_bet_first_window: {
+					bet_renders_total: 12,
+					bet_render_errors_total: 0,
+					bet_click_throughs_total: 4,
+					ctr_first_200: {
+						renders: 12,
+						clicks: 4,
+						pct: 33.33,
+						target_pct: 30,
+						target_met: true,
+					},
+					ctr_first_50_kill: {
+						renders: 12,
+						clicks: 4,
+						pct: 33.33,
+						kill_threshold_pct: 30,
+						kill_triggered: false,
+					},
+					render_error_48h: {
+						renders: 8,
+						errors: 0,
+						pct: 0,
+						kill_threshold_pct: 10,
+						kill_triggered: false,
+					},
+				},
+			}
+			mockFetchSuccess(fullSummary)
+
+			const handler = getHandler('get_bet_widget_metrics')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/telemetry/mcp/summary',
+				expect.objectContaining({
+					method: 'GET',
+					headers: expect.objectContaining({
+						Authorization: 'Bearer ank_testkey123',
+						'X-Workspace-Id': 'ws-default-123',
+					}),
+				}),
+			)
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({
+				workspace_id: fullSummary.workspace_id,
+				window_start: fullSummary.window_start,
+				window_end: fullSummary.window_end,
+				widget_bet_first_window: fullSummary.widget_bet_first_window,
+			})
+			// Confirm the unrelated rich-render aggregate did NOT leak through.
+			expect(parsed.tool_calls_total).toBeUndefined()
+			expect(parsed.rich_render_pct).toBeUndefined()
+		})
+
+		it('uses workspace_id from args over default', async () => {
+			mockFetchSuccess({
+				workspace_id: 'ws-custom',
+				window_start: '2026-05-01T00:00:00.000Z',
+				window_end: '2026-05-31T00:00:00.000Z',
+				widget_bet_first_window: {},
+			})
+
+			const handler = getHandler('get_bet_widget_metrics')
+			await handler({ workspace_id: 'ws-custom' })
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/telemetry/mcp/summary',
+				expect.objectContaining({
+					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+				}),
+			)
+		})
+	})
 })

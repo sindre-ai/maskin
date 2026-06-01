@@ -3608,6 +3608,42 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Bet success metrics (read-only) ─────────────────────
+	// Sindre-callable surface for the MCP widget UX bet's success/kill metrics.
+	// Wraps GET /api/telemetry/mcp/summary and returns only the bet-first widget
+	// window — kept narrow so agents pull evidence without reading unrelated
+	// rich-render / mutation aggregates they have no context for.
+	registerAppTool(
+		server,
+		'get_bet_widget_metrics',
+		{
+			description: tools.get_bet_widget_metrics.description,
+			inputSchema: tools.get_bet_widget_metrics.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			const summary = (await apiCall(config, 'GET', '/api/telemetry/mcp/summary', undefined, {
+				workspaceId,
+			})) as {
+				workspace_id: string
+				window_start: string
+				window_end: string
+				widget_bet_first_window: unknown
+			}
+			const result = {
+				workspace_id: summary.workspace_id,
+				window_start: summary.window_start,
+				window_end: summary.window_end,
+				widget_bet_first_window: summary.widget_bet_first_window,
+			}
+			return {
+				_meta: meta('get_bet_widget_metrics', config, workspaceId),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Get Started (Onboarding) ────────────────────────────
 	registerAppTool(
 		server,
