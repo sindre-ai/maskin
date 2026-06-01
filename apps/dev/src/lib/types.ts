@@ -7,5 +7,6 @@ export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>
 /** Typed integration config stored in the `config` jsonb column. */
 export interface IntegrationConfig {
 	system_actor_id?: string
+	owner_login?: string
 	[key: string]: unknown
 }
