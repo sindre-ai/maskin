@@ -47,6 +47,9 @@ providers.set('slack', {
 	webhookPreHandler: slackWebhookPreHandler,
 	extractDeliveryId: slackExtractDeliveryId,
 	webhookFanOut: slackWebhookFanOut,
+	// File downloads can blow past Slack's 3s ack budget; process them off the
+	// hot path. The delivery claim still happens sync so retries are deduped.
+	asyncProcessing: true,
 })
 
 providers.set('gmail', {

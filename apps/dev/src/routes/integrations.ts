@@ -25,6 +25,7 @@ import {
 } from '../lib/integrations/providers/slack/client'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import type { ResolvedProvider, StoredCredentials } from '../lib/integrations/types'
+import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { logger } from '../lib/logger'
 import {
@@ -798,7 +799,13 @@ webhookApp.post('/:provider', async (c) => {
 	const deliveryId = resolved.extractDeliveryId?.(payload, headers)
 	const storageProvider = c.get('storageProvider')
 
-	type Outcome = { kind: 'inserted'; count: number } | { kind: 'duplicate' } | { kind: 'failed' }
+	type Outcome =
+		| { kind: 'inserted'; count: number }
+		| { kind: 'duplicate' }
+		| { kind: 'failed' }
+		| { kind: 'queued' }
+
+	const asyncProcessing = resolved.asyncProcessing === true
 
 	const perWorkspaceResults: Outcome[] = await Promise.all(
 		eligible.map(async (integration): Promise<Outcome> => {
@@ -811,7 +818,7 @@ webhookApp.post('/:provider', async (c) => {
 			// claim caught it. The schema comment on webhook_deliveries calls this out
 			// directly — the ledger is meant to prevent duplicate downloaded files too,
 			// not just duplicate events.
-			let claimed = false
+			let claimRowId: string | null = null
 			if (deliveryId) {
 				try {
 					const rows = await db
@@ -836,7 +843,7 @@ webhookApp.post('/:provider', async (c) => {
 						})
 						return { kind: 'duplicate' }
 					}
-					claimed = true
+					claimRowId = rows[0]?.id ?? null
 				} catch (err) {
 					// Fail open: a dedup-table outage must not stop us from processing.
 					logger.error(`Failed to claim ${providerName} delivery; processing without dedup`, {
@@ -852,20 +859,12 @@ webhookApp.post('/:provider', async (c) => {
 			// .claude/rules/known-pitfalls.md) would leave the claim committed and
 			// permanently starve provider retries for this workspace.
 			const releaseClaim = async () => {
-				if (!claimed || !deliveryId) return
+				if (!claimRowId) return
 				try {
-					await db
-						.delete(webhookDeliveries)
-						.where(
-							and(
-								eq(webhookDeliveries.provider, providerName),
-								eq(webhookDeliveries.externalId, deliveryId),
-								eq(webhookDeliveries.workspaceId, integration.workspaceId),
-							),
-						)
+					await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
 				} catch (err) {
-					// Best-effort: if this fails, the next retry will be deduplicated
-					// and the workspace loses this event. Surfaced loudly so on-call sees it.
+					// Best-effort: if this fails the reconciler will pick the orphan up
+					// after the stale threshold elapses. Logged loudly so on-call sees it.
 					logger.error(`Failed to release webhook delivery claim for ${providerName}`, {
 						deliveryId,
 						workspaceId: integration.workspaceId,
@@ -874,18 +873,70 @@ webhookApp.post('/:provider', async (c) => {
 				}
 			}
 
-			let toInsert = [normalized]
-			if (resolved.webhookFanOut) {
+			const runFanOutAndInsert = async (): Promise<Outcome> => {
+				let toInsert = [normalized]
+				if (resolved.webhookFanOut) {
+					try {
+						toInsert = await resolved.webhookFanOut({
+							db,
+							storage: storageProvider,
+							integrationId: integration.id,
+							workspaceId: integration.workspaceId,
+							normalized,
+						})
+					} catch (err) {
+						logger.error(`webhookFanOut failed for ${providerName}`, {
+							integrationId: integration.id,
+							workspaceId: integration.workspaceId,
+							error: err instanceof Error ? err.message : String(err),
+						})
+						await releaseClaim()
+						return { kind: 'failed' }
+					}
+				}
+
+				if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
+
+				// Mark the claim processed in the SAME transaction as the events insert,
+				// gated on the claim row still existing and being unprocessed. Without
+				// the gate, a long fan-out (>STALE_THRESHOLD_MS) could race the
+				// reconciler: the reconciler deletes the orphan, the route's UPDATE
+				// matches 0 rows but the txn commits anyway, and an events row lands
+				// without its provenance claim. Throwing on a 0-row UPDATE aborts the
+				// txn so neither side commits — the provider's next retry reprocesses
+				// cleanly.
 				try {
-					toInsert = await resolved.webhookFanOut({
-						db,
-						storage: storageProvider,
-						integrationId: integration.id,
-						workspaceId: integration.workspaceId,
-						normalized,
+					await commitWebhookDelivery(db, {
+						eventRows: toInsert.map((e) => ({
+							workspaceId: integration.workspaceId,
+							actorId: systemActorId,
+							action: e.action,
+							entityType: e.entityType,
+							entityId: integration.id,
+							data: e.data,
+						})),
+						claimRowId,
 					})
+					return { kind: 'inserted', count: toInsert.length }
 				} catch (err) {
-					logger.error(`webhookFanOut failed for ${providerName}`, {
+					if (err instanceof ClaimReleasedError) {
+						// Two cases land here: the reconciler deleted the claim during
+						// fan-out, or another writer already set processed_at on it. Log
+						// neutrally so on-call doesn't mis-attribute a double-processed
+						// delivery to a reconciler race — claimRowId + deliveryId in the
+						// structured fields are enough to tell them apart from logs.
+						logger.warn(
+							`Webhook claim gone or already processed for ${providerName} at commit time; txn aborted`,
+							{
+								integrationId: integration.id,
+								workspaceId: integration.workspaceId,
+								deliveryId,
+								claimRowId: err.claimRowId,
+							},
+						)
+						return { kind: 'failed' }
+					}
+					logger.error(`Event insert failed for ${providerName}`, {
 						integrationId: integration.id,
 						workspaceId: integration.workspaceId,
 						error: err instanceof Error ? err.message : String(err),
@@ -895,29 +946,23 @@ webhookApp.post('/:provider', async (c) => {
 				}
 			}
 
-			if (toInsert.length === 0) return { kind: 'inserted', count: 0 }
-
-			try {
-				await db.insert(events).values(
-					toInsert.map((e) => ({
+			if (asyncProcessing) {
+				// Hand fan-out + event insert off to the event loop so the route can ack
+				// inside Slack's 3s budget regardless of file count or download latency.
+				// The delivery claim above already committed, so a Slack retry that
+				// arrives while this background task is still running is recognised as
+				// a duplicate and skipped.
+				void runFanOutAndInsert().catch((err) => {
+					logger.error(`Async ${providerName} processing crashed`, {
+						integrationId: integration.id,
 						workspaceId: integration.workspaceId,
-						actorId: systemActorId,
-						action: e.action,
-						entityType: e.entityType,
-						entityId: integration.id,
-						data: e.data,
-					})),
-				)
-				return { kind: 'inserted', count: toInsert.length }
-			} catch (err) {
-				logger.error(`Event insert failed for ${providerName}`, {
-					integrationId: integration.id,
-					workspaceId: integration.workspaceId,
-					error: err instanceof Error ? err.message : String(err),
+						error: err instanceof Error ? err.message : String(err),
+					})
 				})
-				await releaseClaim()
-				return { kind: 'failed' }
+				return { kind: 'queued' }
 			}
+
+			return runFanOutAndInsert()
 		}),
 	)
 
@@ -925,11 +970,19 @@ webhookApp.post('/:provider', async (c) => {
 		(sum, r) => sum + (r.kind === 'inserted' ? r.count : 0),
 		0,
 	)
+	const totalQueued = perWorkspaceResults.filter((r) => r.kind === 'queued').length
 	const allDuplicate =
 		perWorkspaceResults.length > 0 && perWorkspaceResults.every((r) => r.kind === 'duplicate')
 
 	if (allDuplicate) {
 		return c.json({ ok: true, skipped: 'duplicate' })
+	}
+
+	if (totalQueued > 0) {
+		logger.info(
+			`Webhook queued: ${totalQueued} delivery(ies) for ${providerName} across ${eligible.length} workspace(s)`,
+		)
+		return c.json({ ok: true, queued: totalQueued, workspaces: eligible.length })
 	}
 
 	if (totalInserted === 0) {

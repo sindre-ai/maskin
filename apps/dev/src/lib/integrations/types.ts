@@ -181,6 +181,14 @@ export interface ResolvedProvider {
 	 */
 	webhookFanOut?: (ctx: WebhookFanOutContext) => Promise<NormalizedEvent[]>
 	/**
+	 * Process fan-out and event insert in the background after the delivery is
+	 * claimed, so the webhook can ack within tight provider budgets (Slack: 3s)
+	 * even when the fan-out does heavy work (file downloads). The delivery claim
+	 * still runs synchronously so a provider retry that arrives before background
+	 * work finishes is deduplicated as a duplicate, not double-processed.
+	 */
+	asyncProcessing?: boolean
+	/**
 	 * Run provider-specific cleanup before the integration is marked as revoked
 	 * (e.g. Gmail's users.stop call so Google stops sending pushes immediately
 	 * instead of waiting up to 7 days for the watch to expire). Implementations
