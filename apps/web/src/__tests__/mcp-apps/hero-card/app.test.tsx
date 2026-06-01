@@ -10,7 +10,7 @@ vi.mock('@/mcp-apps/shared/mcp-app-provider', () => ({
 	useWebAppContext: () => ({ baseUrl: 'https://maskin.test', workspaceId: 'ws-1' }),
 }))
 
-import { HeroCardApp, extractHeroCard } from '@/mcp-apps/hero-card/app'
+import { HeroCardApp, HeroCardRoot, extractHeroCard } from '@/mcp-apps/hero-card/app'
 
 function makeBetToolResult() {
 	return {
@@ -150,6 +150,49 @@ describe('HeroCardApp — bet single render', () => {
 		})
 		render(<HeroCardApp />)
 		expect(screen.getByText('raw payload')).toBeInTheDocument()
+	})
+})
+
+describe('HeroCardRoot — render_error telemetry', () => {
+	beforeEach(() => {
+		__resetSchemaCacheForTests()
+		callTool.mockReset()
+		useToolResultMock.mockReset()
+		callTool.mockImplementation((name) => {
+			if (name === 'get_workspace_schema') return Promise.resolve(makeSchemaResponse())
+			return Promise.resolve({ content: [] })
+		})
+	})
+
+	it('catches a child render throw, fires record_widget_event with event: "render_error", and renders the fallback', () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+		const betToolResult = makeBetToolResult()
+		// HeroCardRoot calls useToolResult once; HeroCardApp (the child) calls it
+		// again. Returning the bet result for the outer call lets the boundary's
+		// onError include the card_kind + object metadata; throwing on the inner
+		// call forces componentDidCatch to fire.
+		useToolResultMock
+			.mockReturnValueOnce(betToolResult)
+			.mockImplementationOnce(() => {
+				throw new Error('boom')
+			})
+
+		render(<HeroCardRoot />)
+
+		expect(screen.getByText(/Card failed to render/)).toBeInTheDocument()
+		expect(callTool).toHaveBeenCalledWith(
+			'record_widget_event',
+			expect.objectContaining({
+				widget_name: 'hero-card',
+				event: 'render_error',
+				tool_name: 'get_objects',
+				card_kind: 'single',
+				object_type: 'bet',
+				object_id: 'bet-9',
+			}),
+		)
+
+		consoleError.mockRestore()
 	})
 })
 

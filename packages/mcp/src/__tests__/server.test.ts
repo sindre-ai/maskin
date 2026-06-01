@@ -1958,6 +1958,78 @@ describe('tool handlers', () => {
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
 		})
 
+		it('builds the insight contextLine from cluster_size when present', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/insight-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'insight-1',
+									type: 'insight',
+									title: 'Recurring stall',
+									status: 'clustered',
+									owner: null,
+									metadata: { cluster_size: 4, evidence_quality: 'evidence_backed' },
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['insight-1'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: { heroCard: { kind: string; object?: { contextLine?: string } } }
+			}
+
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe('clustered · 4 sources')
+			// Insight still falls back to the objects widget — only the bet
+			// predicate widens to hero-card in T3.
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
+		})
+
+		it('uses the default contextLine for unknown object types', async () => {
+			// Use a fresh createdAt so ageLabel collapses to "today" regardless of
+			// wall-clock drift between fixture time and test execution.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/org-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'org-1',
+									type: 'organization',
+									title: 'Acme',
+									status: 'prospect',
+									owner: null,
+									createdAt: new Date().toISOString(),
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['org-1'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: { heroCard: { kind: string; object?: { contextLine?: string } } }
+			}
+
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'organization · prospect · today',
+			)
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
+		})
+
 		it('emits an empty heroCard for list_objects with no rows', async () => {
 			mockFetchSuccess([])
 			const handler = getHandler('list_objects')
