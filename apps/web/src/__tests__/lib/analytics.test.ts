@@ -1,5 +1,7 @@
 import { trackEvent } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
+import { __setInitializedForTesting } from '@/lib/posthog'
+import posthog from 'posthog-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 beforeEach(() => {
@@ -8,6 +10,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+	__setInitializedForTesting(false)
 	vi.restoreAllMocks()
 })
 
@@ -46,5 +49,17 @@ describe('trackEvent', () => {
 		expect(() => trackEvent('objects_control_changed', {})).not.toThrow()
 
 		Storage.prototype.getItem = original
+	})
+
+	it('routes through posthog.capture once posthog is initialised', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		trackEvent('objects_control_changed', { source: 'objects-page' })
+
+		expect(capture).toHaveBeenCalledTimes(1)
+		expect(capture).toHaveBeenCalledWith('objects_control_changed', { source: 'objects-page' })
+		// The console fallback only fires when posthog isn't ready.
+		expect(console.info).not.toHaveBeenCalled()
 	})
 })

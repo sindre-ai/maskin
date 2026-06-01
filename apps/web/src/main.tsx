@@ -5,12 +5,14 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './app.css'
 import { consumeMagicLink } from './lib/magic-link'
+import { initPosthog } from './lib/posthog'
 import { queryClient } from './lib/query'
 import { ThemeProvider } from './lib/theme'
 import { routeTree } from './routeTree.gen'
 
 // Consume any #key=... fragment before the router mounts so the auth guard sees the key.
 consumeMagicLink()
+initPosthog()
 
 const router = createRouter({
 	routeTree,

@@ -8,12 +8,14 @@ import { useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { getStoredActor } from '@/lib/auth'
 import { PageHeaderProvider } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
+import { registerWorkspaceProperties } from '@/lib/posthog'
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
-import { type ReactNode, useCallback, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
 
@@ -70,6 +72,18 @@ function WorkspaceLayout() {
 			return next
 		})
 	}, [])
+
+	// Pin the Synthesizer's join keys on every analytics event from this workspace.
+	useEffect(() => {
+		if (!workspace) return
+		const actor = getStoredActor()
+		if (!actor) return
+		registerWorkspaceProperties({
+			workspace_id: workspaceId,
+			actor_id: actor.id,
+			actor_type: actor.type,
+		})
+	}, [workspace, workspaceId])
 
 	if (!workspace) {
 		return (
