@@ -1927,7 +1927,7 @@ describe('tool handlers', () => {
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 		})
 
-		it('keeps the objects resource for non-bet single results', async () => {
+		it('routes a single task result through the hero-card resource with a task-shaped context line', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/objects/task-9/graph')) {
@@ -1940,6 +1940,85 @@ describe('tool handlers', () => {
 									type: 'task',
 									title: 'Test task',
 									status: 'in_progress',
+									owner: 'actor-2',
+								},
+							}),
+					} as Response
+				}
+				if (urlStr.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'actor-2', name: 'Magnus' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['task-9'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: { kind: string; object?: { contextLine?: string; owner?: unknown } }
+				}
+			}
+
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'in_progress · owner Magnus',
+			)
+		})
+
+		it('routes a single insight result through the hero-card resource with an anchor + cluster context line', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/insight-7/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'insight-7',
+									type: 'insight',
+									title: 'Pricing pain',
+									status: 'clustered',
+									owner: null,
+									metadata: { anchors: ['#3', '#6'], cluster_size: 4 },
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['insight-7'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: { kind: string; object?: { contextLine?: string } }
+				}
+			}
+
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'clustered · anchor #3+#6 · 4 sources',
+			)
+		})
+
+		it('keeps the objects resource for single results of an unknown type (default fallback)', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/customer-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'customer-1',
+									type: 'customer',
+									title: 'Acme Inc.',
+									status: 'engaged',
 									owner: null,
 								},
 							}),
@@ -1949,7 +2028,7 @@ describe('tool handlers', () => {
 			})
 
 			const handler = getHandler('get_objects')
-			const result = (await handler({ ids: ['task-9'] })) as {
+			const result = (await handler({ ids: ['customer-1'] })) as {
 				_meta: { ui?: { resourceUri?: string } }
 				structuredContent: { heroCard: { kind: string } }
 			}
@@ -1968,6 +2047,105 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.kind).toBe('empty')
 			expect(result.structuredContent.heroCard.tool).toBe('list_objects')
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
+		})
+
+		it('routes a single-trigger list_triggers response through the hero-card resource with a cron schedule + next-run', async () => {
+			vi.useFakeTimers()
+			vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'trig-1',
+									name: 'Nightly sweep',
+									type: 'cron',
+									config: { expression: '0 0 * * *' },
+									enabled: true,
+									targetActorId: 'actor-3',
+								},
+							]),
+					} as Response
+				}
+				if (urlStr.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'actor-3', name: 'Observer' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('list_triggers')
+			const result = (await handler({})) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: {
+						kind: string
+						object?: {
+							type: string
+							status: string
+							title: string
+							contextLine: string
+							owner?: { name?: string | null }
+						}
+					}
+				}
+			}
+
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.object?.type).toBe('trigger')
+			expect(result.structuredContent.heroCard.object?.status).toBe('enabled')
+			expect(result.structuredContent.heroCard.object?.title).toBe('Nightly sweep')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'enabled · 0 0 * * * · next in 1d',
+			)
+			expect(result.structuredContent.heroCard.object?.owner?.name).toBe('Observer')
+		})
+
+		it('keeps the triggers resource when list_triggers returns multiple results', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'trig-a',
+									name: 'A',
+									type: 'cron',
+									config: { expression: '0 0 * * *' },
+									enabled: true,
+									targetActorId: null,
+								},
+								{
+									id: 'trig-b',
+									name: 'B',
+									type: 'event',
+									config: { entity_type: 'task', action: 'created' },
+									enabled: false,
+									targetActorId: null,
+								},
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('list_triggers')
+			const result = (await handler({})) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: { heroCard: { kind: string; totalCount?: number } }
+			}
+
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.totalCount).toBe(2)
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/triggers')
 		})
 	})
 
