@@ -88,22 +88,45 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 		{
 			id: 'select',
 			header: ({ table }) => (
-				<Checkbox
-					checked={
-						table.getIsAllPageRowsSelected() ||
-						(table.getIsSomePageRowsSelected() && 'indeterminate')
-					}
-					onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-					aria-label="Select all"
-				/>
+				// biome-ignore lint/a11y/useKeyWithClickEvents: wrapper extends the iOS tap target; the inner Checkbox stays keyboard-accessible via focus + Space
+				<span
+					role="presentation"
+					data-testid="select-all-tap-target"
+					className="inline-flex min-h-11 min-w-11 items-center justify-center cursor-pointer"
+					onClick={(e) => {
+						e.stopPropagation()
+						table.toggleAllPageRowsSelected(!table.getIsAllPageRowsSelected())
+					}}
+				>
+					<Checkbox
+						checked={
+							table.getIsAllPageRowsSelected() ||
+							(table.getIsSomePageRowsSelected() && 'indeterminate')
+						}
+						onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+						aria-label="Select all"
+						className="pointer-events-none"
+					/>
+				</span>
 			),
 			cell: ({ row }) => (
-				<Checkbox
-					checked={row.getIsSelected()}
-					onCheckedChange={(value) => row.toggleSelected(!!value)}
-					aria-label="Select row"
-					onClick={(e) => e.stopPropagation()}
-				/>
+				// biome-ignore lint/a11y/useKeyWithClickEvents: wrapper extends the iOS tap target; the inner Checkbox stays keyboard-accessible via focus + Space
+				<span
+					role="presentation"
+					data-testid="select-row-tap-target"
+					className="inline-flex min-h-11 min-w-11 items-center justify-center cursor-pointer"
+					onClick={(e) => {
+						e.stopPropagation()
+						row.toggleSelected(!row.getIsSelected())
+					}}
+				>
+					<Checkbox
+						checked={row.getIsSelected()}
+						onCheckedChange={(value) => row.toggleSelected(!!value)}
+						aria-label="Select row"
+						className="pointer-events-none"
+					/>
+				</span>
 			),
 			enableSorting: false,
 			enableHiding: false,
