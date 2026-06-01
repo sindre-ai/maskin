@@ -51,6 +51,23 @@ const optionalWorkspaceId = z
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
 	)
 
+// Mirrors mcpServerSchema in packages/shared/src/schemas/sessions.ts. Kept inline
+// here so the MCP tool surface stays a pure JSON Schema with no shared imports
+// leaking into the public tool contract.
+const sessionMcpServerSchema = z.union([
+	z.object({
+		type: z.literal('stdio').default('stdio'),
+		command: z.string(),
+		args: z.array(z.string()).default([]),
+		env: z.record(z.string()).default({}),
+	}),
+	z.object({
+		type: z.literal('http'),
+		url: z.string().url(),
+		headers: z.record(z.string()).default({}),
+	}),
+])
+
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
@@ -704,6 +721,12 @@ export const tools = {
 					memory_mb: z.number().int().min(256).max(8192).optional(),
 					cpu_shares: z.number().int().min(256).max(4096).optional(),
 					env_vars: z.record(z.string()).optional(),
+					mcps: z
+						.array(sessionMcpServerSchema)
+						.optional()
+						.describe(
+							'Additional MCP servers to mount into this session, on top of the actor\'s permanent tools.mcpServers. Each entry is either { type: "stdio", command, args?, env? } or { type: "http", url, headers? }. Use this to wire a hosted MCP (e.g. PostHog at https://mcp.posthog.com/mcp with Authorization: Bearer <PERSONAL_API_KEY>) into a single session without modifying the actor.',
+						),
 				})
 				.optional()
 				.describe('Container configuration overrides'),

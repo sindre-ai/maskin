@@ -308,6 +308,55 @@ describe('create_session schema', () => {
 			}),
 		).toThrow()
 	})
+
+	it('accepts a hosted (http) mcp server in config.mcps', () => {
+		const result = schema.parse({
+			actor_id: uuid,
+			action_prompt: 'Pull last 7 days of mcpTelemetry',
+			config: {
+				mcps: [
+					{
+						type: 'http',
+						url: 'https://mcp.posthog.com/mcp',
+						headers: { Authorization: 'Bearer phx_test_key' },
+					},
+				],
+			},
+		})
+		expect(result.config?.mcps).toHaveLength(1)
+		const first = result.config?.mcps?.[0]
+		expect(first?.type).toBe('http')
+		if (first?.type === 'http') {
+			expect(first.url).toBe('https://mcp.posthog.com/mcp')
+			expect(first.headers.Authorization).toBe('Bearer phx_test_key')
+		}
+	})
+
+	it('accepts a stdio mcp server in config.mcps', () => {
+		const result = schema.parse({
+			actor_id: uuid,
+			action_prompt: 'Test',
+			config: {
+				mcps: [{ type: 'stdio', command: 'npx', args: ['-y', '@some/mcp'] }],
+			},
+		})
+		const first = result.config?.mcps?.[0]
+		expect(first?.type).toBe('stdio')
+		if (first?.type === 'stdio') {
+			expect(first.command).toBe('npx')
+			expect(first.env).toEqual({})
+		}
+	})
+
+	it('rejects an http mcp server with an invalid url', () => {
+		expect(() =>
+			schema.parse({
+				actor_id: uuid,
+				action_prompt: 'Test',
+				config: { mcps: [{ type: 'http', url: 'not-a-url' }] },
+			}),
+		).toThrow()
+	})
 })
 
 describe('list_sessions schema', () => {
