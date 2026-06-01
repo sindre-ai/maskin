@@ -368,7 +368,7 @@ export const tools = {
 	},
 	get_workspace_schema: {
 		description:
-			'Get the workspace schema: available statuses per object type, custom metadata field definitions (name, type, required, enum values), display names, and relationship types. Call this before creating or updating objects to know which metadata fields exist, what types they expect, and which values are valid. Optionally filter by object type.',
+			'Get the workspace schema: available statuses per object type, custom metadata field definitions (name, type, required, enum values), display names, and relationship types. Call this before creating or updating objects to know which metadata fields exist, what types they expect, and which values are valid. Optionally filter by object type. Types with Hero Card defaults or workspace overrides also include a `hero_card` annotation block on the response (`hero_card_context`, `hero_card_metas`, `primary_action`) describing how matching objects render in the Hero Card MCP widget.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
