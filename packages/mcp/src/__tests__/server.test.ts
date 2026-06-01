@@ -1967,7 +1967,130 @@ describe('tool handlers', () => {
 			}
 			expect(result.structuredContent.heroCard.kind).toBe('empty')
 			expect(result.structuredContent.heroCard.tool).toBe('list_objects')
-			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
+			// Collection tools always route through the Hero Card bundle so the
+			// 0/1/N branches render through a single widget; T6 broadened the
+			// predicate from single-bet to every list/search response.
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+		})
+
+		it('emits a list heroCard and uses the hero-card resource for multi-row list_objects', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects?')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'bet-1', type: 'bet', title: 'Bet 1', status: 'active' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet 2', status: 'shaping' },
+							]),
+					} as Response
+				}
+				if (urlStr.endsWith('/api/actors')) {
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+			const handler = getHandler('list_objects')
+			const result = (await handler({ type: 'bet', limit: 50, offset: 0 })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: { kind: string; tool: string; totalCount?: number }
+				}
+			}
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.totalCount).toBe(2)
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+		})
+
+		it('emits a list heroCard for list_actors with type=actor rows', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'a-1', type: 'human', name: 'Sebastian', email: 's@x.test' },
+								{ id: 'a-2', type: 'agent', name: 'Sindre', role: 'admin' },
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: {
+						kind: string
+						tool: string
+						objects?: Array<{ type: string; title: string | null; contextLine: string }>
+					}
+				}
+			}
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.tool).toBe('list_actors')
+			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('actor')
+			expect(result.structuredContent.heroCard.objects?.[0]?.title).toBe('Sebastian')
+		})
+
+		it('emits a list heroCard for list_triggers with type=trigger rows + resolved target actor', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 't-1',
+									type: 'cron',
+									name: 'Daily sweep',
+									enabled: true,
+									targetActorId: 'actor-1',
+								},
+								{
+									id: 't-2',
+									type: 'event',
+									name: 'On comment',
+									enabled: false,
+									targetActorId: null,
+								},
+							]),
+					} as Response
+				}
+				if (urlStr.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sindre' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: {
+						kind: string
+						tool: string
+						objects?: Array<{
+							type: string
+							status: string | null
+							owner: { name: string | null } | null
+						}>
+					}
+				}
+			}
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.tool).toBe('list_triggers')
+			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('trigger')
+			expect(result.structuredContent.heroCard.objects?.[0]?.status).toBe('enabled')
+			expect(result.structuredContent.heroCard.objects?.[0]?.owner?.name).toBe('Sindre')
+			expect(result.structuredContent.heroCard.objects?.[1]?.status).toBe('disabled')
 		})
 	})
 

@@ -852,16 +852,86 @@ function buildHeroCardObject(
 }
 
 /**
- * Per-response resource swap. T3 ships the Hero Card only for single-bet
- * results; everything else stays on the existing `objects` widget. Widening
- * the predicate (e.g. adding `task`) is the only change required to roll out
- * a new variant.
+ * Per-response resource swap. T3 ships the Hero Card for single-bet results
+ * via `pickResourceUri`. T6 broadens the predicate so any collection-style
+ * response (list_objects / search_objects / list_actors / list_triggers)
+ * also routes through the Hero Card bundle — its `kind: 'list'` envelope
+ * handles N > 1 and collapses to the single card when N === 1.
  */
 function pickResourceUri(payload: HeroCardPayload): string {
 	if (payload.kind === 'single' && payload.object?.type === 'bet') {
 		return UI_RESOURCES.heroCard
 	}
 	return UI_RESOURCES.objects
+}
+
+/**
+ * Collection tools always render through the Hero Card bundle: the same
+ * widget handles the 0 / 1 / N branches and keeps the iframe payload
+ * inside Anthropic's 500px envelope without a second template.
+ */
+function pickCollectionResourceUri(_payload: HeroCardPayload): string {
+	return UI_RESOURCES.heroCard
+}
+
+interface RawActor {
+	id: string
+	type?: string | null
+	name?: string | null
+	email?: string | null
+	role?: string | null
+	isSystem?: boolean | null
+}
+
+interface RawTrigger {
+	id: string
+	type?: string | null
+	name?: string | null
+	enabled?: boolean | null
+	targetActorId?: string | null
+	createdAt?: string | null
+}
+
+function buildActorContextLine(actor: RawActor): string {
+	const kind = actor.type || 'actor'
+	const parts: string[] = [kind]
+	if (actor.role) parts.push(actor.role)
+	else if (actor.email) parts.push(actor.email)
+	return parts.join(' · ')
+}
+
+function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
+	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
+	return {
+		id: actor.id,
+		type: 'actor',
+		title: actor.name ?? null,
+		status,
+		owner: null,
+		contextLine: buildActorContextLine(actor),
+	}
+}
+
+function buildTriggerContextLine(trigger: RawTrigger, ownerName: string | null): string {
+	const kind = trigger.type || 'trigger'
+	const enabled = trigger.enabled === false ? 'disabled' : 'enabled'
+	const parts: string[] = [kind, enabled]
+	if (ownerName) parts.push(`runs ${ownerName}`)
+	return parts.join(' · ')
+}
+
+function buildTriggerHeroCardObject(
+	trigger: RawTrigger,
+	owner: HeroCardActor | null,
+): HeroCardObject {
+	return {
+		id: trigger.id,
+		type: 'trigger',
+		title: trigger.name ?? null,
+		status: trigger.enabled === false ? 'disabled' : 'enabled',
+		owner,
+		contextLine: buildTriggerContextLine(trigger, owner?.name ?? null),
+	}
 }
 
 /**
@@ -1452,7 +1522,12 @@ export function createMcpServer(config: McpConfig) {
 				args.workspace_id,
 			)
 			return {
-				_meta: uiMeta('list_objects', config, args.workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'list_objects',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1484,7 +1559,12 @@ export function createMcpServer(config: McpConfig) {
 				args.workspace_id,
 			)
 			return {
-				_meta: uiMeta('search_objects', config, args.workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'search_objects',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1583,17 +1663,40 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_actors.description,
 			inputSchema: tools.list_actors.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = args.workspace_id
-				? await apiCall(config, 'GET', '/api/actors', undefined, {
-						workspaceId: args.workspace_id,
-					})
-				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
+			const result = (
+				args.workspace_id
+					? await apiCall(config, 'GET', '/api/actors', undefined, {
+							workspaceId: args.workspace_id,
+						})
+					: await apiCall(config, 'GET', '/api/actors', undefined, {
+							skipWorkspace: true,
+						})
+			) as RawActor[]
+			const rows = Array.isArray(result) ? result : []
+			const heroObjects = rows.map(buildActorHeroCardObject)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_actors' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'list_actors', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_actors',
+								objects: heroObjects,
+								totalCount: heroObjects.length,
+							}
 			return {
-				_meta: meta('list_actors', config),
+				_meta: uiMeta(
+					'list_actors',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -2473,15 +2576,43 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_triggers.description,
 			inputSchema: tools.list_triggers.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', '/api/triggers', undefined, {
+			const result = (await apiCall(config, 'GET', '/api/triggers', undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as RawTrigger[]
+			const rows = Array.isArray(result) ? result : []
+			const ownerIds = rows
+				.map((t) => t.targetActorId)
+				.filter((v): v is string => typeof v === 'string')
+			const actors = await resolveActors(config, ownerIds, args.workspace_id)
+			const heroObjects = rows.map((t) =>
+				buildTriggerHeroCardObject(
+					t,
+					t.targetActorId ? (actors.get(t.targetActorId) ?? null) : null,
+				),
+			)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_triggers' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'list_triggers', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_triggers',
+								objects: heroObjects,
+								totalCount: heroObjects.length,
+							}
 			return {
-				_meta: meta('list_triggers', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: uiMeta(
+					'list_triggers',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
