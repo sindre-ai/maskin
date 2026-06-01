@@ -797,16 +797,18 @@ export interface HeroCardTypeAnnotation {
 }
 
 /**
- * Built-in Hero Card annotations for object types in the launch set. `bet`
- * keeps its T3 path (legacy switch in `buildContextLine`) so this map is
- * purely additive — workspaces can still override per-type via
- * `settings.hero_card`.
+ * Built-in Hero Card annotations for object types in the launch set. Presence
+ * in this map (even with an empty `{}`) marks a type as Hero-Card eligible —
+ * `pickResourceUri` consults this map instead of hardcoding type literals.
+ * `bet` keeps its T3 context line (legacy switch in `buildContextLine`), so
+ * its entry stays empty.
  *
  * The customer variant (T2 resolution: render both `organization` AND `person`
  * with the customer context line) lives here, so any future explicit
  * `customer` type drops in by adding one entry.
  */
 export const HERO_CARD_TYPE_DEFAULTS: Record<string, HeroCardTypeAnnotation> = {
+	bet: {},
 	organization: {
 		hero_card_context: 'last touch + stage',
 		hero_card_metas: [
@@ -916,18 +918,17 @@ export function buildHeroCardObject(
 
 /**
  * Per-response resource swap. Returns the Hero Card resource for single results
- * whose type is either `bet` (T3 launch type, kept hardcoded so widening doesn't
- * silently drop it if the annotation map ever forgets it) or has a Hero Card
- * annotation (T5 customer variant: `organization`, `person`, and any future
- * schema-annotated type). Everything else stays on the existing `objects` widget.
+ * whose type has a Hero Card annotation (present in `HERO_CARD_TYPE_DEFAULTS`
+ * or merged in from workspace `settings.hero_card`). Eligibility is uniformly
+ * schema-driven — an empty annotation `{}` still marks the type eligible.
+ * Everything else stays on the existing `objects` widget.
  */
 export function pickResourceUri(
 	payload: HeroCardPayload,
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): string {
 	if (payload.kind !== 'single' || !payload.object) return UI_RESOURCES.objects
-	const type = payload.object.type
-	if (type === 'bet' || annotations[type]) return UI_RESOURCES.heroCard
+	if (annotations[payload.object.type]) return UI_RESOURCES.heroCard
 	return UI_RESOURCES.objects
 }
 
@@ -941,15 +942,42 @@ async function buildCollectionHeroCard(
 	tool: string,
 	rows: RawObject[],
 	workspaceId: string | undefined,
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): Promise<HeroCardPayload> {
 	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
 	const ownerIds = rows.map((o) => o.owner).filter((v): v is string => typeof v === 'string')
 	const actors = await resolveActors(config, ownerIds, workspaceId)
 	const heroObjects = rows.map((o) =>
-		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null, Date.now(), annotations),
 	)
 	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
 	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
+}
+
+/**
+ * Resolve the Hero Card annotation map for a request: built-in defaults merged
+ * with `settings.hero_card` from the workspace. Falls back to defaults if the
+ * workspace lookup fails so a failing workspaces fetch never breaks the tool
+ * response — eligibility just doesn't pick up the override this turn.
+ */
+async function resolveHeroCardAnnotations(
+	config: McpConfig,
+	workspaceId: string | undefined,
+): Promise<Record<string, HeroCardTypeAnnotation>> {
+	try {
+		const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+			skipWorkspace: true,
+		})) as Array<{ id: string; settings?: Record<string, unknown> }>
+		const effectiveWsId = workspaceId ?? config.defaultWorkspaceId
+		const workspace = effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]
+		const overrides = (workspace?.settings?.hero_card ?? {}) as Record<
+			string,
+			HeroCardTypeAnnotation
+		>
+		return { ...HERO_CARD_TYPE_DEFAULTS, ...overrides }
+	} catch {
+		return HERO_CARD_TYPE_DEFAULTS
+	}
 }
 
 /**
@@ -1186,18 +1214,21 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id } = args
-			const results = await Promise.all(
-				args.ids.map(async (id) => {
-					try {
-						const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
-							workspaceId: workspace_id,
-						})
-						return { id, success: true, result }
-					} catch (error) {
-						return { id, success: false, error: String(error) }
-					}
-				}),
-			)
+			const [results, heroCardAnnotations] = await Promise.all([
+				Promise.all(
+					args.ids.map(async (id) => {
+						try {
+							const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
+								workspaceId: workspace_id,
+							})
+							return { id, success: true, result }
+						} catch (error) {
+							return { id, success: false, error: String(error) }
+						}
+					}),
+				),
+				resolveHeroCardAnnotations(config, workspace_id),
+			])
 
 			// Build the Hero Card payload. Single successful result → kind='single'
 			// (eligible to swap to the Hero Card widget); anything else stays
@@ -1212,7 +1243,12 @@ export function createMcpServer(config: McpConfig) {
 				.filter((v): v is string => typeof v === 'string')
 			const actors = await resolveActors(config, ownerIds, workspace_id)
 			const heroObjects = rawObjects.map((o) =>
-				buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+				buildHeroCardObject(
+					o,
+					o.owner ? (actors.get(o.owner) ?? null) : null,
+					Date.now(),
+					heroCardAnnotations,
+				),
 			)
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
@@ -1227,7 +1263,12 @@ export function createMcpServer(config: McpConfig) {
 							}
 
 			return {
-				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'get_objects',
+					config,
+					workspace_id,
+					pickResourceUri(heroCard, heroCardAnnotations),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1509,17 +1550,26 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})) as RawObject[]
+			const [result, heroCardAnnotations] = await Promise.all([
+				apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+					workspaceId: args.workspace_id,
+				}) as Promise<RawObject[]>,
+				resolveHeroCardAnnotations(config, args.workspace_id),
+			])
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'list_objects',
 				result,
 				args.workspace_id,
+				heroCardAnnotations,
 			)
 			return {
-				_meta: uiMeta('list_objects', config, args.workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'list_objects',
+					config,
+					args.workspace_id,
+					pickResourceUri(heroCard, heroCardAnnotations),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1541,17 +1591,26 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})) as RawObject[]
+			const [result, heroCardAnnotations] = await Promise.all([
+				apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+					workspaceId: args.workspace_id,
+				}) as Promise<RawObject[]>,
+				resolveHeroCardAnnotations(config, args.workspace_id),
+			])
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'search_objects',
 				result,
 				args.workspace_id,
+				heroCardAnnotations,
 			)
 			return {
-				_meta: uiMeta('search_objects', config, args.workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'search_objects',
+					config,
+					args.workspace_id,
+					pickResourceUri(heroCard, heroCardAnnotations),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1840,8 +1899,11 @@ export function createMcpServer(config: McpConfig) {
 					statuses: statuses[t] ?? [],
 					fields: fieldDefinitions[t] ?? [],
 				}
+				// Empty annotation objects (e.g. the eligibility marker for `bet`)
+				// are not surfaced — only configurable annotations belong in the
+				// schema response.
 				const hc = heroCardAnnotations[t]
-				if (hc) typeSchema.hero_card = hc
+				if (hc && Object.keys(hc).length > 0) typeSchema.hero_card = hc
 				typeSchemas[t] = typeSchema
 			}
 

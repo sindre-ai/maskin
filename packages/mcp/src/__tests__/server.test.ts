@@ -286,7 +286,8 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 
-			expect(fetch).toHaveBeenCalledTimes(2)
+			// 2 per-id graph fetches + 1 workspaces lookup for hero-card annotations.
+			expect(fetch).toHaveBeenCalledTimes(3)
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/objects/id-1/graph',
 				expect.anything(),
@@ -295,6 +296,7 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/objects/id-2/graph',
 				expect.anything(),
 			)
+			expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/workspaces', expect.anything())
 
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toHaveLength(2)
@@ -2165,6 +2167,117 @@ describe('tool handlers', () => {
 				createdAt: null,
 			}
 			expect(buildContextLine(obj, null)).toBe('something-new · open')
+		})
+
+		it('picks the hero-card resource for bet via the defaults map (no hardcoded literal)', () => {
+			expect(Object.keys(HERO_CARD_TYPE_DEFAULTS)).toContain('bet')
+			const betPayload = {
+				kind: 'single' as const,
+				tool: 'get_objects',
+				object: {
+					id: 'bet-1',
+					type: 'bet',
+					title: 'B',
+					status: 'active',
+					owner: null,
+					contextLine: 'active · 6-week bet',
+				},
+			}
+			// Annotations argument omitted — proves the default map carries bet.
+			expect(pickResourceUri(betPayload)).toBe('ui://maskin/hero-card')
+			// And dropping bet from the map flips eligibility, confirming the
+			// hardcoded `type === 'bet'` is gone.
+			const { bet: _bet, ...noBet } = HERO_CARD_TYPE_DEFAULTS
+			expect(pickResourceUri(betPayload, noBet)).toBe('ui://maskin/objects')
+		})
+
+		it('triggers the hero-card resource swap end-to-end when a workspace overrides settings.hero_card', async () => {
+			const updatedAt = new Date(Date.now() - 2 * 86_400_000).toISOString()
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'ws-default-123',
+									settings: {
+										hero_card: {
+											account: { hero_card_context: 'last touch + stage' },
+										},
+									},
+								},
+							]),
+					} as Response
+				}
+				if (urlStr.includes('/api/objects/acct-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'acct-1',
+									type: 'account',
+									title: 'Acme Account',
+									status: 'qualifying',
+									owner: null,
+									updatedAt,
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['acct-1'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: { kind: string; object?: { type: string; contextLine: string } }
+				}
+			}
+
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result.structuredContent.heroCard.object?.type).toBe('account')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'last touch 2d ago · qualifying',
+			)
+		})
+
+		it('stays on the objects resource for an unannotated type even when a workspace exists', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'ws-default-123', settings: { hero_card: {} } }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/objects/widget-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'widget-1',
+									type: 'unknown-type',
+									title: 'W',
+									status: 'open',
+									owner: null,
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['widget-1'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+			}
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
 		})
 	})
 
