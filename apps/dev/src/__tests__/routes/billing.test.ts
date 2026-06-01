@@ -214,7 +214,10 @@ describe('GET /api/billing/usage', () => {
 	it('sums input + output tokens across maskin_plan sessions since period_start', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		const periodStart = Date.now() - 7 * 24 * 60 * 60 * 1000
+		// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
+		// writes `subscription.current_period_start` straight through, and
+		// Stripe timestamps are seconds. Test uses the production unit.
+		const periodStart = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60
 		mockResults.selectQueue = [
 			[
 				{
@@ -250,6 +253,11 @@ describe('GET /api/billing/usage', () => {
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
+		// Regression: `period_start` is seconds, the row arithmetic must run in
+		// ms. With period_start set 7d ago, the next reset is ~23d out.
+		const oneDay = 24 * 60 * 60 * 1000
+		expect(body.period_resets_in_ms).toBeGreaterThan(22 * oneDay)
+		expect(body.period_resets_in_ms).toBeLessThan(24 * oneDay)
 	})
 
 	it('skips the token sum entirely when plan is byollm', async () => {

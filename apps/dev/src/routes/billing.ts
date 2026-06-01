@@ -133,11 +133,17 @@ app.openapi(usageRoute, async (c) => {
 			: plan === 'trial' || plan === 'byollm'
 				? DEFAULT_TRIAL_HARD_CAP_TOKENS
 				: null
-	const periodStartMs = billing?.period_start ?? Date.now() - TRIAL_WINDOW_MS
+	// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
+	// writes `subscription.current_period_start` straight through, and Stripe
+	// timestamps are seconds (not ms). Multiply by 1000 here so `new Date()`,
+	// `Date.now()`, and the resets-in arithmetic all operate in ms.
+	const periodStartMs = billing?.period_start
+		? billing.period_start * 1000
+		: Date.now() - TRIAL_WINDOW_MS
 	const periodEndMs = billing?.period_start
 		? // Stripe periods are 28-31d; we don't store period_end on this branch,
 			// so we approximate as "30d from period_start" for the resets-in hint.
-			billing.period_start + TRIAL_WINDOW_MS
+			billing.period_start * 1000 + TRIAL_WINDOW_MS
 		: Date.now() + TRIAL_WINDOW_MS
 
 	let tokensUsed = 0
