@@ -70,7 +70,7 @@ app.openapi(recordRoute, (async (c) => {
 			hasRichRender: body.has_rich_render,
 			durationMs: body.duration_ms,
 		})
-	} else if (body.event_type === 'mutation') {
+	} else {
 		await db.insert(mcpTelemetry).values({
 			workspaceId,
 			eventType: 'mutation',
@@ -79,32 +79,6 @@ app.openapi(recordRoute, (async (c) => {
 			objectType: body.object_type ?? null,
 			mutationKind: body.mutation_kind,
 		})
-	} else {
-		// widget_event — fan widget-specific fields into the `data` jsonb so a
-		// new column isn't needed on a hot table. T9's aggregation reads
-		// data->>'event' for CTR and render-error rates.
-		await db.insert(mcpTelemetry).values({
-			workspaceId,
-			eventType: 'widget_event',
-			toolName: body.tool_name,
-			sessionId: body.session_id ?? null,
-			objectType: body.object_type ?? null,
-			data: {
-				widget_name: body.widget_name,
-				event: body.event,
-				card_kind: body.card_kind,
-				object_id: body.object_id ?? null,
-				ts: body.ts ?? null,
-			},
-		})
-		// Surface render failures as warn-level logs so an outage shows up in
-		// app logs even before T9's rolling aggregation runs. Success and
-		// click-through events are persisted silently — the table is the signal.
-		if (body.event === 'render_error') {
-			console.warn(
-				`[telemetry] widget render_error widget=${body.widget_name} tool=${body.tool_name} object_type=${body.object_type ?? '-'} workspace=${workspaceId}`,
-			)
-		}
 	}
 
 	return c.json({ recorded: true as const }, 202)

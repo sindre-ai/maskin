@@ -2,19 +2,14 @@ import { z } from 'zod'
 
 // Events emitted by the MCP server to /api/telemetry/mcp.
 //
-// Three event types power the MCP bet metrics:
-//   - tool_call:    every tool response. `has_rich_render` is true when the tool
-//                   returned `_meta.ui` (i.e. a widget resource was attached so a
-//                   client like Claude can render a rich card). Numerator/denominator
-//                   of the "50% of MCP tool calls render a rich card" metric.
-//   - mutation:     every successful in-chat mutation (update_objects / delete_object).
-//                   Counted per `session_id` to power the "20% of MCP sessions include
-//                   at least one in-chat mutation" metric.
-//   - widget_event: emitted by a rendered Hero Card widget for click-through,
-//                   render success, and render failure. Drives the CTR success
-//                   metric on the "Open in Maskin" CTA and the 48h render-error
-//                   kill criterion. Click-throughs correlate to their parent render
-//                   via shared (session_id, tool_name, object_id).
+// Two event types power the bet's success metrics:
+//   - tool_call: every tool response. `has_rich_render` is true when the tool
+//                returned `_meta.ui` (i.e. a widget resource was attached so a
+//                client like Claude can render a rich card). Numerator/denominator
+//                of the "50% of MCP tool calls render a rich card" metric.
+//   - mutation:  every successful in-chat mutation (update_objects / delete_object).
+//                Counted per `session_id` to power the "20% of MCP sessions include
+//                at least one in-chat mutation" metric.
 //
 // Tool name is constrained loosely (1–128 chars, identifier-ish characters).
 // The MCP server is the producer, but we still validate at the boundary because
@@ -26,16 +21,6 @@ const toolNameSchema = z
 	.regex(/^[A-Za-z0-9_.-]+$/, 'tool name must be identifier-like')
 
 const sessionIdSchema = z.string().min(1).max(128).optional()
-
-const widgetNameSchema = z
-	.string()
-	.min(1)
-	.max(64)
-	.regex(/^[A-Za-z0-9_.-]+$/, 'widget name must be identifier-like')
-
-const cardKindSchema = z.enum(['single', 'list', 'empty'])
-
-const widgetEventKindSchema = z.enum(['click_through', 'render_success', 'render_error'])
 
 export const recordMcpToolCallSchema = z.object({
 	event_type: z.literal('tool_call'),
@@ -57,25 +42,9 @@ export const recordMcpMutationSchema = z.object({
 	mutation_kind: z.string().min(1).max(64),
 })
 
-export const recordMcpWidgetEventSchema = z.object({
-	event_type: z.literal('widget_event'),
-	widget_name: widgetNameSchema,
-	event: widgetEventKindSchema,
-	tool_name: toolNameSchema,
-	card_kind: cardKindSchema,
-	session_id: sessionIdSchema,
-	object_type: z.string().min(1).max(64).optional(),
-	object_id: z.string().min(1).max(128).optional(),
-	// Client-supplied wall-clock ms. Used by aggregation to bound the 48h
-	// render-error window when server-side createdAt is too coarse for the
-	// rolling check.
-	ts: z.number().int().positive().optional(),
-})
-
 export const recordMcpTelemetrySchema = z.discriminatedUnion('event_type', [
 	recordMcpToolCallSchema,
 	recordMcpMutationSchema,
-	recordMcpWidgetEventSchema,
 ])
 
 export type RecordMcpTelemetryBody = z.infer<typeof recordMcpTelemetrySchema>
