@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { jsonGet } from '../helpers'
 
 vi.mock('../../lib/stripe', async () => {
 	const actual = await vi.importActual<typeof import('../../lib/stripe')>('../../lib/stripe')
@@ -183,5 +184,102 @@ describe('POST /api/billing/checkout', () => {
 			),
 		)
 		expect(res.status).toBe(500)
+	})
+})
+
+describe('GET /api/billing/usage', () => {
+	it('returns trial defaults for a workspace with no billing row', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {} }],
+			[], // sessions sum: no rows
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({
+			plan: 'trial',
+			status: 'active',
+			tokens_used: 0,
+			hard_cap_tokens: 100_000,
+			stripe_customer_id: null,
+			stripe_subscription_id: null,
+			period_start: null,
+		})
+		expect(body.period_resets_in_ms).toBeGreaterThan(0)
+	})
+
+	it('sums input + output tokens across maskin_plan sessions since period_start', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		const periodStart = Date.now() - 7 * 24 * 60 * 60 * 1000
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'starter',
+							status: 'active',
+							hard_cap_tokens: 32_000_000,
+							period_start: periodStart,
+							stripe_customer_id: 'cus_x',
+							stripe_subscription_id: 'sub_x',
+						},
+					},
+				},
+			],
+			[
+				{ inputTokens: 1000, outputTokens: 200 },
+				{ inputTokens: 5000, outputTokens: 800 },
+				{ inputTokens: null, outputTokens: 50 },
+			],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({
+			plan: 'starter',
+			status: 'active',
+			tokens_used: 7050,
+			hard_cap_tokens: 32_000_000,
+			period_start: periodStart,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+	})
+
+	it('skips the token sum entirely when plan is byollm', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: { plan: 'byollm', status: 'canceled', stripe_subscription_id: null },
+					},
+				},
+			],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({
+			plan: 'byollm',
+			status: 'canceled',
+			tokens_used: 0,
+			period_resets_in_ms: null,
+		})
+	})
+
+	it('returns 404 when workspace is missing', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': randomUUID() }))
+		expect(res.status).toBe(404)
 	})
 })
