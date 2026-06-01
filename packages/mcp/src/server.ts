@@ -801,14 +801,11 @@ function ageLabel(fromIso: string | null | undefined, nowMs = Date.now()): strin
 /** Render one or more anchor tags as a single `anchor #3+#6` label. */
 function anchorLabel(meta: Record<string, unknown> | null | undefined): string | null {
 	if (!meta) return null
-	const raw = meta.anchors ?? meta.anchor
-	if (Array.isArray(raw)) {
-		const tags = raw.filter((v): v is string => typeof v === 'string' && v.length > 0)
-		if (tags.length === 0) return null
-		return `anchor ${tags.join('+')}`
-	}
-	if (typeof raw === 'string' && raw.length > 0) return `anchor ${raw}`
-	return null
+	const raw = meta.anchors
+	if (!Array.isArray(raw)) return null
+	const tags = raw.filter((v): v is string => typeof v === 'string' && v.length > 0)
+	if (tags.length === 0) return null
+	return `anchor ${tags.join('+')}`
 }
 
 /**
@@ -906,14 +903,13 @@ async function buildCollectionHeroCard(
 	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
 }
 
-interface RawTrigger {
+export interface RawTrigger {
 	id: string
 	name: string
 	type: string
 	config: Record<string, unknown> | null
 	enabled: boolean
 	targetActorId?: string | null
-	target_actor_id?: string | null
 	createdAt?: string | null
 	updatedAt?: string | null
 }
@@ -936,7 +932,7 @@ function formatRelativeFuture(targetMs: number, nowMs: number): string {
  * for reminder, event predicate for event triggers. Uses `croner` purely for
  * next-run lookup — no shared scheduler state.
  */
-function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): string {
+export function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): string {
 	const enabledLabel = trigger.enabled ? 'enabled' : 'disabled'
 	const config = trigger.config ?? {}
 	switch (trigger.type) {
@@ -999,11 +995,11 @@ async function buildTriggerCollectionHeroCard(
 ): Promise<HeroCardPayload> {
 	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
 	const ownerIds = rows
-		.map((t) => t.targetActorId ?? t.target_actor_id ?? null)
+		.map((t) => t.targetActorId ?? null)
 		.filter((v): v is string => typeof v === 'string')
 	const actors = await resolveActors(config, ownerIds, workspaceId)
 	const heroObjects = rows.map((t) => {
-		const targetId = t.targetActorId ?? t.target_actor_id ?? null
+		const targetId = t.targetActorId ?? null
 		const owner = targetId ? (actors.get(targetId) ?? null) : null
 		return buildTriggerHeroCardObject(t, owner)
 	})

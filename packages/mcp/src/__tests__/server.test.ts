@@ -16,7 +16,7 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
-import { createMcpServer } from '../server'
+import { type RawTrigger, buildTriggerContextLine, createMcpServer } from '../server'
 import { tools } from '../tools'
 
 const config = {
@@ -2185,5 +2185,71 @@ describe('tool handlers', () => {
 				widget_name: 'hero-card',
 			})
 		})
+	})
+})
+
+describe('buildTriggerContextLine', () => {
+	const NOW = Date.parse('2026-06-01T00:00:00Z')
+
+	function makeTrigger(overrides: Partial<RawTrigger> = {}): RawTrigger {
+		return {
+			id: 'trig-1',
+			name: 'Test trigger',
+			type: 'cron',
+			config: null,
+			enabled: true,
+			...overrides,
+		}
+	}
+
+	it('skips next-run on an invalid cron expression but keeps the schedule line', () => {
+		const line = buildTriggerContextLine(
+			makeTrigger({ type: 'cron', config: { expression: 'not a cron' } }),
+			NOW,
+		)
+		expect(line).toBe('enabled · not a cron')
+	})
+
+	it('omits the next-run segment when a cron trigger is disabled', () => {
+		const line = buildTriggerContextLine(
+			makeTrigger({ type: 'cron', config: { expression: '0 0 * * *' }, enabled: false }),
+			NOW,
+		)
+		expect(line).toBe('disabled · 0 0 * * *')
+	})
+
+	it('renders a reminder trigger with scheduled time and relative future', () => {
+		const line = buildTriggerContextLine(
+			makeTrigger({
+				type: 'reminder',
+				config: { scheduled_at: '2026-06-02T00:00:00Z' },
+			}),
+			NOW,
+		)
+		expect(line).toBe('enabled · at 2026-06-02T00:00:00Z · in 1d')
+	})
+
+	it('falls back to a bare label when a reminder has no scheduled_at', () => {
+		const line = buildTriggerContextLine(makeTrigger({ type: 'reminder', config: {} }), NOW)
+		expect(line).toBe('reminder · enabled')
+	})
+
+	it('renders an event trigger as `on action entity_type`', () => {
+		const line = buildTriggerContextLine(
+			makeTrigger({
+				type: 'event',
+				config: { action: 'created', entity_type: 'task' },
+			}),
+			NOW,
+		)
+		expect(line).toBe('enabled · on created task')
+	})
+
+	it('renders an event trigger with only an action', () => {
+		const line = buildTriggerContextLine(
+			makeTrigger({ type: 'event', config: { action: 'updated' } }),
+			NOW,
+		)
+		expect(line).toBe('enabled · on updated')
 	})
 })
