@@ -91,8 +91,8 @@ describe('DataTable grouped selection', () => {
 		]
 		render(<GroupedTableHarness data={data} />)
 
-		// Group header renders the raw YYYY-MM-DD key on desktop.
-		const groupHeader = screen.getByText('2026-06-01')
+		// Group header renders the formatted date (see formatGroupDate in data-table.tsx).
+		const groupHeader = screen.getByText('1st June 2026')
 		// Children start collapsed.
 		expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
 
