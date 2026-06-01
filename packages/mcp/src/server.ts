@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url'
 import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
+	type ActorListItem,
 	type CustomExtensionEntry,
+	type TriggerResponse,
 	WORKSPACE_TEMPLATES,
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
@@ -874,25 +876,7 @@ function pickCollectionResourceUri(_payload: HeroCardPayload): string {
 	return UI_RESOURCES.heroCard
 }
 
-interface RawActor {
-	id: string
-	type?: string | null
-	name?: string | null
-	email?: string | null
-	role?: string | null
-	isSystem?: boolean | null
-}
-
-interface RawTrigger {
-	id: string
-	type?: string | null
-	name?: string | null
-	enabled?: boolean | null
-	targetActorId?: string | null
-	createdAt?: string | null
-}
-
-function buildActorContextLine(actor: RawActor): string {
+function buildActorContextLine(actor: ActorListItem): string {
 	const kind = actor.type || 'actor'
 	const parts: string[] = [kind]
 	if (actor.role) parts.push(actor.role)
@@ -900,7 +884,7 @@ function buildActorContextLine(actor: RawActor): string {
 	return parts.join(' · ')
 }
 
-function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
+function buildActorHeroCardObject(actor: ActorListItem): HeroCardObject {
 	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
 	return {
 		id: actor.id,
@@ -912,7 +896,7 @@ function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
 	}
 }
 
-function buildTriggerContextLine(trigger: RawTrigger, ownerName: string | null): string {
+function buildTriggerContextLine(trigger: TriggerResponse, ownerName: string | null): string {
 	const kind = trigger.type || 'trigger'
 	const enabled = trigger.enabled === false ? 'disabled' : 'enabled'
 	const parts: string[] = [kind, enabled]
@@ -921,7 +905,7 @@ function buildTriggerContextLine(trigger: RawTrigger, ownerName: string | null):
 }
 
 function buildTriggerHeroCardObject(
-	trigger: RawTrigger,
+	trigger: TriggerResponse,
 	owner: HeroCardActor | null,
 ): HeroCardObject {
 	return {
@@ -1674,7 +1658,7 @@ export function createMcpServer(config: McpConfig) {
 					: await apiCall(config, 'GET', '/api/actors', undefined, {
 							skipWorkspace: true,
 						})
-			) as RawActor[]
+			) as ActorListItem[]
 			const rows = Array.isArray(result) ? result : []
 			const heroObjects = rows.map(buildActorHeroCardObject)
 			const heroCard: HeroCardPayload =
@@ -2581,7 +2565,7 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const result = (await apiCall(config, 'GET', '/api/triggers', undefined, {
 				workspaceId: args.workspace_id,
-			})) as RawTrigger[]
+			})) as TriggerResponse[]
 			const rows = Array.isArray(result) ? result : []
 			const ownerIds = rows
 				.map((t) => t.targetActorId)

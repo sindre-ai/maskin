@@ -3,6 +3,7 @@ import { useCallTool, useToolResult } from '@/mcp-apps/shared/mcp-app-provider'
 import { renderMcpApp } from '@/mcp-apps/shared/render'
 import { type WorkspaceSchema, useWorkspaceSchema } from '@/mcp-apps/shared/use-workspace-schema'
 import {
+	WEB_APP_OBJECT_TYPES,
 	type WebAppObjectType,
 	type WebAppTarget,
 	useWebAppHref,
@@ -198,26 +199,20 @@ function buildListCtaTarget(toolName: string, objects: HeroCardObject[]): WebApp
 	const types = new Set(objects.map((o) => o.type))
 	if (types.size === 1) {
 		const [only] = [...types]
-		// Only forward an object-table type the URL builder knows; otherwise
-		// drop the filter so the URL stays valid.
-		const safeTypes = new Set([
-			'insight',
-			'bet',
-			'task',
-			'meeting',
-			'document',
-			'decision',
-			'risk',
-			'metric',
-			'canvas',
-			'organization',
-			'person',
-		])
-		if (only && safeTypes.has(only)) {
-			return { kind: 'objects', type: only as WebAppObjectType }
+		if (only && isWebAppObjectType(only)) {
+			return { kind: 'objects', type: only }
 		}
 	}
 	return { kind: 'objects' }
+}
+
+// Only forward an object-table type the URL builder knows; otherwise the
+// caller drops the filter so the URL stays valid. Built from the canonical
+// `WEB_APP_OBJECT_TYPES` list — adding `goal`/`note` there flows through to
+// the CTA filter automatically.
+const WEB_APP_OBJECT_TYPE_SET: ReadonlySet<string> = new Set(WEB_APP_OBJECT_TYPES)
+function isWebAppObjectType(type: string): type is WebAppObjectType {
+	return WEB_APP_OBJECT_TYPE_SET.has(type)
 }
 
 function rowTarget(row: HeroCardObject): WebAppTarget {
