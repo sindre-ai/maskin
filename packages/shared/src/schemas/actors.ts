@@ -48,6 +48,11 @@ export const actorParamsSchema = z.object({
 	id: z.string().uuid(),
 })
 
+// JSONB columns inferred as `Record<string, unknown> | null` so callers can
+// index without `unknown` widening — matches the shape the web client was
+// using before this schema became the single source.
+const jsonbColumn = z.record(z.string(), z.unknown()).nullable()
+
 // Server-assigned read-only fields (e.g. isSystem) live on response shapes only.
 // Intentionally absent from createActorSchema/updateActorSchema — clients cannot set them.
 //
@@ -61,13 +66,38 @@ export const actorResponseSchema = z.object({
 	email: z.string().nullable(),
 	description: z.string().nullable(),
 	system_prompt: z.string().nullable(),
-	tools: z.unknown().nullable(),
-	memory: z.unknown().nullable(),
+	tools: jsonbColumn,
+	memory: jsonbColumn,
 	llm_provider: z.string().nullable(),
-	llm_config: z.unknown().nullable(),
+	llm_config: jsonbColumn,
 	isSystem: z.boolean(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>
+
+// Canonical shape returned by GET /api/actors and consumed by every read
+// surface (web UI, MCP server, integrations). When the route adds a field,
+// add it here so MCP and web pick it up automatically — duplicate type
+// declarations on either side defeat the whole point of this schema.
+export const actorListItemSchema = z.object({
+	id: z.string().uuid(),
+	type: z.string(),
+	name: z.string(),
+	email: z.string().nullable(),
+	description: z.string().nullable(),
+	isSystem: z.boolean(),
+	role: z.string().optional(),
+	workspaces: z
+		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
+		.optional(),
+})
+
+export type ActorListItem = z.infer<typeof actorListItemSchema>
+
+export const actorWithRoleSchema = actorListItemSchema.extend({
+	role: z.string(),
+})
+
+export type ActorWithRole = z.infer<typeof actorWithRoleSchema>

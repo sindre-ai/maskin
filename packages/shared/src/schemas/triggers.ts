@@ -84,3 +84,39 @@ export const updateTriggerSchema = z.object({
 export const triggerParamsSchema = z.object({
 	id: z.string().uuid(),
 })
+
+// JSON-compatible record used for trigger `config` so the response shape
+// stays valid in `@hono/zod-openapi` (its response generic refuses
+// `z.unknown()`). One level of nesting is enough for cron/event/reminder
+// configs that exist today.
+const triggerConfigJsonSchema = z
+	.record(
+		z.string(),
+		z.union([
+			z.string(),
+			z.number(),
+			z.boolean(),
+			z.null(),
+			z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+		]),
+	)
+	.nullable()
+
+// Canonical shape returned by GET /api/triggers. Renaming any field here
+// must happen in lockstep with the route handler — both web and MCP read
+// the result through this type, so a silent rename now blows up at compile.
+export const triggerResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	name: z.string(),
+	type: z.string(),
+	config: triggerConfigJsonSchema,
+	actionPrompt: z.string(),
+	targetActorId: z.string().uuid(),
+	enabled: z.boolean(),
+	createdBy: z.string().uuid(),
+	createdAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+})
+
+export type TriggerResponse = z.infer<typeof triggerResponseSchema>

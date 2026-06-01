@@ -1,5 +1,12 @@
 import { z } from '@hono/zod-openapi'
+import { actorListItemSchema, actorWithRoleSchema, triggerResponseSchema } from '@maskin/shared'
 import { apiErrorSchema } from './errors'
+
+// Re-exported from `@maskin/shared` so the route handlers' OpenAPI shape
+// stays in lockstep with what MCP and the web client consume — duplicating
+// these here was how `targetActorId → target_actor_id` could have silently
+// nulled out the hero-card payload.
+export { actorListItemSchema, actorWithRoleSchema, triggerResponseSchema }
 
 /**
  * JSON-compatible schema for JSONB fields in OpenAPI response schemas.
@@ -67,23 +74,6 @@ export const actorResponseSchema = z.object({
 export const actorWithKeySchema = actorResponseSchema.extend({
 	api_key: z.string(),
 	workspace_id: z.string().uuid().optional(),
-})
-
-export const actorListItemSchema = z.object({
-	id: z.string().uuid(),
-	type: z.string(),
-	name: z.string(),
-	email: z.string().nullable(),
-	description: z.string().nullable(),
-	isSystem: z.boolean(),
-	role: z.string().optional(),
-	workspaces: z
-		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
-		.optional(),
-})
-
-export const actorWithRoleSchema = actorListItemSchema.extend({
-	role: z.string(),
 })
 
 export const workspaceResponseSchema = z.object({
@@ -162,20 +152,6 @@ export const providerInfoSchema = z.object({
 	name: z.string(),
 	displayName: z.string(),
 	events: z.array(providerEventSchema),
-})
-
-export const triggerResponseSchema = z.object({
-	id: z.string().uuid(),
-	workspaceId: z.string().uuid(),
-	name: z.string(),
-	type: z.string(),
-	config: jsonbField,
-	actionPrompt: z.string(),
-	targetActorId: z.string().uuid(),
-	enabled: z.boolean(),
-	createdBy: z.string().uuid(),
-	createdAt: z.string().nullable(),
-	updatedAt: z.string().nullable(),
 })
 
 export const sessionResponseSchema = z.object({
