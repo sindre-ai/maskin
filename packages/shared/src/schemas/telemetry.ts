@@ -77,6 +77,17 @@ export const mcpTelemetrySummarySchema = z.object({
 			rich_pct: z.number().min(0).max(100),
 		}),
 	),
+	// Rolling-kill criterion from the MCP Widget UX bet: widget render failures
+	// above 10% in any 48h window pause shipping and revert to the Markdown
+	// deep-link fallback in `content[0].text`. The window is fixed at 48h
+	// independent of `?days=` — the kill switch only cares about the most
+	// recent two days. `render_error_kill_switch_breach=true` is the signal
+	// dashboards and Slack monitors should escalate on.
+	widget_renders_48h: z.number().int().min(0),
+	widget_render_errors_48h: z.number().int().min(0),
+	render_error_pct_48h: z.number().min(0).max(100),
+	render_error_kill_switch_pct: z.number().min(0).max(100),
+	render_error_kill_switch_breach: z.boolean(),
 })
 
 export type McpTelemetrySummary = z.infer<typeof mcpTelemetrySummarySchema>

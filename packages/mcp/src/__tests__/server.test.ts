@@ -1971,6 +1971,230 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('Markdown deep-link fallback in content[0].text (T7)', () => {
+		// Two-layer deep-link strategy: when the response is bound to the Hero
+		// Card resource, `content[0].text` is a Markdown link so Claude shows
+		// a clickable deep-link when the iframe fails to mount. Non-hero-card
+		// responses keep the raw JSON dump so agents still have the payload to
+		// reason about.
+		const heroCardUri = 'ui://maskin/hero-card'
+
+		it('replaces JSON dump with Markdown deep-link on get_objects single-bet response', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/bet-fallback/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'bet-fallback',
+									type: 'bet',
+									title: 'Bet under fallback',
+									status: 'active',
+									owner: null,
+									createdAt: new Date().toISOString(),
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['bet-fallback'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				content: Array<{ text: string }>
+			}
+			expect(result._meta.ui?.resourceUri).toBe(heroCardUri)
+			expect(result.content[0].text).toBe(
+				'[Bet under fallback](https://maskin.sindre.ai/ws-default-123/objects/bet-fallback)',
+			)
+		})
+
+		it('falls back to the object id when title is missing', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/bet-untitled/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'bet-untitled',
+									type: 'bet',
+									title: null,
+									status: 'active',
+									owner: null,
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['bet-untitled'] })) as {
+				content: Array<{ text: string }>
+			}
+			expect(result.content[0].text).toContain('[bet-untitled](')
+		})
+
+		it('keeps the JSON dump on responses that do not route to the hero-card resource', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/task-x/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'task-x',
+									type: 'task',
+									title: 'Task X',
+									status: 'todo',
+									owner: null,
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['task-x'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				content: Array<{ text: string }>
+			}
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
+			// Raw JSON parse — confirms the dump survived for non-hero-card responses.
+			const parsed = JSON.parse(result.content[0].text)
+			expect(Array.isArray(parsed)).toBe(true)
+		})
+
+		it('emits Markdown fallback on list_objects when a single bet collapses to single', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects?')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'bet-list',
+									type: 'bet',
+									title: 'List bet',
+									status: 'active',
+									owner: null,
+								},
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('list_objects')
+			const result = (await handler({ type: 'bet', limit: 50, offset: 0 })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				content: Array<{ text: string }>
+			}
+			expect(result._meta.ui?.resourceUri).toBe(heroCardUri)
+			expect(result.content[0].text).toBe(
+				'[List bet](https://maskin.sindre.ai/ws-default-123/objects/bet-list)',
+			)
+		})
+
+		it('emits Markdown fallback on search_objects single-bet match', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/search?')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'bet-search',
+									type: 'bet',
+									title: 'Search bet',
+									status: 'active',
+									owner: null,
+								},
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('search_objects')
+			const result = (await handler({ q: 'bet', limit: 50, offset: 0 })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				content: Array<{ text: string }>
+			}
+			expect(result._meta.ui?.resourceUri).toBe(heroCardUri)
+			expect(result.content[0].text).toBe(
+				'[Search bet](https://maskin.sindre.ai/ws-default-123/objects/bet-search)',
+			)
+		})
+
+		it('every hero-card-bound response across the three read tools carries Markdown fallback', async () => {
+			// Single contract assertion: when the resource is the hero-card,
+			// content[0].text MUST be Markdown (not JSON). Runs each tool with
+			// a single-bet fixture and asserts the invariant. This is the
+			// regression guard the bet's exit criteria depend on.
+			const fixtures: Array<{
+				tool: 'get_objects' | 'list_objects' | 'search_objects'
+				args: Record<string, unknown>
+				urlPart: string
+				body: unknown
+			}> = [
+				{
+					tool: 'get_objects',
+					args: { ids: ['b1'] },
+					urlPart: '/api/objects/b1/graph',
+					body: {
+						object: { id: 'b1', type: 'bet', title: 'B1', status: 'active', owner: null },
+					},
+				},
+				{
+					tool: 'list_objects',
+					args: { type: 'bet', limit: 50, offset: 0 },
+					urlPart: '/api/objects?',
+					body: [{ id: 'b2', type: 'bet', title: 'B2', status: 'active', owner: null }],
+				},
+				{
+					tool: 'search_objects',
+					args: { q: 'b3', limit: 50, offset: 0 },
+					urlPart: '/api/objects/search?',
+					body: [{ id: 'b3', type: 'bet', title: 'B3', status: 'active', owner: null }],
+				},
+			]
+
+			for (const fx of fixtures) {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const urlStr = url as string
+					if (urlStr.includes(fx.urlPart)) {
+						return { ok: true, json: () => Promise.resolve(fx.body) } as Response
+					}
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				})
+				const handler = getHandler(fx.tool)
+				const result = (await handler(fx.args)) as {
+					_meta: { ui?: { resourceUri?: string } }
+					content: Array<{ text: string }>
+					structuredContent: { heroCard: { kind: string } }
+				}
+				expect(result._meta.ui?.resourceUri).toBe(heroCardUri)
+				expect(result.content[0].text).toMatch(
+					/^\[[^\]]+\]\(https:\/\/maskin\.sindre\.ai\/ws-default-123\/objects\/[^)]+\)$/,
+				)
+				// Confirm we're not also leaking the JSON dump — the entire
+				// content[0].text must be the Markdown link, nothing else.
+				expect(() => JSON.parse(result.content[0].text)).toThrow()
+				vi.restoreAllMocks()
+			}
+		})
+	})
+
 	describe('record_widget_event handler', () => {
 		it('forwards click_through events to the telemetry sink', async () => {
 			const events: unknown[] = []

@@ -865,6 +865,41 @@ function pickResourceUri(payload: HeroCardPayload): string {
 }
 
 /**
+ * Two-layer deep-link fallback for Hero-Card-bound responses. The widget
+ * lives in `structuredContent.heroCard`; this returns the Markdown that
+ * replaces the JSON dump in `content[0].text` so Claude has a clickable
+ * link when the iframe fails to mount. Pairs with `pickResourceUri` — only
+ * called when the chosen resource is `UI_RESOURCES.heroCard`.
+ *
+ * Returns `null` when no usable deep-link can be built (no workspace id,
+ * missing object); callers fall back to the JSON dump in that case so the
+ * agent still has the raw payload to reason about.
+ */
+function buildHeroCardFallbackMarkdown(
+	payload: HeroCardPayload,
+	config: McpConfig,
+	workspaceId: string | undefined,
+): string | null {
+	const ws = workspaceId ?? config.defaultWorkspaceId
+	if (!ws) return null
+	const baseUrl = resolveWebAppBaseUrl({ WEB_APP_URL: config.webAppBaseUrl })
+
+	const renderLink = (obj: HeroCardObject): string => {
+		const href = buildWebAppHref(baseUrl, ws, { kind: 'object', id: obj.id })
+		const title = obj.title && obj.title.trim().length > 0 ? obj.title : obj.id
+		return `[${title}](${href})`
+	}
+
+	if (payload.kind === 'single' && payload.object) {
+		return renderLink(payload.object)
+	}
+	if (payload.kind === 'list' && payload.objects?.length) {
+		return payload.objects.map((o) => `- ${renderLink(o)}`).join('\n')
+	}
+	return null
+}
+
+/**
  * Build the heroCard payload for a list-style tool response. Collapses to
  * `single` when the result has exactly one row so the predicate can fire on
  * single-result `list_objects` / `search_objects` calls too.
@@ -1159,9 +1194,19 @@ export function createMcpServer(config: McpConfig) {
 								totalCount: heroObjects.length,
 							}
 
+			const resourceUri = pickResourceUri(heroCard)
+			const fallbackMarkdown =
+				resourceUri === UI_RESOURCES.heroCard
+					? buildHeroCardFallbackMarkdown(heroCard, config, workspace_id)
+					: null
 			return {
-				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
-				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+				_meta: uiMeta('get_objects', config, workspace_id, resourceUri),
+				content: [
+					{
+						type: 'text' as const,
+						text: fallbackMarkdown ?? JSON.stringify(results, null, 2),
+					},
+				],
 				structuredContent: { heroCard },
 			}
 		},
@@ -1451,9 +1496,19 @@ export function createMcpServer(config: McpConfig) {
 				result,
 				args.workspace_id,
 			)
+			const resourceUri = pickResourceUri(heroCard)
+			const fallbackMarkdown =
+				resourceUri === UI_RESOURCES.heroCard
+					? buildHeroCardFallbackMarkdown(heroCard, config, args.workspace_id)
+					: null
 			return {
-				_meta: uiMeta('list_objects', config, args.workspace_id, pickResourceUri(heroCard)),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: uiMeta('list_objects', config, args.workspace_id, resourceUri),
+				content: [
+					{
+						type: 'text' as const,
+						text: fallbackMarkdown ?? JSON.stringify(result, null, 2),
+					},
+				],
 				structuredContent: { heroCard },
 			}
 		},
@@ -1483,9 +1538,19 @@ export function createMcpServer(config: McpConfig) {
 				result,
 				args.workspace_id,
 			)
+			const resourceUri = pickResourceUri(heroCard)
+			const fallbackMarkdown =
+				resourceUri === UI_RESOURCES.heroCard
+					? buildHeroCardFallbackMarkdown(heroCard, config, args.workspace_id)
+					: null
 			return {
-				_meta: uiMeta('search_objects', config, args.workspace_id, pickResourceUri(heroCard)),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: uiMeta('search_objects', config, args.workspace_id, resourceUri),
+				content: [
+					{
+						type: 'text' as const,
+						text: fallbackMarkdown ?? JSON.stringify(result, null, 2),
+					},
+				],
 				structuredContent: { heroCard },
 			}
 		},
