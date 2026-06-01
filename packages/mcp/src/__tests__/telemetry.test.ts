@@ -80,13 +80,34 @@ describe('MCP telemetry wrapper', () => {
 		expect(typeof toolCalls[0].session_id).toBe('string')
 	})
 
-	it('reports has_rich_render=true when the tool definition declares _meta.ui', () => {
-		// All built-in tools register with _meta.ui; sample a few to assert the
-		// signal we read at registration time matches what cards see.
+	it('reports has_rich_render=true when the tool definition declares _meta.ui.resourceUri', () => {
+		// Widget-producing tools register with `_meta.ui.resourceUri`; sample
+		// a few to assert the signal we read at registration time matches
+		// what cards see.
 		for (const name of ['create_objects', 'update_objects', 'delete_object', 'list_objects']) {
 			const def = definitions.get(name)
-			expect(def?._meta?.ui).toBeTruthy()
+			expect(def?._meta?.ui).toMatchObject({ resourceUri: expect.any(String) })
 		}
+	})
+
+	it('reports has_rich_render=false for record_widget_event (visibility-only _meta.ui)', async () => {
+		// `record_widget_event` carries `_meta.ui.visibility` for host-side
+		// gating but never renders a widget itself. It must not count toward
+		// the rich-render KPI.
+		const def = definitions.get('record_widget_event')
+		expect(def?._meta?.ui).toEqual({ visibility: ['app'] })
+
+		const handler = getHandler('record_widget_event')
+		await handler({
+			widget_name: 'hero-card',
+			event: 'render_success',
+			tool_name: 'get_objects',
+			card_kind: 'single',
+		})
+
+		const toolCalls = recorded.filter((r) => r.event_type === 'tool_call')
+		const entry = toolCalls.find((c) => c.tool_name === 'record_widget_event')
+		expect(entry?.has_rich_render).toBe(false)
 	})
 
 	it('emits a mutation telemetry event after a successful update_objects call', async () => {
