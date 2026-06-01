@@ -16,7 +16,14 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
-import { createMcpServer } from '../server'
+import {
+	HERO_CARD_TYPE_DEFAULTS,
+	type HeroCardTypeAnnotation,
+	buildContextLine,
+	buildHeroCardObject,
+	createMcpServer,
+	pickResourceUri,
+} from '../server'
 import { tools } from '../tools'
 
 const config = {
@@ -1968,6 +1975,196 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.kind).toBe('empty')
 			expect(result.structuredContent.heroCard.tool).toBe('list_objects')
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
+		})
+
+		it('swaps to the hero-card resource for a single organization (customer variant)', async () => {
+			const updatedAt = new Date(Date.now() - 3 * 86_400_000).toISOString()
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/org-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'org-1',
+									type: 'organization',
+									title: 'Acme Co',
+									status: 'qualifying',
+									owner: 'actor-1',
+									updatedAt,
+								},
+							}),
+					} as Response
+				}
+				if (urlStr.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sebastian' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['org-1'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: {
+						kind: string
+						object?: { type: string; contextLine: string; owner?: unknown }
+					}
+				}
+			}
+
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result.structuredContent.heroCard.object?.type).toBe('organization')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'last touch 3d ago · qualifying',
+			)
+		})
+
+		it('swaps to the hero-card resource for a single person (customer variant)', async () => {
+			const updatedAt = new Date(Date.now() - 1 * 86_400_000).toISOString()
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/person-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'person-1',
+									type: 'person',
+									title: 'Jane Doe',
+									status: 'engaged',
+									owner: null,
+									updatedAt,
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['person-1'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: { heroCard: { kind: string; object?: { contextLine: string } } }
+			}
+
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'last touch 1d ago · engaged',
+			)
+		})
+	})
+
+	describe('Hero Card schema-driven type annotations', () => {
+		it('exposes hero_card annotations for organization and person in get_workspace_schema', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([
+						{
+							id: 'ws-1',
+							name: 'Test Workspace',
+							settings: {
+								statuses: {
+									organization: ['prospect', 'qualifying'],
+									person: ['new', 'engaged'],
+									bet: ['active'],
+								},
+							},
+						},
+					]),
+			} as Response)
+			const handler = getHandler('get_workspace_schema')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text) as {
+				types: Record<string, { hero_card?: HeroCardTypeAnnotation }>
+			}
+			expect(parsed.types.organization?.hero_card?.hero_card_context).toBe('last touch + stage')
+			expect(parsed.types.person?.hero_card?.hero_card_context).toBe('last touch + stage')
+			// bet has no built-in annotation — schema-driven path is opt-in per type.
+			expect(parsed.types.bet?.hero_card).toBeUndefined()
+		})
+
+		it('lets workspace settings override the built-in hero_card annotation', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([
+						{
+							id: 'ws-2',
+							name: 'Override',
+							settings: {
+								statuses: { organization: ['prospect'] },
+								hero_card: {
+									organization: {
+										hero_card_context: 'custom strategy',
+										primary_action: { label: 'View account', kind: 'open_object' },
+									},
+								},
+							},
+						},
+					]),
+			} as Response)
+			const handler = getHandler('get_workspace_schema')
+			const result = (await handler({ workspace_id: 'ws-2' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text) as {
+				types: Record<string, { hero_card?: HeroCardTypeAnnotation }>
+			}
+			expect(parsed.types.organization?.hero_card?.hero_card_context).toBe('custom strategy')
+			expect(parsed.types.organization?.hero_card?.primary_action?.label).toBe('View account')
+		})
+
+		it('renders a hypothetical new object type identically when given the same annotation', () => {
+			// Proves the template is generic: an annotated type with no widget code,
+			// no predicate edit, and no new constant entry renders the same Hero Card
+			// surface as organization/person.
+			const annotations: Record<string, HeroCardTypeAnnotation> = {
+				...HERO_CARD_TYPE_DEFAULTS,
+				account: HERO_CARD_TYPE_DEFAULTS.organization,
+			}
+			const updatedAt = new Date(Date.now() - 5 * 86_400_000).toISOString()
+			const accountObj = {
+				id: 'acct-1',
+				type: 'account',
+				title: 'Hypothetical Co',
+				status: 'qualifying',
+				updatedAt,
+			}
+			const orgObj = { ...accountObj, id: 'org-1', type: 'organization' }
+			const accountHero = buildHeroCardObject(accountObj, null, Date.now(), annotations)
+			const orgHero = buildHeroCardObject(orgObj, null, Date.now(), annotations)
+			// Same context line, same owner shape — render path is type-agnostic.
+			expect(accountHero.contextLine).toBe(orgHero.contextLine)
+			expect(accountHero.contextLine).toBe('last touch 5d ago · qualifying')
+
+			// Resource swap fires identically for the new type.
+			const accountPayload = { kind: 'single' as const, tool: 't', object: accountHero }
+			const orgPayload = { kind: 'single' as const, tool: 't', object: orgHero }
+			expect(pickResourceUri(accountPayload, annotations)).toBe('ui://maskin/hero-card')
+			expect(pickResourceUri(orgPayload, annotations)).toBe(
+				pickResourceUri(accountPayload, annotations),
+			)
+		})
+
+		it('falls back to type · status for an unannotated unknown type', () => {
+			const obj = {
+				id: 'x-1',
+				type: 'something-new',
+				title: 'X',
+				status: 'open',
+				createdAt: null,
+			}
+			expect(buildContextLine(obj, null)).toBe('something-new · open')
 		})
 	})
 
