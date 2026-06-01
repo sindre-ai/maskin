@@ -1904,7 +1904,7 @@ describe('tool handlers', () => {
 							}),
 					} as Response
 				}
-				if (urlStr.endsWith('/api/actors')) {
+				if (urlStr.includes('/api/actors')) {
 					return {
 						ok: true,
 						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sebastian' }]),
@@ -1956,6 +1956,105 @@ describe('tool handlers', () => {
 
 			expect(result.structuredContent.heroCard.kind).toBe('single')
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
+		})
+
+		it('resolves hero-card owner names via a batched ?ids= lookup, not the full actor list', async () => {
+			const calls: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				calls.push(urlStr)
+				if (urlStr.includes('/api/objects/search')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+								{
+									id: 'bet-3',
+									type: 'bet',
+									title: 'Bet Three',
+									status: 'active',
+									owner: 'actor-1',
+								},
+							]),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'actor-1', name: 'Alice' },
+								{ id: 'actor-2', name: 'Bob' },
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('search_objects')
+			const result = (await handler({ q: 'bet' })) as {
+				structuredContent: {
+					heroCard: {
+						kind: string
+						objects?: Array<{ owner?: { id: string; name: string | null } }>
+					}
+				}
+			}
+
+			const actorCall = calls.find((u) => u.includes('/api/actors'))
+			expect(actorCall).toBeDefined()
+			// Single batched request, not the unbounded full-workspace fetch.
+			expect(calls.filter((u) => u.includes('/api/actors'))).toHaveLength(1)
+			expect(actorCall).toContain('?ids=')
+			// Owner IDs are deduped — actor-1 appears twice in the result rows.
+			const idsParam = new URL(actorCall as string).searchParams.get('ids') ?? ''
+			const ids = idsParam.split(',').filter(Boolean)
+			expect(ids.sort()).toEqual(['actor-1', 'actor-2'])
+
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
+			expect(owners).toEqual([
+				{ id: 'actor-1', name: 'Alice' },
+				{ id: 'actor-2', name: 'Bob' },
+				{ id: 'actor-1', name: 'Alice' },
+			])
+		})
+
+		it('falls back to { id, name: null } when the batched lookup misses an actor', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/search')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+							]),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'actor-1', name: 'Alice' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('search_objects')
+			const result = (await handler({ q: 'bet' })) as {
+				structuredContent: {
+					heroCard: { objects?: Array<{ owner?: { id: string; name: string | null } }> }
+				}
+			}
+			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
+			expect(owners).toEqual([
+				{ id: 'actor-1', name: 'Alice' },
+				{ id: 'actor-2', name: null },
+			])
 		})
 
 		it('emits an empty heroCard for list_objects with no rows', async () => {
