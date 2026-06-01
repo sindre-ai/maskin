@@ -112,8 +112,8 @@ describe('Telemetry Routes', () => {
 			expect(res.status).toBe(400)
 		})
 
-		it('records a widget_event render_success for a workspace member', async () => {
-			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+		it('records a widget_event render_success with the full correlation payload', async () => {
+			const { app, mockResults, calls } = createTestApp(telemetryRoutes, '/api/telemetry')
 			mockResults.select = [memberRow]
 			mockResults.insert = [{}]
 
@@ -138,10 +138,26 @@ describe('Telemetry Routes', () => {
 
 			expect(res.status).toBe(202)
 			expect(await res.json()).toEqual({ recorded: true })
+			expect(calls.inserts).toHaveLength(1)
+			expect(calls.inserts[0]).toEqual({
+				workspaceId: wsId,
+				eventType: 'widget_event',
+				toolName: 'get_objects',
+				sessionId: 'mcp-widget-1',
+				objectType: 'bet',
+				data: {
+					event: 'render_success',
+					widget_name: 'hero-card',
+					card_kind: 'single',
+					object_id: 'bet-123',
+					ts: 1717245000000,
+					actor_type: 'human',
+				},
+			})
 		})
 
-		it('records a widget_event click_through for a workspace member', async () => {
-			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+		it('records a widget_event click_through with the same correlation tuple as its render_success', async () => {
+			const { app, mockResults, calls } = createTestApp(telemetryRoutes, '/api/telemetry')
 			mockResults.select = [memberRow]
 			mockResults.insert = [{}]
 
@@ -165,6 +181,68 @@ describe('Telemetry Routes', () => {
 			)
 
 			expect(res.status).toBe(202)
+			expect(calls.inserts).toHaveLength(1)
+			const inserted = calls.inserts[0] as Record<string, unknown>
+			const data = inserted.data as Record<string, unknown>
+			// Correlation tuple — must match the render_success row above so T9's
+			// CTR query can join click_through back to its parent render.
+			expect(inserted.sessionId).toBe('mcp-widget-1')
+			expect(inserted.toolName).toBe('get_objects')
+			expect(data.object_id).toBe('bet-123')
+			expect(data.event).toBe('click_through')
+			expect(data.ts).toBe(1717245001000)
+			expect(data.actor_type).toBe('human')
+		})
+
+		it('records a widget_event render_error so the 48h kill criterion can grep raw logs', async () => {
+			const { app, mockResults, calls } = createTestApp(telemetryRoutes, '/api/telemetry')
+			mockResults.select = [memberRow]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'widget_event',
+						widget_name: 'hero-card',
+						event: 'render_error',
+						tool_name: 'get_objects',
+						session_id: 'mcp-widget-1',
+						card_kind: 'single',
+						ts: 1717245000000,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(202)
+			expect(calls.inserts).toHaveLength(1)
+			const data = (calls.inserts[0] as Record<string, unknown>).data as Record<string, unknown>
+			expect(data.event).toBe('render_error')
+		})
+
+		it('returns 400 when widget_event ts is beyond the year-2100 upper bound', async () => {
+			const { app } = createTestApp(telemetryRoutes, '/api/telemetry')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'widget_event',
+						widget_name: 'hero-card',
+						event: 'render_success',
+						tool_name: 'get_objects',
+						session_id: 'mcp-widget-1',
+						card_kind: 'single',
+						ts: Number.MAX_SAFE_INTEGER,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
 		})
 
 		it('returns 400 when widget_event has unknown event kind', async () => {

@@ -81,8 +81,10 @@ app.openapi(recordRoute, (async (c) => {
 		})
 	} else {
 		// widget_event — widget-only fields (event, widget_name, card_kind, object_id,
-		// ts) live in the `data` jsonb column so we avoid a hot-table migration. T9's
-		// CTR aggregation reads them back via jsonb operators.
+		// ts, actor_type) live in the `data` jsonb column so we avoid a hot-table
+		// migration. T9's CTR aggregation reads them back via jsonb operators.
+		// `actor_type` is persisted so the sibling visibility-gate task can filter
+		// agent-driven renders out of the CTR numerator without a backfill.
 		await db.insert(mcpTelemetry).values({
 			workspaceId,
 			eventType: 'widget_event',
@@ -95,13 +97,17 @@ app.openapi(recordRoute, (async (c) => {
 				card_kind: body.card_kind,
 				object_id: body.object_id ?? null,
 				ts: body.ts,
+				actor_type: c.get('actorType'),
 			},
 		})
-		// One log line per widget event so the 48h render-error kill criterion is
-		// observable in raw logs without running the T9 aggregation query.
-		console.log(
-			`[telemetry] widget_event ${body.event} — widget=${body.widget_name} tool=${body.tool_name} object_type=${body.object_type ?? 'null'} object_id=${body.object_id ?? 'null'} workspace=${workspaceId}`,
-		)
+		// Only render_error is logged — the 48h kill criterion grepped from raw
+		// logs only needs the error rows. render_success/click_through volume goes
+		// through the T9 aggregation query instead.
+		if (body.event === 'render_error') {
+			console.warn(
+				`[telemetry] widget_event render_error — widget=${body.widget_name} tool=${body.tool_name} object_type=${body.object_type ?? 'null'} object_id=${body.object_id ?? 'null'} workspace=${workspaceId}`,
+			)
+		}
 	}
 
 	return c.json({ recorded: true as const }, 202)

@@ -69,7 +69,9 @@ export const recordMcpWidgetEventSchema = z.object({
 	card_kind: z.enum(['single', 'list', 'empty']),
 	object_type: z.string().min(1).max(64).optional(),
 	object_id: z.string().min(1).max(128).optional(),
-	ts: z.number().int().min(0),
+	// Upper bound is ~year 2100 in ms epoch — guards T9's CTR window from a
+	// malformed client polluting buckets with effectively-infinite timestamps.
+	ts: z.number().int().min(0).max(4_102_444_800_000),
 })
 
 export const recordMcpTelemetrySchema = z.discriminatedUnion('event_type', [
