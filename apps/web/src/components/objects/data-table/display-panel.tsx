@@ -215,7 +215,7 @@ export function DisplayPanel({
 				)}
 			</ResponsivePopoverTrigger>
 			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-0">
-				<div className="max-h-[480px] overflow-y-auto text-left">
+				<div className="md:max-h-[480px] md:overflow-y-auto text-left">
 					{/* View */}
 					<div className="p-3 space-y-2">
 						<SectionHeader>View</SectionHeader>

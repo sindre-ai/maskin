@@ -127,4 +127,20 @@ describe('DisplayPanel', () => {
 		expect(screen.getByRole('button', { name: /\+ Status/i })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /\+ Owner/i })).toBeInTheDocument()
 	})
+
+	it('gates the inner 480px scroll cap behind md: so mobile uses the sheet height', async () => {
+		const user = userEvent.setup()
+		renderPanel()
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		// The wrapper sitting directly inside ResponsivePopoverContent holds the
+		// scroll cap. On mobile (<md) the sheet itself is the scroll surface, so
+		// the cap and overflow must be md-prefixed.
+		const view = screen.getByText('View')
+		const wrapper = view.closest('div.text-left') as HTMLElement
+		expect(wrapper).not.toBeNull()
+		expect(wrapper.className).toContain('md:max-h-[480px]')
+		expect(wrapper.className).toContain('md:overflow-y-auto')
+		expect(wrapper.className).not.toMatch(/(^|\s)max-h-\[480px\]/)
+		expect(wrapper.className).not.toMatch(/(^|\s)overflow-y-auto/)
+	})
 })
