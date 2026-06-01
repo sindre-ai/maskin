@@ -137,9 +137,10 @@ describe('tool handlers', () => {
 		return handler
 	}
 
-	function mockFetchSuccess(data: unknown) {
+	function mockFetchSuccess(data: unknown, headers?: Record<string, string>) {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 			ok: true,
+			headers: new Headers(headers ?? {}),
 			json: () => Promise.resolve(data),
 		} as Response)
 	}
@@ -2006,9 +2007,10 @@ describe('tool handlers', () => {
 		it('emits a list heroCard for list_actors with type=actor rows', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
-				if (urlStr.endsWith('/api/actors')) {
+				if (urlStr.includes('/api/actors')) {
 					return {
 						ok: true,
+						headers: new Headers({ 'X-Total-Count': '2' }),
 						json: () =>
 							Promise.resolve([
 								{ id: 'a-1', type: 'human', name: 'Sebastian', email: 's@x.test' },
@@ -2025,6 +2027,7 @@ describe('tool handlers', () => {
 					heroCard: {
 						kind: string
 						tool: string
+						totalCount?: number
 						objects?: Array<{ type: string; title: string | null; contextLine: string }>
 					}
 				}
@@ -2032,16 +2035,60 @@ describe('tool handlers', () => {
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.tool).toBe('list_actors')
+			expect(result.structuredContent.heroCard.totalCount).toBe(2)
 			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('actor')
 			expect(result.structuredContent.heroCard.objects?.[0]?.title).toBe('Sebastian')
+		})
+
+		it('passes limit/offset to /api/actors and uses X-Total-Count for the +N more footer', async () => {
+			const calls: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				calls.push(urlStr)
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1234' }),
+						json: () =>
+							Promise.resolve([{ id: 'a-1', type: 'human', name: 'Alice', email: 'a@x.test' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1', limit: 1, offset: 0 })) as {
+				structuredContent: {
+					heroCard: { kind: string; totalCount?: number }
+				}
+			}
+			expect(calls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.totalCount).toBe(1234)
+		})
+
+		it('collapses list_actors to single heroCard when total is exactly 1', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+				return {
+					ok: true,
+					headers: new Headers({ 'X-Total-Count': '1' }),
+					json: () =>
+						Promise.resolve([{ id: 'a-1', type: 'human', name: 'Solo', email: 's@x.test' }]),
+				} as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: { heroCard: { kind: string } }
+			}
+			expect(result.structuredContent.heroCard.kind).toBe('single')
 		})
 
 		it('emits a list heroCard for list_triggers with type=trigger rows + resolved target actor', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
-				if (urlStr.endsWith('/api/triggers')) {
+				if (urlStr.includes('/api/triggers')) {
 					return {
 						ok: true,
+						headers: new Headers({ 'X-Total-Count': '2' }),
 						json: () =>
 							Promise.resolve([
 								{
@@ -2076,6 +2123,7 @@ describe('tool handlers', () => {
 					heroCard: {
 						kind: string
 						tool: string
+						totalCount?: number
 						objects?: Array<{
 							type: string
 							status: string | null
@@ -2087,10 +2135,44 @@ describe('tool handlers', () => {
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.tool).toBe('list_triggers')
+			expect(result.structuredContent.heroCard.totalCount).toBe(2)
 			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('trigger')
 			expect(result.structuredContent.heroCard.objects?.[0]?.status).toBe('enabled')
 			expect(result.structuredContent.heroCard.objects?.[0]?.owner?.name).toBe('Sindre')
 			expect(result.structuredContent.heroCard.objects?.[1]?.status).toBe('disabled')
+		})
+
+		it('passes limit/offset to /api/triggers and uses X-Total-Count for the +N more footer', async () => {
+			const calls: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				calls.push(urlStr)
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '987' }),
+						json: () =>
+							Promise.resolve([
+								{
+									id: 't-1',
+									type: 'cron',
+									name: 'Daily sweep',
+									enabled: true,
+									targetActorId: null,
+								},
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			const result = (await handler({ workspace_id: 'ws-1', limit: 1, offset: 0 })) as {
+				structuredContent: { heroCard: { kind: string; totalCount?: number } }
+			}
+			const triggersCalls = calls.filter((u) => u.includes('/api/triggers'))
+			expect(triggersCalls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.totalCount).toBe(987)
 		})
 	})
 
