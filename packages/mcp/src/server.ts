@@ -950,7 +950,11 @@ export function createMcpServer(config: McpConfig) {
 	// pass-through so giving up the wrapper's signature is safe.
 	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
 	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
-		const defHasRichRender = Boolean(definition?._meta?.ui)
+		// `has_rich_render` measures widget-producing calls — `_meta.ui` alone
+		// isn't enough because a tool can carry `_meta.ui.visibility` (the MCP
+		// Apps host-side gate) without ever rendering a widget. Require an
+		// actual `resourceUri` to count as a rich render.
+		const defHasRichRender = Boolean(definition?._meta?.ui?.resourceUri)
 		const mutationKind = MUTATION_TOOL_KINDS[name]
 
 		const wrappedHandler = async (args: unknown, extra: unknown) => {
@@ -968,9 +972,9 @@ export function createMcpServer(config: McpConfig) {
 				throw err
 			}
 
-			const responseMeta = (response as { _meta?: { ui?: unknown } } | undefined)?._meta
-			const responseHasRichRender =
-				defHasRichRender || Boolean(responseMeta && 'ui' in responseMeta)
+			const responseUi = (response as { _meta?: { ui?: { resourceUri?: unknown } } } | undefined)
+				?._meta?.ui
+			const responseHasRichRender = defHasRichRender || typeof responseUi?.resourceUri === 'string'
 
 			recordToolCall(telemetrySink, telemetryTarget, {
 				tool_name: name,
@@ -3852,13 +3856,19 @@ export function createMcpServer(config: McpConfig) {
 	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
 	// the 48h rolling render-error kill criterion. Intentionally NOT in
 	// MUTATION_TOOL_KINDS — it's an instrumentation channel, not a write.
+	//
+	// `_meta.ui.visibility: ['app']` is the MCP Apps spec mechanism for hiding
+	// a tool from the model's tool list while keeping it callable by the
+	// widget bundle via the AppBridge channel. Without this, an honest agent
+	// can call the tool directly and pollute the bet's success metric or trip
+	// the 48h render-error kill switch.
 	registerAppTool(
 		server,
 		'record_widget_event',
 		{
 			description: tools.record_widget_event.description,
 			inputSchema: tools.record_widget_event.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { visibility: ['app'] } },
 		},
 		async (args) => {
 			recordWidgetEvent(telemetrySink, telemetryTarget, {

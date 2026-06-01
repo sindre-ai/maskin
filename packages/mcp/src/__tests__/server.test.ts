@@ -110,6 +110,18 @@ describe('createMcpServer', () => {
 			expect(registeredNames).toContain(name)
 		}
 	})
+
+	it('registers record_widget_event with app-only visibility', () => {
+		createMcpServer(config)
+		const call = vi
+			.mocked(registerAppTool)
+			.mock.calls.find(([, name]) => name === 'record_widget_event')
+		if (!call) throw new Error('record_widget_event not registered')
+		const def = call[2] as { _meta?: { ui?: { visibility?: string[]; resourceUri?: string } } }
+		expect(def._meta?.ui?.visibility).toEqual(['app'])
+		// Tool is telemetry only — never renders a widget, so no resourceUri.
+		expect(def._meta?.ui?.resourceUri).toBeUndefined()
+	})
 })
 
 describe('tool handlers', () => {
