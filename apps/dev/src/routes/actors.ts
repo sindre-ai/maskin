@@ -16,6 +16,8 @@ import {
 	sessions,
 	subscriptions,
 	triggers,
+	userDisplaySettings,
+	webhookDeliveries,
 	workspaceMembers,
 	workspaceSkills,
 	workspaces,
@@ -24,11 +26,15 @@ import {
 	PLATFORM_MCP_PRESET,
 	SINDRE_DEFAULT,
 	createActorSchema,
+	notificationPrefsSchema,
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { and, asc, eq, inArray, or } from 'drizzle-orm'
+import type { StorageProvider } from '@maskin/storage'
+import { and, asc, count, eq, inArray, ne, or } from 'drizzle-orm'
+import { serializeActor, serializeActorWithKey } from '../lib/actor-response'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -37,7 +43,8 @@ import {
 	idParamSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
-import { serialize, serializeArray } from '../lib/serialize'
+import { emitProfileFieldChanged } from '../lib/profile-telemetry'
+import { serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
@@ -45,7 +52,21 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		storageProvider: StorageProvider
 	}
+}
+
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024
+
+function avatarStorageKey(actorId: string, ext: string): string {
+	return `actors/${actorId}/avatar.${ext}`
+}
+
+function mimeToExt(mime: string): string | null {
+	if (mime === 'image/jpeg') return 'jpg'
+	if (mime === 'image/png') return 'png'
+	if (mime === 'image/webp') return 'webp'
+	return null
 }
 
 const app = new OpenAPIHono<Env>()
@@ -208,21 +229,7 @@ app.openapi(createActorRoute, async (c) => {
 		if (created) workspaceId = created.id
 	}
 
-	// Return actor WITHOUT api_key, but WITH it in the expected response field.
-	// Field names must be snake_case to match actorResponseSchema so MCP read→update
-	// round trips don't get keys stripped.
-	const { apiKey: _, systemPrompt, llmProvider, llmConfig, ...actorWithoutKey } = actor
-	return c.json(
-		{
-			...serialize(actorWithoutKey),
-			system_prompt: systemPrompt,
-			llm_provider: llmProvider,
-			llm_config: llmConfig,
-			api_key: key,
-			...(workspaceId && { workspace_id: workspaceId }),
-		} as z.infer<typeof actorWithKeySchema>,
-		201,
-	)
+	return c.json(serializeActorWithKey(actor, key, workspaceId), 201)
 })
 
 // GET / - List actors
@@ -356,31 +363,13 @@ app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
 	const { id } = c.req.valid('param')
 
-	const [actor] = await db
-		.select({
-			id: actors.id,
-			type: actors.type,
-			name: actors.name,
-			email: actors.email,
-			description: actors.description,
-			system_prompt: actors.systemPrompt,
-			tools: actors.tools,
-			memory: actors.memory,
-			llm_provider: actors.llmProvider,
-			llm_config: actors.llmConfig,
-			isSystem: actors.isSystem,
-			createdAt: actors.createdAt,
-			updatedAt: actors.updatedAt,
-		})
-		.from(actors)
-		.where(eq(actors.id, id))
-		.limit(1)
+	const [actor] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
 
 	if (!actor) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	return c.json(serialize(actor) as z.infer<typeof actorResponseSchema>)
+	return c.json(serializeActor(actor))
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor
@@ -422,7 +411,10 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type })
+		.select({
+			type: actors.type,
+			notificationPrefs: actors.notificationPrefs,
+		})
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
@@ -453,12 +445,23 @@ app.openapi(updateActorRoute, (async (c) => {
 		}
 	}
 
+	// Merge partial notification_prefs onto the existing object so callers can
+	// flip one switch without resending the whole shape.
+	const mergedPrefs =
+		body.notification_prefs !== undefined
+			? notificationPrefsSchema.parse({
+					...(existing.notificationPrefs as Record<string, unknown> | null),
+					...body.notification_prefs,
+				})
+			: undefined
+
 	const [updated] = await db
 		.update(actors)
 		.set({
 			...(body.name && { name: body.name }),
-			...(body.email && { email: body.email }),
 			...(body.description !== undefined && { description: body.description }),
+			...(body.bio !== undefined && { bio: body.bio }),
+			...(mergedPrefs !== undefined && { notificationPrefs: mergedPrefs }),
 			...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
 			...(body.tools !== undefined && { tools: body.tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
@@ -467,26 +470,23 @@ app.openapi(updateActorRoute, (async (c) => {
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
-		.returning({
-			id: actors.id,
-			type: actors.type,
-			name: actors.name,
-			email: actors.email,
-			description: actors.description,
-			system_prompt: actors.systemPrompt,
-			tools: actors.tools,
-			memory: actors.memory,
-			llm_provider: actors.llmProvider,
-			llm_config: actors.llmConfig,
-			isSystem: actors.isSystem,
-			updatedAt: actors.updatedAt,
-		})
+		.returning()
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	// Telemetry — one event per profile field actually written. Only humans
+	// editing their own profile count toward the bet's ≥70% adoption metric.
+	if (id === actorId && existing.type === 'human') {
+		if (body.name !== undefined) await emitProfileFieldChanged(db, id, 'name')
+		if (body.bio !== undefined) await emitProfileFieldChanged(db, id, 'bio')
+		if (body.notification_prefs !== undefined) {
+			await emitProfileFieldChanged(db, id, 'notification_prefs')
+		}
+	}
+
+	return c.json(serializeActor(updated))
 }) as RouteHandler<typeof updateActorRoute, Env>)
 
 // POST /:id/api-keys - Regenerate API key
@@ -528,6 +528,126 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
+
+// POST /:id/avatar — upload avatar
+const uploadAvatarRoute = createRoute({
+	method: 'post',
+	path: '/{id}/avatar',
+	tags: ['Actors'],
+	summary: 'Upload actor avatar',
+	request: {
+		params: idParamSchema,
+		// Hono passes through multipart form data unparsed; the schema is just
+		// documentation here. Actual parsing happens via c.req.formData().
+		body: {
+			content: {
+				'multipart/form-data': {
+					schema: z.object({ file: z.unknown() }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Avatar uploaded',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid avatar',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Forbidden',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found',
+		},
+	},
+})
+
+app.openapi(uploadAvatarRoute, (async (c) => {
+	const db = c.get('db')
+	const storage = c.get('storageProvider')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+
+	if (id !== callerId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Avatar can only be set by the actor themselves'),
+			403,
+		)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	let form: FormData
+	try {
+		form = await c.req.formData()
+	} catch (err) {
+		logger.error('Avatar upload: failed to parse multipart body', {
+			actorId: id,
+			error: String(err),
+		})
+		return c.json(createApiError('BAD_REQUEST', 'Invalid multipart body'), 400)
+	}
+
+	const file = form.get('file')
+	if (!file || !(file instanceof File)) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing "file" field'), 400)
+	}
+
+	if (file.size > MAX_AVATAR_BYTES) {
+		return c.json(createApiError('BAD_REQUEST', 'Avatar must be 5MB or smaller'), 400)
+	}
+
+	const ext = mimeToExt(file.type)
+	if (!ext) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Avatar must be JPEG, PNG, or WebP', [
+				{ field: 'file', message: `Unsupported mime type: ${file.type || 'unknown'}` },
+			]),
+			400,
+		)
+	}
+
+	const storageKey = avatarStorageKey(id, ext)
+	let bytes: Buffer
+	try {
+		bytes = Buffer.from(await file.arrayBuffer())
+	} catch (err) {
+		logger.error('Avatar upload: failed to read body', { actorId: id, error: String(err) })
+		return c.json(createApiError('BAD_REQUEST', 'Failed to read uploaded file'), 400)
+	}
+
+	try {
+		await storage.put(storageKey, bytes)
+	} catch (err) {
+		logger.error('Avatar upload: storage put failed', { actorId: id, error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to store avatar'), 500)
+	}
+
+	// If the prior avatar lived under a different extension, leave the old object
+	// behind for now — S3 lifecycle policies will collect it. Overwriting the
+	// metadata column is the only thing that matters for serving the new one.
+	const [updated] = await db
+		.update(actors)
+		.set({ avatarStorageKey: storageKey, updatedAt: new Date() })
+		.where(eq(actors.id, id))
+		.returning()
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	await emitProfileFieldChanged(db, id, 'avatar')
+
+	return c.json(serializeActor(updated))
+}) as RouteHandler<typeof uploadAvatarRoute, Env>)
 
 // POST /:id/reset - Reset system actor to factory defaults (Sindre)
 const resetActorRoute = createRoute({
@@ -592,20 +712,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
-		.returning({
-			id: actors.id,
-			type: actors.type,
-			name: actors.name,
-			email: actors.email,
-			description: actors.description,
-			system_prompt: actors.systemPrompt,
-			tools: actors.tools,
-			memory: actors.memory,
-			llm_provider: actors.llmProvider,
-			llm_config: actors.llmConfig,
-			isSystem: actors.isSystem,
-			updatedAt: actors.updatedAt,
-		})
+		.returning()
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
@@ -620,18 +727,20 @@ app.openapi(resetActorRoute, (async (c) => {
 		data: updated,
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	return c.json(serializeActor(updated))
 }) as RouteHandler<typeof resetActorRoute, Env>)
 
-// DELETE /:id - Delete actor (agents only)
+// DELETE /:id - Delete actor (agent: workspace-scoped; human: self-delete + cascade)
 const deleteActorRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
 	tags: ['Actors'],
-	summary: 'Delete actor (agents only)',
+	summary: 'Delete actor (agents: workspace-scoped; humans: self-delete the account)',
 	request: {
 		params: idParamSchema,
-		headers: workspaceIdHeader,
+		headers: z.object({
+			'x-workspace-id': z.string().uuid().optional(),
+		}),
 	},
 	responses: {
 		200: {
@@ -640,7 +749,7 @@ const deleteActorRoute = createRoute({
 		},
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Cannot delete human actors',
+			description: 'Forbidden',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -655,13 +764,190 @@ app.openapi(deleteActorRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
-		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
-	}
-
 	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
 
 	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.isSystem) {
+		return c.json(createApiError('FORBIDDEN', 'System actors cannot be deleted'), 403)
+	}
+
+	// Human self-delete branch — implements T1's contract: hard-delete
+	// solely-owned workspaces, reassign authored content in shared ones to
+	// that workspace's Sindre actor.
+	if (existing.type === 'human') {
+		if (id !== actorId) {
+			return c.json(createApiError('FORBIDDEN', 'Humans can only delete their own account'), 403)
+		}
+
+		const memberships = await db
+			.select({ workspaceId: workspaceMembers.workspaceId })
+			.from(workspaceMembers)
+			.where(eq(workspaceMembers.actorId, id))
+		const userWorkspaceIds = memberships.map((m) => m.workspaceId)
+
+		await db.transaction(async (tx) => {
+			for (const wsId of userWorkspaceIds) {
+				const [{ count: otherHumanCount } = { count: 0 }] = await tx
+					.select({ count: count() })
+					.from(workspaceMembers)
+					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+					.where(
+						and(
+							eq(workspaceMembers.workspaceId, wsId),
+							eq(actors.type, 'human'),
+							ne(actors.id, id),
+						),
+					)
+
+				if (otherHumanCount === 0) {
+					// Solely-owned workspace: hard-delete every workspace-scoped row.
+					// Order matters: clear FK dependents before parents. workspace_skills,
+					// files, user_display_settings, and mcp_telemetry already cascade —
+					// they'll go when the workspace row drops.
+					await tx.delete(events).where(eq(events.workspaceId, wsId))
+					await tx.delete(notifications).where(eq(notifications.workspaceId, wsId))
+					await tx
+						.delete(relationships)
+						.where(
+							inArray(
+								relationships.sourceId,
+								tx.select({ id: objects.id }).from(objects).where(eq(objects.workspaceId, wsId)),
+							),
+						)
+					await tx
+						.delete(relationships)
+						.where(
+							inArray(
+								relationships.targetId,
+								tx.select({ id: objects.id }).from(objects).where(eq(objects.workspaceId, wsId)),
+							),
+						)
+					await tx.delete(objects).where(eq(objects.workspaceId, wsId))
+					await tx.delete(integrations).where(eq(integrations.workspaceId, wsId))
+					await tx.delete(triggers).where(eq(triggers.workspaceId, wsId))
+					await tx.delete(subscriptions).where(eq(subscriptions.workspaceId, wsId))
+					await tx.delete(readState).where(eq(readState.workspaceId, wsId))
+					await tx.delete(imports).where(eq(imports.workspaceId, wsId))
+					await tx.delete(agentFiles).where(eq(agentFiles.workspaceId, wsId))
+					// session_logs FK → sessions; sessions FK → workspaces.
+					const wsSessions = await tx
+						.select({ id: sessions.id })
+						.from(sessions)
+						.where(eq(sessions.workspaceId, wsId))
+					if (wsSessions.length > 0) {
+						await tx.delete(sessionLogs).where(
+							inArray(
+								sessionLogs.sessionId,
+								wsSessions.map((s) => s.id),
+							),
+						)
+					}
+					await tx.delete(sessions).where(eq(sessions.workspaceId, wsId))
+					await tx.delete(webhookDeliveries).where(eq(webhookDeliveries.workspaceId, wsId))
+					await tx.delete(userDisplaySettings).where(eq(userDisplaySettings.workspaceId, wsId))
+					await tx.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, wsId))
+					await tx.delete(workspaces).where(eq(workspaces.id, wsId))
+				} else {
+					// Shared workspace: reassign user-authored content to that
+					// workspace's Sindre actor so the trail stays visible to teammates.
+					const [sindreRow] = await tx
+						.select({ id: actors.id })
+						.from(workspaceMembers)
+						.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+						.where(
+							and(
+								eq(workspaceMembers.workspaceId, wsId),
+								eq(actors.isSystem, true),
+								eq(actors.type, 'agent'),
+							),
+						)
+						.limit(1)
+
+					if (!sindreRow) {
+						throw new Error(
+							`Cannot reassign authored content in workspace ${wsId}: no Sindre actor`,
+						)
+					}
+
+					await tx
+						.update(objects)
+						.set({ createdBy: sindreRow.id })
+						.where(and(eq(objects.workspaceId, wsId), eq(objects.createdBy, id)))
+					await tx
+						.update(objects)
+						.set({ owner: null })
+						.where(and(eq(objects.workspaceId, wsId), eq(objects.owner, id)))
+					await tx
+						.update(files)
+						.set({ createdBy: sindreRow.id })
+						.where(and(eq(files.workspaceId, wsId), eq(files.createdBy, id)))
+					await tx
+						.update(integrations)
+						.set({ createdBy: sindreRow.id })
+						.where(and(eq(integrations.workspaceId, wsId), eq(integrations.createdBy, id)))
+					await tx
+						.update(imports)
+						.set({ createdBy: sindreRow.id })
+						.where(and(eq(imports.workspaceId, wsId), eq(imports.createdBy, id)))
+					await tx
+						.update(sessions)
+						.set({ createdBy: sindreRow.id })
+						.where(and(eq(sessions.workspaceId, wsId), eq(sessions.createdBy, id)))
+					await tx
+						.update(sessions)
+						.set({ actorId: sindreRow.id })
+						.where(and(eq(sessions.workspaceId, wsId), eq(sessions.actorId, id)))
+					// Events authored by this user stay — they are an audit trail.
+					// Reassign actor_id to Sindre so the FK doesn't block the actor delete.
+					await tx
+						.update(events)
+						.set({ actorId: sindreRow.id })
+						.where(and(eq(events.workspaceId, wsId), eq(events.actorId, id)))
+					await tx
+						.update(workspaces)
+						.set({ createdBy: sindreRow.id })
+						.where(and(eq(workspaces.id, wsId), eq(workspaces.createdBy, id)))
+					await tx
+						.delete(subscriptions)
+						.where(and(eq(subscriptions.workspaceId, wsId), eq(subscriptions.actorId, id)))
+					await tx
+						.delete(readState)
+						.where(and(eq(readState.workspaceId, wsId), eq(readState.actorId, id)))
+					await tx
+						.delete(workspaceMembers)
+						.where(and(eq(workspaceMembers.workspaceId, wsId), eq(workspaceMembers.actorId, id)))
+				}
+			}
+
+			// Actor-level cleanup. Sessions and notifications belonging to this
+			// human across workspaces have already been deleted via the per-ws
+			// loops above, but a defensive sweep covers any rows that slipped
+			// through (e.g. orphaned sessions whose workspace was already gone).
+			await tx.delete(notifications).where(eq(notifications.targetActorId, id))
+			await tx.delete(notifications).where(eq(notifications.sourceActorId, id))
+			// Any session still pointing at this actor at this stage is an orphan
+			// from a workspace already removed; delete it rather than NULLing a
+			// NOT NULL column.
+			await tx.delete(sessions).where(eq(sessions.createdBy, id))
+			await tx.delete(sessions).where(eq(sessions.actorId, id))
+			await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
+			await tx.delete(actors).where(eq(actors.id, id))
+		})
+
+		logger.info('Human actor self-deleted', { actorId: id, workspaces: userWorkspaceIds.length })
+
+		return c.json({ deleted: true })
+	}
+
+	// Agent delete: requires workspace context, only deletes from that workspace's perspective.
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'X-Workspace-Id required for agent deletion'), 400)
+	}
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
@@ -669,12 +955,11 @@ app.openapi(deleteActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	if (existing.isSystem) {
-		return c.json(createApiError('FORBIDDEN', 'System agents cannot be deleted'), 403)
-	}
-
 	if (existing.type !== 'agent') {
-		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
+		return c.json(
+			createApiError('FORBIDDEN', 'Only agent actors can be deleted via this path'),
+			403,
+		)
 	}
 
 	const existingData = { ...existing }

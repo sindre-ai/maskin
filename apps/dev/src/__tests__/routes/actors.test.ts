@@ -422,10 +422,11 @@ describe('Actors Routes', () => {
 		it('returns 200 when agent actor deleted successfully', async () => {
 			const agentActor = buildActor({ type: 'agent' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// isWorkspaceMember (requester), actor lookup, isWorkspaceMember (target)
+			// actor lookup, isWorkspaceMember (requester), isWorkspaceMember (target),
+			// actorSessions in transaction.
 			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
 				[], // actorSessions in transaction
 			]
@@ -439,9 +440,10 @@ describe('Actors Routes', () => {
 			expect(body.deleted).toBe(true)
 		})
 
-		it('returns 404 when requesting actor is not a workspace member', async () => {
-			const { app } = createTestApp(actorsRoutes, '/api/actors')
-			// isWorkspaceMember returns empty — requester not a member
+		it('returns 404 when target actor not found', async () => {
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			// actor lookup returns nothing
+			mockResults.selectQueue = [[]]
 
 			const res = await app.request(
 				jsonDelete(`/api/actors/${randomUUID()}`, { 'x-workspace-id': wsId }),
@@ -450,16 +452,14 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		it('returns 404 when target actor not found', async () => {
+		it('returns 404 when requesting actor is not a workspace member', async () => {
+			const agentActor = buildActor({ type: 'agent' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// isWorkspaceMember (requester) passes, actor lookup fails
-			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
-				[], // actor not found
-			]
+			// actor found, isWorkspaceMember (requester) returns empty
+			mockResults.selectQueue = [[agentActor], []]
 
 			const res = await app.request(
-				jsonDelete(`/api/actors/${randomUUID()}`, { 'x-workspace-id': wsId }),
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
 			)
 
 			expect(res.status).toBe(404)
@@ -468,10 +468,10 @@ describe('Actors Routes', () => {
 		it('returns 404 when target actor is not in the workspace', async () => {
 			const agentActor = buildActor({ type: 'agent' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// isWorkspaceMember (requester) passes, actor found, isWorkspaceMember (target) fails
+			// actor found, requester member, target not member
 			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[], // target not a workspace member
 			]
 
@@ -485,14 +485,8 @@ describe('Actors Routes', () => {
 		it('returns 403 when trying to delete a system actor and leaves the actor intact', async () => {
 			const systemActor = buildActor({ type: 'agent', isSystem: true })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// DELETE: requester member, target actor, target member.
-			// Follow-up GET: same actor row — proves the record was not removed.
-			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
-				[systemActor],
-				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
-				[systemActor],
-			]
+			// DELETE: target actor (system → rejected early). Follow-up GET: same row.
+			mockResults.selectQueue = [[systemActor], [systemActor]]
 
 			const deleteRes = await app.request(
 				jsonDelete(`/api/actors/${systemActor.id}`, { 'x-workspace-id': wsId }),
@@ -500,7 +494,7 @@ describe('Actors Routes', () => {
 
 			expect(deleteRes.status).toBe(403)
 			const deleteBody = await deleteRes.json()
-			expect(deleteBody.error.message).toContain('System agents cannot be deleted')
+			expect(deleteBody.error.message).toContain('System actors cannot be deleted')
 
 			const getRes = await app.request(jsonGet(`/api/actors/${systemActor.id}`))
 
@@ -509,14 +503,10 @@ describe('Actors Routes', () => {
 			expect(getBody.id).toBe(systemActor.id)
 		})
 
-		it('returns 403 when trying to delete a human actor', async () => {
+		it('returns 403 when a human tries to delete another human account', async () => {
 			const humanActor = buildActor({ type: 'human' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.selectQueue = [
-				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
-				[humanActor],
-				[buildWorkspaceMember({ actorId: humanActor.id, workspaceId: wsId })],
-			]
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [[humanActor]]
 
 			const res = await app.request(
 				jsonDelete(`/api/actors/${humanActor.id}`, { 'x-workspace-id': wsId }),
@@ -524,7 +514,7 @@ describe('Actors Routes', () => {
 
 			expect(res.status).toBe(403)
 			const body = await res.json()
-			expect(body.error.message).toContain('Only agent actors can be deleted')
+			expect(body.error.message).toContain('Humans can only delete their own account')
 		})
 	})
 
@@ -540,12 +530,12 @@ describe('Actors Routes', () => {
 				llmConfig: { model: 'gpt-4' },
 				tools: { mcpServers: {} },
 			})
-			// Matches the .returning({ system_prompt: actors.systemPrompt, ... }) shape.
+			// .returning() now returns the full Drizzle row (camelCase columns).
 			const resetActor = {
 				...systemActor,
-				system_prompt: SINDRE_DEFAULT.systemPrompt,
-				llm_provider: SINDRE_DEFAULT.llmProvider,
-				llm_config: SINDRE_DEFAULT.llmConfig,
+				systemPrompt: SINDRE_DEFAULT.systemPrompt,
+				llmProvider: SINDRE_DEFAULT.llmProvider,
+				llmConfig: SINDRE_DEFAULT.llmConfig,
 				tools: SINDRE_DEFAULT.tools,
 			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')

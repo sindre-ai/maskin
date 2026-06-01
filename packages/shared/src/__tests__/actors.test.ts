@@ -146,13 +146,32 @@ describe('updateActorSchema', () => {
 		expect(() => updateActorSchema.parse({ name: '' })).toThrow()
 	})
 
-	it('rejects invalid email', () => {
-		expect(() => updateActorSchema.parse({ email: 'bad' })).toThrow()
+	it('strips email — verified email changes go through the dedicated flow', () => {
+		// Email is intentionally not in updateActorSchema, so Zod strips it.
+		const parsed = updateActorSchema.parse({
+			name: 'Updated',
+			email: 'new@x.com',
+		} as Record<string, unknown>) as Record<string, unknown>
+		expect(parsed.email).toBeUndefined()
+		expect(parsed.name).toBe('Updated')
 	})
 
 	it('accepts memory as record', () => {
 		const result = updateActorSchema.parse({ memory: { key: 'value' } })
 		expect(result.memory).toEqual({ key: 'value' })
+	})
+
+	it('accepts profile fields (bio, notification_prefs)', () => {
+		const result = updateActorSchema.parse({
+			bio: 'Hello world',
+			notification_prefs: { weeklyDigest: true },
+		})
+		expect(result.bio).toBe('Hello world')
+		expect(result.notification_prefs).toEqual({ weeklyDigest: true })
+	})
+
+	it('rejects bio longer than 300 chars', () => {
+		expect(() => updateActorSchema.parse({ bio: 'x'.repeat(301) })).toThrow()
 	})
 
 	// Regression: an agent doing read-modify-write via MCP feeds the response
@@ -163,8 +182,8 @@ describe('updateActorSchema', () => {
 	it('accepts every writable field from the actor response shape', () => {
 		const writableFromResponse = {
 			name: 'Updated',
-			email: 'a@b.co',
 			description: 'one-liner',
+			bio: 'A short bio',
 			system_prompt: 'new prompt',
 			tools: { mcpServers: {} },
 			memory: { key: 'value' },
@@ -192,6 +211,10 @@ describe('actorResponseSchema', () => {
 		name: 'Sindre',
 		email: null,
 		description: null,
+		bio: null,
+		avatar_storage_key: null,
+		notification_prefs: null,
+		pending_email: null,
 		system_prompt: 'You are a helper',
 		tools: null,
 		memory: null,
