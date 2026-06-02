@@ -1008,6 +1008,9 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 		case 'cron': {
 			const expression = typeof config.expression === 'string' ? config.expression : null
 			if (!expression) return `cron · ${enabledLabel}`
+			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts).
+			// Workspaces don't carry a timezone yet, so we surface UTC inline to keep the
+			// label honest against the runtime; drop the suffix once timezone is plumbed through.
 			let nextLabel: string | null = null
 			if (trigger.enabled) {
 				try {
@@ -1018,9 +1021,10 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 					// Invalid expression — skip next-run, keep the schedule line.
 				}
 			}
+			const schedule = `${expression} (UTC)`
 			return nextLabel
-				? `${enabledLabel} · ${expression} · ${nextLabel}`
-				: `${enabledLabel} · ${expression}`
+				? `${enabledLabel} · ${schedule} · ${nextLabel}`
+				: `${enabledLabel} · ${schedule}`
 		}
 		case 'reminder': {
 			const scheduledAt = typeof config.scheduled_at === 'string' ? config.scheduled_at : null

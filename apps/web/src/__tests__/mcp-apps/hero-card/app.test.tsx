@@ -279,7 +279,7 @@ describe('HeroCardApp — schema-driven render per type', () => {
 				title: 'Nightly sweep',
 				status: 'enabled',
 				owner: { id: 'actor-3', name: 'Observer' },
-				contextLine: 'enabled · 0 0 * * * · next in 6h',
+			contextLine: 'enabled · 0 0 * * * (UTC) · next in 6h',
 			},
 			expectedTypeLabel: 'Trigger',
 			expectedOwner: 'Owner: Observer',
