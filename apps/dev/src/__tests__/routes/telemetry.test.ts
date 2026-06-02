@@ -240,8 +240,19 @@ describe('Telemetry Routes', () => {
 	describe('GET /api/telemetry/mcp/summary', () => {
 		it('returns zero counters and zero ratios when no telemetry exists', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
-			// 1) workspace membership check, 2) tool_call totals, 3) sessions group, 4) mutations total, 5) per-day rows, 6) widget rows
-			mockResults.selectQueue = [[memberRow], [{ total: 0, rich: 0 }], [], [{ total: 0 }], [], []]
+			// 1) workspace membership check, 2) tool_call totals, 3) sessions group, 4) mutations total,
+			// 5) per-day rows, 6) widget totals, 7) first 200 renders, 8) 48h error window rows.
+			// (Correlated-clicks query is skipped when there are no first-render rows.)
+			mockResults.selectQueue = [
+				[memberRow],
+				[{ total: 0, rich: 0 }],
+				[],
+				[{ total: 0 }],
+				[],
+				[{ renders: 0, errors: 0, clicks: 0 }],
+				[],
+				[],
+			]
 
 			const res = await app.request(
 				jsonGet('/api/telemetry/mcp/summary?days=30', { 'x-workspace-id': wsId }),
@@ -302,6 +313,8 @@ describe('Telemetry Routes', () => {
 					{ day: '2026-04-25', total: 4, rich: 2 },
 					{ day: '2026-04-26', total: 6, rich: 4 },
 				],
+				[{ renders: 0, errors: 0, clicks: 0 }],
+				[],
 				[],
 			]
 
@@ -333,14 +346,17 @@ describe('Telemetry Routes', () => {
 			// 60 bet renders, 20 click_throughs that correlate by (session_id, tool_name, object_id)
 			// to the first 20 renders → ctr_first_50 = 20/50 = 40% (target met, kill not triggered).
 			// ctr_first_200 over the available 60 = 20/60 ≈ 33.3% (target met).
-			const widgetRows = buildBetWidgetRows({ renders: 60, clicksOnFirstN: 20, errors: 0 })
+			const widget = buildBetWidgetQueryResults({ renders: 60, clicksOnFirstN: 20, errors: 0 })
 			mockResults.selectQueue = [
 				[memberRow],
 				[{ total: 0, rich: 0 }],
 				[],
 				[{ total: 0 }],
 				[],
-				widgetRows,
+				[widget.totals],
+				widget.firstRenders,
+				widget.correlatedClicks,
+				widget.errorWindowRows,
 			]
 
 			const res = await app.request(
@@ -364,14 +380,17 @@ describe('Telemetry Routes', () => {
 		it('triggers the first-50 kill window when CTR falls below 30%', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			// 50 renders, 10 clicks → 20% < 30% threshold → kill_triggered
-			const widgetRows = buildBetWidgetRows({ renders: 50, clicksOnFirstN: 10, errors: 0 })
+			const widget = buildBetWidgetQueryResults({ renders: 50, clicksOnFirstN: 10, errors: 0 })
 			mockResults.selectQueue = [
 				[memberRow],
 				[{ total: 0, rich: 0 }],
 				[],
 				[{ total: 0 }],
 				[],
-				widgetRows,
+				[widget.totals],
+				widget.firstRenders,
+				widget.correlatedClicks,
+				widget.errorWindowRows,
 			]
 
 			const res = await app.request(
@@ -389,14 +408,17 @@ describe('Telemetry Routes', () => {
 		it('does not trigger the kill window before 50 renders have happened', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			// 30 renders, 0 clicks → 0% but only 30 renders → window not full → no kill yet
-			const widgetRows = buildBetWidgetRows({ renders: 30, clicksOnFirstN: 0, errors: 0 })
+			const widget = buildBetWidgetQueryResults({ renders: 30, clicksOnFirstN: 0, errors: 0 })
 			mockResults.selectQueue = [
 				[memberRow],
 				[{ total: 0, rich: 0 }],
 				[],
 				[{ total: 0 }],
 				[],
-				widgetRows,
+				[widget.totals],
+				widget.firstRenders,
+				widget.correlatedClicks,
+				widget.errorWindowRows,
 			]
 
 			const res = await app.request(
@@ -412,21 +434,15 @@ describe('Telemetry Routes', () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			// 8 renders + 2 errors in the last 48h → 2/10 = 20% > 10%
 			const recent = new Date()
-			const widgetRows = [
-				...Array.from({ length: 8 }, (_, i) => ({
-					event: 'render_success',
-					session_id: `s${i}`,
-					tool_name: 'get_objects',
-					object_id: `bet-${i}`,
-					created_at: recent,
-				})),
-				...Array.from({ length: 2 }, (_, i) => ({
-					event: 'render_error',
-					session_id: `e${i}`,
-					tool_name: 'get_objects',
-					object_id: `bet-e${i}`,
-					created_at: recent,
-				})),
+			const firstRenders = Array.from({ length: 8 }, (_, i) => ({
+				session_id: `s${i}`,
+				tool_name: 'get_objects',
+				object_id: `bet-${i}`,
+				created_at: recent,
+			}))
+			const errorWindowRows = [
+				...Array.from({ length: 8 }, () => ({ event: 'render_success' })),
+				...Array.from({ length: 2 }, () => ({ event: 'render_error' })),
 			]
 			mockResults.selectQueue = [
 				[memberRow],
@@ -434,7 +450,10 @@ describe('Telemetry Routes', () => {
 				[],
 				[{ total: 0 }],
 				[],
-				widgetRows,
+				[{ renders: 8, errors: 2, clicks: 0 }],
+				firstRenders,
+				[],
+				errorWindowRows,
 			]
 
 			const res = await app.request(
@@ -452,31 +471,28 @@ describe('Telemetry Routes', () => {
 		it('ignores render_error rows older than 48h for the kill window', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			const recent = new Date()
-			const stale = new Date(recent.getTime() - 72 * 60 * 60 * 1000) // 72h ago
-			const widgetRows = [
-				// One stale error (must NOT count) and a fresh successful render.
+			// One stale error and a fresh render exist in the table, but the 48h-clipped
+			// SQL query never returns the stale row — only the recent render reaches the
+			// aggregator.
+			const firstRenders = [
 				{
-					event: 'render_error',
-					session_id: 'old',
-					tool_name: 'get_objects',
-					object_id: 'bet-1',
-					created_at: stale,
-				},
-				{
-					event: 'render_success',
 					session_id: 'new',
 					tool_name: 'get_objects',
 					object_id: 'bet-2',
 					created_at: recent,
 				},
 			]
+			const errorWindowRows = [{ event: 'render_success' }]
 			mockResults.selectQueue = [
 				[memberRow],
 				[{ total: 0, rich: 0 }],
 				[],
 				[{ total: 0 }],
 				[],
-				widgetRows,
+				[{ renders: 1, errors: 1, clicks: 0 }],
+				firstRenders,
+				[],
+				errorWindowRows,
 			]
 
 			const res = await app.request(
@@ -538,11 +554,14 @@ describe('Telemetry Routes', () => {
 	})
 })
 
-// Builds N synthetic render_success rows that share (session_id, tool_name, object_id)
-// with the first M click_through rows so the CTR aggregation correlates them.
-// All rows land at the current moment so they fall inside the 48h render-error
-// window — sufficient for first-200 / first-50 assertions.
-function buildBetWidgetRows({
+// Builds the four query results the SQL-bounded aggregation expects:
+//   - `totals` row (running counts of renders/errors/clicks)
+//   - `firstRenders` (first ≤200 render_success rows in chrono order)
+//   - `correlatedClicks` (clicks that share (session_id, tool_name, object_id)
+//     with the first M renders — what the SQL IN clause would return)
+//   - `errorWindowRows` (rows in the 48h render-error window — here we assume
+//     all events fall inside the window, matching the existing test set-up)
+function buildBetWidgetQueryResults({
 	renders,
 	clicksOnFirstN,
 	errors,
@@ -552,39 +571,26 @@ function buildBetWidgetRows({
 	errors: number
 }) {
 	const now = new Date()
-	const rows: Array<{
-		event: string
-		session_id: string
-		tool_name: string
-		object_id: string
-		created_at: Date
-	}> = []
-	for (let i = 0; i < renders; i++) {
-		rows.push({
-			event: 'render_success',
-			session_id: `s${i}`,
-			tool_name: 'get_objects',
-			object_id: `bet-${i}`,
-			created_at: new Date(now.getTime() + i),
-		})
+	const firstRenders = Array.from({ length: Math.min(renders, 200) }, (_, i) => ({
+		session_id: `s${i}`,
+		tool_name: 'get_objects',
+		object_id: `bet-${i}`,
+		created_at: new Date(now.getTime() + i),
+	}))
+	const correlatedClicks = Array.from({ length: clicksOnFirstN }, (_, i) => ({
+		session_id: `s${i}`,
+		tool_name: 'get_objects',
+		object_id: `bet-${i}`,
+		created_at: new Date(now.getTime() + renders + i),
+	}))
+	const errorWindowRows = [
+		...Array.from({ length: renders }, () => ({ event: 'render_success' })),
+		...Array.from({ length: errors }, () => ({ event: 'render_error' })),
+	]
+	return {
+		totals: { renders, errors, clicks: clicksOnFirstN },
+		firstRenders,
+		correlatedClicks,
+		errorWindowRows,
 	}
-	for (let i = 0; i < clicksOnFirstN; i++) {
-		rows.push({
-			event: 'click_through',
-			session_id: `s${i}`,
-			tool_name: 'get_objects',
-			object_id: `bet-${i}`,
-			created_at: new Date(now.getTime() + renders + i),
-		})
-	}
-	for (let i = 0; i < errors; i++) {
-		rows.push({
-			event: 'render_error',
-			session_id: `e${i}`,
-			tool_name: 'get_objects',
-			object_id: `bet-e${i}`,
-			created_at: new Date(now.getTime() + renders + clicksOnFirstN + i),
-		})
-	}
-	return rows
 }

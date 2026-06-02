@@ -6,7 +6,7 @@ import {
 	mcpTelemetrySummarySchema,
 	recordMcpTelemetrySchema,
 } from '@maskin/shared'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -247,37 +247,110 @@ app.openapi(summaryRoute, (async (c) => {
 
 	// ── Widget bet-first window ──────────────────────────────────────────
 	//
-	// Pulls render_success / render_error / click_through widget_event rows for
-	// object_type='bet' in chronological order. Renders sent by agents are
-	// excluded via `data->>'actor_type' != 'agent'`. Rows persisted before this
-	// column existed have no actor_type and are treated as human (the visibility
-	// gate from T7 is the primary defense; this filter is defense-in-depth).
-	//
-	// We pull a bounded slice (200 renders + the click_throughs that correlate
-	// to them, plus the 48h error window) rather than streaming the whole table,
-	// because the bet-first measurement window is by construction tiny. The
-	// `since` query param does NOT clip this set — the bet-first window is
-	// absolute (it measures the first N bet renders ever, not a sliding window).
-	const widgetRows = await db
+	// Each of the four queries below touches a bounded slice of mcp_telemetry —
+	// the previous single fetch had no SQL bound and would scale linearly with
+	// bet-widget history once volume picks up. Renders sent by agents are
+	// excluded via `data->>'actor_type' != 'agent'`. Rows persisted before that
+	// column existed have no actor_type and are treated as human (the
+	// visibility gate from T7 is the primary defense; this filter is defense-
+	// in-depth). The bet-first window is absolute (it measures the first N bet
+	// renders ever, not a sliding window), so the `since` query param does NOT
+	// clip these queries.
+	const widgetBaseWhere = and(
+		eq(mcpTelemetry.workspaceId, workspaceId),
+		eq(mcpTelemetry.eventType, 'widget_event'),
+		eq(mcpTelemetry.objectType, 'bet'),
+		sql`coalesce(${mcpTelemetry.data}->>'actor_type', 'human') <> 'agent'`,
+	)
+
+	// 1. Three filtered counters for the running totals. Returns one row of
+	//    ints regardless of underlying scan size.
+	const widgetTotalsRows = await db
 		.select({
-			event: sql<string>`(${mcpTelemetry.data}->>'event')::text`,
+			renders: sql<number>`count(*) filter (where ${mcpTelemetry.data}->>'event' = 'render_success')::int`,
+			errors: sql<number>`count(*) filter (where ${mcpTelemetry.data}->>'event' = 'render_error')::int`,
+			clicks: sql<number>`count(*) filter (where ${mcpTelemetry.data}->>'event' = 'click_through')::int`,
+		})
+		.from(mcpTelemetry)
+		.where(widgetBaseWhere)
+	const widgetTotals = widgetTotalsRows[0] ?? { renders: 0, errors: 0, clicks: 0 }
+
+	// 2. First 200 render_success rows in chronological order. `LIMIT 200`
+	//    is the hard upper bound — the bet-first window never reads more.
+	const firstRenderRows = await db
+		.select({
 			session_id: mcpTelemetry.sessionId,
 			tool_name: mcpTelemetry.toolName,
 			object_id: sql<string | null>`(${mcpTelemetry.data}->>'object_id')`,
 			created_at: mcpTelemetry.createdAt,
 		})
 		.from(mcpTelemetry)
+		.where(and(widgetBaseWhere, sql`${mcpTelemetry.data}->>'event' = 'render_success'`))
+		.orderBy(mcpTelemetry.createdAt)
+		.limit(WIDGET_BET_FIRST_WINDOW_SIZE)
+
+	// 3. Click_throughs that correlate to one of the first-200 render keys
+	//    AND occurred at or after the first render — replayed or out-of-order
+	//    clicks can't credit a render that hasn't happened yet. Both bounds
+	//    are pushed into SQL; the JS-side filter in step 5 only narrows
+	//    further from first-200 to first-50.
+	let correlatedClickRows: ReadonlyArray<{
+		session_id: string | null
+		tool_name: string
+		object_id: string | null
+		created_at: Date
+	}> = []
+	const firstRenderHead = firstRenderRows[0]
+	if (firstRenderHead) {
+		const firstRenderTs = firstRenderHead.created_at
+		const correlatorKey = (k: {
+			session_id: string | null
+			tool_name: string
+			object_id: string | null
+		}) => `${k.session_id ?? ''}::${k.tool_name}::${k.object_id ?? ''}`
+		const firstRenderKeys = firstRenderRows.map(correlatorKey)
+		const correlatorExpr = sql<string>`concat(coalesce(${mcpTelemetry.sessionId}, ''), '::', ${mcpTelemetry.toolName}, '::', coalesce(${mcpTelemetry.data}->>'object_id', ''))`
+		correlatedClickRows = await db
+			.select({
+				session_id: mcpTelemetry.sessionId,
+				tool_name: mcpTelemetry.toolName,
+				object_id: sql<string | null>`(${mcpTelemetry.data}->>'object_id')`,
+				created_at: mcpTelemetry.createdAt,
+			})
+			.from(mcpTelemetry)
+			.where(
+				and(
+					widgetBaseWhere,
+					sql`${mcpTelemetry.data}->>'event' = 'click_through'`,
+					gte(mcpTelemetry.createdAt, firstRenderTs),
+					inArray(correlatorExpr, firstRenderKeys),
+				),
+			)
+	}
+
+	// 4. Render attempts (success + error) in the trailing 48h window.
+	//    Clipped by `created_at` so the scan is bounded by the time index.
+	const errorWindowStart = new Date(now.getTime() - WIDGET_RENDER_ERROR_WINDOW_MS)
+	const errorWindowRows = await db
+		.select({
+			event: sql<string>`(${mcpTelemetry.data}->>'event')::text`,
+		})
+		.from(mcpTelemetry)
 		.where(
 			and(
-				eq(mcpTelemetry.workspaceId, workspaceId),
-				eq(mcpTelemetry.eventType, 'widget_event'),
-				eq(mcpTelemetry.objectType, 'bet'),
-				sql`coalesce(${mcpTelemetry.data}->>'actor_type', 'human') <> 'agent'`,
+				widgetBaseWhere,
+				sql`${mcpTelemetry.data}->>'event' in ('render_success', 'render_error')`,
+				gte(mcpTelemetry.createdAt, errorWindowStart),
 			),
 		)
-		.orderBy(mcpTelemetry.createdAt)
 
-	const widgetBetFirstWindow = buildWidgetBetFirstWindow(widgetRows, now)
+	// 5. Combine into the bet-first window shape (pure function, testable).
+	const widgetBetFirstWindow = buildWidgetBetFirstWindow({
+		totals: widgetTotals,
+		firstRenders: firstRenderRows,
+		correlatedClicks: correlatedClickRows,
+		errorWindowRows,
+	})
 
 	return c.json({
 		workspace_id: workspaceId,
@@ -299,66 +372,69 @@ app.openapi(summaryRoute, (async (c) => {
 	})
 }) as RouteHandler<typeof summaryRoute, Env>)
 
-interface WidgetRow {
-	event: string
+interface RenderKey {
 	session_id: string | null
 	tool_name: string
 	object_id: string | null
+}
+
+interface RenderRow extends RenderKey {
 	created_at: Date
 }
 
-// Computes the bet's success and kill metrics from chronologically-ordered
-// widget_event rows. Pure function, exported for testing. The matching rule for
+interface ErrorWindowRow {
+	event: string
+}
+
+interface WidgetTotals {
+	renders: number
+	errors: number
+	clicks: number
+}
+
+// Computes the bet's success and kill metrics from the four structured query
+// results. Pure function, exported for testing. The matching rule for
 // click_through → render is shared `(session_id, tool_name, object_id)` —
 // `recordWidgetEvent` always emits the same triple for the render and the
-// click on the same card. Null/undefined object_id matches null/undefined
-// across the pair (so list cards with no specific object still correlate).
-function buildWidgetBetFirstWindow(rows: readonly WidgetRow[], now: Date) {
-	const renders = rows.filter((r) => r.event === 'render_success')
-	const errors = rows.filter((r) => r.event === 'render_error')
-	const clicks = rows.filter((r) => r.event === 'click_through')
-
-	const correlatorKey = (r: Pick<WidgetRow, 'session_id' | 'tool_name' | 'object_id'>) =>
+// click on the same card. Null object_id matches null across the pair (so list
+// cards with no specific object still correlate).
+function buildWidgetBetFirstWindow({
+	totals,
+	firstRenders,
+	correlatedClicks,
+	errorWindowRows,
+}: {
+	totals: WidgetTotals
+	firstRenders: readonly RenderRow[]
+	correlatedClicks: readonly RenderRow[]
+	errorWindowRows: readonly ErrorWindowRow[]
+}) {
+	const correlatorKey = (r: RenderKey) =>
 		`${r.session_id ?? ''}::${r.tool_name}::${r.object_id ?? ''}`
 
-	const countClicksAgainst = (renderSlice: readonly WidgetRow[]) => {
-		if (renderSlice.length === 0) return 0
-		const keys = new Set(renderSlice.map(correlatorKey))
-		// A click only counts if it lands AT OR AFTER the first render in the
-		// slice — earlier clicks can't have been triggered by a render that
-		// hasn't happened yet (defends against replayed or out-of-order events).
-		const firstRenderTs = renderSlice[0]?.created_at.getTime() ?? 0
-		let counted = 0
-		for (const c of clicks) {
-			if (c.created_at.getTime() < firstRenderTs) continue
-			if (keys.has(correlatorKey(c))) counted++
-		}
-		return counted
-	}
+	const first200 = firstRenders.slice(0, WIDGET_BET_FIRST_WINDOW_SIZE)
+	const first50 = firstRenders.slice(0, WIDGET_BET_KILL_WINDOW_SIZE)
 
-	const first200 = renders.slice(0, WIDGET_BET_FIRST_WINDOW_SIZE)
-	const first50 = renders.slice(0, WIDGET_BET_KILL_WINDOW_SIZE)
-
-	const clicks200 = countClicksAgainst(first200)
-	const clicks50 = countClicksAgainst(first50)
+	// The SQL already filtered correlatedClicks to the first-200 key set; the
+	// first-50 subset is enforced here in JS.
+	const first50KeySet = new Set(first50.map(correlatorKey))
+	const clicks200 = correlatedClicks.length
+	const clicks50 = correlatedClicks.filter((c) => first50KeySet.has(correlatorKey(c))).length
 
 	const pctOrNull = (num: number, denom: number) => (denom > 0 ? (num / denom) * 100 : null)
 
 	const ctr200Pct = pctOrNull(clicks200, first200.length)
 	const ctr50Pct = pctOrNull(clicks50, first50.length)
 
-	// 48h render-error rate — denominator is render attempts (success + error)
-	// in the trailing 48h window. Click_throughs are not attempts.
-	const errorWindowStart = now.getTime() - WIDGET_RENDER_ERROR_WINDOW_MS
-	const renders48h = renders.filter((r) => r.created_at.getTime() >= errorWindowStart).length
-	const errors48h = errors.filter((r) => r.created_at.getTime() >= errorWindowStart).length
+	const renders48h = errorWindowRows.filter((r) => r.event === 'render_success').length
+	const errors48h = errorWindowRows.filter((r) => r.event === 'render_error').length
 	const attempts48h = renders48h + errors48h
 	const errorPct48h = pctOrNull(errors48h, attempts48h)
 
 	return {
-		bet_renders_total: renders.length,
-		bet_render_errors_total: errors.length,
-		bet_click_throughs_total: clicks.length,
+		bet_renders_total: totals.renders,
+		bet_render_errors_total: totals.errors,
+		bet_click_throughs_total: totals.clicks,
 		ctr_first_200: {
 			renders: first200.length,
 			clicks: clicks200,
