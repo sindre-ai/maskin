@@ -9,7 +9,7 @@ import {
 	requestEmailChangeSchema,
 	verifyEmailChangeSchema,
 } from '@maskin/shared'
-import { and, eq, gt } from 'drizzle-orm'
+import { and, eq, gt, or } from 'drizzle-orm'
 import { serializeActorWithKey } from '../lib/actor-response'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -192,7 +192,7 @@ app.openapi(requestEmailChangeRoute, async (c) => {
 	const [collision] = await db
 		.select({ id: actors.id })
 		.from(actors)
-		.where(eq(actors.email, body.new_email))
+		.where(or(eq(actors.email, body.new_email), eq(actors.pendingEmail, body.new_email)))
 		.limit(1)
 	if (collision && collision.id !== actorId) {
 		return c.json(createApiError('CONFLICT', 'Email already in use'), 409)

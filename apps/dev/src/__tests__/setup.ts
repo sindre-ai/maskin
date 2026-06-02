@@ -70,7 +70,8 @@ export function createTestContext() {
 		updates: unknown[]
 		updateTables: unknown[]
 		deleteTables: unknown[]
-	} = { inserts: [], updates: [], updateTables: [], deleteTables: [] }
+		wheres: unknown[]
+	} = { inserts: [], updates: [], updateTables: [], deleteTables: [], wheres: [] }
 
 	const db = new Proxy({} as Database, {
 		get: (_target, prop) => {
@@ -159,7 +160,7 @@ function createChain(
 	returnValue?: unknown,
 	error?: Error,
 	captureKey?: 'inserts' | 'updates',
-	calls?: { inserts: unknown[]; updates: unknown[] },
+	calls?: { inserts: unknown[]; updates: unknown[]; wheres: unknown[] },
 ): Record<string, unknown> {
 	const chain: Record<string, unknown> = {}
 	const methods = [
@@ -187,6 +188,7 @@ function createChain(
 		chain[m] = (arg?: unknown) => {
 			if (calls && captureKey === 'inserts' && m === 'values') calls.inserts.push(arg)
 			if (calls && captureKey === 'updates' && m === 'set') calls.updates.push(arg)
+			if (calls && m === 'where') calls.wheres.push(arg)
 			return chain
 		}
 	}

@@ -40,6 +40,30 @@ const { default: authRoutes } = await import('../../routes/auth')
 const workspaceId = '00000000-0000-0000-0000-000000000001'
 const headers = { 'X-Workspace-Id': workspaceId }
 
+// Walks a Drizzle SQL condition tree and collects every column `name` it
+// references. The mock chain captures the raw node passed to `.where()`, so
+// asserting against this set proves the actual columns the route filtered on
+// without needing the Drizzle SQL serializer. WeakSet guards against the
+// column→table→column back-references Drizzle wires in its schema graph.
+function collectColumnNames(node: unknown): Set<string> {
+	const names = new Set<string>()
+	const seen = new WeakSet<object>()
+	const visit = (v: unknown) => {
+		if (!v || typeof v !== 'object') return
+		if (seen.has(v as object)) return
+		seen.add(v as object)
+		const obj = v as Record<string, unknown>
+		if (typeof obj.name === 'string' && obj.columnType !== undefined) {
+			names.add(obj.name)
+		}
+		for (const key of Object.keys(obj)) {
+			visit(obj[key])
+		}
+	}
+	visit(node)
+	return names
+}
+
 describe('Profile — PATCH /api/actors/:id (T2 profile fields)', () => {
 	beforeEach(() => {
 		mockVerifyPassword.mockReset()
@@ -477,6 +501,30 @@ describe('Profile — POST /api/auth/email-change', () => {
 		)
 
 		expect(res.status).toBe(409)
+	})
+
+	it('collision check also covers another actor with the same pendingEmail', async () => {
+		const actor = buildActor({ type: 'human', passwordHash: 'old' })
+		const other = buildActor({ type: 'human', pendingEmail: 'taken@x.com' })
+		const { app, mockResults, calls } = createTestApp(authRoutes, '/api/auth', actor.id)
+		// 1: actor lookup, 2: collision lookup hits the other actor via pendingEmail.
+		mockResults.selectQueue = [[actor], [{ id: other.id }]]
+		mockVerifyPassword.mockResolvedValue(true)
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/auth/email-change', {
+				new_email: 'taken@x.com',
+				current_password: 'pw',
+			}),
+		)
+
+		expect(res.status).toBe(409)
+		// The collision query is the second .where() — the first is the actor lookup.
+		// Asserting against the column set proves the route filtered on both columns,
+		// independent of how drizzle-orm serializes the or(...) tree.
+		const columns = collectColumnNames(calls.wheres[1])
+		expect(columns).toContain('email')
+		expect(columns).toContain('pending_email')
 	})
 
 	it('returns 401 when current password is wrong', async () => {
