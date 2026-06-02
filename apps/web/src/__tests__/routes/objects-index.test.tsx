@@ -49,7 +49,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	return {
 		...actual,
 		useInfiniteQuery: () => ({
-			data: { pages: [[]] },
+			data: { pages: [{ items: [], totalCount: 0 }] },
 			hasNextPage: false,
 			isFetchingNextPage: false,
 			isError: false,
@@ -64,6 +64,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 
 vi.mock('@/hooks/use-objects', () => ({
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkDeleteObjects: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-user-display-settings', () => ({

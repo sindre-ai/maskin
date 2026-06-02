@@ -13,6 +13,9 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	MAX_BULK_AFFECTED_ROWS,
+	type ObjectsFilter,
+	bulkDeleteObjectsSchema,
 	bulkUpdateObjectsResponseSchema,
 	bulkUpdateObjectsSchema,
 	createObjectSchema,
@@ -23,7 +26,19 @@ import {
 	searchObjectsSchema,
 	updateObjectSchema,
 } from '@maskin/shared'
-import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import {
+	type Column,
+	type SQL,
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	ilike,
+	inArray,
+	or,
+	sql,
+} from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
@@ -91,6 +106,78 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
 	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
+}
+
+/**
+ * Build the WHERE conditions for an objects query that's scoped to a single
+ * workspace plus an optional filter predicate. Shared between list, search,
+ * and the filter-scoped bulk endpoints so the row-selection rules can't drift.
+ *
+ * `q` runs against title + content with ILIKE (matching searchObjectsRoute).
+ * `status` and `owner` accept comma-lists. `ids` accepts a comma-list of UUIDs
+ * — unparseable entries are silently dropped rather than 400'd so a stale
+ * notification link doesn't blow up the page.
+ */
+function buildObjectsWhere(workspaceId: string, filter: ObjectsFilter): SQL[] {
+	const conditions: SQL[] = [eq(objects.workspaceId, workspaceId)]
+	if (filter.q) {
+		const escaped = filter.q.replace(/[%_\\]/g, '\\$&')
+		const pattern = `%${escaped}%`
+		const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
+		if (textMatch) conditions.push(textMatch)
+	}
+	if (filter.type) conditions.push(eq(objects.type, filter.type))
+	if (filter.status) {
+		const statuses = filter.status.split(',').filter(Boolean)
+		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
+		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
+	}
+	if (filter.owner) {
+		const owners = filter.owner.split(',').filter((id) => UUID_RE.test(id))
+		if (owners.length === 1) conditions.push(eq(objects.owner, owners[0] as string))
+		else if (owners.length > 1) conditions.push(inArray(objects.owner, owners))
+	}
+	if (filter.ids) {
+		const idList = filter.ids.split(',').filter((id) => UUID_RE.test(id))
+		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
+	}
+	return conditions
+}
+
+/** Cap-aware id resolution for filter-scoped bulk ops.
+ *
+ * Selects up to MAX_BULK_AFFECTED_ROWS+1 ids in a single round-trip. If the
+ * extra row materializes, the predicate matches more rows than the cap allows
+ * — the caller short-circuits to 422 without performing any writes. Running
+ * the SELECT once (rather than COUNT(*) + SELECT) avoids a TOCTOU window where
+ * a fresh insert between the two would let a runaway predicate sneak past the
+ * cap. */
+async function resolveFilterIdsCapped(
+	executor: Database,
+	workspaceId: string,
+	filter: ObjectsFilter,
+): Promise<{ ids: string[]; capExceeded: boolean; matchedCount: number }> {
+	const conditions = buildObjectsWhere(workspaceId, filter)
+	const rows = await executor
+		.select({ id: objects.id })
+		.from(objects)
+		.where(and(...conditions))
+		.limit(MAX_BULK_AFFECTED_ROWS + 1)
+	if (rows.length > MAX_BULK_AFFECTED_ROWS) {
+		// Real count is worth the round-trip — the client surfaces it back to the
+		// user as "5,247 matching filter (over 1,000-row cap)" so they can decide
+		// how to narrow the predicate.
+		const [totalRow] = await executor
+			.select({ value: count() })
+			.from(objects)
+			.where(and(...conditions))
+		return {
+			ids: [],
+			capExceeded: true,
+			matchedCount: totalRow?.value ?? rows.length,
+		}
+	}
+	return { ids: rows.map((r) => r.id), capExceeded: false, matchedCount: rows.length }
 }
 
 // POST / - Create object
@@ -251,33 +338,33 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = [eq(objects.workspaceId, workspaceId)]
-	if (query.type) conditions.push(eq(objects.type, query.type))
-	if (query.status) {
-		const statuses = query.status.split(',').filter(Boolean)
-		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
-		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
-	}
-	if (query.owner) {
-		const owners = query.owner.split(',').filter((id) => UUID_RE.test(id))
-		if (owners.length === 1) conditions.push(eq(objects.owner, owners[0] as string))
-		else if (owners.length > 1) conditions.push(inArray(objects.owner, owners))
-	}
-	if (query.ids) {
-		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
-		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
-	}
-
+	const conditions = buildObjectsWhere(workspaceId, {
+		type: query.type,
+		status: query.status,
+		owner: query.owner,
+		ids: query.ids,
+	})
 	const orderBy = resolveOrderBy(query)
 
-	const results = await db
-		.select()
-		.from(objects)
-		.where(and(...conditions))
-		.limit(query.limit)
-		.offset(query.offset)
-		.orderBy(...orderBy)
+	// Run the page fetch and the total-row count in parallel so the
+	// virtualizer can render a stable "showing N of M" without an extra
+	// round-trip. The count uses the same predicate as the page so
+	// "select all N matching this filter" stays honest.
+	const [results, totalRow] = await Promise.all([
+		db
+			.select()
+			.from(objects)
+			.where(and(...conditions))
+			.limit(query.limit)
+			.offset(query.offset)
+			.orderBy(...orderBy),
+		db
+			.select({ value: count() })
+			.from(objects)
+			.where(and(...conditions)),
+	])
 
+	c.header('X-Total-Count', String(totalRow[0]?.value ?? results.length))
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
 
@@ -308,28 +395,28 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const escaped = query.q.replace(/[%_\\]/g, '\\$&')
-	const pattern = `%${escaped}%`
-	const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
-	const conditions = [eq(objects.workspaceId, workspaceId)]
-	if (textMatch) conditions.push(textMatch)
-	if (query.type) conditions.push(eq(objects.type, query.type))
-	if (query.status) {
-		const statuses = query.status.split(',').filter(Boolean)
-		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
-		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
-	}
-
+	const conditions = buildObjectsWhere(workspaceId, {
+		q: query.q,
+		type: query.type,
+		status: query.status,
+	})
 	const orderBy = resolveOrderBy(query)
 
-	const results = await db
-		.select()
-		.from(objects)
-		.where(and(...conditions))
-		.limit(query.limit)
-		.offset(query.offset)
-		.orderBy(...orderBy)
+	const [results, totalRow] = await Promise.all([
+		db
+			.select()
+			.from(objects)
+			.where(and(...conditions))
+			.limit(query.limit)
+			.offset(query.offset)
+			.orderBy(...orderBy),
+		db
+			.select({ value: count() })
+			.from(objects)
+			.where(and(...conditions)),
+	])
 
+	c.header('X-Total-Count', String(totalRow[0]?.value ?? results.length))
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
 
@@ -910,10 +997,53 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { ids, patch } = c.req.valid('json')
+	const body = c.req.valid('json')
+	const { patch } = body
 
-	// Dedup so duplicates in the request don't double-write or double-report.
-	const uniqueIds = Array.from(new Set(ids))
+	// Resolve the working id set per scope. Filter scope is capped server-side
+	// so a runaway predicate can't take down the workspace; if the cap is
+	// exceeded we return 422 without performing any writes — the client uses
+	// `count` + `max` to tell the user how many rows the predicate matched.
+	let uniqueIds: string[]
+	if (body.scope === 'filter') {
+		const resolved = await resolveFilterIdsCapped(db, workspaceId, body.filter)
+		if (resolved.capExceeded) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Bulk update would touch ${resolved.matchedCount} rows, over the ${MAX_BULK_AFFECTED_ROWS}-row cap`,
+					[
+						{
+							field: '_root',
+							message: 'cap_exceeded',
+							expected: String(MAX_BULK_AFFECTED_ROWS),
+							received: String(resolved.matchedCount),
+						},
+					],
+					'Narrow the filter or operate on fewer rows.',
+				),
+				400,
+			)
+		}
+		uniqueIds = resolved.ids
+	} else {
+		// Dedup so duplicates in the request don't double-write or double-report.
+		uniqueIds = Array.from(new Set(body.ids))
+	}
+
+	// Filter scope can legitimately match zero rows (e.g. the predicate's last
+	// row was just deleted) — return an empty results array rather than 400.
+	if (uniqueIds.length === 0) {
+		logger.info('bulk-update objects', {
+			actorId,
+			scope: body.scope,
+			requested: 0,
+			deduped: 0,
+			updated: 0,
+			failed: 0,
+		})
+		return c.json({ results: [] }, 200)
+	}
 
 	// Scope the fetch to the header workspace — ids that don't belong here
 	// collapse into "Object not found" without revealing whether they exist
@@ -1018,9 +1148,153 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 	const okCount = results.filter((r) => r.ok).length
 	logger.info('bulk-update objects', {
 		actorId,
-		requested: ids.length,
+		scope: body.scope,
+		requested: body.scope === 'ids' ? body.ids.length : uniqueIds.length,
 		deduped: uniqueIds.length,
 		updated: okCount,
+		failed: uniqueIds.length - okCount,
+	})
+
+	return c.json({ results }, 200)
+})
+
+// POST /bulk-delete - Delete many objects in one call with per-id partial failure.
+// Mirrors bulk-update so the client can treat the per-id result envelope the
+// same for both ops. Filter scope hits the same MAX_BULK_AFFECTED_ROWS ceiling
+// so a runaway predicate can't take down the workspace.
+const bulkDeleteObjectsRoute = createRoute({
+	method: 'post',
+	path: '/bulk-delete',
+	tags: ['Objects'],
+	summary: 'Bulk delete objects',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: bulkDeleteObjectsSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: bulkUpdateObjectsResponseSchema } },
+			description: 'Bulk delete completed (per-id results, including failures)',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request (including cap_exceeded for filter scope)',
+		},
+	},
+})
+
+app.openapi(bulkDeleteObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	let uniqueIds: string[]
+	if (body.scope === 'filter') {
+		const resolved = await resolveFilterIdsCapped(db, workspaceId, body.filter)
+		if (resolved.capExceeded) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Bulk delete would touch ${resolved.matchedCount} rows, over the ${MAX_BULK_AFFECTED_ROWS}-row cap`,
+					[
+						{
+							field: '_root',
+							message: 'cap_exceeded',
+							expected: String(MAX_BULK_AFFECTED_ROWS),
+							received: String(resolved.matchedCount),
+						},
+					],
+					'Narrow the filter or operate on fewer rows.',
+				),
+				400,
+			)
+		}
+		uniqueIds = resolved.ids
+	} else {
+		uniqueIds = Array.from(new Set(body.ids))
+	}
+
+	if (uniqueIds.length === 0) {
+		logger.info('bulk-delete objects', {
+			actorId,
+			scope: body.scope,
+			requested: 0,
+			deduped: 0,
+			deleted: 0,
+			failed: 0,
+		})
+		return c.json({ results: [] }, 200)
+	}
+
+	// Scope the SELECT to the header workspace — ids outside it collapse into
+	// "Object not found" so we don't leak existence of out-of-scope rows.
+	const existingRows = await db
+		.select()
+		.from(objects)
+		.where(and(inArray(objects.id, uniqueIds), eq(objects.workspaceId, workspaceId)))
+	const existingById = new Map(existingRows.map((row) => [row.id, row]))
+
+	type ResultEntry = { id: string; ok: boolean; error?: string }
+	const results: ResultEntry[] = []
+	const toDelete: typeof existingRows = []
+	for (const id of uniqueIds) {
+		const existing = existingById.get(id)
+		if (!existing) {
+			results.push({ id, ok: false, error: 'Object not found' })
+			continue
+		}
+		toDelete.push(existing)
+		results.push({ id, ok: true })
+	}
+
+	if (toDelete.length > 0) {
+		const deletedIds = toDelete.map((row) => row.id)
+		await db.transaction(async (tx) => {
+			// Polymorphic subscription + read_state rows aren't FK'd to objects,
+			// so drop them explicitly to avoid orphans pointing at a freed
+			// entity_id. Same pattern as the single-object DELETE handler.
+			await tx
+				.delete(subscriptions)
+				.where(
+					and(eq(subscriptions.entityType, 'object'), inArray(subscriptions.entityId, deletedIds)),
+				)
+			await tx
+				.delete(readState)
+				.where(and(eq(readState.entityType, 'object'), inArray(readState.entityId, deletedIds)))
+
+			// Re-scope the DELETE to the header workspace so a row that moved
+			// workspaces between the SELECT and here doesn't get touched.
+			await tx
+				.delete(objects)
+				.where(and(inArray(objects.id, deletedIds), eq(objects.workspaceId, workspaceId)))
+
+			await tx.insert(events).values(
+				toDelete.map((row) => ({
+					workspaceId: row.workspaceId,
+					actorId,
+					action: 'deleted' as const,
+					entityType: row.type,
+					entityId: row.id,
+					data: row,
+				})),
+			)
+		})
+	}
+
+	const okCount = results.filter((r) => r.ok).length
+	logger.info('bulk-delete objects', {
+		actorId,
+		scope: body.scope,
+		requested: body.scope === 'ids' ? body.ids.length : uniqueIds.length,
+		deduped: uniqueIds.length,
+		deleted: okCount,
 		failed: uniqueIds.length - okCount,
 	})
 

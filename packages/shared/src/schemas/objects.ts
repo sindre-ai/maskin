@@ -26,21 +26,65 @@ export const updateObjectSchema = z.object({
 	owner: z.string().uuid().nullable().optional(),
 })
 
-/** Bulk-update many objects in one call. Status/owner/metadata are validated
- * per-id against the existing object so a single bad row never poisons the batch
- * — the response shape is `{ results: { id, ok, error? }[] }`. */
-export const bulkUpdateObjectsSchema = z.object({
-	ids: z.array(z.string().uuid()).min(1).max(200),
-	patch: z
-		.object({
-			status: z.string().optional(),
-			owner: z.string().uuid().nullable().optional(),
-			metadata: safeMetadataSchema.optional(),
-		})
-		.refine((p) => p.status !== undefined || p.owner !== undefined || p.metadata !== undefined, {
-			message: 'patch must include at least one of status, owner, metadata',
-		}),
+/** Filter predicate for bulk ops scoped to "all matching this filter". Mirrors
+ * the subset of `objectQuerySchema` that selects rows, without the pagination
+ * or sort fields — those have no meaning for a bulk mutation. */
+export const objectsFilterSchema = z.object({
+	q: z.string().min(1).optional(),
+	type: objectTypeSchema.optional(),
+	status: z.string().optional(),
+	owner: z.string().optional(),
+	ids: z.string().optional(),
 })
+export type ObjectsFilter = z.infer<typeof objectsFilterSchema>
+
+/** Hard server-side ceiling on how many rows a single filter-scoped bulk op
+ * can touch. Acts as a circuit breaker so a runaway predicate can't take down
+ * the workspace; the client surfaces the cap in the "select all matching" UI
+ * before it ever sends a request. */
+export const MAX_BULK_AFFECTED_ROWS = 1000
+
+const bulkPatchSchema = z
+	.object({
+		status: z.string().optional(),
+		owner: z.string().uuid().nullable().optional(),
+		metadata: safeMetadataSchema.optional(),
+	})
+	.refine((p) => p.status !== undefined || p.owner !== undefined || p.metadata !== undefined, {
+		message: 'patch must include at least one of status, owner, metadata',
+	})
+
+/** Bulk-update many objects in one call. Either `{ scope: 'ids', ids }` (legacy
+ * loaded-rows path, capped at 200 to bound the txn) or `{ scope: 'filter', filter }`
+ * (operate on every row matching the filter, capped server-side at
+ * `MAX_BULK_AFFECTED_ROWS`). The response is per-id so a single bad row never
+ * poisons the batch: `{ results: { id, ok, error? }[] }`. */
+export const bulkUpdateObjectsSchema = z.discriminatedUnion('scope', [
+	z.object({
+		scope: z.literal('ids'),
+		ids: z.array(z.string().uuid()).min(1).max(200),
+		patch: bulkPatchSchema,
+	}),
+	z.object({
+		scope: z.literal('filter'),
+		filter: objectsFilterSchema,
+		patch: bulkPatchSchema,
+	}),
+])
+export type BulkUpdateObjectsBody = z.infer<typeof bulkUpdateObjectsSchema>
+
+/** Bulk-delete: mirror of bulk-update. Same scope discriminator, no patch. */
+export const bulkDeleteObjectsSchema = z.discriminatedUnion('scope', [
+	z.object({
+		scope: z.literal('ids'),
+		ids: z.array(z.string().uuid()).min(1).max(200),
+	}),
+	z.object({
+		scope: z.literal('filter'),
+		filter: objectsFilterSchema,
+	}),
+])
+export type BulkDeleteObjectsBody = z.infer<typeof bulkDeleteObjectsSchema>
 
 export const bulkUpdateObjectsResultSchema = z.object({
 	id: z.string().uuid(),
@@ -51,6 +95,17 @@ export const bulkUpdateObjectsResultSchema = z.object({
 export const bulkUpdateObjectsResponseSchema = z.object({
 	results: z.array(bulkUpdateObjectsResultSchema),
 })
+
+/** Returned (with HTTP 422) when a filter-scoped bulk op would touch more rows
+ * than `MAX_BULK_AFFECTED_ROWS`. No writes happen — the client uses `count` to
+ * tell the user how many rows the predicate matched and `max` to surface the
+ * cap. The route emits this nested under the standard `{ error: { ... } }`
+ * envelope (see createApiError), so callers read `error.code === 'cap_exceeded'`. */
+export const bulkCapExceededDetailsSchema = z.object({
+	count: z.number().int().nonnegative(),
+	max: z.number().int().positive(),
+})
+export type BulkCapExceededDetails = z.infer<typeof bulkCapExceededDetailsSchema>
 
 /** Bulk-migrate or delete every object of a given type within a workspace.
  * Used when an extension is removed/disabled, to avoid orphaning rows whose

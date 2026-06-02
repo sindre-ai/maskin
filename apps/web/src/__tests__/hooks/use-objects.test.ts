@@ -235,9 +235,10 @@ describe('useBulkUpdateObjects', () => {
 		const { Wrapper } = makeWrapper()
 		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
 
-		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
+		result.current.mutate({ scope: 'ids', ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.bulkUpdate).toHaveBeenCalledWith(workspaceId, {
+			scope: 'ids',
 			ids: ['obj-1', 'obj-2'],
 			patch: { status: 'done' },
 		})
@@ -252,7 +253,10 @@ describe('useBulkUpdateObjects', () => {
 			buildObject({ id: 'obj-3', status, type: 'task' }),
 		]
 		const key = queryKeys.objects.listInfinite(workspaceId, {})
-		queryClient.setQueryData(key, { pages: [seed('todo')], pageParams: [0] })
+		queryClient.setQueryData(key, {
+			pages: [{ items: seed('todo'), totalCount: 3 }],
+			pageParams: [0],
+		})
 
 		let resolve!: (value: { results: Array<{ id: string; ok: boolean }> }) => void
 		vi.mocked(api.objects.bulkUpdate).mockReturnValue(
@@ -262,13 +266,19 @@ describe('useBulkUpdateObjects', () => {
 		)
 
 		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
-		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'in_progress' } })
+		result.current.mutate({
+			scope: 'ids',
+			ids: ['obj-1', 'obj-2'],
+			patch: { status: 'in_progress' },
+		})
 
 		// Before the request resolves, the cache should already reflect the patch
 		// for selected ids and leave un-selected rows untouched.
 		await waitFor(() => {
-			const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
-			const rows = cache?.pages[0] ?? []
+			const cache = queryClient.getQueryData<{
+				pages: { items: ObjectResponse[]; totalCount: number | null }[]
+			}>(key)
+			const rows = cache?.pages[0]?.items ?? []
 			expect(rows.find((r) => r.id === 'obj-1')?.status).toBe('in_progress')
 			expect(rows.find((r) => r.id === 'obj-2')?.status).toBe('in_progress')
 			expect(rows.find((r) => r.id === 'obj-3')?.status).toBe('todo')
@@ -290,16 +300,88 @@ describe('useBulkUpdateObjects', () => {
 			buildObject({ id: 'obj-2', status: 'todo', type: 'task' }),
 		]
 		const key = queryKeys.objects.listInfinite(workspaceId, {})
-		queryClient.setQueryData(key, { pages: [seed], pageParams: [0] })
+		queryClient.setQueryData(key, {
+			pages: [{ items: seed, totalCount: 2 }],
+			pageParams: [0],
+		})
 
 		vi.mocked(api.objects.bulkUpdate).mockRejectedValue(new Error('Network'))
 		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
-		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
+		result.current.mutate({ scope: 'ids', ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
-		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
-		const rows = cache?.pages[0] ?? []
+		const cache = queryClient.getQueryData<{
+			pages: { items: ObjectResponse[]; totalCount: number | null }[]
+		}>(key)
+		const rows = cache?.pages[0]?.items ?? []
 		expect(rows.every((r) => r.status === 'todo')).toBe(true)
+	})
+
+	it('routes filter-scoped mutation through the API with the frozen filter snapshot', async () => {
+		vi.mocked(api.objects.bulkUpdate).mockResolvedValue({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: true },
+			],
+		})
+		const { Wrapper } = makeWrapper()
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+
+		result.current.mutate({
+			scope: 'filter',
+			filter: { type: 'task', status: 'todo', q: 'urgent' },
+			patch: { status: 'in_progress' },
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.objects.bulkUpdate).toHaveBeenCalledWith(workspaceId, {
+			scope: 'filter',
+			filter: { type: 'task', status: 'todo', q: 'urgent' },
+			patch: { status: 'in_progress' },
+		})
+	})
+
+	it('predicate-patches only loaded rows that match the filter snapshot, leaving non-matches untouched', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const seed = [
+			buildObject({ id: 'obj-1', status: 'todo', type: 'task', title: 'urgent bug' }),
+			buildObject({ id: 'obj-2', status: 'todo', type: 'task', title: 'tidy up later' }),
+			buildObject({ id: 'obj-3', status: 'todo', type: 'bet', title: 'urgent bet' }),
+		]
+		const key = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(key, {
+			pages: [{ items: seed, totalCount: 3 }],
+			pageParams: [0],
+		})
+
+		let resolve!: (value: { results: Array<{ id: string; ok: boolean }> }) => void
+		vi.mocked(api.objects.bulkUpdate).mockReturnValue(
+			new Promise((res) => {
+				resolve = res
+			}),
+		)
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({
+			scope: 'filter',
+			filter: { type: 'task', q: 'urgent' },
+			patch: { status: 'in_progress' },
+		})
+
+		await waitFor(() => {
+			const cache = queryClient.getQueryData<{
+				pages: { items: ObjectResponse[]; totalCount: number | null }[]
+			}>(key)
+			const rows = cache?.pages[0]?.items ?? []
+			// obj-1 matches type=task + q=urgent → patched.
+			expect(rows.find((r) => r.id === 'obj-1')?.status).toBe('in_progress')
+			// obj-2 fails q=urgent → left alone.
+			expect(rows.find((r) => r.id === 'obj-2')?.status).toBe('todo')
+			// obj-3 fails type=task → left alone.
+			expect(rows.find((r) => r.id === 'obj-3')?.status).toBe('todo')
+		})
+
+		resolve({ results: [{ id: 'obj-1', ok: true }] })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 	})
 })
 

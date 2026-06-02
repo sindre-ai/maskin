@@ -3,10 +3,13 @@ import { type InfiniteData, useMutation, useQuery, useQueryClient } from '@tanst
 import { toast } from 'sonner'
 import type { z } from 'zod'
 import type {
+	BulkDeleteObjectsInput,
 	BulkUpdateObjectsInput,
 	BulkUpdateObjectsResponse,
+	BulkUpdatePatch,
 	MigrateObjectTypeInput,
 	ObjectResponse,
+	ObjectsFilterInput,
 } from '../lib/api'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
@@ -67,7 +70,15 @@ export function useUpdateObject(workspaceId: string) {
 }
 
 type ObjectListCache = ObjectResponse[]
-type ObjectListInfiniteCache = InfiniteData<ObjectResponse[]>
+/** Each page of the listInfinite cache carries totalCount in addition to the
+ * row items — the virtualizer reads totalCount to drive the "select all N
+ * matching this filter" affordance. Older callers that only need the rows
+ * walk `pages[i].items`. */
+export interface ObjectListInfinitePage {
+	items: ObjectResponse[]
+	totalCount: number | null
+}
+type ObjectListInfiniteCache = InfiniteData<ObjectListInfinitePage>
 
 interface BulkUpdateContext {
 	listSnapshots: Array<[readonly unknown[], ObjectListCache | undefined]>
@@ -75,20 +86,61 @@ interface BulkUpdateContext {
 	detailSnapshots: Array<[readonly unknown[], ObjectResponse | undefined]>
 }
 
-// Optimistically apply a patch to every object whose id appears in `ids`.
+// Mirror of the server-side row-selection predicate. Kept in sync with
+// buildObjectsWhere on the server so the optimistic patch only touches loaded
+// rows that *would* match the filter — rows the user never scrolled to stay
+// untouched in cache until the server's eventual `onSettled` invalidate.
+function matchesObjectsFilter(obj: ObjectResponse, filter: ObjectsFilterInput): boolean {
+	if (filter.type && obj.type !== filter.type) return false
+	if (filter.status) {
+		const statuses = filter.status.split(',').filter(Boolean)
+		if (statuses.length > 0 && !statuses.includes(obj.status)) return false
+	}
+	if (filter.owner) {
+		const owners = filter.owner.split(',').filter(Boolean)
+		if (owners.length > 0 && (!obj.owner || !owners.includes(obj.owner))) return false
+	}
+	if (filter.ids) {
+		const idList = filter.ids.split(',').filter(Boolean)
+		if (idList.length > 0 && !idList.includes(obj.id)) return false
+	}
+	if (filter.q) {
+		const needle = filter.q.toLowerCase()
+		const hay = `${obj.title ?? ''} ${obj.content ?? ''}`.toLowerCase()
+		if (!hay.includes(needle)) return false
+	}
+	return true
+}
+
+// Optimistically apply a patch to every object matching the selection scope.
 // Touches both the flat list cache and the page-shaped infinite cache, plus
 // any open detail caches, so the data-table re-renders without waiting on the
 // server response. Snapshots are returned so onError can rollback.
+//
+// In `ids` scope we patch exactly the listed ids. In `filter` scope we re-run
+// the filter predicate on every loaded row — this is the virtualizer-aware
+// path: rows the user never scrolled to stay untouched in cache and reconcile
+// on the server's response. Detail caches are only invalidated for ids the
+// server reports `ok: true` (see onSettled below).
 function applyOptimisticBulkPatch(
 	queryClient: ReturnType<typeof useQueryClient>,
 	workspaceId: string,
-	ids: string[],
-	patch: BulkUpdateObjectsInput['patch'],
+	input: BulkUpdateObjectsInput,
 ): BulkUpdateContext {
-	const idSet = new Set(ids)
 	const stamped = new Date().toISOString()
+	const shouldPatch = input.scope === 'ids' ? (id: string) => new Set(input.ids).has(id) : undefined
+	const filterPredicate =
+		input.scope === 'filter'
+			? (obj: ObjectResponse) => matchesObjectsFilter(obj, input.filter)
+			: undefined
+
+	const patch = input.patch
 	const merge = (obj: ObjectResponse): ObjectResponse => {
-		if (!idSet.has(obj.id)) return obj
+		const hit =
+			input.scope === 'ids'
+				? (shouldPatch as (id: string) => boolean)(obj.id)
+				: (filterPredicate as (o: ObjectResponse) => boolean)(obj)
+		if (!hit) return obj
 		const next: ObjectResponse = { ...obj, updatedAt: stamped }
 		if (patch.status !== undefined) next.status = patch.status
 		if (patch.owner !== undefined) next.owner = patch.owner
@@ -113,17 +165,25 @@ function applyOptimisticBulkPatch(
 		if (!cache) continue
 		queryClient.setQueryData<ObjectListInfiniteCache>(key, {
 			...cache,
-			pages: cache.pages.map((page) => page.map(merge)),
+			pages: cache.pages.map((page) => ({
+				items: page.items.map(merge),
+				totalCount: page.totalCount,
+			})),
 		})
 	}
 
+	// In `ids` scope we know exactly which detail caches to flip. In `filter`
+	// scope we'd have to walk every open detail cache — skip it; the server's
+	// onSettled invalidate covers detail rehydration without the cost.
 	const detailSnapshots: Array<[readonly unknown[], ObjectResponse | undefined]> = []
-	for (const id of ids) {
-		const key = queryKeys.objects.detail(id)
-		const cached = queryClient.getQueryData<ObjectResponse>(key)
-		if (cached) {
-			detailSnapshots.push([key, cached])
-			queryClient.setQueryData<ObjectResponse>(key, merge(cached))
+	if (input.scope === 'ids') {
+		for (const id of input.ids) {
+			const key = queryKeys.objects.detail(id)
+			const cached = queryClient.getQueryData<ObjectResponse>(key)
+			if (cached) {
+				detailSnapshots.push([key, cached])
+				queryClient.setQueryData<ObjectResponse>(key, merge(cached))
+			}
 		}
 	}
 
@@ -146,22 +206,67 @@ export function useBulkUpdateObjects(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation<BulkUpdateObjectsResponse, Error, BulkUpdateObjectsInput, BulkUpdateContext>({
 		mutationFn: (body) => api.objects.bulkUpdate(workspaceId, body),
-		onMutate: async ({ ids, patch }) => {
+		onMutate: async (input) => {
 			await queryClient.cancelQueries({ queryKey: queryKeys.objects.all(workspaceId) })
-			return applyOptimisticBulkPatch(queryClient, workspaceId, ids, patch)
+			return applyOptimisticBulkPatch(queryClient, workspaceId, input)
 		},
 		onError: (_err, _vars, ctx) => {
 			if (ctx) rollbackBulkPatch(queryClient, ctx)
 		},
-		onSettled: (data, _err, { ids }) => {
+		onSettled: (data, _err, input) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 			// On network failure (no data) we don't know which rows changed, so
 			// fall back to invalidating every requested id's detail cache. On a
 			// 200, only invalidate details for ids the server reported ok=true.
-			const idsToInvalidate = data ? data.results.filter((r) => r.ok).map((r) => r.id) : ids
+			const failureFallback = input.scope === 'ids' ? input.ids : []
+			const idsToInvalidate = data
+				? data.results.filter((r) => r.ok).map((r) => r.id)
+				: failureFallback
 			for (const id of idsToInvalidate) {
 				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			}
+		},
+	})
+}
+
+/**
+ * Convenience wrapper for the most common loaded-rows call site — keeps the
+ * old `{ ids, patch }` shape so callers that pre-date the two-scope contract
+ * don't have to thread `scope: 'ids'` through. Filter-scoped callers should
+ * use `useBulkUpdateObjects` directly.
+ */
+export function useBulkUpdateLoadedObjects(workspaceId: string) {
+	const mutation = useBulkUpdateObjects(workspaceId)
+	return {
+		...mutation,
+		mutate: (
+			vars: { ids: string[]; patch: BulkUpdatePatch },
+			options?: Parameters<typeof mutation.mutate>[1],
+		) => mutation.mutate({ scope: 'ids', ids: vars.ids, patch: vars.patch }, options),
+		mutateAsync: (vars: { ids: string[]; patch: BulkUpdatePatch }) =>
+			mutation.mutateAsync({ scope: 'ids', ids: vars.ids, patch: vars.patch }),
+	}
+}
+
+export function useBulkDeleteObjects(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<BulkUpdateObjectsResponse, Error, BulkDeleteObjectsInput>({
+		mutationFn: (body) => api.objects.bulkDelete(workspaceId, body),
+		onSettled: (data, _err, input) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+			// Drop detail caches for ids the server actually deleted so a router
+			// nav to the gone object doesn't render stale data. On network
+			// failure (no data) fall back to ids scope's known list; filter
+			// scope can't enumerate offline so we skip.
+			const idsToInvalidate = data
+				? data.results.filter((r) => r.ok).map((r) => r.id)
+				: input.scope === 'ids'
+					? input.ids
+					: []
+			for (const id of idsToInvalidate) {
+				queryClient.removeQueries({ queryKey: queryKeys.objects.detail(id) })
 			}
 		},
 	})
