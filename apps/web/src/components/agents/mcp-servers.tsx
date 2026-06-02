@@ -63,6 +63,11 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		url: 'https://gmailmcp.googleapis.com/mcp/v1',
 		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
 	},
+	posthog: {
+		type: 'http',
+		url: 'https://mcp.posthog.com/mcp',
+		headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+	},
 }
 
 const PLATFORM_MCP_PRESET: McpServer = {

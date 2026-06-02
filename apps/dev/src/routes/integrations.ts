@@ -159,6 +159,75 @@ app.openapi(connectRoute, (async (c) => {
 		)
 	}
 
+	// api_key providers skip the OAuth round-trip — the platform owns the key,
+	// so we activate the integration synchronously from the configured env var
+	// and return a redirect back to the same settings page.
+	if (resolved.config.auth.type === 'api_key') {
+		const envKey = resolved.config.auth.config.envKeyName
+		const apiKey = process.env[envKey]
+		if (!apiKey) {
+			logger.error(`api_key provider ${providerName} missing env var`, { envKey })
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Provider ${providerName} is not configured on this server (${envKey} unset)`,
+				),
+				400,
+			)
+		}
+
+		const credentials: StoredCredentials = { accessToken: apiKey }
+		const encryptedCredentials = encrypt(JSON.stringify(credentials))
+		const externalId = `${providerName}-personal`
+
+		const [row] = await db
+			.insert(integrations)
+			.values({
+				workspaceId,
+				provider: providerName,
+				status: 'active',
+				externalId,
+				credentials: encryptedCredentials,
+				createdBy: actorId,
+			})
+			.onConflictDoUpdate({
+				target: [integrations.workspaceId, integrations.provider],
+				set: {
+					status: 'active',
+					externalId,
+					credentials: encryptedCredentials,
+					updatedAt: new Date(),
+				},
+			})
+			.returning({ id: integrations.id })
+
+		if (!row?.id) {
+			logger.error('api_key integration upsert returned no row', {
+				provider: providerName,
+				workspaceId,
+			})
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to activate integration'), 500)
+		}
+
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'created',
+			entityType: 'integration',
+			entityId: row.id,
+			data: { provider: providerName, external_id: externalId, auth_type: 'api_key' },
+		})
+
+		logger.info('api_key integration activated', {
+			provider: providerName,
+			workspaceId,
+			integrationId: row.id,
+		})
+
+		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
+	}
+
 	// Create signed state containing workspace + actor info + one-time nonce
 	const nonce = randomBytes(16).toString('hex')
 	const statePayload: Record<string, unknown> = {

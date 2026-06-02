@@ -103,6 +103,75 @@ describe('Integrations Routes', () => {
 			expect(body.install_url).toContain('github.com')
 		})
 
+		it('activates an api_key provider (posthog) immediately and stores env key in credentials', async () => {
+			const originalKey = process.env.POSTHOG_PERSONAL_API_KEY
+			const originalFrontendUrl = process.env.FRONTEND_URL
+			process.env.POSTHOG_PERSONAL_API_KEY = 'phx_test_personal_key'
+			process.env.FRONTEND_URL = 'http://localhost:5173'
+			try {
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/posthog/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.install_url).toBe(`http://localhost:5173/${wsId}/settings/integrations`)
+
+				const integrationInsert = calls.inserts[0] as Record<string, unknown>
+				expect(integrationInsert.provider).toBe('posthog')
+				expect(integrationInsert.status).toBe('active')
+				expect(integrationInsert.externalId).toBe('posthog-personal')
+				expect(typeof integrationInsert.credentials).toBe('string')
+				expect((integrationInsert.credentials as string).length).toBeGreaterThan(0)
+				// Credentials must be encrypted, not the plain env var
+				expect(integrationInsert.credentials).not.toBe('phx_test_personal_key')
+
+				const eventInsert = calls.inserts[1] as Record<string, unknown>
+				expect(eventInsert.entityType).toBe('integration')
+				expect(eventInsert.action).toBe('created')
+				expect((eventInsert.data as Record<string, unknown>).provider).toBe('posthog')
+				expect((eventInsert.data as Record<string, unknown>).auth_type).toBe('api_key')
+			} finally {
+				if (originalKey === undefined) {
+					Reflect.deleteProperty(process.env, 'POSTHOG_PERSONAL_API_KEY')
+				} else {
+					process.env.POSTHOG_PERSONAL_API_KEY = originalKey
+				}
+				if (originalFrontendUrl === undefined) {
+					Reflect.deleteProperty(process.env, 'FRONTEND_URL')
+				} else {
+					process.env.FRONTEND_URL = originalFrontendUrl
+				}
+			}
+		})
+
+		it('returns 400 when api_key provider env var is unset', async () => {
+			const originalKey = process.env.POSTHOG_PERSONAL_API_KEY
+			Reflect.deleteProperty(process.env, 'POSTHOG_PERSONAL_API_KEY')
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/posthog/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.message).toContain('POSTHOG_PERSONAL_API_KEY')
+			} finally {
+				if (originalKey !== undefined) {
+					process.env.POSTHOG_PERSONAL_API_KEY = originalKey
+				}
+			}
+		})
+
 		it('returns 200 with install_url for standard oauth2 provider (slack)', async () => {
 			const originalClientId = process.env.SLACK_CLIENT_ID
 			process.env.SLACK_CLIENT_ID = 'test-slack-client-id'
