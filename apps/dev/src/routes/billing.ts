@@ -16,6 +16,36 @@ import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/st
 const DEFAULT_TRIAL_HARD_CAP_TOKENS = 100_000
 const TRIAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 /**
+ * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
+ * populated yet (delayed Stripe webhook, partial state after a webhook failure).
+ * Read from env first, then fall through to the literal documented in the PR
+ * body for the Settings row. We parse env locally instead of reusing
+ * `readStripeEnv` because that helper throws when Stripe is unconfigured, and
+ * `/api/billing/usage` must keep serving usage to workspaces regardless.
+ */
+const STARTER_HARD_CAP_DEFAULT_TOKENS = 32_000_000
+const PRO_HARD_CAP_DEFAULT_TOKENS = 96_000_000
+
+function readPlanCapEnv(envKey: string): number | null {
+	const raw = process.env[envKey]
+	if (raw === undefined || raw === '') return null
+	const n = Number(raw)
+	return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+}
+
+function planHardCapFallback(plan: 'trial' | 'starter' | 'pro' | 'byollm'): number | null {
+	switch (plan) {
+		case 'trial':
+		case 'byollm':
+			return DEFAULT_TRIAL_HARD_CAP_TOKENS
+		case 'starter':
+			return readPlanCapEnv('MASKIN_STARTER_HARD_CAP_TOKENS') ?? STARTER_HARD_CAP_DEFAULT_TOKENS
+		case 'pro':
+			return readPlanCapEnv('MASKIN_PRO_HARD_CAP_TOKENS') ?? PRO_HARD_CAP_DEFAULT_TOKENS
+	}
+}
+
+/**
  * LLM-route tag the paid-plan + trial sessions write on `sessions.config.llm_route`.
  * Lives as a literal here so this task doesn't import from the hard-cap branch;
  * when the bet branch rebases everything together the constant in
@@ -130,21 +160,25 @@ app.openapi(usageRoute, async (c) => {
 	const hardCap =
 		billing?.hard_cap_tokens && billing.hard_cap_tokens > 0
 			? billing.hard_cap_tokens
-			: plan === 'trial' || plan === 'byollm'
-				? DEFAULT_TRIAL_HARD_CAP_TOKENS
-				: null
+			: planHardCapFallback(plan)
 	// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
 	// writes `subscription.current_period_start` straight through, and Stripe
-	// timestamps are seconds (not ms). Multiply by 1000 here so `new Date()`,
-	// `Date.now()`, and the resets-in arithmetic all operate in ms.
-	const periodStartMs = billing?.period_start
-		? billing.period_start * 1000
-		: Date.now() - TRIAL_WINDOW_MS
-	const periodEndMs = billing?.period_start
-		? // Stripe periods are 28-31d; we don't store period_end on this branch,
-			// so we approximate as "30d from period_start" for the resets-in hint.
-			billing.period_start * 1000 + TRIAL_WINDOW_MS
-		: Date.now() + TRIAL_WINDOW_MS
+	// timestamps are seconds (not ms). Coerce to a positive integer at read
+	// time so a partial / legacy / malformed stored value never trips the
+	// response schema (which requires `int().nonnegative()`).
+	const rawPeriodStart = billing?.period_start
+	const periodStartSec =
+		typeof rawPeriodStart === 'number' && Number.isFinite(rawPeriodStart) && rawPeriodStart > 0
+			? Math.floor(rawPeriodStart)
+			: null
+	const periodStartMs =
+		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - TRIAL_WINDOW_MS
+	const periodEndMs =
+		periodStartSec !== null
+			? // Stripe periods are 28-31d; we don't store period_end on this branch,
+				// so we approximate as "30d from period_start" for the resets-in hint.
+				periodStartSec * 1000 + TRIAL_WINDOW_MS
+			: Date.now() + TRIAL_WINDOW_MS
 
 	let tokensUsed = 0
 	if (plan !== 'byollm') {
@@ -184,7 +218,7 @@ app.openapi(usageRoute, async (c) => {
 			status,
 			tokens_used: tokensUsed,
 			hard_cap_tokens: hardCap,
-			period_start: billing?.period_start ?? null,
+			period_start: periodStartSec,
 			period_resets_in_ms: plan === 'byollm' ? null : resetsIn,
 			stripe_customer_id: billing?.stripe_customer_id ?? null,
 			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
