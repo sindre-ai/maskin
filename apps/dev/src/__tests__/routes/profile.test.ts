@@ -1,4 +1,23 @@
 import { randomUUID } from 'node:crypto'
+import {
+	events,
+	actors,
+	agentFiles,
+	files,
+	imports,
+	integrations,
+	notifications,
+	objects,
+	readState,
+	relationships,
+	sessions,
+	subscriptions,
+	triggers,
+	userDisplaySettings,
+	webhookDeliveries,
+	workspaceMembers,
+	workspaces,
+} from '@maskin/db/schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActor, buildWorkspaceMember } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -46,6 +65,31 @@ describe('Profile — PATCH /api/actors/:id (T2 profile fields)', () => {
 		)
 		expect(eventInsert).toBeDefined()
 		expect(eventInsert?.data.field).toBe('bio')
+	})
+
+	it('writes name and emits one profile.field_changed event for name', async () => {
+		const actor = buildActor({ type: 'human', notificationPrefs: {} })
+		const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+		// existing-row lookup, then telemetry workspace lookup. Without the second
+		// row the telemetry path silently drops via the `actor has no workspace`
+		// warn branch — that swallow is exactly what hides the regression this
+		// test exists to catch.
+		mockResults.selectQueue = [[{ type: 'human', notificationPrefs: {} }], [{ workspaceId }]]
+		mockResults.update = [{ ...actor, name: 'Renamed' }]
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${actor.id}`, { name: 'Renamed' }),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.name).toBe('Renamed')
+		const eventInsert = calls.inserts.find(
+			(i): i is { action: string; data: { field: string } } =>
+				(i as { action?: string }).action === 'profile.field_changed',
+		)
+		expect(eventInsert).toBeDefined()
+		expect(eventInsert?.data.field).toBe('name')
 	})
 
 	it('merges partial notification_prefs onto the existing object', async () => {
@@ -203,6 +247,121 @@ describe('Profile — DELETE /api/actors/:id (human self-delete)', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.deleted).toBe(true)
+	})
+
+	it('tears down a solely-owned workspace in FK-safe order, then the actor', async () => {
+		const actor = buildActor({ type: 'human' })
+		const wsId = randomUUID()
+		const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+		// Selects, in order:
+		//   1) actor lookup
+		//   2) memberships → one workspace
+		//   3) otherHumanCount → 0 (solely-owned branch)
+		//   4) objects subquery used by `inArray` on relationships.source_id
+		//   5) objects subquery used by `inArray` on relationships.target_id
+		//   6) wsSessions (empty → skip the conditional sessionLogs delete)
+		mockResults.selectQueue = [[actor], [{ workspaceId: wsId }], [{ count: 0 }], [], [], []]
+
+		const res = await app.request(
+			new Request(`http://localhost/api/actors/${actor.id}`, {
+				method: 'DELETE',
+				headers,
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		// Per-workspace teardown order — FK dependents before parents. The two
+		// relationships deletes are the in/source and in/target queries; the
+		// sessionLogs delete is intentionally absent because wsSessions was empty.
+		expect(calls.deleteTables.slice(0, 16)).toEqual([
+			events,
+			notifications,
+			relationships,
+			relationships,
+			objects,
+			integrations,
+			triggers,
+			subscriptions,
+			readState,
+			imports,
+			agentFiles,
+			sessions,
+			webhookDeliveries,
+			userDisplaySettings,
+			workspaceMembers,
+			workspaces,
+		])
+		// After the per-workspace loop, actor-level cleanup runs and the actors
+		// row is the final delete.
+		expect(calls.deleteTables[calls.deleteTables.length - 1]).toBe(actors)
+		expect(calls.updateTables[calls.updateTables.length - 1]).toBe(actors)
+	})
+
+	it('reassigns authored content to Sindre in a shared workspace and removes membership', async () => {
+		const actor = buildActor({ type: 'human' })
+		const wsId = randomUUID()
+		const sindreId = randomUUID()
+		const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+		// Selects, in order:
+		//   1) actor lookup
+		//   2) memberships → one workspace
+		//   3) otherHumanCount → 1 (shared branch)
+		//   4) Sindre lookup → present, so reassignment can proceed
+		mockResults.selectQueue = [[actor], [{ workspaceId: wsId }], [{ count: 1 }], [{ id: sindreId }]]
+
+		const res = await app.request(
+			new Request(`http://localhost/api/actors/${actor.id}`, {
+				method: 'DELETE',
+				headers,
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		// Updates, in order: objects (createdBy), objects (owner=null), files,
+		// integrations, imports, sessions (createdBy), sessions (actorId),
+		// events (actorId), workspaces (createdBy), and the actor-level
+		// createdBy=null sweep just before the actors row drops.
+		expect(calls.updateTables).toEqual([
+			objects,
+			objects,
+			files,
+			integrations,
+			imports,
+			sessions,
+			sessions,
+			events,
+			workspaces,
+			actors,
+		])
+		// Deletes, in order: subscriptions / readState / workspaceMembers inside
+		// the shared-workspace branch, then notifications×2 and sessions×2 from
+		// the actor-level sweep, then the actors row itself.
+		expect(calls.deleteTables).toEqual([
+			subscriptions,
+			readState,
+			workspaceMembers,
+			notifications,
+			notifications,
+			sessions,
+			sessions,
+			actors,
+		])
+		// Six `createdBy` reassignments to Sindre: objects, files, integrations,
+		// imports, sessions, workspaces. The actor-level createdBy sweep nulls
+		// instead, so it is excluded.
+		const reassignedToSindre = calls.updates.filter(
+			(u): u is { createdBy: string } =>
+				typeof (u as { createdBy?: unknown }).createdBy === 'string' &&
+				(u as { createdBy: string }).createdBy === sindreId,
+		)
+		expect(reassignedToSindre).toHaveLength(6)
+		// Two `actorId` reassignments to Sindre: sessions and events.
+		const actorIdReassigned = calls.updates.filter(
+			(u): u is { actorId: string } =>
+				typeof (u as { actorId?: unknown }).actorId === 'string' &&
+				(u as { actorId: string }).actorId === sindreId,
+		)
+		expect(actorIdReassigned).toHaveLength(2)
 	})
 })
 
