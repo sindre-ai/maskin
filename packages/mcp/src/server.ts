@@ -746,6 +746,16 @@ export interface HeroCardActor {
 	name: string | null
 }
 
+export interface HeroCardMeta {
+	label: string
+	value: string
+}
+
+export interface HeroCardPrimaryAction {
+	label: string
+	kind: string
+}
+
 export interface HeroCardObject {
 	id: string
 	type: string
@@ -753,6 +763,8 @@ export interface HeroCardObject {
 	status: string | null
 	owner: HeroCardActor | null
 	contextLine: string
+	metas?: HeroCardMeta[]
+	primaryAction?: HeroCardPrimaryAction
 	badges?: string[]
 }
 
@@ -809,20 +821,49 @@ export interface HeroCardTypeAnnotation {
 export const HERO_CARD_TYPE_DEFAULTS: Record<string, HeroCardTypeAnnotation> = {
 	organization: {
 		hero_card_context: 'last touch + stage',
-		hero_card_metas: [
-			{ label: 'Stage', field: 'status' },
-			{ label: 'Owner', field: 'owner' },
-		],
 		primary_action: { label: 'Open in Maskin', kind: 'open_object' },
 	},
 	person: {
 		hero_card_context: 'last touch + stage',
-		hero_card_metas: [
-			{ label: 'Stage', field: 'status' },
-			{ label: 'Owner', field: 'owner' },
-		],
 		primary_action: { label: 'Open in Maskin', kind: 'open_object' },
 	},
+}
+
+/**
+ * Resolve a `hero_card_metas` annotation entry to a displayable `{label, value}`
+ * pair by reading the named `field` off the object (or owner, for owner fields).
+ * Returns `null` when the field is missing or empty — the widget skips empty
+ * metas rather than render label-only chips.
+ *
+ * Known field references: `status` (object.status), `owner` (owner.name).
+ * Anything else is looked up under `object.metadata` and coerced to string.
+ * Field-less entries are treated as static labels and pass through with an
+ * empty value, letting them be skipped by callers.
+ */
+function resolveHeroCardMeta(
+	entry: { label: string; field?: string },
+	obj: RawObject,
+	owner: HeroCardActor | null,
+): HeroCardMeta | null {
+	if (!entry.field) return null
+	let raw: unknown
+	switch (entry.field) {
+		case 'status':
+			raw = obj.status
+			break
+		case 'owner':
+			raw = owner?.name
+			break
+		case 'title':
+			raw = obj.title
+			break
+		default:
+			raw = obj.metadata?.[entry.field]
+	}
+	if (raw === undefined || raw === null) return null
+	const value = typeof raw === 'string' ? raw : String(raw)
+	if (value.length === 0) return null
+	return { label: entry.label, value }
 }
 
 /** Days between two ISO timestamps. Negative values clamp to 0. */
@@ -904,7 +945,11 @@ export function buildHeroCardObject(
 	nowMs = Date.now(),
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): HeroCardObject {
-	return {
+	const annotation = annotations[obj.type]
+	const metas = annotation?.hero_card_metas
+		?.map((m) => resolveHeroCardMeta(m, obj, owner))
+		.filter((m): m is HeroCardMeta => m !== null)
+	const hero: HeroCardObject = {
 		id: obj.id,
 		type: obj.type,
 		title: obj.title ?? null,
@@ -912,6 +957,9 @@ export function buildHeroCardObject(
 		owner,
 		contextLine: buildContextLine(obj, owner, nowMs, annotations),
 	}
+	if (metas && metas.length > 0) hero.metas = metas
+	if (annotation?.primary_action) hero.primaryAction = annotation.primary_action
+	return hero
 }
 
 /**

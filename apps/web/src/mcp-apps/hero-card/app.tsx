@@ -11,6 +11,16 @@ interface HeroCardActor {
 	name: string | null
 }
 
+interface HeroCardMeta {
+	label: string
+	value: string
+}
+
+interface HeroCardPrimaryAction {
+	label: string
+	kind: string
+}
+
 interface HeroCardObject {
 	id: string
 	type: string
@@ -18,6 +28,8 @@ interface HeroCardObject {
 	status: string | null
 	owner: HeroCardActor | null
 	contextLine: string
+	metas?: HeroCardMeta[]
+	primaryAction?: HeroCardPrimaryAction
 	badges?: string[]
 }
 
@@ -110,6 +122,16 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 				<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
 					{object.contextLine}
 				</p>
+				{object.metas && object.metas.length > 0 && (
+					<dl className="flex flex-wrap items-center gap-x-3 gap-y-1 m-0">
+						{object.metas.map((m) => (
+							<div key={m.label} className="flex items-center gap-1 text-[11.5px]">
+								<dt className="text-muted-foreground">{m.label}:</dt>
+								<dd className="text-foreground tabular-nums m-0">{m.value}</dd>
+							</div>
+						))}
+					</dl>
+				)}
 				<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
 					{object.owner?.name && (
 						<span className="text-[11.5px] text-muted-foreground tabular-nums">
@@ -124,7 +146,7 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 							onClick={onCtaClick}
 							className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border hover:bg-muted hover:border-border-hover transition-colors min-h-[28px]"
 						>
-							Open in Maskin
+							{object.primaryAction?.label ?? 'Open in Maskin'}
 							<ExternalLink className="size-3" />
 						</a>
 					) : null}
