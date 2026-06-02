@@ -1133,4 +1133,23 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 		}),
 	},
+
+	// ─── Widget telemetry ─────────────────────────────────────
+	record_widget_event: {
+		description:
+			'INTERNAL — called by rendered MCP widgets (Hero Card) to report click-through, render success, and render failure events. Powers the bet success metric (click-through rate on Open in Maskin) and the 48h rolling render-error kill criterion. Do not call from an agent directly.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			widget_name: z.string().describe('Widget bundle name, e.g. "hero-card".'),
+			event: z
+				.enum(['click_through', 'render_success', 'render_error'])
+				.describe('What happened on the widget.'),
+			tool_name: z.string().describe('The MCP tool whose response produced this widget render.'),
+			card_kind: z
+				.enum(['single', 'list', 'empty'])
+				.describe('Result shape — single object, multi-row list, or empty state.'),
+			object_type: z.string().optional().describe('Object type when card_kind=single.'),
+			object_id: z.string().optional().describe('Object id when card_kind=single.'),
+		}),
+	},
 } as const

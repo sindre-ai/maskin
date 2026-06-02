@@ -22,6 +22,13 @@ type Env = {
 const RICH_RENDER_TARGET_PCT = 50
 const MUTATION_SESSION_TARGET_PCT = 20
 const DEFAULT_WINDOW_DAYS = 30
+// Rolling kill criterion from the MCP Widget UX bet — pause shipping and
+// revert to Markdown deep-link fallback if widget render failures exceed this
+// in any 48h window. Surfaced as `render_error_kill_switch_breach` in the
+// summary response; dashboards/cron should escalate to Magnus via Slack on
+// breach (see ce02150d-7666-45ec-ba6d-4fdea86f23c2 Exit criteria).
+const RENDER_ERROR_KILL_SWITCH_PCT = 10
+const RENDER_ERROR_WINDOW_MS = 48 * 60 * 60 * 1000
 
 // Bet-first measurement window for the MCP widget UX bet. Constants come
 // directly from the bet's success/exit criteria:
