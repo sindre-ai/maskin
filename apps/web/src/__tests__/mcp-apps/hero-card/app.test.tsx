@@ -367,6 +367,23 @@ describe('HeroCardApp — schema-driven primaryAction + metas wiring', () => {
 		// No definition list is rendered — the row only appears when metas exist.
 		expect(document.querySelector('dl')).toBeNull()
 	})
+
+	it('renders both metas entries when two share the same label', async () => {
+		// Index-keyed list — duplicate labels (e.g. two annotation entries both
+		// pulling a "Region" from different metadata fields) must not collide.
+		useToolResultMock.mockReturnValue(
+			makeAnnotatedToolResult({
+				metas: [
+					{ label: 'Region', value: 'EMEA' },
+					{ label: 'Region', value: 'NA' },
+				],
+			}),
+		)
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('EMEA')).toBeInTheDocument())
+		expect(screen.getByText('NA')).toBeInTheDocument()
+		expect(screen.getAllByText('Region:')).toHaveLength(2)
+	})
 })
 
 describe('extractHeroCard', () => {

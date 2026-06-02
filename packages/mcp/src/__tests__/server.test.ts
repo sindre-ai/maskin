@@ -2265,6 +2265,49 @@ describe('tool handlers', () => {
 			const hero = buildHeroCardObject(obj, null, Date.now(), annotations)
 			expect(hero.metas).toEqual([{ label: 'Region', value: 'EMEA' }])
 		})
+
+		it('does not invoke the meta resolver when the annotation has no hero_card_metas', () => {
+			// Per-object allocation guard — the hot path (every `get_objects`
+			// response) must not run a resolve+filter pass for types that never
+			// declared metas.
+			const obj = {
+				id: 'org-1',
+				type: 'organization',
+				title: 'Acme',
+				status: 'qualifying',
+				updatedAt: new Date().toISOString(),
+				metadata: {},
+			}
+			const hero = buildHeroCardObject(obj, null)
+			// organization is in HERO_CARD_TYPE_DEFAULTS but only declares
+			// `primary_action` — no `hero_card_metas`, so metas must stay unset.
+			expect(hero.metas).toBeUndefined()
+		})
+
+		it('accepts known and arbitrary kind strings on primary_action without losing the open_object hint', () => {
+			// HeroCardPrimaryActionKind is `'open_object' | (string & {})` —
+			// proves at runtime that a workspace override with a forward-compat
+			// kind (e.g. `open_dialog`) still flows through unchanged while the
+			// built-in literal stays usable.
+			const annotations: Record<string, HeroCardTypeAnnotation> = {
+				account: {
+					primary_action: { label: 'Open in dialog', kind: 'open_dialog' },
+				},
+				bet: {
+					primary_action: { label: 'Open in Maskin', kind: 'open_object' },
+				},
+			}
+			const accountObj = { id: 'a-1', type: 'account', title: 'A', status: 'q' }
+			const betObj = { id: 'b-1', type: 'bet', title: 'B', status: 'active' }
+			expect(buildHeroCardObject(accountObj, null, Date.now(), annotations).primaryAction).toEqual({
+				label: 'Open in dialog',
+				kind: 'open_dialog',
+			})
+			expect(buildHeroCardObject(betObj, null, Date.now(), annotations).primaryAction).toEqual({
+				label: 'Open in Maskin',
+				kind: 'open_object',
+			})
+		})
 	})
 
 	describe('record_widget_event handler', () => {

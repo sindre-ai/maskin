@@ -751,9 +751,14 @@ export interface HeroCardMeta {
 	value: string
 }
 
+// Narrowed so callers (annotations, tests, future kinds) get autocomplete on
+// `open_object` without losing the ability to pass an unknown string from a
+// workspace override. `(string & {})` keeps the union from widening to `string`.
+export type HeroCardPrimaryActionKind = 'open_object' | (string & {})
+
 export interface HeroCardPrimaryAction {
 	label: string
-	kind: string
+	kind: HeroCardPrimaryActionKind
 }
 
 export interface HeroCardObject {
@@ -805,7 +810,7 @@ export interface HeroCardTypeAnnotation {
 	 */
 	hero_card_context?: string
 	hero_card_metas?: Array<{ label: string; field?: string }>
-	primary_action?: { label: string; kind: string }
+	primary_action?: { label: string; kind: HeroCardPrimaryActionKind }
 }
 
 /**
@@ -946,9 +951,6 @@ export function buildHeroCardObject(
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): HeroCardObject {
 	const annotation = annotations[obj.type]
-	const metas = annotation?.hero_card_metas
-		?.map((m) => resolveHeroCardMeta(m, obj, owner))
-		.filter((m): m is HeroCardMeta => m !== null)
 	const hero: HeroCardObject = {
 		id: obj.id,
 		type: obj.type,
@@ -957,8 +959,15 @@ export function buildHeroCardObject(
 		owner,
 		contextLine: buildContextLine(obj, owner, nowMs, annotations),
 	}
-	if (metas && metas.length > 0) hero.metas = metas
 	if (annotation?.primary_action) hero.primaryAction = annotation.primary_action
+	// Skip the resolve+filter pass entirely when the annotation has no metas
+	// declaration — the common case on every `get_objects` / list response.
+	if (annotation?.hero_card_metas) {
+		const metas = annotation.hero_card_metas
+			.map((m) => resolveHeroCardMeta(m, obj, owner))
+			.filter((m): m is HeroCardMeta => m !== null)
+		if (metas.length > 0) hero.metas = metas
+	}
 	return hero
 }
 
