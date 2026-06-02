@@ -1734,7 +1734,12 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ rows, totalCount, limit, offset }, null, 2),
+					},
+				],
 				structuredContent: { heroCard },
 			}
 		},
@@ -2658,7 +2663,12 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ rows, totalCount, limit, offset }, null, 2),
+					},
+				],
 				structuredContent: { heroCard },
 			}
 		},

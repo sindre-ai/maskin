@@ -2066,6 +2066,36 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.totalCount).toBe(1234)
 		})
 
+		it('surfaces totalCount/limit/offset in the LLM-visible text content for list_actors', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1234' }),
+						json: () =>
+							Promise.resolve([{ id: 'a-1', type: 'human', name: 'Alice', email: 'a@x.test' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1', limit: 50, offset: 0 })) as {
+				content: Array<{ type: string; text: string }>
+			}
+			const payload = JSON.parse(result.content[0].text) as {
+				rows: unknown[]
+				totalCount: number
+				limit: number
+				offset: number
+			}
+			expect(payload.totalCount).toBe(1234)
+			expect(payload.limit).toBe(50)
+			expect(payload.offset).toBe(0)
+			expect(Array.isArray(payload.rows)).toBe(true)
+			expect(payload.rows).toHaveLength(1)
+		})
+
 		it('collapses list_actors to single heroCard when total is exactly 1', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
 				return {
@@ -2173,6 +2203,44 @@ describe('tool handlers', () => {
 			expect(triggersCalls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
+		})
+
+		it('surfaces totalCount/limit/offset in the LLM-visible text content for list_triggers', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '987' }),
+						json: () =>
+							Promise.resolve([
+								{
+									id: 't-1',
+									type: 'cron',
+									name: 'Daily sweep',
+									enabled: true,
+									targetActorId: null,
+								},
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			const result = (await handler({ workspace_id: 'ws-1', limit: 25, offset: 100 })) as {
+				content: Array<{ type: string; text: string }>
+			}
+			const payload = JSON.parse(result.content[0].text) as {
+				rows: unknown[]
+				totalCount: number
+				limit: number
+				offset: number
+			}
+			expect(payload.totalCount).toBe(987)
+			expect(payload.limit).toBe(25)
+			expect(payload.offset).toBe(100)
+			expect(Array.isArray(payload.rows)).toBe(true)
+			expect(payload.rows).toHaveLength(1)
 		})
 	})
 
