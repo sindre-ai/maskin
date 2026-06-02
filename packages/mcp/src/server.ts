@@ -778,6 +778,54 @@ interface RawObject {
 	metadata?: Record<string, unknown> | null
 }
 
+/**
+ * Schema-driven Hero Card metadata for an object type. Keeps render eligibility
+ * + context line + meta + primary action as schema annotations so a new type
+ * gets the full Hero Card surface by adding one entry — no widget edits, no
+ * predicate edits.
+ *
+ * Mirrors `heroCardTypeAnnotationSchema` in `packages/shared/src/schemas/workspaces.ts`.
+ */
+export interface HeroCardTypeAnnotation {
+	/**
+	 * One-line context strategy. Known value: `'last touch + stage'` — renders
+	 * `last touch {age} · {status}`. Unknown strategies fall back to the
+	 * legacy per-type switch in `buildContextLine`.
+	 */
+	hero_card_context?: string
+	hero_card_metas?: Array<{ label: string; field?: string }>
+	primary_action?: { label: string; kind: string }
+}
+
+/**
+ * Built-in Hero Card annotations for object types in the launch set. `bet`,
+ * `task`, `insight`, `trigger` keep their legacy switch paths in
+ * `buildContextLine` so this map is purely additive — workspaces can still
+ * override per-type via `settings.hero_card`.
+ *
+ * The customer variant (T2 resolution: render both `organization` AND `person`
+ * with the customer context line) lives here, so any future explicit
+ * `customer` type drops in by adding one entry.
+ */
+export const HERO_CARD_TYPE_DEFAULTS: Record<string, HeroCardTypeAnnotation> = {
+	organization: {
+		hero_card_context: 'last touch + stage',
+		hero_card_metas: [
+			{ label: 'Stage', field: 'status' },
+			{ label: 'Owner', field: 'owner' },
+		],
+		primary_action: { label: 'Open in Maskin', kind: 'open_object' },
+	},
+	person: {
+		hero_card_context: 'last touch + stage',
+		hero_card_metas: [
+			{ label: 'Stage', field: 'status' },
+			{ label: 'Owner', field: 'owner' },
+		],
+		primary_action: { label: 'Open in Maskin', kind: 'open_object' },
+	},
+}
+
 /** Days between two ISO timestamps. Negative values clamp to 0. */
 function daysBetween(fromIso: string | null | undefined, nowMs: number): number | null {
 	if (!fromIso) return null
@@ -812,11 +860,25 @@ function anchorLabel(meta: Record<string, unknown> | null | undefined): string |
 }
 
 /**
- * Per-type one-line context. New types fall through to `type · status`, so
- * absorbing a new object type does NOT require a widget change.
+ * Per-type one-line context. Schema annotations (`HeroCardTypeAnnotation.hero_card_context`)
+ * take precedence — a type with `'last touch + stage'` renders `last touch {age} · {status}`
+ * regardless of which concrete type it is. Falls through to the legacy per-type
+ * switch for `bet`/`task`/`insight` and to `type · status` for everything else,
+ * so absorbing a new object type does NOT require a widget change.
  */
-function buildContextLine(obj: RawObject, owner: HeroCardActor | null, nowMs = Date.now()): string {
+export function buildContextLine(
+	obj: RawObject,
+	owner: HeroCardActor | null,
+	nowMs = Date.now(),
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
+): string {
 	const status = obj.status ?? 'unknown'
+	const annotation = annotations[obj.type]
+	if (annotation?.hero_card_context === 'last touch + stage') {
+		const lastTouch = obj.updatedAt ?? obj.createdAt
+		const age = ageLabel(lastTouch, nowMs)
+		return age ? `last touch ${age} · ${status}` : status
+	}
 	const age = ageLabel(obj.createdAt, nowMs)
 	const ownerName = owner?.name
 	switch (obj.type) {
@@ -852,10 +914,11 @@ function buildContextLine(obj: RawObject, owner: HeroCardActor | null, nowMs = D
 	}
 }
 
-function buildHeroCardObject(
+export function buildHeroCardObject(
 	obj: RawObject,
 	owner: HeroCardActor | null,
 	nowMs = Date.now(),
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): HeroCardObject {
 	return {
 		id: obj.id,
@@ -863,25 +926,27 @@ function buildHeroCardObject(
 		title: obj.title ?? null,
 		status: obj.status ?? null,
 		owner,
-		contextLine: buildContextLine(obj, owner, nowMs),
+		contextLine: buildContextLine(obj, owner, nowMs, annotations),
 	}
 }
 
 /**
- * Per-response resource swap. Single results for any of the launch types
- * route through the Hero Card; everything else stays on the existing `objects`
- * widget. New variants opt in by extending HERO_CARD_SINGLE_TYPES.
+ * Per-response resource swap. Returns the Hero Card resource for single results
+ * whose type is either in the built-in launch set (`bet`, `task`, `insight`,
+ * `trigger`) or has a Hero Card annotation (customer variant: `organization`,
+ * `person`, and any future schema-annotated type). Everything else stays on the
+ * existing `objects` widget. New variants opt in by extending
+ * `HERO_CARD_SINGLE_TYPES` or by adding an annotation.
  */
 const HERO_CARD_SINGLE_TYPES: ReadonlySet<string> = new Set(['bet', 'task', 'insight', 'trigger'])
 
-function pickResourceUri(payload: HeroCardPayload): string {
-	if (
-		payload.kind === 'single' &&
-		payload.object &&
-		HERO_CARD_SINGLE_TYPES.has(payload.object.type)
-	) {
-		return UI_RESOURCES.heroCard
-	}
+export function pickResourceUri(
+	payload: HeroCardPayload,
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
+): string {
+	if (payload.kind !== 'single' || !payload.object) return UI_RESOURCES.objects
+	const type = payload.object.type
+	if (HERO_CARD_SINGLE_TYPES.has(type) || annotations[type]) return UI_RESOURCES.heroCard
 	return UI_RESOURCES.objects
 }
 
@@ -1877,6 +1942,13 @@ export function createMcpServer(config: McpConfig) {
 			>
 			const displayNames = (settings.display_names ?? {}) as Record<string, string>
 			const relationshipTypes = (settings.relationship_types ?? []) as string[]
+			const heroCardOverrides = (settings.hero_card ?? {}) as Record<string, HeroCardTypeAnnotation>
+			// Workspace settings override built-in defaults so a workspace can rewire
+			// the customer variant (or annotate a new type) without a code change.
+			const heroCardAnnotations: Record<string, HeroCardTypeAnnotation> = {
+				...HERO_CARD_TYPE_DEFAULTS,
+				...heroCardOverrides,
+			}
 			const typeFilter = args.type
 
 			const schema: Record<string, unknown> = {
@@ -1891,11 +1963,14 @@ export function createMcpServer(config: McpConfig) {
 			const typeSchemas: Record<string, unknown> = {}
 
 			for (const t of types) {
-				typeSchemas[t] = {
+				const typeSchema: Record<string, unknown> = {
 					display_name: displayNames[t] ?? t,
 					statuses: statuses[t] ?? [],
 					fields: fieldDefinitions[t] ?? [],
 				}
+				const hc = heroCardAnnotations[t]
+				if (hc) typeSchema.hero_card = hc
+				typeSchemas[t] = typeSchema
 			}
 
 			schema.types = typeSchemas
