@@ -261,6 +261,114 @@ describe('HeroCardApp — customer variant (organization + person + new type par
 	})
 })
 
+// Follow-up to T5 — proves the bet's load-bearing claim is total: every
+// schema-driven Hero Card field (`metas`, `primaryAction`) reaches the widget
+// without per-type code. Two paths are exercised: (1) annotation present →
+// widget consumes it, (2) annotation absent → widget falls back so the bet
+// surface stays stable.
+function makeAnnotatedToolResult(
+	opts: {
+		type?: string
+		primaryActionLabel?: string
+		metas?: Array<{ label: string; value: string }>
+	} = {},
+) {
+	return {
+		toolName: 'get_objects',
+		workspaceId: 'ws-1',
+		webAppBaseUrl: 'https://maskin.test',
+		input: null,
+		result: {
+			content: [{ type: 'text', text: '[]' }],
+			structuredContent: {
+				heroCard: {
+					kind: 'single',
+					tool: 'get_objects',
+					object: {
+						id: 'obj-1',
+						type: opts.type ?? 'account',
+						title: 'Acme Co',
+						status: 'qualifying',
+						owner: { id: 'actor-1', name: 'Sebastian' },
+						contextLine: 'last touch 3d ago · qualifying',
+						...(opts.metas ? { metas: opts.metas } : {}),
+						...(opts.primaryActionLabel
+							? { primaryAction: { label: opts.primaryActionLabel, kind: 'open_object' } }
+							: {}),
+					},
+				},
+			},
+		},
+	}
+}
+
+describe('HeroCardApp — schema-driven primaryAction + metas wiring', () => {
+	beforeEach(() => {
+		__resetSchemaCacheForTests()
+		callTool.mockReset()
+		useToolResultMock.mockReset()
+		callTool.mockImplementation((name) => {
+			if (name === 'get_workspace_schema') {
+				return Promise.resolve({
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify({
+								workspace_id: 'ws-1',
+								workspace_name: 'Test',
+								relationship_types: [],
+								types: { account: { display_name: 'Account', statuses: [], fields: [] } },
+							}),
+						},
+					],
+				})
+			}
+			return Promise.resolve({ content: [] })
+		})
+	})
+
+	it('uses primaryAction.label for the CTA when the schema supplies one', async () => {
+		useToolResultMock.mockReturnValue(
+			makeAnnotatedToolResult({ primaryActionLabel: 'View account' }),
+		)
+		render(<HeroCardApp />)
+		const cta = await screen.findByRole('link', { name: /View account/ })
+		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/objects/obj-1')
+		// "Open in Maskin" is the fallback — it must not appear when primaryAction.label is set.
+		expect(screen.queryByRole('link', { name: /Open in Maskin/ })).toBeNull()
+	})
+
+	it('falls back to "Open in Maskin" when primaryAction is absent (preserves bet surface)', async () => {
+		useToolResultMock.mockReturnValue(makeAnnotatedToolResult())
+		render(<HeroCardApp />)
+		await screen.findByRole('link', { name: /Open in Maskin/ })
+	})
+
+	it('renders metas as label/value pairs when the schema supplies them', async () => {
+		useToolResultMock.mockReturnValue(
+			makeAnnotatedToolResult({
+				metas: [
+					{ label: 'ARR', value: '120000' },
+					{ label: 'Region', value: 'EMEA' },
+				],
+			}),
+		)
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('ARR:')).toBeInTheDocument())
+		expect(screen.getByText('120000')).toBeInTheDocument()
+		expect(screen.getByText('Region:')).toBeInTheDocument()
+		expect(screen.getByText('EMEA')).toBeInTheDocument()
+	})
+
+	it('omits the metas row when the schema supplies no metas', async () => {
+		useToolResultMock.mockReturnValue(makeAnnotatedToolResult())
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Acme Co')).toBeInTheDocument())
+		// No definition list is rendered — the row only appears when metas exist.
+		expect(document.querySelector('dl')).toBeNull()
+	})
+})
+
 describe('extractHeroCard', () => {
 	it('returns null when structuredContent is absent', () => {
 		expect(extractHeroCard({ content: [] })).toBeNull()

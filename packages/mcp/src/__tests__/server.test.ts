@@ -2166,6 +2166,105 @@ describe('tool handlers', () => {
 			}
 			expect(buildContextLine(obj, null)).toBe('something-new · open')
 		})
+
+		it('populates HeroCardObject.primaryAction from the annotation so the widget renders the schema-driven label', () => {
+			const annotations: Record<string, HeroCardTypeAnnotation> = {
+				account: {
+					hero_card_context: 'last touch + stage',
+					primary_action: { label: 'View account', kind: 'open_object' },
+				},
+			}
+			const obj = {
+				id: 'acct-1',
+				type: 'account',
+				title: 'Acme',
+				status: 'qualifying',
+				updatedAt: new Date().toISOString(),
+			}
+			const hero = buildHeroCardObject(obj, null, Date.now(), annotations)
+			expect(hero.primaryAction).toEqual({ label: 'View account', kind: 'open_object' })
+		})
+
+		it('omits primaryAction for unannotated types so the widget keeps its built-in CTA fallback', () => {
+			const obj = {
+				id: 'b-1',
+				type: 'bet',
+				title: 'B',
+				status: 'active',
+				createdAt: new Date().toISOString(),
+			}
+			const hero = buildHeroCardObject(obj, null)
+			expect(hero.primaryAction).toBeUndefined()
+		})
+
+		it('resolves hero_card_metas field references to {label, value} pairs the widget can render', () => {
+			const annotations: Record<string, HeroCardTypeAnnotation> = {
+				account: {
+					hero_card_metas: [
+						{ label: 'ARR', field: 'arr' },
+						{ label: 'Stage', field: 'status' },
+						{ label: 'Owner', field: 'owner' },
+					],
+				},
+			}
+			const obj = {
+				id: 'acct-1',
+				type: 'account',
+				title: 'Acme',
+				status: 'qualifying',
+				createdAt: null,
+				metadata: { arr: 120_000 },
+			}
+			const owner = { id: 'a-1', name: 'Sebastian' }
+			const hero = buildHeroCardObject(obj, owner, Date.now(), annotations)
+			expect(hero.metas).toEqual([
+				{ label: 'ARR', value: '120000' },
+				{ label: 'Stage', value: 'qualifying' },
+				{ label: 'Owner', value: 'Sebastian' },
+			])
+		})
+
+		it('skips meta entries whose field is missing or empty rather than rendering label-only chips', () => {
+			const annotations: Record<string, HeroCardTypeAnnotation> = {
+				account: {
+					hero_card_metas: [
+						{ label: 'ARR', field: 'arr' },
+						{ label: 'Owner', field: 'owner' },
+					],
+				},
+			}
+			const obj = {
+				id: 'acct-1',
+				type: 'account',
+				title: 'Acme',
+				status: 'qualifying',
+				createdAt: null,
+				metadata: {},
+			}
+			const hero = buildHeroCardObject(obj, null, Date.now(), annotations)
+			// No ARR in metadata, no owner — both filtered out, metas stays unset
+			// rather than `[]` so the widget doesn't render an empty metas row.
+			expect(hero.metas).toBeUndefined()
+		})
+
+		it('lets a workspace metas override flow through to the rendered metas array', () => {
+			const annotations: Record<string, HeroCardTypeAnnotation> = {
+				organization: {
+					...HERO_CARD_TYPE_DEFAULTS.organization,
+					hero_card_metas: [{ label: 'Region', field: 'region' }],
+				},
+			}
+			const obj = {
+				id: 'org-1',
+				type: 'organization',
+				title: 'Acme',
+				status: 'qualifying',
+				updatedAt: new Date().toISOString(),
+				metadata: { region: 'EMEA' },
+			}
+			const hero = buildHeroCardObject(obj, null, Date.now(), annotations)
+			expect(hero.metas).toEqual([{ label: 'Region', value: 'EMEA' }])
+		})
 	})
 
 	describe('record_widget_event handler', () => {
