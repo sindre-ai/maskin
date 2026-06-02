@@ -124,8 +124,9 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 				</p>
 				{object.metas && object.metas.length > 0 && (
 					<dl className="flex flex-wrap items-center gap-x-3 gap-y-1 m-0">
-						{object.metas.map((m) => (
-							<div key={m.label} className="flex items-center gap-1 text-[11.5px]">
+						{object.metas.map((m, i) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: metas come from a schema annotation; order is stable and two entries can legitimately share a label
+							<div key={i} className="flex items-center gap-1 text-[11.5px]">
 								<dt className="text-muted-foreground">{m.label}:</dt>
 								<dd className="text-foreground tabular-nums m-0">{m.value}</dd>
 							</div>
