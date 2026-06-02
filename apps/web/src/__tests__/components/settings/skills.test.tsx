@@ -3,6 +3,21 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
+const { mockNavigate, searchState } = vi.hoisted(() => ({
+	mockNavigate: vi.fn(),
+	searchState: { sort: 'name' as 'name' | 'createdAt' | 'updatedAt', order: 'asc' as 'asc' | 'desc' },
+}))
+
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return {
+		...mockTanStackRouter(),
+		createFileRoute: () => (options: Record<string, unknown>) => options,
+		useSearch: () => ({ sort: searchState.sort, order: searchState.order }),
+		useNavigate: () => mockNavigate,
+	}
+})
+
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
@@ -28,6 +43,7 @@ vi.mock('@/hooks/use-workspace-skills', () => ({
 import {
 	Route,
 	deriveNameFromFileName,
+	sortSkills,
 	toSkillUpload,
 	uniqueName,
 } from '@/routes/_authed/$workspaceId/settings/skills'
@@ -59,6 +75,8 @@ const buildSkill = (overrides: Record<string, unknown> = {}) => ({
 describe('Settings > Skills', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		searchState.sort = 'name'
+		searchState.order = 'asc'
 		createPending.value = false
 		updatePending.value = false
 		deletePending.value = false
@@ -193,6 +211,38 @@ describe('Settings > Skills', () => {
 		expect(payload).toEqual({ name: 'new-skill', content: 'body' })
 	})
 
+	it('lists skills sorted by name ascending by default', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [
+				buildSkill({ id: 's1', name: 'review', description: 'b' }),
+				buildSkill({ id: 's2', name: 'archive', description: 'a' }),
+				buildSkill({ id: 's3', name: 'deploy', description: 'c' }),
+			],
+			isLoading: false,
+		})
+		renderPage()
+		const rendered = screen.getAllByText(/^(archive|deploy|review)$/).map((el) => el.textContent)
+		expect(rendered).toEqual(['archive', 'deploy', 'review'])
+	})
+
+	it('navigates with the new sort when the user picks a different option', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ name: 'deploy' })],
+			isLoading: false,
+		})
+		renderPage()
+
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		// Default sort is Name — open the sort dropdown, then pick Updated.
+		await user.click(screen.getByRole('button', { name: 'Name' }))
+		await user.click(screen.getByRole('menuitem', { name: /Updated/ }))
+
+		expect(mockNavigate).toHaveBeenCalled()
+		const lastCall = mockNavigate.mock.calls.at(-1)?.[0] as { search: { sort: string } }
+		expect(lastCall.search.sort).toBe('updatedAt')
+	})
+
 	it('confirms deletion and calls delete mutation', async () => {
 		const user = userEvent.setup()
 		mockUseWorkspaceSkills.mockReturnValue({
@@ -248,6 +298,43 @@ describe('settings/skills helpers', () => {
 		it('appends a numeric suffix on collision', () => {
 			expect(uniqueName('deploy', new Set(['deploy']))).toBe('deploy-2')
 			expect(uniqueName('deploy', new Set(['deploy', 'deploy-2']))).toBe('deploy-3')
+		})
+	})
+
+	describe('sortSkills', () => {
+		const a = buildSkill({
+			id: 'a',
+			name: 'archive',
+			createdAt: '2026-01-01T00:00:00Z',
+			updatedAt: '2026-04-01T00:00:00Z',
+		})
+		const b = buildSkill({
+			id: 'b',
+			name: 'deploy',
+			createdAt: '2026-02-01T00:00:00Z',
+			updatedAt: '2026-03-01T00:00:00Z',
+		})
+		const c = buildSkill({
+			id: 'c',
+			name: 'review',
+			createdAt: '2026-03-01T00:00:00Z',
+			updatedAt: '2026-02-01T00:00:00Z',
+		})
+
+		it('sorts by name ascending', () => {
+			expect(sortSkills([c, a, b], 'name', 'asc').map((s) => s.id)).toEqual(['a', 'b', 'c'])
+		})
+
+		it('sorts by name descending', () => {
+			expect(sortSkills([a, c, b], 'name', 'desc').map((s) => s.id)).toEqual(['c', 'b', 'a'])
+		})
+
+		it('sorts by createdAt descending (newest first)', () => {
+			expect(sortSkills([a, c, b], 'createdAt', 'desc').map((s) => s.id)).toEqual(['c', 'b', 'a'])
+		})
+
+		it('sorts by updatedAt ascending (oldest first)', () => {
+			expect(sortSkills([a, c, b], 'updatedAt', 'asc').map((s) => s.id)).toEqual(['c', 'b', 'a'])
 		})
 	})
 
