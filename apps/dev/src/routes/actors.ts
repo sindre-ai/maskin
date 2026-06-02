@@ -225,6 +225,26 @@ app.openapi(createActorRoute, async (c) => {
 	)
 })
 
+// Cap the `ids=` filter at 200 entries per request. Sized for the hero-card
+// owner-resolution caller (one ID per object in a tool response) plus headroom.
+const MAX_IDS_FILTER = 200
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function parseIdsParam(
+	raw: string | undefined,
+): { ok: true; ids: string[] | null } | { ok: false } {
+	if (raw === undefined || raw === '') return { ok: true, ids: null }
+	const seen = new Set<string>()
+	for (const part of raw.split(',')) {
+		const trimmed = part.trim()
+		if (!trimmed) continue
+		if (!UUID_RE.test(trimmed)) return { ok: false }
+		seen.add(trimmed.toLowerCase())
+		if (seen.size > MAX_IDS_FILTER) return { ok: false }
+	}
+	return { ok: true, ids: [...seen] }
+}
+
 // GET / - List actors
 const listActorsRoute = createRoute({
 	method: 'get',
@@ -235,21 +255,50 @@ const listActorsRoute = createRoute({
 		headers: z.object({
 			'x-workspace-id': z.string().uuid().optional(),
 		}),
+		query: z.object({
+			ids: z
+				.string()
+				.optional()
+				.openapi({
+					description: `Comma-separated list of actor UUIDs to filter by. Max ${MAX_IDS_FILTER} entries.`,
+					example: '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002',
+				}),
+		}),
 	},
 	responses: {
 		200: {
 			content: { 'application/json': { schema: z.array(actorListItemSchema) } },
 			description: 'List of actors',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
 	},
 })
 
-app.openapi(listActorsRoute, async (c) => {
+app.openapi(listActorsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { ids: idsParam } = c.req.valid('query')
+
+	const parsed = parseIdsParam(idsParam)
+	if (!parsed.ok) {
+		return c.json(
+			createApiError('BAD_REQUEST', `ids must be comma-separated UUIDs (max ${MAX_IDS_FILTER})`),
+			400,
+		)
+	}
+	const idsFilter = parsed.ids
+
+	if (idsFilter !== null && idsFilter.length === 0) {
+		return c.json([] as z.infer<typeof actorListItemSchema>[], 200)
+	}
 
 	if (workspaceId) {
 		// List actors in workspace
+		const whereClauses = [eq(workspaceMembers.workspaceId, workspaceId)]
+		if (idsFilter) whereClauses.push(inArray(actors.id, idsFilter))
 		const members = await db
 			.select({
 				id: actors.id,
@@ -262,9 +311,9 @@ app.openapi(listActorsRoute, async (c) => {
 			})
 			.from(workspaceMembers)
 			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-			.where(eq(workspaceMembers.workspaceId, workspaceId))
+			.where(whereClauses.length === 1 ? whereClauses[0] : and(...whereClauses))
 
-		return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+		return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[], 200)
 	}
 
 	// List actors across all workspaces the authenticated actor belongs to
@@ -277,8 +326,12 @@ app.openapi(listActorsRoute, async (c) => {
 
 	const workspaceIds = myWorkspaces.map((w) => w.workspaceId)
 	if (workspaceIds.length === 0) {
-		return c.json([] as z.infer<typeof actorListItemSchema>[])
+		return c.json([] as z.infer<typeof actorListItemSchema>[], 200)
 	}
+
+	const crossWhere = idsFilter
+		? and(inArray(workspaceMembers.workspaceId, workspaceIds), inArray(actors.id, idsFilter))
+		: inArray(workspaceMembers.workspaceId, workspaceIds)
 
 	const rows = await db
 		.select({
@@ -295,7 +348,7 @@ app.openapi(listActorsRoute, async (c) => {
 		.from(workspaceMembers)
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
+		.where(crossWhere)
 		.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
 
 	const byActor = new Map<
@@ -328,8 +381,8 @@ app.openapi(listActorsRoute, async (c) => {
 		}
 	}
 
-	return c.json(serializeArray([...byActor.values()]) as z.infer<typeof actorListItemSchema>[])
-})
+	return c.json(serializeArray([...byActor.values()]) as z.infer<typeof actorListItemSchema>[], 200)
+}) as RouteHandler<typeof listActorsRoute, Env>)
 
 // GET /:id - Get actor by ID
 const getActorRoute = createRoute({

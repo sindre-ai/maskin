@@ -826,7 +826,6 @@ export const HERO_CARD_TYPE_DEFAULTS: Record<string, HeroCardTypeAnnotation> = {
 	},
 }
 
-
 /** Days between two ISO timestamps. Negative values clamp to 0. */
 function daysBetween(fromIso: string | null | undefined, nowMs: number): number | null {
 	if (!fromIso) return null
@@ -1119,12 +1118,16 @@ async function buildTriggerCollectionHeroCard(
 	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
 }
 
-
 /**
  * Resolve actor names for a set of actor IDs in one shot. Used to fill owner
  * names into HeroCardObject. Best-effort: missing actors come back as
  * `{ id, name: null }` so the widget renders without owner instead of failing.
  */
+// Hero-card responses typically resolve a single tool call's owner set (≤50
+// objects). Cap defensively at 200 to match the server-side `?ids=` limit and
+// avoid building an URL larger than the receiver accepts.
+const RESOLVE_ACTORS_MAX_IDS = 200
+
 async function resolveActors(
 	config: McpConfig,
 	actorIds: Iterable<string>,
@@ -1133,11 +1136,16 @@ async function resolveActors(
 	const uniq = [...new Set([...actorIds].filter((id): id is string => typeof id === 'string'))]
 	const out = new Map<string, HeroCardActor>()
 	if (uniq.length === 0) return out
+	const queryIds = uniq.slice(0, RESOLVE_ACTORS_MAX_IDS)
 	try {
-		const result = (await apiCall(config, 'GET', '/api/actors', undefined, {
+		const query = `?ids=${queryIds.map(encodeURIComponent).join(',')}`
+		const result = (await apiCall(config, 'GET', `/api/actors${query}`, undefined, {
 			workspaceId,
 		})) as Array<{ id: string; name: string | null }>
 		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null })
+		console.log(
+			`[MCP] Resolved ${out.size}/${queryIds.length} hero-card actor names (requested ${uniq.length})`,
+		)
 	} catch (err) {
 		console.error('[MCP] Failed to resolve actors for hero-card:', err)
 	}
