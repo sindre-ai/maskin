@@ -290,4 +290,49 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': randomUUID() }))
 		expect(res.status).toBe(404)
 	})
+
+	// Regression: a malformed stored `period_start` (negative / float / non-finite)
+	// used to surface as a 500 through the response validator
+	// (`z.number().int().nonnegative()`), taking the entire Settings row dark.
+	// Now it degrades to `null` + a fresh trial-shaped window.
+	it.each([
+		['negative integer', -100],
+		['float', 1700000000.5],
+	])('returns period_start: null when the stored value is malformed (%s)', async (_label, bad) => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'starter',
+							status: 'active',
+							hard_cap_tokens: 32_000_000,
+							period_start: bad,
+							stripe_customer_id: 'cus_x',
+							stripe_subscription_id: 'sub_x',
+						},
+					},
+				},
+			],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({
+			plan: 'starter',
+			status: 'active',
+			tokens_used: 0,
+			hard_cap_tokens: 32_000_000,
+			period_start: null,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+		// The trial-shaped fallback window puts the next reset ~30d out.
+		expect(body.period_resets_in_ms).toBeGreaterThan(0)
+	})
 })
