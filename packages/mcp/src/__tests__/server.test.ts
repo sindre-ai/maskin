@@ -2246,7 +2246,7 @@ describe('tool handlers', () => {
 							]),
 					} as Response
 				}
-				if (urlStr.endsWith('/api/actors')) {
+				if (urlStr.includes('/api/actors')) {
 					return {
 						ok: true,
 						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sindre' }]),

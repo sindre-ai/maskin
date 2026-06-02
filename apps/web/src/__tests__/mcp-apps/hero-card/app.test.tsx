@@ -10,7 +10,7 @@ vi.mock('@/mcp-apps/shared/mcp-app-provider', () => ({
 	useWebAppContext: () => ({ baseUrl: 'https://maskin.test', workspaceId: 'ws-1' }),
 }))
 
-import { HeroCardApp, extractHeroCard } from '@/mcp-apps/hero-card/app'
+import { HeroCardApp, HeroCardRoot, extractHeroCard } from '@/mcp-apps/hero-card/app'
 
 function makeBetToolResult() {
 	return {
@@ -654,6 +654,45 @@ describe('HeroCardApp — customer variant (organization + person + new type par
 			'href',
 			'https://maskin.test/ws-1/objects/customer-1',
 		)
+	})
+})
+
+describe('HeroCardRoot — render_error telemetry', () => {
+	beforeEach(() => {
+		__resetSchemaCacheForTests()
+		callTool.mockReset()
+		useToolResultMock.mockReset()
+		callTool.mockImplementation((name) => {
+			if (name === 'get_workspace_schema') return Promise.resolve(makeSchemaResponse())
+			return Promise.resolve({ content: [] })
+		})
+	})
+
+	it('catches a child render throw, fires record_widget_event with event: "render_error", and renders the fallback', () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+		const betToolResult = makeBetToolResult()
+		useToolResultMock
+			.mockReturnValueOnce(betToolResult)
+			.mockImplementationOnce(() => {
+				throw new Error('boom')
+			})
+
+		render(<HeroCardRoot />)
+
+		expect(screen.getByText(/Card failed to render/)).toBeInTheDocument()
+		expect(callTool).toHaveBeenCalledWith(
+			'record_widget_event',
+			expect.objectContaining({
+				widget_name: 'hero-card',
+				event: 'render_error',
+				tool_name: 'get_objects',
+				card_kind: 'single',
+				object_type: 'bet',
+				object_id: 'bet-9',
+			}),
+		)
+
+		consoleError.mockRestore()
 	})
 })
 
