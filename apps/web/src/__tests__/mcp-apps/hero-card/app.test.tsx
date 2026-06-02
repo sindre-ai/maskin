@@ -200,6 +200,39 @@ function makeMultiTypeSchemaResponse() {
 	}
 }
 
+// Customer variant — both `organization` and `person` render through the
+// same widget code as `bet`, driven purely by structuredContent + schema. A
+// hypothetical future `customer` type with the same annotation shape would
+// reach the widget through the same path with no widget edit.
+function makeCustomerToolResult(
+	type: 'organization' | 'person' | 'customer',
+	overrides: Partial<{ title: string; status: string; contextLine: string; id: string }> = {},
+) {
+	return {
+		toolName: 'get_objects',
+		workspaceId: 'ws-1',
+		webAppBaseUrl: 'https://maskin.test',
+		input: null,
+		result: {
+			content: [{ type: 'text', text: '[]' }],
+			structuredContent: {
+				heroCard: {
+					kind: 'single',
+					tool: 'get_objects',
+					object: {
+						id: overrides.id ?? `${type}-1`,
+						type,
+						title: overrides.title ?? 'Acme Co',
+						status: overrides.status ?? 'qualifying',
+						owner: { id: 'actor-1', name: 'Sebastian' },
+						contextLine: overrides.contextLine ?? 'last touch 3d ago · qualifying',
+					},
+				},
+			},
+		},
+	}
+}
+
 describe('HeroCardApp — schema-driven render per type', () => {
 	beforeEach(() => {
 		__resetSchemaCacheForTests()
@@ -278,6 +311,81 @@ describe('HeroCardApp — schema-driven render per type', () => {
 			expect(container.firstChild).toMatchSnapshot()
 		})
 	}
+})
+
+describe('HeroCardApp — customer variant (organization + person + new type parity)', () => {
+	beforeEach(() => {
+		__resetSchemaCacheForTests()
+		callTool.mockReset()
+		useToolResultMock.mockReset()
+		callTool.mockImplementation((name) => {
+			if (name === 'get_workspace_schema') {
+				return Promise.resolve({
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify({
+								workspace_id: 'ws-1',
+								workspace_name: 'Test',
+								relationship_types: [],
+								types: {
+									organization: { display_name: 'Organization', statuses: [], fields: [] },
+									person: { display_name: 'Person', statuses: [], fields: [] },
+									customer: { display_name: 'Customer', statuses: [], fields: [] },
+								},
+							}),
+						},
+					],
+				})
+			}
+			return Promise.resolve({ content: [] })
+		})
+	})
+
+	it('renders an organization without any widget code changes', async () => {
+		useToolResultMock.mockReturnValue(makeCustomerToolResult('organization'))
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Acme Co')).toBeInTheDocument())
+		expect(screen.getByText('last touch 3d ago · qualifying')).toBeInTheDocument()
+		expect(screen.getByText('Organization')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Open in Maskin/ })).toHaveAttribute(
+			'href',
+			'https://maskin.test/ws-1/objects/organization-1',
+		)
+	})
+
+	it('renders a person via the same widget code path', async () => {
+		useToolResultMock.mockReturnValue(
+			makeCustomerToolResult('person', {
+				id: 'person-1',
+				title: 'Jane Doe',
+				status: 'engaged',
+				contextLine: 'last touch 1d ago · engaged',
+			}),
+		)
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Jane Doe')).toBeInTheDocument())
+		expect(screen.getByText('last touch 1d ago · engaged')).toBeInTheDocument()
+		expect(screen.getByText('Person')).toBeInTheDocument()
+	})
+
+	it('renders a hypothetical new object type (e.g. `customer`) identically given the same payload shape', async () => {
+		useToolResultMock.mockReturnValue(
+			makeCustomerToolResult('customer', {
+				id: 'customer-1',
+				title: 'Hypothetical Customer',
+			}),
+		)
+		render(<HeroCardApp />)
+		// Same surface: title, context line, schema-driven type label, CTA — no per-type widget branch.
+		await waitFor(() => expect(screen.getByText('Hypothetical Customer')).toBeInTheDocument())
+		expect(screen.getByText('last touch 3d ago · qualifying')).toBeInTheDocument()
+		expect(screen.getByText('Customer')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Open in Maskin/ })).toHaveAttribute(
+			'href',
+			'https://maskin.test/ws-1/objects/customer-1',
+		)
+	})
 })
 
 describe('extractHeroCard', () => {
