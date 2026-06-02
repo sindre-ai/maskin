@@ -60,6 +60,31 @@ interface ActorResponse {
 	updatedAt: string | null
 }
 
+interface FileDetailResponse {
+	id: string
+	workspaceId: string
+	name: string
+	description: string | null
+	mimeType: string
+	sizeBytes: number
+	storageKey: string
+	createdBy: string
+	createdAt: string
+	updatedAt: string
+	content: string
+	encoding: 'base64' | 'utf8'
+	url: string
+}
+
+interface RelationshipResponse {
+	id: string
+	sourceType: string
+	sourceId: string
+	targetType: string
+	targetId: string
+	type: string
+}
+
 export class TestAPI {
 	constructor(
 		private apiKey: string,
@@ -187,6 +212,44 @@ export class TestAPI {
 			headers: this.headers(workspaceId),
 		})
 		if (!res.ok) throw new Error(`resetActor failed: ${res.status}`)
+		return res.json()
+	}
+
+	async createFile(
+		workspaceId: string,
+		data: {
+			name: string
+			mime_type: string
+			content: string
+			encoding?: 'base64' | 'utf8'
+			description?: string | null
+		},
+	): Promise<FileDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/files`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`createFile failed: ${res.status}`)
+		return res.json()
+	}
+
+	async createRelationship(
+		workspaceId: string,
+		data: {
+			source_type: string
+			source_id: string
+			target_type: string
+			target_id: string
+			type: string
+		},
+	): Promise<RelationshipResponse> {
+		const res = await fetch(`${this.baseURL}/api/relationships`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`createRelationship failed: ${res.status}`)
 		return res.json()
 	}
 }
