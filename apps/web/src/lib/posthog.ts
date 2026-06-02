@@ -51,6 +51,51 @@ export function registerWorkspaceProperties(props: WorkspaceSuperProperties): vo
 	}
 }
 
+// Mirrors the Privacy & data toggle. When users turn share-usage off we
+// route through PostHog's opt_out so the queued events never leave the
+// browser; turning it back on flushes the standard opt_in path.
+export function setCapturingEnabled(enabled: boolean): void {
+	if (!initialized) return
+	try {
+		if (enabled) {
+			posthog.opt_in_capturing()
+		} else {
+			posthog.opt_out_capturing()
+		}
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
+// SHA-256 hash used when the workspace is anonymised. Returns the raw actor id
+// when Web Crypto isn't available (legacy browsers, jsdom without `subtle`) so
+// the caller still produces a usable distinct_id — better than silently
+// dropping identification.
+export async function hashDistinctId(value: string): Promise<string> {
+	const subtle = globalThis.crypto?.subtle
+	if (!subtle) return value
+	const bytes = new TextEncoder().encode(value)
+	const digest = await subtle.digest('SHA-256', bytes)
+	return Array.from(new Uint8Array(digest))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('')
+}
+
+// Identify the actor for analytics, applying the workspace's anonymise pref.
+// When anonymised, the distinct_id sent to PostHog is SHA-256(actor.id) so the
+// raw actor id never leaves the browser; the Synthesizer's joins still resolve
+// because they key off `actor_id` registered as a super property, not
+// `$distinct_id` (per the bet's property-contract decision).
+export async function identifyForWorkspace(actorId: string, anonymize: boolean): Promise<void> {
+	if (!initialized) return
+	try {
+		const distinctId = anonymize ? await hashDistinctId(actorId) : actorId
+		posthog.identify(distinctId)
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
 // Test-only — lets the analytics test suite simulate the post-init state.
 export function __setInitializedForTesting(value: boolean): void {
 	initialized = value

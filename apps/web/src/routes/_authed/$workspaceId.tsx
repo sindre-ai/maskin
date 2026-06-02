@@ -11,7 +11,11 @@ import { useWorkspaces } from '@/hooks/use-workspaces'
 import { getStoredActor } from '@/lib/auth'
 import { PageHeaderProvider } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
-import { registerWorkspaceProperties } from '@/lib/posthog'
+import {
+	identifyForWorkspace,
+	registerWorkspaceProperties,
+	setCapturingEnabled,
+} from '@/lib/posthog'
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
@@ -73,7 +77,16 @@ function WorkspaceLayout() {
 		})
 	}, [])
 
-	// Pin the Synthesizer's join keys on every analytics event from this workspace.
+	// Pin the Synthesizer's join keys on every analytics event from this workspace,
+	// and apply the workspace's Privacy & data settings — both the share-usage
+	// opt-in/out and the SHA-256 identify when anonymise is on — so the prefs
+	// survive reloads, not just the moment the user flips a switch.
+	const settings = workspace?.settings as Record<string, unknown> | undefined
+	const privacy = settings?.privacy as
+		| { share_usage?: boolean; anonymize_workspace?: boolean }
+		| undefined
+	const shareUsage = privacy?.share_usage ?? true
+	const anonymizeWorkspace = privacy?.anonymize_workspace ?? false
 	useEffect(() => {
 		if (!workspace) return
 		const actor = getStoredActor()
@@ -83,7 +96,9 @@ function WorkspaceLayout() {
 			actor_id: actor.id,
 			actor_type: actor.type,
 		})
-	}, [workspace, workspaceId])
+		setCapturingEnabled(shareUsage)
+		void identifyForWorkspace(actor.id, anonymizeWorkspace)
+	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 
 	if (!workspace) {
 		return (
