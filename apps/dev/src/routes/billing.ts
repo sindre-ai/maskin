@@ -110,7 +110,11 @@ app.openapi(usageRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [workspace] = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			createdAt: workspaces.createdAt,
+		})
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
@@ -122,9 +126,6 @@ app.openapi(usageRoute, async (c) => {
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
 	const billing = parsed.success ? parsed.data.billing : undefined
 
-	// No billing row → workspace is on trial. Window starts whenever sessions
-	// first ran; we use a 30d rolling window so the trial usage never grows
-	// unbounded, and the row in Settings has a consistent "X / Y · resets in Zd".
 	const plan = billing?.plan ?? 'trial'
 	const status = billing?.status ?? 'active'
 	const hardCap =
@@ -133,18 +134,22 @@ app.openapi(usageRoute, async (c) => {
 			: plan === 'trial' || plan === 'byollm'
 				? DEFAULT_TRIAL_HARD_CAP_TOKENS
 				: null
+	// Trial workspaces have no Stripe `period_start`, so anchor the window to
+	// `workspaces.createdAt` and roll forward in fixed 30d cycles. Without a
+	// stable origin the row reads "resets in ~30d" forever — the countdown
+	// drifts with `Date.now()` while sessions burn the budget, so the displayed
+	// reset and the `tokens_used` sum describe different intervals.
+	const now = Date.now()
+	const trialOrigin = workspace.createdAt?.getTime() ?? now
+	const elapsedSinceOrigin = Math.max(0, now - trialOrigin)
+	const trialCycleStartMs =
+		trialOrigin + Math.floor(elapsedSinceOrigin / TRIAL_WINDOW_MS) * TRIAL_WINDOW_MS
 	// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
 	// writes `subscription.current_period_start` straight through, and Stripe
 	// timestamps are seconds (not ms). Multiply by 1000 here so `new Date()`,
 	// `Date.now()`, and the resets-in arithmetic all operate in ms.
-	const periodStartMs = billing?.period_start
-		? billing.period_start * 1000
-		: Date.now() - TRIAL_WINDOW_MS
-	const periodEndMs = billing?.period_start
-		? // Stripe periods are 28-31d; we don't store period_end on this branch,
-			// so we approximate as "30d from period_start" for the resets-in hint.
-			billing.period_start * 1000 + TRIAL_WINDOW_MS
-		: Date.now() + TRIAL_WINDOW_MS
+	const periodStartMs = billing?.period_start ? billing.period_start * 1000 : trialCycleStartMs
+	const periodEndMs = periodStartMs + TRIAL_WINDOW_MS
 
 	let tokensUsed = 0
 	if (plan !== 'byollm') {
@@ -168,7 +173,7 @@ app.openapi(usageRoute, async (c) => {
 		}
 	}
 
-	const resetsIn = Math.max(0, periodEndMs - Date.now())
+	const resetsIn = Math.max(0, periodEndMs - now)
 
 	logger.info('Billing usage read', {
 		workspaceId,

@@ -192,7 +192,7 @@ describe('GET /api/billing/usage', () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: {} }],
+			[{ id: workspaceId, settings: {}, createdAt: new Date() }],
 			[], // sessions sum: no rows
 		]
 
@@ -209,6 +209,46 @@ describe('GET /api/billing/usage', () => {
 			period_start: null,
 		})
 		expect(body.period_resets_in_ms).toBeGreaterThan(0)
+	})
+
+	it('anchors the trial reset to workspaces.createdAt so the countdown actually decreases', async () => {
+		// Regression: previously the trial branch derived both periodStartMs
+		// and periodEndMs from Date.now(), so the row always read "resets in
+		// ~30d" no matter how old the workspace was. With the createdAt anchor,
+		// a workspace 5d into its current 30d cycle shows ~25d remaining.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {}, createdAt: fiveDaysAgo }],
+			[], // sessions sum: no rows
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const oneDay = 24 * 60 * 60 * 1000
+		expect(body.period_resets_in_ms).toBeGreaterThan(24 * oneDay)
+		expect(body.period_resets_in_ms).toBeLessThan(26 * oneDay)
+	})
+
+	it('rolls the trial window forward in 30d cycles from createdAt for older workspaces', async () => {
+		// A workspace 35d old is 5d into its second 30d cycle, so the row
+		// should read ~25d remaining — not "expired", not "reset to ~30d".
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		const thirtyFiveDaysAgo = new Date(Date.now() - 35 * 24 * 60 * 60 * 1000)
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {}, createdAt: thirtyFiveDaysAgo }],
+			[], // sessions sum: no rows
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const oneDay = 24 * 60 * 60 * 1000
+		expect(body.period_resets_in_ms).toBeGreaterThan(24 * oneDay)
+		expect(body.period_resets_in_ms).toBeLessThan(26 * oneDay)
 	})
 
 	it('sums input + output tokens across maskin_plan sessions since period_start', async () => {
@@ -232,6 +272,7 @@ describe('GET /api/billing/usage', () => {
 							stripe_subscription_id: 'sub_x',
 						},
 					},
+					createdAt: new Date(),
 				},
 			],
 			[
@@ -270,6 +311,7 @@ describe('GET /api/billing/usage', () => {
 					settings: {
 						billing: { plan: 'byollm', status: 'canceled', stripe_subscription_id: null },
 					},
+					createdAt: new Date(),
 				},
 			],
 		]
