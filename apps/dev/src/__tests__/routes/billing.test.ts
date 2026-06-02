@@ -16,13 +16,20 @@ import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
+// Sentinel cap values that are intentionally NOT the literal defaults
+// (32_000_000 / 96_000_000). When a test asserts a 32M/96M response, it must
+// be coming from the literal fallback path, not the env var — otherwise the
+// "unset env falls back to literal" assertion is trivially satisfied.
+const STARTER_ENV_SENTINEL = '33000000'
+const PRO_ENV_SENTINEL = '97000000'
+
 const VALID_ENV = {
 	STRIPE_SECRET_KEY: 'sk_test_x',
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_STARTER: 'price_starter',
 	STRIPE_PRICE_PRO: 'price_pro',
-	MASKIN_STARTER_HARD_CAP_TOKENS: '32000000',
-	MASKIN_PRO_HARD_CAP_TOKENS: '96000000',
+	MASKIN_STARTER_HARD_CAP_TOKENS: STARTER_ENV_SENTINEL,
+	MASKIN_PRO_HARD_CAP_TOKENS: PRO_ENV_SENTINEL,
 }
 
 const setupEnv = () => {
@@ -309,6 +316,69 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body).toMatchObject({ plan: 'starter', hard_cap_tokens: 40_000_000 })
+	})
+
+	it('falls back to env-driven cap when a Pro workspace has no hard_cap_tokens', async () => {
+		process.env.MASKIN_PRO_HARD_CAP_TOKENS = '80000000'
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: { billing: { plan: 'pro', status: 'active' } },
+				},
+			],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_tokens: 80_000_000 })
+	})
+
+	it('falls back to plan default when stored hard_cap_tokens is zero or negative', async () => {
+		// Regression: the `billing?.hard_cap_tokens && billing.hard_cap_tokens > 0`
+		// guard's false branch was untested. A 0 (or negative) value stored on the
+		// workspace must NOT be treated as "an explicit cap" — the env/literal
+		// fallback should kick in just like when the field is missing.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const zeroWs = randomUUID()
+		const negWs = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: zeroWs,
+					settings: { billing: { plan: 'starter', status: 'active', hard_cap_tokens: 0 } },
+				},
+			],
+			[],
+			[
+				{
+					id: negWs,
+					settings: { billing: { plan: 'pro', status: 'active', hard_cap_tokens: -5 } },
+				},
+			],
+			[],
+		]
+
+		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
+		expect(zeroRes.status).toBe(200)
+		// Env is set to the Starter sentinel by `setupEnv`, so the fallback path
+		// resolves to that — proving the request didn't bypass the guard via the
+		// stored 0 value.
+		expect(await zeroRes.json()).toMatchObject({
+			plan: 'starter',
+			hard_cap_tokens: Number(STARTER_ENV_SENTINEL),
+		})
+
+		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
+		expect(negRes.status).toBe(200)
+		expect(await negRes.json()).toMatchObject({
+			plan: 'pro',
+			hard_cap_tokens: Number(PRO_ENV_SENTINEL),
+		})
 	})
 
 	it('falls back to literal Starter/Pro defaults when env caps are unset', async () => {
