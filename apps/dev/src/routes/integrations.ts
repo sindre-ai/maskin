@@ -18,6 +18,7 @@ import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import {
 	type SlackConversationType,
 	listSlackConversations,
@@ -187,7 +188,10 @@ app.openapi(connectRoute, (async (c) => {
 			createdBy: actorId,
 		})
 		.onConflictDoUpdate({
-			target: [integrations.workspaceId, integrations.provider],
+			// Matches the DB-level unique constraint (workspace_id, provider, external_id).
+			// Pending rows use a fresh random nonce as externalId so this conflict is
+			// effectively impossible — the upsert stays purely as defence-in-depth.
+			target: [integrations.workspaceId, integrations.provider, integrations.externalId],
 			set: {
 				externalId: nonce,
 				status: 'pending',
@@ -405,20 +409,91 @@ app.openapi(callbackRoute, (async (c) => {
 		externalId = `oauth-${stateData.nonce.slice(0, 8)}`
 	}
 
-	// Activate the pending integration (consumes the nonce)
-	const encryptedCredentials = encrypt(JSON.stringify(credentials))
-	const integrationId = pendingIntegration.id
+	// GitHub-only: resolve the installation's owner login so the row can be
+	// disambiguated from other installations on the same workspace. Failures fall
+	// back to an undefined owner_login rather than blocking the connect — the row
+	// is still useful for token/webhook routing.
+	let ownerLogin: string | undefined
+	if (credentials.installation_id) {
+		try {
+			ownerLogin = await fetchInstallationOwnerLogin(String(credentials.installation_id))
+		} catch (err) {
+			logger.warn(`Failed to fetch installation owner_login for ${providerName}`, {
+				workspaceId: stateData.workspaceId,
+				installationId: String(credentials.installation_id),
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
 
-	await db
-		.update(integrations)
-		.set({
-			status: 'active',
-			externalId,
-			credentials: encryptedCredentials,
-			config: { system_actor_id: systemActor.id },
-			updatedAt: new Date(),
-		})
-		.where(eq(integrations.id, integrationId))
+	const encryptedCredentials = encrypt(JSON.stringify(credentials))
+	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
+	if (ownerLogin) activeConfig.owner_login = ownerLogin
+
+	// Re-connecting an already-active installation: refresh the existing row in
+	// place and drop the pending nonce row. Without this, we'd UPDATE the pending
+	// row to externalId=installation_id and hit the (workspace_id, provider,
+	// external_id) unique constraint at commit time. Only meaningful for providers
+	// whose externalId is stable across connects (GitHub installations); standard
+	// OAuth2 nonce-derived externalIds can't collide.
+	let integrationId = pendingIntegration.id
+	if (credentials.installation_id) {
+		const [existingActive] = await db
+			.select()
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, stateData.workspaceId),
+					eq(integrations.provider, providerName),
+					eq(integrations.externalId, externalId),
+					eq(integrations.status, 'active'),
+				),
+			)
+			.limit(1)
+
+		if (existingActive) {
+			await db
+				.update(integrations)
+				.set({
+					credentials: encryptedCredentials,
+					config: activeConfig,
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, existingActive.id))
+
+			await db.delete(integrations).where(eq(integrations.id, pendingIntegration.id))
+
+			integrationId = existingActive.id
+			logger.info(`Refreshed existing ${providerName} installation`, {
+				integrationId,
+				workspaceId: stateData.workspaceId,
+				externalId,
+				ownerLogin,
+			})
+		} else {
+			await db
+				.update(integrations)
+				.set({
+					status: 'active',
+					externalId,
+					credentials: encryptedCredentials,
+					config: activeConfig,
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, integrationId))
+		}
+	} else {
+		await db
+			.update(integrations)
+			.set({
+				status: 'active',
+				externalId,
+				credentials: encryptedCredentials,
+				config: activeConfig,
+				updatedAt: new Date(),
+			})
+			.where(eq(integrations.id, integrationId))
+	}
 
 	// Provider-specific post-install work (e.g. Gmail's users.watch). Runs after the
 	// row is active so postInstall can read the persisted config and append to it.
@@ -455,7 +530,11 @@ app.openapi(callbackRoute, (async (c) => {
 		action: 'created',
 		entityType: 'integration',
 		entityId: integrationId,
-		data: { provider: providerName, external_id: externalId },
+		data: {
+			provider: providerName,
+			external_id: externalId,
+			...(ownerLogin ? { owner_login: ownerLogin } : {}),
+		},
 	})
 
 	// Redirect to frontend settings/integrations page
