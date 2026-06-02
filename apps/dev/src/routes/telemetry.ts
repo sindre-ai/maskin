@@ -22,6 +22,13 @@ type Env = {
 const RICH_RENDER_TARGET_PCT = 50
 const MUTATION_SESSION_TARGET_PCT = 20
 const DEFAULT_WINDOW_DAYS = 30
+// Rolling kill criterion from the MCP Widget UX bet — pause shipping and
+// revert to Markdown deep-link fallback if widget render failures exceed this
+// in any 48h window. Surfaced as `render_error_kill_switch_breach` in the
+// summary response; dashboards/cron should escalate to Magnus via Slack on
+// breach (see ce02150d-7666-45ec-ba6d-4fdea86f23c2 Exit criteria).
+const RENDER_ERROR_KILL_SWITCH_PCT = 10
+const RENDER_ERROR_WINDOW_MS = 48 * 60 * 60 * 1000
 
 const app = new OpenAPIHono<Env>()
 
@@ -30,7 +37,7 @@ const recordRoute = createRoute({
 	method: 'post',
 	path: '/mcp',
 	tags: ['Telemetry'],
-	summary: 'Record an MCP telemetry event (tool_call or mutation).',
+	summary: 'Record an MCP telemetry event (tool_call, mutation, or widget_event).',
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: recordMcpTelemetrySchema } } },
@@ -70,7 +77,7 @@ app.openapi(recordRoute, (async (c) => {
 			hasRichRender: body.has_rich_render,
 			durationMs: body.duration_ms,
 		})
-	} else {
+	} else if (body.event_type === 'mutation') {
 		await db.insert(mcpTelemetry).values({
 			workspaceId,
 			eventType: 'mutation',
@@ -79,6 +86,29 @@ app.openapi(recordRoute, (async (c) => {
 			objectType: body.object_type ?? null,
 			mutationKind: body.mutation_kind,
 		})
+	} else {
+		// widget_event — widget-only fields (event, widget_name, card_kind, object_id,
+		// ts) live in the `data` jsonb column so we avoid a hot-table migration. T9's
+		// CTR aggregation reads them back via jsonb operators.
+		await db.insert(mcpTelemetry).values({
+			workspaceId,
+			eventType: 'widget_event',
+			toolName: body.tool_name,
+			sessionId: body.session_id,
+			objectType: body.object_type ?? null,
+			data: {
+				event: body.event,
+				widget_name: body.widget_name,
+				card_kind: body.card_kind,
+				object_id: body.object_id ?? null,
+				ts: body.ts,
+			},
+		})
+		// One log line per widget event so the 48h render-error kill criterion is
+		// observable in raw logs without running the T9 aggregation query.
+		console.log(
+			`[telemetry] widget_event ${body.event} — widget=${body.widget_name} tool=${body.tool_name} object_type=${body.object_type ?? 'null'} object_id=${body.object_id ?? 'null'} workspace=${workspaceId}`,
+		)
 	}
 
 	return c.json({ recorded: true as const }, 202)
@@ -206,6 +236,33 @@ app.openapi(summaryRoute, (async (c) => {
 		rich_pct: r.total > 0 ? (r.rich / r.total) * 100 : 0,
 	}))
 
+	// Rolling 48h widget render-error rate. Counts only mount-time signals —
+	// `render_success` (denominator increment) and `render_error` (both). The
+	// `event` sub-field lives on `data` (jsonb) because the widget event shape
+	// is more granular than the columned tool_call/mutation rows and the schema
+	// extension for it is owned by T8. Until T8 lands the schema entry, this
+	// returns 0/0 and the breach boolean is false — additive and safe.
+	const renderWindowStart = new Date(now.getTime() - RENDER_ERROR_WINDOW_MS)
+	const renderRows = await db
+		.select({
+			renders: sql<number>`count(*) filter (where ${mcpTelemetry.data}->>'event' in ('render_success', 'render_error'))::int`,
+			errors: sql<number>`count(*) filter (where ${mcpTelemetry.data}->>'event' = 'render_error')::int`,
+		})
+		.from(mcpTelemetry)
+		.where(
+			and(
+				eq(mcpTelemetry.workspaceId, workspaceId),
+				eq(mcpTelemetry.eventType, 'widget_event'),
+				gte(mcpTelemetry.createdAt, renderWindowStart),
+			),
+		)
+	const widgetRenders48h = renderRows[0]?.renders ?? 0
+	const widgetRenderErrors48h = renderRows[0]?.errors ?? 0
+	const renderErrorPct48h =
+		widgetRenders48h > 0 ? (widgetRenderErrors48h / widgetRenders48h) * 100 : 0
+	const renderErrorKillSwitchBreach =
+		widgetRenders48h > 0 && renderErrorPct48h > RENDER_ERROR_KILL_SWITCH_PCT
+
 	return c.json({
 		workspace_id: workspaceId,
 		window_start: windowStart.toISOString(),
@@ -222,6 +279,11 @@ app.openapi(summaryRoute, (async (c) => {
 		mutation_session_target_met: mutationSessionPct >= MUTATION_SESSION_TARGET_PCT,
 		mutations_total: mutationsTotal,
 		rich_render_by_day: richRenderByDay,
+		widget_renders_48h: widgetRenders48h,
+		widget_render_errors_48h: widgetRenderErrors48h,
+		render_error_pct_48h: renderErrorPct48h,
+		render_error_kill_switch_pct: RENDER_ERROR_KILL_SWITCH_PCT,
+		render_error_kill_switch_breach: renderErrorKillSwitchBreach,
 	})
 }) as RouteHandler<typeof summaryRoute, Env>)
 

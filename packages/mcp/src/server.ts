@@ -20,6 +20,7 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { Cron } from 'croner'
 import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
@@ -797,18 +798,16 @@ export interface HeroCardTypeAnnotation {
 }
 
 /**
- * Built-in Hero Card annotations for object types in the launch set. Presence
- * in this map (even with an empty `{}`) marks a type as Hero-Card eligible —
- * `pickResourceUri` consults this map instead of hardcoding type literals.
- * `bet` keeps its T3 context line (legacy switch in `buildContextLine`), so
- * its entry stays empty.
+ * Built-in Hero Card annotations for object types in the launch set. `bet`,
+ * `task`, `insight`, `trigger` keep their legacy switch paths in
+ * `buildContextLine` so this map is purely additive — workspaces can still
+ * override per-type via `settings.hero_card`.
  *
  * The customer variant (T2 resolution: render both `organization` AND `person`
  * with the customer context line) lives here, so any future explicit
  * `customer` type drops in by adding one entry.
  */
 export const HERO_CARD_TYPE_DEFAULTS: Record<string, HeroCardTypeAnnotation> = {
-	bet: {},
 	organization: {
 		hero_card_context: 'last touch + stage',
 		hero_card_metas: [
@@ -845,6 +844,19 @@ function ageLabel(fromIso: string | null | undefined, nowMs = Date.now()): strin
 	if (months < 12) return `${months}mo ago`
 	const years = Math.floor(days / 365)
 	return `${years}y ago`
+}
+
+/** Render one or more anchor tags as a single `anchor #3+#6` label. */
+function anchorLabel(meta: Record<string, unknown> | null | undefined): string | null {
+	if (!meta) return null
+	const raw = meta.anchors ?? meta.anchor
+	if (Array.isArray(raw)) {
+		const tags = raw.filter((v): v is string => typeof v === 'string' && v.length > 0)
+		if (tags.length === 0) return null
+		return `anchor ${tags.join('+')}`
+	}
+	if (typeof raw === 'string' && raw.length > 0) return `anchor ${raw}`
+	return null
 }
 
 /**
@@ -890,7 +902,9 @@ export function buildContextLine(
 		case 'insight': {
 			const cluster = obj.metadata?.cluster_size as number | undefined
 			const evidence = obj.metadata?.evidence_quality as string | undefined
+			const anchor = anchorLabel(obj.metadata)
 			const parts = [status]
+			if (anchor) parts.push(anchor)
 			if (typeof cluster === 'number') parts.push(`${cluster} sources`)
 			else if (evidence) parts.push(evidence)
 			return parts.join(' · ')
@@ -918,18 +932,60 @@ export function buildHeroCardObject(
 
 /**
  * Per-response resource swap. Returns the Hero Card resource for single results
- * whose type has a Hero Card annotation (present in `HERO_CARD_TYPE_DEFAULTS`
- * or merged in from workspace `settings.hero_card`). Eligibility is uniformly
- * schema-driven — an empty annotation `{}` still marks the type eligible.
- * Everything else stays on the existing `objects` widget.
+ * whose type is either in the built-in launch set (`bet`, `task`, `insight`,
+ * `trigger`) or has a Hero Card annotation (customer variant: `organization`,
+ * `person`, and any future schema-annotated type). Everything else stays on the
+ * existing `objects` widget. New variants opt in by extending
+ * `HERO_CARD_SINGLE_TYPES` or by adding an annotation.
  */
+const HERO_CARD_SINGLE_TYPES: ReadonlySet<string> = new Set(['bet', 'task', 'insight', 'trigger'])
+
 export function pickResourceUri(
 	payload: HeroCardPayload,
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): string {
 	if (payload.kind !== 'single' || !payload.object) return UI_RESOURCES.objects
-	if (annotations[payload.object.type]) return UI_RESOURCES.heroCard
+	const type = payload.object.type
+	if (HERO_CARD_SINGLE_TYPES.has(type) || annotations[type]) return UI_RESOURCES.heroCard
 	return UI_RESOURCES.objects
+}
+
+/**
+ * Collection tools always render through the Hero Card bundle: the same
+ * widget handles the 0 / 1 / N branches and keeps the iframe payload
+ * inside Anthropic's 500px envelope without a second template.
+ */
+function pickCollectionResourceUri(_payload: HeroCardPayload): string {
+	return UI_RESOURCES.heroCard
+}
+
+interface RawActor {
+	id: string
+	type?: string | null
+	name?: string | null
+	email?: string | null
+	role?: string | null
+	isSystem?: boolean | null
+}
+
+function buildActorContextLine(actor: RawActor): string {
+	const kind = actor.type || 'actor'
+	const parts: string[] = [kind]
+	if (actor.role) parts.push(actor.role)
+	else if (actor.email) parts.push(actor.email)
+	return parts.join(' · ')
+}
+
+function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
+	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
+	return {
+		id: actor.id,
+		type: 'actor',
+		title: actor.name ?? null,
+		status,
+		owner: null,
+		contextLine: buildActorContextLine(actor),
+	}
 }
 
 /**
@@ -942,42 +998,124 @@ async function buildCollectionHeroCard(
 	tool: string,
 	rows: RawObject[],
 	workspaceId: string | undefined,
-	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): Promise<HeroCardPayload> {
 	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
 	const ownerIds = rows.map((o) => o.owner).filter((v): v is string => typeof v === 'string')
 	const actors = await resolveActors(config, ownerIds, workspaceId)
 	const heroObjects = rows.map((o) =>
-		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null, Date.now(), annotations),
+		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
 	)
 	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
 	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
 }
 
+interface RawTrigger {
+	id: string
+	name: string
+	type: string
+	config: Record<string, unknown> | null
+	enabled: boolean
+	targetActorId?: string | null
+	target_actor_id?: string | null
+	createdAt?: string | null
+	updatedAt?: string | null
+}
+
+function formatRelativeFuture(targetMs: number, nowMs: number): string {
+	const diffMs = targetMs - nowMs
+	if (diffMs <= 0) return 'due now'
+	const minutes = Math.floor(diffMs / 60_000)
+	if (minutes < 60) return `in ${minutes}m`
+	const hours = Math.floor(minutes / 60)
+	if (hours < 24) return `in ${hours}h`
+	const days = Math.floor(hours / 24)
+	if (days < 30) return `in ${days}d`
+	const months = Math.floor(days / 30)
+	return `in ${months}mo`
+}
+
 /**
- * Resolve the Hero Card annotation map for a request: built-in defaults merged
- * with `settings.hero_card` from the workspace. Falls back to defaults if the
- * workspace lookup fails so a failing workspaces fetch never breaks the tool
- * response — eligibility just doesn't pick up the override this turn.
+ * Per-trigger-type context line: schedule + next-run for cron, scheduled time
+ * for reminder, event predicate for event triggers. Uses `croner` purely for
+ * next-run lookup — no shared scheduler state.
  */
-async function resolveHeroCardAnnotations(
-	config: McpConfig,
-	workspaceId: string | undefined,
-): Promise<Record<string, HeroCardTypeAnnotation>> {
-	try {
-		const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
-			skipWorkspace: true,
-		})) as Array<{ id: string; settings?: Record<string, unknown> }>
-		const effectiveWsId = workspaceId ?? config.defaultWorkspaceId
-		const workspace = effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]
-		const overrides = (workspace?.settings?.hero_card ?? {}) as Record<
-			string,
-			HeroCardTypeAnnotation
-		>
-		return { ...HERO_CARD_TYPE_DEFAULTS, ...overrides }
-	} catch {
-		return HERO_CARD_TYPE_DEFAULTS
+function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): string {
+	const enabledLabel = trigger.enabled ? 'enabled' : 'disabled'
+	const config = trigger.config ?? {}
+	switch (trigger.type) {
+		case 'cron': {
+			const expression = typeof config.expression === 'string' ? config.expression : null
+			if (!expression) return `cron · ${enabledLabel}`
+			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts).
+			// Workspaces don't carry a timezone yet, so we surface UTC inline to keep the
+			// label honest against the runtime; drop the suffix once timezone is plumbed through.
+			let nextLabel: string | null = null
+			if (trigger.enabled) {
+				try {
+					const job = new Cron(expression, { timezone: 'UTC' })
+					const next = job.nextRun(new Date(nowMs))
+					if (next) nextLabel = `next ${formatRelativeFuture(next.getTime(), nowMs)}`
+				} catch {
+					// Invalid expression — skip next-run, keep the schedule line.
+				}
+			}
+			const schedule = `${expression} (UTC)`
+			return nextLabel
+				? `${enabledLabel} · ${schedule} · ${nextLabel}`
+				: `${enabledLabel} · ${schedule}`
+		}
+		case 'reminder': {
+			const scheduledAt = typeof config.scheduled_at === 'string' ? config.scheduled_at : null
+			if (!scheduledAt) return `reminder · ${enabledLabel}`
+			const targetMs = Date.parse(scheduledAt)
+			if (!Number.isFinite(targetMs)) return `reminder · ${enabledLabel}`
+			return `${enabledLabel} · at ${scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
+		}
+		case 'event': {
+			const action = typeof config.action === 'string' ? config.action : null
+			const entityType = typeof config.entity_type === 'string' ? config.entity_type : null
+			if (action && entityType) return `${enabledLabel} · on ${action} ${entityType}`
+			if (action) return `${enabledLabel} · on ${action}`
+			return `event · ${enabledLabel}`
+		}
+		default:
+			return `${trigger.type} · ${enabledLabel}`
 	}
+}
+
+function buildTriggerHeroCardObject(
+	trigger: RawTrigger,
+	owner: HeroCardActor | null,
+	nowMs = Date.now(),
+): HeroCardObject {
+	return {
+		id: trigger.id,
+		type: 'trigger',
+		title: trigger.name ?? null,
+		status: trigger.enabled ? 'enabled' : 'disabled',
+		owner,
+		contextLine: buildTriggerContextLine(trigger, nowMs),
+	}
+}
+
+async function buildTriggerCollectionHeroCard(
+	config: McpConfig,
+	tool: string,
+	rows: RawTrigger[],
+	workspaceId: string | undefined,
+): Promise<HeroCardPayload> {
+	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
+	const ownerIds = rows
+		.map((t) => t.targetActorId ?? t.target_actor_id ?? null)
+		.filter((v): v is string => typeof v === 'string')
+	const actors = await resolveActors(config, ownerIds, workspaceId)
+	const heroObjects = rows.map((t) => {
+		const targetId = t.targetActorId ?? t.target_actor_id ?? null
+		const owner = targetId ? (actors.get(targetId) ?? null) : null
+		return buildTriggerHeroCardObject(t, owner)
+	})
+	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
+	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
 }
 
 /**
@@ -985,6 +1123,11 @@ async function resolveHeroCardAnnotations(
  * names into HeroCardObject. Best-effort: missing actors come back as
  * `{ id, name: null }` so the widget renders without owner instead of failing.
  */
+// Hero-card responses typically resolve a single tool call's owner set (≤50
+// objects). Cap defensively at 200 to match the server-side `?ids=` limit and
+// avoid building an URL larger than the receiver accepts.
+const RESOLVE_ACTORS_MAX_IDS = 200
+
 async function resolveActors(
 	config: McpConfig,
 	actorIds: Iterable<string>,
@@ -993,11 +1136,16 @@ async function resolveActors(
 	const uniq = [...new Set([...actorIds].filter((id): id is string => typeof id === 'string'))]
 	const out = new Map<string, HeroCardActor>()
 	if (uniq.length === 0) return out
+	const queryIds = uniq.slice(0, RESOLVE_ACTORS_MAX_IDS)
 	try {
-		const result = (await apiCall(config, 'GET', '/api/actors', undefined, {
+		const query = `?ids=${queryIds.map(encodeURIComponent).join(',')}`
+		const result = (await apiCall(config, 'GET', `/api/actors${query}`, undefined, {
 			workspaceId,
 		})) as Array<{ id: string; name: string | null }>
 		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null })
+		console.log(
+			`[MCP] Resolved ${out.size}/${queryIds.length} hero-card actor names (requested ${uniq.length})`,
+		)
 	} catch (err) {
 		console.error('[MCP] Failed to resolve actors for hero-card:', err)
 	}
@@ -1214,21 +1362,18 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id } = args
-			const [results, heroCardAnnotations] = await Promise.all([
-				Promise.all(
-					args.ids.map(async (id) => {
-						try {
-							const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
-								workspaceId: workspace_id,
-							})
-							return { id, success: true, result }
-						} catch (error) {
-							return { id, success: false, error: String(error) }
-						}
-					}),
-				),
-				resolveHeroCardAnnotations(config, workspace_id),
-			])
+			const results = await Promise.all(
+				args.ids.map(async (id) => {
+					try {
+						const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
+							workspaceId: workspace_id,
+						})
+						return { id, success: true, result }
+					} catch (error) {
+						return { id, success: false, error: String(error) }
+					}
+				}),
+			)
 
 			// Build the Hero Card payload. Single successful result → kind='single'
 			// (eligible to swap to the Hero Card widget); anything else stays
@@ -1243,12 +1388,7 @@ export function createMcpServer(config: McpConfig) {
 				.filter((v): v is string => typeof v === 'string')
 			const actors = await resolveActors(config, ownerIds, workspace_id)
 			const heroObjects = rawObjects.map((o) =>
-				buildHeroCardObject(
-					o,
-					o.owner ? (actors.get(o.owner) ?? null) : null,
-					Date.now(),
-					heroCardAnnotations,
-				),
+				buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
 			)
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
@@ -1263,12 +1403,7 @@ export function createMcpServer(config: McpConfig) {
 							}
 
 			return {
-				_meta: uiMeta(
-					'get_objects',
-					config,
-					workspace_id,
-					pickResourceUri(heroCard, heroCardAnnotations),
-				),
+				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1550,25 +1685,21 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const [result, heroCardAnnotations] = await Promise.all([
-				apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
-					workspaceId: args.workspace_id,
-				}) as Promise<RawObject[]>,
-				resolveHeroCardAnnotations(config, args.workspace_id),
-			])
+			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as RawObject[]
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'list_objects',
 				result,
 				args.workspace_id,
-				heroCardAnnotations,
 			)
 			return {
 				_meta: uiMeta(
 					'list_objects',
 					config,
 					args.workspace_id,
-					pickResourceUri(heroCard, heroCardAnnotations),
+					pickCollectionResourceUri(heroCard),
 				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
@@ -1591,25 +1722,21 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const [result, heroCardAnnotations] = await Promise.all([
-				apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
-					workspaceId: args.workspace_id,
-				}) as Promise<RawObject[]>,
-				resolveHeroCardAnnotations(config, args.workspace_id),
-			])
+			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as RawObject[]
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'search_objects',
 				result,
 				args.workspace_id,
-				heroCardAnnotations,
 			)
 			return {
 				_meta: uiMeta(
 					'search_objects',
 					config,
 					args.workspace_id,
-					pickResourceUri(heroCard, heroCardAnnotations),
+					pickCollectionResourceUri(heroCard),
 				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
@@ -1709,17 +1836,40 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_actors.description,
 			inputSchema: tools.list_actors.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = args.workspace_id
-				? await apiCall(config, 'GET', '/api/actors', undefined, {
-						workspaceId: args.workspace_id,
-					})
-				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
+			const result = (
+				args.workspace_id
+					? await apiCall(config, 'GET', '/api/actors', undefined, {
+							workspaceId: args.workspace_id,
+						})
+					: await apiCall(config, 'GET', '/api/actors', undefined, {
+							skipWorkspace: true,
+						})
+			) as RawActor[]
+			const rows = Array.isArray(result) ? result : []
+			const heroObjects = rows.map(buildActorHeroCardObject)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_actors' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'list_actors', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_actors',
+								objects: heroObjects,
+								totalCount: heroObjects.length,
+							}
 			return {
-				_meta: meta('list_actors', config),
+				_meta: uiMeta(
+					'list_actors',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -1899,11 +2049,8 @@ export function createMcpServer(config: McpConfig) {
 					statuses: statuses[t] ?? [],
 					fields: fieldDefinitions[t] ?? [],
 				}
-				// Empty annotation objects (e.g. the eligibility marker for `bet`)
-				// are not surfaced — only configurable annotations belong in the
-				// schema response.
 				const hc = heroCardAnnotations[t]
-				if (hc && Object.keys(hc).length > 0) typeSchema.hero_card = hc
+				if (hc) typeSchema.hero_card = hc
 				typeSchemas[t] = typeSchema
 			}
 
@@ -2612,15 +2759,27 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_triggers.description,
 			inputSchema: tools.list_triggers.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', '/api/triggers', undefined, {
+			const result = (await apiCall(config, 'GET', '/api/triggers', undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as RawTrigger[]
+			const heroCard = await buildTriggerCollectionHeroCard(
+				config,
+				'list_triggers',
+				result,
+				args.workspace_id,
+			)
 			return {
-				_meta: meta('list_triggers', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: uiMeta(
+					'list_triggers',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
