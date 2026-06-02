@@ -20,10 +20,11 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { getProvider } from '../lib/integrations/registry'
 import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
-import type { WorkspaceSettings } from '../lib/types'
+import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
@@ -770,13 +771,34 @@ export class SessionManager extends EventEmitter {
 			)
 
 		const tokenManager = new TokenManager()
+		// GitHub installations get a per-owner env var (GITHUB_TOKEN_<OWNER>) plus a
+		// synthesized MCP server entry (github-<owner>) so a single session with N
+		// installations exposes N distinct tokens and N MCP servers.
+		const githubMcpServers: Record<string, unknown> = {}
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
 				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
-				const envVarName =
-					resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
-				envVars[envVarName] = accessToken
+
+				if (integration.provider === 'github') {
+					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
+					if (!ownerLogin) continue
+
+					const sanitizedOwner = ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
+					const envVarName = `GITHUB_TOKEN_${sanitizedOwner}`
+					envVars[envVarName] = accessToken
+
+					const mcpName = `github-${ownerLogin.toLowerCase()}`
+					githubMcpServers[mcpName] = {
+						command: resolved.config.mcp?.command ?? 'npx',
+						args: resolved.config.mcp?.args ?? ['-y', '@modelcontextprotocol/server-github'],
+						env: { GITHUB_TOKEN: `\${${envVarName}}` },
+					}
+				} else {
+					const envVarName =
+						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
+					envVars[envVarName] = accessToken
+				}
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {
 					error: String(err),
@@ -823,13 +845,16 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Session-level MCP config (convert array → { mcpServers: { ... } } format)
+		// Session-level MCP config (convert array → { mcpServers: { ... } } format),
+		// merged with any auto-injected per-installation GitHub MCP entries.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		const mcpServers: Record<string, unknown> = { ...githubMcpServers }
 		if (mcps?.length) {
-			const mcpServers: Record<string, unknown> = {}
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp
 			}
+		}
+		if (Object.keys(mcpServers).length > 0) {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
 		}
 
@@ -870,6 +895,50 @@ export class SessionManager extends EventEmitter {
 		}
 
 		return containerId
+	}
+
+	/**
+	 * Return the GitHub owner_login for an integration row, lazily backfilling it
+	 * via the GitHub API and persisting back to the row when missing. Returns
+	 * undefined (and logs) if the backfill cannot complete — the caller skips that
+	 * integration rather than failing the whole session.
+	 */
+	private async resolveGithubOwnerLogin(
+		integration: typeof integrations.$inferSelect,
+	): Promise<string | undefined> {
+		const config = (integration.config as IntegrationConfig | null) ?? {}
+		if (config.owner_login) return config.owner_login
+
+		const installationId = integration.externalId
+		if (!installationId) {
+			logger.warn('GitHub integration has no externalId; cannot backfill owner_login', {
+				integrationId: integration.id,
+			})
+			return undefined
+		}
+
+		try {
+			const ownerLogin = await fetchInstallationOwnerLogin(installationId)
+			await this.db
+				.update(integrations)
+				.set({
+					config: { ...config, owner_login: ownerLogin },
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, integration.id))
+			logger.info('Backfilled owner_login for GitHub integration', {
+				integrationId: integration.id,
+				ownerLogin,
+			})
+			return ownerLogin
+		} catch (err) {
+			logger.warn('Failed to backfill owner_login for GitHub integration; skipping', {
+				integrationId: integration.id,
+				installationId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return undefined
+		}
 	}
 
 	private computeTimeout(session: typeof sessions.$inferSelect): Date {
