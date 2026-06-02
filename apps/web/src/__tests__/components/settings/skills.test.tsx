@@ -193,6 +193,39 @@ describe('Settings > Skills', () => {
 		expect(payload).toEqual({ name: 'new-skill', content: 'body' })
 	})
 
+	it('opens the edit dialog when the skill row is clicked', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ name: 'deploy' })],
+			isLoading: false,
+		})
+		mockUseWorkspaceSkill.mockReturnValue({
+			data: { ...buildSkill({ name: 'deploy' }), content: 'existing content' },
+			isLoading: false,
+		})
+		renderPage()
+
+		await user.click(screen.getByText('deploy'))
+
+		expect(screen.getByRole('heading', { name: 'Edit skill' })).toBeInTheDocument()
+		expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('deploy')
+	})
+
+	it('does not open the edit dialog when the kebab menu is opened', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildSkill({ name: 'deploy' })],
+			isLoading: false,
+		})
+		renderPage()
+
+		await user.click(screen.getByRole('button', { name: 'Actions for deploy' }))
+
+		// Kebab opens its menu but does NOT trigger row click → no edit dialog yet.
+		expect(screen.queryByRole('heading', { name: 'Edit skill' })).not.toBeInTheDocument()
+		expect(screen.getByRole('menuitem', { name: /Edit/ })).toBeInTheDocument()
+	})
+
 	it('confirms deletion and calls delete mutation', async () => {
 		const user = userEvent.setup()
 		mockUseWorkspaceSkills.mockReturnValue({
