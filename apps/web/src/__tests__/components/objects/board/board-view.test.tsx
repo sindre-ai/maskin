@@ -1,6 +1,6 @@
 import { BoardView } from '@/components/objects/board/board-view'
 import { deriveColumns } from '@/components/objects/board/derive-columns'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { buildObjectResponse } from '../../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -11,6 +11,59 @@ vi.mock('@tanstack/react-router', async () => {
 vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => <span>agent working</span>,
 }))
+
+// dnd-kit pulls in pointer-capture APIs jsdom doesn't ship, and we want to
+// drive `onDragEnd` directly from the tests. Capture the handler off the
+// `DndContext` props and stub the draggable/droppable hooks to no-ops so the
+// tree renders.
+let capturedDragEnd: ((event: unknown) => void) | null = null
+vi.mock('@dnd-kit/core', () => ({
+	DndContext: ({
+		onDragEnd,
+		children,
+	}: {
+		onDragEnd?: (event: unknown) => void
+		children: React.ReactNode
+	}) => {
+		capturedDragEnd = onDragEnd ?? null
+		return <div data-testid="dnd-context">{children}</div>
+	},
+	PointerSensor: function PointerSensor() {},
+	useSensor: () => undefined,
+	useSensors: () => [],
+	useDraggable: () => ({
+		attributes: {},
+		listeners: {},
+		setNodeRef: () => {},
+		isDragging: false,
+	}),
+	useDroppable: () => ({ setNodeRef: () => {}, isOver: false, active: null }),
+}))
+
+const bulkUpdateMutate = vi.fn()
+vi.mock('@/hooks/use-objects', () => ({
+	useBulkUpdateObjects: () => ({ mutate: bulkUpdateMutate }),
+}))
+
+const toastError = vi.fn()
+vi.mock('sonner', () => ({
+	toast: { error: (msg: string) => toastError(msg) },
+}))
+
+beforeEach(() => {
+	bulkUpdateMutate.mockReset()
+	toastError.mockReset()
+	capturedDragEnd = null
+})
+
+function makeDragEvent(activeObject: unknown, overStatus: string | null) {
+	return {
+		active: { id: 'a', data: { current: { object: activeObject } } },
+		over: overStatus
+			? { id: `col:${overStatus}`, data: { current: { status: overStatus } } }
+			: null,
+	}
+}
 
 describe('deriveColumns', () => {
 	it('returns one column per configured status, in order', () => {
@@ -71,7 +124,6 @@ describe('BoardView', () => {
 				]}
 			/>,
 		)
-		// Status appears in column header AND on each card's StatusBadge — assert count >= 1.
 		expect(screen.getAllByText('todo').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByText('in progress').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByText('done').length).toBeGreaterThanOrEqual(1)
@@ -103,7 +155,6 @@ describe('BoardView', () => {
 				isLoading
 			/>,
 		)
-		// Two columns × two skeletons each.
 		expect(screen.getAllByTestId('board-card-skeleton')).toHaveLength(4)
 	})
 
@@ -132,5 +183,155 @@ describe('BoardView', () => {
 			/>,
 		)
 		expect(screen.getAllByTestId('board-card')).toHaveLength(2)
+	})
+
+	describe('drag-to-status', () => {
+		it('calls the bulk-update mutation with the dropped status when a task is dragged to a new column', () => {
+			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo' })
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo', 'in_progress', 'done'] }}
+					objects={[obj]}
+				/>,
+			)
+			expect(capturedDragEnd).toBeTypeOf('function')
+
+			capturedDragEnd?.(makeDragEvent(obj, 'in_progress'))
+
+			expect(bulkUpdateMutate).toHaveBeenCalledTimes(1)
+			expect(bulkUpdateMutate).toHaveBeenCalledWith(
+				{ ids: ['t1'], patch: { status: 'in_progress' } },
+				expect.objectContaining({ onError: expect.any(Function) }),
+			)
+		})
+
+		it('surfaces a toast when the mutation rejects (rollback is owned by useBulkUpdateObjects)', async () => {
+			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo' })
+			// Simulate the mutation calling onError synchronously with a real Error.
+			bulkUpdateMutate.mockImplementation(
+				(_input: unknown, opts: { onError?: (e: Error) => void }) => {
+					opts.onError?.(new Error('Network blew up'))
+				},
+			)
+
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo', 'done'] }}
+					objects={[obj]}
+				/>,
+			)
+			capturedDragEnd?.(makeDragEvent(obj, 'done'))
+
+			await waitFor(() => {
+				expect(toastError).toHaveBeenCalledWith('Network blew up')
+			})
+		})
+
+		it('does not mutate when dropping on the same column the card already lives in', () => {
+			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo' })
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo', 'done'] }}
+					objects={[obj]}
+				/>,
+			)
+			capturedDragEnd?.(makeDragEvent(obj, 'todo'))
+			expect(bulkUpdateMutate).not.toHaveBeenCalled()
+		})
+
+		it('does not mutate when the drop happens outside any droppable column', () => {
+			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo' })
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo', 'done'] }}
+					objects={[obj]}
+				/>,
+			)
+			capturedDragEnd?.(makeDragEvent(obj, null))
+			expect(bulkUpdateMutate).not.toHaveBeenCalled()
+		})
+
+		it('ignores drag events whose payload is for a bet card (defense in depth)', () => {
+			const bet = buildObjectResponse({ id: 'b1', type: 'bet', status: 'proposed' })
+			render(
+				<BoardView
+					objectType="bet"
+					workspaceId="ws-1"
+					statusesByType={{ bet: ['proposed', 'active'] }}
+					objects={[bet]}
+				/>,
+			)
+			capturedDragEnd?.(makeDragEvent(bet, 'active'))
+			expect(bulkUpdateMutate).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('bet-type guard', () => {
+		it('renders bet cards without the draggable wrapper', () => {
+			render(
+				<BoardView
+					objectType="bet"
+					workspaceId="ws-1"
+					statusesByType={{ bet: ['proposed', 'active'] }}
+					objects={[
+						buildObjectResponse({ id: 'b1', type: 'bet', status: 'active', title: 'Big bet' }),
+					]}
+				/>,
+			)
+			expect(screen.getByText('Big bet')).toBeInTheDocument()
+			expect(screen.queryByTestId('board-card-draggable')).not.toBeInTheDocument()
+			// The gated affordance is visible on the card itself.
+			expect(screen.getByText('Gated')).toBeInTheDocument()
+			expect(screen.getByTestId('board-card')).toHaveAttribute('data-gated', 'true')
+		})
+
+		it('renders the helper banner above the board when the active tab is bets', () => {
+			render(
+				<BoardView
+					objectType="bet"
+					workspaceId="ws-1"
+					statusesByType={{ bet: ['proposed', 'active'] }}
+					objects={[buildObjectResponse({ id: 'b1', type: 'bet', status: 'active' })]}
+				/>,
+			)
+			expect(screen.getByTestId('board-bets-gated-banner')).toBeInTheDocument()
+			expect(screen.getByTestId('board-bets-gated-banner')).toHaveTextContent(
+				/bet statuses are gated/i,
+			)
+		})
+
+		it('does not render the helper banner on task or insight boards', () => {
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo'] }}
+					objects={[buildObjectResponse({ id: 't1', type: 'task', status: 'todo' })]}
+				/>,
+			)
+			expect(screen.queryByTestId('board-bets-gated-banner')).not.toBeInTheDocument()
+		})
+
+		it('wraps task cards in the draggable wrapper', () => {
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo'] }}
+					objects={[
+						buildObjectResponse({ id: 't1', type: 'task', status: 'todo', title: 'Task one' }),
+					]}
+				/>,
+			)
+			expect(screen.getByTestId('board-card-draggable')).toBeInTheDocument()
+		})
 	})
 })
