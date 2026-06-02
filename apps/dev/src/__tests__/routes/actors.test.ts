@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
+import {
+	PLATFORM_MCP_PRESET,
+	SINDRE_DEFAULT,
+	actorCrossWorkspaceSchema,
+	actorWorkspaceMemberSchema,
+} from '@maskin/shared'
 import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -217,6 +222,37 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(0)
 		})
+
+		it('round-trips cross-workspace response through the lifted shared schema', async () => {
+			const actor = buildActor({ type: 'agent', name: 'Bot', email: null })
+			const ws1 = '00000000-0000-0000-0000-000000000001'
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[{ workspaceId: ws1 }],
+				[
+					{
+						id: actor.id,
+						type: actor.type,
+						name: actor.name,
+						email: actor.email,
+						description: null,
+						isSystem: false,
+						workspaceId: ws1,
+						workspaceName: 'Acme',
+						role: 'owner',
+					},
+				],
+			]
+
+			const res = await app.request(jsonGet('/api/actors'))
+			expect(res.status).toBe(200)
+			const body = await res.json()
+
+			// Parse through the strict cross-workspace schema — a snake-case rename
+			// in apps/dev (e.g. `workspaces → workspace_list`) would otherwise pass
+			// every shared-package test and break MCP consumers silently.
+			expect(() => actorCrossWorkspaceSchema.array().parse(body)).not.toThrow()
+		})
 	})
 
 	describe('GET /api/actors/:id', () => {
@@ -400,9 +436,19 @@ describe('Actors Routes', () => {
 				type: 'human',
 				name: 'Alice',
 				email: 'alice@test.com',
+				description: null,
+				isSystem: false,
 				role: 'owner',
 			}
-			const a2 = { id: randomUUID(), type: 'agent', name: 'Bot', email: null, role: 'member' }
+			const a2 = {
+				id: randomUUID(),
+				type: 'agent',
+				name: 'Bot',
+				email: null,
+				description: null,
+				isSystem: false,
+				role: 'member',
+			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			// When X-Workspace-Id is provided, the route does an innerJoin query
 			mockResults.select = [a1, a2]
@@ -413,6 +459,11 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(2)
 			expect(body[0].role).toBeDefined()
+
+			// Round-trip through the lifted strict schema — guards against the
+			// workspace-scoped path silently losing `role` (or any other field
+			// the MCP hero-card consumer relies on).
+			expect(() => actorWorkspaceMemberSchema.array().parse(body)).not.toThrow()
 		})
 	})
 

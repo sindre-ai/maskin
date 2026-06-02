@@ -394,6 +394,80 @@ describe('HeroCardApp — list envelope', () => {
 		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/agents')
 	})
 
+	it('drops the type filter on the CTA for unknown row types (isWebAppObjectType fall-through)', async () => {
+		const unknownRows = [
+			{
+				id: 'goal-1',
+				type: 'goal', // not in WEB_APP_OBJECT_TYPES — must not appear in ?type=
+				title: 'Quarterly goal',
+				status: 'open',
+				owner: null,
+				contextLine: 'goal · q1',
+			},
+			{
+				id: 'goal-2',
+				type: 'goal',
+				title: 'Annual goal',
+				status: 'open',
+				owner: null,
+				contextLine: 'goal · annual',
+			},
+		]
+		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', unknownRows))
+		render(<HeroCardApp />)
+		const cta = await screen.findByRole('link', { name: /Open in Maskin/ })
+		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/objects')
+	})
+
+	it('drops the type filter on the CTA when the list mixes types', async () => {
+		const mixed = [
+			betRows[0],
+			{
+				id: 'task-1',
+				type: 'task',
+				title: 'Some task',
+				status: 'todo',
+				owner: null,
+				contextLine: 'task · open',
+			},
+		]
+		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', mixed))
+		render(<HeroCardApp />)
+		const cta = await screen.findByRole('link', { name: /Open in Maskin/ })
+		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/objects')
+	})
+
+	it('renders kind:single for list_actors and links the CTA to /agents/{id} (N=1 actor path)', async () => {
+		useToolResultMock.mockReturnValue({
+			toolName: 'list_actors',
+			workspaceId: 'ws-1',
+			webAppBaseUrl: 'https://maskin.test',
+			input: null,
+			result: {
+				content: [{ type: 'text', text: '[]' }],
+				structuredContent: {
+					heroCard: {
+						kind: 'single',
+						tool: 'list_actors',
+						object: {
+							id: 'actor-7',
+							type: 'actor',
+							title: 'Pricing Analyst',
+							status: 'agent',
+							owner: null,
+							contextLine: 'agent · member',
+						},
+					},
+				},
+			},
+		})
+		render(<HeroCardApp />)
+		const cta = await screen.findByRole('link', { name: /Open in Maskin/ })
+		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/agents/actor-7')
+		expect(screen.getByText('Pricing Analyst')).toBeInTheDocument()
+		expect(screen.getByText('agent · member')).toBeInTheDocument()
+	})
+
 	it('fires click_through telemetry on the footer CTA with card_kind:list', async () => {
 		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', betRows))
 		render(<HeroCardApp />)

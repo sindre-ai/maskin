@@ -75,10 +75,15 @@ export const actorResponseSchema = z.object({
 export type ActorResponse = z.infer<typeof actorResponseSchema>
 
 // Compact actor row used by list endpoints (`GET /api/actors`,
-// `GET /api/objects/:id/actors`). The optional `role` and `workspaces` fields
-// are populated when the row comes from a workspace-members join — agent code
-// downstream of the MCP server reads `role`, so renaming or dropping it here
-// would silently null out the heroCard owner pill without a compile error.
+// `GET /api/objects/:id/actors`). The endpoint returns two distinct shapes
+// depending on whether `X-Workspace-Id` is set:
+//   • workspace-scoped: flat `role`, no `workspaces[]` — see actorWorkspaceMemberSchema
+//   • cross-workspace : no `role`, a `workspaces[]` array — see actorCrossWorkspaceSchema
+// `actorListItemSchema` makes both fields optional so the OpenAPI route handler
+// can declare one response shape and so existing extenders (`actorWithRoleSchema`)
+// keep working. Consumers that know which call they're making should narrow with
+// the strict variants below — reading `actor.role` off a cross-workspace row
+// silently returns `undefined` and is what produced this split.
 export const actorListItemSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),
@@ -93,3 +98,36 @@ export const actorListItemSchema = z.object({
 })
 
 export type ActorListItem = z.infer<typeof actorListItemSchema>
+
+const actorListItemBaseFields = {
+	id: z.string().uuid(),
+	type: z.string(),
+	name: z.string(),
+	email: z.string().nullable(),
+	description: z.string().nullable(),
+	isSystem: z.boolean(),
+}
+
+/**
+ * Strict shape returned by `GET /api/actors` when `X-Workspace-Id` is supplied:
+ * a workspace-members join, with `role` always populated. Use this when calling
+ * the workspace-scoped path — `actor.role` is then guaranteed by the type.
+ */
+export const actorWorkspaceMemberSchema = z.object({
+	...actorListItemBaseFields,
+	role: z.string(),
+})
+
+export type ActorWorkspaceMember = z.infer<typeof actorWorkspaceMemberSchema>
+
+/**
+ * Strict shape returned by `GET /api/actors` *without* `X-Workspace-Id`: actors
+ * aggregated across every workspace the caller belongs to, with the membership
+ * list under `workspaces[]`. There is no flat `role` on this variant.
+ */
+export const actorCrossWorkspaceSchema = z.object({
+	...actorListItemBaseFields,
+	workspaces: z.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() })),
+})
+
+export type ActorCrossWorkspace = z.infer<typeof actorCrossWorkspaceSchema>

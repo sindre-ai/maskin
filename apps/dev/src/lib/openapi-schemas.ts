@@ -54,6 +54,10 @@ export const objectResponseSchema = z.object({
 	subscriber_count: z.number().optional(),
 })
 
+// NOTE: kept divergent from @maskin/shared/actorResponseSchema — the dev
+// definition uses `jsonbField` so the OpenAPI generator can emit a concrete
+// JSONValue type, while the shared schema uses `Record<string, unknown> | null`
+// for downstream consumers. See PR #567.
 export const actorResponseSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),

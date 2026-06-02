@@ -92,9 +92,11 @@ export const triggerParamsSchema = z.object({
 export const triggerResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
-	name: z.string(),
+	name: z.string().min(1),
 	type: z.string(),
-	config: z.record(z.string(), z.unknown()).nullable(),
+	// `triggers.config` is `jsonb().notNull()` in the DB (see packages/db/src/schema.ts);
+	// the response mirrors that — a null here would mean a row that cannot exist.
+	config: z.record(z.string(), z.unknown()),
 	actionPrompt: z.string(),
 	targetActorId: z.string().uuid(),
 	enabled: z.boolean(),

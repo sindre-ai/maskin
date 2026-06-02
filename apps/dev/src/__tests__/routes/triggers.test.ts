@@ -1,3 +1,4 @@
+import { triggerResponseSchema } from '@maskin/shared'
 import { buildCreateTriggerBody, buildTrigger, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -56,6 +57,11 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+
+			// Each response row round-trips cleanly through the lifted shared schema —
+			// catches a snake-case rename in apps/dev that the shared-package tests
+			// would otherwise miss.
+			expect(() => triggerResponseSchema.array().parse(body)).not.toThrow()
 		})
 	})
 

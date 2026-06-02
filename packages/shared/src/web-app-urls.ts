@@ -67,6 +67,19 @@ export const WEB_APP_OBJECT_TYPES = [
 export type WebAppObjectType = (typeof WEB_APP_OBJECT_TYPES)[number]
 
 /**
+ * O(1) lookup over `WEB_APP_OBJECT_TYPES`. Co-located with the canonical list so
+ * any consumer narrowing an arbitrary string down to `WebAppObjectType` uses the
+ * same source of truth — re-declaring this Set in a feature module is the exact
+ * drift class the lifted list closes.
+ */
+export const WEB_APP_OBJECT_TYPE_SET: ReadonlySet<string> = new Set(WEB_APP_OBJECT_TYPES)
+
+/** Type guard: narrow `string` → `WebAppObjectType` via `WEB_APP_OBJECT_TYPE_SET`. */
+export function isWebAppObjectType(type: string): type is WebAppObjectType {
+	return WEB_APP_OBJECT_TYPE_SET.has(type)
+}
+
+/**
  * Sub-sections inside the workspace settings page. Mirrors the file tree
  * under `apps/web/src/routes/_authed/$workspaceId/settings/`.
  */

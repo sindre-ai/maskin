@@ -34,7 +34,7 @@ function buildTrigger(overrides: Partial<TriggerResponse> & { id: string }): Tri
 		workspaceId: 'ws-1',
 		name: 'Test Trigger',
 		type: 'cron',
-		config: null,
+		config: {},
 		actionPrompt: 'Run task',
 		targetActorId: 'actor-1',
 		enabled: true,

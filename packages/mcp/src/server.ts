@@ -405,14 +405,6 @@ interface ActorRow {
 	role?: string
 }
 
-interface TriggerRow {
-	id: string
-	workspaceId: string
-	name: string
-	type: string
-	enabled: boolean
-}
-
 interface SessionRow {
 	id: string
 	actorId: string
@@ -615,7 +607,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 			try {
 				const triggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
 					workspaceId: config.defaultWorkspaceId,
-				})) as TriggerRow[]
+				})) as TriggerResponse[]
 				return {
 					resources: triggers.map((t) => ({
 						uri: buildWebAppHref(baseUrl, t.workspaceId, { kind: 'trigger', id: t.id }),
@@ -643,7 +635,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 			const triggerId = String(vars.triggerId)
 			const trigger = (await apiCall(config, 'GET', `/api/triggers/${triggerId}`, undefined, {
 				workspaceId,
-			})) as TriggerRow
+			})) as TriggerResponse
 			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
 				kind: 'trigger',
 				id: trigger.id,
