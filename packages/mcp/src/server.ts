@@ -26,6 +26,7 @@ import {
 	createDefaultSink,
 	recordMutation,
 	recordToolCall,
+	recordWidgetEvent,
 } from './telemetry.js'
 import { tools } from './tools.js'
 
@@ -67,6 +68,20 @@ function meta(toolName: string, config: McpConfig, workspaceId?: string): Record
 	return m
 }
 
+/**
+ * `meta()` plus a `ui` block. Use this when a response wants to override the
+ * widget resource on a per-response basis (e.g. swap to the Hero Card when the
+ * predicate fires) without changing the tool registration.
+ */
+function uiMeta(
+	toolName: string,
+	config: McpConfig,
+	workspaceId: string | undefined,
+	resourceUri: string,
+): Record<string, unknown> {
+	return { ...meta(toolName, config, workspaceId), ui: { resourceUri, csp: CSP } }
+}
+
 function authSetupHint(config: McpConfig): string {
 	return config.transport === 'http'
 		? 'Set an `Authorization: Bearer <YOUR_MASKIN_API_KEY>` header on the MCP request (see https://sindre.ai/docs/get-started/).'
@@ -92,6 +107,7 @@ const UI_RESOURCES = {
 	graph: 'ui://maskin/graph',
 	sessions: 'ui://maskin/sessions',
 	schema: 'ui://maskin/schema',
+	heroCard: 'ui://maskin/hero-card',
 } as const
 
 const CSP = {
@@ -719,6 +735,183 @@ function extractObjectType(toolName: string, args: unknown): string | undefined 
 	return undefined
 }
 
+// ─── Hero Card payload builders ────────────────────────────
+//
+// The widget reads `structuredContent.heroCard` and renders a single flat
+// HeroCardObject — no per-type branches on the client. Per-type context is
+// resolved here so new object types absorb with a sensible default.
+
+export interface HeroCardActor {
+	id: string
+	name: string | null
+}
+
+export interface HeroCardObject {
+	id: string
+	type: string
+	title: string | null
+	status: string | null
+	owner: HeroCardActor | null
+	contextLine: string
+	badges?: string[]
+}
+
+export type HeroCardKind = 'single' | 'list' | 'empty'
+
+export interface HeroCardPayload {
+	kind: HeroCardKind
+	tool: string
+	object?: HeroCardObject
+	objects?: HeroCardObject[]
+	totalCount?: number
+}
+
+interface RawObject {
+	id: string
+	type: string
+	title?: string | null
+	status?: string | null
+	owner?: string | null
+	createdAt?: string | null
+	updatedAt?: string | null
+	metadata?: Record<string, unknown> | null
+}
+
+/** Days between two ISO timestamps. Negative values clamp to 0. */
+function daysBetween(fromIso: string | null | undefined, nowMs: number): number | null {
+	if (!fromIso) return null
+	const fromMs = Date.parse(fromIso)
+	if (!Number.isFinite(fromMs)) return null
+	return Math.max(0, Math.floor((nowMs - fromMs) / 86_400_000))
+}
+
+function ageLabel(fromIso: string | null | undefined, nowMs = Date.now()): string | null {
+	const days = daysBetween(fromIso, nowMs)
+	if (days === null) return null
+	if (days === 0) return 'today'
+	if (days === 1) return '1d ago'
+	if (days < 30) return `${days}d ago`
+	const months = Math.floor(days / 30)
+	if (months < 12) return `${months}mo ago`
+	const years = Math.floor(days / 365)
+	return `${years}y ago`
+}
+
+/**
+ * Per-type one-line context. New types fall through to `type · status`, so
+ * absorbing a new object type does NOT require a widget change.
+ */
+function buildContextLine(obj: RawObject, owner: HeroCardActor | null, nowMs = Date.now()): string {
+	const status = obj.status ?? 'unknown'
+	const age = ageLabel(obj.createdAt, nowMs)
+	const ownerName = owner?.name
+	switch (obj.type) {
+		case 'bet': {
+			const duration = (obj.metadata?.duration_weeks ?? obj.metadata?.duration) as
+				| string
+				| number
+				| undefined
+			const durationLabel =
+				typeof duration === 'number'
+					? `${duration}-week bet`
+					: typeof duration === 'string' && duration.length > 0
+						? duration
+						: age
+							? `created ${age}`
+							: null
+			return durationLabel ? `${status} · ${durationLabel}` : status
+		}
+		case 'task':
+			return ownerName ? `${status} · owner ${ownerName}` : status
+		case 'insight': {
+			const cluster = obj.metadata?.cluster_size as number | undefined
+			const evidence = obj.metadata?.evidence_quality as string | undefined
+			const parts = [status]
+			if (typeof cluster === 'number') parts.push(`${cluster} sources`)
+			else if (evidence) parts.push(evidence)
+			return parts.join(' · ')
+		}
+		default:
+			return age ? `${obj.type} · ${status} · ${age}` : `${obj.type} · ${status}`
+	}
+}
+
+function buildHeroCardObject(
+	obj: RawObject,
+	owner: HeroCardActor | null,
+	nowMs = Date.now(),
+): HeroCardObject {
+	return {
+		id: obj.id,
+		type: obj.type,
+		title: obj.title ?? null,
+		status: obj.status ?? null,
+		owner,
+		contextLine: buildContextLine(obj, owner, nowMs),
+	}
+}
+
+/**
+ * Per-response resource swap. T3 ships the Hero Card only for single-bet
+ * results; everything else stays on the existing `objects` widget. Widening
+ * the predicate (e.g. adding `task`) is the only change required to roll out
+ * a new variant.
+ */
+function pickResourceUri(payload: HeroCardPayload): string {
+	if (payload.kind === 'single' && payload.object?.type === 'bet') {
+		return UI_RESOURCES.heroCard
+	}
+	return UI_RESOURCES.objects
+}
+
+/**
+ * Build the heroCard payload for a list-style tool response. Collapses to
+ * `single` when the result has exactly one row so the predicate can fire on
+ * single-result `list_objects` / `search_objects` calls too.
+ */
+async function buildCollectionHeroCard(
+	config: McpConfig,
+	tool: string,
+	rows: RawObject[],
+	workspaceId: string | undefined,
+): Promise<HeroCardPayload> {
+	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
+	const ownerIds = rows.map((o) => o.owner).filter((v): v is string => typeof v === 'string')
+	const actors = await resolveActors(config, ownerIds, workspaceId)
+	const heroObjects = rows.map((o) =>
+		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+	)
+	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
+	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
+}
+
+/**
+ * Resolve actor names for a set of actor IDs in one shot. Used to fill owner
+ * names into HeroCardObject. Best-effort: missing actors come back as
+ * `{ id, name: null }` so the widget renders without owner instead of failing.
+ */
+async function resolveActors(
+	config: McpConfig,
+	actorIds: Iterable<string>,
+	workspaceId: string | undefined,
+): Promise<Map<string, HeroCardActor>> {
+	const uniq = [...new Set([...actorIds].filter((id): id is string => typeof id === 'string'))]
+	const out = new Map<string, HeroCardActor>()
+	if (uniq.length === 0) return out
+	try {
+		const result = (await apiCall(config, 'GET', '/api/actors', undefined, {
+			workspaceId,
+		})) as Array<{ id: string; name: string | null }>
+		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null })
+	} catch (err) {
+		console.error('[MCP] Failed to resolve actors for hero-card:', err)
+	}
+	for (const id of uniq) {
+		if (!out.has(id)) out.set(id, { id, name: null })
+	}
+	return out
+}
+
 function loadHtml(config: McpConfig, filename: string): string {
 	const basePath = config.htmlBasePath ?? resolve(__dirname, '../../../apps/web/dist-mcp')
 	const fullPath = resolve(basePath, filename)
@@ -804,11 +997,14 @@ export function createMcpServer(config: McpConfig) {
 	}) as any as typeof _registerAppTool
 
 	// ─── Register UI resources ─────────────────────────────────
+	// Filename is derived from the URI's last path segment so kebab-case bundles
+	// (e.g. `hero-card.html`) can register under camelCase keys (`heroCard`).
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
+		const filename = `${uri.split('/').pop()}.html`
 		registerAppResource(server, `${name}-ui`, uri, { mimeType: RESOURCE_MIME_TYPE }, async () => {
-			console.log(`[MCP] Resource read requested: ${uri} (${name}.html)`)
+			console.log(`[MCP] Resource read requested: ${uri} (${filename})`)
 			return {
-				contents: [{ uri, mimeType: RESOURCE_MIME_TYPE, text: loadHtml(config, `${name}.html`) }],
+				contents: [{ uri, mimeType: RESOURCE_MIME_TYPE, text: loadHtml(config, filename) }],
 			}
 		})
 	}
@@ -935,9 +1131,38 @@ export function createMcpServer(config: McpConfig) {
 					}
 				}),
 			)
+
+			// Build the Hero Card payload. Single successful result → kind='single'
+			// (eligible to swap to the Hero Card widget); anything else stays
+			// 'list' / 'empty' and renders via the existing objects widget.
+			const successful = results.filter(
+				(r): r is { id: string; success: true; result: { object: RawObject } } =>
+					r.success === true && (r.result as { object?: unknown } | null)?.object != null,
+			)
+			const rawObjects = successful.map((r) => r.result.object)
+			const ownerIds = rawObjects
+				.map((o) => o.owner)
+				.filter((v): v is string => typeof v === 'string')
+			const actors = await resolveActors(config, ownerIds, workspace_id)
+			const heroObjects = rawObjects.map((o) =>
+				buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+			)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'get_objects' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'get_objects', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'get_objects',
+								objects: heroObjects,
+								totalCount: heroObjects.length,
+							}
+
 			return {
-				_meta: meta('get_objects', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -1217,12 +1442,19 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as RawObject[]
+			const heroCard = await buildCollectionHeroCard(
+				config,
+				'list_objects',
+				result,
+				args.workspace_id,
+			)
 			return {
-				_meta: meta('list_objects', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: uiMeta('list_objects', config, args.workspace_id, pickResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -1242,12 +1474,19 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as RawObject[]
+			const heroCard = await buildCollectionHeroCard(
+				config,
+				'search_objects',
+				result,
+				args.workspace_id,
+			)
 			return {
-				_meta: meta('search_objects', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: uiMeta('search_objects', config, args.workspace_id, pickResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -3605,6 +3844,36 @@ export function createMcpServer(config: McpConfig) {
 			throw new Error(
 				`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
 			)
+		},
+	)
+
+	// ─── Widget telemetry ────────────────────────────────────
+	// Called by rendered MCP widgets to report click-through and render
+	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
+	// the 48h rolling render-error kill criterion. Intentionally NOT in
+	// MUTATION_TOOL_KINDS — it's an instrumentation channel, not a write.
+	registerAppTool(
+		server,
+		'record_widget_event',
+		{
+			description: tools.record_widget_event.description,
+			inputSchema: tools.record_widget_event.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			recordWidgetEvent(telemetrySink, telemetryTarget, {
+				widget_name: args.widget_name,
+				event: args.event,
+				tool_name: args.tool_name,
+				card_kind: args.card_kind,
+				object_type: args.object_type,
+				object_id: args.object_id,
+				workspace_id: args.workspace_id,
+			})
+			return {
+				_meta: meta('record_widget_event', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify({ recorded: true }) }],
+			}
 		},
 	)
 
