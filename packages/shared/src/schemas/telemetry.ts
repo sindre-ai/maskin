@@ -85,6 +85,47 @@ export const mcpTelemetrySummaryQuerySchema = z.object({
 	days: z.coerce.number().int().min(1).max(90).optional(),
 })
 
+// Bet-first measurement window for the MCP widget UX bet's success/kill criteria.
+// Computed over render_success + click_through + render_error widget_event rows
+// where object_type='bet'. Renders sent by `actor_type='agent'` are excluded so
+// honest-host telemetry pollution can't trip the kill switch (consistent with
+// the visibility gate that hides record_widget_event from agents in compliant
+// hosts). All percentages are 0–100 (not 0–1).
+export const widgetBetFirstWindowSchema = z.object({
+	bet_renders_total: z.number().int().min(0),
+	bet_render_errors_total: z.number().int().min(0),
+	bet_click_throughs_total: z.number().int().min(0),
+	// First-200 rolling CTR — the bet's success metric. `pct` is null until the
+	// window opens (zero renders).
+	ctr_first_200: z.object({
+		renders: z.number().int().min(0),
+		clicks: z.number().int().min(0),
+		pct: z.number().min(0).max(100).nullable(),
+		target_pct: z.number().min(0).max(100),
+		target_met: z.boolean(),
+	}),
+	// First-50 rolling CTR — the kill window. `kill_triggered` is true once we
+	// have ≥50 renders and the CTR is below the threshold.
+	ctr_first_50_kill: z.object({
+		renders: z.number().int().min(0),
+		clicks: z.number().int().min(0),
+		pct: z.number().min(0).max(100).nullable(),
+		kill_threshold_pct: z.number().min(0).max(100),
+		kill_triggered: z.boolean(),
+	}),
+	// 48h rolling render-error rate. `kill_triggered` is true once the window
+	// has ≥1 render attempt and the error rate exceeds the threshold.
+	render_error_48h: z.object({
+		renders: z.number().int().min(0),
+		errors: z.number().int().min(0),
+		pct: z.number().min(0).max(100).nullable(),
+		kill_threshold_pct: z.number().min(0).max(100),
+		kill_triggered: z.boolean(),
+	}),
+})
+
+export type WidgetBetFirstWindow = z.infer<typeof widgetBetFirstWindowSchema>
+
 export const mcpTelemetrySummarySchema = z.object({
 	workspace_id: z.string().uuid(),
 	window_start: z.string().datetime({ offset: true }),
@@ -108,17 +149,7 @@ export const mcpTelemetrySummarySchema = z.object({
 			rich_pct: z.number().min(0).max(100),
 		}),
 	),
-	// Rolling-kill criterion from the MCP Widget UX bet: widget render failures
-	// above 10% in any 48h window pause shipping and revert to the Markdown
-	// deep-link fallback in `content[0].text`. The window is fixed at 48h
-	// independent of `?days=` — the kill switch only cares about the most
-	// recent two days. `render_error_kill_switch_breach=true` is the signal
-	// dashboards and Slack monitors should escalate on.
-	widget_renders_48h: z.number().int().min(0),
-	widget_render_errors_48h: z.number().int().min(0),
-	render_error_pct_48h: z.number().min(0).max(100),
-	render_error_kill_switch_pct: z.number().min(0).max(100),
-	render_error_kill_switch_breach: z.boolean(),
+	widget_bet_first_window: widgetBetFirstWindowSchema,
 })
 
 export type McpTelemetrySummary = z.infer<typeof mcpTelemetrySummarySchema>
