@@ -116,8 +116,16 @@ describe('Telemetry Routes', () => {
 	describe('GET /api/telemetry/mcp/summary', () => {
 		it('returns zero counters and zero ratios when no telemetry exists', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
-			// 1) workspace membership check, 2) tool_call totals, 3) sessions group, 4) mutations total, 5) per-day rows
-			mockResults.selectQueue = [[memberRow], [{ total: 0, rich: 0 }], [], [{ total: 0 }], []]
+			// 1) workspace membership, 2) tool_call totals, 3) sessions group,
+			// 4) mutations total, 5) per-day rows, 6) widget render-error rows
+			mockResults.selectQueue = [
+				[memberRow],
+				[{ total: 0, rich: 0 }],
+				[],
+				[{ total: 0 }],
+				[],
+				[{ renders: 0, errors: 0 }],
+			]
 
 			const res = await app.request(
 				jsonGet('/api/telemetry/mcp/summary?days=30', { 'x-workspace-id': wsId }),
@@ -137,6 +145,11 @@ describe('Telemetry Routes', () => {
 			expect(body.mutation_session_target_met).toBe(false)
 			expect(body.mutations_total).toBe(0)
 			expect(body.rich_render_by_day).toEqual([])
+			expect(body.widget_renders_48h).toBe(0)
+			expect(body.widget_render_errors_48h).toBe(0)
+			expect(body.render_error_pct_48h).toBe(0)
+			expect(body.render_error_kill_switch_pct).toBe(10)
+			expect(body.render_error_kill_switch_breach).toBe(false)
 		})
 
 		it('computes rich-render and mutation-session percentages from telemetry rows', async () => {
@@ -158,6 +171,7 @@ describe('Telemetry Routes', () => {
 					{ day: '2026-04-25', total: 4, rich: 2 },
 					{ day: '2026-04-26', total: 6, rich: 4 },
 				],
+				[{ renders: 0, errors: 0 }],
 			]
 
 			const res = await app.request(
@@ -192,6 +206,52 @@ describe('Telemetry Routes', () => {
 			)
 
 			expect(res.status).toBe(403)
+		})
+
+		it('flags the kill-switch breach when widget render-error rate exceeds 10% in the 48h window', async () => {
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			// 100 widget renders in the 48h window, 15 errors → 15% → breach.
+			mockResults.selectQueue = [
+				[memberRow],
+				[{ total: 0, rich: 0 }],
+				[],
+				[{ total: 0 }],
+				[],
+				[{ renders: 100, errors: 15 }],
+			]
+
+			const res = await app.request(
+				jsonGet('/api/telemetry/mcp/summary?days=30', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.widget_renders_48h).toBe(100)
+			expect(body.widget_render_errors_48h).toBe(15)
+			expect(body.render_error_pct_48h).toBe(15)
+			expect(body.render_error_kill_switch_breach).toBe(true)
+		})
+
+		it('does not flag the kill-switch breach when render-error rate is within tolerance', async () => {
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			// 100 widget renders in the 48h window, 5 errors → 5% → no breach.
+			mockResults.selectQueue = [
+				[memberRow],
+				[{ total: 0, rich: 0 }],
+				[],
+				[{ total: 0 }],
+				[],
+				[{ renders: 100, errors: 5 }],
+			]
+
+			const res = await app.request(
+				jsonGet('/api/telemetry/mcp/summary?days=30', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.render_error_pct_48h).toBe(5)
+			expect(body.render_error_kill_switch_breach).toBe(false)
 		})
 	})
 })

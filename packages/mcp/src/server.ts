@@ -20,6 +20,7 @@ import {
 } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { Cron } from 'croner'
 import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
@@ -777,6 +778,54 @@ interface RawObject {
 	metadata?: Record<string, unknown> | null
 }
 
+/**
+ * Schema-driven Hero Card metadata for an object type. Keeps render eligibility
+ * + context line + meta + primary action as schema annotations so a new type
+ * gets the full Hero Card surface by adding one entry — no widget edits, no
+ * predicate edits.
+ *
+ * Mirrors `heroCardTypeAnnotationSchema` in `packages/shared/src/schemas/workspaces.ts`.
+ */
+export interface HeroCardTypeAnnotation {
+	/**
+	 * One-line context strategy. Known value: `'last touch + stage'` — renders
+	 * `last touch {age} · {status}`. Unknown strategies fall back to the
+	 * legacy per-type switch in `buildContextLine`.
+	 */
+	hero_card_context?: string
+	hero_card_metas?: Array<{ label: string; field?: string }>
+	primary_action?: { label: string; kind: string }
+}
+
+/**
+ * Built-in Hero Card annotations for object types in the launch set. `bet`,
+ * `task`, `insight`, `trigger` keep their legacy switch paths in
+ * `buildContextLine` so this map is purely additive — workspaces can still
+ * override per-type via `settings.hero_card`.
+ *
+ * The customer variant (T2 resolution: render both `organization` AND `person`
+ * with the customer context line) lives here, so any future explicit
+ * `customer` type drops in by adding one entry.
+ */
+export const HERO_CARD_TYPE_DEFAULTS: Record<string, HeroCardTypeAnnotation> = {
+	organization: {
+		hero_card_context: 'last touch + stage',
+		hero_card_metas: [
+			{ label: 'Stage', field: 'status' },
+			{ label: 'Owner', field: 'owner' },
+		],
+		primary_action: { label: 'Open in Maskin', kind: 'open_object' },
+	},
+	person: {
+		hero_card_context: 'last touch + stage',
+		hero_card_metas: [
+			{ label: 'Stage', field: 'status' },
+			{ label: 'Owner', field: 'owner' },
+		],
+		primary_action: { label: 'Open in Maskin', kind: 'open_object' },
+	},
+}
+
 /** Days between two ISO timestamps. Negative values clamp to 0. */
 function daysBetween(fromIso: string | null | undefined, nowMs: number): number | null {
 	if (!fromIso) return null
@@ -797,12 +846,39 @@ function ageLabel(fromIso: string | null | undefined, nowMs = Date.now()): strin
 	return `${years}y ago`
 }
 
+/** Render one or more anchor tags as a single `anchor #3+#6` label. */
+function anchorLabel(meta: Record<string, unknown> | null | undefined): string | null {
+	if (!meta) return null
+	const raw = meta.anchors ?? meta.anchor
+	if (Array.isArray(raw)) {
+		const tags = raw.filter((v): v is string => typeof v === 'string' && v.length > 0)
+		if (tags.length === 0) return null
+		return `anchor ${tags.join('+')}`
+	}
+	if (typeof raw === 'string' && raw.length > 0) return `anchor ${raw}`
+	return null
+}
+
 /**
- * Per-type one-line context. New types fall through to `type · status`, so
- * absorbing a new object type does NOT require a widget change.
+ * Per-type one-line context. Schema annotations (`HeroCardTypeAnnotation.hero_card_context`)
+ * take precedence — a type with `'last touch + stage'` renders `last touch {age} · {status}`
+ * regardless of which concrete type it is. Falls through to the legacy per-type
+ * switch for `bet`/`task`/`insight` and to `type · status` for everything else,
+ * so absorbing a new object type does NOT require a widget change.
  */
-function buildContextLine(obj: RawObject, owner: HeroCardActor | null, nowMs = Date.now()): string {
+export function buildContextLine(
+	obj: RawObject,
+	owner: HeroCardActor | null,
+	nowMs = Date.now(),
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
+): string {
 	const status = obj.status ?? 'unknown'
+	const annotation = annotations[obj.type]
+	if (annotation?.hero_card_context === 'last touch + stage') {
+		const lastTouch = obj.updatedAt ?? obj.createdAt
+		const age = ageLabel(lastTouch, nowMs)
+		return age ? `last touch ${age} · ${status}` : status
+	}
 	const age = ageLabel(obj.createdAt, nowMs)
 	const ownerName = owner?.name
 	switch (obj.type) {
@@ -826,7 +902,9 @@ function buildContextLine(obj: RawObject, owner: HeroCardActor | null, nowMs = D
 		case 'insight': {
 			const cluster = obj.metadata?.cluster_size as number | undefined
 			const evidence = obj.metadata?.evidence_quality as string | undefined
+			const anchor = anchorLabel(obj.metadata)
 			const parts = [status]
+			if (anchor) parts.push(anchor)
 			if (typeof cluster === 'number') parts.push(`${cluster} sources`)
 			else if (evidence) parts.push(evidence)
 			return parts.join(' · ')
@@ -836,10 +914,11 @@ function buildContextLine(obj: RawObject, owner: HeroCardActor | null, nowMs = D
 	}
 }
 
-function buildHeroCardObject(
+export function buildHeroCardObject(
 	obj: RawObject,
 	owner: HeroCardActor | null,
 	nowMs = Date.now(),
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): HeroCardObject {
 	return {
 		id: obj.id,
@@ -847,21 +926,66 @@ function buildHeroCardObject(
 		title: obj.title ?? null,
 		status: obj.status ?? null,
 		owner,
-		contextLine: buildContextLine(obj, owner, nowMs),
+		contextLine: buildContextLine(obj, owner, nowMs, annotations),
 	}
 }
 
 /**
- * Per-response resource swap. T3 ships the Hero Card only for single-bet
- * results; everything else stays on the existing `objects` widget. Widening
- * the predicate (e.g. adding `task`) is the only change required to roll out
- * a new variant.
+ * Per-response resource swap. Returns the Hero Card resource for single results
+ * whose type is either in the built-in launch set (`bet`, `task`, `insight`,
+ * `trigger`) or has a Hero Card annotation (customer variant: `organization`,
+ * `person`, and any future schema-annotated type). Everything else stays on the
+ * existing `objects` widget. New variants opt in by extending
+ * `HERO_CARD_SINGLE_TYPES` or by adding an annotation.
  */
-function pickResourceUri(payload: HeroCardPayload): string {
-	if (payload.kind === 'single' && payload.object?.type === 'bet') {
-		return UI_RESOURCES.heroCard
-	}
+const HERO_CARD_SINGLE_TYPES: ReadonlySet<string> = new Set(['bet', 'task', 'insight', 'trigger'])
+
+export function pickResourceUri(
+	payload: HeroCardPayload,
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
+): string {
+	if (payload.kind !== 'single' || !payload.object) return UI_RESOURCES.objects
+	const type = payload.object.type
+	if (HERO_CARD_SINGLE_TYPES.has(type) || annotations[type]) return UI_RESOURCES.heroCard
 	return UI_RESOURCES.objects
+}
+
+/**
+ * Collection tools always render through the Hero Card bundle: the same
+ * widget handles the 0 / 1 / N branches and keeps the iframe payload
+ * inside Anthropic's 500px envelope without a second template.
+ */
+function pickCollectionResourceUri(_payload: HeroCardPayload): string {
+	return UI_RESOURCES.heroCard
+}
+
+interface RawActor {
+	id: string
+	type?: string | null
+	name?: string | null
+	email?: string | null
+	role?: string | null
+	isSystem?: boolean | null
+}
+
+function buildActorContextLine(actor: RawActor): string {
+	const kind = actor.type || 'actor'
+	const parts: string[] = [kind]
+	if (actor.role) parts.push(actor.role)
+	else if (actor.email) parts.push(actor.email)
+	return parts.join(' · ')
+}
+
+function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
+	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
+	return {
+		id: actor.id,
+		type: 'actor',
+		title: actor.name ?? null,
+		status,
+		owner: null,
+		contextLine: buildActorContextLine(actor),
+	}
 }
 
 /**
@@ -885,11 +1009,125 @@ async function buildCollectionHeroCard(
 	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
 }
 
+interface RawTrigger {
+	id: string
+	name: string
+	type: string
+	config: Record<string, unknown> | null
+	enabled: boolean
+	targetActorId?: string | null
+	target_actor_id?: string | null
+	createdAt?: string | null
+	updatedAt?: string | null
+}
+
+function formatRelativeFuture(targetMs: number, nowMs: number): string {
+	const diffMs = targetMs - nowMs
+	if (diffMs <= 0) return 'due now'
+	const minutes = Math.floor(diffMs / 60_000)
+	if (minutes < 60) return `in ${minutes}m`
+	const hours = Math.floor(minutes / 60)
+	if (hours < 24) return `in ${hours}h`
+	const days = Math.floor(hours / 24)
+	if (days < 30) return `in ${days}d`
+	const months = Math.floor(days / 30)
+	return `in ${months}mo`
+}
+
+/**
+ * Per-trigger-type context line: schedule + next-run for cron, scheduled time
+ * for reminder, event predicate for event triggers. Uses `croner` purely for
+ * next-run lookup — no shared scheduler state.
+ */
+function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): string {
+	const enabledLabel = trigger.enabled ? 'enabled' : 'disabled'
+	const config = trigger.config ?? {}
+	switch (trigger.type) {
+		case 'cron': {
+			const expression = typeof config.expression === 'string' ? config.expression : null
+			if (!expression) return `cron · ${enabledLabel}`
+			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts).
+			// Workspaces don't carry a timezone yet, so we surface UTC inline to keep the
+			// label honest against the runtime; drop the suffix once timezone is plumbed through.
+			let nextLabel: string | null = null
+			if (trigger.enabled) {
+				try {
+					const job = new Cron(expression, { timezone: 'UTC' })
+					const next = job.nextRun(new Date(nowMs))
+					if (next) nextLabel = `next ${formatRelativeFuture(next.getTime(), nowMs)}`
+				} catch {
+					// Invalid expression — skip next-run, keep the schedule line.
+				}
+			}
+			const schedule = `${expression} (UTC)`
+			return nextLabel
+				? `${enabledLabel} · ${schedule} · ${nextLabel}`
+				: `${enabledLabel} · ${schedule}`
+		}
+		case 'reminder': {
+			const scheduledAt = typeof config.scheduled_at === 'string' ? config.scheduled_at : null
+			if (!scheduledAt) return `reminder · ${enabledLabel}`
+			const targetMs = Date.parse(scheduledAt)
+			if (!Number.isFinite(targetMs)) return `reminder · ${enabledLabel}`
+			return `${enabledLabel} · at ${scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
+		}
+		case 'event': {
+			const action = typeof config.action === 'string' ? config.action : null
+			const entityType = typeof config.entity_type === 'string' ? config.entity_type : null
+			if (action && entityType) return `${enabledLabel} · on ${action} ${entityType}`
+			if (action) return `${enabledLabel} · on ${action}`
+			return `event · ${enabledLabel}`
+		}
+		default:
+			return `${trigger.type} · ${enabledLabel}`
+	}
+}
+
+function buildTriggerHeroCardObject(
+	trigger: RawTrigger,
+	owner: HeroCardActor | null,
+	nowMs = Date.now(),
+): HeroCardObject {
+	return {
+		id: trigger.id,
+		type: 'trigger',
+		title: trigger.name ?? null,
+		status: trigger.enabled ? 'enabled' : 'disabled',
+		owner,
+		contextLine: buildTriggerContextLine(trigger, nowMs),
+	}
+}
+
+async function buildTriggerCollectionHeroCard(
+	config: McpConfig,
+	tool: string,
+	rows: RawTrigger[],
+	workspaceId: string | undefined,
+): Promise<HeroCardPayload> {
+	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
+	const ownerIds = rows
+		.map((t) => t.targetActorId ?? t.target_actor_id ?? null)
+		.filter((v): v is string => typeof v === 'string')
+	const actors = await resolveActors(config, ownerIds, workspaceId)
+	const heroObjects = rows.map((t) => {
+		const targetId = t.targetActorId ?? t.target_actor_id ?? null
+		const owner = targetId ? (actors.get(targetId) ?? null) : null
+		return buildTriggerHeroCardObject(t, owner)
+	})
+	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
+	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
+}
+
 /**
  * Resolve actor names for a set of actor IDs in one shot. Used to fill owner
  * names into HeroCardObject. Best-effort: missing actors come back as
  * `{ id, name: null }` so the widget renders without owner instead of failing.
  */
+// Hero-card responses typically resolve a single tool call's owner set (≤50
+// objects). Cap defensively at 200 to match the server-side `?ids=` limit and
+// avoid building an URL larger than the receiver accepts.
+const RESOLVE_ACTORS_MAX_IDS = 200
+
 async function resolveActors(
 	config: McpConfig,
 	actorIds: Iterable<string>,
@@ -898,11 +1136,16 @@ async function resolveActors(
 	const uniq = [...new Set([...actorIds].filter((id): id is string => typeof id === 'string'))]
 	const out = new Map<string, HeroCardActor>()
 	if (uniq.length === 0) return out
+	const queryIds = uniq.slice(0, RESOLVE_ACTORS_MAX_IDS)
 	try {
-		const result = (await apiCall(config, 'GET', '/api/actors', undefined, {
+		const query = `?ids=${queryIds.map(encodeURIComponent).join(',')}`
+		const result = (await apiCall(config, 'GET', `/api/actors${query}`, undefined, {
 			workspaceId,
 		})) as Array<{ id: string; name: string | null }>
 		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null })
+		console.log(
+			`[MCP] Resolved ${out.size}/${queryIds.length} hero-card actor names (requested ${uniq.length})`,
+		)
 	} catch (err) {
 		console.error('[MCP] Failed to resolve actors for hero-card:', err)
 	}
@@ -1452,7 +1695,12 @@ export function createMcpServer(config: McpConfig) {
 				args.workspace_id,
 			)
 			return {
-				_meta: uiMeta('list_objects', config, args.workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'list_objects',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1484,7 +1732,12 @@ export function createMcpServer(config: McpConfig) {
 				args.workspace_id,
 			)
 			return {
-				_meta: uiMeta('search_objects', config, args.workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'search_objects',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1583,17 +1836,40 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_actors.description,
 			inputSchema: tools.list_actors.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = args.workspace_id
-				? await apiCall(config, 'GET', '/api/actors', undefined, {
-						workspaceId: args.workspace_id,
-					})
-				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
+			const result = (
+				args.workspace_id
+					? await apiCall(config, 'GET', '/api/actors', undefined, {
+							workspaceId: args.workspace_id,
+						})
+					: await apiCall(config, 'GET', '/api/actors', undefined, {
+							skipWorkspace: true,
+						})
+			) as RawActor[]
+			const rows = Array.isArray(result) ? result : []
+			const heroObjects = rows.map(buildActorHeroCardObject)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_actors' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'list_actors', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_actors',
+								objects: heroObjects,
+								totalCount: heroObjects.length,
+							}
 			return {
-				_meta: meta('list_actors', config),
+				_meta: uiMeta(
+					'list_actors',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -1747,6 +2023,13 @@ export function createMcpServer(config: McpConfig) {
 			>
 			const displayNames = (settings.display_names ?? {}) as Record<string, string>
 			const relationshipTypes = (settings.relationship_types ?? []) as string[]
+			const heroCardOverrides = (settings.hero_card ?? {}) as Record<string, HeroCardTypeAnnotation>
+			// Workspace settings override built-in defaults so a workspace can rewire
+			// the customer variant (or annotate a new type) without a code change.
+			const heroCardAnnotations: Record<string, HeroCardTypeAnnotation> = {
+				...HERO_CARD_TYPE_DEFAULTS,
+				...heroCardOverrides,
+			}
 			const typeFilter = args.type
 
 			const schema: Record<string, unknown> = {
@@ -1761,11 +2044,14 @@ export function createMcpServer(config: McpConfig) {
 			const typeSchemas: Record<string, unknown> = {}
 
 			for (const t of types) {
-				typeSchemas[t] = {
+				const typeSchema: Record<string, unknown> = {
 					display_name: displayNames[t] ?? t,
 					statuses: statuses[t] ?? [],
 					fields: fieldDefinitions[t] ?? [],
 				}
+				const hc = heroCardAnnotations[t]
+				if (hc) typeSchema.hero_card = hc
+				typeSchemas[t] = typeSchema
 			}
 
 			schema.types = typeSchemas
@@ -2473,15 +2759,22 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_triggers.description,
 			inputSchema: tools.list_triggers.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', '/api/triggers', undefined, {
+			const result = (await apiCall(config, 'GET', '/api/triggers', undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as RawTrigger[]
+			const heroCard = await buildTriggerCollectionHeroCard(
+				config,
+				'list_triggers',
+				result,
+				args.workspace_id,
+			)
 			return {
-				_meta: meta('list_triggers', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: uiMeta('list_triggers', config, args.workspace_id, pickCollectionResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
