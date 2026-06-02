@@ -303,11 +303,10 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, and LLM config.',
+			'Update an actor by ID. Can change name, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, and LLM config. Email cannot be changed via this tool — it requires the verified email-change flow on the web app.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
-			email: z.string().email().optional(),
 			description: z
 				.string()
 				.max(80)
