@@ -86,6 +86,29 @@ export function getOpenApiConfig(port = 3000) {
 	}
 }
 
+/**
+ * Returns true when the request should skip API-key auth. Each exemption has a
+ * distinct reason; do not extend without checking the corresponding flow:
+ *   - /api/health, /api/openapi.json: public discovery endpoints
+ *   - POST /api/actors: signup bootstrap, mints the first API key
+ *   - POST /api/auth/login: pre-auth credential exchange
+ *   - POST /api/auth/email-change/verify: token-authenticated handler — the
+ *     verification link is clicked from the new-email inbox, where the user is
+ *     not logged in. The token is single-use, 256 bits of entropy, 24h TTL,
+ *     and the change was already gated by current-password at request time.
+ *   - /api/webhooks/*: authenticated via provider HMAC, not our API key
+ *   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
+ */
+export function isAuthBypassed(path: string, method: string): boolean {
+	if (path === '/api/health' || path === '/api/openapi.json') return true
+	if (path === '/api/actors' && method === 'POST') return true
+	if (path === '/api/auth/login' && method === 'POST') return true
+	if (path === '/api/auth/email-change/verify' && method === 'POST') return true
+	if (path.startsWith('/api/webhooks/')) return true
+	if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return true
+	return false
+}
+
 export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAPIHono<Env> {
 	const { db, notifyBridge, sessionManager, agentStorage, storageProvider } = deps
 	const port = options.port ?? (Number(process.env.PORT) || 3000)
@@ -165,23 +188,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		return c.json({ status: 'ok', timestamp: new Date().toISOString() })
 	})
 
-	// Auth allowlist — each exemption has a distinct reason; do not tighten
-	// without checking the corresponding flow:
-	//   - /api/health, /api/openapi.json: public discovery endpoints
-	//   - POST /api/actors: signup bootstrap, mints the first API key
-	//   - POST /api/auth/login: pre-auth credential exchange
-	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
-	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
-		const path = c.req.path
-		const method = c.req.method
-		if (path === '/api/health' || path === '/api/openapi.json') return next()
-		if (path === '/api/actors' && method === 'POST') return next()
-		if (path === '/api/auth/login' && method === 'POST') return next()
-		if (path.startsWith('/api/webhooks/')) return next()
-		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
-
+		if (isAuthBypassed(c.req.path, c.req.method)) return next()
 		return auth(c, next)
 	})
 
