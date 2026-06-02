@@ -826,6 +826,7 @@ export const HERO_CARD_TYPE_DEFAULTS: Record<string, HeroCardTypeAnnotation> = {
 	},
 }
 
+
 /** Days between two ISO timestamps. Negative values clamp to 0. */
 function daysBetween(fromIso: string | null | undefined, nowMs: number): number | null {
 	if (!fromIso) return null
@@ -948,6 +949,44 @@ export function pickResourceUri(
 	const type = payload.object.type
 	if (HERO_CARD_SINGLE_TYPES.has(type) || annotations[type]) return UI_RESOURCES.heroCard
 	return UI_RESOURCES.objects
+}
+
+/**
+ * Collection tools always render through the Hero Card bundle: the same
+ * widget handles the 0 / 1 / N branches and keeps the iframe payload
+ * inside Anthropic's 500px envelope without a second template.
+ */
+function pickCollectionResourceUri(_payload: HeroCardPayload): string {
+	return UI_RESOURCES.heroCard
+}
+
+interface RawActor {
+	id: string
+	type?: string | null
+	name?: string | null
+	email?: string | null
+	role?: string | null
+	isSystem?: boolean | null
+}
+
+function buildActorContextLine(actor: RawActor): string {
+	const kind = actor.type || 'actor'
+	const parts: string[] = [kind]
+	if (actor.role) parts.push(actor.role)
+	else if (actor.email) parts.push(actor.email)
+	return parts.join(' · ')
+}
+
+function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
+	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
+	return {
+		id: actor.id,
+		type: 'actor',
+		title: actor.name ?? null,
+		status,
+		owner: null,
+		contextLine: buildActorContextLine(actor),
+	}
 }
 
 /**
@@ -1079,6 +1118,7 @@ async function buildTriggerCollectionHeroCard(
 	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
 	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
 }
+
 
 /**
  * Resolve actor names for a set of actor IDs in one shot. Used to fill owner
@@ -1647,7 +1687,12 @@ export function createMcpServer(config: McpConfig) {
 				args.workspace_id,
 			)
 			return {
-				_meta: uiMeta('list_objects', config, args.workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'list_objects',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1679,7 +1724,12 @@ export function createMcpServer(config: McpConfig) {
 				args.workspace_id,
 			)
 			return {
-				_meta: uiMeta('search_objects', config, args.workspace_id, pickResourceUri(heroCard)),
+				_meta: uiMeta(
+					'search_objects',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
@@ -1778,17 +1828,40 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_actors.description,
 			inputSchema: tools.list_actors.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = args.workspace_id
-				? await apiCall(config, 'GET', '/api/actors', undefined, {
-						workspaceId: args.workspace_id,
-					})
-				: await apiCall(config, 'GET', '/api/actors', undefined, { skipWorkspace: true })
+			const result = (
+				args.workspace_id
+					? await apiCall(config, 'GET', '/api/actors', undefined, {
+							workspaceId: args.workspace_id,
+						})
+					: await apiCall(config, 'GET', '/api/actors', undefined, {
+							skipWorkspace: true,
+						})
+			) as RawActor[]
+			const rows = Array.isArray(result) ? result : []
+			const heroObjects = rows.map(buildActorHeroCardObject)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_actors' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'list_actors', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_actors',
+								objects: heroObjects,
+								totalCount: heroObjects.length,
+							}
 			return {
-				_meta: meta('list_actors', config),
+				_meta: uiMeta(
+					'list_actors',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -2678,7 +2751,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_triggers.description,
 			inputSchema: tools.list_triggers.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
 			const result = (await apiCall(config, 'GET', '/api/triggers', undefined, {
@@ -2690,14 +2763,8 @@ export function createMcpServer(config: McpConfig) {
 				result,
 				args.workspace_id,
 			)
-			// Single-trigger responses route through hero-card; multi-result
-			// responses keep the existing triggers widget until that variant ships.
-			const resourceUri =
-				heroCard.kind === 'single' && heroCard.object?.type === 'trigger'
-					? UI_RESOURCES.heroCard
-					: UI_RESOURCES.triggers
 			return {
-				_meta: uiMeta('list_triggers', config, args.workspace_id, resourceUri),
+				_meta: uiMeta('list_triggers', config, args.workspace_id, pickCollectionResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
