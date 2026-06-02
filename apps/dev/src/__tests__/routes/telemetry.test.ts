@@ -111,6 +111,130 @@ describe('Telemetry Routes', () => {
 
 			expect(res.status).toBe(400)
 		})
+
+		it('records a widget_event render_success for a workspace member', async () => {
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			mockResults.select = [memberRow]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'widget_event',
+						widget_name: 'hero-card',
+						event: 'render_success',
+						tool_name: 'get_objects',
+						session_id: 'mcp-widget-1',
+						card_kind: 'single',
+						object_type: 'bet',
+						object_id: 'bet-123',
+						ts: 1717245000000,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(202)
+			expect(await res.json()).toEqual({ recorded: true })
+		})
+
+		it('records a widget_event click_through for a workspace member', async () => {
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			mockResults.select = [memberRow]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'widget_event',
+						widget_name: 'hero-card',
+						event: 'click_through',
+						tool_name: 'get_objects',
+						session_id: 'mcp-widget-1',
+						card_kind: 'single',
+						object_type: 'bet',
+						object_id: 'bet-123',
+						ts: 1717245001000,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(202)
+		})
+
+		it('returns 400 when widget_event has unknown event kind', async () => {
+			const { app } = createTestApp(telemetryRoutes, '/api/telemetry')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'widget_event',
+						widget_name: 'hero-card',
+						event: 'hover',
+						tool_name: 'get_objects',
+						session_id: 'mcp-widget-1',
+						card_kind: 'single',
+						ts: 1717245000000,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when widget_event is missing session_id', async () => {
+			const { app } = createTestApp(telemetryRoutes, '/api/telemetry')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'widget_event',
+						widget_name: 'hero-card',
+						event: 'render_success',
+						tool_name: 'get_objects',
+						card_kind: 'single',
+						ts: 1717245000000,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 403 when widget_event sender is not a workspace member', async () => {
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/telemetry/mcp',
+					{
+						event_type: 'widget_event',
+						widget_name: 'hero-card',
+						event: 'render_error',
+						tool_name: 'get_objects',
+						session_id: 'mcp-widget-1',
+						card_kind: 'single',
+						ts: 1717245000000,
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
+		})
 	})
 
 	describe('GET /api/telemetry/mcp/summary', () => {

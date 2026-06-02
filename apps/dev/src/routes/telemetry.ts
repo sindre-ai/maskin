@@ -37,7 +37,7 @@ const recordRoute = createRoute({
 	method: 'post',
 	path: '/mcp',
 	tags: ['Telemetry'],
-	summary: 'Record an MCP telemetry event (tool_call or mutation).',
+	summary: 'Record an MCP telemetry event (tool_call, mutation, or widget_event).',
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: recordMcpTelemetrySchema } } },
@@ -77,7 +77,7 @@ app.openapi(recordRoute, (async (c) => {
 			hasRichRender: body.has_rich_render,
 			durationMs: body.duration_ms,
 		})
-	} else {
+	} else if (body.event_type === 'mutation') {
 		await db.insert(mcpTelemetry).values({
 			workspaceId,
 			eventType: 'mutation',
@@ -86,6 +86,29 @@ app.openapi(recordRoute, (async (c) => {
 			objectType: body.object_type ?? null,
 			mutationKind: body.mutation_kind,
 		})
+	} else {
+		// widget_event — widget-only fields (event, widget_name, card_kind, object_id,
+		// ts) live in the `data` jsonb column so we avoid a hot-table migration. T9's
+		// CTR aggregation reads them back via jsonb operators.
+		await db.insert(mcpTelemetry).values({
+			workspaceId,
+			eventType: 'widget_event',
+			toolName: body.tool_name,
+			sessionId: body.session_id,
+			objectType: body.object_type ?? null,
+			data: {
+				event: body.event,
+				widget_name: body.widget_name,
+				card_kind: body.card_kind,
+				object_id: body.object_id ?? null,
+				ts: body.ts,
+			},
+		})
+		// One log line per widget event so the 48h render-error kill criterion is
+		// observable in raw logs without running the T9 aggregation query.
+		console.log(
+			`[telemetry] widget_event ${body.event} — widget=${body.widget_name} tool=${body.tool_name} object_type=${body.object_type ?? 'null'} object_id=${body.object_id ?? 'null'} workspace=${workspaceId}`,
+		)
 	}
 
 	return c.json({ recorded: true as const }, 202)
