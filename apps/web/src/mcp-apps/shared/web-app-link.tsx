@@ -6,7 +6,12 @@ import { useWebAppContext } from './mcp-app-provider'
 // `mcp-apps/shared` barrel. The single source of truth lives in
 // `@maskin/shared/web-app-urls` so the MCP server and the web cards build
 // hrefs from the same table.
-export { buildWebAppPath, WEB_APP_OBJECT_TYPES } from '@maskin/shared'
+export {
+	buildWebAppPath,
+	isWebAppObjectType,
+	WEB_APP_OBJECT_TYPE_SET,
+	WEB_APP_OBJECT_TYPES,
+} from '@maskin/shared'
 export type {
 	WebAppObjectType,
 	WebAppSettingsSection,

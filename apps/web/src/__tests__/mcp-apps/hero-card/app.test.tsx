@@ -420,6 +420,73 @@ describe('HeroCardApp — list envelope', () => {
 		expect(screen.queryByRole('textbox', { name: /Filter rows/ })).not.toBeInTheDocument()
 		expect(screen.queryByRole('combobox', { name: /Sort rows/ })).not.toBeInTheDocument()
 	})
+
+	it('drops the CTA type filter when every row carries an unknown object type', async () => {
+		const goalRows = betRows.map((row, i) => ({
+			...row,
+			id: `goal-${i + 1}`,
+			type: 'goal', // intentionally not in WEB_APP_OBJECT_TYPES
+		}))
+		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', goalRows))
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Alpha launch')).toBeInTheDocument())
+		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
+		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/objects')
+	})
+
+	it('drops the CTA type filter when rows carry a mix of object types', async () => {
+		const [first, second] = betRows
+		if (!first || !second) throw new Error('betRows fixture missing entries')
+		const mixedRows = [first, { ...second, id: 'task-1', type: 'task' }]
+		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', mixedRows))
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Alpha launch')).toBeInTheDocument())
+		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
+		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/objects')
+	})
+
+	it('renders kind:single for list_actors when N=1 and fires single-card telemetry', async () => {
+		useToolResultMock.mockReturnValue({
+			toolName: 'list_actors',
+			workspaceId: 'ws-1',
+			webAppBaseUrl: 'https://maskin.test',
+			input: null,
+			result: {
+				content: [{ type: 'text', text: '[]' }],
+				structuredContent: {
+					heroCard: {
+						kind: 'single',
+						tool: 'list_actors',
+						object: {
+							id: 'actor-1',
+							type: 'actor',
+							title: 'Designer',
+							status: 'agent',
+							owner: null,
+							contextLine: 'agent · admin',
+						},
+					},
+				},
+			},
+		})
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Designer')).toBeInTheDocument())
+		expect(screen.getByText('agent · admin')).toBeInTheDocument()
+		expect(screen.queryByText('Actors')).not.toBeInTheDocument()
+		await waitFor(() => {
+			expect(callTool).toHaveBeenCalledWith(
+				'record_widget_event',
+				expect.objectContaining({
+					widget_name: 'hero-card',
+					event: 'render_success',
+					tool_name: 'list_actors',
+					card_kind: 'single',
+					object_type: 'actor',
+					object_id: 'actor-1',
+				}),
+			)
+		})
+	})
 })
 
 describe('extractHeroCard', () => {

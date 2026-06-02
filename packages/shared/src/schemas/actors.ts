@@ -74,11 +74,20 @@ export const actorResponseSchema = z.object({
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>
 
-// Compact actor row used by list endpoints (`GET /api/actors`,
-// `GET /api/objects/:id/actors`). The optional `role` and `workspaces` fields
-// are populated when the row comes from a workspace-members join — agent code
-// downstream of the MCP server reads `role`, so renaming or dropping it here
-// would silently null out the heroCard owner pill without a compile error.
+// Compact actor row used by list endpoints. Two response shapes share this
+// schema — pick the one that matches the call site:
+//
+// - **Workspace-scoped** (`GET /api/actors` with `X-Workspace-Id`, joined to
+//   `workspace_members`): `role` is always set, `workspaces` is omitted.
+//   Downstream MCP code (e.g. heroCard owner pill) reads `actor.role`.
+// - **Cross-workspace** (`GET /api/actors` without `X-Workspace-Id`): `role`
+//   is omitted on the top-level row, `workspaces[]` carries the per-workspace
+//   memberships with their own `role`. Consumers that read top-level `role`
+//   on a cross-workspace response will silently see `undefined`.
+//
+// Both fields stay optional so a single schema validates both shapes; the
+// rename/drop hazard the lift was meant to catch is still covered because
+// the field names live in one place.
 export const actorListItemSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),

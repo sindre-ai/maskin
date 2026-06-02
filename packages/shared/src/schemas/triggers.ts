@@ -89,12 +89,17 @@ export const triggerParamsSchema = z.object({
 // web client both consume the same canonical fields — a rename like
 // `targetActorId → target_actor_id` would otherwise null out trigger owners in
 // the heroCard payload without a compile error.
+//
+// `config` is non-nullable: the DB column is `jsonb().notNull()` and every
+// trigger discriminant in `createTriggerSchema` requires a populated config.
+// `name` carries the create-side `.min(1)` so the read/write invariants stay
+// symmetric.
 export const triggerResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
-	name: z.string(),
+	name: z.string().min(1),
 	type: z.string(),
-	config: z.record(z.string(), z.unknown()).nullable(),
+	config: z.record(z.string(), z.unknown()),
 	actionPrompt: z.string(),
 	targetActorId: z.string().uuid(),
 	enabled: z.boolean(),

@@ -1,3 +1,4 @@
+import { triggerResponseSchema } from '@maskin/shared'
 import { buildCreateTriggerBody, buildTrigger, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -45,7 +46,7 @@ describe('Triggers Routes', () => {
 	})
 
 	describe('GET /api/triggers', () => {
-		it('returns 200 with list of triggers', async () => {
+		it('returns 200 with list of triggers that round-trip through the lifted schema', async () => {
 			const t1 = buildTrigger({ workspaceId: wsId })
 			const t2 = buildTrigger({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
@@ -54,8 +55,14 @@ describe('Triggers Routes', () => {
 			const res = await app.request(jsonGet('/api/triggers', { 'x-workspace-id': wsId }))
 
 			expect(res.status).toBe(200)
-			const body = await res.json()
+			const body = (await res.json()) as unknown[]
 			expect(body).toHaveLength(2)
+			// Drift defence — the response body must satisfy `triggerResponseSchema`
+			// (the shape MCP consumers in `packages/mcp/server.ts` rely on). Drift
+			// on a field name like `targetActorId` fails here loudly.
+			const parsed = body.map((row) => triggerResponseSchema.parse(row))
+			expect(parsed[0]?.id).toBe(t1.id)
+			expect(parsed[0]?.config).toBeTypeOf('object')
 		})
 	})
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
+import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT, actorListItemSchema } from '@maskin/shared'
 import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -393,16 +393,26 @@ describe('Actors Routes', () => {
 	})
 
 	describe('GET /api/actors with X-Workspace-Id', () => {
-		it('returns workspace members with role field', async () => {
+		it('returns workspace members with role field that round-trip through the lifted schema', async () => {
 			const wsId = randomUUID()
 			const a1 = {
 				id: randomUUID(),
 				type: 'human',
 				name: 'Alice',
 				email: 'alice@test.com',
+				description: null,
+				isSystem: false,
 				role: 'owner',
 			}
-			const a2 = { id: randomUUID(), type: 'agent', name: 'Bot', email: null, role: 'member' }
+			const a2 = {
+				id: randomUUID(),
+				type: 'agent',
+				name: 'Bot',
+				email: null,
+				description: 'workspace observer',
+				isSystem: true,
+				role: 'member',
+			}
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			// When X-Workspace-Id is provided, the route does an innerJoin query
 			mockResults.select = [a1, a2]
@@ -410,9 +420,15 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors', { 'x-workspace-id': wsId }))
 
 			expect(res.status).toBe(200)
-			const body = await res.json()
+			const body = (await res.json()) as unknown[]
 			expect(body).toHaveLength(2)
-			expect(body[0].role).toBeDefined()
+			// Drift defence — the response body must satisfy `actorListItemSchema`
+			// (the shape MCP consumers like the hero-card owner pill rely on).
+			// Renaming or dropping a field on the route side fails here loudly.
+			const parsed = body.map((row) => actorListItemSchema.parse(row))
+			expect(parsed[0]?.role).toBe('owner')
+			expect(parsed[1]?.role).toBe('member')
+			expect(parsed[1]?.isSystem).toBe(true)
 		})
 	})
 
