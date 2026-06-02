@@ -1,4 +1,6 @@
+import { trackCommentPostedFor } from '@/hooks/use-events'
 import { useUploadFile } from '@/hooks/use-files'
+import { trackObjectAttachedFile } from '@/lib/analytics'
 import { type CreateCommentInput, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { queryKeys } from '@/lib/query-keys'
@@ -333,6 +335,27 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 					// creating a duplicate event.
 					await api.events.create(entry.workspaceId, body, tempId)
 					queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entry.objectId) })
+					trackCommentPostedFor(queryClient, entry.objectId, body, tempId)
+					for (const fileId of attachmentIds) {
+						const parentType = queryClient.getQueryData<{ type?: string }>(
+							queryKeys.objects.detail(entry.objectId),
+						)?.type
+						if (
+							parentType === 'bet' ||
+							parentType === 'task' ||
+							parentType === 'insight' ||
+							parentType === 'knowledge' ||
+							parentType === 'meeting'
+						) {
+							trackObjectAttachedFile({
+								entity_id: entry.objectId,
+								entity_type: parentType,
+								flow_id: tempId,
+								file_id: fileId,
+								parent_entity_type: parentType,
+							})
+						}
+					}
 					mutate(tempId, (prev) => ({ ...prev, status: 'completed' }))
 					setTimeout(() => {
 						mutate(tempId, () => undefined)
