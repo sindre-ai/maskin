@@ -153,7 +153,54 @@ describe('HeroCardApp — bet single render', () => {
 	})
 })
 
-// Customer variant (T5) — both `organization` and `person` render through the
+function makeToolResult(object: {
+	id: string
+	type: string
+	title: string
+	status: string
+	owner: { id: string; name: string } | null
+	contextLine: string
+}) {
+	return {
+		toolName: 'get_objects',
+		workspaceId: 'ws-1',
+		webAppBaseUrl: 'https://maskin.test',
+		input: null,
+		result: {
+			content: [{ type: 'text', text: '[]' }],
+			structuredContent: {
+				heroCard: {
+					kind: 'single',
+					tool: 'get_objects',
+					object,
+				},
+			},
+		},
+	}
+}
+
+function makeMultiTypeSchemaResponse() {
+	return {
+		content: [
+			{
+				type: 'text',
+				text: JSON.stringify({
+					workspace_id: 'ws-1',
+					workspace_name: 'Test',
+					relationship_types: [],
+					types: {
+						bet: { display_name: 'Bet', statuses: ['active'], fields: [] },
+						task: { display_name: 'Task', statuses: ['in_progress'], fields: [] },
+						insight: { display_name: 'Insight', statuses: ['clustered'], fields: [] },
+						trigger: { display_name: 'Trigger', statuses: ['enabled'], fields: [] },
+					},
+				}),
+			},
+		],
+	}
+}
+
+// Customer variant — both `organization` and `person` render through the
 // same widget code as `bet`, driven purely by structuredContent + schema. A
 // hypothetical future `customer` type with the same annotation shape would
 // reach the widget through the same path with no widget edit.
@@ -185,6 +232,86 @@ function makeCustomerToolResult(
 		},
 	}
 }
+
+describe('HeroCardApp — schema-driven render per type', () => {
+	beforeEach(() => {
+		__resetSchemaCacheForTests()
+		callTool.mockReset()
+		useToolResultMock.mockReset()
+		callTool.mockImplementation((name) => {
+			if (name === 'get_workspace_schema') return Promise.resolve(makeMultiTypeSchemaResponse())
+			return Promise.resolve({ content: [] })
+		})
+	})
+
+	const cases = [
+		{
+			label: 'task',
+			object: {
+				id: 'task-9',
+				type: 'task',
+				title: 'Write tests',
+				status: 'in_progress',
+				owner: { id: 'actor-2', name: 'Magnus' },
+				contextLine: 'in_progress · owner Magnus',
+			},
+			expectedTypeLabel: 'Task',
+			expectedOwner: 'Owner: Magnus',
+		},
+		{
+			label: 'insight',
+			object: {
+				id: 'insight-7',
+				type: 'insight',
+				title: 'Pricing pain',
+				status: 'clustered',
+				owner: null,
+				contextLine: 'clustered · anchor #3+#6 · 4 sources',
+			},
+			expectedTypeLabel: 'Insight',
+			expectedOwner: null,
+		},
+		{
+			label: 'trigger',
+			object: {
+				id: 'trig-1',
+				type: 'trigger',
+				title: 'Nightly sweep',
+				status: 'enabled',
+				owner: { id: 'actor-3', name: 'Observer' },
+				contextLine: 'enabled · 0 0 * * * · next in 6h',
+			},
+			expectedTypeLabel: 'Trigger',
+			expectedOwner: 'Owner: Observer',
+		},
+	] as const
+
+	for (const c of cases) {
+		it(`renders the ${c.label} variant from structuredContent + schema with no widget code changes`, async () => {
+			useToolResultMock.mockReturnValue(makeToolResult(c.object))
+			const { container } = render(<HeroCardApp />)
+
+			await waitFor(() => {
+				expect(screen.getByText(c.expectedTypeLabel)).toBeInTheDocument()
+			})
+
+			expect(screen.getByText(c.object.title)).toBeInTheDocument()
+			expect(screen.getByText(c.object.status)).toBeInTheDocument()
+			expect(screen.getByText(c.object.contextLine)).toBeInTheDocument()
+
+			if (c.expectedOwner) {
+				expect(screen.getByText(c.expectedOwner)).toBeInTheDocument()
+			} else {
+				expect(screen.queryByText(/^Owner:/)).toBeNull()
+			}
+
+			const cta = screen.getByRole('link', { name: /Open in Maskin/ })
+			expect(cta).toHaveAttribute('href', `https://maskin.test/ws-1/objects/${c.object.id}`)
+
+			expect(container.firstChild).toMatchSnapshot()
+		})
+	}
+})
 
 describe('HeroCardApp — customer variant (organization + person + new type parity)', () => {
 	beforeEach(() => {
