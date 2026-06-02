@@ -71,6 +71,11 @@ describe('buildWebAppPath', () => {
 		}
 	})
 
+	it('builds workspace objects list path with optional type filter', () => {
+		expect(buildWebAppPath(ws, { kind: 'objects' })).toBe('/ws-123/objects')
+		expect(buildWebAppPath(ws, { kind: 'objects', type: 'bet' })).toBe('/ws-123/objects?type=bet')
+	})
+
 	it('builds actor list and detail paths', () => {
 		expect(buildWebAppPath(ws, { kind: 'actor' })).toBe('/ws-123/agents')
 		expect(buildWebAppPath(ws, { kind: 'actor', id: 'a-1' })).toBe('/ws-123/agents/a-1')
