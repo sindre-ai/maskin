@@ -54,6 +54,11 @@ export const objectResponseSchema = z.object({
 	subscriber_count: z.number().optional(),
 })
 
+// NOTE: kept divergent from @maskin/shared/actorResponseSchema — see PR #567.
+// The shared schema models JSONB with `z.record(z.string(), z.unknown())`,
+// which zod-openapi can't emit as a JSON Schema. Here we use the local
+// `jsonbField` helper instead so the OpenAPI surface stays compatible. Keep
+// the field names + nullability in lockstep with the shared shape.
 export const actorResponseSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),

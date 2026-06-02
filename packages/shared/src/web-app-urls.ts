@@ -66,6 +66,20 @@ export const WEB_APP_OBJECT_TYPES = [
 
 export type WebAppObjectType = (typeof WEB_APP_OBJECT_TYPES)[number]
 
+// Set-backed membership test for `WEB_APP_OBJECT_TYPES`. Co-located so a second
+// consumer can't redeclare a parallel Set and silently drift when a new type is
+// added to the canonical list.
+export const WEB_APP_OBJECT_TYPE_SET: ReadonlySet<WebAppObjectType> = new Set(WEB_APP_OBJECT_TYPES)
+
+/**
+ * Type guard for `WebAppObjectType`. Use this in MCP cards and any other
+ * caller that needs to narrow a string before passing it to a `WebAppTarget`
+ * carrying an object type.
+ */
+export function isWebAppObjectType(type: string): type is WebAppObjectType {
+	return (WEB_APP_OBJECT_TYPE_SET as ReadonlySet<string>).has(type)
+}
+
 /**
  * Sub-sections inside the workspace settings page. Mirrors the file tree
  * under `apps/web/src/routes/_authed/$workspaceId/settings/`.
