@@ -53,6 +53,50 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		body: body !== undefined ? JSON.stringify(body) : undefined,
 	})
 
+	return parseJsonResponse<T>(res)
+}
+
+/**
+ * Request variant that exposes selected response headers alongside the parsed
+ * body — used by list/search routes to surface `X-Total-Count` for "select all
+ * N matching filter" affordances. Falls back to `null` if the header is absent
+ * (older servers) or unparseable.
+ */
+async function requestWithTotalCount<T>(
+	path: string,
+	opts: RequestOptions = {},
+): Promise<{ items: T; totalCount: number | null }> {
+	const { method = 'GET', body, headers = {}, workspaceId } = opts
+	const apiKey = getApiKey()
+
+	const reqHeaders: Record<string, string> = {
+		...headers,
+	}
+
+	if (apiKey) {
+		reqHeaders.Authorization = `Bearer ${apiKey}`
+	}
+	if (workspaceId) {
+		reqHeaders['X-Workspace-Id'] = workspaceId
+	}
+	if (body !== undefined) {
+		reqHeaders['Content-Type'] = 'application/json'
+	}
+
+	const res = await fetch(`${API_BASE}${path}`, {
+		method,
+		headers: reqHeaders,
+		body: body !== undefined ? JSON.stringify(body) : undefined,
+	})
+
+	const rawHeader = res.headers.get('X-Total-Count')
+	const items = await parseJsonResponse<T>(res)
+	const parsed = rawHeader === null ? Number.NaN : Number(rawHeader)
+	const totalCount = Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+	return { items, totalCount }
+}
+
+async function parseJsonResponse<T>(res: Response): Promise<T> {
 	if (!res.ok) {
 		const data = await res.json().catch(() => ({ error: res.statusText }))
 
@@ -161,6 +205,10 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
 		},
+		listWithMeta: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return requestWithTotalCount<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
+		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
 			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
@@ -173,6 +221,10 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects/search${qs}`, { workspaceId })
 		},
+		searchWithMeta: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return requestWithTotalCount<ObjectResponse[]>(`/objects/search${qs}`, { workspaceId })
+		},
 		migrateType: (workspaceId: string, body: MigrateObjectTypeInput) =>
 			request<MigrateObjectTypeResponse>('/objects/migrate-type', {
 				method: 'POST',
@@ -181,6 +233,12 @@ export const api = {
 			}),
 		bulkUpdate: (workspaceId: string, body: BulkUpdateObjectsInput) =>
 			request<BulkUpdateObjectsResponse>('/objects/bulk-update', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		bulkDelete: (workspaceId: string, body: BulkDeleteObjectsInput) =>
+			request<BulkUpdateObjectsResponse>('/objects/bulk-delete', {
 				method: 'POST',
 				body,
 				workspaceId,
@@ -613,14 +671,36 @@ export interface UpdateObjectInput {
 	owner?: string | null
 }
 
-export interface BulkUpdateObjectsInput {
-	ids: string[]
-	patch: {
-		status?: string
-		owner?: string | null
-		metadata?: SafeMetadata
-	}
+/** Filter predicate for "select all matching this filter" bulk ops. Mirrors
+ * the row-selection subset of the list endpoint's query — `q | type | status |
+ * owner | ids`. Pagination and sort fields are intentionally omitted; they
+ * have no meaning for a bulk mutation. */
+export interface ObjectsFilterInput {
+	q?: string
+	type?: string
+	status?: string
+	owner?: string
+	ids?: string
 }
+
+export interface BulkUpdatePatch {
+	status?: string
+	owner?: string | null
+	metadata?: SafeMetadata
+}
+
+/** Discriminated wire shape — `{ scope: 'ids', ids, patch }` for the legacy
+ * loaded-rows path (capped at 200) or `{ scope: 'filter', filter, patch }` for
+ * the virtualizer-aware "all matching this filter" path (capped server-side
+ * at MAX_BULK_AFFECTED_ROWS). */
+export type BulkUpdateObjectsInput =
+	| { scope: 'ids'; ids: string[]; patch: BulkUpdatePatch }
+	| { scope: 'filter'; filter: ObjectsFilterInput; patch: BulkUpdatePatch }
+
+/** Same scope discriminator as bulk-update, no patch. */
+export type BulkDeleteObjectsInput =
+	| { scope: 'ids'; ids: string[] }
+	| { scope: 'filter'; filter: ObjectsFilterInput }
 
 export interface BulkUpdateObjectsResult {
 	id: string
@@ -631,6 +711,12 @@ export interface BulkUpdateObjectsResult {
 export interface BulkUpdateObjectsResponse {
 	results: BulkUpdateObjectsResult[]
 }
+
+/** Server returns this (HTTP 400 with code `BAD_REQUEST` and a `cap_exceeded`
+ * detail) when a filter-scoped bulk op matches more rows than the
+ * server-side ceiling. No writes happened — the client surfaces `count` /
+ * `max` back to the user so they can narrow the predicate. */
+export const BULK_CAP_EXCEEDED_DETAIL = 'cap_exceeded'
 
 export interface MigrateObjectTypeInput {
 	fromType: string

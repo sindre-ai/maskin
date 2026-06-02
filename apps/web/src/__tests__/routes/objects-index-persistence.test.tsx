@@ -40,7 +40,10 @@ vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-enabled-modules', () => ({ useEnabledModules: () => [] }))
 vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] }))
 vi.mock('@maskin/module-sdk', () => ({ getEnabledObjectTypeTabs: () => [] }))
-vi.mock('@/hooks/use-objects', () => ({ useBulkUpdateObjects: () => ({ mutate: vi.fn() }) }))
+vi.mock('@/hooks/use-objects', () => ({
+	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkDeleteObjects: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+}))
 
 // Track upsert calls via globalThis to dodge vi.mock hoist.
 ;(globalThis as unknown as { __dsUpsertCalls?: number }).__dsUpsertCalls = 0
@@ -57,7 +60,12 @@ vi.mock('@/lib/api', () => {
 	return {
 		ApiError,
 		api: {
-			objects: { list: async () => [], search: async () => [] },
+			objects: {
+				list: async () => [],
+				search: async () => [],
+				listWithMeta: async () => ({ items: [], totalCount: 0 }),
+				searchWithMeta: async () => ({ items: [], totalCount: 0 }),
+			},
 			userDisplaySettings: {
 				list: async () => ({ items: [] }),
 				get: async () => ({

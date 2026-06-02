@@ -149,7 +149,17 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// policy — browsers reject wildcard + credentials together. /api/* uses
 	// the configured-origin policy with credentials for the web app.
 	app.use('/mcp', cors())
-	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
+	app.use(
+		'/api/*',
+		cors({
+			origin: allowedOrigins,
+			credentials: true,
+			// X-Total-Count is set by list/search routes for virtualizer-aware
+			// "select all N matching this filter" affordances; the browser hides
+			// non-simple response headers from JS unless we list them here.
+			exposeHeaders: ['X-Total-Count'],
+		}),
+	)
 	app.use('*', honoLogger())
 
 	app.use('*', async (c, next) => {

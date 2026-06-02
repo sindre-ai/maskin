@@ -196,3 +196,102 @@ describe('BulkActionBar', () => {
 		expect(screen.queryByRole('combobox', { name: 'Set status' })).toBeNull()
 	})
 })
+
+describe('BulkActionBar — scope notice + filter scope', () => {
+	beforeEach(() => {
+		setMatchMedia(false)
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+		vi.useRealTimers()
+	})
+
+	it('shows the scope notice with an honest count + select-all-matching action in ids scope', () => {
+		const onSelectAllMatching = vi.fn()
+		renderBar({
+			selectedCount: 50,
+			scope: 'ids',
+			scopeNotice: {
+				loadedCount: 50,
+				matchingCount: 240,
+				onSelectAllMatching,
+			},
+		})
+		const notice = screen.getByLabelText('Selection scope notice')
+		expect(within(notice).getByText(/50/)).toBeInTheDocument()
+		const button = within(notice).getByRole('button', {
+			name: /Select all 240 matching this filter/,
+		})
+		fireEvent.click(button)
+		expect(onSelectAllMatching).toHaveBeenCalledTimes(1)
+	})
+
+	it('hides the scope notice in filter scope so the user does not double-promote', () => {
+		renderBar({
+			selectedCount: 240,
+			scope: 'filter',
+			scopeNotice: {
+				loadedCount: 50,
+				matchingCount: 240,
+				onSelectAllMatching: vi.fn(),
+			},
+		})
+		expect(screen.queryByLabelText('Selection scope notice')).toBeNull()
+	})
+
+	it('switches the pill label to "matching filter" and disables per-row icon actions in filter scope', () => {
+		renderBar({
+			selectedCount: 240,
+			scope: 'filter',
+			onCopyLink: vi.fn(),
+			onCopyTitle: vi.fn(),
+			onCopyTitleAsLink: vi.fn(),
+			onOpenLinks: vi.fn(),
+		})
+		expect(screen.getByText('matching filter')).toBeInTheDocument()
+		// Per-row actions can't act on rows the virtualizer never loaded — they
+		// must be disabled (not hidden) in filter scope so the user gets a
+		// tooltip explaining why.
+		expect(screen.getByRole('button', { name: 'Copy links' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Copy titles' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Open in new tabs' })).toBeDisabled()
+	})
+
+	it('reads "Delete all N matching this filter?" in the confirm dialog and lists active filter chips', () => {
+		renderBar({
+			selectedCount: 5000,
+			scope: 'filter',
+			filterChips: [
+				{ label: 'Type', value: 'task' },
+				{ label: 'Status', value: 'todo' },
+			],
+			onDelete: vi.fn(),
+		})
+		fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+		expect(
+			screen.getByRole('heading', { name: /Delete all 5,000 matching this filter\?/ }),
+		).toBeInTheDocument()
+		// Filter chips appear in the body so the predicate is verifiable before
+		// the user pulls the trigger.
+		const chips = screen.getByLabelText('Active filters')
+		expect(within(chips).getByText('Type:')).toBeInTheDocument()
+		expect(within(chips).getByText('task')).toBeInTheDocument()
+		expect(within(chips).getByText('Status:')).toBeInTheDocument()
+		expect(within(chips).getByText('todo')).toBeInTheDocument()
+	})
+
+	it('reads "Delete N selected?" with no filter chips in ids scope', () => {
+		renderBar({
+			selectedCount: 3,
+			scope: 'ids',
+			filterChips: [{ label: 'Type', value: 'task' }],
+			onDelete: vi.fn(),
+		})
+		fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+		expect(screen.getByRole('heading', { name: /Delete 3 selected\?/ })).toBeInTheDocument()
+		// Even if the caller provided chips, ids scope shouldn't render them —
+		// the predicate is the explicit row list, not a filter.
+		expect(screen.queryByLabelText('Active filters')).toBeNull()
+	})
+})

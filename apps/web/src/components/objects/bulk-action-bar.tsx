@@ -29,8 +29,38 @@ export interface BulkActionBarOwnerOption {
 	name: string
 }
 
+export type BulkActionBarScope = 'ids' | 'filter'
+
+/** Filter chip shown in the destructive confirm dialog when the user is acting
+ * on filter scope — so the predicate they're about to apply is verifiable. */
+export interface BulkActionBarFilterChip {
+	label: string
+	value: string
+}
+
+export interface BulkActionBarScopeNotice {
+	/** Loaded rows currently selected (the "X selected" the user just made). */
+	loadedCount: number
+	/** Total rows the active filter matches across the workspace. */
+	matchingCount: number
+	/** Promote selection from "all loaded" to "all matching this filter". */
+	onSelectAllMatching: () => void
+}
+
 export interface BulkActionBarProps {
 	selectedCount: number
+	/** `'ids'` for the loaded-rows selection (default). `'filter'` once the user
+	 * has promoted to "all N matching this filter" — switches the badge color,
+	 * label, and disables per-row icon actions (which can't act on unloaded
+	 * rows). */
+	scope?: BulkActionBarScope
+	/** Notice chip stacked above the pill — appears only when every loaded row
+	 * is selected and more rows match the filter, mirroring Gmail's pattern. */
+	scopeNotice?: BulkActionBarScopeNotice
+	/** Active filter chips listed in the destructive confirm dialog body so the
+	 * user can verify the predicate before deleting. Empty array = no chips
+	 * rendered. */
+	filterChips?: BulkActionBarFilterChip[]
 	statusOptions?: BulkActionBarOption[]
 	ownerOptions?: BulkActionBarOwnerOption[]
 	onStatusChange?: (status: string) => void
@@ -58,6 +88,9 @@ function usePrefersReducedMotion() {
 
 export function BulkActionBar({
 	selectedCount,
+	scope = 'ids',
+	scopeNotice,
+	filterChips = [],
 	statusOptions = [],
 	ownerOptions = [],
 	onStatusChange,
@@ -99,9 +132,42 @@ export function BulkActionBar({
 	const copyTitleLabel = `Copy title${plural}`
 	const copyTitleAsLinkLabel = `Copy title${plural} as link${plural}`
 	const openLinksLabel = `Open in new tab${plural}`
+	const isFilterScope = scope === 'filter'
+	const scopeLabel = isFilterScope ? 'matching filter' : 'selected'
+
+	// Per-row icon actions can't act on rows the virtualizer never loaded — at
+	// filter scope they'd silently miss the unloaded majority of the selection.
+	// Disable them with an explaining tooltip rather than firing a partial op.
+	const loadedOnlyTooltip = 'Loaded rows only — narrow the filter to act on these'
+
+	// The scope notice should only render alongside a visible pill; aria-hidden
+	// follows the same `visible` flag the pill uses below.
+	const showScopeNotice = scopeNotice !== undefined && visible && scope === 'ids'
 
 	return (
 		<TooltipProvider delayDuration={150}>
+			{showScopeNotice && (
+				<aside
+					aria-label="Selection scope notice"
+					className={cn(
+						'fixed left-1/2 bottom-[5.75rem] z-50 -translate-x-1/2',
+						'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
+						'rounded-full border border-accent/40 bg-bg-surface px-3 py-1.5 text-xs shadow-md',
+						transitionClass,
+					)}
+				>
+					<span className="text-text-secondary">
+						All <strong className="text-text">{scopeNotice.loadedCount}</strong> loaded selected.
+					</span>
+					<button
+						type="button"
+						onClick={scopeNotice.onSelectAllMatching}
+						className="text-accent underline-offset-2 hover:underline"
+					>
+						Select all {scopeNotice.matchingCount.toLocaleString()} matching this filter
+					</button>
+				</aside>
+			)}
 			<section
 				aria-label="Bulk actions"
 				aria-hidden={!visible}
@@ -117,12 +183,15 @@ export function BulkActionBar({
 				)}
 			>
 				<span
-					className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-accent px-2 text-xs font-medium text-accent-foreground"
-					aria-label={`${selectedCount} selected`}
+					className={cn(
+						'inline-flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-xs font-medium',
+						isFilterScope ? 'bg-indigo-500 text-white' : 'bg-accent text-accent-foreground',
+					)}
+					aria-label={`${selectedCount} ${scopeLabel}`}
 				>
-					{selectedCount}
+					{selectedCount.toLocaleString()}
 				</span>
-				<span className="text-sm text-text-secondary">selected</span>
+				<span className="text-sm text-text-secondary">{scopeLabel}</span>
 
 				<div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
 
@@ -183,12 +252,13 @@ export function BulkActionBar({
 									size="icon"
 									className="size-8"
 									onClick={onCopyLink}
+									disabled={isFilterScope}
 									aria-label={copyLinkLabel}
 								>
 									<Link className="size-4" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent>{copyLinkLabel}</TooltipContent>
+							<TooltipContent>{isFilterScope ? loadedOnlyTooltip : copyLinkLabel}</TooltipContent>
 						</Tooltip>
 					)}
 					{onCopyTitle && (
@@ -200,12 +270,13 @@ export function BulkActionBar({
 									size="icon"
 									className="size-8"
 									onClick={onCopyTitle}
+									disabled={isFilterScope}
 									aria-label={copyTitleLabel}
 								>
 									<Type className="size-4" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent>{copyTitleLabel}</TooltipContent>
+							<TooltipContent>{isFilterScope ? loadedOnlyTooltip : copyTitleLabel}</TooltipContent>
 						</Tooltip>
 					)}
 					{onCopyTitleAsLink && (
@@ -217,12 +288,15 @@ export function BulkActionBar({
 									size="icon"
 									className="size-8"
 									onClick={onCopyTitleAsLink}
+									disabled={isFilterScope}
 									aria-label={copyTitleAsLinkLabel}
 								>
 									<Brackets className="size-4" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent>{`${copyTitleAsLinkLabel} (Markdown)`}</TooltipContent>
+							<TooltipContent>
+								{isFilterScope ? loadedOnlyTooltip : `${copyTitleAsLinkLabel} (Markdown)`}
+							</TooltipContent>
 						</Tooltip>
 					)}
 					{onOpenLinks && (
@@ -234,12 +308,13 @@ export function BulkActionBar({
 									size="icon"
 									className="size-8"
 									onClick={onOpenLinks}
+									disabled={isFilterScope}
 									aria-label={openLinksLabel}
 								>
 									<ExternalLink className="size-4" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent>{openLinksLabel}</TooltipContent>
+							<TooltipContent>{isFilterScope ? loadedOnlyTooltip : openLinksLabel}</TooltipContent>
 						</Tooltip>
 					)}
 					{onDelete && (
@@ -271,11 +346,28 @@ export function BulkActionBar({
 			<Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>Delete {selectedCount} selected?</DialogTitle>
+						<DialogTitle>
+							{isFilterScope
+								? `Delete all ${selectedCount.toLocaleString()} matching this filter?`
+								: `Delete ${selectedCount} selected?`}
+						</DialogTitle>
 						<DialogDescription>
-							This permanently removes the selected objects. This action cannot be undone.
+							{`${selectedCount.toLocaleString()} object${plural} · permanent · cannot be undone.`}
 						</DialogDescription>
 					</DialogHeader>
+					{isFilterScope && filterChips.length > 0 && (
+						<div className="flex flex-wrap gap-1.5 text-xs" aria-label="Active filters">
+							{filterChips.map((chip) => (
+								<span
+									key={`${chip.label}-${chip.value}`}
+									className="inline-flex items-center gap-1 rounded-full border border-border bg-bg-hover px-2 py-0.5"
+								>
+									<span className="text-text-secondary">{chip.label}:</span>
+									<span className="text-text">{chip.value}</span>
+								</span>
+							))}
+						</div>
+					)}
 					<DialogFooter>
 						<Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>
 							Cancel

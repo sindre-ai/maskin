@@ -55,7 +55,7 @@ function Harness({ selectedIds, onClear }: HarnessProps) {
 		(status: string) => {
 			const ids = [...selectedIds]
 			bulkUpdate.mutate(
-				{ ids, patch: { status } },
+				{ scope: 'ids', ids, patch: { status } },
 				{
 					onSuccess: (data: BulkUpdateObjectsResponse) => {
 						const okCount = data.results.filter((r) => r.ok).length
@@ -121,11 +121,14 @@ describe('BulkActionBar wired to bulk-update', () => {
 		const key = queryKeys.objects.listInfinite(workspaceId, {})
 		queryClient.setQueryData(key, {
 			pages: [
-				[
-					buildObject({ id: 'obj-1', status: 'todo' }),
-					buildObject({ id: 'obj-2', status: 'todo' }),
-					buildObject({ id: 'obj-3', status: 'todo' }),
-				],
+				{
+					items: [
+						buildObject({ id: 'obj-1', status: 'todo' }),
+						buildObject({ id: 'obj-2', status: 'todo' }),
+						buildObject({ id: 'obj-3', status: 'todo' }),
+					],
+					totalCount: 3,
+				},
 			],
 			pageParams: [0],
 		})
@@ -135,6 +138,7 @@ describe('BulkActionBar wired to bulk-update', () => {
 
 		await waitFor(() =>
 			expect(api.objects.bulkUpdate).toHaveBeenCalledWith(workspaceId, {
+				scope: 'ids',
 				ids: ['obj-1', 'obj-2'],
 				patch: { status: 'done' },
 			}),
@@ -142,8 +146,10 @@ describe('BulkActionBar wired to bulk-update', () => {
 		await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 objects updated'))
 		await waitFor(() => expect(onClear).toHaveBeenCalledTimes(1))
 
-		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
-		const rows = cache?.pages[0] ?? []
+		const cache = queryClient.getQueryData<{
+			pages: { items: ObjectResponse[]; totalCount: number | null }[]
+		}>(key)
+		const rows = cache?.pages[0]?.items ?? []
 		expect(rows.find((r) => r.id === 'obj-1')?.status).toBe('done')
 		expect(rows.find((r) => r.id === 'obj-2')?.status).toBe('done')
 		expect(rows.find((r) => r.id === 'obj-3')?.status).toBe('todo')

@@ -1,6 +1,6 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
-import { BulkActionBar } from '@/components/objects/bulk-action-bar'
+import { BulkActionBar, type BulkActionBarFilterChip } from '@/components/objects/bulk-action-bar'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
@@ -13,13 +13,13 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
-import { useBulkUpdateObjects } from '@/hooks/use-objects'
+import { useBulkDeleteObjects, useBulkUpdateObjects } from '@/hooks/use-objects'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { api } from '@/lib/api'
-import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
+import type { DisplaySettingsBody, ObjectResponse, ObjectsFilterInput } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
@@ -34,6 +34,18 @@ import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstac
 import { Filter, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+
+/** Snapshot of the active filter at the moment the user promoted to "all
+ * matching" — frozen so a mid-confirm filter edit can't silently change which
+ * rows the bulk op applies to (the server SELECT runs against this snapshot,
+ * not the live URL). */
+interface FilterSelectionScope {
+	kind: 'filter'
+	filter: ObjectsFilterInput
+	estimatedCount: number
+}
+
+type SelectionScope = { kind: 'ids' } | FilterSelectionScope
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	component: ObjectsPage,
@@ -73,6 +85,7 @@ function ObjectsPage() {
 	const [importOpen, setImportOpen] = useState(false)
 	const { startTracking: trackImport } = useImportToast(workspaceId)
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
+	const [selectionScope, setSelectionScope] = useState<SelectionScope>({ kind: 'ids' })
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		createdBy: false,
 	})
@@ -80,10 +93,22 @@ function ObjectsPage() {
 	// Row selection keys are object IDs (data-table sets getRowId: row => row.id),
 	// so we can lift them directly as the selection surface for sibling bulk-action UI.
 	const selectedIds = useMemo(() => Object.keys(rowSelection), [rowSelection])
-	const clearSelection = useCallback(() => setRowSelection({}), [])
+	const clearSelection = useCallback(() => {
+		setRowSelection({})
+		setSelectionScope({ kind: 'ids' })
+	}, [])
+	// Wrap setRowSelection so any row-level toggle drops back to ids scope.
+	// Otherwise re-clicking a checkbox in filter scope would silently leave the
+	// "all matching" promotion in place even though the user just narrowed the
+	// set, and the next bulk op would touch rows the user can no longer see.
+	const handleRowSelectionChange = useCallback<typeof setRowSelection>((updater) => {
+		setRowSelection(updater)
+		setSelectionScope((prev) => (prev.kind === 'filter' ? { kind: 'ids' } : prev))
+	}, [])
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection whenever the active workspace changes
 	useEffect(() => {
 		setRowSelection({})
+		setSelectionScope({ kind: 'ids' })
 	}, [workspaceId])
 
 	const searchParamsRef = useRef(searchParams)
@@ -117,10 +142,39 @@ function ObjectsPage() {
 		return f
 	}, [typeFilter, statusFilter, ownerFilter, idsFilter, sort, order])
 
-	// Infinite query — use search endpoint when q is present
+	// Row-selection subset of the active filter — what the server's
+	// `objectsFilterSchema` accepts. Snapshotted at the moment the user
+	// promotes to filter scope so a mid-confirm filter edit can't change which
+	// rows the bulk op applies to.
+	const activeFilter = useMemo<ObjectsFilterInput>(() => {
+		const f: ObjectsFilterInput = {}
+		if (typeFilter) f.type = typeFilter
+		if (statusFilter) f.status = statusFilter
+		if (ownerFilter) f.owner = ownerFilter
+		if (idsFilter) f.ids = idsFilter
+		if (q) f.q = q
+		return f
+	}, [typeFilter, statusFilter, ownerFilter, idsFilter, q])
+
+	// Drop scope whenever the row-selection portion of the URL changes
+	// (Gmail's rule). Sort and grouping don't affect which rows the predicate
+	// matches, so they don't drop scope. Workspace switches are handled by
+	// the existing effect that resets selection wholesale.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: deps are intentionally the filter-control fields — re-run when any of them flips, even though the effect body doesn't read them directly
+	useEffect(() => {
+		setSelectionScope((prev) => (prev.kind === 'filter' ? { kind: 'ids' } : prev))
+		setRowSelection({})
+	}, [typeFilter, statusFilter, ownerFilter, idsFilter, q])
+
+	// Infinite query — use search endpoint when q is present. Pages carry
+	// `totalCount` from the server's `X-Total-Count` header so the virtualizer
+	// can drive the "select all N matching this filter" affordance without an
+	// extra round-trip. The flat list cache (the existing `list` / `search`
+	// shape used elsewhere) is unaffected; the meta only lives in the
+	// listInfinite cache where the virtualizer reads.
 	const infiniteQuery = useInfiniteQuery({
 		queryKey: queryKeys.objects.listInfinite(workspaceId, { ...filters, q }),
-		queryFn: ({ pageParam }) => {
+		queryFn: async ({ pageParam }) => {
 			const params: Record<string, string> = {
 				...filters,
 				limit: String(PAGE_SIZE),
@@ -128,19 +182,26 @@ function ObjectsPage() {
 			}
 			if (q) {
 				params.q = q
-				return api.objects.search(workspaceId, params)
+				return api.objects.searchWithMeta(workspaceId, params)
 			}
-			return api.objects.list(workspaceId, params)
+			return api.objects.listWithMeta(workspaceId, params)
 		},
 		getNextPageParam: (lastPage, allPages) => {
-			if (lastPage.length < PAGE_SIZE) return undefined
-			return allPages.flat().length
+			if (lastPage.items.length < PAGE_SIZE) return undefined
+			return allPages.reduce((sum, p) => sum + p.items.length, 0)
 		},
 		initialPageParam: 0,
 		placeholderData: keepPreviousData,
 	})
 
-	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+	const allObjects = useMemo(
+		() => infiniteQuery.data?.pages.flatMap((p) => p.items) ?? [],
+		[infiniteQuery.data],
+	)
+	const totalMatchingCount = useMemo(() => {
+		const first = infiniteQuery.data?.pages[0]
+		return first?.totalCount ?? allObjects.length
+	}, [infiniteQuery.data, allObjects.length])
 
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
@@ -349,7 +410,26 @@ function ObjectsPage() {
 	)
 
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
+	const bulkDelete = useBulkDeleteObjects(workspaceId)
 	const queryClient = useQueryClient()
+
+	// Honest, scope-aware count: filter scope reports the server's matched
+	// total (frozen at promote-time), ids scope reports the loaded selection.
+	const bulkCount =
+		selectionScope.kind === 'filter' ? selectionScope.estimatedCount : selectedIds.length
+
+	// Surface server-side cap_exceeded as a single coherent toast instead of a
+	// generic "failed" — the ApiError's fieldErrors map carries the marker
+	// since createApiError serializes details into `_root`.
+	const reportBulkError = useCallback((err: unknown, verb: 'update' | 'delete') => {
+		if (err instanceof ApiError && err.fieldErrors._root?.includes('cap_exceeded')) {
+			toast.error(`Too many rows to ${verb}`, { description: err.message })
+			return
+		}
+		toast.error(`Failed to ${verb} objects`, {
+			description: err instanceof Error ? err.message : undefined,
+		})
+	}, [])
 
 	const reportBulkResult = useCallback(
 		(
@@ -360,13 +440,14 @@ function ObjectsPage() {
 			const okCount = response.results.filter((r) => r.ok).length
 			const failed = total - okCount
 			if (failed === 0) {
-				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} ${verb}`)
+				toast.success(`${okCount.toLocaleString()} object${okCount === 1 ? '' : 's'} ${verb}`)
 				clearSelection()
 			} else {
 				const firstError = response.results.find((r) => !r.ok)?.error
-				toast.error(`${okCount} of ${total} ${verb}; ${failed} failed`, {
-					description: firstError,
-				})
+				toast.error(
+					`${okCount.toLocaleString()} of ${total.toLocaleString()} ${verb}; ${failed.toLocaleString()} failed`,
+					{ description: firstError },
+				)
 			}
 		},
 		[clearSelection],
@@ -374,32 +455,54 @@ function ObjectsPage() {
 
 	const handleBulkStatusChange = useCallback(
 		(status: string) => {
+			if (selectionScope.kind === 'filter') {
+				const expected = selectionScope.estimatedCount
+				bulkUpdate.mutate(
+					{ scope: 'filter', filter: selectionScope.filter, patch: { status } },
+					{
+						onSuccess: (data) => reportBulkResult(data, expected, 'updated'),
+						onError: (err) => reportBulkError(err, 'update'),
+					},
+				)
+				return
+			}
 			if (selectedIds.length === 0) return
 			const ids = [...selectedIds]
 			bulkUpdate.mutate(
-				{ ids, patch: { status } },
+				{ scope: 'ids', ids, patch: { status } },
 				{
 					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
-					onError: () => toast.error('Failed to update objects'),
+					onError: (err) => reportBulkError(err, 'update'),
 				},
 			)
 		},
-		[selectedIds, bulkUpdate, reportBulkResult],
+		[selectionScope, selectedIds, bulkUpdate, reportBulkResult, reportBulkError],
 	)
 
 	const handleBulkOwnerChange = useCallback(
 		(ownerId: string) => {
+			if (selectionScope.kind === 'filter') {
+				const expected = selectionScope.estimatedCount
+				bulkUpdate.mutate(
+					{ scope: 'filter', filter: selectionScope.filter, patch: { owner: ownerId } },
+					{
+						onSuccess: (data) => reportBulkResult(data, expected, 'updated'),
+						onError: (err) => reportBulkError(err, 'update'),
+					},
+				)
+				return
+			}
 			if (selectedIds.length === 0) return
 			const ids = [...selectedIds]
 			bulkUpdate.mutate(
-				{ ids, patch: { owner: ownerId } },
+				{ scope: 'ids', ids, patch: { owner: ownerId } },
 				{
 					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
-					onError: () => toast.error('Failed to update objects'),
+					onError: (err) => reportBulkError(err, 'update'),
 				},
 			)
 		},
-		[selectedIds, bulkUpdate, reportBulkResult],
+		[selectionScope, selectedIds, bulkUpdate, reportBulkResult, reportBulkError],
 	)
 
 	// Build the path the app uses for object detail pages — kept relative so we can
@@ -483,10 +586,26 @@ function ObjectsPage() {
 		}
 	}, [selectedIds, objectPath])
 
-	// No bulk-delete endpoint yet — loop through the existing single-object DELETE
-	// so the UX (partial-failure toast + selection-clear on full success) matches
-	// the bulk-update path. See tech-debt insight: add /api/objects/bulk-delete.
+	// Both scopes go through the server's bulk-delete endpoint so the per-id
+	// partial-failure envelope is consistent with bulk-update. Ids scope
+	// optimistically drops loaded rows; filter scope skips the optimistic step
+	// because we can't enumerate the unloaded rows the predicate matches —
+	// reconciliation lives in the post-mutation invalidate.
 	const handleBulkDelete = useCallback(async () => {
+		if (selectionScope.kind === 'filter') {
+			const expected = selectionScope.estimatedCount
+			try {
+				const data = await bulkDelete.mutateAsync({
+					scope: 'filter',
+					filter: selectionScope.filter,
+				})
+				reportBulkResult(data, expected, 'deleted')
+			} catch (err) {
+				reportBulkError(err, 'delete')
+			}
+			return
+		}
+
 		if (selectedIds.length === 0) return
 		const ids = [...selectedIds]
 		const idSet = new Set(ids)
@@ -504,44 +623,104 @@ function ObjectsPage() {
 				cache.filter((o) => !idSet.has(o.id)),
 			)
 		}
-		const infiniteEntries = queryClient.getQueriesData<InfiniteData<ObjectResponse[]>>({
+		const infiniteEntries = queryClient.getQueriesData<
+			InfiniteData<{ items: ObjectResponse[]; totalCount: number | null }>
+		>({
 			queryKey: queryKeys.objects.listInfinitePrefix(workspaceId),
 		})
 		for (const [key, cache] of infiniteEntries) {
 			if (!cache) continue
-			queryClient.setQueryData<InfiniteData<ObjectResponse[]>>(key, {
+			queryClient.setQueryData<
+				InfiniteData<{ items: ObjectResponse[]; totalCount: number | null }>
+			>(key, {
 				...cache,
-				pages: cache.pages.map((page) => page.filter((o) => !idSet.has(o.id))),
+				pages: cache.pages.map((page) => ({
+					items: page.items.filter((o) => !idSet.has(o.id)),
+					totalCount:
+						typeof page.totalCount === 'number'
+							? Math.max(0, page.totalCount - ids.length)
+							: page.totalCount,
+				})),
 			})
 		}
-		for (const id of ids) {
-			queryClient.removeQueries({ queryKey: queryKeys.objects.detail(id) })
+
+		try {
+			const data = await bulkDelete.mutateAsync({ scope: 'ids', ids })
+
+			// Keep selection only for ids whose DELETE failed, so the bar stays
+			// pinned to the rows that still need attention. reportBulkResult
+			// clears selection on full success; on partial failure we want the
+			// failed ids to remain selected (and the deleted ones removed so
+			// their stale ids don't linger).
+			const failedIds = new Set(data.results.filter((r) => !r.ok).map((r) => r.id))
+			setRowSelection((prev) => {
+				const next: RowSelectionState = {}
+				for (const id of Object.keys(prev)) {
+					if (failedIds.has(id) || !idSet.has(id)) next[id] = prev[id] as boolean
+				}
+				return next
+			})
+
+			reportBulkResult(data, ids.length, 'deleted')
+		} catch (err) {
+			// Failure path leaves the optimistic drop in place momentarily; the
+			// hook's onSettled invalidate will rehydrate the table from the
+			// server within the next refetch.
+			reportBulkError(err, 'delete')
 		}
+	}, [
+		selectionScope,
+		selectedIds,
+		queryClient,
+		workspaceId,
+		bulkDelete,
+		reportBulkResult,
+		reportBulkError,
+	])
 
-		const settled = await Promise.allSettled(ids.map((id) => api.objects.delete(id)))
-		const results = settled.map((r, i) => ({
-			id: ids[i] as string,
-			ok: r.status === 'fulfilled' && r.value.deleted,
-			error: r.status === 'rejected' ? String(r.reason) : undefined,
-		}))
-		queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
-		queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
-
-		// Keep selection only for ids whose DELETE failed, so the bar stays pinned
-		// to the rows that still need attention. reportBulkResult clears selection
-		// on full success; on partial failure we want the failed ids to remain
-		// selected (and the deleted ones removed so their stale ids don't linger).
-		const failedIds = new Set(results.filter((r) => !r.ok).map((r) => r.id))
-		setRowSelection((prev) => {
-			const next: RowSelectionState = {}
-			for (const id of Object.keys(prev)) {
-				if (failedIds.has(id) || !idSet.has(id)) next[id] = prev[id] as boolean
-			}
-			return next
+	const handleSelectAllMatching = useCallback(() => {
+		setSelectionScope({
+			kind: 'filter',
+			filter: activeFilter,
+			estimatedCount: totalMatchingCount,
 		})
+	}, [activeFilter, totalMatchingCount])
 
-		reportBulkResult({ results }, ids.length, 'deleted')
-	}, [selectedIds, queryClient, workspaceId, reportBulkResult])
+	const filterChips = useMemo<BulkActionBarFilterChip[]>(() => {
+		const chips: BulkActionBarFilterChip[] = []
+		if (typeFilter) chips.push({ label: 'Type', value: typeFilter })
+		if (statusFilter) chips.push({ label: 'Status', value: statusFilter })
+		if (ownerFilter) {
+			const ownerName = actors?.find((a) => a.id === ownerFilter)?.name ?? ownerFilter
+			chips.push({ label: 'Owner', value: ownerName })
+		}
+		if (q) chips.push({ label: 'Search', value: q })
+		if (idsFilter) chips.push({ label: 'Ids', value: `${idsFilter.split(',').length} pinned` })
+		return chips
+	}, [typeFilter, statusFilter, ownerFilter, q, idsFilter, actors])
+
+	const scopeNotice = useMemo(() => {
+		if (selectionScope.kind !== 'ids') return undefined
+		if (selectedIds.length === 0) return undefined
+		// Only offer the promotion when every loaded row is selected and there's
+		// strictly more matching the predicate — the strict guard mirrors
+		// Gmail's pattern so the notice never appears when there's nothing
+		// extra to grant.
+		if (selectedIds.length !== allObjects.length) return undefined
+		if (!infiniteQuery.hasNextPage && totalMatchingCount <= selectedIds.length) return undefined
+		return {
+			loadedCount: selectedIds.length,
+			matchingCount: totalMatchingCount,
+			onSelectAllMatching: handleSelectAllMatching,
+		}
+	}, [
+		selectionScope.kind,
+		selectedIds.length,
+		allObjects.length,
+		infiniteQuery.hasNextPage,
+		totalMatchingCount,
+		handleSelectAllMatching,
+	])
 
 	return (
 		<div className="flex flex-col flex-1 min-h-0">
@@ -619,7 +798,7 @@ function ObjectsPage() {
 				workspaceId={workspaceId}
 				actors={actors}
 				rowSelection={rowSelection}
-				onRowSelectionChange={setRowSelection}
+				onRowSelectionChange={handleRowSelectionChange}
 				columnVisibility={effectiveVisibility}
 				onColumnVisibilityChange={setColumnVisibility}
 				grouping={groupingState}
@@ -631,7 +810,10 @@ function ObjectsPage() {
 				isLoading={infiniteQuery.isLoading}
 			/>
 			<BulkActionBar
-				selectedCount={selectedIds.length}
+				selectedCount={bulkCount}
+				scope={selectionScope.kind}
+				scopeNotice={scopeNotice}
+				filterChips={filterChips}
 				statusOptions={bulkStatusOptions}
 				ownerOptions={bulkOwnerOptions}
 				onStatusChange={handleBulkStatusChange}
