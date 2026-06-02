@@ -770,6 +770,11 @@ export class SessionManager extends EventEmitter {
 			)
 
 		const tokenManager = new TokenManager()
+		// MCP servers injected by virtue of a workspace having an active
+		// integration with `mcp.autoInject = true`. Workspace-scoped data pipes
+		// (e.g. PostHog → Synthesizer) belong here; tools an agent opts into
+		// per-config still go through the agent/session MCP paths.
+		const autoInjectedMcpServers: Record<string, unknown> = {}
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
@@ -777,6 +782,14 @@ export class SessionManager extends EventEmitter {
 				const envVarName =
 					resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
 				envVars[envVarName] = accessToken
+				if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
+					autoInjectedMcpServers[`integration-${integration.provider}`] = resolved.config.mcp.server
+					logger.info('Auto-injected MCP server for active integration', {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						provider: integration.provider,
+					})
+				}
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {
 					error: String(err),
@@ -823,13 +836,17 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Session-level MCP config (convert array → { mcpServers: { ... } } format)
+		// Session-level MCP config (convert array → { mcpServers: { ... } } format),
+		// merged with any auto-injected workspace integration MCPs above. Keys are
+		// namespaced so the two sources can't collide.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
-			const mcpServers: Record<string, unknown> = {}
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp
 			}
+		}
+		if (Object.keys(mcpServers).length > 0) {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
 		}
 

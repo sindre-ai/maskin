@@ -23,4 +23,18 @@ describe('PostHog provider config', () => {
 	it('has no event definitions — no inbound events to normalize', () => {
 		expect(config.events).toBeUndefined()
 	})
+
+	it('declares autoInject so session-manager wires the MCP for every workspace with an active integration', () => {
+		expect(config.mcp).toBeDefined()
+		expect(config.mcp?.autoInject).toBe(true)
+		expect(config.mcp?.envKey).toBe('POSTHOG_TOKEN')
+	})
+
+	it('declares an HTTP server spec matching the frontend INTEGRATION_MCP_PRESETS entry', () => {
+		expect(config.mcp?.server).toEqual({
+			type: 'http',
+			url: 'https://mcp.posthog.com/mcp',
+			headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+		})
+	})
 })

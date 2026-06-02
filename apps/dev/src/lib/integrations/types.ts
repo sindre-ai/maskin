@@ -62,11 +62,41 @@ export interface WebhookConfig {
 
 // ── MCP config ─────────────────────────────────────────────────────────────
 
-export interface McpConfig {
+export interface StdioMcpServer {
+	type: 'stdio'
 	command: string
 	args: string[]
-	/** Env var the MCP server reads for its auth token */
+	env?: Record<string, string>
+}
+
+export interface HttpMcpServer {
+	type: 'http'
+	url: string
+	headers?: Record<string, string>
+}
+
+export type McpServerSpec = StdioMcpServer | HttpMcpServer
+
+export interface McpConfig {
+	/** Env var the MCP server reads for its auth token. */
 	envKey: string
+	/**
+	 * Legacy stdio metadata kept for symmetry with first-party MCP presets in
+	 * the frontend. Not read at runtime — session-manager only consumes envKey
+	 * and (when autoInject is set) `server`.
+	 */
+	command?: string
+	args?: string[]
+	/**
+	 * When true, session-manager merges `server` into MCP_SERVERS_JSON for any
+	 * workspace with an active integration of this provider — no per-agent
+	 * MCP config required. Use for providers that act as workspace-level data
+	 * pipes (e.g. PostHog feeding the Synthesizer) rather than tools a human
+	 * opts into per agent.
+	 */
+	autoInject?: boolean
+	/** MCP server spec injected when autoInject=true. */
+	server?: McpServerSpec
 }
 
 // ── Events ─────────────────────────────────────────────────────────────────

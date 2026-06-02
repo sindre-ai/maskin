@@ -65,6 +65,9 @@ vi.mock('../../services/workspace-briefing', () => ({
 
 import { execFile } from 'node:child_process'
 import type { StorageProvider } from '@maskin/storage'
+import { TokenManager } from '../../lib/integrations/oauth/token-manager'
+import { getProvider } from '../../lib/integrations/registry'
+import type { ResolvedProvider } from '../../lib/integrations/types'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager } from '../../services/session-manager'
 import { buildSession } from '../factories'
@@ -319,6 +322,188 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.INTERACTIVE).toBeUndefined()
+		})
+	})
+
+	describe('startSession() — workspace integration MCP auto-inject', () => {
+		const agentFor = (session: ReturnType<typeof buildSession>) => ({
+			id: session.actorId,
+			type: 'agent',
+			systemPrompt: 'You are a helpful AI agent.',
+			llmProvider: null,
+			llmConfig: null,
+			apiKey: 'ank_test_agent_key',
+			tools: null,
+		})
+
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			vi.spyOn(TokenManager.prototype, 'getValidToken').mockResolvedValue('phx_test_token')
+		})
+
+		it('injects an autoInject-flagged provider into MCP_SERVERS_JSON and sets the envKey token', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = agentFor(session)
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.mocked(getProvider).mockReturnValue({
+				config: {
+					name: 'posthog',
+					displayName: 'PostHog',
+					auth: {
+						type: 'api_key',
+						config: {
+							headerName: 'Authorization',
+							headerPrefix: 'Bearer ',
+							envKeyName: 'POSTHOG_PERSONAL_API_KEY',
+						},
+					},
+					mcp: {
+						envKey: 'POSTHOG_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http',
+							url: 'https://mcp.posthog.com/mcp',
+							headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+						},
+					},
+				},
+			} as ResolvedProvider)
+
+			mockResults.selectQueue = [
+				[session],
+				[workspace],
+				[{ count: 0 }],
+				[agent],
+				[workspace],
+				[{ id: 'int-1', provider: 'posthog', workspaceId: session.workspaceId, status: 'active' }],
+			]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.POSTHOG_TOKEN).toBe('phx_test_token')
+			expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
+			const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			expect(parsed.mcpServers['integration-posthog']).toEqual({
+				type: 'http',
+				url: 'https://mcp.posthog.com/mcp',
+				headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+			})
+		})
+
+		it('does not write MCP_SERVERS_JSON when an active integration has no autoInject', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = agentFor(session)
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.mocked(getProvider).mockReturnValue({
+				config: {
+					name: 'github',
+					displayName: 'GitHub',
+					auth: { type: 'oauth2_custom' },
+					mcp: {
+						command: 'npx',
+						args: ['-y', '@modelcontextprotocol/server-github'],
+						envKey: 'GITHUB_TOKEN',
+					},
+				},
+			} as ResolvedProvider)
+
+			mockResults.selectQueue = [
+				[session],
+				[workspace],
+				[{ count: 0 }],
+				[agent],
+				[workspace],
+				[{ id: 'int-2', provider: 'github', workspaceId: session.workspaceId, status: 'active' }],
+			]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.GITHUB_TOKEN).toBe('phx_test_token')
+			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+		})
+
+		it('merges auto-inject servers with session-level MCPs under namespaced keys', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+				config: {
+					mcps: [{ type: 'stdio', command: 'foo', args: [] }],
+				},
+			})
+			const agent = agentFor(session)
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.mocked(getProvider).mockReturnValue({
+				config: {
+					name: 'posthog',
+					displayName: 'PostHog',
+					auth: {
+						type: 'api_key',
+						config: {
+							headerName: 'Authorization',
+							headerPrefix: 'Bearer ',
+							envKeyName: 'POSTHOG_PERSONAL_API_KEY',
+						},
+					},
+					mcp: {
+						envKey: 'POSTHOG_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http',
+							url: 'https://mcp.posthog.com/mcp',
+							headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+						},
+					},
+				},
+			} as ResolvedProvider)
+
+			mockResults.selectQueue = [
+				[session],
+				[workspace],
+				[{ count: 0 }],
+				[agent],
+				[workspace],
+				[{ id: 'int-3', provider: 'posthog', workspaceId: session.workspaceId, status: 'active' }],
+			]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			expect(Object.keys(parsed.mcpServers).sort()).toEqual([
+				'integration-posthog',
+				'session-mcp-0',
+			])
 		})
 	})
 
