@@ -671,11 +671,9 @@ describe('HeroCardRoot — render_error telemetry', () => {
 	it('catches a child render throw, fires record_widget_event with event: "render_error", and renders the fallback', () => {
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 		const betToolResult = makeBetToolResult()
-		useToolResultMock
-			.mockReturnValueOnce(betToolResult)
-			.mockImplementationOnce(() => {
-				throw new Error('boom')
-			})
+		useToolResultMock.mockReturnValueOnce(betToolResult).mockImplementationOnce(() => {
+			throw new Error('boom')
+		})
 
 		render(<HeroCardRoot />)
 

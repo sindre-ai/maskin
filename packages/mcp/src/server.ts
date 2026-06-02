@@ -2772,7 +2772,12 @@ export function createMcpServer(config: McpConfig) {
 				args.workspace_id,
 			)
 			return {
-				_meta: uiMeta('list_triggers', config, args.workspace_id, pickCollectionResourceUri(heroCard)),
+				_meta: uiMeta(
+					'list_triggers',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				structuredContent: { heroCard },
 			}
