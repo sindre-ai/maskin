@@ -125,6 +125,35 @@ describe('HeroCardApp — bet single render', () => {
 		})
 	})
 
+	it('links a single actor card to the agent detail page', async () => {
+		useToolResultMock.mockReturnValue({
+			toolName: 'get_actor',
+			workspaceId: 'ws-1',
+			webAppBaseUrl: 'https://maskin.test',
+			input: null,
+			result: {
+				content: [{ type: 'text', text: '[]' }],
+				structuredContent: {
+					heroCard: {
+						kind: 'single',
+						tool: 'get_actor',
+						object: {
+							id: 'actor-1',
+							type: 'actor',
+							title: 'Designer',
+							status: 'running',
+							owner: null,
+							contextLine: 'Mocking up MCP widget directions',
+						},
+					},
+				},
+			},
+		})
+		render(<HeroCardApp />)
+		const card = await screen.findByRole('link', { name: /Designer/ })
+		expect(card).toHaveAttribute('href', 'https://maskin.test/ws-1/agents/actor-1')
+	})
+
 	it('renders the compact empty state when structuredContent.heroCard.kind is empty', async () => {
 		useToolResultMock.mockReturnValue({
 			toolName: 'get_objects',
@@ -581,7 +610,12 @@ describe('HeroCardApp — schema-driven render per type', () => {
 			}
 
 			const cta = screen.getByRole('link', { name: /Open in Maskin/ })
-			expect(cta).toHaveAttribute('href', `https://maskin.test/ws-1/objects/${c.object.id}`)
+			expect(cta).toHaveAttribute(
+				'href',
+				c.label === 'trigger'
+					? `https://maskin.test/ws-1/triggers/${c.object.id}`
+					: `https://maskin.test/ws-1/objects/${c.object.id}`,
+			)
 
 			expect(container.firstChild).toMatchSnapshot()
 		})

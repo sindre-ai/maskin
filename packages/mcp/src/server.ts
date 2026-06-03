@@ -802,7 +802,14 @@ export interface HeroCardPayload {
 	object?: HeroCardObject
 	objects?: HeroCardObject[]
 	totalCount?: number
+	page?: {
+		limit: number
+		offset: number
+		hasMore: boolean
+	}
 }
+
+const HERO_CARD_UI_PAGE_SIZE = 25
 
 interface RawObject {
 	id: string
@@ -1061,6 +1068,8 @@ async function buildCollectionHeroCard(
 	tool: string,
 	rows: RawObject[],
 	workspaceId: string | undefined,
+	totalCount = rows.length,
+	offset = 0,
 ): Promise<HeroCardPayload> {
 	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
 	const ownerIds = rows.map((o) => o.owner).filter((v): v is string => typeof v === 'string')
@@ -1069,7 +1078,18 @@ async function buildCollectionHeroCard(
 		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
 	)
 	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
-	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
+	const uiObjects = heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE)
+	return {
+		kind: 'list',
+		tool,
+		objects: uiObjects,
+		totalCount,
+		page: {
+			limit: uiObjects.length,
+			offset,
+			hasMore: offset + uiObjects.length < totalCount,
+		},
+	}
 }
 
 interface RawTrigger {
@@ -1441,14 +1461,23 @@ export function createMcpServer(config: McpConfig) {
 						: {
 								kind: 'list',
 								tool: 'get_objects',
-								objects: heroObjects,
+								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
 								totalCount: heroObjects.length,
+								page: {
+									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									offset: 0,
+									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
+								},
 							}
 
 			return {
 				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
-				structuredContent: { heroCard },
+				structuredContent: {
+					heroCard,
+					results,
+					objects: successful.map((r) => r.result),
+				},
 			}
 		},
 	)
@@ -1731,11 +1760,14 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
+			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'list_objects',
 				result,
 				args.workspace_id,
+				result.length,
+				offset,
 			)
 			return {
 				_meta: uiMeta(
@@ -1745,7 +1777,11 @@ export function createMcpServer(config: McpConfig) {
 					pickCollectionResourceUri(heroCard),
 				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-				structuredContent: { heroCard },
+				structuredContent: {
+					heroCard,
+					objects: result,
+					page: { limit: result.length, offset, returned: result.length },
+				},
 			}
 		},
 	)
@@ -1768,11 +1804,14 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
+			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'search_objects',
 				result,
 				args.workspace_id,
+				result.length,
+				offset,
 			)
 			return {
 				_meta: uiMeta(
@@ -1782,7 +1821,11 @@ export function createMcpServer(config: McpConfig) {
 					pickCollectionResourceUri(heroCard),
 				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-				structuredContent: { heroCard },
+				structuredContent: {
+					heroCard,
+					objects: result,
+					page: { limit: result.length, offset, returned: result.length },
+				},
 			}
 		},
 	)
@@ -1903,8 +1946,14 @@ export function createMcpServer(config: McpConfig) {
 						: {
 								kind: 'list',
 								tool: 'list_actors',
-								objects: heroObjects,
+								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
 								totalCount,
+								page: {
+									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									offset,
+									hasMore:
+										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
+								},
 							}
 			return {
 				_meta: uiMeta(
@@ -2047,8 +2096,13 @@ export function createMcpServer(config: McpConfig) {
 						: {
 								kind: 'list',
 								tool: 'list_workspaces',
-								objects: heroObjects,
+								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
 								totalCount: heroObjects.length,
+								page: {
+									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									offset: 0,
+									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
+								},
 							}
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
@@ -2859,8 +2913,14 @@ export function createMcpServer(config: McpConfig) {
 						: {
 								kind: 'list',
 								tool: 'list_triggers',
-								objects: heroObjects,
+								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
 								totalCount,
+								page: {
+									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									offset,
+									hasMore:
+										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
+								},
 							}
 			return {
 				_meta: uiMeta(

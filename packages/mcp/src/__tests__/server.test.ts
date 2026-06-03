@@ -301,6 +301,47 @@ describe('tool handlers', () => {
 			expect(parsed).toHaveLength(2)
 			expect(parsed[0].success).toBe(true)
 		})
+
+		it('keeps graph context model-visible while the heroCard stays object-only', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/bet-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: { id: 'bet-1', type: 'bet', title: 'Bet 1', status: 'active' },
+								relationships: [
+									{
+										id: 'rel-1',
+										sourceId: 'bet-1',
+										targetId: 'task-1',
+										type: 'breaks_into',
+										targetTitle: 'Task 1',
+									},
+								],
+								connected_objects: [
+									{ id: 'task-1', type: 'task', title: 'Task 1', status: 'todo' },
+								],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['bet-1'] })) as {
+				structuredContent: {
+					heroCard: { object?: { id: string }; relationships?: unknown }
+					objects: Array<{ relationships: unknown[]; connected_objects: unknown[] }>
+				}
+			}
+
+			expect(result.structuredContent.heroCard.object?.id).toBe('bet-1')
+			expect(result.structuredContent.heroCard.relationships).toBeUndefined()
+			expect(result.structuredContent.objects[0].relationships).toHaveLength(1)
+			expect(result.structuredContent.objects[0].connected_objects).toHaveLength(1)
+		})
 	})
 
 	describe('list_objects handler', () => {
@@ -2187,6 +2228,45 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(2)
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+		})
+
+		it('caps the list_objects heroCard at 25 rows while exposing all returned objects', async () => {
+			const rows = Array.from({ length: 100 }, (_, i) => ({
+				id: `bet-${i + 1}`,
+				type: 'bet',
+				title: `Bet ${i + 1}`,
+				status: 'active',
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects?')) {
+					return { ok: true, json: () => Promise.resolve(rows) } as Response
+				}
+				if (urlStr.endsWith('/api/actors')) {
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('list_objects')
+			const result = (await handler({ type: 'bet', limit: 100, offset: 0 })) as {
+				structuredContent: {
+					heroCard: {
+						objects?: unknown[]
+						totalCount?: number
+						page?: { limit: number; hasMore: boolean }
+					}
+					objects: unknown[]
+				}
+			}
+
+			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
+			expect(result.structuredContent.heroCard.totalCount).toBe(100)
+			expect(result.structuredContent.heroCard.page).toMatchObject({
+				limit: 25,
+				hasMore: true,
+			})
+			expect(result.structuredContent.objects).toHaveLength(100)
 		})
 
 		it('emits a list heroCard for list_actors with type=actor rows', async () => {
