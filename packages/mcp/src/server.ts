@@ -1005,6 +1005,14 @@ interface RawActor {
 	isSystem?: boolean | null
 }
 
+interface RawWorkspace {
+	id: string
+	name?: string | null
+	role?: string | null
+	createdAt?: string | null
+	updatedAt?: string | null
+}
+
 function buildActorContextLine(actor: RawActor): string {
 	const kind = actor.type || 'actor'
 	const parts: string[] = [kind]
@@ -1022,6 +1030,24 @@ function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
 		status,
 		owner: null,
 		contextLine: buildActorContextLine(actor),
+	}
+}
+
+function buildWorkspaceContextLine(workspace: RawWorkspace): string {
+	const age = ageLabel(workspace.updatedAt ?? workspace.createdAt)
+	const parts = ['workspace']
+	if (age) parts.push(age)
+	return parts.join(' · ')
+}
+
+function buildWorkspaceHeroCardObject(workspace: RawWorkspace): HeroCardObject {
+	return {
+		id: workspace.id,
+		type: 'workspace',
+		title: workspace.name ?? null,
+		status: workspace.role ?? 'active',
+		owner: null,
+		contextLine: buildWorkspaceContextLine(workspace),
 	}
 }
 
@@ -1899,15 +1925,22 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_actor.description,
 			inputSchema: tools.get_actor.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
 				skipWorkspace: true,
-			})
+			})) as RawActor
+			const heroCard: HeroCardPayload = {
+				kind: 'single',
+				tool: 'get_actor',
+				object: buildActorHeroCardObject(result),
+			}
+			const workspaceId = (args as { workspace_id?: string }).workspace_id
 			return {
-				_meta: meta('get_actor', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -1997,15 +2030,30 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_workspaces.description,
 			inputSchema: tools.list_workspaces.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async () => {
 			const result = await apiCall(config, 'GET', '/api/workspaces', undefined, {
 				skipWorkspace: true,
 			})
+			const rows = Array.isArray(result) ? (result as RawWorkspace[]) : []
+			const heroObjects = rows.map(buildWorkspaceHeroCardObject)
+			const webContextWorkspaceId = config.defaultWorkspaceId ?? rows[0]?.id
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_workspaces' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'list_workspaces', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_workspaces',
+								objects: heroObjects,
+								totalCount: heroObjects.length,
+							}
 			return {
-				_meta: meta('list_workspaces', config),
+				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)

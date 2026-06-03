@@ -1,5 +1,5 @@
 ﻿import { CompactEmpty } from '@/mcp-apps/shared/compact-empty'
-import { useCallTool, useToolResult } from '@/mcp-apps/shared/mcp-app-provider'
+import { useCallTool, useToolResult, useWebAppContext } from '@/mcp-apps/shared/mcp-app-provider'
 import { renderMcpApp } from '@/mcp-apps/shared/render'
 import { type WorkspaceSchema, useWorkspaceSchema } from '@/mcp-apps/shared/use-workspace-schema'
 import {
@@ -8,16 +8,8 @@ import {
 	type WebAppTarget,
 	useWebAppHref,
 } from '@/mcp-apps/shared/web-app-link'
-import { ExternalLink, Search } from 'lucide-react'
-import {
-	Component,
-	type ErrorInfo,
-	type ReactNode,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-} from 'react'
+import { ExternalLink } from 'lucide-react'
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef } from 'react'
 
 interface HeroCardActor {
 	id: string
@@ -93,9 +85,37 @@ function HeroCardEmpty({ toolName }: { toolName: string }) {
 	return <CompactEmpty toolName={toolName} label="no results" />
 }
 
+function statusPillClass(status: string): string {
+	const base = 'text-[10.5px] px-1.5 py-0.5 rounded-full font-medium'
+	switch (status.toLowerCase()) {
+		case 'active':
+			return `${base} bg-green-100 text-green-800`
+		case 'running':
+			return `${base} inline-flex items-center gap-1.5 bg-blue-100 text-blue-800 before:content-[''] before:size-1 before:rounded-full before:bg-blue-800 before:animate-pulse`
+		case 'idle':
+		case 'system':
+			return `${base} bg-slate-100 text-slate-600`
+		case 'paused':
+			return `${base} bg-amber-100 text-amber-800`
+		case 'failed':
+			return `${base} bg-red-100 text-red-800`
+		default:
+			return `${base} bg-muted text-muted-foreground`
+	}
+}
+
+function useHeroObjectHref(object: HeroCardObject): string | null {
+	const ctx = useWebAppContext()
+	const objectHref = useWebAppHref({ kind: 'object', id: object.id })
+	if (object.type === 'workspace') {
+		return ctx ? `${ctx.baseUrl}/${object.id}` : null
+	}
+	return objectHref
+}
+
 function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName: string }) {
 	const callTool = useCallTool()
-	const href = useWebAppHref({ kind: 'object', id: object.id })
+	const href = useHeroObjectHref(object)
 	const { schema } = useWorkspaceSchema()
 	const typeLabel = schema?.types?.[object.type]?.display_name ?? object.type
 
@@ -121,11 +141,7 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 					</div>
 					<span className="font-mono text-[11px] text-muted-foreground lowercase">{typeLabel}</span>
 					<div className="flex-1" />
-					{object.status && (
-						<span className="text-[10.5px] px-1.5 py-0.5 rounded-full font-medium bg-muted text-muted-foreground">
-							{object.status}
-						</span>
-					)}
+					{object.status && <span className={statusPillClass(object.status)}>{object.status}</span>}
 				</div>
 				<h3 className="text-[15px] font-semibold leading-snug text-foreground m-0 line-clamp-1">
 					{object.title || 'Untitled'}
@@ -159,34 +175,6 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 
 const MAX_VISIBLE_ROWS = 4
 
-type SortKey = 'title' | 'status' | 'owner'
-
-const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-	{ value: 'title', label: 'Title' },
-	{ value: 'status', label: 'Status' },
-	{ value: 'owner', label: 'Owner' },
-]
-
-function compareRows(a: HeroCardObject, b: HeroCardObject, key: SortKey): number {
-	const get = (o: HeroCardObject) => {
-		if (key === 'title') return (o.title ?? '').toLowerCase()
-		if (key === 'status') return (o.status ?? '').toLowerCase()
-		return (o.owner?.name ?? '').toLowerCase()
-	}
-	return get(a).localeCompare(get(b))
-}
-
-function matchesFilter(o: HeroCardObject, q: string): boolean {
-	const needle = q.trim().toLowerCase()
-	if (!needle) return true
-	return (
-		(o.title ?? '').toLowerCase().includes(needle) ||
-		(o.contextLine ?? '').toLowerCase().includes(needle) ||
-		(o.status ?? '').toLowerCase().includes(needle) ||
-		(o.owner?.name ?? '').toLowerCase().includes(needle)
-	)
-}
-
 /**
  * Pick the deep-link target for the footer CTA. Object/search tools land on
  * the workspace objects list (filtered to a uniform type when possible);
@@ -194,6 +182,7 @@ function matchesFilter(o: HeroCardObject, q: string): boolean {
  * falls back to the workspace root.
  */
 function buildListCtaTarget(toolName: string, objects: HeroCardObject[]): WebAppTarget {
+	if (toolName === 'list_workspaces') return { kind: 'workspace' }
 	if (toolName === 'list_actors') return { kind: 'actor' }
 	if (toolName === 'list_triggers') return { kind: 'trigger' }
 	const types = new Set(objects.map((o) => o.type))
@@ -215,12 +204,14 @@ function isWebAppObjectType(type: string): type is WebAppObjectType {
 }
 
 function rowTarget(row: HeroCardObject): WebAppTarget {
+	if (row.type === 'workspace') return { kind: 'workspace' }
 	if (row.type === 'actor') return { kind: 'actor', id: row.id }
 	if (row.type === 'trigger') return { kind: 'trigger', id: row.id }
 	return { kind: 'object', id: row.id }
 }
 
 function pickPluralLabel(toolName: string, schema: WorkspaceSchema | null, rows: HeroCardObject[]) {
+	if (toolName === 'list_workspaces') return 'Workspaces'
 	if (toolName === 'list_actors') return 'Actors'
 	if (toolName === 'list_triggers') return 'Triggers'
 	const types = new Set(rows.map((o) => o.type))
@@ -245,20 +236,10 @@ function HeroCardList({
 	toolName: string
 }) {
 	const { schema } = useWorkspaceSchema()
-	const [sortKey, setSortKey] = useState<SortKey>('title')
-	const [filter, setFilter] = useState('')
 	const callTool = useCallTool()
 
-	const filtered = useMemo(() => objects.filter((o) => matchesFilter(o, filter)), [objects, filter])
-	const sorted = useMemo(
-		() => [...filtered].sort((a, b) => compareRows(a, b, sortKey)),
-		[filtered, sortKey],
-	)
-	const visible = sorted.slice(0, MAX_VISIBLE_ROWS)
-	const localRemainder = Math.max(0, sorted.length - visible.length)
+	const visible = objects.slice(0, MAX_VISIBLE_ROWS)
 	const totalRemainder = Math.max(0, totalCount - visible.length)
-	const hasFilter = filter.trim().length > 0
-	const filteredOut = hasFilter ? totalCount - filtered.length : 0
 
 	const ctaTarget = useMemo(() => buildListCtaTarget(toolName, objects), [toolName, objects])
 	const ctaHref = useWebAppHref(ctaTarget)
@@ -275,8 +256,6 @@ function HeroCardList({
 		})
 	}
 
-	const showControls = totalCount > MAX_VISIBLE_ROWS
-
 	return (
 		<div className="p-3">
 			<div className="flex flex-col bg-card border border-border rounded-[10px] max-w-[540px] overflow-hidden">
@@ -291,45 +270,9 @@ function HeroCardList({
 					</span>
 				</header>
 
-				{showControls && (
-					<div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-muted/40">
-						<div className="relative flex-1 min-w-0">
-							<Search
-								size={11}
-								className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
-							/>
-							<input
-								aria-label="Filter rows"
-								type="text"
-								value={filter}
-								onChange={(e) => setFilter(e.target.value)}
-								placeholder="Filter"
-								className="w-full h-7 pl-6 pr-2 text-[12px] rounded-md bg-card border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-border-hover"
-							/>
-						</div>
-						<label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-							<span>Sort</span>
-							<select
-								aria-label="Sort rows"
-								value={sortKey}
-								onChange={(e) => setSortKey(e.target.value as SortKey)}
-								className="h-7 px-1.5 text-[11px] rounded-md bg-card border border-border text-foreground focus:outline-none focus:border-border-hover"
-							>
-								{SORT_OPTIONS.map((opt) => (
-									<option key={opt.value} value={opt.value}>
-										{opt.label}
-									</option>
-								))}
-							</select>
-						</label>
-					</div>
-				)}
-
 				<div className="flex flex-col">
 					{visible.length === 0 ? (
-						<div className="px-4 py-3 text-[12px] text-muted-foreground">
-							No rows match "{filter}".
-						</div>
+						<div className="px-4 py-3 text-[12px] text-muted-foreground">No rows to show.</div>
 					) : (
 						visible.map((row) => <HeroCardListRow key={row.id} row={row} schema={schema} />)
 					)}
@@ -337,11 +280,7 @@ function HeroCardList({
 
 				<footer className="flex items-center px-4 py-2.5 border-t border-border bg-muted/30">
 					<span className="text-[11.5px] text-muted-foreground">
-						{filteredOut > 0
-							? `${filtered.length} of ${totalCount} shown · ${localRemainder > 0 ? `+${localRemainder} more in filter` : `+${Math.max(0, totalCount - filtered.length)} more outside filter`}`
-							: totalRemainder > 0
-								? `+${totalRemainder} more`
-								: 'All shown'}
+						{totalRemainder > 0 ? `+${totalRemainder} more` : 'All shown'}
 					</span>
 					{ctaHref ? (
 						<a
@@ -368,7 +307,9 @@ function HeroCardListRow({
 	row: HeroCardObject
 	schema: WorkspaceSchema | null
 }) {
-	const href = useWebAppHref(rowTarget(row))
+	const ctx = useWebAppContext()
+	const targetHref = useWebAppHref(rowTarget(row))
+	const href = row.type === 'workspace' && ctx ? `${ctx.baseUrl}/${row.id}` : targetHref
 	const typeLabel = schema?.types?.[row.type]?.display_name ?? row.type
 	const rowContent = (
 		<>

@@ -2225,6 +2225,83 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.objects?.[0]?.title).toBe('Sebastian')
 		})
 
+		it('emits a single heroCard for get_actor', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors/a-1')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								id: 'a-1',
+								type: 'agent',
+								name: 'Designer',
+								email: null,
+								role: 'running',
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'a-1', workspace_id: 'ws-1' })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: {
+						kind: string
+						tool: string
+						object?: { type: string; title: string | null; status: string | null }
+					}
+				}
+			}
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result.structuredContent.heroCard.tool).toBe('get_actor')
+			expect(result.structuredContent.heroCard.object).toMatchObject({
+				type: 'actor',
+				title: 'Designer',
+				status: 'running',
+			})
+		})
+
+		it('emits a list heroCard for list_workspaces with type=workspace rows', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'ws-1', name: 'Maskin', role: 'owner' },
+								{ id: 'ws-2', name: 'Reflect Studio', role: 'member' },
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_workspaces')
+			const result = (await handler({})) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: {
+						kind: string
+						tool: string
+						totalCount?: number
+						objects?: Array<{ type: string; title: string | null; status: string | null }>
+					}
+				}
+			}
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.tool).toBe('list_workspaces')
+			expect(result.structuredContent.heroCard.totalCount).toBe(2)
+			expect(result.structuredContent.heroCard.objects?.[0]).toMatchObject({
+				type: 'workspace',
+				title: 'Maskin',
+				status: 'owner',
+			})
+		})
+
 		it('passes limit/offset to /api/actors and uses X-Total-Count for the +N more footer', async () => {
 			const calls: string[] = []
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {

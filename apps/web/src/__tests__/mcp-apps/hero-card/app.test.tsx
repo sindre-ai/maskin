@@ -1,5 +1,5 @@
 ﻿import { __resetSchemaCacheForTests } from '@/mcp-apps/shared/use-workspace-schema'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 const callTool = vi.fn()
 const useToolResultMock = vi.fn()
@@ -411,14 +411,14 @@ describe('HeroCardApp — list envelope', () => {
 		render(<HeroCardApp />)
 		await waitFor(() => expect(screen.getByText('Bets')).toBeInTheDocument())
 		expect(screen.getByText('5')).toBeInTheDocument()
-		// Sort defaults to title ascending → Alpha, Beta, Delta, Epsilon visible;
-		// Gamma is below the fold.
 		expect(screen.getByText('Alpha launch')).toBeInTheDocument()
 		expect(screen.getByText('Beta polish')).toBeInTheDocument()
+		expect(screen.getByText('Gamma test')).toBeInTheDocument()
 		expect(screen.getByText('Delta roll-out')).toBeInTheDocument()
-		expect(screen.getByText('Epsilon revisit')).toBeInTheDocument()
-		expect(screen.queryByText('Gamma test')).not.toBeInTheDocument()
+		expect(screen.queryByText('Epsilon revisit')).not.toBeInTheDocument()
 		expect(screen.getByText('+1 more')).toBeInTheDocument()
+		expect(screen.queryByRole('textbox', { name: /Filter rows/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('combobox', { name: /Sort rows/ })).not.toBeInTheDocument()
 		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
 		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/objects?type=bet')
 	})
@@ -428,44 +428,6 @@ describe('HeroCardApp — list envelope', () => {
 		render(<HeroCardApp />)
 		await waitFor(() => expect(screen.getByText('Bets')).toBeInTheDocument())
 		expect(screen.getByText('+1233 more')).toBeInTheDocument()
-	})
-
-	it('reorders rows by status when the sort control changes', async () => {
-		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', betRows))
-		render(<HeroCardApp />)
-		await waitFor(() => expect(screen.getByText('Bets')).toBeInTheDocument())
-		const sortSelect = screen.getByRole('combobox', { name: /Sort rows/ })
-		await act(async () => {
-			fireEvent.change(sortSelect, { target: { value: 'status' } })
-		})
-		// active rows come before shaping (a < s); within ties insertion order
-		// is preserved by Array.prototype.sort being stable in modern Node.
-		const rowNames = screen.getAllByRole('link').map((a) => a.textContent ?? '')
-		const firstFour = rowNames.filter(
-			(t) =>
-				t.includes('launch') ||
-				t.includes('test') ||
-				t.includes('polish') ||
-				t.includes('roll-out') ||
-				t.includes('revisit'),
-		)
-		expect(firstFour[0]).toContain('Alpha launch') // active
-		expect(firstFour[1]).toContain('Gamma test') // active
-		expect(firstFour[2]).toContain('Epsilon revisit') // active
-		expect(firstFour[3]).toContain('Beta polish') // shaping
-	})
-
-	it('narrows rows when the filter input changes (filter-and-show behaviour)', async () => {
-		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', betRows))
-		render(<HeroCardApp />)
-		await waitFor(() => expect(screen.getByText('Bets')).toBeInTheDocument())
-		const filterInput = screen.getByRole('textbox', { name: /Filter rows/ })
-		await act(async () => {
-			fireEvent.change(filterInput, { target: { value: 'gamma' } })
-		})
-		expect(screen.getByText('Gamma test')).toBeInTheDocument()
-		expect(screen.queryByText('Alpha launch')).not.toBeInTheDocument()
-		expect(screen.getByText(/1 of 5 shown/)).toBeInTheDocument()
 	})
 
 	it('renders the list envelope for list_actors (different type) and routes CTA to /agents', async () => {
@@ -480,6 +442,42 @@ describe('HeroCardApp — list envelope', () => {
 		expect(screen.getByText('+1 more')).toBeInTheDocument()
 		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
 		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/agents')
+	})
+
+	it('renders the list_workspaces envelope and links rows to their workspace roots', async () => {
+		useToolResultMock.mockReturnValue(
+			makeListToolResult('list_workspaces', [
+				{
+					id: 'ws-1',
+					type: 'workspace',
+					title: 'Maskin',
+					status: 'owner',
+					owner: null,
+					contextLine: 'workspace · 4m ago',
+				},
+				{
+					id: 'ws-2',
+					type: 'workspace',
+					title: 'Reflect Studio',
+					status: 'member',
+					owner: null,
+					contextLine: 'workspace · 1h ago',
+				},
+			]),
+		)
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Workspaces')).toBeInTheDocument())
+		expect(screen.getByText('2')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /^M\s*Maskin/ })).toHaveAttribute(
+			'href',
+			'https://maskin.test/ws-1',
+		)
+		expect(screen.getByRole('link', { name: /Reflect Studio/ })).toHaveAttribute(
+			'href',
+			'https://maskin.test/ws-2',
+		)
+		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
+		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1')
 	})
 
 	it('fires click_through telemetry on the footer CTA with card_kind:list', async () => {
@@ -501,7 +499,7 @@ describe('HeroCardApp — list envelope', () => {
 		})
 	})
 
-	it('hides sort+filter controls when totalCount ≤ MAX_VISIBLE_ROWS (no need)', async () => {
+	it('keeps the list compact when totalCount ≤ MAX_VISIBLE_ROWS', async () => {
 		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', betRows.slice(0, 3)))
 		render(<HeroCardApp />)
 		await waitFor(() => expect(screen.getByText('Bets')).toBeInTheDocument())
