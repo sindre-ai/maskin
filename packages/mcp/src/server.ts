@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url'
 import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
+	type ActorListItem,
 	type CustomExtensionEntry,
+	type TriggerResponse,
 	WORKSPACE_TEMPLATES,
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
@@ -771,6 +773,235 @@ function extractObjectType(toolName: string, args: unknown): string | undefined 
 		if (typeof ot === 'string') return ot
 	}
 	return undefined
+}
+
+// ─── Hero Card payload builders ────────────────────────────
+//
+// The widget reads `structuredContent.heroCard` and renders a single flat
+// HeroCardObject — no per-type branches on the client. Per-type context is
+// resolved here so new object types absorb with a sensible default.
+
+export interface HeroCardActor {
+	id: string
+	name: string | null
+}
+
+export interface HeroCardObject {
+	id: string
+	type: string
+	title: string | null
+	status: string | null
+	owner: HeroCardActor | null
+	contextLine: string
+	badges?: string[]
+}
+
+export type HeroCardKind = 'single' | 'list' | 'empty'
+
+export interface HeroCardPayload {
+	kind: HeroCardKind
+	tool: string
+	object?: HeroCardObject
+	objects?: HeroCardObject[]
+	totalCount?: number
+}
+
+interface RawObject {
+	id: string
+	type: string
+	title?: string | null
+	status?: string | null
+	owner?: string | null
+	createdAt?: string | null
+	updatedAt?: string | null
+	metadata?: Record<string, unknown> | null
+}
+
+/** Days between two ISO timestamps. Negative values clamp to 0. */
+function daysBetween(fromIso: string | null | undefined, nowMs: number): number | null {
+	if (!fromIso) return null
+	const fromMs = Date.parse(fromIso)
+	if (!Number.isFinite(fromMs)) return null
+	return Math.max(0, Math.floor((nowMs - fromMs) / 86_400_000))
+}
+
+function ageLabel(fromIso: string | null | undefined, nowMs = Date.now()): string | null {
+	const days = daysBetween(fromIso, nowMs)
+	if (days === null) return null
+	if (days === 0) return 'today'
+	if (days === 1) return '1d ago'
+	if (days < 30) return `${days}d ago`
+	const months = Math.floor(days / 30)
+	if (months < 12) return `${months}mo ago`
+	const years = Math.floor(days / 365)
+	return `${years}y ago`
+}
+
+/**
+ * Per-type one-line context. New types fall through to `type · status`, so
+ * absorbing a new object type does NOT require a widget change.
+ */
+function buildContextLine(obj: RawObject, owner: HeroCardActor | null, nowMs = Date.now()): string {
+	const status = obj.status ?? 'unknown'
+	const age = ageLabel(obj.createdAt, nowMs)
+	const ownerName = owner?.name
+	switch (obj.type) {
+		case 'bet': {
+			const duration = (obj.metadata?.duration_weeks ?? obj.metadata?.duration) as
+				| string
+				| number
+				| undefined
+			const durationLabel =
+				typeof duration === 'number'
+					? `${duration}-week bet`
+					: typeof duration === 'string' && duration.length > 0
+						? duration
+						: age
+							? `created ${age}`
+							: null
+			return durationLabel ? `${status} · ${durationLabel}` : status
+		}
+		case 'task':
+			return ownerName ? `${status} · owner ${ownerName}` : status
+		case 'insight': {
+			const cluster = obj.metadata?.cluster_size as number | undefined
+			const evidence = obj.metadata?.evidence_quality as string | undefined
+			const parts = [status]
+			if (typeof cluster === 'number') parts.push(`${cluster} sources`)
+			else if (evidence) parts.push(evidence)
+			return parts.join(' · ')
+		}
+		default:
+			return age ? `${obj.type} · ${status} · ${age}` : `${obj.type} · ${status}`
+	}
+}
+
+function buildHeroCardObject(
+	obj: RawObject,
+	owner: HeroCardActor | null,
+	nowMs = Date.now(),
+): HeroCardObject {
+	return {
+		id: obj.id,
+		type: obj.type,
+		title: obj.title ?? null,
+		status: obj.status ?? null,
+		owner,
+		contextLine: buildContextLine(obj, owner, nowMs),
+	}
+}
+
+/**
+ * Per-response resource swap. T3 ships the Hero Card for single-bet results
+ * via `pickResourceUri`. T6 broadens the predicate so any collection-style
+ * response (list_objects / search_objects / list_actors / list_triggers)
+ * also routes through the Hero Card bundle — its `kind: 'list'` envelope
+ * handles N > 1 and collapses to the single card when N === 1.
+ */
+function pickResourceUri(payload: HeroCardPayload): string {
+	if (payload.kind === 'single' && payload.object?.type === 'bet') {
+		return UI_RESOURCES.heroCard
+	}
+	return UI_RESOURCES.objects
+}
+
+/**
+ * Collection tools always render through the Hero Card bundle: the same
+ * widget handles the 0 / 1 / N branches and keeps the iframe payload
+ * inside Anthropic's 500px envelope without a second template.
+ */
+function pickCollectionResourceUri(_payload: HeroCardPayload): string {
+	return UI_RESOURCES.heroCard
+}
+
+function buildActorContextLine(actor: ActorListItem): string {
+	const kind = actor.type || 'actor'
+	const parts: string[] = [kind]
+	if (actor.role) parts.push(actor.role)
+	else if (actor.email) parts.push(actor.email)
+	return parts.join(' · ')
+}
+
+function buildActorHeroCardObject(actor: ActorListItem): HeroCardObject {
+	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
+	return {
+		id: actor.id,
+		type: 'actor',
+		title: actor.name ?? null,
+		status,
+		owner: null,
+		contextLine: buildActorContextLine(actor),
+	}
+}
+
+function buildTriggerContextLine(trigger: TriggerResponse, ownerName: string | null): string {
+	const kind = trigger.type || 'trigger'
+	const enabled = trigger.enabled === false ? 'disabled' : 'enabled'
+	const parts: string[] = [kind, enabled]
+	if (ownerName) parts.push(`runs ${ownerName}`)
+	return parts.join(' · ')
+}
+
+function buildTriggerHeroCardObject(
+	trigger: TriggerResponse,
+	owner: HeroCardActor | null,
+): HeroCardObject {
+	return {
+		id: trigger.id,
+		type: 'trigger',
+		title: trigger.name ?? null,
+		status: trigger.enabled === false ? 'disabled' : 'enabled',
+		owner,
+		contextLine: buildTriggerContextLine(trigger, owner?.name ?? null),
+	}
+}
+
+/**
+ * Build the heroCard payload for a list-style tool response. Collapses to
+ * `single` when the result has exactly one row so the predicate can fire on
+ * single-result `list_objects` / `search_objects` calls too.
+ */
+async function buildCollectionHeroCard(
+	config: McpConfig,
+	tool: string,
+	rows: RawObject[],
+	workspaceId: string | undefined,
+): Promise<HeroCardPayload> {
+	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
+	const ownerIds = rows.map((o) => o.owner).filter((v): v is string => typeof v === 'string')
+	const actors = await resolveActors(config, ownerIds, workspaceId)
+	const heroObjects = rows.map((o) =>
+		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+	)
+	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
+	return { kind: 'list', tool, objects: heroObjects, totalCount: heroObjects.length }
+}
+
+/**
+ * Resolve actor names for a set of actor IDs in one shot. Used to fill owner
+ * names into HeroCardObject. Best-effort: missing actors come back as
+ * `{ id, name: null }` so the widget renders without owner instead of failing.
+ */
+async function resolveActors(
+	config: McpConfig,
+	actorIds: Iterable<string>,
+	workspaceId: string | undefined,
+): Promise<Map<string, HeroCardActor>> {
+	const uniq = [...new Set([...actorIds].filter((id): id is string => typeof id === 'string'))]
+	const out = new Map<string, HeroCardActor>()
+	if (uniq.length === 0) return out
+	try {
+		const result = (await apiCall(config, 'GET', '/api/actors', undefined, {
+			workspaceId,
+		})) as Array<{ id: string; name: string | null }>
+		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null })
+	} catch (err) {
+		console.error('[MCP] Failed to resolve actors for hero-card:', err)
+	}
+	for (const id of uniq) {
+		if (!out.has(id)) out.set(id, { id, name: null })
+	}
+	return out
 }
 
 // ─── Hero Card payload builders ────────────────────────────
@@ -4205,6 +4436,36 @@ export function createMcpServer(config: McpConfig) {
 			throw new Error(
 				`Extension "${args.id}" not found. Call list_extensions to see available extensions.`,
 			)
+		},
+	)
+
+	// ─── Widget telemetry ────────────────────────────────────
+	// Called by rendered MCP widgets to report click-through and render
+	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
+	// the 48h rolling render-error kill criterion. Intentionally NOT in
+	// MUTATION_TOOL_KINDS — it's an instrumentation channel, not a write.
+	registerAppTool(
+		server,
+		'record_widget_event',
+		{
+			description: tools.record_widget_event.description,
+			inputSchema: tools.record_widget_event.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			recordWidgetEvent(telemetrySink, telemetryTarget, {
+				widget_name: args.widget_name,
+				event: args.event,
+				tool_name: args.tool_name,
+				card_kind: args.card_kind,
+				object_type: args.object_type,
+				object_id: args.object_id,
+				workspace_id: args.workspace_id,
+			})
+			return {
+				_meta: meta('record_widget_event', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify({ recorded: true }) }],
+			}
 		},
 	)
 
