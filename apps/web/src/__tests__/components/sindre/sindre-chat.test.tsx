@@ -46,6 +46,21 @@ vi.mock('@/lib/api', () => ({
 		actors: { list: vi.fn() },
 		objects: { list: vi.fn(), search: vi.fn() },
 		notifications: { list: vi.fn().mockResolvedValue([]) },
+		// useOverCapBlock (added by the over-cap composer block) reads from
+		// useBillingUsage; default to a BYO payload so existing SindreChat tests
+		// don't need to know about billing state.
+		billing: {
+			usage: vi.fn().mockResolvedValue({
+				plan: 'byollm',
+				status: 'active',
+				tokens_used: 0,
+				hard_cap_tokens: null,
+				period_start: null,
+				period_resets_in_ms: null,
+				stripe_customer_id: null,
+				stripe_subscription_id: null,
+			}),
+		},
 	},
 }))
 

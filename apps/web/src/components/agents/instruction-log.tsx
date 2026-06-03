@@ -1,3 +1,7 @@
+import {
+	OverCapComposerNotice,
+	useOverCapBlock,
+} from '@/components/billing/over-cap-composer-notice'
 import { Spinner } from '@/components/ui/spinner'
 import { useCreateSession } from '@/hooks/use-sessions'
 import type { ActorResponse } from '@/lib/api'
@@ -39,6 +43,7 @@ export function InstructionLog({ agent, workspaceId, onViewSession }: Instructio
 	const messagesEndRef = useRef<HTMLDivElement>(null)
 	const mountedRef = useRef(true)
 	const createSession = useCreateSession(workspaceId)
+	const overCapBlocked = useOverCapBlock(workspaceId)
 
 	useEffect(() => {
 		return () => {
@@ -184,7 +189,7 @@ export function InstructionLog({ agent, workspaceId, onViewSession }: Instructio
 
 	const handleSend = useCallback(async () => {
 		const prompt = input.trim()
-		if (!prompt || isStreaming) return
+		if (!prompt || isStreaming || overCapBlocked) return
 
 		const userMsgId = crypto.randomUUID()
 
@@ -196,14 +201,14 @@ export function InstructionLog({ agent, workspaceId, onViewSession }: Instructio
 		setInput('')
 
 		await startSession(prompt)
-	}, [input, isStreaming, startSession])
+	}, [input, isStreaming, overCapBlocked, startSession])
 
 	const handleRetry = useCallback(
 		(actionPrompt: string) => {
-			if (isStreaming) return
+			if (isStreaming || overCapBlocked) return
 			startSession(actionPrompt)
 		},
-		[isStreaming, startSession],
+		[isStreaming, overCapBlocked, startSession],
 	)
 
 	const handleKeyDown = useCallback(
@@ -232,9 +237,16 @@ export function InstructionLog({ agent, workspaceId, onViewSession }: Instructio
 								onRetry={handleRetry}
 								onViewSession={onViewSession}
 								isStreaming={isStreaming}
+								overCapBlocked={overCapBlocked}
 							/>
 						))}
 						<div ref={messagesEndRef} />
+					</div>
+				)}
+
+				{overCapBlocked && (
+					<div className="border-t border-border p-2">
+						<OverCapComposerNotice workspaceId={workspaceId} />
 					</div>
 				)}
 
@@ -246,13 +258,13 @@ export function InstructionLog({ agent, workspaceId, onViewSession }: Instructio
 						onChange={(e) => setInput(e.target.value)}
 						onKeyDown={handleKeyDown}
 						placeholder={`Tell ${agent.name} what to do...`}
-						disabled={isStreaming}
+						disabled={isStreaming || overCapBlocked}
 						className="flex-1 bg-transparent text-sm px-2 py-1.5 outline-none placeholder:text-muted-foreground disabled:opacity-50"
 					/>
 					<button
 						type="button"
 						onClick={handleSend}
-						disabled={!input.trim() || isStreaming}
+						disabled={!input.trim() || isStreaming || overCapBlocked}
 						className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
 					>
 						<SendHorizontal size={16} />
@@ -268,11 +280,13 @@ function MessageBubble({
 	onRetry,
 	onViewSession,
 	isStreaming,
+	overCapBlocked,
 }: {
 	message: Message
 	onRetry: (actionPrompt: string) => void
 	onViewSession?: (sessionId: string) => void
 	isStreaming: boolean
+	overCapBlocked: boolean
 }) {
 	if (message.role === 'user') {
 		return (
@@ -347,7 +361,7 @@ function MessageBubble({
 								type="button"
 								className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
 								onClick={() => onRetry(message.actionPrompt as string)}
-								disabled={isStreaming}
+								disabled={isStreaming || overCapBlocked}
 							>
 								<RotateCw size={12} />
 								Retry

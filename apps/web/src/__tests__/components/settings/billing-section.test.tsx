@@ -1,4 +1,5 @@
-import { BillingSection, formatResetsIn, formatTokens } from '@/components/settings/billing-section'
+import { BillingSection } from '@/components/settings/billing-section'
+import { formatResetsIn, formatTokens } from '@/lib/billing-format'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TestWrapper } from '../../setup'

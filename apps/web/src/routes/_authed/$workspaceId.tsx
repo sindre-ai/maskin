@@ -1,4 +1,4 @@
-import { NearCapBanner } from '@/components/billing/near-cap-banner'
+import { UsageStateBanner } from '@/components/billing/usage-state-banner'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
@@ -89,7 +89,7 @@ function WorkspaceLayout() {
 							<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
 								<AppSidebar />
 								<SidebarInset className="min-w-0">
-									<NearCapBanner workspaceId={workspaceId} />
+									<UsageStateBanner workspaceId={workspaceId} />
 									<Header />
 									<div className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8">
 										<Outlet />

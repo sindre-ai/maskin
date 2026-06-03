@@ -10,32 +10,11 @@ import {
 import { Label } from '@/components/ui/label'
 import { useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import type { BillingPlan, BillingStatus } from '@/lib/api'
+import { PLAN_LABEL, formatResetsIn, formatTokens } from '@/lib/billing-format'
 import { ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 
-const PLAN_LABEL: Record<BillingPlan, string> = {
-	trial: 'Trial',
-	starter: 'Starter — $20/mo',
-	pro: 'Pro — $60/mo',
-	byollm: 'Bring-your-own',
-}
-
 const STRIPE_BILLING_PORTAL = 'https://billing.stripe.com/p/login/maskin'
-
-export function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
-	if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
-	return `${n}`
-}
-
-export function formatResetsIn(ms: number | null): string {
-	if (ms == null || ms <= 0) return ''
-	const days = Math.floor(ms / (24 * 60 * 60 * 1000))
-	if (days > 0) return `resets in ${days}d`
-	const hours = Math.floor(ms / (60 * 60 * 1000))
-	if (hours > 0) return `resets in ${hours}h`
-	return 'resets soon'
-}
 
 function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string; tone: string } {
 	if (plan === 'byollm') return { label: 'Inactive', tone: 'bg-muted text-muted-foreground' }

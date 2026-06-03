@@ -1,4 +1,4 @@
-import { NearCapBanner } from '@/components/billing/near-cap-banner'
+import { UsageStateBanner } from '@/components/billing/usage-state-banner'
 import { render, screen } from '@testing-library/react'
 import { TestWrapper } from '../../setup'
 
@@ -37,12 +37,12 @@ const baseUsage = {
 function renderBanner() {
 	return render(
 		<TestWrapper>
-			<NearCapBanner workspaceId="ws-1" />
+			<UsageStateBanner workspaceId="ws-1" />
 		</TestWrapper>,
 	)
 }
 
-describe('NearCapBanner', () => {
+describe('UsageStateBanner — near-cap state', () => {
 	beforeEach(() => {
 		vi.mocked(api.billing.usage).mockReset()
 	})
@@ -118,18 +118,6 @@ describe('NearCapBanner', () => {
 		await screen.findByText(/90% of your trial credits/)
 	})
 
-	it('hides once usage hits or exceeds the cap (over-cap is a separate task)', async () => {
-		vi.mocked(api.billing.usage).mockResolvedValue({
-			...baseUsage,
-			tokens_used: baseUsage.hard_cap_tokens,
-		})
-		const { container } = renderBanner()
-		await vi.waitFor(() => {
-			expect(vi.mocked(api.billing.usage)).toHaveBeenCalled()
-		})
-		expect(container).toBeEmptyDOMElement()
-	})
-
 	it('hides on BYO plans (no cap to track)', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
@@ -176,6 +164,92 @@ describe('NearCapBanner', () => {
 		})
 		renderBanner()
 		await screen.findByText(/credits/)
+		expect(screen.queryByText(/resets in/)).not.toBeInTheDocument()
+	})
+})
+
+describe('UsageStateBanner — over-cap state', () => {
+	beforeEach(() => {
+		vi.mocked(api.billing.usage).mockReset()
+	})
+
+	it('shows the over-cap banner exactly at the cap (used == cap)', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			tokens_used: baseUsage.hard_cap_tokens,
+		})
+		renderBanner()
+		await screen.findByText(/over your Starter cap/)
+		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
+	})
+
+	it('shows when usage exceeds cap on Starter and routes upgrade to settings', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			tokens_used: baseUsage.hard_cap_tokens + 1_000_000,
+		})
+		renderBanner()
+		await screen.findByText(/over your Starter cap/)
+		// Starter sees the in-app upgrade CTA pointing at the settings row.
+		const upgrade = screen.getByRole('link', { name: 'Upgrade' })
+		expect(upgrade).toHaveAttribute('href', '/ws-1/settings/keys')
+		const switchToByo = screen.getByRole('link', { name: 'Switch to BYO key' })
+		expect(switchToByo).toHaveAttribute('href', '/ws-1/settings/keys')
+		// Pro overage is out of v1 — Starter must not surface the Contact us mailto.
+		expect(screen.queryByRole('link', { name: 'Contact us' })).not.toBeInTheDocument()
+		expect(
+			screen.queryByRole('button', { name: /close|dismiss/i }),
+		).not.toBeInTheDocument()
+	})
+
+	it('routes Pro over-cap to a Contact us mailto instead of settings', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			tokens_used: baseUsage.hard_cap_tokens + 1,
+		})
+		renderBanner()
+		await screen.findByText(/over your Pro cap/)
+		const contact = screen.getByRole('link', { name: 'Contact us' })
+		expect(contact.getAttribute('href') ?? '').toMatch(/^mailto:/)
+		// The "Upgrade" affordance should not be present on Pro — the Pro→? path
+		// is out of v1.
+		expect(screen.queryByRole('link', { name: 'Upgrade' })).not.toBeInTheDocument()
+	})
+
+	it('shows for trial workspaces too', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'trial',
+			hard_cap_tokens: 100_000,
+			tokens_used: 100_000,
+		})
+		renderBanner()
+		await screen.findByText(/over your trial cap/)
+	})
+
+	it('hides for BYO workspaces even if numbers look over-cap', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'byollm',
+			hard_cap_tokens: null,
+			tokens_used: 0,
+		})
+		const { container } = renderBanner()
+		await vi.waitFor(() => {
+			expect(vi.mocked(api.billing.usage)).toHaveBeenCalled()
+		})
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('omits the reset hint on over-cap if period_resets_in_ms is null', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			tokens_used: baseUsage.hard_cap_tokens + 1,
+			period_resets_in_ms: null,
+		})
+		renderBanner()
+		await screen.findByText(/over your Starter cap/)
 		expect(screen.queryByText(/resets in/)).not.toBeInTheDocument()
 	})
 })
