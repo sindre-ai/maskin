@@ -167,6 +167,13 @@ describe('Profile — PATCH /api/actors/:id (T2 profile fields)', () => {
 })
 
 describe('Profile — POST /api/actors/:id/avatar', () => {
+	const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+	const JPEG_SIGNATURE = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+	// 12 bytes: 'RIFF' + 4-byte size + 'WEBP'
+	const WEBP_SIGNATURE = new Uint8Array([
+		0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+	])
+
 	function avatarRequest(id: string, file: File, callerId = id) {
 		const form = new FormData()
 		form.append('file', file)
@@ -186,9 +193,7 @@ describe('Profile — POST /api/actors/:id/avatar', () => {
 		mockResults.selectQueue = [[actor], [{ workspaceId }]]
 		mockResults.update = [{ ...actor, avatarStorageKey: `actors/${actor.id}/avatar.png` }]
 
-		const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'a.png', {
-			type: 'image/png',
-		})
+		const png = new File([PNG_SIGNATURE], 'a.png', { type: 'image/png' })
 		const res = await app.request(avatarRequest(actor.id, png))
 
 		expect(res.status).toBe(200)
@@ -200,6 +205,94 @@ describe('Profile — POST /api/actors/:id/avatar', () => {
 			(i): i is { action: string } => (i as { action?: string }).action === 'profile.field_changed',
 		)
 		expect(evt).toBeDefined()
+	})
+
+	it('accepts a JPEG with matching magic bytes', async () => {
+		const actor = buildActor({ type: 'human' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		mockResults.selectQueue = [[actor], [{ workspaceId }]]
+		mockResults.update = [{ ...actor, avatarStorageKey: `actors/${actor.id}/avatar.jpg` }]
+
+		const jpg = new File([JPEG_SIGNATURE], 'a.jpg', { type: 'image/jpeg' })
+		const res = await app.request(avatarRequest(actor.id, jpg))
+
+		expect(res.status).toBe(200)
+		const [storedKey] = (storageProvider.put as ReturnType<typeof vi.fn>).mock.calls[0]
+		expect(storedKey).toBe(`actors/${actor.id}/avatar.jpg`)
+	})
+
+	it('accepts a WebP with matching magic bytes', async () => {
+		const actor = buildActor({ type: 'human' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		mockResults.selectQueue = [[actor], [{ workspaceId }]]
+		mockResults.update = [{ ...actor, avatarStorageKey: `actors/${actor.id}/avatar.webp` }]
+
+		const webp = new File([WEBP_SIGNATURE], 'a.webp', { type: 'image/webp' })
+		const res = await app.request(avatarRequest(actor.id, webp))
+
+		expect(res.status).toBe(200)
+		const [storedKey] = (storageProvider.put as ReturnType<typeof vi.fn>).mock.calls[0]
+		expect(storedKey).toBe(`actors/${actor.id}/avatar.webp`)
+	})
+
+	it('rejects an HTML payload tagged as image/png and never calls storage', async () => {
+		const actor = buildActor({ type: 'human' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		mockResults.select = [actor]
+
+		const html = new File([new TextEncoder().encode('<script>alert(1)</script>')], 'evil.png', {
+			type: 'image/png',
+		})
+		const res = await app.request(avatarRequest(actor.id, html))
+
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toMatch(/JPEG, PNG, or WebP/)
+		expect(storageProvider.put).not.toHaveBeenCalled()
+	})
+
+	it('rejects a PNG payload tagged as image/jpeg (mime/header mismatch)', async () => {
+		const actor = buildActor({ type: 'human' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		mockResults.select = [actor]
+
+		const mismatched = new File([PNG_SIGNATURE], 'a.jpg', { type: 'image/jpeg' })
+		const res = await app.request(avatarRequest(actor.id, mismatched))
+
+		expect(res.status).toBe(400)
+		expect(storageProvider.put).not.toHaveBeenCalled()
+	})
+
+	it('rejects a body too short to identify a known image format', async () => {
+		const actor = buildActor({ type: 'human' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		mockResults.select = [actor]
+
+		const tiny = new File([new Uint8Array([0x89, 0x50])], 'a.png', { type: 'image/png' })
+		const res = await app.request(avatarRequest(actor.id, tiny))
+
+		expect(res.status).toBe(400)
+		expect(storageProvider.put).not.toHaveBeenCalled()
 	})
 
 	it('rejects an avatar over 5MB', async () => {

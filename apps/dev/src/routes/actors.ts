@@ -69,6 +69,36 @@ function mimeToExt(mime: string): string | null {
 	return null
 }
 
+// Verify the file's leading bytes match the format the client claims. The
+// route otherwise trusts `file.type`; a JPEG-tagged HTML/JS blob served with a
+// permissive Content-Disposition would be an XSS vector.
+function detectImageFormat(bytes: Buffer): 'jpg' | 'png' | 'webp' | null {
+	if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+		return 'jpg'
+	}
+	if (
+		bytes.length >= 8 &&
+		bytes[0] === 0x89 &&
+		bytes[1] === 0x50 &&
+		bytes[2] === 0x4e &&
+		bytes[3] === 0x47 &&
+		bytes[4] === 0x0d &&
+		bytes[5] === 0x0a &&
+		bytes[6] === 0x1a &&
+		bytes[7] === 0x0a
+	) {
+		return 'png'
+	}
+	if (
+		bytes.length >= 12 &&
+		bytes.toString('ascii', 0, 4) === 'RIFF' &&
+		bytes.toString('ascii', 8, 12) === 'WEBP'
+	) {
+		return 'webp'
+	}
+	return null
+}
+
 const app = new OpenAPIHono<Env>()
 
 // POST / - Create actor (signup)
@@ -605,8 +635,8 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Avatar must be 5MB or smaller'), 400)
 	}
 
-	const ext = mimeToExt(file.type)
-	if (!ext) {
+	const declaredExt = mimeToExt(file.type)
+	if (!declaredExt) {
 		return c.json(
 			createApiError('BAD_REQUEST', 'Avatar must be JPEG, PNG, or WebP', [
 				{ field: 'file', message: `Unsupported mime type: ${file.type || 'unknown'}` },
@@ -615,7 +645,6 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 		)
 	}
 
-	const storageKey = avatarStorageKey(id, ext)
 	let bytes: Buffer
 	try {
 		bytes = Buffer.from(await file.arrayBuffer())
@@ -624,6 +653,25 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Failed to read uploaded file'), 400)
 	}
 
+	const detectedExt = detectImageFormat(bytes)
+	if (!detectedExt || detectedExt !== declaredExt) {
+		logger.warn('Avatar upload: magic-byte mismatch', {
+			actorId: id,
+			declaredMime: file.type,
+			detected: detectedExt ?? 'unknown',
+		})
+		return c.json(
+			createApiError('BAD_REQUEST', 'Avatar bytes do not match a JPEG, PNG, or WebP image', [
+				{
+					field: 'file',
+					message: `Declared ${file.type}, detected ${detectedExt ?? 'unknown'}`,
+				},
+			]),
+			400,
+		)
+	}
+
+	const storageKey = avatarStorageKey(id, detectedExt)
 	try {
 		await storage.put(storageKey, bytes)
 	} catch (err) {
@@ -645,6 +693,13 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 	}
 
 	await emitProfileFieldChanged(db, id, 'avatar')
+
+	logger.info('Avatar upload: stored', {
+		actorId: id,
+		storageKey,
+		format: detectedExt,
+		sizeBytes: bytes.length,
+	})
 
 	return c.json(serializeActor(updated))
 }) as RouteHandler<typeof uploadAvatarRoute, Env>)
