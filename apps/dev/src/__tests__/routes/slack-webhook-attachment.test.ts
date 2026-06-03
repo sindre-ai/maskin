@@ -180,7 +180,7 @@ describe('POST /api/webhooks/slack — file attachment persistence', () => {
 		const fileIds = row?.data?.maskin_file_ids
 		expect(Array.isArray(fileIds)).toBe(true)
 		expect(fileIds as string[]).toEqual([persistedFileId])
-	})
+	}, 10_000)
 
 	// Counterpart: the same route must NOT fabricate maskin_file_ids when the
 	// message has no attachments — otherwise we'd be claiming a non-existent

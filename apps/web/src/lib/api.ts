@@ -1,6 +1,12 @@
-import type { DisplaySettingsBody, SafeMetadata } from '@maskin/shared'
+import type {
+	ActorListItem,
+	ActorResponse,
+	DisplaySettingsBody,
+	SafeMetadata,
+	TriggerResponse,
+} from '@maskin/shared'
 
-export type { DisplaySettingsBody }
+export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -646,25 +652,6 @@ export interface MigrateObjectTypeResponse {
 	count: number
 }
 
-export interface ActorListItem {
-	id: string
-	type: string
-	name: string
-	email: string | null
-	description: string | null
-	isSystem: boolean
-}
-
-export interface ActorResponse extends ActorListItem {
-	system_prompt: string | null
-	tools: Record<string, unknown> | null
-	memory: Record<string, unknown> | null
-	llm_provider: string | null
-	llm_config: Record<string, unknown> | null
-	createdAt: string | null
-	updatedAt: string | null
-}
-
 export interface ActorWithKey extends ActorResponse {
 	api_key: string
 }
@@ -750,20 +737,6 @@ export interface CreateRelationshipInput {
 	target_type: string
 	target_id: string
 	type: string
-}
-
-export interface TriggerResponse {
-	id: string
-	workspaceId: string
-	name: string
-	type: string
-	config: Record<string, unknown> | null
-	actionPrompt: string
-	targetActorId: string
-	enabled: boolean
-	createdBy: string
-	createdAt: string | null
-	updatedAt: string | null
 }
 
 export interface CreateTriggerInput {
