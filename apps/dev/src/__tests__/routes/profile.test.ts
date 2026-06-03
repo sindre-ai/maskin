@@ -329,6 +329,68 @@ describe('Profile — POST /api/actors/:id/avatar', () => {
 
 		expect(res.status).toBe(403)
 	})
+
+	it('deletes the just-stored blob when the actor row disappeared mid-upload', async () => {
+		const actor = buildActor({ type: 'human' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		// Existing-row lookup succeeds, then the UPDATE finds nothing (concurrent
+		// delete or row vanished between SELECT and UPDATE).
+		mockResults.selectQueue = [[actor]]
+		mockResults.update = []
+
+		const png = new File([PNG_SIGNATURE], 'a.png', { type: 'image/png' })
+		const res = await app.request(avatarRequest(actor.id, png))
+
+		expect(res.status).toBe(404)
+		const expectedKey = `actors/${actor.id}/avatar.png`
+		expect(storageProvider.put).toHaveBeenCalledTimes(1)
+		expect(storageProvider.delete).toHaveBeenCalledTimes(1)
+		expect((storageProvider.delete as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(expectedKey)
+	})
+
+	it('deletes the just-stored blob when the actors UPDATE throws', async () => {
+		const actor = buildActor({ type: 'human' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		mockResults.selectQueue = [[actor]]
+		mockResults.updateError = new Error('connection reset')
+
+		const png = new File([PNG_SIGNATURE], 'a.png', { type: 'image/png' })
+		const res = await app.request(avatarRequest(actor.id, png))
+
+		expect(res.status).toBe(500)
+		const expectedKey = `actors/${actor.id}/avatar.png`
+		expect(storageProvider.put).toHaveBeenCalledTimes(1)
+		expect(storageProvider.delete).toHaveBeenCalledTimes(1)
+		expect((storageProvider.delete as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(expectedKey)
+	})
+
+	it('returns the original 404 even when the orphan cleanup itself fails', async () => {
+		const actor = buildActor({ type: 'human' })
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			actorsRoutes,
+			'/api/actors',
+			actor.id,
+		)
+		mockResults.selectQueue = [[actor]]
+		mockResults.update = []
+		;(storageProvider.delete as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+			new Error('s3 unreachable'),
+		)
+
+		const png = new File([PNG_SIGNATURE], 'a.png', { type: 'image/png' })
+		const res = await app.request(avatarRequest(actor.id, png))
+
+		expect(res.status).toBe(404)
+		expect(storageProvider.delete).toHaveBeenCalledTimes(1)
+	})
 })
 
 describe('Profile — DELETE /api/actors/:id (human self-delete)', () => {

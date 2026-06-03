@@ -679,16 +679,41 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to store avatar'), 500)
 	}
 
+	// Best-effort cleanup of the just-stored blob when the metadata write fails.
+	// Logged-not-thrown: a failing delete must not mask the original 404/500 the
+	// caller needs to see. The blob is the only thing that becomes an orphan.
+	const cleanupOrphan = async (reason: string) => {
+		try {
+			await storage.delete(storageKey)
+		} catch (cleanupErr) {
+			logger.warn('Avatar upload: orphan cleanup failed', {
+				actorId: id,
+				storageKey,
+				reason,
+				error: String(cleanupErr),
+			})
+		}
+	}
+
 	// If the prior avatar lived under a different extension, leave the old object
 	// behind for now — S3 lifecycle policies will collect it. Overwriting the
 	// metadata column is the only thing that matters for serving the new one.
-	const [updated] = await db
-		.update(actors)
-		.set({ avatarStorageKey: storageKey, updatedAt: new Date() })
-		.where(eq(actors.id, id))
-		.returning()
+	let rows: (typeof actors.$inferSelect)[]
+	try {
+		rows = await db
+			.update(actors)
+			.set({ avatarStorageKey: storageKey, updatedAt: new Date() })
+			.where(eq(actors.id, id))
+			.returning()
+	} catch (err) {
+		logger.error('Avatar upload: actor update failed', { actorId: id, error: String(err) })
+		await cleanupOrphan('update_threw')
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to store avatar'), 500)
+	}
 
+	const [updated] = rows
 	if (!updated) {
+		await cleanupOrphan('actor_missing')
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
