@@ -230,9 +230,36 @@ app.openapi(createActorRoute, async (c) => {
 // is present, the result is capped at min(limit, 100) and `X-Total-Count`
 // surfaces the real total so MCP/widget callers can render an accurate
 // `+N more` footer without changing the array body shape.
+// Cap the `ids=` filter at 200 entries per request. Sized for the hero-card
+// owner-resolution caller (one ID per object in a tool response) plus headroom.
+const MAX_IDS_FILTER = 200
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function parseIdsParam(
+	raw: string | undefined,
+): { ok: true; ids: string[] | null } | { ok: false } {
+	if (raw === undefined || raw === '') return { ok: true, ids: null }
+	const seen = new Set<string>()
+	for (const part of raw.split(',')) {
+		const trimmed = part.trim()
+		if (!trimmed) continue
+		if (!UUID_RE.test(trimmed)) return { ok: false }
+		seen.add(trimmed.toLowerCase())
+		if (seen.size > MAX_IDS_FILTER) return { ok: false }
+	}
+	return { ok: true, ids: [...seen] }
+}
+
 const listActorsQuerySchema = z.object({
 	limit: z.coerce.number().int().min(1).max(100).optional(),
 	offset: z.coerce.number().int().min(0).optional(),
+	ids: z
+		.string()
+		.optional()
+		.openapi({
+			description: `Comma-separated list of actor UUIDs to filter by. Max ${MAX_IDS_FILTER} entries.`,
+			example: '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002',
+		}),
 })
 
 // GET / - List actors
@@ -257,16 +284,39 @@ const listActorsRoute = createRoute({
 					.describe('Total actor count for the scope, ignoring limit/offset'),
 			}),
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
 	},
 })
 
-app.openapi(listActorsRoute, async (c) => {
+app.openapi(listActorsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { limit, offset } = c.req.valid('query')
+	const { limit, offset, ids: idsParam } = c.req.valid('query')
+
+	const parsed = parseIdsParam(idsParam)
+	if (!parsed.ok) {
+		return c.json(
+			createApiError('BAD_REQUEST', `ids must be comma-separated UUIDs (max ${MAX_IDS_FILTER})`),
+			400,
+		)
+	}
+	const idsFilter = parsed.ids
+
+	if (idsFilter !== null && idsFilter.length === 0) {
+		c.header('X-Total-Count', '0')
+		return c.json([] as z.infer<typeof actorListItemSchema>[])
+	}
 
 	if (workspaceId) {
 		// Workspace-scoped listing
+		const idsCondition = idsFilter ? [inArray(actors.id, idsFilter)] : []
+		const wsWhere = idsCondition.length
+			? and(eq(workspaceMembers.workspaceId, workspaceId), ...idsCondition)
+			: eq(workspaceMembers.workspaceId, workspaceId)
+
 		if (limit === undefined) {
 			const members = await db
 				.select({
@@ -280,7 +330,7 @@ app.openapi(listActorsRoute, async (c) => {
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-				.where(eq(workspaceMembers.workspaceId, workspaceId))
+				.where(wsWhere)
 
 			c.header('X-Total-Count', String(members.length))
 			return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
@@ -299,14 +349,15 @@ app.openapi(listActorsRoute, async (c) => {
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-				.where(eq(workspaceMembers.workspaceId, workspaceId))
+				.where(wsWhere)
 				.orderBy(asc(actors.name), asc(actors.id))
 				.limit(limit)
 				.offset(offset ?? 0),
 			db
 				.select({ value: count() })
 				.from(workspaceMembers)
-				.where(eq(workspaceMembers.workspaceId, workspaceId)),
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(wsWhere),
 		])
 
 		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
@@ -344,9 +395,13 @@ app.openapi(listActorsRoute, async (c) => {
 			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 			.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
 
+	const crossWhere = idsFilter
+		? and(inArray(workspaceMembers.workspaceId, workspaceIds), inArray(actors.id, idsFilter))
+		: inArray(workspaceMembers.workspaceId, workspaceIds)
+
 	if (limit === undefined) {
 		const rows = await baseQuery()
-			.where(inArray(workspaceMembers.workspaceId, workspaceIds))
+			.where(crossWhere)
 			.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
 		const grouped = groupActorMemberships(rows)
 		c.header('X-Total-Count', String(grouped.length))
@@ -362,12 +417,12 @@ app.openapi(listActorsRoute, async (c) => {
 			.select({ value: countDistinct(actors.id) })
 			.from(workspaceMembers)
 			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-			.where(inArray(workspaceMembers.workspaceId, workspaceIds)),
+			.where(crossWhere),
 		db
 			.selectDistinct({ id: actors.id, name: actors.name })
 			.from(workspaceMembers)
 			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-			.where(inArray(workspaceMembers.workspaceId, workspaceIds))
+			.where(crossWhere)
 			.orderBy(asc(actors.name), asc(actors.id))
 			.limit(limit)
 			.offset(offset ?? 0),
@@ -389,7 +444,7 @@ app.openapi(listActorsRoute, async (c) => {
 	return c.json(
 		serializeArray(groupActorMemberships(rows)) as z.infer<typeof actorListItemSchema>[],
 	)
-})
+}) as RouteHandler<typeof listActorsRoute, Env>)
 
 interface ActorMembershipRow {
 	id: string

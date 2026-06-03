@@ -16,7 +16,14 @@ vi.mock('node:fs', () => ({
 }))
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
-import { createMcpServer } from '../server'
+import {
+	HERO_CARD_TYPE_DEFAULTS,
+	type HeroCardTypeAnnotation,
+	buildContextLine,
+	buildHeroCardObject,
+	createMcpServer,
+	pickResourceUri,
+} from '../server'
 import { tools } from '../tools'
 
 const config = {
@@ -1885,6 +1892,89 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_bet_widget_metrics handler', () => {
+		it('GETs /api/telemetry/mcp/summary and returns only the bet-first window', async () => {
+			const fullSummary = {
+				workspace_id: 'ws-default-123',
+				window_start: '2026-05-01T00:00:00.000Z',
+				window_end: '2026-05-31T00:00:00.000Z',
+				tool_calls_total: 100,
+				rich_render_pct: 60,
+				widget_bet_first_window: {
+					bet_renders_total: 12,
+					bet_render_errors_total: 0,
+					bet_click_throughs_total: 4,
+					ctr_first_200: {
+						renders: 12,
+						clicks: 4,
+						pct: 33.33,
+						target_pct: 30,
+						target_met: true,
+					},
+					ctr_first_50_kill: {
+						renders: 12,
+						clicks: 4,
+						pct: 33.33,
+						kill_threshold_pct: 30,
+						kill_triggered: false,
+					},
+					render_error_48h: {
+						renders: 8,
+						errors: 0,
+						pct: 0,
+						kill_threshold_pct: 10,
+						kill_triggered: false,
+					},
+				},
+			}
+			mockFetchSuccess(fullSummary)
+
+			const handler = getHandler('get_bet_widget_metrics')
+			const result = (await handler({})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/telemetry/mcp/summary',
+				expect.objectContaining({
+					method: 'GET',
+					headers: expect.objectContaining({
+						Authorization: 'Bearer ank_testkey123',
+						'X-Workspace-Id': 'ws-default-123',
+					}),
+				}),
+			)
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual({
+				workspace_id: fullSummary.workspace_id,
+				window_start: fullSummary.window_start,
+				window_end: fullSummary.window_end,
+				widget_bet_first_window: fullSummary.widget_bet_first_window,
+			})
+			// Confirm the unrelated rich-render aggregate did NOT leak through.
+			expect(parsed.tool_calls_total).toBeUndefined()
+			expect(parsed.rich_render_pct).toBeUndefined()
+		})
+
+		it('uses workspace_id from args over default', async () => {
+			mockFetchSuccess({
+				workspace_id: 'ws-custom',
+				window_start: '2026-05-01T00:00:00.000Z',
+				window_end: '2026-05-31T00:00:00.000Z',
+				widget_bet_first_window: {},
+			})
+
+			const handler = getHandler('get_bet_widget_metrics')
+			await handler({ workspace_id: 'ws-custom' })
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/telemetry/mcp/summary',
+				expect.objectContaining({
+					headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
+				}),
+			)
+		})
+	})
+
 	describe('Hero Card structuredContent + per-response swap', () => {
 		it('populates structuredContent.heroCard and swaps to hero-card resource when the response is a single bet', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
@@ -1905,7 +1995,7 @@ describe('tool handlers', () => {
 							}),
 					} as Response
 				}
-				if (urlStr.endsWith('/api/actors')) {
+				if (urlStr.includes('/api/actors')) {
 					return {
 						ok: true,
 						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sebastian' }]),
@@ -1928,7 +2018,7 @@ describe('tool handlers', () => {
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 		})
 
-		it('keeps the objects resource for non-bet single results', async () => {
+		it('routes a single task result through the hero-card resource with a task-shaped context line', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
 				if (urlStr.includes('/api/objects/task-9/graph')) {
@@ -1941,6 +2031,85 @@ describe('tool handlers', () => {
 									type: 'task',
 									title: 'Test task',
 									status: 'in_progress',
+									owner: 'actor-2',
+								},
+							}),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'actor-2', name: 'Magnus' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['task-9'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: { kind: string; object?: { contextLine?: string; owner?: unknown } }
+				}
+			}
+
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'in_progress · owner Magnus',
+			)
+		})
+
+		it('routes a single insight result through the hero-card resource with an anchor + cluster context line', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/insight-7/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'insight-7',
+									type: 'insight',
+									title: 'Pricing pain',
+									status: 'clustered',
+									owner: null,
+									metadata: { anchors: ['#3', '#6'], cluster_size: 4 },
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['insight-7'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: { kind: string; object?: { contextLine?: string } }
+				}
+			}
+
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'clustered · anchor #3+#6 · 4 sources',
+			)
+		})
+
+		it('keeps the objects resource for single results of an unknown type (default fallback)', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/customer-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'customer-1',
+									type: 'customer',
+									title: 'Acme Inc.',
+									status: 'engaged',
 									owner: null,
 								},
 							}),
@@ -1950,13 +2119,112 @@ describe('tool handlers', () => {
 			})
 
 			const handler = getHandler('get_objects')
-			const result = (await handler({ ids: ['task-9'] })) as {
+			const result = (await handler({ ids: ['customer-1'] })) as {
 				_meta: { ui?: { resourceUri?: string } }
 				structuredContent: { heroCard: { kind: string } }
 			}
 
 			expect(result.structuredContent.heroCard.kind).toBe('single')
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
+		})
+
+		it('resolves hero-card owner names via a batched ?ids= lookup, not the full actor list', async () => {
+			const calls: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				calls.push(urlStr)
+				if (urlStr.includes('/api/objects/search')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+								{
+									id: 'bet-3',
+									type: 'bet',
+									title: 'Bet Three',
+									status: 'active',
+									owner: 'actor-1',
+								},
+							]),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'actor-1', name: 'Alice' },
+								{ id: 'actor-2', name: 'Bob' },
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('search_objects')
+			const result = (await handler({ q: 'bet' })) as {
+				structuredContent: {
+					heroCard: {
+						kind: string
+						objects?: Array<{ owner?: { id: string; name: string | null } }>
+					}
+				}
+			}
+
+			const actorCall = calls.find((u) => u.includes('/api/actors'))
+			expect(actorCall).toBeDefined()
+			// Single batched request, not the unbounded full-workspace fetch.
+			expect(calls.filter((u) => u.includes('/api/actors'))).toHaveLength(1)
+			expect(actorCall).toContain('?ids=')
+			// Owner IDs are deduped — actor-1 appears twice in the result rows.
+			const idsParam = new URL(actorCall as string).searchParams.get('ids') ?? ''
+			const ids = idsParam.split(',').filter(Boolean)
+			expect(ids.sort()).toEqual(['actor-1', 'actor-2'])
+
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
+			expect(owners).toEqual([
+				{ id: 'actor-1', name: 'Alice' },
+				{ id: 'actor-2', name: 'Bob' },
+				{ id: 'actor-1', name: 'Alice' },
+			])
+		})
+
+		it('falls back to { id, name: null } when the batched lookup misses an actor', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/search')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+							]),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'actor-1', name: 'Alice' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('search_objects')
+			const result = (await handler({ q: 'bet' })) as {
+				structuredContent: {
+					heroCard: { objects?: Array<{ owner?: { id: string; name: string | null } }> }
+				}
+			}
+			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
+			expect(owners).toEqual([
+				{ id: 'actor-1', name: 'Alice' },
+				{ id: 'actor-2', name: null },
+			])
 		})
 
 		it('emits an empty heroCard for list_objects with no rows', async () => {
@@ -2108,7 +2376,7 @@ describe('tool handlers', () => {
 							]),
 					} as Response
 				}
-				if (urlStr.endsWith('/api/actors')) {
+				if (urlStr.includes('/api/actors')) {
 					return {
 						ok: true,
 						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sindre' }]),
@@ -2173,6 +2441,196 @@ describe('tool handlers', () => {
 			expect(triggersCalls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
+		})
+
+		it('swaps to the hero-card resource for a single organization (customer variant)', async () => {
+			const updatedAt = new Date(Date.now() - 3 * 86_400_000).toISOString()
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/org-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'org-1',
+									type: 'organization',
+									title: 'Acme Co',
+									status: 'qualifying',
+									owner: 'actor-1',
+									updatedAt,
+								},
+							}),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						json: () => Promise.resolve([{ id: 'actor-1', name: 'Sebastian' }]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['org-1'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: {
+						kind: string
+						object?: { type: string; contextLine: string; owner?: unknown }
+					}
+				}
+			}
+
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result.structuredContent.heroCard.object?.type).toBe('organization')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'last touch 3d ago · qualifying',
+			)
+		})
+
+		it('swaps to the hero-card resource for a single person (customer variant)', async () => {
+			const updatedAt = new Date(Date.now() - 1 * 86_400_000).toISOString()
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/person-1/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'person-1',
+									type: 'person',
+									title: 'Jane Doe',
+									status: 'engaged',
+									owner: null,
+									updatedAt,
+								},
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('get_objects')
+			const result = (await handler({ ids: ['person-1'] })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: { heroCard: { kind: string; object?: { contextLine: string } } }
+			}
+
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
+				'last touch 1d ago · engaged',
+			)
+		})
+	})
+
+	describe('Hero Card schema-driven type annotations', () => {
+		it('exposes hero_card annotations for organization and person in get_workspace_schema', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([
+						{
+							id: 'ws-1',
+							name: 'Test Workspace',
+							settings: {
+								statuses: {
+									organization: ['prospect', 'qualifying'],
+									person: ['new', 'engaged'],
+									bet: ['active'],
+								},
+							},
+						},
+					]),
+			} as Response)
+			const handler = getHandler('get_workspace_schema')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text) as {
+				types: Record<string, { hero_card?: HeroCardTypeAnnotation }>
+			}
+			expect(parsed.types.organization?.hero_card?.hero_card_context).toBe('last touch + stage')
+			expect(parsed.types.person?.hero_card?.hero_card_context).toBe('last touch + stage')
+			// bet has no built-in annotation — schema-driven path is opt-in per type.
+			expect(parsed.types.bet?.hero_card).toBeUndefined()
+		})
+
+		it('lets workspace settings override the built-in hero_card annotation', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([
+						{
+							id: 'ws-2',
+							name: 'Override',
+							settings: {
+								statuses: { organization: ['prospect'] },
+								hero_card: {
+									organization: {
+										hero_card_context: 'custom strategy',
+										primary_action: { label: 'View account', kind: 'open_object' },
+									},
+								},
+							},
+						},
+					]),
+			} as Response)
+			const handler = getHandler('get_workspace_schema')
+			const result = (await handler({ workspace_id: 'ws-2' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text) as {
+				types: Record<string, { hero_card?: HeroCardTypeAnnotation }>
+			}
+			expect(parsed.types.organization?.hero_card?.hero_card_context).toBe('custom strategy')
+			expect(parsed.types.organization?.hero_card?.primary_action?.label).toBe('View account')
+		})
+
+		it('renders a hypothetical new object type identically when given the same annotation', () => {
+			// Proves the template is generic: an annotated type with no widget code,
+			// no predicate edit, and no new constant entry renders the same Hero Card
+			// surface as organization/person.
+			const annotations: Record<string, HeroCardTypeAnnotation> = {
+				...HERO_CARD_TYPE_DEFAULTS,
+				account: HERO_CARD_TYPE_DEFAULTS.organization,
+			}
+			const updatedAt = new Date(Date.now() - 5 * 86_400_000).toISOString()
+			const accountObj = {
+				id: 'acct-1',
+				type: 'account',
+				title: 'Hypothetical Co',
+				status: 'qualifying',
+				updatedAt,
+			}
+			const orgObj = { ...accountObj, id: 'org-1', type: 'organization' }
+			const accountHero = buildHeroCardObject(accountObj, null, Date.now(), annotations)
+			const orgHero = buildHeroCardObject(orgObj, null, Date.now(), annotations)
+			// Same context line, same owner shape — render path is type-agnostic.
+			expect(accountHero.contextLine).toBe(orgHero.contextLine)
+			expect(accountHero.contextLine).toBe('last touch 5d ago · qualifying')
+
+			// Resource swap fires identically for the new type.
+			const accountPayload = { kind: 'single' as const, tool: 't', object: accountHero }
+			const orgPayload = { kind: 'single' as const, tool: 't', object: orgHero }
+			expect(pickResourceUri(accountPayload, annotations)).toBe('ui://maskin/hero-card')
+			expect(pickResourceUri(orgPayload, annotations)).toBe(
+				pickResourceUri(accountPayload, annotations),
+			)
+		})
+
+		it('falls back to type · status for an unannotated unknown type', () => {
+			const obj = {
+				id: 'x-1',
+				type: 'something-new',
+				title: 'X',
+				status: 'open',
+				createdAt: null,
+			}
+			expect(buildContextLine(obj, null)).toBe('something-new · open')
 		})
 	})
 
