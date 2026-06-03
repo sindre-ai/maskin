@@ -71,7 +71,7 @@ describe('BoardView', () => {
 				]}
 			/>,
 		)
-		// Status appears in column header AND on each card's StatusBadge — assert count >= 1.
+		// Status appears in column header and on each card's StatusBadge.
 		expect(screen.getAllByText('todo').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByText('in progress').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByText('done').length).toBeGreaterThanOrEqual(1)
@@ -103,7 +103,7 @@ describe('BoardView', () => {
 				isLoading
 			/>,
 		)
-		// Two columns × two skeletons each.
+		// Two columns x two skeletons each.
 		expect(screen.getAllByTestId('board-card-skeleton')).toHaveLength(4)
 	})
 
