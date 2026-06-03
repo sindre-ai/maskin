@@ -132,8 +132,7 @@ describe('Actors Routes', () => {
 			const a2 = buildActor({ type: 'agent', name: 'Bot', email: null })
 			const wsId = '00000000-0000-0000-0000-000000000001'
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// First select: get workspaces the actor belongs to
-			// Second select: get (actor, workspace, role) rows
+			// Without pagination: caller's workspaces, then membership rows.
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[
@@ -161,6 +160,7 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('2')
 			const body = await res.json()
 			expect(body).toHaveLength(2)
 			expect(body[0].workspaces).toEqual([{ id: wsId, name: 'Acme', role: 'owner' }])
@@ -199,6 +199,7 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('1')
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].workspaces).toEqual([
@@ -214,8 +215,125 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('0')
 			const body = await res.json()
 			expect(body).toHaveLength(0)
+		})
+
+		it('paginates workspace-scoped listing and surfaces total count beyond the page cap', async () => {
+			const wsId = '00000000-0000-0000-0000-000000000001'
+			const a1 = buildActor({ type: 'human', name: 'Alice', email: null })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			// Workspace-scoped paginated path runs two parallel queries: page + count.
+			mockResults.selectQueue = [
+				[
+					{
+						id: a1.id,
+						type: a1.type,
+						name: a1.name,
+						email: a1.email,
+						isSystem: a1.isSystem,
+						role: 'member',
+					},
+				],
+				[{ value: 1234 }],
+			]
+
+			const res = await app.request(
+				jsonGet('/api/actors?limit=1&offset=0', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('1234')
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].id).toBe(a1.id)
+		})
+
+		it('rejects oversized limit query at the boundary', async () => {
+			const wsId = '00000000-0000-0000-0000-000000000001'
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(jsonGet('/api/actors?limit=999', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(400)
+		})
+
+		describe('with ?ids= filter', () => {
+			const id1 = '11111111-1111-1111-1111-111111111111'
+			const id2 = '22222222-2222-2222-2222-222222222222'
+			const wsId = '00000000-0000-0000-0000-000000000001'
+
+			it('returns only the requested actors (workspace-scoped branch)', async () => {
+				const a1 = buildActor({ id: id1, type: 'human', name: 'Alice', email: 'a@test.com' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.select = [{ ...a1, role: 'owner' }]
+
+				const res = await app.request(
+					jsonGet(`/api/actors?ids=${id1},${id2}`, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body).toHaveLength(1)
+				expect(body[0].id).toBe(id1)
+			})
+
+			it('returns only the requested actors (cross-workspace branch)', async () => {
+				const a1 = buildActor({ id: id1, type: 'human', name: 'Alice', email: 'a@test.com' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }],
+					[
+						{
+							id: a1.id,
+							type: a1.type,
+							name: a1.name,
+							email: a1.email,
+							workspaceId: wsId,
+							workspaceName: 'Acme',
+							role: 'owner',
+						},
+					],
+				]
+
+				const res = await app.request(jsonGet(`/api/actors?ids=${id1}`))
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body).toHaveLength(1)
+				expect(body[0].id).toBe(a1.id)
+			})
+
+			it('returns 400 when ids contains a non-UUID value', async () => {
+				const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+				const res = await app.request(jsonGet(`/api/actors?ids=${id1},not-a-uuid`))
+
+				expect(res.status).toBe(400)
+			})
+
+			it('returns 400 when ids exceeds the 200 entry cap', async () => {
+				const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+				const overflow = Array.from(
+					{ length: 201 },
+					(_, i) => `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`,
+				).join(',')
+				const res = await app.request(jsonGet(`/api/actors?ids=${overflow}`))
+
+				expect(res.status).toBe(400)
+			})
+
+			it('returns an empty list when ids is empty after trimming', async () => {
+				const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+				const res = await app.request(jsonGet('/api/actors?ids=,,'))
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body).toEqual([])
+			})
 		})
 	})
 

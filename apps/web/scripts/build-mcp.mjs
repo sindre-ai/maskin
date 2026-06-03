@@ -18,6 +18,7 @@ const apps = [
 	'graph',
 	'schema',
 	'sessions',
+	'hero-card',
 ]
 
 // Clean output dirs
