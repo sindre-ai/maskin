@@ -34,7 +34,18 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { parseSkillMd } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Command } from 'cmdk'
-import { BookOpen, Check, FileText, Library, Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+	BookOpen,
+	Building2,
+	Check,
+	FileText,
+	Library,
+	type LucideIcon,
+	Pencil,
+	Plus,
+	Trash2,
+	User,
+} from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 interface SkillsProps {
@@ -67,9 +78,12 @@ export function Skills({ actorId }: SkillsProps) {
 		<div>
 			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} />
 
-			<h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 mt-4">
-				Personal Skills
-			</h3>
+			<SkillsSectionHeader
+				icon={User}
+				label="Personal"
+				count={skillList.length}
+				className="mt-4"
+			/>
 
 			{skillList.length > 0 ? (
 				<div className="space-y-2 mb-3">
@@ -139,9 +153,11 @@ function WorkspaceSkillsSection({
 
 	return (
 		<div>
-			<h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-				Workspace Skills
-			</h3>
+			<SkillsSectionHeader
+				icon={Building2}
+				label="Workspace"
+				count={isLoading ? undefined : attached.length}
+			/>
 
 			{isLoading && <p className="text-xs text-muted-foreground">Loading workspace skills...</p>}
 
@@ -236,6 +252,28 @@ function WorkspaceSkillsSection({
 				</div>
 			)}
 		</div>
+	)
+}
+
+function SkillsSectionHeader({
+	icon: Icon,
+	label,
+	count,
+	className,
+}: {
+	icon: LucideIcon
+	label: string
+	count?: number
+	className?: string
+}) {
+	return (
+		<h3
+			className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 ${className ?? ''}`}
+		>
+			<Icon className="h-3.5 w-3.5" aria-hidden="true" />
+			<span>{label}</span>
+			{count !== undefined && <span aria-label={`${count} ${label.toLowerCase()} skills`}>· {count}</span>}
+		</h3>
 	)
 }
 

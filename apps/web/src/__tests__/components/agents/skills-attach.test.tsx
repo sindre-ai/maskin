@@ -20,8 +20,10 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+const mockUseSkills = vi.fn()
+
 vi.mock('@/hooks/use-skills', () => ({
-	useSkills: () => ({ data: [], isLoading: false }),
+	useSkills: (...args: unknown[]) => mockUseSkills(...args),
 	useSkill: () => ({ data: null }),
 	useSaveSkill: () => ({ mutate: vi.fn(), isPending: false }),
 	useDeleteSkill: () => ({ mutate: vi.fn() }),
@@ -77,6 +79,7 @@ function buildAttachedSkill(
 describe('Skills — Workspace Skills section', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockUseSkills.mockReturnValue({ data: [], isLoading: false })
 		mockUseWorkspaceSkills.mockReturnValue({ data: [], isLoading: false })
 		mockUseAgentSkillAttachments.mockReturnValue({ data: [], isLoading: false })
 	})
@@ -91,6 +94,19 @@ describe('Skills — Workspace Skills section', () => {
 		expect(screen.getByText(/No workspace skills in this workspace yet/)).toBeInTheDocument()
 		const link = screen.getByRole('link', { name: /Settings → Skills/ })
 		expect(link).toHaveAttribute('href', '/$workspaceId/settings/skills')
+	})
+
+	it('renders Workspace and Personal section headers with zero counts when both are empty', () => {
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		const workspaceHeader = screen.getByRole('heading', { name: /workspace.*0/i })
+		const personalHeader = screen.getByRole('heading', { name: /personal.*0/i })
+		expect(workspaceHeader).toBeInTheDocument()
+		expect(personalHeader).toBeInTheDocument()
 	})
 
 	it('does not show the attach dropdown trigger in empty state', () => {
@@ -227,6 +243,63 @@ describe('Skills — Workspace Skills section', () => {
 
 		expect(screen.getByRole('button', { name: 'Remove deploy' })).toBeInTheDocument()
 		expect(screen.getByText('Ship it')).toBeInTheDocument()
+	})
+
+	it('renders both attached workspace skills and personal skills under their respective section headers', () => {
+		mockUseSkills.mockReturnValue({
+			data: [
+				{
+					name: 'personal-one',
+					description: 'A personal skill',
+				},
+			],
+			isLoading: false,
+		})
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [buildWorkspaceSkill({ id: 'a', name: 'deploy' })],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [buildAttachedSkill({ id: 'a', name: 'deploy', description: 'Ship it' })],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByRole('heading', { name: /workspace.*1/i })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: /personal.*1/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Remove deploy' })).toBeInTheDocument()
+		expect(screen.getByText('personal-one')).toBeInTheDocument()
+		expect(screen.getByText('A personal skill')).toBeInTheDocument()
+	})
+
+	it('reflects attached count in the Workspace section header', () => {
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [
+				buildWorkspaceSkill({ id: 'a', name: 'deploy' }),
+				buildWorkspaceSkill({ id: 'b', name: 'review-pr' }),
+			],
+			isLoading: false,
+		})
+		mockUseAgentSkillAttachments.mockReturnValue({
+			data: [
+				buildAttachedSkill({ id: 'a', name: 'deploy' }),
+				buildAttachedSkill({ id: 'b', name: 'review-pr' }),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByRole('heading', { name: /workspace.*2/i })).toBeInTheDocument()
 	})
 
 	it('calls detach when Remove is clicked on an attached row', async () => {
