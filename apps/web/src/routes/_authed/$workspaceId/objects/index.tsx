@@ -657,6 +657,7 @@ function ObjectsPage() {
 						objectType={typeFilter}
 						objects={allObjects}
 						statusesByType={statusesByType}
+						workspaceId={workspaceId}
 						isLoading={infiniteQuery.isLoading}
 					/>
 				</div>
