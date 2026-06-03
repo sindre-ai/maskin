@@ -27,7 +27,7 @@ import {
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { and, asc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, count, countDistinct, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	actorListItemSchema,
@@ -225,6 +225,43 @@ app.openapi(createActorRoute, async (c) => {
 	)
 })
 
+// Pagination is opt-in: when `limit`/`offset` are absent, the endpoint returns
+// every actor (preserving the historical frontend behaviour). When `limit`
+// is present, the result is capped at min(limit, 100) and `X-Total-Count`
+// surfaces the real total so MCP/widget callers can render an accurate
+// `+N more` footer without changing the array body shape.
+// Cap the `ids=` filter at 200 entries per request. Sized for the hero-card
+// owner-resolution caller (one ID per object in a tool response) plus headroom.
+const MAX_IDS_FILTER = 200
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function parseIdsParam(
+	raw: string | undefined,
+): { ok: true; ids: string[] | null } | { ok: false } {
+	if (raw === undefined || raw === '') return { ok: true, ids: null }
+	const seen = new Set<string>()
+	for (const part of raw.split(',')) {
+		const trimmed = part.trim()
+		if (!trimmed) continue
+		if (!UUID_RE.test(trimmed)) return { ok: false }
+		seen.add(trimmed.toLowerCase())
+		if (seen.size > MAX_IDS_FILTER) return { ok: false }
+	}
+	return { ok: true, ids: [...seen] }
+}
+
+const listActorsQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).optional(),
+	offset: z.coerce.number().int().min(0).optional(),
+	ids: z
+		.string()
+		.optional()
+		.openapi({
+			description: `Comma-separated list of actor UUIDs to filter by. Max ${MAX_IDS_FILTER} entries.`,
+			example: '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002',
+		}),
+})
+
 // GET / - List actors
 const listActorsRoute = createRoute({
 	method: 'get',
@@ -235,35 +272,95 @@ const listActorsRoute = createRoute({
 		headers: z.object({
 			'x-workspace-id': z.string().uuid().optional(),
 		}),
+		query: listActorsQuerySchema,
 	},
 	responses: {
 		200: {
 			content: { 'application/json': { schema: z.array(actorListItemSchema) } },
 			description: 'List of actors',
+			headers: z.object({
+				'x-total-count': z
+					.string()
+					.describe('Total actor count for the scope, ignoring limit/offset'),
+			}),
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
 		},
 	},
 })
 
-app.openapi(listActorsRoute, async (c) => {
+app.openapi(listActorsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { limit, offset, ids: idsParam } = c.req.valid('query')
+
+	const parsed = parseIdsParam(idsParam)
+	if (!parsed.ok) {
+		return c.json(
+			createApiError('BAD_REQUEST', `ids must be comma-separated UUIDs (max ${MAX_IDS_FILTER})`),
+			400,
+		)
+	}
+	const idsFilter = parsed.ids
+
+	if (idsFilter !== null && idsFilter.length === 0) {
+		c.header('X-Total-Count', '0')
+		return c.json([] as z.infer<typeof actorListItemSchema>[])
+	}
 
 	if (workspaceId) {
-		// List actors in workspace
-		const members = await db
-			.select({
-				id: actors.id,
-				type: actors.type,
-				name: actors.name,
-				email: actors.email,
-				description: actors.description,
-				isSystem: actors.isSystem,
-				role: workspaceMembers.role,
-			})
-			.from(workspaceMembers)
-			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-			.where(eq(workspaceMembers.workspaceId, workspaceId))
+		// Workspace-scoped listing
+		const idsCondition = idsFilter ? [inArray(actors.id, idsFilter)] : []
+		const wsWhere = idsCondition.length
+			? and(eq(workspaceMembers.workspaceId, workspaceId), ...idsCondition)
+			: eq(workspaceMembers.workspaceId, workspaceId)
 
+		if (limit === undefined) {
+			const members = await db
+				.select({
+					id: actors.id,
+					type: actors.type,
+					name: actors.name,
+					email: actors.email,
+					description: actors.description,
+					isSystem: actors.isSystem,
+					role: workspaceMembers.role,
+				})
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(wsWhere)
+
+			c.header('X-Total-Count', String(members.length))
+			return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+		}
+
+		const [members, totalRow] = await Promise.all([
+			db
+				.select({
+					id: actors.id,
+					type: actors.type,
+					name: actors.name,
+					email: actors.email,
+					description: actors.description,
+					isSystem: actors.isSystem,
+					role: workspaceMembers.role,
+				})
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(wsWhere)
+				.orderBy(asc(actors.name), asc(actors.id))
+				.limit(limit)
+				.offset(offset ?? 0),
+			db
+				.select({ value: count() })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(wsWhere),
+		])
+
+		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
 		return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
 	}
 
@@ -277,27 +374,99 @@ app.openapi(listActorsRoute, async (c) => {
 
 	const workspaceIds = myWorkspaces.map((w) => w.workspaceId)
 	if (workspaceIds.length === 0) {
+		c.header('X-Total-Count', '0')
 		return c.json([] as z.infer<typeof actorListItemSchema>[])
 	}
 
-	const rows = await db
-		.select({
-			id: actors.id,
-			type: actors.type,
-			name: actors.name,
-			email: actors.email,
-			description: actors.description,
-			isSystem: actors.isSystem,
-			workspaceId: workspaces.id,
-			workspaceName: workspaces.name,
-			role: workspaceMembers.role,
-		})
-		.from(workspaceMembers)
-		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
+	const baseQuery = () =>
+		db
+			.select({
+				id: actors.id,
+				type: actors.type,
+				name: actors.name,
+				email: actors.email,
+				description: actors.description,
+				isSystem: actors.isSystem,
+				workspaceId: workspaces.id,
+				workspaceName: workspaces.name,
+				role: workspaceMembers.role,
+			})
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+
+	const crossWhere = idsFilter
+		? and(inArray(workspaceMembers.workspaceId, workspaceIds), inArray(actors.id, idsFilter))
+		: inArray(workspaceMembers.workspaceId, workspaceIds)
+
+	if (limit === undefined) {
+		const rows = await baseQuery()
+			.where(crossWhere)
+			.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
+		const grouped = groupActorMemberships(rows)
+		c.header('X-Total-Count', String(grouped.length))
+		return c.json(serializeArray(grouped) as z.infer<typeof actorListItemSchema>[])
+	}
+
+	// Two phases: (1) count + pick paginated set of distinct actor IDs ordered
+	// by name, then (2) fetch all membership rows for that set and group in
+	// JS. This keeps a hard cap on rows transferred even when an actor sits in
+	// many workspaces, and keeps `X-Total-Count` exact regardless of fan-out.
+	const [totalRow, pageActorRows] = await Promise.all([
+		db
+			.select({ value: countDistinct(actors.id) })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.where(crossWhere),
+		db
+			.selectDistinct({ id: actors.id, name: actors.name })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.where(crossWhere)
+			.orderBy(asc(actors.name), asc(actors.id))
+			.limit(limit)
+			.offset(offset ?? 0),
+	])
+
+	const pageActorIds = pageActorRows.map((r) => r.id)
+	if (pageActorIds.length === 0) {
+		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
+		return c.json([] as z.infer<typeof actorListItemSchema>[])
+	}
+
+	const rows = await baseQuery()
+		.where(
+			and(inArray(workspaceMembers.workspaceId, workspaceIds), inArray(actors.id, pageActorIds)),
+		)
 		.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
 
+	c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
+	return c.json(
+		serializeArray(groupActorMemberships(rows)) as z.infer<typeof actorListItemSchema>[],
+	)
+}) as RouteHandler<typeof listActorsRoute, Env>)
+
+interface ActorMembershipRow {
+	id: string
+	type: string
+	name: string
+	email: string | null
+	description: string | null
+	isSystem: boolean
+	workspaceId: string
+	workspaceName: string
+	role: string
+}
+
+function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
+	id: string
+	type: string
+	name: string
+	email: string | null
+	description: string | null
+	isSystem: boolean
+	workspaces: { id: string; name: string; role: string }[]
+}> {
 	const byActor = new Map<
 		string,
 		{
@@ -327,9 +496,8 @@ app.openapi(listActorsRoute, async (c) => {
 			})
 		}
 	}
-
-	return c.json(serializeArray([...byActor.values()]) as z.infer<typeof actorListItemSchema>[])
-})
+	return [...byActor.values()]
+}
 
 // GET /:id - Get actor by ID
 const getActorRoute = createRoute({
