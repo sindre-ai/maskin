@@ -176,10 +176,11 @@ app.openapi(connectRoute, (async (c) => {
 
 	const state = encrypt(JSON.stringify(statePayload))
 
-	// Store nonce in DB to prevent replay attacks
-	await db
-		.insert(integrations)
-		.values({
+	// Store the nonce in DB to prevent replay attacks. We intentionally avoid an
+	// upsert here because the integrations table uses partial unique indexes, and
+	// Postgres cannot infer those indexes from a plain ON CONFLICT target.
+	try {
+		await db.insert(integrations).values({
 			workspaceId,
 			provider: providerName,
 			status: 'pending',
@@ -187,18 +188,22 @@ app.openapi(connectRoute, (async (c) => {
 			credentials: '',
 			createdBy: actorId,
 		})
-		.onConflictDoUpdate({
-			// Matches the DB-level unique constraint (workspace_id, provider, external_id).
-			// Pending rows use a fresh random nonce as externalId so this conflict is
-			// effectively impossible — the upsert stays purely as defence-in-depth.
-			target: [integrations.workspaceId, integrations.provider, integrations.externalId],
-			set: {
-				externalId: nonce,
-				status: 'pending',
-				updatedAt: new Date(),
-			},
-		})
-
+	} catch (err) {
+		if (
+			typeof err === 'object' &&
+			err !== null &&
+			'code' in err &&
+			(err as { code?: string }).code === '23505'
+		) {
+			logger.info(`Re-used pending integration nonce for ${providerName}`, {
+				workspaceId,
+				actorId,
+				nonce,
+			})
+		} else {
+			throw err
+		}
+	}
 	// Build install URL based on auth type
 	let installUrl: string
 	if (resolved.customAuth) {
