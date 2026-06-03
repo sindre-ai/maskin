@@ -6,10 +6,17 @@
 -- provider can coexist per workspace.
 --
 -- Pure DDL — no row data is read or written, so existing integrations rows
--- and their external_id values are untouched. The new constraint is strictly
--- looser than the old one (every (workspace_id, provider) pair that was
--- unique before is still unique under the triplet), so this cannot reject
--- any existing row at apply time.
-ALTER TABLE "integrations" DROP CONSTRAINT "integrations_ws_provider_uniq";
+-- and their external_id values are untouched.
+--
+-- We need two partial unique indexes instead of a single triplet constraint:
+-- - provider rows with external_id IS NULL must remain one-per-workspace
+-- - GitHub installations with external_id IS NOT NULL can coexist per org
+DROP INDEX IF EXISTS "integrations_ws_provider_uniq";
 --> statement-breakpoint
-ALTER TABLE "integrations" ADD CONSTRAINT "integrations_ws_provider_external_uniq" UNIQUE ("workspace_id", "provider", "external_id");
+CREATE UNIQUE INDEX "integrations_ws_provider_null_external_uniq"
+	ON "integrations" ("workspace_id", "provider")
+	WHERE "external_id" IS NULL;
+--> statement-breakpoint
+CREATE UNIQUE INDEX "integrations_ws_provider_external_uniq"
+	ON "integrations" ("workspace_id", "provider", "external_id")
+	WHERE "external_id" IS NOT NULL;

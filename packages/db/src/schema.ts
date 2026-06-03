@@ -156,7 +156,12 @@ export const integrations = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
-		unique('integrations_ws_provider_external_uniq').on(t.workspaceId, t.provider, t.externalId),
+		uniqueIndex('integrations_ws_provider_external_uniq')
+			.on(t.workspaceId, t.provider, t.externalId)
+			.where(sql`${t.externalId} IS NOT NULL`),
+		uniqueIndex('integrations_ws_provider_null_external_uniq')
+			.on(t.workspaceId, t.provider)
+			.where(sql`${t.externalId} IS NULL`),
 	],
 )
 
