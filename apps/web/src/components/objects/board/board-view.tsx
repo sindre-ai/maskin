@@ -6,13 +6,14 @@ import { cn } from '@/lib/cn'
 import {
 	DndContext,
 	type DragEndEvent,
+	DragOverlay,
 	PointerSensor,
 	useDraggable,
 	useDroppable,
 	useSensor,
 	useSensors,
 } from '@dnd-kit/core'
-import { Lock } from 'lucide-react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { BoardCard } from './board-card'
 import { deriveColumns } from './derive-columns'
@@ -28,10 +29,13 @@ interface BoardViewProps {
 
 const SKELETON_CARDS_PER_COLUMN = 2
 
+function humanizeStatus(status: string) {
+	return status.replace(/_/g, ' ')
+}
+
 /**
- * Kanban board view. Columns derive from `workspace.settings.statuses[objectType]`.
- * Tasks and insights drag between columns to change status — bet cards are
- * structurally gated (the bet flow owns its transitions).
+ * Kanban board view. Columns derive from `workspace.settings.statuses[objectType]`
+ * and every object type uses the same drag-to-status flow.
  */
 export function BoardView({
 	objectType,
@@ -43,6 +47,7 @@ export function BoardView({
 }: BoardViewProps) {
 	const columns = deriveColumns(objectType, statusesByType, objects)
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
+	const [activeObject, setActiveObject] = useState<ObjectResponse | null>(null)
 
 	// 5px activation distance separates a click (open object) from a drag
 	// (change status). Matches the /work-board precedent.
@@ -59,11 +64,11 @@ export function BoardView({
 
 	const handleDragEnd = (event: DragEndEvent) => {
 		const { active, over } = event
+		setActiveObject(null)
 		if (!over) return
 		const dragged = active.data.current?.object as ObjectResponse | undefined
 		const toStatus = over.data.current?.status as string | undefined
 		if (!dragged || !toStatus) return
-		if (dragged.type === 'bet') return
 		if (dragged.status === toStatus) return
 
 		bulkUpdate.mutate(
@@ -77,20 +82,21 @@ export function BoardView({
 	}
 
 	return (
-		<DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-			{objectType === 'bet' && (
-				<div
-					data-testid="board-bets-gated-banner"
-					className="mb-2 flex items-center gap-2 rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
-				>
-					<Lock size={12} aria-hidden />
-					<span>Bet cards aren't draggable — bet statuses are gated by the bet flow.</span>
-				</div>
-			)}
-
+		<DndContext
+			sensors={sensors}
+			onDragStart={({ active }) => {
+				const object = active.data.current?.object as ObjectResponse | undefined
+				setActiveObject(object ?? null)
+			}}
+			onDragCancel={() => setActiveObject(null)}
+			onDragEnd={handleDragEnd}
+		>
 			<div
 				data-testid="board-view"
-				className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory md:snap-none"
+				className={cn(
+					'flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory md:snap-none',
+					activeObject && 'cursor-grabbing',
+				)}
 			>
 				{columns.map((column) => (
 					<BoardColumn
@@ -103,6 +109,13 @@ export function BoardView({
 					/>
 				))}
 			</div>
+			<DragOverlay dropAnimation={null}>
+				{activeObject ? (
+					<div className="pointer-events-none cursor-grabbing rotate-2 scale-[1.02] shadow-lg">
+						<BoardCard object={activeObject} workspaceId={workspaceId} actors={actors} />
+					</div>
+				) : null}
+			</DragOverlay>
 		</DndContext>
 	)
 }
@@ -129,9 +142,9 @@ function BoardColumn({ status, objects, workspaceId, actors, isLoading }: BoardC
 			ref={setNodeRef}
 			data-testid={`board-column-${status}`}
 			className={cn(
-				'flex shrink-0 snap-center flex-col gap-2 rounded-md transition-colors',
+				'relative flex min-h-[28rem] shrink-0 snap-center flex-col gap-2 rounded-md transition-colors',
 				'w-[85vw] sm:w-72 md:w-72 lg:w-80',
-				isValidTarget && 'bg-accent/5 ring-1 ring-accent/30',
+				isValidTarget && 'bg-accent/5',
 			)}
 		>
 			<div className="flex items-center justify-between px-1">
@@ -139,35 +152,46 @@ function BoardColumn({ status, objects, workspaceId, actors, isLoading }: BoardC
 				<span className="text-xs text-muted-foreground tabular-nums">{objects.length}</span>
 			</div>
 
-			<div className="flex flex-col gap-2">
+			<div
+				className={cn(
+					'relative flex min-h-24 flex-col gap-2 rounded-md transition-colors',
+					isValidTarget &&
+						'border border-dashed border-border/70 bg-accent/10 ring-1 ring-accent/15',
+				)}
+			>
 				{isLoading ? (
-					Array.from({ length: SKELETON_CARDS_PER_COLUMN }).map((_, i) => (
-						<CardSkeleton
-							// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton rows never reorder
-							key={`skeleton-${i}`}
-						/>
-					))
-				) : objects.length === 0 ? (
-					<ColumnEmpty />
-				) : (
-					objects.map((obj) =>
-						obj.type === 'bet' ? (
-							<BoardCard
-								key={obj.id}
-								object={obj}
-								workspaceId={workspaceId}
-								actors={actors}
-								gated
+					<div className="flex flex-col gap-2">
+						{Array.from({ length: SKELETON_CARDS_PER_COLUMN }).map((_, i) => (
+							<CardSkeleton
+								// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton rows never reorder
+								key={`skeleton-${i}`}
 							/>
-						) : (
+						))}
+					</div>
+				) : objects.length === 0 ? (
+					isValidTarget ? (
+						<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-3 py-3 text-xs text-muted-foreground">
+							Drop here to move to {humanizeStatus(status)}.
+						</div>
+					) : (
+						<ColumnEmpty status={status} />
+					)
+				) : (
+					<div className="flex flex-col gap-2">
+						{objects.map((obj) => (
 							<DraggableBoardCard
 								key={obj.id}
 								object={obj}
 								workspaceId={workspaceId}
 								actors={actors}
 							/>
-						),
-					)
+						))}
+					</div>
+				)}
+				{isValidTarget && objects.length > 0 && (
+					<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-3 py-3 text-xs text-muted-foreground">
+						Drop here to move to {humanizeStatus(status)}.
+					</div>
 				)}
 			</div>
 		</div>
@@ -185,13 +209,17 @@ function DraggableBoardCard({ object, workspaceId, actors }: DraggableBoardCardP
 		id: object.id,
 		data: { object },
 	})
+
 	return (
 		<div
 			ref={setNodeRef}
 			{...attributes}
 			{...listeners}
 			data-testid="board-card-draggable"
-			className={cn('touch-none', isDragging && 'opacity-40')}
+			className={cn(
+				'touch-none select-none cursor-grab active:cursor-grabbing',
+				isDragging && 'cursor-grabbing opacity-40',
+			)}
 		>
 			<BoardCard object={object} workspaceId={workspaceId} actors={actors} />
 		</div>
@@ -207,6 +235,11 @@ function CardSkeleton() {
 	)
 }
 
-function ColumnEmpty() {
-	return <p className="px-1 text-xs text-muted-foreground">Move a task here when work starts.</p>
+function ColumnEmpty({ status }: { status: string }) {
+	return (
+		<div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
+			<p>Nothing here yet.</p>
+			<p className="mt-1">Drag a card to {humanizeStatus(status)}.</p>
+		</div>
+	)
 }

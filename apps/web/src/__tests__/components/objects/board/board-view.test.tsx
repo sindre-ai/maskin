@@ -20,14 +20,23 @@ let capturedDragEnd: ((event: unknown) => void) | null = null
 vi.mock('@dnd-kit/core', () => ({
 	DndContext: ({
 		onDragEnd,
+		onDragStart,
+		onDragCancel,
 		children,
 	}: {
 		onDragEnd?: (event: unknown) => void
+		onDragStart?: (event: unknown) => void
+		onDragCancel?: () => void
 		children: React.ReactNode
 	}) => {
 		capturedDragEnd = onDragEnd ?? null
+		void onDragStart
+		void onDragCancel
 		return <div data-testid="dnd-context">{children}</div>
 	},
+	DragOverlay: ({ children }: { children: React.ReactNode }) => (
+		<div data-testid="drag-overlay">{children}</div>
+	),
 	PointerSensor: function PointerSensor() {},
 	useSensor: () => undefined,
 	useSensors: () => [],
@@ -167,7 +176,34 @@ describe('BoardView', () => {
 				objects={[]}
 			/>,
 		)
-		expect(screen.getByText('Move a task here when work starts.')).toBeInTheDocument()
+		expect(screen.getByText('Nothing here yet.')).toBeInTheDocument()
+		expect(screen.getByText('Drag a card to todo.')).toBeInTheDocument()
+	})
+
+	it('uses the active status name in the empty hint', () => {
+		render(
+			<BoardView
+				objectType="insight"
+				workspaceId="ws-1"
+				statusesByType={{ insight: ['under_review'] }}
+				objects={[]}
+			/>,
+		)
+		expect(screen.getByText('Drag a card to under review.')).toBeInTheDocument()
+	})
+
+	it('renders the drop cue below existing cards when a column is a valid target', () => {
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo', 'done'] }}
+				objects={[
+					buildObjectResponse({ id: 'a', type: 'task', status: 'done', title: 'Done one' }),
+				]}
+			/>,
+		)
+		expect(screen.queryByText('Drop here to move to todo.')).not.toBeInTheDocument()
 	})
 
 	it('renders a BoardCard for each object in the column', () => {
@@ -259,7 +295,7 @@ describe('BoardView', () => {
 			expect(bulkUpdateMutate).not.toHaveBeenCalled()
 		})
 
-		it('ignores drag events whose payload is for a bet card (defense in depth)', () => {
+		it('moves bet cards like any other object type', () => {
 			const bet = buildObjectResponse({ id: 'b1', type: 'bet', status: 'proposed' })
 			render(
 				<BoardView
@@ -270,12 +306,12 @@ describe('BoardView', () => {
 				/>,
 			)
 			capturedDragEnd?.(makeDragEvent(bet, 'active'))
-			expect(bulkUpdateMutate).not.toHaveBeenCalled()
+			expect(bulkUpdateMutate).toHaveBeenCalledTimes(1)
 		})
 	})
 
-	describe('bet-type guard', () => {
-		it('renders bet cards without the draggable wrapper', () => {
+	describe('draggable cards', () => {
+		it('renders bet cards with the draggable wrapper', () => {
 			render(
 				<BoardView
 					objectType="bet"
@@ -287,13 +323,10 @@ describe('BoardView', () => {
 				/>,
 			)
 			expect(screen.getByText('Big bet')).toBeInTheDocument()
-			expect(screen.queryByTestId('board-card-draggable')).not.toBeInTheDocument()
-			// The gated affordance is visible on the card itself.
-			expect(screen.getByText('Gated')).toBeInTheDocument()
-			expect(screen.getByTestId('board-card')).toHaveAttribute('data-gated', 'true')
+			expect(screen.getByTestId('board-card-draggable')).toBeInTheDocument()
 		})
 
-		it('renders the helper banner above the board when the active tab is bets', () => {
+		it('does not render a gated helper banner', () => {
 			render(
 				<BoardView
 					objectType="bet"
@@ -302,36 +335,7 @@ describe('BoardView', () => {
 					objects={[buildObjectResponse({ id: 'b1', type: 'bet', status: 'active' })]}
 				/>,
 			)
-			expect(screen.getByTestId('board-bets-gated-banner')).toBeInTheDocument()
-			expect(screen.getByTestId('board-bets-gated-banner')).toHaveTextContent(
-				/bet statuses are gated/i,
-			)
-		})
-
-		it('does not render the helper banner on task or insight boards', () => {
-			render(
-				<BoardView
-					objectType="task"
-					workspaceId="ws-1"
-					statusesByType={{ task: ['todo'] }}
-					objects={[buildObjectResponse({ id: 't1', type: 'task', status: 'todo' })]}
-				/>,
-			)
 			expect(screen.queryByTestId('board-bets-gated-banner')).not.toBeInTheDocument()
-		})
-
-		it('wraps task cards in the draggable wrapper', () => {
-			render(
-				<BoardView
-					objectType="task"
-					workspaceId="ws-1"
-					statusesByType={{ task: ['todo'] }}
-					objects={[
-						buildObjectResponse({ id: 't1', type: 'task', status: 'todo', title: 'Task one' }),
-					]}
-				/>,
-			)
-			expect(screen.getByTestId('board-card-draggable')).toBeInTheDocument()
 		})
 	})
 })
