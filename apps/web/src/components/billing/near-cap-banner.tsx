@@ -30,21 +30,20 @@ export function NearCapBanner({ workspaceId }: { workspaceId: string }) {
 	if (cap == null || cap <= 0) return null
 
 	const used = usage.tokens_used
+	if (!Number.isFinite(used) || used < 0) return null
 	if (used >= cap) return null
 
 	const headroom = (cap - used) / cap
 	if (headroom >= NEAR_CAP_HEADROOM) return null
 
+	const planLabel = PLAN_LABEL[usage.plan]
+	if (!planLabel) return null
+
 	const pctUsed = Math.min(99, Math.floor((used / cap) * 100))
-	const planLabel = PLAN_LABEL[usage.plan] || ''
 	const resetsIn = formatResetsIn(usage.period_resets_in_ms)
 
 	return (
-		<div
-			role="status"
-			aria-live="polite"
-			className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm text-foreground"
-		>
+		<output className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm text-foreground">
 			<AlertTriangle size={14} className="text-warning shrink-0" aria-hidden />
 			<span className="min-w-0">
 				You've used {pctUsed}% of your {planLabel} credits
@@ -62,6 +61,6 @@ export function NearCapBanner({ workspaceId }: { workspaceId: string }) {
 					</Link>
 				</Button>
 			</div>
-		</div>
+		</output>
 	)
 }

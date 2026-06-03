@@ -65,6 +65,27 @@ describe('NearCapBanner', () => {
 		expect(container).toBeEmptyDOMElement()
 	})
 
+	it('hides at exactly 15% headroom (85% used boundary)', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			tokens_used: 27_200_000, // 85% used → headroom == 0.15 exactly
+		})
+		const { container } = renderBanner()
+		await vi.waitFor(() => {
+			expect(vi.mocked(api.billing.usage)).toHaveBeenCalled()
+		})
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('shows one token past the 85% boundary', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			tokens_used: 27_200_001, // headroom just below 0.15
+		})
+		renderBanner()
+		await screen.findByText(/of your Starter credits/)
+	})
+
 	it('shows when paid plan crosses the 85% threshold', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
@@ -81,6 +102,9 @@ describe('NearCapBanner', () => {
 			'href',
 			'/ws-1/settings/keys',
 		)
+		expect(
+			screen.queryByRole('button', { name: /close|dismiss/i }),
+		).not.toBeInTheDocument()
 	})
 
 	it('fires on trial plans too', async () => {
@@ -124,6 +148,18 @@ describe('NearCapBanner', () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			hard_cap_tokens: null,
+		})
+		const { container } = renderBanner()
+		await vi.waitFor(() => {
+			expect(vi.mocked(api.billing.usage)).toHaveBeenCalled()
+		})
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('hides when tokens_used is NaN (defensive against webhook race)', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			tokens_used: Number.NaN,
 		})
 		const { container } = renderBanner()
 		await vi.waitFor(() => {
