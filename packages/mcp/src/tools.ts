@@ -328,7 +328,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `systemPrompt`, which is how to pick up context on a human teammate @mentioned in a comment.",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `systemPrompt`, which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -337,6 +337,8 @@ export const tools = {
 				.describe(
 					'Optional workspace ID to scope the listing to. If omitted, returns actors across all workspaces the caller belongs to (each with their workspace memberships).',
 				),
+			limit: z.number().int().min(1).max(100).default(50),
+			offset: z.number().int().min(0).default(0),
 		}),
 	},
 	get_actor: {
@@ -682,9 +684,11 @@ export const tools = {
 		}),
 	},
 	list_triggers: {
-		description: 'List all triggers in the workspace',
+		description: 'List all triggers in the workspace. Results are paginated (default 50, max 100).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			limit: z.number().int().min(1).max(100).default(50),
+			offset: z.number().int().min(0).default(0),
 		}),
 	},
 	// ─── Sessions ────────────────────────────────────────────
@@ -1123,6 +1127,33 @@ export const tools = {
 			id: z
 				.string()
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
+		}),
+	},
+	// ─── Bet success metrics (read-only telemetry surface) ───
+	get_bet_widget_metrics: {
+		description:
+			"Pull the MCP widget UX bet's live success and kill metrics for the workspace: rolling click-through rate over the first 200 bet renders, the first-50 kill window, and the 48h rolling render-error rate. Renders sent by agents are excluded so this number matches the success/kill criteria on the bet. Read-only — does not produce any telemetry rows. Use this when you need evidence on whether the widget UX bet is meeting its CTR target or has tripped a kill criterion, without writing a bespoke SQL query.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+
+	// ─── Widget telemetry ─────────────────────────────────────
+	record_widget_event: {
+		description:
+			'INTERNAL — called by rendered MCP widgets (Hero Card) to report click-through, render success, and render failure events. Powers the bet success metric (click-through rate on Open in Maskin) and the 48h rolling render-error kill criterion. Do not call from an agent directly.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			widget_name: z.string().describe('Widget bundle name, e.g. "hero-card".'),
+			event: z
+				.enum(['click_through', 'render_success', 'render_error'])
+				.describe('What happened on the widget.'),
+			tool_name: z.string().describe('The MCP tool whose response produced this widget render.'),
+			card_kind: z
+				.enum(['single', 'list', 'empty'])
+				.describe('Result shape — single object, multi-row list, or empty state.'),
+			object_type: z.string().optional().describe('Object type when card_kind=single.'),
+			object_id: z.string().optional().describe('Object id when card_kind=single.'),
 		}),
 	},
 } as const
