@@ -453,7 +453,8 @@ function DropPreview() {
 	return (
 		<div
 			data-testid="board-drop-preview"
-			className="pointer-events-none min-h-20 rounded-md border border-dashed border-primary/40 bg-primary/10"
+			aria-hidden="true"
+			className="pointer-events-none min-h-20 rounded-md border border-border bg-card opacity-40"
 		/>
 	)
 }
