@@ -535,7 +535,6 @@ describe('Telemetry Routes', () => {
 
 			expect(res.status).toBe(403)
 		})
-
 	})
 })
 

@@ -132,8 +132,7 @@ describe('Actors Routes', () => {
 			const a2 = buildActor({ type: 'agent', name: 'Bot', email: null })
 			const wsId = '00000000-0000-0000-0000-000000000001'
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			// First select: get workspaces the actor belongs to
-			// Second select: get (actor, workspace, role) rows
+			// Without pagination: caller's workspaces, then membership rows.
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[
@@ -161,6 +160,7 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('2')
 			const body = await res.json()
 			expect(body).toHaveLength(2)
 			expect(body[0].workspaces).toEqual([{ id: wsId, name: 'Acme', role: 'owner' }])
@@ -199,6 +199,7 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('1')
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].workspaces).toEqual([
@@ -214,8 +215,48 @@ describe('Actors Routes', () => {
 			const res = await app.request(jsonGet('/api/actors'))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('0')
 			const body = await res.json()
 			expect(body).toHaveLength(0)
+		})
+
+		it('paginates workspace-scoped listing and surfaces total count beyond the page cap', async () => {
+			const wsId = '00000000-0000-0000-0000-000000000001'
+			const a1 = buildActor({ type: 'human', name: 'Alice', email: null })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			// Workspace-scoped paginated path runs two parallel queries: page + count.
+			mockResults.selectQueue = [
+				[
+					{
+						id: a1.id,
+						type: a1.type,
+						name: a1.name,
+						email: a1.email,
+						isSystem: a1.isSystem,
+						role: 'member',
+					},
+				],
+				[{ value: 1234 }],
+			]
+
+			const res = await app.request(
+				jsonGet('/api/actors?limit=1&offset=0', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('1234')
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].id).toBe(a1.id)
+		})
+
+		it('rejects oversized limit query at the boundary', async () => {
+			const wsId = '00000000-0000-0000-0000-000000000001'
+			const { app } = createTestApp(actorsRoutes, '/api/actors')
+
+			const res = await app.request(jsonGet('/api/actors?limit=999', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(400)
 		})
 
 		describe('with ?ids= filter', () => {

@@ -116,18 +116,20 @@ const CSP = {
 	'style-src': ['https://fonts.googleapis.com'],
 } as const
 
-async function apiCall(
+type ApiCallOptions = {
+	skipAuth?: boolean
+	skipWorkspace?: boolean
+	workspaceId?: string
+	idempotencyKey?: string
+}
+
+async function apiFetch(
 	config: McpConfig,
 	method: string,
 	path: string,
 	body?: unknown,
-	options?: {
-		skipAuth?: boolean
-		skipWorkspace?: boolean
-		workspaceId?: string
-		idempotencyKey?: string
-	},
-): Promise<unknown> {
+	options?: ApiCallOptions,
+): Promise<Response> {
 	if (!options?.skipAuth && !config.apiKey) {
 		throw new Error(`Not authenticated. ${authSetupHint(config)}`)
 	}
@@ -185,7 +187,42 @@ async function apiCall(
 		throw new Error(`API error ${response.status}: ${message}`)
 	}
 
+	return response
+}
+
+async function apiCall(
+	config: McpConfig,
+	method: string,
+	path: string,
+	body?: unknown,
+	options?: ApiCallOptions,
+): Promise<unknown> {
+	const response = await apiFetch(config, method, path, body, options)
 	return response.json()
+}
+
+/**
+ * Like `apiCall`, but also surfaces the response so callers can inspect
+ * headers — e.g. paginated list tools reading `X-Total-Count` to populate
+ * the heroCard `+N more` footer.
+ */
+async function apiCallWithResponse(
+	config: McpConfig,
+	method: string,
+	path: string,
+	body?: unknown,
+	options?: ApiCallOptions,
+): Promise<{ data: unknown; response: Response }> {
+	const response = await apiFetch(config, method, path, body, options)
+	return { data: await response.json(), response }
+}
+
+/** Parse an `X-Total-Count`-style header, falling back to a default. */
+function parseTotalCountHeader(response: Response, fallback: number): number {
+	const raw = response.headers.get('x-total-count')
+	if (raw === null) return fallback
+	const parsed = Number(raw)
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 // Per-workspace mutex used to serialize read-modify-write tool calls (e.g.
@@ -1839,27 +1876,29 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = (
-				args.workspace_id
-					? await apiCall(config, 'GET', '/api/actors', undefined, {
-							workspaceId: args.workspace_id,
-						})
-					: await apiCall(config, 'GET', '/api/actors', undefined, {
-							skipWorkspace: true,
-						})
-			) as RawActor[]
-			const rows = Array.isArray(result) ? result : []
+			const limit = args.limit ?? 50
+			const offset = args.offset ?? 0
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+			const { data, response } = await apiCallWithResponse(
+				config,
+				'GET',
+				`/api/actors?${params}`,
+				undefined,
+				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
+			)
+			const rows = Array.isArray(data) ? (data as RawActor[]) : []
 			const heroObjects = rows.map(buildActorHeroCardObject)
+			const totalCount = parseTotalCountHeader(response, heroObjects.length)
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'list_actors' }
-					: heroObjects.length === 1
+					: heroObjects.length === 1 && totalCount === 1
 						? { kind: 'single', tool: 'list_actors', object: heroObjects[0] }
 						: {
 								kind: 'list',
 								tool: 'list_actors',
 								objects: heroObjects,
-								totalCount: heroObjects.length,
+								totalCount,
 							}
 			return {
 				_meta: uiMeta(
@@ -1868,7 +1907,7 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
 				structuredContent: { heroCard },
 			}
 		},
@@ -2762,15 +2801,39 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'GET', '/api/triggers', undefined, {
-				workspaceId: args.workspace_id,
-			})) as RawTrigger[]
-			const heroCard = await buildTriggerCollectionHeroCard(
+			const limit = args.limit ?? 50
+			const offset = args.offset ?? 0
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+			const { data, response } = await apiCallWithResponse(
 				config,
-				'list_triggers',
-				result,
-				args.workspace_id,
+				'GET',
+				`/api/triggers?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
 			)
+			const rows = Array.isArray(data) ? (data as RawTrigger[]) : []
+			const ownerIds = rows
+				.map((t) => t.targetActorId)
+				.filter((v): v is string => typeof v === 'string')
+			const actors = await resolveActors(config, ownerIds, args.workspace_id)
+			const heroObjects = rows.map((t) =>
+				buildTriggerHeroCardObject(
+					t,
+					t.targetActorId ? (actors.get(t.targetActorId) ?? null) : null,
+				),
+			)
+			const totalCount = parseTotalCountHeader(response, heroObjects.length)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_triggers' }
+					: heroObjects.length === 1 && totalCount === 1
+						? { kind: 'single', tool: 'list_triggers', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_triggers',
+								objects: heroObjects,
+								totalCount,
+							}
 			return {
 				_meta: uiMeta(
 					'list_triggers',
@@ -2778,7 +2841,7 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
 				structuredContent: { heroCard },
 			}
 		},
