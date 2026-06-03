@@ -361,6 +361,35 @@ describe('Telemetry Routes', () => {
 			expect(w.ctr_first_200.target_met).toBe(true)
 		})
 
+		it('counts repeated click_through events only once per correlated render', async () => {
+			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+			const widgetRows = buildBetWidgetRows({ renders: 50, clicksOnFirstN: 1, errors: 0 })
+			const firstClick = widgetRows.find((r) => r.event === 'click_through')
+			if (!firstClick) throw new Error('expected click row')
+			widgetRows.push(
+				{ ...firstClick, created_at: new Date(firstClick.created_at.getTime() + 1) },
+				{ ...firstClick, created_at: new Date(firstClick.created_at.getTime() + 2) },
+			)
+			mockResults.selectQueue = [
+				[memberRow],
+				[{ total: 0, rich: 0 }],
+				[],
+				[{ total: 0 }],
+				[],
+				widgetRows,
+			]
+
+			const res = await app.request(
+				jsonGet('/api/telemetry/mcp/summary?days=30', { 'x-workspace-id': wsId }),
+			)
+
+			const body = await res.json()
+			const w = body.widget_bet_first_window
+			expect(w.bet_click_throughs_total).toBe(3)
+			expect(w.ctr_first_50_kill.clicks).toBe(1)
+			expect(w.ctr_first_50_kill.pct).toBe(2)
+		})
+
 		it('triggers the first-50 kill window when CTR falls below 30%', async () => {
 			const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
 			// 50 renders, 10 clicks → 20% < 30% threshold → kill_triggered

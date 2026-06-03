@@ -229,6 +229,7 @@ function makeListToolResult(
 		owner: { id: string; name: string | null } | null
 		contextLine: string
 	}>,
+	totalCount = objects.length,
 ) {
 	return {
 		toolName: tool,
@@ -242,7 +243,7 @@ function makeListToolResult(
 					kind: 'list',
 					tool,
 					objects,
-					totalCount: objects.length,
+					totalCount,
 				},
 			},
 		},
@@ -420,6 +421,13 @@ describe('HeroCardApp — list envelope', () => {
 		expect(screen.getByText('+1 more')).toBeInTheDocument()
 		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
 		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/objects?type=bet')
+	})
+
+	it('uses server totalCount in the +N more footer when only one page is loaded', async () => {
+		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', betRows.slice(0, 1), 1234))
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Bets')).toBeInTheDocument())
+		expect(screen.getByText('+1233 more')).toBeInTheDocument()
 	})
 
 	it('reorders rows by status when the sort control changes', async () => {

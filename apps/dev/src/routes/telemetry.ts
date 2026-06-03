@@ -327,7 +327,7 @@ function buildWidgetBetFirstWindow(rows: readonly WidgetRow[], now: Date) {
 
 	const countClicksAgainst = (renderSlice: readonly WidgetRow[]) => {
 		if (renderSlice.length === 0) return 0
-		const keys = new Set(renderSlice.map(correlatorKey))
+		const unclickedRenderKeys = new Set(renderSlice.map(correlatorKey))
 		// A click only counts if it lands AT OR AFTER the first render in the
 		// slice — earlier clicks can't have been triggered by a render that
 		// hasn't happened yet (defends against replayed or out-of-order events).
@@ -335,7 +335,10 @@ function buildWidgetBetFirstWindow(rows: readonly WidgetRow[], now: Date) {
 		let counted = 0
 		for (const c of clicks) {
 			if (c.created_at.getTime() < firstRenderTs) continue
-			if (keys.has(correlatorKey(c))) counted++
+			const key = correlatorKey(c)
+			if (!unclickedRenderKeys.has(key)) continue
+			unclickedRenderKeys.delete(key)
+			counted++
 		}
 		return counted
 	}

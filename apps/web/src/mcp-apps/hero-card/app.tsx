@@ -255,8 +255,10 @@ function HeroCardList({
 		[filtered, sortKey],
 	)
 	const visible = sorted.slice(0, MAX_VISIBLE_ROWS)
-	const remainder = Math.max(0, sorted.length - visible.length)
-	const filteredOut = totalCount - filtered.length
+	const localRemainder = Math.max(0, sorted.length - visible.length)
+	const totalRemainder = Math.max(0, totalCount - visible.length)
+	const hasFilter = filter.trim().length > 0
+	const filteredOut = hasFilter ? totalCount - filtered.length : 0
 
 	const ctaTarget = useMemo(() => buildListCtaTarget(toolName, objects), [toolName, objects])
 	const ctaHref = useWebAppHref(ctaTarget)
@@ -336,9 +338,9 @@ function HeroCardList({
 				<footer className="flex items-center px-4 py-2.5 border-t border-border bg-muted/30">
 					<span className="text-[11.5px] text-muted-foreground">
 						{filteredOut > 0
-							? `${filtered.length} of ${totalCount} shown · ${remainder > 0 ? `+${remainder} more in filter` : 'all shown'}`
-							: remainder > 0
-								? `+${remainder} more`
+							? `${filtered.length} of ${totalCount} shown · ${localRemainder > 0 ? `+${localRemainder} more in filter` : `+${Math.max(0, totalCount - filtered.length)} more outside filter`}`
+							: totalRemainder > 0
+								? `+${totalRemainder} more`
 								: 'All shown'}
 					</span>
 					{ctaHref ? (
