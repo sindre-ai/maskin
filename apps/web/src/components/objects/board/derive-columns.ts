@@ -5,6 +5,33 @@ export interface BoardColumn {
 	objects: ObjectResponse[]
 }
 
+function getBoardOrder(object: ObjectResponse): number {
+	const meta = object.metadata && typeof object.metadata === 'object' ? object.metadata : null
+	const raw = meta ? (meta as Record<string, unknown>).board_order : null
+	return typeof raw === 'number' && Number.isFinite(raw) ? raw : Number.POSITIVE_INFINITY
+}
+
+function compareDefaultCardOrder(a: ObjectResponse, b: ObjectResponse) {
+	return (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id)
+}
+
+function getOrderedObjects(objects: ObjectResponse[]) {
+	const fallbackIndexById = new Map<string, number>()
+	for (const [index, object] of objects.slice().sort(compareDefaultCardOrder).entries()) {
+		fallbackIndexById.set(object.id, index)
+	}
+
+	return objects.slice().sort((a, b) => {
+		const aOrder = getBoardOrder(a)
+		const bOrder = getBoardOrder(b)
+		const aEffectiveOrder = Number.isFinite(aOrder) ? aOrder : (fallbackIndexById.get(a.id) ?? 0)
+		const bEffectiveOrder = Number.isFinite(bOrder) ? bOrder : (fallbackIndexById.get(b.id) ?? 0)
+		const orderDiff = aEffectiveOrder - bEffectiveOrder
+		if (orderDiff !== 0) return orderDiff
+		return compareDefaultCardOrder(a, b)
+	})
+}
+
 /**
  * Derive board columns for a given object type from the workspace's configured
  * statuses. Returns one column per configured status in the order it appears in
@@ -32,6 +59,6 @@ export function deriveColumns(
 
 	return statuses.map((status) => ({
 		status,
-		objects: bucketByStatus.get(status) ?? [],
+		objects: getOrderedObjects(bucketByStatus.get(status) ?? []),
 	}))
 }
