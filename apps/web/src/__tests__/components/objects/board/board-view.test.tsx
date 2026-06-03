@@ -3,6 +3,15 @@ import { deriveColumns } from '@/components/objects/board/derive-columns'
 import { render, screen } from '@testing-library/react'
 import { buildObjectResponse } from '../../../factories'
 
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../../mocks/router')
+	return mockTanStackRouter()
+})
+
+vi.mock('@/components/shared/agent-working-badge', () => ({
+	AgentWorkingBadge: () => <span>agent working</span>,
+}))
+
 describe('deriveColumns', () => {
 	it('returns one column per configured status, in order', () => {
 		const objects = [
@@ -53,6 +62,7 @@ describe('BoardView', () => {
 		render(
 			<BoardView
 				objectType="task"
+				workspaceId="ws-1"
 				statusesByType={{ task: ['todo', 'in_progress', 'done'] }}
 				objects={[
 					buildObjectResponse({ id: 'a', type: 'task', status: 'todo', title: 'Alpha' }),
@@ -61,16 +71,23 @@ describe('BoardView', () => {
 				]}
 			/>,
 		)
-		expect(screen.getByText('todo')).toBeInTheDocument()
-		expect(screen.getByText('in progress')).toBeInTheDocument()
-		expect(screen.getByText('done')).toBeInTheDocument()
+		expect(screen.getAllByText('todo').length).toBeGreaterThanOrEqual(1)
+		expect(screen.getAllByText('in progress').length).toBeGreaterThanOrEqual(1)
+		expect(screen.getAllByText('done').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getByText('Alpha')).toBeInTheDocument()
 		expect(screen.getByText('Bravo')).toBeInTheDocument()
 		expect(screen.getByText('Charlie')).toBeInTheDocument()
 	})
 
 	it('renders the empty-state message when the active type has no configured statuses', () => {
-		render(<BoardView objectType="task" statusesByType={{ insight: ['new'] }} objects={[]} />)
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ insight: ['new'] }}
+				objects={[]} 
+			/>,
+		)
 		expect(screen.getByText('No statuses configured')).toBeInTheDocument()
 		expect(screen.queryByTestId('board-view')).not.toBeInTheDocument()
 	})
@@ -79,17 +96,39 @@ describe('BoardView', () => {
 		render(
 			<BoardView
 				objectType="task"
+				workspaceId="ws-1"
 				statusesByType={{ task: ['todo', 'in_progress'] }}
 				objects={[]}
 				isLoading
 			/>,
 		)
-		// Two columns × two skeletons each.
 		expect(screen.getAllByTestId('board-card-skeleton')).toHaveLength(4)
 	})
 
 	it('shows the per-column empty hint when a column has no objects and is not loading', () => {
-		render(<BoardView objectType="task" statusesByType={{ task: ['todo'] }} objects={[]} />)
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo'] }}
+				objects={[]}
+			/>,
+		)
 		expect(screen.getByText('Move a task here when work starts.')).toBeInTheDocument()
+	})
+
+	it('renders a BoardCard for each object in the column', () => {
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo'] }}
+				objects={[
+					buildObjectResponse({ id: 'a', type: 'task', status: 'todo', title: 'Alpha' }),
+					buildObjectResponse({ id: 'b', type: 'task', status: 'todo', title: 'Bravo' }),
+				]}
+			/>,
+		)
+		expect(screen.getAllByTestId('board-card')).toHaveLength(2)
 	})
 })
