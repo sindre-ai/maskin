@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { RelativeTime } from '../shared/relative-time'
+import { Button } from '../ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet'
 import { Spinner } from '../ui/spinner'
 import {
@@ -204,9 +205,11 @@ function RestartSessionButton({
 }: { session: SessionResponse; workspaceId: string }) {
 	const createSession = useCreateSession(workspaceId)
 	return (
-		<button
+		<Button
 			type="button"
-			className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+			variant="outline"
+			size="sm"
+			className="shrink-0"
 			disabled={createSession.isPending}
 			onClick={() => {
 				trackEvent('session_restart_clicked', {
@@ -222,7 +225,7 @@ function RestartSessionButton({
 			}}
 		>
 			{createSession.isPending ? 'Restarting…' : 'Restart'}
-		</button>
+		</Button>
 	)
 }
 
