@@ -106,7 +106,7 @@ function statusPillClass(status: string): string {
 
 function useHeroObjectHref(object: HeroCardObject): string | null {
 	const ctx = useWebAppContext()
-	const objectHref = useWebAppHref({ kind: 'object', id: object.id })
+	const objectHref = useWebAppHref(rowTarget(object))
 	if (object.type === 'workspace') {
 		return ctx ? `${ctx.baseUrl}/${object.id}` : null
 	}
@@ -132,43 +132,53 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 		})
 	}
 
+	const content = (
+		<article className="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover">
+			<div className="flex items-center gap-2">
+				<div className="flex items-center justify-center w-3.5 h-3.5 rounded-sm bg-primary text-primary-foreground text-[9px] leading-none font-bold shrink-0">
+					M
+				</div>
+				<span className="font-mono text-[11px] text-muted-foreground lowercase">{typeLabel}</span>
+				<div className="flex-1" />
+				{object.status && <span className={statusPillClass(object.status)}>{object.status}</span>}
+			</div>
+			<h3 className="text-[15px] font-semibold leading-snug text-foreground m-0 line-clamp-1">
+				{object.title || 'Untitled'}
+			</h3>
+			<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
+				{object.contextLine}
+			</p>
+			<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
+				{object.owner?.name && (
+					<span className="text-[11.5px] text-muted-foreground tabular-nums">
+						Owner: {object.owner.name}
+					</span>
+				)}
+				{href ? (
+					<span className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-hover transition-colors min-h-[28px]">
+						Open in Maskin
+						<ExternalLink className="size-3" />
+					</span>
+				) : null}
+			</div>
+		</article>
+	)
+
 	return (
 		<div className="p-3">
-			<article className="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover">
-				<div className="flex items-center gap-2">
-					<div className="flex items-center justify-center w-3.5 h-3.5 rounded-sm bg-primary text-primary-foreground text-[9px] leading-none font-bold shrink-0">
-						M
-					</div>
-					<span className="font-mono text-[11px] text-muted-foreground lowercase">{typeLabel}</span>
-					<div className="flex-1" />
-					{object.status && <span className={statusPillClass(object.status)}>{object.status}</span>}
-				</div>
-				<h3 className="text-[15px] font-semibold leading-snug text-foreground m-0 line-clamp-1">
-					{object.title || 'Untitled'}
-				</h3>
-				<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
-					{object.contextLine}
-				</p>
-				<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
-					{object.owner?.name && (
-						<span className="text-[11.5px] text-muted-foreground tabular-nums">
-							Owner: {object.owner.name}
-						</span>
-					)}
-					{href ? (
-						<a
-							href={href}
-							target="_blank"
-							rel="noreferrer"
-							onClick={onCtaClick}
-							className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border hover:bg-muted hover:border-border-hover transition-colors min-h-[28px]"
-						>
-							Open in Maskin
-							<ExternalLink className="size-3" />
-						</a>
-					) : null}
-				</div>
-			</article>
+			{href ? (
+				<a
+					href={href}
+					target="_blank"
+					rel="noreferrer"
+					onClick={onCtaClick}
+					className="group block max-w-[540px] no-underline text-foreground"
+				>
+					{content}
+				</a>
+			) : (
+				content
+			)}
 		</div>
 	)
 }
@@ -436,7 +446,7 @@ function HeroCardRoot() {
 // Skip the boot when there's no `#root` (tests import this module to exercise
 // component logic without running the production renderer).
 if (typeof document !== 'undefined' && document.getElementById('root')) {
-	renderMcpApp('HeroCard', <HeroCardRoot />)
+	renderMcpApp('HeroCard', <HeroCardRoot />, { showThemeToggle: false })
 }
 
 export { HeroCardApp, HeroCardList, HeroCardRoot, HeroCardSingle, extractHeroCard }
