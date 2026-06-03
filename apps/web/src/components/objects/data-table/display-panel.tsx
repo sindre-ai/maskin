@@ -25,7 +25,14 @@ export interface DisplayPanelColumn {
 	canHide: boolean
 }
 
+export type DisplayPanelView = 'list' | 'board'
+
 export interface DisplayPanelProps {
+	// View (List | Board)
+	view?: DisplayPanelView
+	onViewChange?: (view: DisplayPanelView) => void
+	// Whether the active type supports board view (false hides Board and forces List)
+	boardSupported?: boolean
 	// Column visibility (Properties section)
 	columns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
@@ -118,6 +125,9 @@ function PickerRow({
 const DROPDOWN_CLS = 'min-w-[10rem] max-h-64 overflow-y-auto'
 
 export function DisplayPanel({
+	view = 'list',
+	onViewChange,
+	boardSupported = true,
 	columns = [],
 	columnVisibility,
 	onColumnVisibilityChange,
@@ -220,11 +230,16 @@ export function DisplayPanel({
 					<div className="p-3 space-y-2">
 						<SectionHeader>View</SectionHeader>
 						<div className="flex items-center gap-1.5">
-							<PillButton active>List</PillButton>
+							<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
+								List
+							</PillButton>
 							<PillButton
-								disabled
-								title="Board view — coming soon"
-								aria-label="Board view (coming soon)"
+								active={view === 'board'}
+								disabled={!boardSupported}
+								onClick={boardSupported ? () => onViewChange?.('board') : undefined}
+								title={
+									boardSupported ? undefined : 'Board view needs configured statuses for this type'
+								}
 							>
 								Board
 							</PillButton>

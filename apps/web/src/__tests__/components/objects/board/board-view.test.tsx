@@ -71,7 +71,6 @@ describe('BoardView', () => {
 				]}
 			/>,
 		)
-		// Status appears in column header and on each card's StatusBadge.
 		expect(screen.getAllByText('todo').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByText('in progress').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByText('done').length).toBeGreaterThanOrEqual(1)
@@ -86,7 +85,7 @@ describe('BoardView', () => {
 				objectType="task"
 				workspaceId="ws-1"
 				statusesByType={{ insight: ['new'] }}
-				objects={[]}
+				objects={[]} 
 			/>,
 		)
 		expect(screen.getByText('No statuses configured')).toBeInTheDocument()
@@ -103,7 +102,6 @@ describe('BoardView', () => {
 				isLoading
 			/>,
 		)
-		// Two columns x two skeletons each.
 		expect(screen.getAllByTestId('board-card-skeleton')).toHaveLength(4)
 	})
 

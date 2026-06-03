@@ -1,10 +1,12 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
+import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
 import { DataTable } from '@/components/objects/data-table/data-table'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
+import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +20,7 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
+import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
@@ -76,6 +79,9 @@ function ObjectsPage() {
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		createdBy: false,
 	})
+	// View switcher (List | Board). Route-local — persists per object type
+	// through the same Display settings row, never via the URL.
+	const [view, setView] = useState<DisplayPanelView>('list')
 
 	// Row selection keys are object IDs (data-table sets getRowId: row => row.id),
 	// so we can lift them directly as the selection surface for sibling bulk-action UI.
@@ -150,6 +156,16 @@ function ObjectsPage() {
 		const enabledTypes = new Set(tabs.map((t) => t.value).filter(Boolean))
 		return Object.fromEntries(Object.entries(statusMap).filter(([type]) => enabledTypes.has(type)))
 	}, [settings, typeFilter, tabs])
+
+	// Board view needs a single active object type with at least one configured
+	// status. The All tab has no slot for "all types" in the persistence row
+	// (Task 5 keyed the row by object_type), so List is the only option there.
+	const boardSupported = Boolean(typeFilter && (statusesByType[typeFilter]?.length ?? 0) > 0)
+	// Effective view: even if the user previously chose Board for this type, an
+	// unsupported context (All tab, type with zero configured statuses) renders
+	// List. We never write that fallback back to settings — the stored
+	// preference is preserved for when the type becomes board-capable again.
+	const effectiveView: DisplayPanelView = boardSupported ? view : 'list'
 
 	// Field definitions for dynamic columns
 	const fieldDefinitions = settings?.field_definitions as
@@ -293,8 +309,16 @@ function ObjectsPage() {
 		// first change, without re-running this hydrate block.
 		hydratedTypesRef.current.add(typeFilter)
 		const persisted = displaySettingsQuery.data
-		if (!persisted || !urlIsInDefaultShape) return
+		if (!persisted) {
+			// No saved view for this type — fall back to the route default.
+			setView('list')
+			return
+		}
 		const s = persisted.settings
+		// View hydrates regardless of urlIsInDefaultShape: `view` is route-local
+		// (not in the URL), so the URL's shape can't conflict with it.
+		setView(s.view ?? 'list')
+		if (!urlIsInDefaultShape) return
 		const updates: Record<string, string | undefined> = {}
 		if (s.sort) updates.sort = s.sort
 		if (s.order) updates.order = s.order
@@ -320,7 +344,7 @@ function ObjectsPage() {
 		if (!typeFilter) return
 		if (!hydratedTypesRef.current.has(typeFilter)) return
 		const settings: DisplaySettingsBody = {
-			view: 'list',
+			view,
 			sort,
 			order,
 			groupBy: groupBy ?? null,
@@ -335,7 +359,7 @@ function ObjectsPage() {
 			updateMutateRef.current({ objectType: typeFilter, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [typeFilter, sort, order, groupBy, statusFilter, ownerFilter, columnVisibility])
+	}, [typeFilter, view, sort, order, groupBy, statusFilter, ownerFilter, columnVisibility])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
@@ -608,28 +632,53 @@ function ObjectsPage() {
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
 				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				view={effectiveView}
+				onViewChange={(next) => {
+					setView(next)
+					// One analytics line per user-initiated switch so we can count
+					// distinct operators reaching for Board (the bet's success
+					// criterion). Hydration also sets view but bypasses this path.
+					trackEvent('objects_control_changed', {
+						source: 'objects-page',
+						control: 'view',
+						value: next,
+						objectType: typeFilter ?? null,
+					})
+				}}
+				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
 			/>
 
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 
-			<DataTable
-				data={allObjects}
-				columns={columns}
-				workspaceId={workspaceId}
-				actors={actors}
-				rowSelection={rowSelection}
-				onRowSelectionChange={setRowSelection}
-				columnVisibility={effectiveVisibility}
-				onColumnVisibilityChange={setColumnVisibility}
-				grouping={groupingState}
-				meta={tableMeta}
-				hasNextPage={infiniteQuery.hasNextPage}
-				isFetchingNextPage={infiniteQuery.isFetchingNextPage}
-				isError={infiniteQuery.isError}
-				fetchNextPage={infiniteQuery.fetchNextPage}
-				isLoading={infiniteQuery.isLoading}
-			/>
+			{effectiveView === 'board' && typeFilter ? (
+				<div className="px-6 pb-4 flex-1 min-h-0 overflow-auto">
+					<BoardView
+						objectType={typeFilter}
+						objects={allObjects}
+						statusesByType={statusesByType}
+						isLoading={infiniteQuery.isLoading}
+					/>
+				</div>
+			) : (
+				<DataTable
+					data={allObjects}
+					columns={columns}
+					workspaceId={workspaceId}
+					actors={actors}
+					rowSelection={rowSelection}
+					onRowSelectionChange={setRowSelection}
+					columnVisibility={effectiveVisibility}
+					onColumnVisibilityChange={setColumnVisibility}
+					grouping={groupingState}
+					meta={tableMeta}
+					hasNextPage={infiniteQuery.hasNextPage}
+					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
+					isError={infiniteQuery.isError}
+					fetchNextPage={infiniteQuery.fetchNextPage}
+					isLoading={infiniteQuery.isLoading}
+				/>
+			)}
 			<BulkActionBar
 				selectedCount={selectedIds.length}
 				statusOptions={bulkStatusOptions}
