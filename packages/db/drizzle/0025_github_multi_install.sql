@@ -11,7 +11,8 @@
 -- We need two partial unique indexes instead of a single triplet constraint:
 -- - provider rows with external_id IS NULL must remain one-per-workspace
 -- - GitHub installations with external_id IS NOT NULL can coexist per org
-DROP INDEX IF EXISTS "integrations_ws_provider_uniq";
+ALTER TABLE "integrations"
+	DROP CONSTRAINT IF EXISTS "integrations_ws_provider_uniq";
 --> statement-breakpoint
 CREATE UNIQUE INDEX "integrations_ws_provider_null_external_uniq"
 	ON "integrations" ("workspace_id", "provider")
