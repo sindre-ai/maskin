@@ -95,6 +95,9 @@ export type WebAppTarget =
 	| { kind: 'activity' }
 	/** Detail page for any object stored in the unified `objects` table. */
 	| { kind: 'object'; id: string; type?: WebAppObjectType }
+	/** Workspace-level objects list. Used as the footer CTA target for list/
+	 * search MCP responses so the user can land in the full data table. */
+	| { kind: 'objects'; type?: WebAppObjectType }
 	/** Actor detail (humans + agents share the same identity model — both
 	 * resolve via `/agents/{id}`). `agent` is kept as an alias of `actor`
 	 * for callers that have already adopted the older name. */
@@ -177,6 +180,8 @@ export function buildWebAppPath(workspaceId: string, target: WebAppTarget): stri
 			return `${root}/activity`
 		case 'object':
 			return `${root}/objects/${target.id}`
+		case 'objects':
+			return target.type ? `${root}/objects?type=${target.type}` : `${root}/objects`
 		case 'actor':
 		case 'agent':
 			return target.id ? `${root}/agents/${target.id}` : `${root}/agents`
