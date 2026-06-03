@@ -45,7 +45,7 @@ describe('Triggers Routes', () => {
 	})
 
 	describe('GET /api/triggers', () => {
-		it('returns 200 with list of triggers', async () => {
+		it('returns 200 with list of triggers and X-Total-Count matching row count when unpaginated', async () => {
 			const t1 = buildTrigger({ workspaceId: wsId })
 			const t2 = buildTrigger({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
@@ -54,8 +54,32 @@ describe('Triggers Routes', () => {
 			const res = await app.request(jsonGet('/api/triggers', { 'x-workspace-id': wsId }))
 
 			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('2')
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+		})
+
+		it('surfaces total trigger count beyond the page cap when limit is set', async () => {
+			const page = [buildTrigger({ workspaceId: wsId })]
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [page, [{ value: 250 }]]
+
+			const res = await app.request(
+				jsonGet('/api/triggers?limit=1&offset=0', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('x-total-count')).toBe('250')
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+		})
+
+		it('rejects oversized limit query at the boundary', async () => {
+			const { app } = createTestApp(triggersRoutes, '/api/triggers')
+
+			const res = await app.request(jsonGet('/api/triggers?limit=999', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(400)
 		})
 	})
 
