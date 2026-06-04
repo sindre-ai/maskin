@@ -10,7 +10,6 @@ export const config: ProviderConfig = {
 		config: {
 			headerName: 'Authorization',
 			headerPrefix: 'Bearer ',
-			envKeyName: 'POSTHOG_PERSONAL_API_KEY',
 		},
 	},
 

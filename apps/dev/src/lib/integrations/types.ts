@@ -24,7 +24,7 @@ export interface OAuth2Config {
 export interface ApiKeyConfig {
 	headerName: string
 	headerPrefix?: string
-	envKeyName: string
+	envKeyName?: string
 }
 
 export type AuthConfig =

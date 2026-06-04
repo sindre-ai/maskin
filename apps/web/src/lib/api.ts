@@ -272,9 +272,10 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string) =>
+		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
 			request<{ install_url: string }>(`/integrations/${provider}/connect`, {
 				method: 'POST',
+				body,
 				workspaceId,
 			}),
 		disconnect: (id: string, workspaceId: string) =>
@@ -777,6 +778,7 @@ export interface ProviderEventDefinition {
 export interface ProviderInfo {
 	name: string
 	displayName: string
+	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
 	events: ProviderEventDefinition[]
 }
 

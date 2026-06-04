@@ -67,8 +67,8 @@ describe('IntegrationsPage', () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
-				{ name: 'slack', displayName: 'Slack', events: [] },
-				{ name: 'github', displayName: 'GitHub', events: [{ type: 'push' }] },
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [{ type: 'push' }] },
 			],
 			isLoading: false,
 		})
@@ -85,8 +85,8 @@ describe('IntegrationsPage', () => {
 		mockUseIntegrations.mockReturnValue({ data: [integration], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
-				{ name: 'slack', displayName: 'Slack', events: [] },
-				{ name: 'github', displayName: 'GitHub', events: [] },
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
 			],
 			isLoading: false,
 		})
@@ -96,7 +96,7 @@ describe('IntegrationsPage', () => {
 	})
 
 	describe('grouped GitHub installations', () => {
-		const githubProvider = { name: 'github', displayName: 'GitHub', events: [] }
+		const githubProvider = { name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] }
 
 		const twoInstallations = [
 			buildIntegrationResponse({
@@ -187,7 +187,7 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 
 			await user.click(screen.getByRole('button', { name: /Add another/ }))
-			expect(mockConnect).toHaveBeenCalledWith('github')
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
 		})
 
 		it('falls back to the single-row Connect UI when github has no active installations', () => {
@@ -208,7 +208,7 @@ describe('IntegrationsPage', () => {
 				isLoading: false,
 			})
 			mockUseProviders.mockReturnValue({
-				data: [{ name: 'slack', displayName: 'Slack', events: [] }],
+				data: [{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }],
 				isLoading: false,
 			})
 			render(<IntegrationsPage />)

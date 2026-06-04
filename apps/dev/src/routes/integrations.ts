@@ -106,6 +106,7 @@ app.openapi(listProvidersRoute, (async (c) => {
 	const providers = listProviders().map((p) => ({
 		name: p.config.name,
 		displayName: p.config.displayName,
+		authType: p.config.auth.type,
 		events: p.config.events?.definitions ?? [],
 	}))
 
@@ -164,59 +165,51 @@ app.openapi(connectRoute, (async (c) => {
 	// so we activate the integration synchronously from the configured env var
 	// and return a redirect back to the same settings page.
 	if (resolved.config.auth.type === 'api_key') {
-		const envKey = resolved.config.auth.config.envKeyName
-		const apiKey = process.env[envKey]
+		const body = (await c.req.json().catch(() => ({}))) as { api_key?: string }
+		const apiKey = body.api_key
 		if (!apiKey) {
-			logger.error(`api_key provider ${providerName} missing env var`, { envKey })
-			return c.json(
-				createApiError(
-					'BAD_REQUEST',
-					`Provider ${providerName} is not configured on this server (${envKey} unset)`,
-				),
-				400,
-			)
+			logger.error(`api_key provider ${providerName} missing request body api_key`)
+			return c.json(createApiError('BAD_REQUEST', `Provider ${providerName} requires an API key`), 400)
 		}
 
 		const credentials: StoredCredentials = { accessToken: apiKey }
 		const encryptedCredentials = encrypt(JSON.stringify(credentials))
 		const externalId = `${providerName}-personal`
 
-		const [existingActive] = await db
-			.select({ id: integrations.id })
-			.from(integrations)
-			.where(
-				and(
-					eq(integrations.workspaceId, workspaceId),
-					eq(integrations.provider, providerName),
-					eq(integrations.externalId, externalId),
-					eq(integrations.status, 'active'),
-				),
-			)
-			.limit(1)
-
-		let integrationId = existingActive?.id
-		if (existingActive) {
-			await db
-				.update(integrations)
-				.set({
+		const [row] = await db
+			.insert(integrations)
+			.values({
+				workspaceId,
+				provider: providerName,
+				status: 'active',
+				externalId,
+				credentials: encryptedCredentials,
+				createdBy: actorId,
+			})
+			.onConflictDoUpdate({
+				target: [integrations.workspaceId, integrations.provider, integrations.externalId],
+				set: {
+					status: 'active',
 					credentials: encryptedCredentials,
 					updatedAt: new Date(),
-				})
-				.where(eq(integrations.id, existingActive.id))
-		} else {
-			const [created] = await db
-				.insert(integrations)
-				.values({
-					workspaceId,
-					provider: providerName,
-					status: 'active',
-					externalId,
-					credentials: encryptedCredentials,
-					createdBy: actorId,
-				})
-				.returning({ id: integrations.id })
+				},
+			})
+			.returning({ id: integrations.id })
 
-			integrationId = created?.id
+		let integrationId = row?.id
+		if (!integrationId) {
+			const [existing] = await db
+				.select({ id: integrations.id })
+				.from(integrations)
+				.where(
+					and(
+						eq(integrations.workspaceId, workspaceId),
+						eq(integrations.provider, providerName),
+						eq(integrations.externalId, externalId),
+					),
+				)
+				.limit(1)
+			integrationId = existing?.id
 		}
 
 		if (!integrationId) {

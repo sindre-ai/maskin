@@ -7,12 +7,12 @@ describe('PostHog provider config', () => {
 		expect(config.displayName).toBe('PostHog')
 	})
 
-	it('uses api_key auth type with POSTHOG_PERSONAL_API_KEY env var', () => {
+	it('uses api_key auth type with no env-backed secret', () => {
 		expect(config.auth.type).toBe('api_key')
 		if (config.auth.type === 'api_key') {
-			expect(config.auth.config.envKeyName).toBe('POSTHOG_PERSONAL_API_KEY')
 			expect(config.auth.config.headerName).toBe('Authorization')
 			expect(config.auth.config.headerPrefix).toBe('Bearer ')
+			expect(config.auth.config.envKeyName).toBeUndefined()
 		}
 	})
 

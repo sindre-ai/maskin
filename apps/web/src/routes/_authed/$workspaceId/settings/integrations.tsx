@@ -2,6 +2,9 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
 	useConnectIntegration,
 	useDisconnectIntegration,
@@ -25,6 +28,8 @@ function IntegrationsPage() {
 	const { data: providers, isLoading: providersLoading } = useProviders()
 
 	const isLoading = integrationsLoading || providersLoading
+	const [apiKeyProvider, setApiKeyProvider] = useState<ProviderInfo | null>(null)
+	const [apiKey, setApiKey] = useState('')
 
 	// Group active integrations by provider — GitHub can have multiple installations,
 	// other providers currently have one.
@@ -65,11 +70,22 @@ function IntegrationsPage() {
 								provider={provider}
 								integration={installations[0]}
 								workspaceId={workspaceId}
+								onRequestApiKey={() => {
+									setApiKeyProvider(provider)
+									setApiKey('')
+								}}
 							/>
 						)
 					})}
 				</div>
 			)}
+			<ApiKeyDialog
+				workspaceId={workspaceId}
+				provider={apiKeyProvider}
+				apiKey={apiKey}
+				onApiKeyChange={setApiKey}
+				onClose={() => setApiKeyProvider(null)}
+			/>
 		</div>
 	)
 }
@@ -78,14 +94,23 @@ function ProviderRow({
 	provider,
 	integration,
 	workspaceId,
+	onRequestApiKey,
 }: {
 	provider: ProviderInfo
 	integration?: IntegrationResponse
 	workspaceId: string
+	onRequestApiKey: () => void
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
 	const isConnected = !!integration
+	const handleConnect = () => {
+		if (provider.authType === 'api_key') {
+			onRequestApiKey()
+			return
+		}
+		connect.mutate({ provider: provider.name })
+	}
 
 	return (
 		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
@@ -114,7 +139,7 @@ function ProviderRow({
 				<Button
 					size="sm"
 					className="shrink-0"
-					onClick={() => connect.mutate(provider.name)}
+					onClick={handleConnect}
 					disabled={connect.isPending}
 				>
 					Connect
@@ -170,7 +195,7 @@ function GroupedProviderRow({
 						variant="outline"
 						size="sm"
 						className="w-full"
-						onClick={() => connect.mutate(provider.name)}
+						onClick={() => connect.mutate({ provider: provider.name })}
 						disabled={connect.isPending}
 					>
 						<Plus className="h-3.5 w-3.5 mr-1" />
@@ -179,6 +204,60 @@ function GroupedProviderRow({
 				</div>
 			)}
 		</div>
+	)
+}
+
+function ApiKeyDialog({
+	workspaceId,
+	provider,
+	apiKey,
+	onApiKeyChange,
+	onClose,
+}: {
+	workspaceId: string
+	provider: ProviderInfo | null
+	apiKey: string
+	onApiKeyChange: (value: string) => void
+	onClose: () => void
+}) {
+	const connect = useConnectIntegration(workspaceId)
+
+	const open = !!provider
+	const handleConnect = () => {
+		if (!provider) return
+		connect.mutate({ provider: provider.name, apiKey })
+		onClose()
+	}
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Connect {provider?.displayName}</DialogTitle>
+					<DialogDescription>
+						Enter your PostHog personal API key to store it for this workspace only.
+					</DialogDescription>
+				</DialogHeader>
+				<div className="space-y-2">
+					<Label htmlFor="posthog-api-key">API key</Label>
+					<Input
+						id="posthog-api-key"
+						type="password"
+						value={apiKey}
+						onChange={(e) => onApiKeyChange(e.target.value)}
+						placeholder="phx_..."
+					/>
+				</div>
+				<div className="flex justify-end gap-2">
+					<Button variant="ghost" onClick={onClose}>
+						Cancel
+					</Button>
+					<Button onClick={handleConnect} disabled={!apiKey.trim() || connect.isPending}>
+						Connect
+					</Button>
+				</div>
+			</DialogContent>
+		</Dialog>
 	)
 }
 
