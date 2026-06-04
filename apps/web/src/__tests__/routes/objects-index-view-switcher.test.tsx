@@ -1,12 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
 
 // Capture the toolbar props so the test can drive the view switcher the same
 // way DisplayPanel would in the live app — without mounting the full panel.
 const toolbarProps: { current: Record<string, unknown> | null } = { current: null }
+const infiniteQueryState = vi.hoisted(() => ({
+	fetchNextPage: vi.fn(),
+	hasNextPage: false,
+	isFetchingNextPage: false,
+	isError: false,
+	observerCallback: null as IntersectionObserverCallback | null,
+}))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -49,10 +56,10 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 		...actual,
 		useInfiniteQuery: () => ({
 			data: { pages: [[]] },
-			hasNextPage: false,
-			isFetchingNextPage: false,
-			isError: false,
-			fetchNextPage: vi.fn(),
+			hasNextPage: infiniteQueryState.hasNextPage,
+			isFetchingNextPage: infiniteQueryState.isFetchingNextPage,
+			isError: infiniteQueryState.isError,
+			fetchNextPage: infiniteQueryState.fetchNextPage,
 			isLoading: false,
 		}),
 	}
@@ -142,6 +149,29 @@ function renderRoute() {
 	)
 }
 
+beforeEach(() => {
+	infiniteQueryState.fetchNextPage.mockClear()
+	infiniteQueryState.hasNextPage = false
+	infiniteQueryState.isFetchingNextPage = false
+	infiniteQueryState.isError = false
+	infiniteQueryState.observerCallback = null
+
+	class MockIntersectionObserver {
+		constructor(callback: IntersectionObserverCallback) {
+			infiniteQueryState.observerCallback = callback
+		}
+		observe = vi.fn()
+		disconnect = vi.fn()
+		unobserve = vi.fn()
+		takeRecords = () => []
+		root = null
+		rootMargin = ''
+		thresholds = []
+	}
+
+	vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+})
+
 describe('ObjectsPage view switcher', () => {
 	it('exposes both list and board options to the toolbar when the type has configured statuses', async () => {
 		persisted.current = null
@@ -202,4 +232,22 @@ describe('ObjectsPage view switcher', () => {
 		expect(lastCall?.[0].objectType).toBe('task')
 		expect(lastCall?.[0].settings.view).toBe('board')
 	}, 10_000)
+
+	it('fetches the next page when the board scroll sentinel intersects', async () => {
+		infiniteQueryState.hasNextPage = true
+		persisted.current = { view: 'board' }
+		toolbarProps.current = null
+		renderRoute()
+		await waitFor(() => expect(screen.getByTestId('board-load-more-sentinel')).toBeInTheDocument())
+		expect(infiniteQueryState.observerCallback).toBeTypeOf('function')
+
+		act(() => {
+			infiniteQueryState.observerCallback?.(
+				[{ isIntersecting: true } as IntersectionObserverEntry],
+				{} as IntersectionObserver,
+			)
+		})
+
+		expect(infiniteQueryState.fetchNextPage).toHaveBeenCalledTimes(1)
+	})
 })

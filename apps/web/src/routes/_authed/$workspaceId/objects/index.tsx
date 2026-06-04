@@ -147,6 +147,8 @@ function ObjectsPage() {
 	})
 
 	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+	const boardScrollRef = useRef<HTMLDivElement>(null)
+	const boardSentinelRef = useRef<HTMLDivElement>(null)
 
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
@@ -166,6 +168,27 @@ function ObjectsPage() {
 	// List. We never write that fallback back to settings — the stored
 	// preference is preserved for when the type becomes board-capable again.
 	const effectiveView: DisplayPanelView = boardSupported ? view : 'list'
+
+	useEffect(() => {
+		if (effectiveView !== 'board') return
+		if (!boardSentinelRef.current || !infiniteQuery.hasNextPage) return
+		if (infiniteQuery.isFetchingNextPage || infiniteQuery.isError) return
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0]?.isIntersecting) infiniteQuery.fetchNextPage()
+			},
+			{ root: boardScrollRef.current, rootMargin: '200px' },
+		)
+		observer.observe(boardSentinelRef.current)
+		return () => observer.disconnect()
+	}, [
+		effectiveView,
+		infiniteQuery.hasNextPage,
+		infiniteQuery.isFetchingNextPage,
+		infiniteQuery.isError,
+		infiniteQuery.fetchNextPage,
+	])
 
 	// Field definitions for dynamic columns
 	const fieldDefinitions = settings?.field_definitions as
@@ -652,7 +675,7 @@ function ObjectsPage() {
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 
 			{effectiveView === 'board' && typeFilter ? (
-				<div className="pb-4 flex-1 min-h-0 overflow-auto md:px-6">
+				<div ref={boardScrollRef} className="pb-4 flex-1 min-h-0 overflow-auto md:px-6">
 					<BoardView
 						objectType={typeFilter}
 						objects={allObjects}
@@ -660,6 +683,7 @@ function ObjectsPage() {
 						workspaceId={workspaceId}
 						isLoading={infiniteQuery.isLoading}
 					/>
+					<div ref={boardSentinelRef} data-testid="board-load-more-sentinel" className="h-px" />
 				</div>
 			) : (
 				<DataTable
