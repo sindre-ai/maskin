@@ -73,6 +73,16 @@ export const workspaceSettingsSchema = z.object({
 			scopes: z.array(z.string()).optional(),
 		})
 		.optional(),
+	// Privacy & data block surfaced in workspace Settings → General.
+	// `share_usage` toggles posthog opt-in capturing; `anonymize_workspace` swaps
+	// the distinct_id for a SHA-256 hash before identify so the Synthesizer's
+	// property-keyed joins keep working without raw IDs leaving the browser.
+	privacy: z
+		.object({
+			share_usage: z.boolean().default(true),
+			anonymize_workspace: z.boolean().default(false),
+		})
+		.default({ share_usage: true, anonymize_workspace: false }),
 	// Bring-your-own model: when enabled, sessions point Claude Code at this
 	// endpoint via ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL. Works for OpenRouter,
 	// self-hosted vLLM/Ollama, LM Studio — anything speaking the Anthropic

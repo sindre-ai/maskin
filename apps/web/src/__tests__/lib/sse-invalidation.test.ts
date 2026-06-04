@@ -1,6 +1,13 @@
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateFromSSE } from '@/lib/sse-invalidation'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/analytics', () => ({
+	trackTriggerFired: vi.fn(),
+	trackAgentSessionCompleted: vi.fn(),
+}))
+
+import { trackAgentSessionCompleted, trackTriggerFired } from '@/lib/analytics'
 
 function createMockQueryClient() {
 	return {
@@ -10,6 +17,10 @@ function createMockQueryClient() {
 
 const workspaceId = 'ws-1'
 const entityId = 'entity-1'
+
+beforeEach(() => {
+	vi.clearAllMocks()
+})
 
 describe('invalidateFromSSE', () => {
 	it('always invalidates events history and byEntity', () => {
@@ -178,5 +189,75 @@ describe('invalidateFromSSE', () => {
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: ['agent-skill-attachments'],
 		})
+	})
+
+	it('emits trigger_fired analytics when a trigger entity carries the fire action', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'trigger',
+			entity_id: 'trg-1',
+			action: 'trigger_fired',
+			event_id: 'evt-1',
+		} as never)
+		expect(trackTriggerFired).toHaveBeenCalledWith({
+			entity_id: 'trg-1',
+			entity_type: 'trigger',
+			flow_id: 'evt-1',
+		})
+	})
+
+	it('does not emit trigger_fired for other trigger actions', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'trigger',
+			entity_id: 'trg-1',
+			action: 'updated',
+		} as never)
+		expect(trackTriggerFired).not.toHaveBeenCalled()
+	})
+
+	it('emits agent_session_completed on completed/failed/timeout actions with outcome', () => {
+		const qc = createMockQueryClient()
+		for (const [action, outcome] of [
+			['session_completed', 'completed'],
+			['session_failed', 'failed'],
+			['session_timeout', 'timeout'],
+		] as const) {
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'session',
+				entity_id: 'sess-1',
+				action,
+				event_id: 'evt-2',
+			} as never)
+		}
+		expect(trackAgentSessionCompleted).toHaveBeenCalledTimes(3)
+		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(1, {
+			entity_id: 'sess-1',
+			entity_type: 'session',
+			outcome: 'completed',
+			flow_id: 'evt-2',
+		})
+		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(2, {
+			entity_id: 'sess-1',
+			entity_type: 'session',
+			outcome: 'failed',
+			flow_id: 'evt-2',
+		})
+		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(3, {
+			entity_id: 'sess-1',
+			entity_type: 'session',
+			outcome: 'timeout',
+			flow_id: 'evt-2',
+		})
+	})
+
+	it('does not emit agent_session_completed for routine session updates', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'session',
+			entity_id: 'sess-1',
+			action: 'updated',
+		} as never)
+		expect(trackAgentSessionCompleted).not.toHaveBeenCalled()
 	})
 })

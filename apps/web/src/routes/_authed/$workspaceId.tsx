@@ -8,12 +8,18 @@ import { useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { getStoredActor } from '@/lib/auth'
 import { PageHeaderProvider } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
+import {
+	identifyForWorkspace,
+	registerWorkspaceProperties,
+	setCapturingEnabled,
+} from '@/lib/posthog'
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
-import { type ReactNode, useCallback, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
 
@@ -70,6 +76,29 @@ function WorkspaceLayout() {
 			return next
 		})
 	}, [])
+
+	// Pin the Synthesizer's join keys on every analytics event from this workspace,
+	// and apply the workspace's Privacy & data settings — both the share-usage
+	// opt-in/out and the SHA-256 identify when anonymise is on — so the prefs
+	// survive reloads, not just the moment the user flips a switch.
+	const settings = workspace?.settings as Record<string, unknown> | undefined
+	const privacy = settings?.privacy as
+		| { share_usage?: boolean; anonymize_workspace?: boolean }
+		| undefined
+	const shareUsage = privacy?.share_usage ?? true
+	const anonymizeWorkspace = privacy?.anonymize_workspace ?? false
+	useEffect(() => {
+		if (!workspace) return
+		const actor = getStoredActor()
+		if (!actor) return
+		registerWorkspaceProperties({
+			workspace_id: workspaceId,
+			actor_id: actor.id,
+			actor_type: actor.type,
+		})
+		setCapturingEnabled(shareUsage)
+		void identifyForWorkspace(actor.id, anonymizeWorkspace)
+	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 
 	if (!workspace) {
 		return (

@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from 'node:child_process'
+﻿import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -771,9 +771,14 @@ export class SessionManager extends EventEmitter {
 			)
 
 		const tokenManager = new TokenManager()
-		// GitHub installations get a per-owner env var (GITHUB_TOKEN_<OWNER>) plus a
-		// synthesized MCP server entry (github-<owner>) so a single session with N
-		// installations exposes N distinct tokens and N MCP servers.
+		// MCP servers injected by virtue of a workspace having an active
+		// integration with `mcp.autoInject = true`. Workspace-scoped data pipes
+		// (e.g. PostHog → Synthesizer) belong here; tools an agent opts into
+		// per-config still go through the agent/session MCP paths.
+		//
+		// GitHub installations also get a per-owner env var plus a synthesized
+		// MCP server entry so a workspace can expose multiple installations at once.
+		const autoInjectedMcpServers: Record<string, unknown> = {}
 		const githubMcpServers: Record<string, unknown> = {}
 		for (const integration of activeIntegrations) {
 			try {
@@ -798,6 +803,15 @@ export class SessionManager extends EventEmitter {
 					const envVarName =
 						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
 					envVars[envVarName] = accessToken
+					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
+						autoInjectedMcpServers[`integration-${integration.provider}`] =
+							resolved.config.mcp.server
+						logger.info('Auto-injected MCP server for active integration', {
+							sessionId: session.id,
+							workspaceId: session.workspaceId,
+							provider: integration.provider,
+						})
+					}
 				}
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {
@@ -846,9 +860,10 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// Session-level MCP config (convert array → { mcpServers: { ... } } format),
-		// merged with any auto-injected per-installation GitHub MCP entries.
+		// merged with any auto-injected workspace MCPs and GitHub installation MCPs.
+		// Keys are namespaced so the sources can't collide.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
-		const mcpServers: Record<string, unknown> = { ...githubMcpServers }
+		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers, ...githubMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp

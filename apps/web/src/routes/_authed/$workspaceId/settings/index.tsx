@@ -62,7 +62,78 @@ function GeneralPage() {
 			</div>
 
 			<div className="border-t border-border pt-6">
+				<PrivacySection />
+			</div>
+
+			<div className="border-t border-border pt-6">
 				<ThemePicker />
+			</div>
+		</div>
+	)
+}
+
+interface PrivacySettings {
+	share_usage: boolean
+	anonymize_workspace: boolean
+}
+
+function readPrivacySettings(settings: Record<string, unknown>): PrivacySettings {
+	const raw = (settings.privacy ?? {}) as Partial<PrivacySettings>
+	return {
+		share_usage: raw.share_usage ?? true,
+		anonymize_workspace: raw.anonymize_workspace ?? false,
+	}
+}
+
+function PrivacySection() {
+	const { workspace, workspaceId } = useWorkspace()
+	const updateWorkspace = useUpdateWorkspace(workspaceId)
+	const settings = workspace.settings as Record<string, unknown>
+	const privacy = readPrivacySettings(settings)
+
+	const persist = (next: PrivacySettings) => {
+		updateWorkspace.mutate(
+			{ settings: { ...settings, privacy: next } },
+			{ onError: () => toast.error('Failed to update privacy settings') },
+		)
+	}
+
+	return (
+		<div>
+			<Label className="mb-1 text-muted-foreground">Privacy & data</Label>
+			<p className="text-sm text-muted-foreground mb-3 max-w-prose">
+				Product usage events are sent to PostHog so the team and the Synthesizer can see how the
+				workspace is actually used and feed that back into active bets.
+			</p>
+			<div className="space-y-3">
+				<div className="flex items-start justify-between gap-4 rounded-lg border border-border p-3">
+					<div className="min-w-0">
+						<span className="text-sm font-medium block">Share product usage with Maskin</span>
+						<span className="text-sm text-muted-foreground">
+							Bet lifecycle, agent sessions, comments, trigger fires. No object titles, no content,
+							no PII.
+						</span>
+					</div>
+					<Switch
+						checked={privacy.share_usage}
+						onCheckedChange={(checked) => persist({ ...privacy, share_usage: !!checked })}
+						aria-label="Share product usage with Maskin"
+					/>
+				</div>
+				<div className="flex items-start justify-between gap-4 rounded-lg border border-border p-3">
+					<div className="min-w-0">
+						<span className="text-sm font-medium block">Anonymize this workspace</span>
+						<span className="text-sm text-muted-foreground">
+							Replace workspace and actor IDs with rotating hashes before events leave the browser.
+							Recommended when working with sensitive customer data.
+						</span>
+					</div>
+					<Switch
+						checked={privacy.anonymize_workspace}
+						onCheckedChange={(checked) => persist({ ...privacy, anonymize_workspace: !!checked })}
+						aria-label="Anonymize this workspace"
+					/>
+				</div>
 			</div>
 		</div>
 	)

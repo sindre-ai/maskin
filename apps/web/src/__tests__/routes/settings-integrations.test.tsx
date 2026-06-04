@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -67,8 +67,8 @@ describe('IntegrationsPage', () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
-				{ name: 'slack', displayName: 'Slack', events: [] },
-				{ name: 'github', displayName: 'GitHub', events: [{ type: 'push' }] },
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [{ type: 'push' }] },
 			],
 			isLoading: false,
 		})
@@ -85,8 +85,8 @@ describe('IntegrationsPage', () => {
 		mockUseIntegrations.mockReturnValue({ data: [integration], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
-				{ name: 'slack', displayName: 'Slack', events: [] },
-				{ name: 'github', displayName: 'GitHub', events: [] },
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
 			],
 			isLoading: false,
 		})
@@ -95,8 +95,46 @@ describe('IntegrationsPage', () => {
 		expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
 	})
 
+	it('keeps the api key dialog open until connect succeeds', async () => {
+		const user = userEvent.setup()
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [{ name: 'posthog', displayName: 'PostHog', authType: 'api_key', events: [] }],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+
+		await user.click(screen.getByRole('button', { name: 'Connect' }))
+		expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+		await user.type(screen.getByLabelText('API key'), 'phx_test_key')
+		expect(screen.getByDisplayValue('phx_test_key')).toBeInTheDocument()
+
+		const connectButton = screen.getByRole('button', { name: 'Connect' })
+		await user.click(connectButton)
+
+		expect(mockConnect).toHaveBeenCalledWith(
+			{ provider: 'posthog', apiKey: 'phx_test_key' },
+			expect.objectContaining({
+				onSuccess: expect.any(Function),
+			}),
+		)
+		expect(screen.getByRole('dialog')).toBeInTheDocument()
+		expect(screen.getByDisplayValue('phx_test_key')).toBeInTheDocument()
+
+		const [, options] = mockConnect.mock.calls[0]
+		await act(async () => {
+			options.onSuccess?.()
+		})
+
+		await waitFor(() => {
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+		})
+		expect(screen.queryByDisplayValue('phx_test_key')).not.toBeInTheDocument()
+	})
+
 	describe('grouped GitHub installations', () => {
-		const githubProvider = { name: 'github', displayName: 'GitHub', events: [] }
+		const githubProvider = { name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] }
 
 		const twoInstallations = [
 			buildIntegrationResponse({
@@ -187,7 +225,7 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 
 			await user.click(screen.getByRole('button', { name: /Add another/ }))
-			expect(mockConnect).toHaveBeenCalledWith('github')
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
 		})
 
 		it('falls back to the single-row Connect UI when github has no active installations', () => {
@@ -208,7 +246,7 @@ describe('IntegrationsPage', () => {
 				isLoading: false,
 			})
 			mockUseProviders.mockReturnValue({
-				data: [{ name: 'slack', displayName: 'Slack', events: [] }],
+				data: [{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }],
 				isLoading: false,
 			})
 			render(<IntegrationsPage />)

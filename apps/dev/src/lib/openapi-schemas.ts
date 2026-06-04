@@ -154,6 +154,7 @@ export const providerEventSchema = z.object({
 export const providerInfoSchema = z.object({
 	name: z.string(),
 	displayName: z.string(),
+	authType: z.enum(['oauth2', 'oauth2_custom', 'api_key']),
 	events: z.array(providerEventSchema),
 })
 

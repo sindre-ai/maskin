@@ -106,6 +106,7 @@ app.openapi(listProvidersRoute, (async (c) => {
 	const providers = listProviders().map((p) => ({
 		name: p.config.name,
 		displayName: p.config.displayName,
+		authType: p.config.auth.type,
 		events: p.config.events?.definitions ?? [],
 	}))
 
@@ -158,6 +159,87 @@ app.openapi(connectRoute, (async (c) => {
 			),
 			400,
 		)
+	}
+
+	// api_key providers skip the OAuth round-trip — the platform owns the key,
+	// so we activate the integration synchronously from the configured env var
+	// and return a redirect back to the same settings page.
+	if (resolved.config.auth.type === 'api_key') {
+		const body = (await c.req.json().catch(() => ({}))) as { api_key?: string }
+		const apiKey = body.api_key
+		if (!apiKey) {
+			logger.error(`api_key provider ${providerName} missing request body api_key`)
+			return c.json(
+				createApiError('BAD_REQUEST', `Provider ${providerName} requires an API key`),
+				400,
+			)
+		}
+
+		const credentials: StoredCredentials = { accessToken: apiKey }
+		const encryptedCredentials = encrypt(JSON.stringify(credentials))
+		const externalId = `${providerName}-personal`
+
+		const [row] = await db
+			.insert(integrations)
+			.values({
+				workspaceId,
+				provider: providerName,
+				status: 'active',
+				externalId,
+				credentials: encryptedCredentials,
+				createdBy: actorId,
+			})
+			.onConflictDoUpdate({
+				target: [integrations.workspaceId, integrations.provider, integrations.externalId],
+				set: {
+					status: 'active',
+					credentials: encryptedCredentials,
+					updatedAt: new Date(),
+				},
+			})
+			.returning({ id: integrations.id })
+
+		let integrationId = row?.id
+		if (!integrationId) {
+			const [existing] = await db
+				.select({ id: integrations.id })
+				.from(integrations)
+				.where(
+					and(
+						eq(integrations.workspaceId, workspaceId),
+						eq(integrations.provider, providerName),
+						eq(integrations.externalId, externalId),
+					),
+				)
+				.limit(1)
+			integrationId = existing?.id
+		}
+
+		if (!integrationId) {
+			logger.error('api_key integration activation returned no id', {
+				provider: providerName,
+				workspaceId,
+			})
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to activate integration'), 500)
+		}
+
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'created',
+			entityType: 'integration',
+			entityId: integrationId,
+			data: { provider: providerName, external_id: externalId, auth_type: 'api_key' },
+		})
+
+		logger.info('api_key integration activated', {
+			provider: providerName,
+			workspaceId,
+			integrationId,
+		})
+
+		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
 	}
 
 	// Create signed state containing workspace + actor info + one-time nonce

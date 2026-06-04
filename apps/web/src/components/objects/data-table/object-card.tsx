@@ -1,5 +1,6 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { SourceBadge } from '@/components/shared/source-badge'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -63,6 +64,7 @@ export function ObjectCard({
 				</div>
 				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
 					<TypeBadge type={object.type} />
+					{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 					{owner && <span className="truncate">{owner.name}</span>}
 					{object.updatedAt && (
 						<RelativeTime date={object.updatedAt} className="ml-auto shrink-0" />

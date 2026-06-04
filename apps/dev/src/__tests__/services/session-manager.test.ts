@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+﻿import { vi } from 'vitest'
 
 // Mock external dependencies
 vi.mock('node:fs/promises', () => ({
