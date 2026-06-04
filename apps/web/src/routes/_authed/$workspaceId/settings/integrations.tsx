@@ -2,7 +2,13 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -139,12 +145,7 @@ function ProviderRow({
 					Disconnect
 				</Button>
 			) : (
-				<Button
-					size="sm"
-					className="shrink-0"
-					onClick={handleConnect}
-					disabled={connect.isPending}
-				>
+				<Button size="sm" className="shrink-0" onClick={handleConnect} disabled={connect.isPending}>
 					Connect
 				</Button>
 			)}

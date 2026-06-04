@@ -125,9 +125,14 @@ describe('Integrations Routes', () => {
 				mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
 
 				const res = await app.request(
-					jsonRequest('POST', '/api/integrations/posthog/connect', { api_key: 'phx_test_personal_key' }, {
-						'x-workspace-id': wsId,
-					}),
+					jsonRequest(
+						'POST',
+						'/api/integrations/posthog/connect',
+						{ api_key: 'phx_test_personal_key' },
+						{
+							'x-workspace-id': wsId,
+						},
+					),
 				)
 
 				expect(res.status).toBe(200)
@@ -159,13 +164,18 @@ describe('Integrations Routes', () => {
 
 		it('refreshes an existing active api_key integration instead of inserting a duplicate', async () => {
 			try {
-			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 				mockResults.selectQueue = [[{ id: 'existing-integration-id' }]]
 
 				const res = await app.request(
-					jsonRequest('POST', '/api/integrations/posthog/connect', { api_key: 'phx_test_personal_key' }, {
-						'x-workspace-id': wsId,
-					}),
+					jsonRequest(
+						'POST',
+						'/api/integrations/posthog/connect',
+						{ api_key: 'phx_test_personal_key' },
+						{
+							'x-workspace-id': wsId,
+						},
+					),
 				)
 
 				expect(res.status).toBe(200)

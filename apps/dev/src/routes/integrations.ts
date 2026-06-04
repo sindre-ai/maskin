@@ -169,7 +169,10 @@ app.openapi(connectRoute, (async (c) => {
 		const apiKey = body.api_key
 		if (!apiKey) {
 			logger.error(`api_key provider ${providerName} missing request body api_key`)
-			return c.json(createApiError('BAD_REQUEST', `Provider ${providerName} requires an API key`), 400)
+			return c.json(
+				createApiError('BAD_REQUEST', `Provider ${providerName} requires an API key`),
+				400,
+			)
 		}
 
 		const credentials: StoredCredentials = { accessToken: apiKey }
