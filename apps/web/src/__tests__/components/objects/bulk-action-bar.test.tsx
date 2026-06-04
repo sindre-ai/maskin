@@ -73,6 +73,8 @@ describe('BulkActionBar', () => {
 		renderBar()
 		const bar = screen.getByRole('region', { name: 'Bulk actions' })
 		expect(bar.className).toMatch(/overflow-x-auto/)
+		expect(bar.className).toMatch(/rounded-md/)
+		expect(bar.className).toMatch(/bg-white/)
 		expect(within(bar).getByText('selected').className).toMatch(/hidden/)
 		expect(within(bar).getByText('selected').className).toMatch(/sm:inline/)
 		expect(within(bar).getByLabelText('3 selected').className).toMatch(/shrink-0/)
