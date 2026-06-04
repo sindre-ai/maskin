@@ -109,7 +109,7 @@ export function BulkActionBar({
 				className={cn(
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
-					'rounded-full border border-border bg-bg-surface px-3 py-2 shadow-lg',
+					'overflow-x-auto rounded-md border border-border bg-white px-3 py-2 shadow-lg',
 					transitionClass,
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
@@ -117,14 +117,14 @@ export function BulkActionBar({
 				)}
 			>
 				<span
-					className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-accent px-2 text-xs font-medium text-accent-foreground"
+					className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-2 text-xs font-medium text-accent-foreground"
 					aria-label={`${selectedCount} selected`}
 				>
 					{selectedCount}
 				</span>
-				<span className="text-sm text-text-secondary">selected</span>
+				<span className="hidden text-sm text-text-secondary sm:inline">selected</span>
 
-				<div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
+				<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
 
 				{onStatusChange && statusOptions.length > 0 && (
 					<Select
@@ -136,7 +136,7 @@ export function BulkActionBar({
 					>
 						<SelectTrigger
 							aria-label="Set status"
-							className="text-sm data-[placeholder]:text-text-secondary"
+							className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
 						>
 							<SelectValue placeholder="Status" />
 						</SelectTrigger>
@@ -160,7 +160,7 @@ export function BulkActionBar({
 				>
 					<SelectTrigger
 						aria-label="Set owner"
-						className="text-sm data-[placeholder]:text-text-secondary"
+						className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
 					>
 						<SelectValue placeholder="Owner" />
 					</SelectTrigger>
@@ -173,7 +173,7 @@ export function BulkActionBar({
 					</SelectContent>
 				</Select>
 
-				<div className="ml-auto flex items-center gap-1">
+				<div className="ml-auto flex shrink-0 items-center gap-1">
 					{onCopyLink && (
 						<Tooltip>
 							<TooltipTrigger asChild>
