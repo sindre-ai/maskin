@@ -117,6 +117,7 @@ vi.mock('@/lib/query-keys', () => ({
 			listInfinite: () => ['objects'],
 			listInfinitePrefix: () => ['objects', 'infinite'],
 			listPrefix: () => ['objects', 'list'],
+			board: () => ['objects', 'board'],
 			detail: (id: string) => ['objects', 'detail', id],
 			all: () => ['objects'],
 		},

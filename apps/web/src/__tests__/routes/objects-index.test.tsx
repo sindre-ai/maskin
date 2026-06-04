@@ -113,7 +113,10 @@ vi.mock('@/lib/api', () => ({
 
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
-		objects: { listInfinite: () => ['objects'] },
+		objects: {
+			listInfinite: () => ['objects'],
+			board: () => ['objects', 'board'],
+		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [
