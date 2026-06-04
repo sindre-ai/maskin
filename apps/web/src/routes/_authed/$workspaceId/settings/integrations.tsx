@@ -84,7 +84,10 @@ function IntegrationsPage() {
 				provider={apiKeyProvider}
 				apiKey={apiKey}
 				onApiKeyChange={setApiKey}
-				onClose={() => setApiKeyProvider(null)}
+				onClose={() => {
+					setApiKeyProvider(null)
+					setApiKey('')
+				}}
 			/>
 		</div>
 	)
@@ -225,8 +228,14 @@ function ApiKeyDialog({
 	const open = !!provider
 	const handleConnect = () => {
 		if (!provider) return
-		connect.mutate({ provider: provider.name, apiKey })
-		onClose()
+		connect.mutate(
+			{ provider: provider.name, apiKey },
+			{
+				onSuccess: () => {
+					onClose()
+				},
+			},
+		)
 	}
 
 	return (

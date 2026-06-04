@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -93,6 +93,44 @@ describe('IntegrationsPage', () => {
 		render(<IntegrationsPage />)
 		expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
+	})
+
+	it('keeps the api key dialog open until connect succeeds', async () => {
+		const user = userEvent.setup()
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [{ name: 'posthog', displayName: 'PostHog', authType: 'api_key', events: [] }],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+
+		await user.click(screen.getByRole('button', { name: 'Connect' }))
+		expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+		await user.type(screen.getByLabelText('API key'), 'phx_test_key')
+		expect(screen.getByDisplayValue('phx_test_key')).toBeInTheDocument()
+
+		const connectButton = screen.getByRole('button', { name: 'Connect' })
+		await user.click(connectButton)
+
+		expect(mockConnect).toHaveBeenCalledWith(
+			{ provider: 'posthog', apiKey: 'phx_test_key' },
+			expect.objectContaining({
+				onSuccess: expect.any(Function),
+			}),
+		)
+		expect(screen.getByRole('dialog')).toBeInTheDocument()
+		expect(screen.getByDisplayValue('phx_test_key')).toBeInTheDocument()
+
+		const [, options] = mockConnect.mock.calls[0]
+		await act(async () => {
+			options.onSuccess?.()
+		})
+
+		await waitFor(() => {
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+		})
+		expect(screen.queryByDisplayValue('phx_test_key')).not.toBeInTheDocument()
 	})
 
 	describe('grouped GitHub installations', () => {
