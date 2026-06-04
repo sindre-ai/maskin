@@ -392,4 +392,46 @@ describe('Objects Integration', () => {
 			expect(collected).toEqual([...collected].sort())
 		})
 	})
+
+	describe('GET /api/objects/board', () => {
+		it('returns full column totals with paged objects per column', async () => {
+			const app = createApp()
+
+			for (let i = 0; i < 3; i++) {
+				await insertObject(db, workspaceId, getTestActorId(), {
+					type: 'task',
+					status: 'todo',
+					title: `Todo ${i}`,
+				})
+			}
+			await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'in_progress',
+				title: 'In progress',
+			})
+
+			const firstPage = await app.request(
+				jsonGet('/api/objects/board?type=task&limit=2', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(firstPage.status).toBe(200)
+			const body = await firstPage.json()
+			const todo = body.columns.find((column: { value: string }) => column.value === 'todo')
+			expect(todo.total).toBe(3)
+			expect(todo.objects).toHaveLength(2)
+
+			const secondPage = await app.request(
+				jsonGet('/api/objects/board?type=task&column=todo&limit=2&offset=2', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(secondPage.status).toBe(200)
+			const nextBody = await secondPage.json()
+			expect(nextBody.columns).toHaveLength(1)
+			expect(nextBody.columns[0].value).toBe('todo')
+			expect(nextBody.columns[0].total).toBe(3)
+			expect(nextBody.columns[0].objects).toHaveLength(1)
+		})
+	})
 })

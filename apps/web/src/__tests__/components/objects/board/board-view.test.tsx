@@ -2,7 +2,7 @@ import { BoardView } from '@/components/objects/board/board-view'
 import { deriveColumns } from '@/components/objects/board/derive-columns'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
-import { buildObjectResponse } from '../../../factories'
+import { buildActorListItem, buildObjectResponse } from '../../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../../mocks/router')
@@ -481,6 +481,104 @@ describe('BoardView', () => {
 			expect.stringContaining('Inserted between second and third'),
 			expect.stringContaining('Third'),
 		])
+	})
+
+	it('uses display ordering when sort/order are provided', () => {
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo'] }}
+				sort="title"
+				order="asc"
+				objects={[
+					buildObjectResponse({
+						id: 'b',
+						type: 'task',
+						status: 'todo',
+						title: 'Bravo',
+						metadata: { board_order: 1 },
+					}),
+					buildObjectResponse({
+						id: 'a',
+						type: 'task',
+						status: 'todo',
+						title: 'Alpha',
+						metadata: { board_order: 2 },
+					}),
+				]}
+			/>,
+		)
+		const cards = screen.getAllByTestId('board-card')
+		expect(cards.map((card) => card.textContent)).toEqual([
+			expect.stringContaining('Alpha'),
+			expect.stringContaining('Bravo'),
+		])
+	})
+
+	it('groups board columns by owner when groupBy is owner', () => {
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo'] }}
+				groupBy="owner"
+				actors={[buildActorListItem({ id: 'actor-1', name: 'Ada' })]}
+				objects={[
+					buildObjectResponse({
+						id: 'a',
+						type: 'task',
+						status: 'todo',
+						title: 'Owned task',
+						owner: 'actor-1',
+					}),
+					buildObjectResponse({
+						id: 'b',
+						type: 'task',
+						status: 'todo',
+						title: 'Unowned task',
+						owner: null,
+					}),
+				]}
+			/>,
+		)
+
+		expect(screen.getByTestId('board-column-actor-1')).toHaveTextContent('Ada')
+		expect(screen.getByTestId('board-column-No value')).toHaveTextContent('No value')
+		expect(screen.getByText('Owned task')).toBeInTheDocument()
+		expect(screen.getByText('Unowned task')).toBeInTheDocument()
+	})
+
+	it('switches to manual ordering when a card is dragged while display-sorted', () => {
+		const onManualOrderChange = vi.fn()
+		const objA = buildObjectResponse({
+			id: 'a',
+			type: 'task',
+			status: 'todo',
+			title: 'Alpha',
+		})
+		const objB = buildObjectResponse({
+			id: 'b',
+			type: 'task',
+			status: 'todo',
+			title: 'Bravo',
+		})
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo'] }}
+				sort="title"
+				order="asc"
+				objects={[objA, objB]}
+				onManualOrderChange={onManualOrderChange}
+			/>,
+		)
+
+		fireDragEnd(makeCardDragEvent(objA, objB, 'todo', 'after'))
+
+		expect(onManualOrderChange).toHaveBeenCalledTimes(1)
+		expect(bulkUpdateMutate).toHaveBeenCalledTimes(1)
 	})
 
 	describe('drag-to-status', () => {

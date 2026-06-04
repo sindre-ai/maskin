@@ -1,7 +1,14 @@
+import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { useBulkUpdateObjects } from '@/hooks/use-objects'
-import type { ActorListItem, BulkUpdateObjectsInput, ObjectResponse } from '@/lib/api'
+import { api } from '@/lib/api'
+import type {
+	ActorListItem,
+	BoardObjectColumn,
+	BulkUpdateObjectsInput,
+	ObjectResponse,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	type CollisionDetection,
@@ -17,9 +24,12 @@ import {
 	useSensors,
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import type { VisibilityState } from '@tanstack/react-table'
 import {
 	type PointerEvent,
 	type MouseEvent as ReactMouseEvent,
+	type ReactNode,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
@@ -31,7 +41,10 @@ import { deriveColumns } from './derive-columns'
 
 interface BoardViewProps {
 	objectType: string
-	objects: ObjectResponse[]
+	objects?: ObjectResponse[]
+	columns?: BoardObjectColumn[]
+	boardParams?: Record<string, string>
+	pageSize?: number
 	statusesByType: Record<string, string[] | undefined>
 	workspaceId: string
 	actors?: ActorListItem[]
@@ -39,14 +52,21 @@ interface BoardViewProps {
 	selectedIds?: string[]
 	onObjectSelectionChange?: (id: string, selected: boolean) => void
 	onObjectRangeSelectionChange?: (ids: string[]) => void
+	sort?: string
+	order?: 'asc' | 'desc'
+	groupBy?: string
+	displayColumns?: DisplayPanelColumn[]
+	columnVisibility?: VisibilityState
+	onManualOrderChange?: () => void
 }
 
+const BOARD_MANUAL_SORT = 'boardOrder'
 const SKELETON_CARDS_PER_COLUMN = 2
 const LONG_PRESS_MS = 500
 const LONG_PRESS_MOVE_TOLERANCE = 8
-type PendingBoardPatch = Pick<BulkUpdateObjectsInput['patch'], 'status' | 'metadata'>
+type PendingBoardPatch = Pick<BulkUpdateObjectsInput['patch'], 'status' | 'owner' | 'metadata'>
 interface DragPreview {
-	status: string
+	groupValue: string
 	insertIndex: number
 }
 
@@ -69,7 +89,73 @@ function compareDefaultCardOrder(a: ObjectResponse, b: ObjectResponse) {
 	return (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id)
 }
 
-function getOrderedObjects(objects: ObjectResponse[]) {
+function getSortValue(object: ObjectResponse, sort: string) {
+	if (sort.startsWith('metadata.')) {
+		const key = sort.slice('metadata.'.length)
+		const metadata = object.metadata as Record<string, unknown> | null
+		return metadata?.[key] ?? null
+	}
+
+	return object[sort as keyof ObjectResponse] ?? null
+}
+
+function compareValues(aValue: unknown, bValue: unknown) {
+	if (aValue == null && bValue == null) return 0
+	if (aValue == null) return 1
+	if (bValue == null) return -1
+	if (typeof aValue === 'number' && typeof bValue === 'number') return aValue - bValue
+	return String(aValue).localeCompare(String(bValue), undefined, {
+		numeric: true,
+		sensitivity: 'base',
+	})
+}
+
+function shouldUseDisplaySort(sort?: string, order?: 'asc' | 'desc') {
+	return Boolean(
+		sort && order && sort !== BOARD_MANUAL_SORT && (sort !== 'createdAt' || order !== 'desc'),
+	)
+}
+
+function getObjectGroupValue(object: ObjectResponse, groupBy?: string) {
+	if (!groupBy || groupBy === 'status') return object.status
+	if (groupBy.startsWith('metadata.')) {
+		const key = groupBy.slice('metadata.'.length)
+		const metadata = object.metadata as Record<string, unknown> | null
+		const value = metadata?.[key]
+		return value == null || value === '' ? 'No value' : String(value)
+	}
+	const value = object[groupBy as keyof ObjectResponse]
+	return value == null || value === '' ? 'No value' : String(value)
+}
+
+function getGroupPatch(
+	object: ObjectResponse,
+	groupBy: string | undefined,
+	toGroupValue: string,
+): PendingBoardPatch | null {
+	if (!groupBy || groupBy === 'status') return { status: toGroupValue }
+	if (groupBy === 'owner') return { owner: toGroupValue === 'No value' ? null : toGroupValue }
+	if (groupBy.startsWith('metadata.')) {
+		const key = groupBy.slice('metadata.'.length)
+		return {
+			metadata: {
+				...(object.metadata ?? {}),
+				[key]: toGroupValue === 'No value' ? null : toGroupValue,
+			},
+		}
+	}
+	return null
+}
+
+function getOrderedObjects(objects: ObjectResponse[], sort?: string, order?: 'asc' | 'desc') {
+	if (shouldUseDisplaySort(sort, order) && sort && order) {
+		return objects.slice().sort((a, b) => {
+			const diff = compareValues(getSortValue(a, sort), getSortValue(b, sort))
+			if (diff !== 0) return order === 'asc' ? diff : -diff
+			return a.id.localeCompare(b.id)
+		})
+	}
+
 	const fallbackIndexById = new Map<string, number>()
 	for (const [index, object] of objects.slice().sort(compareDefaultCardOrder).entries()) {
 		fallbackIndexById.set(object.id, index)
@@ -149,6 +235,9 @@ function getDropIndex({
 export function BoardView({
 	objectType,
 	objects,
+	columns: initialColumns,
+	boardParams = {},
+	pageSize = 20,
 	statusesByType,
 	workspaceId,
 	actors,
@@ -156,6 +245,12 @@ export function BoardView({
 	selectedIds = [],
 	onObjectSelectionChange,
 	onObjectRangeSelectionChange,
+	sort,
+	order,
+	groupBy,
+	displayColumns,
+	columnVisibility,
+	onManualOrderChange,
 }: BoardViewProps) {
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
 	const [activeObject, setActiveObject] = useState<ObjectResponse | null>(null)
@@ -163,24 +258,66 @@ export function BoardView({
 	const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
 	const [pendingPatches, setPendingPatches] = useState<Record<string, PendingBoardPatch>>({})
 	const [selectionAnchorByStatus, setSelectionAnchorByStatus] = useState<Record<string, string>>({})
+	const resolvedInitialColumns = useMemo<BoardObjectColumn[]>(() => {
+		if (initialColumns) return initialColumns
+		return deriveColumns(objectType, statusesByType, objects ?? [], groupBy, actors).map(
+			(column) => ({
+				...column,
+				total: column.objects.length,
+			}),
+		)
+	}, [actors, groupBy, initialColumns, objectType, objects, statusesByType])
+	const [loadedColumns, setLoadedColumns] = useState<BoardObjectColumn[]>(resolvedInitialColumns)
+
+	useEffect(() => {
+		setLoadedColumns(resolvedInitialColumns)
+	}, [resolvedInitialColumns])
 
 	const displayObjects = useMemo(
 		() =>
-			objects.map((object) => {
-				const pending = pendingPatches[object.id]
-				if (!pending) return object
-				return {
-					...object,
-					...(pending.status ? { status: pending.status } : {}),
-					...(pending.metadata
-						? { metadata: { ...(object.metadata ?? {}), ...pending.metadata } }
-						: {}),
-				}
-			}),
-		[objects, pendingPatches],
+			loadedColumns
+				.flatMap((column) => column.objects)
+				.map((object) => {
+					const pending = pendingPatches[object.id]
+					if (!pending) return object
+					return {
+						...object,
+						...(pending.status ? { status: pending.status } : {}),
+						...(pending.owner !== undefined ? { owner: pending.owner } : {}),
+						...(pending.metadata
+							? { metadata: { ...(object.metadata ?? {}), ...pending.metadata } }
+							: {}),
+					}
+				}),
+		[loadedColumns, pendingPatches],
 	)
-	const columns = deriveColumns(objectType, statusesByType, displayObjects)
+	const displayObjectsById = useMemo(
+		() => new Map(displayObjects.map((object) => [object.id, object])),
+		[displayObjects],
+	)
+	const columns = useMemo(
+		() =>
+			loadedColumns.map((column) => ({
+				...column,
+				objects: column.objects.map((object) => displayObjectsById.get(object.id) ?? object),
+			})),
+		[loadedColumns, displayObjectsById],
+	)
 	const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
+
+	const appendColumnObjects = useCallback((columnValue: string, nextObjects: ObjectResponse[]) => {
+		setLoadedColumns((current) =>
+			current.map((column) => {
+				if (column.value !== columnValue) return column
+				const existingIds = new Set(column.objects.map((object) => object.id))
+				const merged = [
+					...column.objects,
+					...nextObjects.filter((object) => !existingIds.has(object.id)),
+				]
+				return { ...column, objects: merged }
+			}),
+		)
+	}, [])
 
 	const selectSingleCard = (status: string, id: string, selected: boolean) => {
 		onObjectSelectionChange?.(id, selected)
@@ -214,16 +351,17 @@ export function BoardView({
 			let changed = false
 
 			for (const [id, pending] of Object.entries(current)) {
-				const object = objects.find((obj) => obj.id === id)
+				const object = displayObjects.find((obj) => obj.id === id)
 				if (!object) continue
 
 				const statusMatches = pending.status === undefined || object.status === pending.status
+				const ownerMatches = pending.owner === undefined || object.owner === pending.owner
 				const metadataMatches = Object.entries(pending.metadata ?? {}).every(([key, value]) => {
 					const metadata = object.metadata as Record<string, unknown> | null
 					return metadata?.[key] === value
 				})
 
-				if (statusMatches && metadataMatches) {
+				if (statusMatches && ownerMatches && metadataMatches) {
 					delete next[id]
 					changed = true
 				}
@@ -231,7 +369,7 @@ export function BoardView({
 
 			return changed ? next : current
 		})
-	}, [objects])
+	}, [displayObjects])
 
 	if (columns.length === 0) {
 		return (
@@ -249,21 +387,28 @@ export function BoardView({
 		setDragPreview(null)
 		if (!over) return
 		const dragged = active.data.current?.object as ObjectResponse | undefined
-		const toStatus = over.data.current?.status as string | undefined
-		if (!dragged || !toStatus) return
+		const toGroupValue = (over.data.current?.groupValue ?? over.data.current?.status) as
+			| string
+			| undefined
+		if (!dragged || !toGroupValue) return
 		const overObject = columns
 			.flatMap((column) => column.objects)
 			.find((object) => object.id === String(over.id))
 		const sameSpot = dragged.id === overObject?.id
-		const statusChanged = dragged.status !== toStatus
-		if (!statusChanged && sameSpot) return
-		if (!statusChanged && !overObject) return
+		const groupChanged = getObjectGroupValue(dragged, groupBy) !== toGroupValue
+		if (!groupChanged && sameSpot) return
+		if (!groupChanged && !overObject) return
 
-		const targetColumn = columns.find((column) => column.status === toStatus)
+		const groupPatch = groupChanged ? getGroupPatch(dragged, groupBy, toGroupValue) : {}
+		if (groupChanged && !groupPatch) return
+
+		const targetColumn = columns.find((column) => column.value === toGroupValue)
 		if (!targetColumn) return
 
 		const targetObjects = getOrderedObjects(
 			targetColumn.objects.filter((obj) => obj.id !== dragged.id),
+			sort,
+			order,
 		)
 		const pointerY = getPointerY(event)
 		const insertIndex = overObject
@@ -274,7 +419,7 @@ export function BoardView({
 					draggedId: dragged.id,
 					pointerY,
 				})
-			: dragPreview?.status === toStatus
+			: dragPreview?.groupValue === toGroupValue
 				? dragPreview.insertIndex
 				: targetObjects.length
 
@@ -294,9 +439,14 @@ export function BoardView({
 			board_order: nextBoardOrder,
 		}
 		const pendingPatch: PendingBoardPatch = {
-			...(statusChanged ? { status: toStatus } : {}),
-			metadata: nextMetadata,
+			...groupPatch,
+			metadata: {
+				...(groupPatch?.metadata ?? dragged.metadata ?? {}),
+				board_order: nextBoardOrder,
+			},
 		}
+
+		if (shouldUseDisplaySort(sort, order)) onManualOrderChange?.()
 
 		setPendingPatches((current) => ({
 			...current,
@@ -341,15 +491,25 @@ export function BoardView({
 			}}
 			onDragOver={(event: DragOverEvent) => {
 				const { active, over } = event
-				setOverStatus((over?.data.current?.status as string | undefined) ?? null)
+				const toGroupValue = (over?.data.current?.groupValue ?? over?.data.current?.status) as
+					| string
+					| undefined
+				setOverStatus(toGroupValue ?? null)
 				const dragged = active.data.current?.object as ObjectResponse | undefined
-				const toStatus = over?.data.current?.status as string | undefined
-				if (!dragged || !toStatus || dragged.status === toStatus || !over) {
+				const groupChanged = dragged
+					? getObjectGroupValue(dragged, groupBy) !== toGroupValue
+					: false
+				if (!dragged || !toGroupValue || !groupChanged || !over) {
 					setDragPreview(null)
 					return
 				}
 
-				const targetColumn = columns.find((column) => column.status === toStatus)
+				if (!getGroupPatch(dragged, groupBy, toGroupValue)) {
+					setDragPreview(null)
+					return
+				}
+
+				const targetColumn = columns.find((column) => column.value === toGroupValue)
 				if (!targetColumn) {
 					setDragPreview(null)
 					return
@@ -357,13 +517,15 @@ export function BoardView({
 
 				const targetObjects = getOrderedObjects(
 					targetColumn.objects.filter((obj) => obj.id !== dragged.id),
+					sort,
+					order,
 				)
 				const overObject = targetObjects.find((object) => object.id === String(over.id))
 				if (!overObject && targetObjects.length > 0) {
 					setDragPreview((current) =>
-						current?.status === toStatus
+						current?.groupValue === toGroupValue
 							? current
-							: { status: toStatus, insertIndex: targetObjects.length },
+							: { groupValue: toGroupValue, insertIndex: targetObjects.length },
 					)
 					return
 				}
@@ -377,7 +539,7 @@ export function BoardView({
 							pointerY: getPointerY(event),
 						})
 					: targetObjects.length
-				setDragPreview({ status: toStatus, insertIndex })
+				setDragPreview({ groupValue: toGroupValue, insertIndex })
 			}}
 			onDragCancel={() => {
 				setActiveObject(null)
@@ -391,29 +553,56 @@ export function BoardView({
 			>
 				{columns.map((column) => (
 					<BoardColumn
-						key={column.status}
-						status={column.status}
+						key={column.id}
+						status={column.value}
+						label={column.label}
 						objects={column.objects}
+						total={column.total}
 						workspaceId={workspaceId}
 						actors={actors}
 						isLoading={isLoading}
-						isOverTarget={overStatus === column.status && activeObject?.status !== column.status}
+						isOverTarget={
+							overStatus === column.value &&
+							!!activeObject &&
+							getObjectGroupValue(activeObject, groupBy) !== column.value
+						}
 						previewObject={
-							dragPreview?.status === column.status && activeObject
-								? { ...activeObject, status: column.status }
+							dragPreview?.groupValue === column.value && activeObject
+								? { ...activeObject, ...getGroupPatch(activeObject, groupBy, column.value) }
 								: null
 						}
-						previewIndex={dragPreview?.status === column.status ? dragPreview.insertIndex : null}
+						previewIndex={dragPreview?.groupValue === column.value ? dragPreview.insertIndex : null}
 						selectedIds={selectedIdSet}
 						onObjectSelectionChange={selectSingleCard}
 						onObjectRangeSelectionChange={selectCardRange}
+						sort={sort}
+						order={order}
+						displayColumns={displayColumns}
+						columnVisibility={columnVisibility}
+						loadMore={
+							<ColumnLoadMore
+								workspaceId={workspaceId}
+								boardParams={boardParams}
+								columnValue={column.value}
+								loadedCount={column.objects.length}
+								total={column.total}
+								pageSize={pageSize}
+								onLoaded={appendColumnObjects}
+							/>
+						}
 					/>
 				))}
 			</div>
 			<DragOverlay dropAnimation={null}>
 				{activeObject ? (
 					<div className="pointer-events-none cursor-grabbing rotate-2 scale-[1.02] shadow-lg">
-						<BoardCard object={activeObject} workspaceId={workspaceId} actors={actors} />
+						<BoardCard
+							object={activeObject}
+							workspaceId={workspaceId}
+							actors={actors}
+							columns={displayColumns}
+							columnVisibility={columnVisibility}
+						/>
 					</div>
 				) : null}
 			</DragOverlay>
@@ -423,7 +612,9 @@ export function BoardView({
 
 interface BoardColumnProps {
 	status: string
+	label: string
 	objects: ObjectResponse[]
+	total: number
 	workspaceId: string
 	actors?: ActorListItem[]
 	isLoading?: boolean
@@ -433,11 +624,18 @@ interface BoardColumnProps {
 	selectedIds: Set<string>
 	onObjectSelectionChange?: (status: string, id: string, selected: boolean) => void
 	onObjectRangeSelectionChange?: (status: string, orderedIds: string[], id: string) => void
+	sort?: string
+	order?: 'asc' | 'desc'
+	displayColumns?: DisplayPanelColumn[]
+	columnVisibility?: VisibilityState
+	loadMore?: ReactNode
 }
 
 function BoardColumn({
 	status,
+	label,
 	objects,
+	total,
 	workspaceId,
 	actors,
 	isLoading,
@@ -447,20 +645,31 @@ function BoardColumn({
 	selectedIds,
 	onObjectSelectionChange,
 	onObjectRangeSelectionChange,
+	sort,
+	order,
+	displayColumns,
+	columnVisibility,
+	loadMore,
 }: BoardColumnProps) {
 	const { setNodeRef, isOver, active } = useDroppable({
 		id: `col:${status}`,
-		data: { status },
+		data: { groupValue: status },
 	})
 
 	const activeObject = active?.data.current?.object as ObjectResponse | undefined
 	const isValidTarget = Boolean(
 		(isOverTarget ?? isOver) && activeObject && activeObject.status !== status,
 	)
-	const orderedObjects = getOrderedObjects(objects)
+	const orderedObjects = getOrderedObjects(objects, sort, order)
 	const orderedIds = useMemo(() => orderedObjects.map((object) => object.id), [orderedObjects])
 	const previewCard = previewObject ? (
-		<DropPreview object={previewObject} workspaceId={workspaceId} actors={actors} />
+		<DropPreview
+			object={previewObject}
+			workspaceId={workspaceId}
+			actors={actors}
+			displayColumns={displayColumns}
+			columnVisibility={columnVisibility}
+		/>
 	) : null
 
 	return (
@@ -474,13 +683,17 @@ function BoardColumn({
 			)}
 		>
 			<div className="flex items-center justify-between px-1">
-				<StatusBadge status={status} />
-				<span className="text-xs text-muted-foreground tabular-nums">{objects.length}</span>
+				<StatusBadge status={label} />
+				<span className="text-xs text-muted-foreground tabular-nums">
+					{objects.length}
+					{total > objects.length ? `/${total}` : ''}
+				</span>
 			</div>
 
 			<div
 				className={cn(
-					'relative flex min-h-24 flex-col gap-2 rounded-md transition-colors',
+					'relative flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto rounded-md pr-1 transition-colors',
+					'max-h-[calc(100dvh-15rem)]',
 					isValidTarget &&
 						'border border-dashed border-border/70 bg-accent/10 ring-1 ring-accent/15',
 				)}
@@ -522,10 +735,13 @@ function BoardColumn({
 										orderedIds={orderedIds}
 										onSelectionChange={onObjectSelectionChange}
 										onRangeSelectionChange={onObjectRangeSelectionChange}
+										displayColumns={displayColumns}
+										columnVisibility={columnVisibility}
 									/>
 								</div>
 							))}
 							{previewIndex === orderedObjects.length && previewCard}
+							{loadMore}
 						</div>
 					</SortableContext>
 				)}
@@ -539,14 +755,75 @@ function BoardColumn({
 	)
 }
 
+function ColumnLoadMore({
+	workspaceId,
+	boardParams,
+	columnValue,
+	loadedCount,
+	total,
+	pageSize,
+	onLoaded,
+}: {
+	workspaceId: string
+	boardParams: Record<string, string>
+	columnValue: string
+	loadedCount: number
+	total: number
+	pageSize: number
+	onLoaded: (columnValue: string, objects: ObjectResponse[]) => void
+}) {
+	const sentinelRef = useRef<HTMLDivElement>(null)
+	const [isFetching, setIsFetching] = useState(false)
+	const hasMore = loadedCount < total
+
+	useEffect(() => {
+		if (!hasMore || isFetching || !sentinelRef.current) return
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (!entries[0]?.isIntersecting) return
+				setIsFetching(true)
+				api.objects
+					.board(workspaceId, {
+						...boardParams,
+						column: columnValue,
+						limit: String(pageSize),
+						offset: String(loadedCount),
+					})
+					.then((response) => {
+						onLoaded(columnValue, response.columns[0]?.objects ?? [])
+					})
+					.catch((err) => {
+						toast.error(err instanceof Error ? err.message : 'Could not load more cards')
+					})
+					.finally(() => setIsFetching(false))
+			},
+			{ rootMargin: '120px' },
+		)
+		observer.observe(sentinelRef.current)
+		return () => observer.disconnect()
+	}, [boardParams, columnValue, hasMore, isFetching, loadedCount, onLoaded, pageSize, workspaceId])
+
+	if (!hasMore) return null
+
+	return (
+		<div ref={sentinelRef} className="py-2 text-center text-xs text-muted-foreground">
+			{isFetching ? 'Loading more...' : 'Scroll for more'}
+		</div>
+	)
+}
+
 function DropPreview({
 	object,
 	workspaceId,
 	actors,
+	displayColumns,
+	columnVisibility,
 }: {
 	object: ObjectResponse
 	workspaceId: string
 	actors?: ActorListItem[]
+	displayColumns?: DisplayPanelColumn[]
+	columnVisibility?: VisibilityState
 }) {
 	return (
 		<div
@@ -554,7 +831,13 @@ function DropPreview({
 			aria-hidden="true"
 			className="pointer-events-none opacity-40"
 		>
-			<BoardCard object={object} workspaceId={workspaceId} actors={actors} />
+			<BoardCard
+				object={object}
+				workspaceId={workspaceId}
+				actors={actors}
+				columns={displayColumns}
+				columnVisibility={columnVisibility}
+			/>
 		</div>
 	)
 }
@@ -568,6 +851,8 @@ interface DraggableBoardCardProps {
 	orderedIds: string[]
 	onSelectionChange?: (status: string, id: string, selected: boolean) => void
 	onRangeSelectionChange?: (status: string, orderedIds: string[], id: string) => void
+	displayColumns?: DisplayPanelColumn[]
+	columnVisibility?: VisibilityState
 }
 
 function DraggableBoardCard({
@@ -579,6 +864,8 @@ function DraggableBoardCard({
 	orderedIds,
 	onSelectionChange,
 	onRangeSelectionChange,
+	displayColumns,
+	columnVisibility,
 }: DraggableBoardCardProps) {
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: object.id,
@@ -676,6 +963,8 @@ function DraggableBoardCard({
 				workspaceId={workspaceId}
 				actors={actors}
 				isSelected={isSelected}
+				columns={displayColumns}
+				columnVisibility={columnVisibility}
 			/>
 		</div>
 	)

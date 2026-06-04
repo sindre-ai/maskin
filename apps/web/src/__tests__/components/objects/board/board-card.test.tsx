@@ -83,6 +83,37 @@ describe('BoardCard', () => {
 		expect(screen.getByTestId('agent-working-badge')).toBeInTheDocument()
 	})
 
+	it('respects display property visibility', () => {
+		const actors = [buildActorListItem({ id: 'actor-7', name: 'Magnus' })]
+		const obj = buildObjectResponse({
+			id: 'obj-1',
+			type: 'task',
+			status: 'todo',
+			title: 'Visible properties',
+			owner: 'actor-7',
+			metadata: { priority: 'High' },
+		})
+		render(
+			<BoardCard
+				object={obj}
+				workspaceId="ws-1"
+				actors={actors}
+				columns={[
+					{ id: 'title', label: 'Title', canHide: false },
+					{ id: 'status', label: 'Status', canHide: true },
+					{ id: 'owner', label: 'Owner', canHide: true },
+					{ id: 'metadata.priority', label: 'priority', canHide: true },
+				]}
+				columnVisibility={{ owner: false }}
+			/>,
+		)
+
+		expect(screen.getByText('todo')).toBeInTheDocument()
+		expect(screen.queryByText('Magnus')).not.toBeInTheDocument()
+		expect(screen.getByText(/priority:/)).toBeInTheDocument()
+		expect(screen.getByText(/High/)).toBeInTheDocument()
+	})
+
 	it('does not show the AgentWorkingBadge when activeSessionId is null', () => {
 		render(<BoardCard object={buildObjectResponse({ activeSessionId: null })} workspaceId="ws-1" />)
 		expect(screen.queryByTestId('agent-working-badge')).not.toBeInTheDocument()

@@ -30,6 +30,7 @@ import {
 	type InfiniteData,
 	keepPreviousData,
 	useInfiniteQuery,
+	useQuery,
 	useQueryClient,
 } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
@@ -57,6 +58,8 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 })
 
 const PAGE_SIZE = 50
+const BOARD_PAGE_SIZE = 20
+const BOARD_MANUAL_SORT = 'boardOrder'
 
 function ObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
@@ -162,8 +165,6 @@ function ObjectsPage() {
 	})
 
 	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
-	const boardScrollRef = useRef<HTMLDivElement>(null)
-	const boardSentinelRef = useRef<HTMLDivElement>(null)
 
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
@@ -184,26 +185,33 @@ function ObjectsPage() {
 	// preference is preserved for when the type becomes board-capable again.
 	const effectiveView: DisplayPanelView = boardSupported ? view : 'list'
 
-	useEffect(() => {
-		if (effectiveView !== 'board') return
-		if (!boardSentinelRef.current || !infiniteQuery.hasNextPage) return
-		if (infiniteQuery.isFetchingNextPage || infiniteQuery.isError) return
+	const boardParams = useMemo(() => {
+		if (!typeFilter) return null
+		const params: Record<string, string> = {
+			...filters,
+			type: typeFilter,
+			sort,
+			order,
+			limit: String(BOARD_PAGE_SIZE),
+			offset: '0',
+		}
+		if (q) params.q = q
+		if (groupBy) params.groupBy = groupBy
+		return params
+	}, [filters, groupBy, order, q, sort, typeFilter])
 
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0]?.isIntersecting) infiniteQuery.fetchNextPage()
-			},
-			{ root: boardScrollRef.current, rootMargin: '200px' },
-		)
-		observer.observe(boardSentinelRef.current)
-		return () => observer.disconnect()
-	}, [
-		effectiveView,
-		infiniteQuery.hasNextPage,
-		infiniteQuery.isFetchingNextPage,
-		infiniteQuery.isError,
-		infiniteQuery.fetchNextPage,
-	])
+	const boardQuery = useQuery({
+		queryKey: queryKeys.objects.board(workspaceId, boardParams ?? {}),
+		queryFn: () => api.objects.board(workspaceId, boardParams as Record<string, string>),
+		enabled: effectiveView === 'board' && !!boardParams,
+		placeholderData: keepPreviousData,
+	})
+
+	const boardInitialObjects = useMemo(
+		() => boardQuery.data?.columns.flatMap((column) => column.objects) ?? [],
+		[boardQuery.data],
+	)
+	const visibleObjects = effectiveView === 'board' ? boardInitialObjects : allObjects
 
 	// Field definitions for dynamic columns
 	const fieldDefinitions = settings?.field_definitions as
@@ -475,8 +483,8 @@ function ObjectsPage() {
 	const selectedObjectsLoaded = useMemo(() => {
 		if (selectedIds.length === 0) return []
 		const idSet = new Set(selectedIds)
-		return allObjects.filter((o) => idSet.has(o.id))
-	}, [selectedIds, allObjects])
+		return visibleObjects.filter((o) => idSet.has(o.id))
+	}, [selectedIds, visibleObjects])
 
 	// Status options for the bulk action bar — scoped to the selected objects' type.
 	// When the selection spans multiple types (or any selected row isn't loaded so we
@@ -665,7 +673,12 @@ function ObjectsPage() {
 				actors={actors}
 				onResetFilters={() => updateSearch({ status: undefined, owner: undefined })}
 				sort={sort}
-				onSortChange={(value) => updateSearch({ sort: value })}
+				onSortChange={(value) =>
+					updateSearch({
+						sort: value,
+						order: value === BOARD_MANUAL_SORT ? 'asc' : order,
+					})
+				}
 				order={order}
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
@@ -673,6 +686,9 @@ function ObjectsPage() {
 				view={effectiveView}
 				onViewChange={(next) => {
 					setView(next)
+					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
+						updateSearch({ sort: 'createdAt', order: 'desc' })
+					}
 					// One analytics line per user-initiated switch so we can count
 					// distinct operators reaching for Board (the bet's success
 					// criterion). Hydration also sets view but bypasses this path.
@@ -690,19 +706,26 @@ function ObjectsPage() {
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 
 			{effectiveView === 'board' && typeFilter ? (
-				<div ref={boardScrollRef} className="pb-4 flex-1 min-h-0 overflow-auto md:px-6">
+				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">
 					<BoardView
 						objectType={typeFilter}
-						objects={allObjects}
+						columns={boardQuery.data?.columns ?? []}
+						boardParams={boardParams ?? {}}
+						pageSize={BOARD_PAGE_SIZE}
 						statusesByType={statusesByType}
 						workspaceId={workspaceId}
-						isLoading={infiniteQuery.isLoading}
+						isLoading={boardQuery.isLoading}
 						actors={actors}
 						selectedIds={selectedIds}
 						onObjectSelectionChange={handleObjectSelectionChange}
 						onObjectRangeSelectionChange={handleObjectRangeSelectionChange}
+						sort={sort}
+						order={order}
+						groupBy={groupBy}
+						displayColumns={columnInfo}
+						columnVisibility={effectiveVisibility}
+						onManualOrderChange={() => updateSearch({ sort: BOARD_MANUAL_SORT, order: 'asc' })}
 					/>
-					<div ref={boardSentinelRef} data-testid="board-load-more-sentinel" className="h-px" />
 				</div>
 			) : (
 				<DataTable

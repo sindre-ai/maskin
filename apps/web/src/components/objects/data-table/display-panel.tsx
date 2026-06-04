@@ -123,6 +123,7 @@ function PickerRow({
 }
 
 const DROPDOWN_CLS = 'min-w-[10rem] max-h-64 overflow-y-auto'
+const BOARD_MANUAL_SORT = 'boardOrder'
 
 export function DisplayPanel({
 	view = 'list',
@@ -156,8 +157,12 @@ export function DisplayPanel({
 	const showFilters = !!onStatusFilterChange || !!onOwnerFilterChange
 	const hideableColumns = columns.filter((col) => col.canHide)
 	const showProperties = !!onColumnVisibilityChange && hideableColumns.length > 0
+	const orderingColumns =
+		view === 'board'
+			? [{ id: BOARD_MANUAL_SORT, label: 'Manual', canHide: false }, ...columns]
+			: columns
 
-	const sortLabel = columns.find((c) => c.id === sort)?.label
+	const sortLabel = orderingColumns.find((c) => c.id === sort)?.label
 	const groupLabel = columns.find((c) => c.id === groupBy)?.label
 
 	const typeEntries = Object.entries(statusesByType).filter(([, statuses]) => statuses.length > 0)
@@ -265,7 +270,7 @@ export function DisplayPanel({
 											</Button>
 										</DropdownMenuTrigger>
 										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-											{columns.map((col) => (
+											{orderingColumns.map((col) => (
 												<DropdownMenuItem
 													key={col.id}
 													onClick={() => onSortChange?.(col.id)}
@@ -277,15 +282,17 @@ export function DisplayPanel({
 											))}
 										</DropdownMenuContent>
 									</DropdownMenu>
-									<button
-										type="button"
-										aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
-										title={order === 'asc' ? 'Ascending' : 'Descending'}
-										onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
-										className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary hover:text-foreground hover:border-border-hover transition-colors"
-									>
-										{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-									</button>
+									{sort !== BOARD_MANUAL_SORT && (
+										<button
+											type="button"
+											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
+											title={order === 'asc' ? 'Ascending' : 'Descending'}
+											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
+											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary hover:text-foreground hover:border-border-hover transition-colors"
+										>
+											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+										</button>
+									)}
 								</PickerRow>
 							</div>
 							<Separator />

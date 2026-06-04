@@ -124,6 +124,25 @@ describe('DisplayPanel', () => {
 		expect(props.onOrderChange).toHaveBeenCalledWith('asc')
 	})
 
+	it('offers Manual ordering only in board view', async () => {
+		const user = userEvent.setup()
+		const { props } = renderPanel({ view: 'board' })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		const orderingSection = screen.getByText('Ordering').closest('div') as HTMLElement
+		await user.click(within(orderingSection).getByRole('button', { name: /created/i }))
+		await user.click(screen.getByRole('menuitem', { name: /manual/i }))
+		expect(props.onSortChange).toHaveBeenCalledWith('boardOrder')
+	})
+
+	it('hides the direction toggle for Manual board ordering', async () => {
+		const user = userEvent.setup()
+		renderPanel({ view: 'board', sort: 'boardOrder', order: 'asc' })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		expect(screen.getByRole('button', { name: /manual/i })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /ascending/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /descending/i })).not.toBeInTheDocument()
+	})
+
 	it('clears both filters when Reset is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderPanel({ statusFilter: 'active', ownerFilter: 'a1' })

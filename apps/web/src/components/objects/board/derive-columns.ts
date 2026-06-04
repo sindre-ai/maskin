@@ -1,7 +1,10 @@
-import type { ObjectResponse } from '@/lib/api'
+import type { ActorListItem, ObjectResponse } from '@/lib/api'
 
 export interface BoardColumn {
-	status: string
+	id: string
+	label: string
+	value: string
+	status?: string
 	objects: ObjectResponse[]
 }
 
@@ -43,9 +46,30 @@ export function deriveColumns(
 	objectType: string,
 	statusesByType: Record<string, string[] | undefined>,
 	objects: ObjectResponse[],
+	groupBy?: string,
+	actors?: ActorListItem[],
 ): BoardColumn[] {
 	const statuses = statusesByType[objectType] ?? []
 	if (statuses.length === 0) return []
+
+	if (groupBy && groupBy !== 'status') {
+		const groups = new Map<string, { label: string; objects: ObjectResponse[] }>()
+		for (const obj of objects) {
+			if (obj.type !== objectType) continue
+			const value = getGroupValue(obj, groupBy)
+			const key = value || 'No value'
+			const label = getGroupLabel(groupBy, key, actors)
+			const existing = groups.get(key)
+			groups.set(key, { label, objects: [...(existing?.objects ?? []), obj] })
+		}
+
+		return Array.from(groups.entries()).map(([value, group]) => ({
+			id: `${groupBy}:${value}`,
+			label: group.label,
+			value,
+			objects: getOrderedObjects(group.objects),
+		}))
+	}
 
 	const bucketByStatus = new Map<string, ObjectResponse[]>()
 	for (const status of statuses) {
@@ -58,7 +82,29 @@ export function deriveColumns(
 	}
 
 	return statuses.map((status) => ({
+		id: `status:${status}`,
+		label: status,
+		value: status,
 		status,
 		objects: getOrderedObjects(bucketByStatus.get(status) ?? []),
 	}))
+}
+
+function getGroupLabel(groupBy: string, value: string, actors?: ActorListItem[]) {
+	if ((groupBy === 'owner' || groupBy === 'createdBy') && value !== 'No value') {
+		return actors?.find((actor) => actor.id === value)?.name ?? value
+	}
+	return value
+}
+
+function getGroupValue(object: ObjectResponse, groupBy: string): string {
+	if (groupBy.startsWith('metadata.')) {
+		const key = groupBy.slice('metadata.'.length)
+		const metadata = object.metadata as Record<string, unknown> | null
+		const value = metadata?.[key]
+		return value == null || value === '' ? '' : String(value)
+	}
+
+	const value = object[groupBy as keyof ObjectResponse]
+	return value == null || value === '' ? '' : String(value)
 }
