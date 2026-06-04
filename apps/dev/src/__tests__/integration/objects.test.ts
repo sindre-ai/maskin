@@ -433,5 +433,48 @@ describe('Objects Integration', () => {
 			expect(nextBody.columns[0].total).toBe(3)
 			expect(nextBody.columns[0].objects).toHaveLength(1)
 		})
+
+		it('respects manual board order across pages', async () => {
+			const app = createApp()
+
+			const low = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'Low',
+				metadata: { board_order: 1 },
+			})
+			const mid = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'Mid',
+				metadata: { board_order: 2 },
+			})
+			const high = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				title: 'High',
+				metadata: { board_order: 3 },
+			})
+
+			const firstPage = await app.request(
+				jsonGet('/api/objects/board?type=task&sort=boardOrder&order=asc&limit=2', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(firstPage.status).toBe(200)
+			const body = await firstPage.json()
+			const todo = body.columns.find((column: { value: string }) => column.value === 'todo')
+			expect(todo.objects.map((obj: { id: string }) => obj.id)).toEqual([low.id, mid.id])
+
+			const secondPage = await app.request(
+				jsonGet('/api/objects/board?type=task&sort=boardOrder&order=asc&limit=2&offset=2', {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(secondPage.status).toBe(200)
+			const nextBody = await secondPage.json()
+			const nextTodo = nextBody.columns.find((column: { value: string }) => column.value === 'todo')
+			expect(nextTodo.objects.map((obj: { title: string }) => obj.title)).toEqual(['High'])
+		})
 	})
 })

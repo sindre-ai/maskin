@@ -79,6 +79,7 @@ const sortColumns: Record<string, Column | SQL> = {
 	type: objects.type,
 	owner: objects.owner,
 	createdBy: objects.createdBy,
+	boardOrder: sql`coalesce((${objects.metadata}->>'board_order')::numeric, 2147483647)`,
 }
 
 /** Resolve sort expression — built-in column or metadata->>'field_name'. Returns null for unknown/unsafe fields. */
