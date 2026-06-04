@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useEffect, useState } from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
 
@@ -15,7 +15,14 @@ const infiniteQueryState = vi.hoisted(() => ({
 	observerCallback: null as IntersectionObserverCallback | null,
 }))
 const boardQueryState = vi.hoisted(() => ({
-	columns: [{ value: 'todo', label: 'todo', objects: [], total: 0 }],
+	columns: [
+		{
+			value: 'todo',
+			label: 'todo',
+			objects: [] as Array<{ id: string }>,
+			total: 0,
+		},
+	],
 }))
 
 vi.mock('@tanstack/react-router', async () => {
