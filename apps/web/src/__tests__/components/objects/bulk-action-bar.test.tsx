@@ -69,6 +69,15 @@ describe('BulkActionBar', () => {
 		expect(within(bar).getByLabelText('1 selected')).toHaveTextContent('1')
 	})
 
+	it('uses a horizontally scrollable mobile layout and hides selected copy below sm', () => {
+		renderBar()
+		const bar = screen.getByRole('region', { name: 'Bulk actions' })
+		expect(bar.className).toMatch(/overflow-x-auto/)
+		expect(within(bar).getByText('selected').className).toMatch(/hidden/)
+		expect(within(bar).getByText('selected').className).toMatch(/sm:inline/)
+		expect(within(bar).getByLabelText('3 selected').className).toMatch(/shrink-0/)
+	})
+
 	it('renders status and owner selects with provided options', () => {
 		renderBar()
 		expect(screen.getByRole('combobox', { name: 'Set status' })).not.toBeDisabled()
