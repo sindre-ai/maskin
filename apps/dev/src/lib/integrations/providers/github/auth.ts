@@ -40,6 +40,13 @@ function parsePrivateKey(raw: string): string {
 	return Buffer.from(raw, 'base64').toString('utf8')
 }
 
+function mintAppJwt(): string {
+	const appId = getEnvOrThrow('GITHUB_APP_ID')
+	const privateKeyRaw = getEnvOrThrow('GITHUB_APP_PRIVATE_KEY')
+	const privateKey = parsePrivateKey(privateKeyRaw)
+	return createJwt(appId, privateKey)
+}
+
 export const githubAuth: CustomAuthHandler = {
 	getInstallUrl(state: string): string {
 		return `https://github.com/apps/${process.env.GITHUB_APP_SLUG || 'sindre-maskin'}/installations/new?state=${encodeURIComponent(state)}`
@@ -54,10 +61,7 @@ export const githubAuth: CustomAuthHandler = {
 	},
 
 	async getAccessToken(credentials: StoredCredentials): Promise<string> {
-		const appId = getEnvOrThrow('GITHUB_APP_ID')
-		const privateKeyRaw = getEnvOrThrow('GITHUB_APP_PRIVATE_KEY')
-		const privateKey = parsePrivateKey(privateKeyRaw)
-		const jwt = createJwt(appId, privateKey)
+		const jwt = mintAppJwt()
 
 		const response = await fetch(
 			`https://api.github.com/app/installations/${credentials.installation_id}/access_tokens`,
@@ -79,4 +83,32 @@ export const githubAuth: CustomAuthHandler = {
 		const data = (await response.json()) as { token: string }
 		return data.token
 	},
+}
+
+/**
+ * Fetch the `account.login` (org or user) for a GitHub App installation.
+ * Used to disambiguate multiple installations on the same workspace by owner.
+ */
+export async function fetchInstallationOwnerLogin(installationId: string): Promise<string> {
+	const jwt = mintAppJwt()
+
+	const response = await fetch(`https://api.github.com/app/installations/${installationId}`, {
+		headers: {
+			Authorization: `Bearer ${jwt}`,
+			Accept: 'application/vnd.github+json',
+			'X-GitHub-Api-Version': '2022-11-28',
+		},
+	})
+
+	if (!response.ok) {
+		const text = await response.text()
+		throw new Error(`Failed to fetch installation owner: ${response.status} ${text}`)
+	}
+
+	const data = (await response.json()) as { account?: { login?: string } }
+	const login = data.account?.login
+	if (!login || typeof login !== 'string') {
+		throw new Error('GitHub installation response missing account.login')
+	}
+	return login
 }

@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+﻿import { vi } from 'vitest'
 
 // Mock external dependencies
 vi.mock('node:fs/promises', () => ({
@@ -55,6 +55,21 @@ vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))
 
+const { mockGetValidToken, mockFetchInstallationOwnerLogin } = vi.hoisted(() => ({
+	mockGetValidToken: vi.fn(),
+	mockFetchInstallationOwnerLogin: vi.fn(),
+}))
+
+vi.mock('../../lib/integrations/oauth/token-manager', () => ({
+	TokenManager: vi.fn().mockImplementation(() => ({
+		getValidToken: mockGetValidToken,
+	})),
+}))
+
+vi.mock('../../lib/integrations/providers/github/auth', () => ({
+	fetchInstallationOwnerLogin: mockFetchInstallationOwnerLogin,
+}))
+
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
 	renderWorkspaceBriefing: vi.fn().mockResolvedValue('briefing'),
@@ -64,13 +79,12 @@ vi.mock('../../services/workspace-briefing', () => ({
 }))
 
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
-import { TokenManager } from '../../lib/integrations/oauth/token-manager'
 import { getProvider } from '../../lib/integrations/registry'
-import type { ResolvedProvider } from '../../lib/integrations/types'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager } from '../../services/session-manager'
-import { buildSession } from '../factories'
+import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
 
 function createMockStorageProvider() {
@@ -325,185 +339,170 @@ describe('SessionManager', () => {
 		})
 	})
 
-	describe('startSession() — workspace integration MCP auto-inject', () => {
-		const agentFor = (session: ReturnType<typeof buildSession>) => ({
-			id: session.actorId,
-			type: 'agent',
-			systemPrompt: 'You are a helpful AI agent.',
-			llmProvider: null,
-			llmConfig: null,
-			apiKey: 'ank_test_agent_key',
-			tools: null,
-		})
+	describe('startSession() — GitHub installations', () => {
+		const githubProviderConfig = {
+			config: {
+				name: 'github',
+				mcp: {
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-github'],
+					envKey: 'GITHUB_TOKEN',
+				},
+			},
+		}
 
-		beforeEach(() => {
+		function setupLaunchMocks(opts: {
+			session: ReturnType<typeof buildSession>
+			workspace: { id: string; settings: Record<string, unknown> }
+			agent: Record<string, unknown>
+			integrationRows: ReturnType<typeof buildIntegration>[]
+		}) {
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
 				skipped: 0,
 				failures: [],
 			})
-			vi.spyOn(TokenManager.prototype, 'getValidToken').mockResolvedValue('phx_test_token')
-		})
+			mockResults.selectQueue = [
+				[opts.session], // startSession: load session
+				[opts.workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[opts.agent], // launchContainer: agent lookup
+				[opts.workspace], // launchContainer: workspace lookup (llm keys)
+				opts.integrationRows, // launchContainer: integrations lookup
+			]
+		}
 
-		it('injects an autoInject-flagged provider into MCP_SERVERS_JSON and sets the envKey token', async () => {
+		function buildLaunchFixtures(integrationRows: ReturnType<typeof buildIntegration>[]) {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
 				actionPrompt: 'Do the thing',
 				containerId: null,
 			})
-			const agent = agentFor(session)
-			const workspace = { id: session.workspaceId, settings: {} }
-
-			vi.mocked(getProvider).mockReturnValue({
-				config: {
-					name: 'posthog',
-					displayName: 'PostHog',
-					auth: {
-						type: 'api_key',
-						config: {
-							headerName: 'Authorization',
-							headerPrefix: 'Bearer ',
-							envKeyName: 'POSTHOG_PERSONAL_API_KEY',
-						},
-					},
-					mcp: {
-						envKey: 'POSTHOG_TOKEN',
-						autoInject: true,
-						server: {
-							type: 'http',
-							url: 'https://mcp.posthog.com/mcp',
-							headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
-						},
-					},
+			return {
+				session,
+				workspace: { id: session.workspaceId, settings: {} },
+				agent: {
+					id: session.actorId,
+					type: 'agent',
+					systemPrompt: 'You are a helpful AI agent.',
+					llmProvider: null,
+					llmConfig: null,
+					apiKey: 'ank_test_agent_key',
+					tools: null,
 				},
-			} as ResolvedProvider)
+				integrationRows,
+			}
+		}
 
-			mockResults.selectQueue = [
-				[session],
-				[workspace],
-				[{ count: 0 }],
-				[agent],
-				[workspace],
-				[{ id: 'int-1', provider: 'posthog', workspaceId: session.workspaceId, status: 'active' }],
-			]
+		it('produces per-owner env vars and MCP entries for two GitHub installations', async () => {
+			const wsId = randomUUID()
+			const integrationA = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const integrationB = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				externalId: 'install-bbb',
+				config: { owner_login: 'vaerksted-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integrationA, integrationB])
+			fixtures.session.workspaceId = wsId
+			fixtures.workspace.id = wsId
 
-			await manager.startSession(session.id)
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken
+				.mockResolvedValueOnce('ghs_token_sindre_ai')
+				.mockResolvedValueOnce('ghs_token_vaerksted_ai')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
 
 			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
 				env: Record<string, string>
 			}
-			expect(createArgs.env.POSTHOG_TOKEN).toBe('phx_test_token')
-			expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
-			const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, unknown>
+
+			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_token_sindre_ai')
+			expect(createArgs.env.GITHUB_TOKEN_VAERKSTED_AI).toBe('ghs_token_vaerksted_ai')
+			expect(createArgs.env.GITHUB_TOKEN).toBeUndefined()
+
+			const mcpConfig = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+				mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
 			}
-			expect(parsed.mcpServers['integration-posthog']).toEqual({
-				type: 'http',
-				url: 'https://mcp.posthog.com/mcp',
-				headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
-			})
-		})
-
-		it('does not write MCP_SERVERS_JSON when an active integration has no autoInject', async () => {
-			const session = buildSession({
-				status: 'pending',
-				interactive: false,
-				actionPrompt: 'Do the thing',
-				containerId: null,
-			})
-			const agent = agentFor(session)
-			const workspace = { id: session.workspaceId, settings: {} }
-
-			vi.mocked(getProvider).mockReturnValue({
-				config: {
-					name: 'github',
-					displayName: 'GitHub',
-					auth: { type: 'oauth2_custom' },
-					mcp: {
-						command: 'npx',
-						args: ['-y', '@modelcontextprotocol/server-github'],
-						envKey: 'GITHUB_TOKEN',
-					},
-				},
-			} as ResolvedProvider)
-
-			mockResults.selectQueue = [
-				[session],
-				[workspace],
-				[{ count: 0 }],
-				[agent],
-				[workspace],
-				[{ id: 'int-2', provider: 'github', workspaceId: session.workspaceId, status: 'active' }],
-			]
-
-			await manager.startSession(session.id)
-
-			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
-				env: Record<string, string>
-			}
-			expect(createArgs.env.GITHUB_TOKEN).toBe('phx_test_token')
-			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
-		})
-
-		it('merges auto-inject servers with session-level MCPs under namespaced keys', async () => {
-			const session = buildSession({
-				status: 'pending',
-				interactive: false,
-				actionPrompt: 'Do the thing',
-				containerId: null,
-				config: {
-					mcps: [{ type: 'stdio', command: 'foo', args: [] }],
-				},
-			})
-			const agent = agentFor(session)
-			const workspace = { id: session.workspaceId, settings: {} }
-
-			vi.mocked(getProvider).mockReturnValue({
-				config: {
-					name: 'posthog',
-					displayName: 'PostHog',
-					auth: {
-						type: 'api_key',
-						config: {
-							headerName: 'Authorization',
-							headerPrefix: 'Bearer ',
-							envKeyName: 'POSTHOG_PERSONAL_API_KEY',
-						},
-					},
-					mcp: {
-						envKey: 'POSTHOG_TOKEN',
-						autoInject: true,
-						server: {
-							type: 'http',
-							url: 'https://mcp.posthog.com/mcp',
-							headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
-						},
-					},
-				},
-			} as ResolvedProvider)
-
-			mockResults.selectQueue = [
-				[session],
-				[workspace],
-				[{ count: 0 }],
-				[agent],
-				[workspace],
-				[{ id: 'int-3', provider: 'posthog', workspaceId: session.workspaceId, status: 'active' }],
-			]
-
-			await manager.startSession(session.id)
-
-			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
-				env: Record<string, string>
-			}
-			const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, unknown>
-			}
-			expect(Object.keys(parsed.mcpServers).sort()).toEqual([
-				'integration-posthog',
-				'session-mcp-0',
+			expect(Object.keys(mcpConfig.mcpServers).sort()).toEqual([
+				'github-sindre-ai',
+				'github-vaerksted-ai',
 			])
+			expect(mcpConfig.mcpServers['github-sindre-ai'].command).toBe('npx')
+			expect(mcpConfig.mcpServers['github-sindre-ai'].args).toEqual([
+				'-y',
+				'@modelcontextprotocol/server-github',
+			])
+			expect(mcpConfig.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
+				'${GITHUB_TOKEN_SINDRE_AI}',
+			)
+			expect(mcpConfig.mcpServers['github-vaerksted-ai'].env.GITHUB_TOKEN).toBe(
+				'${GITHUB_TOKEN_VAERKSTED_AI}',
+			)
+		})
+
+		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-needs-backfill',
+				config: {},
+			})
+			const fixtures = buildLaunchFixtures([integration])
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_token_acme')
+			mockFetchInstallationOwnerLogin.mockResolvedValueOnce('acme-org')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			expect(mockFetchInstallationOwnerLogin).toHaveBeenCalledWith('install-needs-backfill')
+
+			const updateCall = calls.updates.find(
+				(u): u is { config: { owner_login?: string } } =>
+					typeof u === 'object' && u !== null && 'config' in u,
+			) as { config: { owner_login?: string } } | undefined
+			expect(updateCall?.config.owner_login).toBe('acme-org')
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.GITHUB_TOKEN_ACME_ORG).toBe('ghs_token_acme')
+			const mcpConfig = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+				mcpServers: Record<string, unknown>
+			}
+			expect(Object.keys(mcpConfig.mcpServers)).toEqual(['github-acme-org'])
+		})
+
+		it('skips the integration when owner_login backfill fails (does not kill the session)', async () => {
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-broken',
+				config: {},
+			})
+			const fixtures = buildLaunchFixtures([integration])
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_token_unused')
+			mockFetchInstallationOwnerLogin.mockRejectedValueOnce(new Error('GitHub 404'))
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
+			expect(githubKeys).toEqual([])
+			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
 		})
 	})
 

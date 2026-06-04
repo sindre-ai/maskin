@@ -41,12 +41,6 @@ interface McpServersProps {
 }
 
 const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
-	github: {
-		type: 'stdio',
-		command: 'npx',
-		args: ['-y', '@modelcontextprotocol/server-github'],
-		env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
-	},
 	linear: {
 		type: 'http',
 		url: 'https://mcp.linear.app/mcp',

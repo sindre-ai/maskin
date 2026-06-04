@@ -19,8 +19,22 @@ vi.mock('../../lib/integrations/registry', async () => {
 	}
 })
 
+// Stub fetchInstallationOwnerLogin so the github callback path doesn't make a
+// live api.github.com call during unit tests. Keep `githubAuth` as-is so the
+// registry's customAuth handler still works.
+vi.mock('../../lib/integrations/providers/github/auth', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../lib/integrations/providers/github/auth')
+	>('../../lib/integrations/providers/github/auth')
+	return {
+		...actual,
+		fetchInstallationOwnerLogin: vi.fn(async (installationId: string) => `owner-${installationId}`),
+	}
+})
+
 const { getProvider } = await import('../../lib/integrations/registry')
 const { default: integrationsRoutes, webhookApp } = await import('../../routes/integrations')
+const { fetchInstallationOwnerLogin } = await import('../../lib/integrations/providers/github/auth')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 
@@ -477,7 +491,7 @@ describe('Integrations Routes', () => {
 			}
 		})
 
-		it('uses installation_id as external ID when provided in github callback', async () => {
+		it('uses installation_id as external ID and persists config.owner_login in github callback', async () => {
 			const { encrypt } = await import('../../lib/crypto')
 			const nonce = 'fallback-nonce-1234567890'
 			const state = encrypt(
@@ -495,12 +509,13 @@ describe('Integrations Routes', () => {
 			})
 			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
 			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
-			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 			mockResults.selectQueue = [
 				[pendingIntegration], // pending integration lookup
 				[member], // membership check
 				[systemActor], // system actor lookup
 				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				[], // existing-active-row lookup — first time seeing this installation
 			]
 
 			// GitHub callback with installation_id — uses installation_id as externalId
@@ -511,6 +526,144 @@ describe('Integrations Routes', () => {
 			)
 
 			expect(res.status).toBe(302)
+			expect(fetchInstallationOwnerLogin).toHaveBeenCalledWith('42')
+
+			const activateCall = calls.updates.find(
+				(u): u is { status?: string; externalId?: string; config?: { owner_login?: string } } =>
+					!!u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCall).toBeDefined()
+			expect(activateCall?.externalId).toBe('42')
+			expect(activateCall?.config).toEqual({
+				system_actor_id: 'system-actor-id',
+				owner_login: 'owner-42',
+			})
+		})
+
+		it('connecting a second github installation creates a new row and leaves the first untouched', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'second-install-nonce'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup (the row for THIS connect)
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				// existing-active-row lookup for installation_id=200 — empty because the
+				// already-connected installation_id=100 doesn't match this externalId
+				[],
+			]
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=200`,
+				),
+			)
+
+			expect(res.status).toBe(302)
+
+			// Exactly one update — the pending row activates as a NEW active row.
+			// Crucially: nothing else got UPDATE'd (the first installation row, if it
+			// existed, would have its own externalId=100 and the WHERE clause never
+			// matches it).
+			const activateCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCalls).toHaveLength(1)
+			expect(activateCalls[0]).toMatchObject({
+				status: 'active',
+				externalId: '200',
+				config: { system_actor_id: 'system-actor-id', owner_login: 'owner-200' },
+			})
+
+			// No refresh-shaped update (no status field set) — the existing row was untouched.
+			const refreshCalls = calls.updates.filter(
+				(u) =>
+					u &&
+					typeof u === 'object' &&
+					!('status' in (u as Record<string, unknown>)) &&
+					'credentials' in (u as Record<string, unknown>),
+			)
+			expect(refreshCalls).toHaveLength(0)
+		})
+
+		it('re-connecting the same github installation refreshes the existing row in place (no duplicate)', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'reconnect-nonce'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const existingActive = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				externalId: '300',
+				config: { system_actor_id: 'system-actor-id', owner_login: 'owner-300' },
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				[existingActive], // existing-active-row lookup — finds the already-active installation
+			]
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=300`,
+				),
+			)
+
+			expect(res.status).toBe(302)
+
+			// Refresh-shaped update: sets credentials + config but does NOT touch status
+			// (that's how we distinguish "in-place refresh" from "activate pending").
+			const refreshCall = calls.updates.find(
+				(u) =>
+					u &&
+					typeof u === 'object' &&
+					!('status' in (u as Record<string, unknown>)) &&
+					'credentials' in (u as Record<string, unknown>),
+			) as { credentials?: string; config?: { owner_login?: string } } | undefined
+			expect(refreshCall).toBeDefined()
+			expect(refreshCall?.config).toEqual({
+				system_actor_id: 'system-actor-id',
+				owner_login: 'owner-300',
+			})
+
+			// No activate-shaped update — the pending row was NOT promoted to active.
+			const activateCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCalls).toHaveLength(0)
 		})
 	})
 
