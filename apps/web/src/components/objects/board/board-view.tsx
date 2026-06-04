@@ -262,17 +262,28 @@ export function BoardView({
 			[dragged.id]: pendingPatch,
 		}))
 
+		const removePendingPatch = () => {
+			setPendingPatches((current) => {
+				const { [dragged.id]: _removed, ...rest } = current
+				return rest
+			})
+		}
+
 		bulkUpdate.mutate(
 			{
 				ids: [dragged.id],
 				patch: pendingPatch,
 			},
 			{
+				onSuccess: (data) => {
+					const result = data.results.find((item) => item.id === dragged.id)
+					if (result?.ok === false) {
+						removePendingPatch()
+						toast.error(result.error ?? 'Could not move card')
+					}
+				},
 				onError: (err) => {
-					setPendingPatches((current) => {
-						const { [dragged.id]: _removed, ...rest } = current
-						return rest
-					})
+					removePendingPatch()
 					toast.error(err instanceof Error ? err.message : 'Could not move card')
 				},
 			},

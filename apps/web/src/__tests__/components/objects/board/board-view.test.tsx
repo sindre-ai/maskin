@@ -495,6 +495,40 @@ describe('BoardView', () => {
 			})
 		})
 
+		it('rolls back the board overlay when the bulk-update response reports a per-id failure', async () => {
+			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo', title: 'Task 1' })
+			bulkUpdateMutate.mockImplementation(
+				(
+					_input: unknown,
+					opts: {
+						onSuccess?: (data: {
+							results: Array<{ id: string; ok: boolean; error?: string }>
+						}) => void
+					},
+				) => {
+					opts.onSuccess?.({
+						results: [{ id: 't1', ok: false, error: "Invalid status 'done'" }],
+					})
+				},
+			)
+
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo', 'done'] }}
+					objects={[obj]}
+				/>,
+			)
+			fireDragEnd(makeDragEvent(obj, 'done'))
+
+			await waitFor(() => {
+				expect(toastError).toHaveBeenCalledWith("Invalid status 'done'")
+			})
+			expect(within(screen.getByTestId('board-column-todo')).getByText('Task 1')).toBeInTheDocument()
+			expect(within(screen.getByTestId('board-column-done')).queryByText('Task 1')).toBeNull()
+		})
+
 		it('does not mutate when dropping on the same column the card already lives in', () => {
 			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo' })
 			render(
