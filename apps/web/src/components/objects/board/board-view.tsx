@@ -4,8 +4,8 @@ import { useBulkUpdateObjects } from '@/hooks/use-objects'
 import type { ActorListItem, BulkUpdateObjectsInput, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
-	DndContext,
 	type CollisionDetection,
+	DndContext,
 	type DragEndEvent,
 	type DragOverEvent,
 	DragOverlay,
@@ -225,20 +225,20 @@ export function BoardView({
 			targetColumn.objects.filter((obj) => obj.id !== dragged.id),
 		)
 		const pointerY = getPointerY(event)
-		const insertIndex =
-			overObject
-				? getDropIndex({
+		const insertIndex = overObject
+			? getDropIndex({
 					active,
 					over,
 					targetObjects,
 					draggedId: dragged.id,
 					pointerY,
 				})
-				: dragPreview?.status === toStatus
-					? dragPreview.insertIndex
-					: targetObjects.length
+			: dragPreview?.status === toStatus
+				? dragPreview.insertIndex
+				: targetObjects.length
 
-		const prevOrder = insertIndex > 0 ? getEffectiveBoardOrder(targetObjects, insertIndex - 1) : null
+		const prevOrder =
+			insertIndex > 0 ? getEffectiveBoardOrder(targetObjects, insertIndex - 1) : null
 		const nextOrder =
 			insertIndex < targetObjects.length ? getEffectiveBoardOrder(targetObjects, insertIndex) : null
 
@@ -354,9 +354,7 @@ export function BoardView({
 								? { ...activeObject, status: column.status }
 								: null
 						}
-						previewIndex={
-							dragPreview?.status === column.status ? dragPreview.insertIndex : null
-						}
+						previewIndex={dragPreview?.status === column.status ? dragPreview.insertIndex : null}
 					/>
 				))}
 			</div>
@@ -412,7 +410,7 @@ function BoardColumn({
 			data-testid={`board-column-${status}`}
 			className={cn(
 				'relative flex min-h-[28rem] shrink-0 snap-center flex-col gap-2 rounded-md transition-colors',
-				'w-[85vw] sm:w-72 md:w-72 lg:w-80',
+				'w-full sm:w-72 md:w-72 lg:w-80',
 				isValidTarget && 'bg-accent/5',
 			)}
 		>

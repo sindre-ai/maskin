@@ -652,7 +652,7 @@ function ObjectsPage() {
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 
 			{effectiveView === 'board' && typeFilter ? (
-				<div className="px-6 pb-4 flex-1 min-h-0 overflow-auto">
+				<div className="pb-4 flex-1 min-h-0 overflow-auto md:px-6">
 					<BoardView
 						objectType={typeFilter}
 						objects={allObjects}
