@@ -192,7 +192,7 @@ app.openapi(connectRoute, (async (c) => {
 				createdBy: actorId,
 			})
 			.onConflictDoUpdate({
-				target: [integrations.workspaceId, integrations.provider],
+				target: [integrations.workspaceId, integrations.provider, integrations.externalId],
 				set: {
 					status: 'active',
 					externalId,
