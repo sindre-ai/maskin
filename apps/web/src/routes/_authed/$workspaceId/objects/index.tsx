@@ -87,6 +87,21 @@ function ObjectsPage() {
 	// so we can lift them directly as the selection surface for sibling bulk-action UI.
 	const selectedIds = useMemo(() => Object.keys(rowSelection), [rowSelection])
 	const clearSelection = useCallback(() => setRowSelection({}), [])
+	const handleObjectSelectionChange = useCallback((id: string, selected: boolean) => {
+		setRowSelection((current) => {
+			const next = { ...current }
+			if (selected) next[id] = true
+			else delete next[id]
+			return next
+		})
+	}, [])
+	const handleObjectRangeSelectionChange = useCallback((ids: string[]) => {
+		setRowSelection((current) => {
+			const next = { ...current }
+			for (const id of ids) next[id] = true
+			return next
+		})
+	}, [])
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection whenever the active workspace changes
 	useEffect(() => {
 		setRowSelection({})
@@ -682,6 +697,10 @@ function ObjectsPage() {
 						statusesByType={statusesByType}
 						workspaceId={workspaceId}
 						isLoading={infiniteQuery.isLoading}
+						actors={actors}
+						selectedIds={selectedIds}
+						onObjectSelectionChange={handleObjectSelectionChange}
+						onObjectRangeSelectionChange={handleObjectRangeSelectionChange}
 					/>
 					<div ref={boardSentinelRef} data-testid="board-load-more-sentinel" className="h-px" />
 				</div>

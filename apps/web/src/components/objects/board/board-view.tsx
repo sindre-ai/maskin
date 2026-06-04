@@ -17,7 +17,14 @@ import {
 	useSensors,
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { useEffect, useMemo, useState } from 'react'
+import {
+	type PointerEvent,
+	type MouseEvent as ReactMouseEvent,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import { toast } from 'sonner'
 import { BoardCard } from './board-card'
 import { deriveColumns } from './derive-columns'
@@ -29,9 +36,14 @@ interface BoardViewProps {
 	workspaceId: string
 	actors?: ActorListItem[]
 	isLoading?: boolean
+	selectedIds?: string[]
+	onObjectSelectionChange?: (id: string, selected: boolean) => void
+	onObjectRangeSelectionChange?: (ids: string[]) => void
 }
 
 const SKELETON_CARDS_PER_COLUMN = 2
+const LONG_PRESS_MS = 500
+const LONG_PRESS_MOVE_TOLERANCE = 8
 type PendingBoardPatch = Pick<BulkUpdateObjectsInput['patch'], 'status' | 'metadata'>
 interface DragPreview {
 	status: string
@@ -141,12 +153,16 @@ export function BoardView({
 	workspaceId,
 	actors,
 	isLoading,
+	selectedIds = [],
+	onObjectSelectionChange,
+	onObjectRangeSelectionChange,
 }: BoardViewProps) {
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
 	const [activeObject, setActiveObject] = useState<ObjectResponse | null>(null)
 	const [overStatus, setOverStatus] = useState<string | null>(null)
 	const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
 	const [pendingPatches, setPendingPatches] = useState<Record<string, PendingBoardPatch>>({})
+	const [selectionAnchorByStatus, setSelectionAnchorByStatus] = useState<Record<string, string>>({})
 
 	const displayObjects = useMemo(
 		() =>
@@ -164,6 +180,31 @@ export function BoardView({
 		[objects, pendingPatches],
 	)
 	const columns = deriveColumns(objectType, statusesByType, displayObjects)
+	const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
+
+	const selectSingleCard = (status: string, id: string, selected: boolean) => {
+		onObjectSelectionChange?.(id, selected)
+		setSelectionAnchorByStatus((current) => ({ ...current, [status]: id }))
+	}
+
+	const selectCardRange = (status: string, orderedIds: string[], id: string) => {
+		const anchorId = selectionAnchorByStatus[status]
+		if (selectedIds.length === 0 || !anchorId || !selectedIdSet.has(anchorId)) {
+			selectSingleCard(status, id, true)
+			return
+		}
+
+		const anchorIndex = orderedIds.indexOf(anchorId)
+		const targetIndex = orderedIds.indexOf(id)
+		if (anchorIndex < 0 || targetIndex < 0) {
+			selectSingleCard(status, id, true)
+			return
+		}
+
+		const start = Math.min(anchorIndex, targetIndex)
+		const end = Math.max(anchorIndex, targetIndex)
+		onObjectRangeSelectionChange?.(orderedIds.slice(start, end + 1))
+	}
 
 	const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -346,10 +387,7 @@ export function BoardView({
 		>
 			<div
 				data-testid="board-view"
-				className={cn(
-					'flex gap-3 overflow-x-auto pb-2',
-					activeObject && 'cursor-grabbing',
-				)}
+				className={cn('flex gap-3 overflow-x-auto pb-2', activeObject && 'cursor-grabbing')}
 			>
 				{columns.map((column) => (
 					<BoardColumn
@@ -366,6 +404,9 @@ export function BoardView({
 								: null
 						}
 						previewIndex={dragPreview?.status === column.status ? dragPreview.insertIndex : null}
+						selectedIds={selectedIdSet}
+						onObjectSelectionChange={selectSingleCard}
+						onObjectRangeSelectionChange={selectCardRange}
 					/>
 				))}
 			</div>
@@ -389,6 +430,9 @@ interface BoardColumnProps {
 	isOverTarget?: boolean
 	previewObject?: ObjectResponse | null
 	previewIndex?: number | null
+	selectedIds: Set<string>
+	onObjectSelectionChange?: (status: string, id: string, selected: boolean) => void
+	onObjectRangeSelectionChange?: (status: string, orderedIds: string[], id: string) => void
 }
 
 function BoardColumn({
@@ -400,6 +444,9 @@ function BoardColumn({
 	isOverTarget,
 	previewObject,
 	previewIndex,
+	selectedIds,
+	onObjectSelectionChange,
+	onObjectRangeSelectionChange,
 }: BoardColumnProps) {
 	const { setNodeRef, isOver, active } = useDroppable({
 		id: `col:${status}`,
@@ -411,6 +458,7 @@ function BoardColumn({
 		(isOverTarget ?? isOver) && activeObject && activeObject.status !== status,
 	)
 	const orderedObjects = getOrderedObjects(objects)
+	const orderedIds = useMemo(() => orderedObjects.map((object) => object.id), [orderedObjects])
 	const previewCard = previewObject ? (
 		<DropPreview object={previewObject} workspaceId={workspaceId} actors={actors} />
 	) : null
@@ -465,7 +513,16 @@ function BoardColumn({
 							{orderedObjects.map((obj, index) => (
 								<div key={obj.id} className="contents">
 									{previewIndex === index && previewCard}
-									<DraggableBoardCard object={obj} workspaceId={workspaceId} actors={actors} />
+									<DraggableBoardCard
+										object={obj}
+										workspaceId={workspaceId}
+										actors={actors}
+										isSelected={selectedIds.has(obj.id)}
+										status={status}
+										orderedIds={orderedIds}
+										onSelectionChange={onObjectSelectionChange}
+										onRangeSelectionChange={onObjectRangeSelectionChange}
+									/>
 								</div>
 							))}
 							{previewIndex === orderedObjects.length && previewCard}
@@ -506,13 +563,79 @@ interface DraggableBoardCardProps {
 	object: ObjectResponse
 	workspaceId: string
 	actors?: ActorListItem[]
+	isSelected?: boolean
+	status: string
+	orderedIds: string[]
+	onSelectionChange?: (status: string, id: string, selected: boolean) => void
+	onRangeSelectionChange?: (status: string, orderedIds: string[], id: string) => void
 }
 
-function DraggableBoardCard({ object, workspaceId, actors }: DraggableBoardCardProps) {
+function DraggableBoardCard({
+	object,
+	workspaceId,
+	actors,
+	isSelected,
+	status,
+	orderedIds,
+	onSelectionChange,
+	onRangeSelectionChange,
+}: DraggableBoardCardProps) {
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: object.id,
 		data: { object, status: object.status },
 	})
+	const longPressTimerRef = useRef<number | null>(null)
+	const longPressStartRef = useRef<{ x: number; y: number } | null>(null)
+	const suppressNextClickRef = useRef(false)
+	const suppressNextContextMenuRef = useRef(false)
+
+	const clearLongPress = () => {
+		if (longPressTimerRef.current) {
+			window.clearTimeout(longPressTimerRef.current)
+			longPressTimerRef.current = null
+		}
+		longPressStartRef.current = null
+	}
+
+	const toggleSelection = () => {
+		onSelectionChange?.(status, object.id, !isSelected)
+	}
+
+	const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+		const sortablePointerDown = listeners?.onPointerDown as
+			| ((event: PointerEvent<HTMLDivElement>) => void)
+			| undefined
+		sortablePointerDown?.(event)
+		if (!onSelectionChange || (event.pointerType !== 'touch' && event.pointerType !== 'pen')) return
+		longPressStartRef.current = { x: event.clientX, y: event.clientY }
+		longPressTimerRef.current = window.setTimeout(() => {
+			suppressNextClickRef.current = true
+			suppressNextContextMenuRef.current = true
+			toggleSelection()
+			clearLongPress()
+		}, LONG_PRESS_MS)
+	}
+
+	const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+		const start = longPressStartRef.current
+		if (!start) return
+		const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y)
+		if (moved > LONG_PRESS_MOVE_TOLERANCE) clearLongPress()
+	}
+
+	const handleClickCapture = (event: ReactMouseEvent<HTMLDivElement>) => {
+		if (suppressNextClickRef.current) {
+			suppressNextClickRef.current = false
+			event.preventDefault()
+			event.stopPropagation()
+			return
+		}
+		if (event.shiftKey && onRangeSelectionChange) {
+			event.preventDefault()
+			event.stopPropagation()
+			onRangeSelectionChange(status, orderedIds, object.id)
+		}
+	}
 
 	return (
 		<div
@@ -520,6 +643,23 @@ function DraggableBoardCard({ object, workspaceId, actors }: DraggableBoardCardP
 			{...attributes}
 			{...listeners}
 			data-testid="board-card-draggable"
+			data-state={isSelected ? 'selected' : undefined}
+			onContextMenu={(event) => {
+				event.preventDefault()
+				if (suppressNextContextMenuRef.current) {
+					suppressNextContextMenuRef.current = false
+					event.stopPropagation()
+					return
+				}
+				if (!onSelectionChange) return
+				toggleSelection()
+			}}
+			onPointerDown={handlePointerDown}
+			onPointerMove={handlePointerMove}
+			onPointerUp={clearLongPress}
+			onPointerCancel={clearLongPress}
+			onPointerLeave={clearLongPress}
+			onClickCapture={handleClickCapture}
 			className={cn(
 				'touch-none select-none cursor-grab active:cursor-grabbing',
 				isDragging && 'cursor-grabbing opacity-40',
@@ -531,7 +671,12 @@ function DraggableBoardCard({ object, workspaceId, actors }: DraggableBoardCardP
 				transition,
 			}}
 		>
-			<BoardCard object={object} workspaceId={workspaceId} actors={actors} />
+			<BoardCard
+				object={object}
+				workspaceId={workspaceId}
+				actors={actors}
+				isSelected={isSelected}
+			/>
 		</div>
 	)
 }

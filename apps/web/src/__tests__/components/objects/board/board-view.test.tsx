@@ -1,6 +1,7 @@
 import { BoardView } from '@/components/objects/board/board-view'
 import { deriveColumns } from '@/components/objects/board/derive-columns'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
 import { buildObjectResponse } from '../../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -157,6 +158,43 @@ function fireDragOver(event: unknown) {
 	})
 }
 
+function fireTouchPointerDown(element: Element, options: { clientX: number; clientY: number }) {
+	const event = new Event('pointerdown', { bubbles: true, cancelable: true })
+	Object.defineProperties(event, {
+		clientX: { value: options.clientX },
+		clientY: { value: options.clientY },
+		pointerType: { value: 'touch' },
+	})
+	fireEvent(element, event)
+}
+
+function BoardSelectionHarness({ objects }: { objects: ReturnType<typeof buildObjectResponse>[] }) {
+	const [selectedIds, setSelectedIds] = useState<string[]>([])
+
+	return (
+		<div>
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo', 'in_progress'] }}
+				objects={objects}
+				selectedIds={selectedIds}
+				onObjectSelectionChange={(id, selected) => {
+					setSelectedIds((current) =>
+						selected
+							? Array.from(new Set([...current, id]))
+							: current.filter((item) => item !== id),
+					)
+				}}
+				onObjectRangeSelectionChange={(ids) => {
+					setSelectedIds((current) => Array.from(new Set([...current, ...ids])))
+				}}
+			/>
+			<output data-testid="selected-ids">{selectedIds.join(',')}</output>
+		</div>
+	)
+}
+
 describe('deriveColumns', () => {
 	it('returns one column per configured status, in order', () => {
 		const objects = [
@@ -311,7 +349,9 @@ describe('BoardView', () => {
 		fireDragOver(makeCardDragEvent(source, todoB, 'todo', 'before'))
 
 		expect(screen.getByTestId('board-drop-preview')).toBeInTheDocument()
-		expect(within(screen.getByTestId('board-column-todo')).getByText('Source card')).toBeInTheDocument()
+		expect(
+			within(screen.getByTestId('board-column-todo')).getByText('Source card'),
+		).toBeInTheDocument()
 		expect(screen.queryByText('Drop here to move to todo.')).not.toBeInTheDocument()
 	})
 
@@ -525,7 +565,9 @@ describe('BoardView', () => {
 			await waitFor(() => {
 				expect(toastError).toHaveBeenCalledWith("Invalid status 'done'")
 			})
-			expect(within(screen.getByTestId('board-column-todo')).getByText('Task 1')).toBeInTheDocument()
+			expect(
+				within(screen.getByTestId('board-column-todo')).getByText('Task 1'),
+			).toBeInTheDocument()
 			expect(within(screen.getByTestId('board-column-done')).queryByText('Task 1')).toBeNull()
 		})
 
@@ -746,6 +788,141 @@ describe('BoardView', () => {
 				/>,
 			)
 			expect(screen.queryByTestId('board-bets-gated-banner')).not.toBeInTheDocument()
+		})
+
+		it('toggles selection with the desktop context menu gesture', () => {
+			const onSelectionChange = vi.fn()
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo'] }}
+					objects={[
+						buildObjectResponse({ id: 'task-1', type: 'task', status: 'todo', title: 'Task 1' }),
+					]}
+					selectedIds={[]}
+					onObjectSelectionChange={onSelectionChange}
+				/>,
+			)
+
+			fireEvent.contextMenu(screen.getByTestId('board-card-draggable'))
+
+			expect(onSelectionChange).toHaveBeenCalledWith('task-1', true)
+		})
+
+		it('toggles selection after a stationary touch long-press', () => {
+			vi.useFakeTimers()
+			const onSelectionChange = vi.fn()
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo'] }}
+					objects={[
+						buildObjectResponse({ id: 'task-1', type: 'task', status: 'todo', title: 'Task 1' }),
+					]}
+					selectedIds={[]}
+					onObjectSelectionChange={onSelectionChange}
+				/>,
+			)
+
+			fireTouchPointerDown(screen.getByTestId('board-card-draggable'), {
+				clientX: 20,
+				clientY: 20,
+			})
+			act(() => {
+				vi.advanceTimersByTime(500)
+			})
+			vi.useRealTimers()
+
+			expect(onSelectionChange).toHaveBeenCalledWith('task-1', true)
+		})
+
+		it('does not toggle selection back off when mobile emits contextmenu after long-press', () => {
+			vi.useFakeTimers()
+			const onSelectionChange = vi.fn()
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo'] }}
+					objects={[
+						buildObjectResponse({ id: 'task-1', type: 'task', status: 'todo', title: 'Task 1' }),
+					]}
+					selectedIds={[]}
+					onObjectSelectionChange={onSelectionChange}
+				/>,
+			)
+			const card = screen.getByTestId('board-card-draggable')
+
+			fireTouchPointerDown(card, { clientX: 20, clientY: 20 })
+			act(() => {
+				vi.advanceTimersByTime(500)
+			})
+			fireEvent.contextMenu(card)
+			vi.useRealTimers()
+
+			expect(onSelectionChange).toHaveBeenCalledTimes(1)
+			expect(onSelectionChange).toHaveBeenCalledWith('task-1', true)
+		})
+
+		it('selects only the clicked card when shift-click starts with no current selection', () => {
+			render(
+				<BoardSelectionHarness
+					objects={[
+						buildObjectResponse({ id: 'a', type: 'task', status: 'todo' }),
+						buildObjectResponse({ id: 'b', type: 'task', status: 'todo' }),
+						buildObjectResponse({ id: 'c', type: 'task', status: 'todo' }),
+					]}
+				/>,
+			)
+
+			fireEvent.click(screen.getAllByTestId('board-card-draggable')[1], { shiftKey: true })
+
+			expect(screen.getByTestId('selected-ids')).toHaveTextContent('b')
+		})
+
+		it('shift-click selects the inclusive range from the same-column anchor', () => {
+			render(
+				<BoardSelectionHarness
+					objects={[
+						buildObjectResponse({ id: 'a', type: 'task', status: 'todo' }),
+						buildObjectResponse({ id: 'b', type: 'task', status: 'todo' }),
+						buildObjectResponse({ id: 'c', type: 'task', status: 'todo' }),
+						buildObjectResponse({ id: 'd', type: 'task', status: 'todo' }),
+					]}
+				/>,
+			)
+
+			const cards = screen.getAllByTestId('board-card-draggable')
+			fireEvent.contextMenu(cards[1])
+			fireEvent.click(cards[3], { shiftKey: true })
+
+			expect(screen.getByTestId('selected-ids')).toHaveTextContent('b,c,d')
+		})
+
+		it('keeps a card selected in one column while building a range in another column', () => {
+			render(
+				<BoardSelectionHarness
+					objects={[
+						buildObjectResponse({ id: 'todo-a', type: 'task', status: 'todo' }),
+						buildObjectResponse({ id: 'progress-a', type: 'task', status: 'in_progress' }),
+						buildObjectResponse({ id: 'progress-b', type: 'task', status: 'in_progress' }),
+						buildObjectResponse({ id: 'progress-c', type: 'task', status: 'in_progress' }),
+					]}
+				/>,
+			)
+
+			const todoColumn = screen.getByTestId('board-column-todo')
+			const progressColumn = screen.getByTestId('board-column-in_progress')
+			fireEvent.contextMenu(within(todoColumn).getByTestId('board-card-draggable'))
+			const progressCards = within(progressColumn).getAllByTestId('board-card-draggable')
+			fireEvent.click(progressCards[0], { shiftKey: true })
+			fireEvent.click(progressCards[2], { shiftKey: true })
+
+			expect(screen.getByTestId('selected-ids')).toHaveTextContent(
+				'todo-a,progress-a,progress-b,progress-c',
+			)
 		})
 	})
 })

@@ -10,9 +10,10 @@ interface BoardCardProps {
 	object: ObjectResponse
 	workspaceId: string
 	actors?: ActorListItem[]
+	isSelected?: boolean
 }
 
-export function BoardCard({ object, workspaceId, actors }: BoardCardProps) {
+export function BoardCard({ object, workspaceId, actors, isSelected }: BoardCardProps) {
 	const owner = object.owner ? actors?.find((a) => a.id === object.owner) : null
 
 	return (
@@ -20,8 +21,11 @@ export function BoardCard({ object, workspaceId, actors }: BoardCardProps) {
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId: object.id }}
 			data-testid="board-card"
+			data-state={isSelected ? 'selected' : undefined}
+			aria-selected={isSelected}
 			className={cn(
 				'relative flex flex-col gap-2 rounded-md border border-border bg-card p-3 text-sm transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+				'data-[state=selected]:border-accent data-[state=selected]:bg-accent/40 data-[state=selected]:ring-2 data-[state=selected]:ring-accent/30',
 			)}
 		>
 			<div className="flex items-start justify-between gap-2">
