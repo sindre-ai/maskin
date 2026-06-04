@@ -1,6 +1,6 @@
 import { BoardView } from '@/components/objects/board/board-view'
 import { deriveColumns } from '@/components/objects/board/derive-columns'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { buildObjectResponse } from '../../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -290,7 +290,12 @@ describe('BoardView', () => {
 	})
 
 	it('renders an insertion preview for cross-column drags', () => {
-		const source = buildObjectResponse({ id: 'source', type: 'task', status: 'in_progress' })
+		const source = buildObjectResponse({
+			id: 'source',
+			type: 'task',
+			status: 'in_progress',
+			title: 'Source card',
+		})
 		const todoA = buildObjectResponse({ id: 'todo-a', type: 'task', status: 'todo', title: 'A' })
 		const todoB = buildObjectResponse({ id: 'todo-b', type: 'task', status: 'todo', title: 'B' })
 		render(
@@ -306,7 +311,44 @@ describe('BoardView', () => {
 		fireDragOver(makeCardDragEvent(source, todoB, 'todo', 'before'))
 
 		expect(screen.getByTestId('board-drop-preview')).toBeInTheDocument()
+		expect(within(screen.getByTestId('board-column-todo')).getByText('Source card')).toBeInTheDocument()
 		expect(screen.queryByText('Drop here to move to todo.')).not.toBeInTheDocument()
+	})
+
+	it('keeps the cross-column insertion preview when hovering the column gap', () => {
+		const source = buildObjectResponse({
+			id: 'source',
+			type: 'task',
+			status: 'in_progress',
+			title: 'Source card',
+		})
+		const todoA = buildObjectResponse({ id: 'todo-a', type: 'task', status: 'todo', title: 'A' })
+		const todoB = buildObjectResponse({ id: 'todo-b', type: 'task', status: 'todo', title: 'B' })
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ task: ['todo', 'in_progress'] }}
+				objects={[todoA, todoB, source]}
+			/>,
+		)
+
+		fireDragStart({ active: { id: source.id, data: { current: { object: source } } } })
+		fireDragOver(makeCardDragEvent(source, todoB, 'todo', 'before'))
+		fireDragOver({
+			active: { id: source.id, data: { current: { object: source } } },
+			over: { id: 'col:todo', data: { current: { status: 'todo' } } },
+			activatorEvent: new MouseEvent('pointerdown', { clientY: 120 }),
+			delta: { x: 0, y: 0 },
+		})
+
+		const todoColumn = screen.getByTestId('board-column-todo')
+		const todoCards = within(todoColumn).getAllByTestId('board-card')
+		expect(todoCards.map((card) => card.textContent)).toEqual([
+			expect.stringContaining('A'),
+			expect.stringContaining('Source card'),
+			expect.stringContaining('B'),
+		])
 	})
 
 	it('renders a BoardCard for each object in the column', () => {

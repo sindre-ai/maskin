@@ -225,15 +225,18 @@ export function BoardView({
 			targetColumn.objects.filter((obj) => obj.id !== dragged.id),
 		)
 		const pointerY = getPointerY(event)
-		const insertIndex = overObject
-			? getDropIndex({
+		const insertIndex =
+			overObject
+				? getDropIndex({
 					active,
 					over,
 					targetObjects,
 					draggedId: dragged.id,
 					pointerY,
 				})
-			: targetObjects.length
+				: dragPreview?.status === toStatus
+					? dragPreview.insertIndex
+					: targetObjects.length
 
 		const prevOrder = insertIndex > 0 ? getEffectiveBoardOrder(targetObjects, insertIndex - 1) : null
 		const nextOrder =
@@ -304,6 +307,15 @@ export function BoardView({
 					targetColumn.objects.filter((obj) => obj.id !== dragged.id),
 				)
 				const overObject = targetObjects.find((object) => object.id === String(over.id))
+				if (!overObject && targetObjects.length > 0) {
+					setDragPreview((current) =>
+						current?.status === toStatus
+							? current
+							: { status: toStatus, insertIndex: targetObjects.length },
+					)
+					return
+				}
+
 				const insertIndex = overObject
 					? getDropIndex({
 							active,
@@ -337,6 +349,11 @@ export function BoardView({
 						actors={actors}
 						isLoading={isLoading}
 						isOverTarget={overStatus === column.status && activeObject?.status !== column.status}
+						previewObject={
+							dragPreview?.status === column.status && activeObject
+								? { ...activeObject, status: column.status }
+								: null
+						}
 						previewIndex={
 							dragPreview?.status === column.status ? dragPreview.insertIndex : null
 						}
@@ -361,6 +378,7 @@ interface BoardColumnProps {
 	actors?: ActorListItem[]
 	isLoading?: boolean
 	isOverTarget?: boolean
+	previewObject?: ObjectResponse | null
 	previewIndex?: number | null
 }
 
@@ -371,6 +389,7 @@ function BoardColumn({
 	actors,
 	isLoading,
 	isOverTarget,
+	previewObject,
 	previewIndex,
 }: BoardColumnProps) {
 	const { setNodeRef, isOver, active } = useDroppable({
@@ -383,6 +402,9 @@ function BoardColumn({
 		(isOverTarget ?? isOver) && activeObject && activeObject.status !== status,
 	)
 	const orderedObjects = getOrderedObjects(objects)
+	const previewCard = previewObject ? (
+		<DropPreview object={previewObject} workspaceId={workspaceId} actors={actors} />
+	) : null
 
 	return (
 		<div
@@ -416,7 +438,9 @@ function BoardColumn({
 						))}
 					</div>
 				) : orderedObjects.length === 0 ? (
-					isValidTarget ? (
+					previewCard ? (
+						previewCard
+					) : isValidTarget ? (
 						<div className="pointer-events-none min-h-14 rounded-md border border-dashed border-border/70 bg-accent/20 px-3 py-3 text-xs text-muted-foreground">
 							Drop here to move to {humanizeStatus(status)}.
 						</div>
@@ -431,11 +455,11 @@ function BoardColumn({
 						<div className="flex flex-col gap-2">
 							{orderedObjects.map((obj, index) => (
 								<div key={obj.id} className="contents">
-									{previewIndex === index && <DropPreview />}
+									{previewIndex === index && previewCard}
 									<DraggableBoardCard object={obj} workspaceId={workspaceId} actors={actors} />
 								</div>
 							))}
-							{previewIndex === orderedObjects.length && <DropPreview />}
+							{previewIndex === orderedObjects.length && previewCard}
 						</div>
 					</SortableContext>
 				)}
@@ -449,13 +473,23 @@ function BoardColumn({
 	)
 }
 
-function DropPreview() {
+function DropPreview({
+	object,
+	workspaceId,
+	actors,
+}: {
+	object: ObjectResponse
+	workspaceId: string
+	actors?: ActorListItem[]
+}) {
 	return (
 		<div
 			data-testid="board-drop-preview"
 			aria-hidden="true"
-			className="pointer-events-none min-h-20 rounded-md border border-border bg-card opacity-40"
-		/>
+			className="pointer-events-none opacity-40"
+		>
+			<BoardCard object={object} workspaceId={workspaceId} actors={actors} />
+		</div>
 	)
 }
 
