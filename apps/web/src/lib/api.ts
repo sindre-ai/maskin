@@ -167,6 +167,10 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
 		},
+		board: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<BoardObjectResponse>(`/objects/board${qs}`, { workspaceId })
+		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
 			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
@@ -570,6 +574,18 @@ export interface ObjectResponse {
 	is_subscribed?: boolean
 	unread_count?: number
 	subscriber_count?: number
+}
+
+export interface BoardObjectColumn {
+	id: string
+	label: string
+	value: string
+	total: number
+	objects: ObjectResponse[]
+}
+
+export interface BoardObjectResponse {
+	columns: BoardObjectColumn[]
 }
 
 export interface SubscribersResponse {
