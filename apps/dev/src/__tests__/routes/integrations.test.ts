@@ -164,6 +164,47 @@ describe('Integrations Routes', () => {
 			}
 		})
 
+		it('refreshes an existing active api_key integration instead of inserting a duplicate', async () => {
+			const originalKey = process.env.POSTHOG_PERSONAL_API_KEY
+			process.env.POSTHOG_PERSONAL_API_KEY = 'phx_test_personal_key'
+			try {
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.selectQueue = [[{ id: 'existing-integration-id' }]]
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/posthog/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.inserts).toHaveLength(1)
+				expect(calls.updates).toHaveLength(1)
+				expect(calls.inserts[0]).toMatchObject({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					action: 'created',
+					entityType: 'integration',
+					entityId: 'existing-integration-id',
+					data: {
+						provider: 'posthog',
+						external_id: 'posthog-personal',
+						auth_type: 'api_key',
+					},
+				})
+				expect(calls.updates[0]).toMatchObject({
+					credentials: expect.any(String),
+				})
+				expect((calls.updates[0] as Record<string, unknown>).updatedAt).toBeInstanceOf(Date)
+			} finally {
+				if (originalKey === undefined) {
+					Reflect.deleteProperty(process.env, 'POSTHOG_PERSONAL_API_KEY')
+				} else {
+					process.env.POSTHOG_PERSONAL_API_KEY = originalKey
+				}
+			}
+		})
+
 		it('returns 400 when api_key provider env var is unset', async () => {
 			const originalKey = process.env.POSTHOG_PERSONAL_API_KEY
 			Reflect.deleteProperty(process.env, 'POSTHOG_PERSONAL_API_KEY')

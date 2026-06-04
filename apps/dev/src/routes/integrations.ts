@@ -181,29 +181,46 @@ app.openapi(connectRoute, (async (c) => {
 		const encryptedCredentials = encrypt(JSON.stringify(credentials))
 		const externalId = `${providerName}-personal`
 
-		const [row] = await db
-			.insert(integrations)
-			.values({
-				workspaceId,
-				provider: providerName,
-				status: 'active',
-				externalId,
-				credentials: encryptedCredentials,
-				createdBy: actorId,
-			})
-			.onConflictDoUpdate({
-				target: [integrations.workspaceId, integrations.provider, integrations.externalId],
-				set: {
+		const [existingActive] = await db
+			.select({ id: integrations.id })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, workspaceId),
+					eq(integrations.provider, providerName),
+					eq(integrations.externalId, externalId),
+					eq(integrations.status, 'active'),
+				),
+			)
+			.limit(1)
+
+		let integrationId = existingActive?.id
+		if (existingActive) {
+			await db
+				.update(integrations)
+				.set({
+					credentials: encryptedCredentials,
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, existingActive.id))
+		} else {
+			const [created] = await db
+				.insert(integrations)
+				.values({
+					workspaceId,
+					provider: providerName,
 					status: 'active',
 					externalId,
 					credentials: encryptedCredentials,
-					updatedAt: new Date(),
-				},
-			})
-			.returning({ id: integrations.id })
+					createdBy: actorId,
+				})
+				.returning({ id: integrations.id })
 
-		if (!row?.id) {
-			logger.error('api_key integration upsert returned no row', {
+			integrationId = created?.id
+		}
+
+		if (!integrationId) {
+			logger.error('api_key integration activation returned no id', {
 				provider: providerName,
 				workspaceId,
 			})
@@ -215,14 +232,14 @@ app.openapi(connectRoute, (async (c) => {
 			actorId,
 			action: 'created',
 			entityType: 'integration',
-			entityId: row.id,
+			entityId: integrationId,
 			data: { provider: providerName, external_id: externalId, auth_type: 'api_key' },
 		})
 
 		logger.info('api_key integration activated', {
 			provider: providerName,
 			workspaceId,
-			integrationId: row.id,
+			integrationId,
 		})
 
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
