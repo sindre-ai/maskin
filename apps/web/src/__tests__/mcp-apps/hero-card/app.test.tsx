@@ -656,7 +656,7 @@ describe('HeroCardApp — customer variant (organization + person + new type par
 		render(<HeroCardApp />)
 		await waitFor(() => expect(screen.getByText('Acme Co')).toBeInTheDocument())
 		expect(screen.getByText('last touch 3d ago · qualifying')).toBeInTheDocument()
-		expect(screen.getByText('Organization')).toBeInTheDocument()
+		await waitFor(() => expect(screen.getByText('Organization')).toBeInTheDocument())
 		expect(screen.getByRole('link', { name: /Open in Maskin/ })).toHaveAttribute(
 			'href',
 			'https://maskin.test/ws-1/objects/organization-1',
