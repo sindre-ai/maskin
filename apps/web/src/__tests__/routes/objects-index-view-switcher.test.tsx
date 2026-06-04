@@ -1,6 +1,6 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useEffect, useState } from 'react'
 
 import { buildWorkspaceWithRole } from '../factories'
 
@@ -13,6 +13,9 @@ const infiniteQueryState = vi.hoisted(() => ({
 	isFetchingNextPage: false,
 	isError: false,
 	observerCallback: null as IntersectionObserverCallback | null,
+}))
+const boardQueryState = vi.hoisted(() => ({
+	columns: [{ value: 'todo', label: 'todo', objects: [], total: 0 }],
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -54,6 +57,12 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
+		useQuery: () => ({
+			data: { columns: boardQueryState.columns },
+			isLoading: false,
+			isSuccess: true,
+			isError: false,
+		}),
 		useInfiniteQuery: () => ({
 			data: { pages: [[]] },
 			hasNextPage: infiniteQueryState.hasNextPage,
@@ -61,6 +70,13 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 			isError: infiniteQueryState.isError,
 			fetchNextPage: infiniteQueryState.fetchNextPage,
 			isLoading: false,
+		}),
+		useQueryClient: () => ({
+			invalidateQueries: vi.fn(),
+			getQueriesData: vi.fn(() => []),
+			setQueryData: vi.fn(),
+			removeQueries: vi.fn(),
+			cancelQueries: vi.fn(),
 		}),
 	}
 })
@@ -92,9 +108,34 @@ vi.mock('@/components/objects/data-table/data-table', () => ({
 	DataTable: () => <div data-testid="data-table" />,
 }))
 vi.mock('@/components/objects/board/board-view', () => ({
-	BoardView: ({ objectType }: { objectType: string }) => (
-		<div data-testid="board-view" data-object-type={objectType} />
-	),
+	// Mimic the real board column "load more" behavior closely enough for the
+	// sentinel test to verify the IntersectionObserver path.
+	BoardView: ({
+		objectType,
+		columns,
+	}: {
+		objectType: string
+		columns?: Array<{ objects?: unknown[]; total?: number }>
+	}) => {
+		const hasMore = columns?.some((column) => (column.total ?? 0) > (column.objects?.length ?? 0))
+		const [sentinelEl, setSentinelEl] = useState<HTMLDivElement | null>(null)
+
+		useEffect(() => {
+			if (!hasMore || !sentinelEl) return
+			const observer = new IntersectionObserver((entries) => {
+				if (!entries[0]?.isIntersecting) return
+				infiniteQueryState.fetchNextPage()
+			})
+			observer.observe(sentinelEl)
+			return () => observer.disconnect()
+		}, [hasMore, sentinelEl])
+
+		return (
+			<div data-testid="board-view" data-object-type={objectType}>
+				{hasMore ? <div ref={setSentinelEl} data-testid="board-load-more-sentinel" /> : null}
+			</div>
+		)
+	},
 }))
 vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
 	DataTableToolbar: (props: Record<string, unknown>) => {
@@ -140,14 +181,7 @@ const RouteOptions = Route as unknown as { component: React.FC }
 const ObjectsPage = RouteOptions.component
 
 function renderRoute() {
-	const queryClient = new QueryClient({
-		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-	})
-	return render(
-		<QueryClientProvider client={queryClient}>
-			<ObjectsPage />
-		</QueryClientProvider>,
-	)
+	return render(<ObjectsPage />)
 }
 
 beforeEach(() => {
@@ -236,6 +270,7 @@ describe('ObjectsPage view switcher', () => {
 
 	it('fetches the next page when the board scroll sentinel intersects', async () => {
 		infiniteQueryState.hasNextPage = true
+		boardQueryState.columns = [{ value: 'todo', label: 'todo', objects: [{ id: 'o-1' }], total: 2 }]
 		persisted.current = { view: 'board' }
 		toolbarProps.current = null
 		renderRoute()
