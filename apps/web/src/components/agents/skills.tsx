@@ -145,6 +145,7 @@ function WorkspaceSkillsSection({
 					<Link
 						to="/$workspaceId/settings/skills"
 						params={{ workspaceId }}
+						search={{ sort: 'name', order: 'asc' }}
 						className="text-primary underline underline-offset-2 hover:opacity-80"
 					>
 						Settings → Skills
