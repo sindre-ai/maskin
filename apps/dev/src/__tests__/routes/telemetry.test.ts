@@ -1,5 +1,21 @@
+import { mcpTelemetry } from '@maskin/db/schema'
+import { gte, inArray } from 'drizzle-orm'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
+
+// Wrap drizzle-orm's `gte` and `inArray` with spies so the SQL-bounded widget
+// queries' WHERE-clause arguments are inspectable. The route's chain mock
+// captures `.values()` / `.set()` only; predicates passed to `.where()` are
+// compiled SQL objects and not directly introspectable, so we tap the helpers
+// instead. Other re-exports are passed through untouched.
+vi.mock('drizzle-orm', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('drizzle-orm')>()
+	return {
+		...actual,
+		gte: vi.fn(actual.gte),
+		inArray: vi.fn(actual.inArray),
+	}
+})
 
 const { default: telemetryRoutes } = await import('../../routes/telemetry')
 
@@ -550,6 +566,107 @@ describe('Telemetry Routes', () => {
 			)
 
 			expect(res.status).toBe(403)
+		})
+
+		// SQL-bound regression guards. The bet-first aggregation depends on two
+		// WHERE clauses pushed into Postgres: a 48h `gte(createdAt, …)` clip on
+		// the render_error window, and a `(gte + inArray)` pair on the
+		// click_through correlator. Both are invisible if a test only inspects
+		// the route's response — the response is built from pre-clipped rows the
+		// test itself supplies. These cases tap `gte` and `inArray` so a future
+		// edit that drops either WHERE clause fails here.
+		describe('widget query SQL bounds', () => {
+			beforeEach(() => {
+				vi.mocked(gte).mockClear()
+				vi.mocked(inArray).mockClear()
+			})
+
+			it('clips the 48h render-error query with gte(createdAt, errorWindowStart)', async () => {
+				const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+				// No first-render rows → the click_through query is skipped, so the
+				// only gte on a ≈now-48h timestamp comes from the error-window query.
+				mockResults.selectQueue = [
+					[memberRow],
+					[{ total: 0, rich: 0 }],
+					[],
+					[{ total: 0 }],
+					[],
+					[{ renders: 0, errors: 0, clicks: 0 }],
+					[],
+					[],
+				]
+
+				const before = Date.now()
+				const res = await app.request(
+					jsonGet('/api/telemetry/mcp/summary?days=30', { 'x-workspace-id': wsId }),
+				)
+				const after = Date.now()
+				expect(res.status).toBe(200)
+
+				const errorWindowMs = 48 * 60 * 60 * 1000
+				const errorWindowCall = vi.mocked(gte).mock.calls.find(([col, val]) => {
+					if (col !== mcpTelemetry.createdAt) return false
+					if (!(val instanceof Date)) return false
+					const t = val.getTime()
+					return t >= before - errorWindowMs - 1000 && t <= after - errorWindowMs + 1000
+				})
+				expect(
+					errorWindowCall,
+					'render_error 48h query must include gte(createdAt, errorWindowStart)',
+				).toBeDefined()
+			})
+
+			it('clips the click_through query with gte(createdAt, firstRenderTs) and inArray(correlator, firstRenderKeys)', async () => {
+				const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+				const firstRenderTs = new Date('2026-06-01T00:00:00.000Z')
+				const firstRenders = [
+					{
+						session_id: 's1',
+						tool_name: 'get_objects',
+						object_id: 'bet-1',
+						created_at: firstRenderTs,
+					},
+					{
+						session_id: 's2',
+						tool_name: 'list_objects',
+						object_id: null,
+						created_at: new Date('2026-06-01T00:00:01.000Z'),
+					},
+				]
+				mockResults.selectQueue = [
+					[memberRow],
+					[{ total: 0, rich: 0 }],
+					[],
+					[{ total: 0 }],
+					[],
+					[{ renders: 2, errors: 0, clicks: 0 }],
+					firstRenders,
+					[],
+					[],
+				]
+
+				const res = await app.request(
+					jsonGet('/api/telemetry/mcp/summary?days=30', { 'x-workspace-id': wsId }),
+				)
+				expect(res.status).toBe(200)
+
+				const firstRenderGteCall = vi
+					.mocked(gte)
+					.mock.calls.find(
+						([col, val]) =>
+							col === mcpTelemetry.createdAt &&
+							val instanceof Date &&
+							val.getTime() === firstRenderTs.getTime(),
+					)
+				expect(
+					firstRenderGteCall,
+					'click_through query must include gte(createdAt, firstRenderTs)',
+				).toBeDefined()
+
+				expect(vi.mocked(inArray)).toHaveBeenCalledTimes(1)
+				const [, keys] = vi.mocked(inArray).mock.calls[0]
+				expect(keys).toEqual(['s1::get_objects::bet-1', 's2::list_objects::'])
+			})
 		})
 	})
 })
