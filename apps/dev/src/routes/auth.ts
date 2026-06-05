@@ -251,6 +251,10 @@ const verifyEmailChangeRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Token invalid or expired',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Email already in use',
+		},
 	},
 })
 
@@ -287,7 +291,7 @@ app.openapi(verifyEmailChangeRoute, async (c) => {
 				updatedAt: new Date(),
 			})
 			.where(eq(actors.id, pending.id))
-		return c.json(createApiError('CONFLICT', 'Email already in use'), 400)
+		return c.json(createApiError('CONFLICT', 'Email already in use'), 409)
 	}
 
 	const [updated] = await db

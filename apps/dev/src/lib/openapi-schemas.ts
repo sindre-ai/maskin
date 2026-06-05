@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi'
+import { notificationPrefsSchema } from '@maskin/shared'
 import { apiErrorSchema } from './errors'
 
 /**
@@ -56,7 +57,7 @@ export const actorResponseSchema = z.object({
 	description: z.string().nullable(),
 	bio: z.string().nullable(),
 	avatar_storage_key: z.string().nullable(),
-	notification_prefs: jsonbField,
+	notification_prefs: notificationPrefsSchema.nullable(),
 	pending_email: z.string().nullable(),
 	system_prompt: z.string().nullable(),
 	tools: jsonbField,

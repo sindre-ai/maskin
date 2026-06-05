@@ -736,6 +736,62 @@ describe('Profile — POST /api/auth/email-change/verify', () => {
 
 		expect(res.status).toBe(400)
 	})
+
+	it('returns 409 when another actor claimed the address between request and verify', async () => {
+		const actor = buildActor({
+			type: 'human',
+			pendingEmail: 'taken@x.com',
+			pendingEmailToken: 'token123',
+			pendingEmailExpiresAt: new Date(Date.now() + 60_000),
+		})
+		const other = buildActor({ type: 'human', email: 'taken@x.com' })
+		const { app, mockResults, calls } = createTestApp(authRoutes, '/api/auth', actor.id)
+		// 1: pending-token lookup hits the actor, 2: collision lookup finds another actor on the address.
+		mockResults.selectQueue = [[actor], [{ id: other.id }]]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/auth/email-change/verify', { token: 'token123' }),
+		)
+
+		expect(res.status).toBe(409)
+		const body = await res.json()
+		expect(body.error.code).toBe('CONFLICT')
+		// The pending state is cleared so the user gets a clean retry path.
+		const updatePayload = calls.updates[0] as {
+			pendingEmail: null
+			pendingEmailToken: null
+			pendingEmailExpiresAt: null
+		}
+		expect(updatePayload.pendingEmail).toBeNull()
+		expect(updatePayload.pendingEmailToken).toBeNull()
+		expect(updatePayload.pendingEmailExpiresAt).toBeNull()
+	})
+
+	it('returns a notification_prefs object with every flag filled even when the column was the default empty object', async () => {
+		const actor = buildActor({
+			type: 'human',
+			notificationPrefs: {},
+			pendingEmail: 'new@x.com',
+			pendingEmailToken: 'token123',
+			pendingEmailExpiresAt: new Date(Date.now() + 60_000),
+		})
+		const { app, mockResults } = createTestApp(authRoutes, '/api/auth', actor.id)
+		mockResults.selectQueue = [[actor], [], [{ workspaceId }]]
+		mockResults.update = [{ ...actor, email: 'new@x.com', pendingEmail: null }]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/auth/email-change/verify', { token: 'token123' }),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.notification_prefs).toEqual({
+			mentions: true,
+			subscribed: true,
+			betStatusChanges: true,
+			weeklyDigest: false,
+		})
+	})
 })
 
 describe('Profile — POST /api/auth/email-change/cancel', () => {
