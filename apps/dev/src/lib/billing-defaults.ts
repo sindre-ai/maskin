@@ -12,8 +12,13 @@
  * The point of the clamp is purely to reject pathological inputs (`"1e308"`
  * passes `Number.isFinite && > 0` but would silently overflow downstream
  * arithmetic). `MAX_SAFE_INTEGER` is the conservative ceiling.
+ *
+ * The shape check (`/^\d+$/`) admits arbitrarily long digit strings — once a
+ * digit string is ≥ 2^53, the `Number()` coercion silently loses precision,
+ * so the post-coercion clamp is what guarantees the final value is bounded.
+ * The shape check alone is not enough.
  */
-const MAX_ENV_CAP = Number.MAX_SAFE_INTEGER
+export const MAX_ENV_CAP = Number.MAX_SAFE_INTEGER
 
 const POSITIVE_INT_SHAPE = /^\d+$/
 

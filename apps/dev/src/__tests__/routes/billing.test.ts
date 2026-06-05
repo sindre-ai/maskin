@@ -17,11 +17,11 @@ import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
 // Sentinel cap values that are intentionally NOT the literal defaults
-// (32_000_000 / 96_000_000). When a test asserts a 32M/96M response, it must
-// be coming from the literal fallback path, not the env var — otherwise the
-// "unset env falls back to literal" assertion is trivially satisfied.
-const STARTER_ENV_SENTINEL = '33000000'
-const PRO_ENV_SENTINEL = '97000000'
+// (32_000_000 / 96_000_000), AND chosen arithmetically far from them so that
+// a swapped or off-by-one test value couldn't accidentally satisfy a literal-
+// default assertion. Pi / Euler digits keep them memorable.
+const STARTER_ENV_SENTINEL = '31415926'
+const PRO_ENV_SENTINEL = '27182818'
 
 const VALID_ENV = {
 	STRIPE_SECRET_KEY: 'sk_test_x',
@@ -342,10 +342,19 @@ describe('GET /api/billing/usage', () => {
 		// Regression: the `billing?.hard_cap_tokens && billing.hard_cap_tokens > 0`
 		// guard's false branch was untested. A 0 (or negative) value stored on the
 		// workspace must NOT be treated as "an explicit cap" — the env/literal
-		// fallback should kick in just like when the field is missing.
+		// fallback should kick in just like when the field is missing. Also pin
+		// `hard_cap_tokens: 1` as the boundary value of the `> 0` guard: a
+		// positive integer is honored verbatim, even at the smallest possible
+		// value, so callers can't accidentally tip into the fallback by saving 1.
+		// And with env unset, the Starter response must equal the literal 32M
+		// default — the env-driven test above only proves the false branch hits
+		// the sentinel, not the literal that fires in prod when the env is
+		// missing.
+		for (const k of ['MASKIN_STARTER_HARD_CAP_TOKENS']) delete process.env[k]
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const zeroWs = randomUUID()
 		const negWs = randomUUID()
+		const oneWs = randomUUID()
 		mockResults.selectQueue = [
 			[
 				{
@@ -361,23 +370,38 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[
+				{
+					id: oneWs,
+					settings: { billing: { plan: 'starter', status: 'active', hard_cap_tokens: 1 } },
+				},
+			],
+			[],
 		]
 
 		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
 		expect(zeroRes.status).toBe(200)
-		// Env is set to the Starter sentinel by `setupEnv`, so the fallback path
-		// resolves to that — proving the request didn't bypass the guard via the
-		// stored 0 value.
+		// Env is unset, so the fallback path resolves to the literal 32M default
+		// — the actual prod failure mode (no env, stored 0). Proves the route
+		// took the `> 0` false branch all the way to the literal.
 		expect(await zeroRes.json()).toMatchObject({
 			plan: 'starter',
-			hard_cap_tokens: Number(STARTER_ENV_SENTINEL),
+			hard_cap_tokens: 32_000_000,
 		})
 
 		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
 		expect(negRes.status).toBe(200)
+		// Pro env is still set to the sentinel by setupEnv — fallback hits env.
 		expect(await negRes.json()).toMatchObject({
 			plan: 'pro',
 			hard_cap_tokens: Number(PRO_ENV_SENTINEL),
+		})
+
+		const oneRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': oneWs }))
+		expect(oneRes.status).toBe(200)
+		expect(await oneRes.json()).toMatchObject({
+			plan: 'starter',
+			hard_cap_tokens: 1,
 		})
 	})
 
