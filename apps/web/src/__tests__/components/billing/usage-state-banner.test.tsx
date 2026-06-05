@@ -102,9 +102,7 @@ describe('UsageStateBanner — near-cap state', () => {
 			'href',
 			'/ws-1/settings/keys',
 		)
-		expect(
-			screen.queryByRole('button', { name: /close|dismiss/i }),
-		).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /close|dismiss/i })).not.toBeInTheDocument()
 	})
 
 	it('fires on trial plans too', async () => {
@@ -197,9 +195,7 @@ describe('UsageStateBanner — over-cap state', () => {
 		expect(switchToByo).toHaveAttribute('href', '/ws-1/settings/keys')
 		// Pro overage is out of v1 — Starter must not surface the Contact us mailto.
 		expect(screen.queryByRole('link', { name: 'Contact us' })).not.toBeInTheDocument()
-		expect(
-			screen.queryByRole('button', { name: /close|dismiss/i }),
-		).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /close|dismiss/i })).not.toBeInTheDocument()
 	})
 
 	it('routes Pro over-cap to a Contact us mailto instead of settings', async () => {

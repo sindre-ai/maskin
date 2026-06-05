@@ -169,8 +169,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	// workspace is over its plan cap. BYO workspaces are not blocked — the
 	// hook returns false in that case.
 	const overCapBlocked = useOverCapBlock(workspaceId)
-	const disabled =
-		overCapBlocked || (selectedAgent ? oneShotBusy : sindreBlocked || !sindreActorId)
+	const disabled = overCapBlocked || (selectedAgent ? oneShotBusy : sindreBlocked || !sindreActorId)
 	// Show the "Connecting to Sindre…" empty-state only while we're actively
 	// booting a session. `idle` is now the default-empty state and shouldn't
 	// trigger the connecting copy.

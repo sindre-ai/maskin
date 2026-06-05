@@ -3,8 +3,8 @@ import { useBillingUsage } from '@/hooks/use-billing'
 import type { BillingPlan } from '@/lib/api'
 import { PLAN_LABEL_SHORT, deriveBillingState, formatResetsIn } from '@/lib/billing-format'
 import { Link } from '@tanstack/react-router'
-import type { ReactElement } from 'react'
 import { AlertTriangle, OctagonAlert } from 'lucide-react'
+import type { ReactElement } from 'react'
 
 const PRO_OVERAGE_CONTACT_MAILTO = 'mailto:support@maskin.ai?subject=Pro%20overage'
 
@@ -105,5 +105,9 @@ function UpgradeCta({
 			</Button>
 		)
 	}
-	return <Button asChild size="sm">{settingsLink}</Button>
+	return (
+		<Button asChild size="sm">
+			{settingsLink}
+		</Button>
+	)
 }

@@ -46,22 +46,16 @@ vi.mock('@/lib/api', () => ({
 		actors: { list: vi.fn() },
 		objects: { list: vi.fn(), search: vi.fn() },
 		notifications: { list: vi.fn().mockResolvedValue([]) },
-		// useOverCapBlock (added by the over-cap composer block) reads from
-		// useBillingUsage; default to a BYO payload so existing SindreChat tests
-		// don't need to know about billing state.
-		billing: {
-			usage: vi.fn().mockResolvedValue({
-				plan: 'byollm',
-				status: 'active',
-				tokens_used: 0,
-				hard_cap_tokens: null,
-				period_start: null,
-				period_resets_in_ms: null,
-				stripe_customer_id: null,
-				stripe_subscription_id: null,
-			}),
-		},
 	},
+}))
+
+// Stub the over-cap composer block so the existing SindreChat tests (rendered
+// without a QueryClientProvider) don't hit useBillingUsage. Over-cap behavior
+// is covered by over-cap-composer-notice.test.tsx and the usage-state-banner
+// suite. Same pattern as instruction-log.test.tsx.
+vi.mock('@/components/billing/over-cap-composer-notice', () => ({
+	useOverCapBlock: () => false,
+	OverCapComposerNotice: () => null,
 }))
 
 import { api } from '@/lib/api'
