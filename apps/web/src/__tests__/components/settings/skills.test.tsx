@@ -5,14 +5,19 @@ import { TestWrapper } from '../../setup'
 
 const { mockNavigate, searchState } = vi.hoisted(() => ({
 	mockNavigate: vi.fn(),
-	searchState: { sort: 'name' as 'name' | 'createdAt' | 'updatedAt', order: 'asc' as 'asc' | 'desc' },
+	searchState: {
+		sort: 'name' as 'name' | 'createdAt' | 'updatedAt',
+		order: 'asc' as 'asc' | 'desc',
+	},
 }))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: Record<string, unknown>) => options,
+		// Wrap in { options } to mirror the real TanStack Route shape so the
+		// test file can read Route.options.component and Route.options.validateSearch.
+		createFileRoute: () => (options: Record<string, unknown>) => ({ options }),
 		useSearch: () => ({ sort: searchState.sort, order: searchState.order }),
 		useNavigate: () => mockNavigate,
 	}
@@ -239,8 +244,36 @@ describe('Settings > Skills', () => {
 		await user.click(screen.getByRole('menuitem', { name: /Updated/ }))
 
 		expect(mockNavigate).toHaveBeenCalled()
-		const lastCall = mockNavigate.mock.calls.at(-1)?.[0] as { search: { sort: string } }
+		const lastCall = mockNavigate.mock.calls.at(-1)?.[0] as {
+			search: { sort: string; order: string }
+			replace: boolean
+		}
 		expect(lastCall.search.sort).toBe('updatedAt')
+		// replace: true keeps the sort change out of browser history so the back
+		// button doesn't step through every intermediate sort.
+		expect(lastCall.replace).toBe(true)
+		// Changing only sort must preserve order — otherwise toggling sort would
+		// silently flip a user-chosen desc back to asc.
+		expect(lastCall.search.order).toBe('asc')
+	})
+
+	it('renders rows in the order dictated by the URL sort state', () => {
+		// Pre-set the URL state to sort=updatedAt asc. The page reads useSearch,
+		// so the render order must match sortSkills(rawList, 'updatedAt', 'asc').
+		searchState.sort = 'updatedAt'
+		searchState.order = 'asc'
+		const rawList = [
+			buildSkill({ id: 'a', name: 'archive', updatedAt: '2026-04-01T00:00:00Z' }),
+			buildSkill({ id: 'b', name: 'deploy', updatedAt: '2026-02-01T00:00:00Z' }),
+			buildSkill({ id: 'c', name: 'review', updatedAt: '2026-03-01T00:00:00Z' }),
+		]
+		mockUseWorkspaceSkills.mockReturnValue({ data: rawList, isLoading: false })
+		renderPage()
+
+		const expected = sortSkills(rawList, 'updatedAt', 'asc').map((s) => s.name)
+		const rendered = screen.getAllByText(/^(archive|deploy|review)$/).map((el) => el.textContent)
+		expect(rendered).toEqual(expected)
+		expect(rendered).toEqual(['deploy', 'review', 'archive'])
 	})
 
 	it('confirms deletion and calls delete mutation', async () => {
@@ -357,6 +390,35 @@ describe('settings/skills helpers', () => {
 			const raw = '---\nname: Not Valid!\ndescription: d\n---\n\nbody'
 			const result = toSkillUpload(raw, 'fallback-name.md')
 			expect(result.baseName).toBe('fallback-name')
+		})
+	})
+
+	describe('Route.options.validateSearch', () => {
+		// Direct coverage for the "malformed URL recovers to defaults" guarantee —
+		// the route-level test only exercises the happy path through useSearch.
+		const validateSearch = Route.options.validateSearch as (search: Record<string, unknown>) => {
+			sort: string
+			order: string
+		}
+		const DEFAULTS = { sort: 'name', order: 'asc' }
+
+		it('falls back to defaults when sort is an unknown string', () => {
+			expect(validateSearch({ sort: 'bogus', order: 'asc' })).toEqual(DEFAULTS)
+		})
+
+		it('falls back to defaults when fields are missing', () => {
+			expect(validateSearch({})).toEqual(DEFAULTS)
+		})
+
+		it('falls back to defaults when fields are non-string', () => {
+			expect(validateSearch({ sort: 123, order: null })).toEqual(DEFAULTS)
+		})
+
+		it('passes through a valid sort + order pair', () => {
+			expect(validateSearch({ sort: 'updatedAt', order: 'desc' })).toEqual({
+				sort: 'updatedAt',
+				order: 'desc',
+			})
 		})
 	})
 })
