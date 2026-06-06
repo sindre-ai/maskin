@@ -8,10 +8,11 @@ vi.mock('../../lib/stripe', async () => {
 		...actual,
 		getStripeClient: vi.fn(() => ({}) as unknown),
 		createCheckoutSession: vi.fn(),
+		createBillingPortalSession: vi.fn(),
 	}
 })
 
-import { createCheckoutSession } from '../../lib/stripe'
+import { createBillingPortalSession, createCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -35,6 +36,7 @@ const clearEnv = () => {
 
 beforeEach(() => {
 	vi.mocked(createCheckoutSession).mockReset()
+	vi.mocked(createBillingPortalSession).mockReset()
 	clearEnv()
 	setupEnv()
 })
@@ -184,6 +186,136 @@ describe('POST /api/billing/checkout', () => {
 			),
 		)
 		expect(res.status).toBe(500)
+	})
+})
+
+describe('POST /api/billing/portal', () => {
+	it('returns the portal URL on success', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'starter', status: 'active', stripe_customer_id: 'cus_42' } },
+			},
+		]
+		vi.mocked(createBillingPortalSession).mockResolvedValue({
+			id: 'bps_test_1',
+			url: 'https://billing.stripe.com/p/session/test_1',
+		} as Awaited<ReturnType<typeof createBillingPortalSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toEqual({ url: 'https://billing.stripe.com/p/session/test_1' })
+		expect(createBillingPortalSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				workspaceId,
+				customerId: 'cus_42',
+				returnUrl: 'https://app.test/settings/keys',
+			}),
+		)
+	})
+
+	it('returns 404 when workspace is missing', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 404 when the workspace has no stripe_customer_id on record', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'trial', status: 'active' } },
+			},
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(404)
+		expect(createBillingPortalSession).not.toHaveBeenCalled()
+	})
+
+	it('returns 500 when Stripe env is not configured', async () => {
+		clearEnv()
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'starter', status: 'active', stripe_customer_id: 'cus_42' } },
+			},
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(500)
+	})
+
+	it('returns 500 when Stripe throws while creating the portal session', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_42' } },
+			},
+		]
+		vi.mocked(createBillingPortalSession).mockRejectedValue(new Error('stripe blew up'))
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(500)
+	})
+
+	it('returns 400 for a malformed return_url', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'not-a-url' },
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(400)
 	})
 })
 

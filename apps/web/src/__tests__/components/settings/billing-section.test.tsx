@@ -8,6 +8,7 @@ vi.mock('@/lib/api', () => ({
 		billing: {
 			usage: vi.fn(),
 			checkout: vi.fn(),
+			portal: vi.fn(),
 		},
 	},
 }))
@@ -57,6 +58,7 @@ describe('BillingSection', () => {
 	beforeEach(() => {
 		vi.mocked(api.billing.usage).mockReset()
 		vi.mocked(api.billing.checkout).mockReset()
+		vi.mocked(api.billing.portal).mockReset()
 	})
 
 	it('renders trial plan with both upgrade buttons and the usage line', async () => {
@@ -104,7 +106,7 @@ describe('BillingSection', () => {
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Switch to bring-your-own/ })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Manage in Stripe/ })).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
 	})
 
@@ -184,6 +186,67 @@ describe('BillingSection', () => {
 		})
 		await vi.waitFor(() => {
 			expect(window.location.href).toBe('https://checkout.stripe.com/c/cs_test_1')
+		})
+
+		Object.defineProperty(window, 'location', { writable: true, value: original })
+	})
+
+	it('only renders Manage in Stripe when stripe_customer_id is set', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: null,
+			stripe_subscription_id: null,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — $20/mo')
+		expect(screen.queryByRole('button', { name: /Manage in Stripe/ })).not.toBeInTheDocument()
+	})
+
+	it('redirects to Stripe billing portal url on Manage click', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+		vi.mocked(api.billing.portal).mockResolvedValue({
+			url: 'https://billing.stripe.com/p/session/test_portal_1',
+		})
+
+		const original = window.location
+		Object.defineProperty(window, 'location', {
+			writable: true,
+			value: { ...original, href: 'http://localhost/settings/keys', assign: vi.fn() },
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await user.click(await screen.findByRole('button', { name: /Manage in Stripe/ }))
+
+		await vi.waitFor(() => {
+			expect(api.billing.portal).toHaveBeenCalledWith(
+				'ws-1',
+				expect.objectContaining({ return_url: 'http://localhost/settings/keys' }),
+			)
+		})
+		await vi.waitFor(() => {
+			expect(window.location.href).toBe('https://billing.stripe.com/p/session/test_portal_1')
 		})
 
 		Object.defineProperty(window, 'location', { writable: true, value: original })
