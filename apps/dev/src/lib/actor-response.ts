@@ -1,6 +1,7 @@
 import type { actors } from '@maskin/db/schema'
 import { type NotificationPrefs, notificationPrefsSchema } from '@maskin/shared'
 import type { z } from 'zod'
+import { logger } from './logger'
 import type { actorResponseSchema, actorWithKeySchema } from './openapi-schemas'
 import { serialize } from './serialize'
 
@@ -14,10 +15,18 @@ type JsonbField = z.infer<typeof actorResponseSchema>['tools']
 // already a full NotificationPrefs object; rows from login / email-change /
 // cancel paths may still hold an empty `{}` from the column default — Zod's
 // defaults fill the missing keys so the response always advertises every flag.
-function reshapeNotificationPrefs(value: unknown): NotificationPrefs | null {
+// A safeParse failure means schema drift or a corrupt JSONB row: we still
+// return null (the caller's contract is nullable), but emit a warn so the
+// offending actor is findable.
+function reshapeNotificationPrefs(value: unknown, actorId: string): NotificationPrefs | null {
 	if (value === null || value === undefined) return null
 	const parsed = notificationPrefsSchema.safeParse(value)
-	return parsed.success ? parsed.data : null
+	if (parsed.success) return parsed.data
+	logger.warn('Notification prefs schema mismatch', {
+		actorId,
+		issues: parsed.error.issues,
+	})
+	return null
 }
 
 // Strip secrets and reshape an `actors` row to the wire schema (snake_case keys,
@@ -33,7 +42,7 @@ export function serializeActor(actor: ActorRow): z.infer<typeof actorResponseSch
 		description: serialized.description,
 		bio: serialized.bio,
 		avatar_storage_key: serialized.avatarStorageKey,
-		notification_prefs: reshapeNotificationPrefs(serialized.notificationPrefs),
+		notification_prefs: reshapeNotificationPrefs(serialized.notificationPrefs, serialized.id),
 		pending_email: serialized.pendingEmail,
 		system_prompt: serialized.systemPrompt,
 		tools: serialized.tools as JsonbField,
