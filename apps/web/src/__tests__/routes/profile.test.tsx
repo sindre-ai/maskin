@@ -60,6 +60,12 @@ function buildActor(overrides: Partial<ActorResponse> = {}): ActorResponse {
 		email: 'alice@example.com',
 		description: null,
 		bio: null,
+		notification_prefs: {
+			mentions: true,
+			subscribed: true,
+			betStatusChanges: true,
+			weeklyDigest: false,
+		},
 		isSystem: false,
 		system_prompt: null,
 		tools: null,
@@ -202,5 +208,100 @@ describe('ProfilePage — Display name + Bio rows', () => {
 		await new Promise((r) => setTimeout(r, 800))
 		expect(mockUpdate).not.toHaveBeenCalled()
 		expect(trackEventSpy).not.toHaveBeenCalledWith('profile.field_changed', expect.any(Object))
+	})
+})
+
+describe('ProfilePage — Notification preference switches', () => {
+	it('renders one switch per preference key, reflecting the actor`s saved values', () => {
+		renderPage(
+			buildActor({
+				notification_prefs: {
+					mentions: false,
+					subscribed: true,
+					betStatusChanges: false,
+					weeklyDigest: true,
+				},
+			}),
+		)
+		expect(screen.getByRole('switch', { name: 'Mentions and replies' })).not.toBeChecked()
+		expect(screen.getByRole('switch', { name: 'Subscribed objects' })).toBeChecked()
+		expect(screen.getByRole('switch', { name: 'Bet status changes' })).not.toBeChecked()
+		expect(screen.getByRole('switch', { name: 'Weekly digest' })).toBeChecked()
+	})
+
+	it('falls back to schema defaults when notification_prefs is null', () => {
+		renderPage(buildActor({ notification_prefs: null }))
+		expect(screen.getByRole('switch', { name: 'Mentions and replies' })).toBeChecked()
+		expect(screen.getByRole('switch', { name: 'Subscribed objects' })).toBeChecked()
+		expect(screen.getByRole('switch', { name: 'Bet status changes' })).toBeChecked()
+		expect(screen.getByRole('switch', { name: 'Weekly digest' })).not.toBeChecked()
+	})
+
+	it('persists a toggle via PATCH /actors and fires telemetry with field=notification_prefs', async () => {
+		mockUpdate.mockResolvedValue(buildActor())
+		renderPage()
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Weekly digest' }))
+
+		await waitFor(() =>
+			expect(mockUpdate).toHaveBeenCalledWith('actor-1', {
+				notification_prefs: {
+					mentions: true,
+					subscribed: true,
+					betStatusChanges: true,
+					weeklyDigest: true,
+				},
+			}),
+		)
+		await waitFor(() =>
+			expect(trackEventSpy).toHaveBeenCalledWith('profile.field_changed', {
+				field: 'notification_prefs',
+			}),
+		)
+	})
+
+	it('writes the optimistic merged prefs into the actor cache before the network resolves', async () => {
+		let resolveUpdate: (value: ActorResponse) => void = () => {}
+		mockUpdate.mockImplementation(
+			() =>
+				new Promise<ActorResponse>((resolve) => {
+					resolveUpdate = resolve
+				}),
+		)
+		renderPage()
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Mentions and replies' }))
+
+		await waitFor(() => {
+			const cached = queryClient.getQueryData<ActorResponse>([
+				'actors',
+				'detail',
+				storedActor.id,
+			])
+			expect(cached?.notification_prefs?.mentions).toBe(false)
+		})
+
+		resolveUpdate(
+			buildActor({
+				notification_prefs: {
+					mentions: false,
+					subscribed: true,
+					betStatusChanges: true,
+					weeklyDigest: false,
+				},
+			}),
+		)
+	})
+
+	it('rolls back the cached toggle and surfaces a toast when the save fails', async () => {
+		mockUpdate.mockRejectedValue(new Error('boom'))
+		renderPage()
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Subscribed objects' }))
+
+		await waitFor(() => expect(toastErrorSpy).toHaveBeenCalled())
+
+		const cached = queryClient.getQueryData<ActorResponse>(['actors', 'detail', storedActor.id])
+		expect(cached?.notification_prefs?.subscribed).toBe(true)
 	})
 })

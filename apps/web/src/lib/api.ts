@@ -1,6 +1,6 @@
-import type { DisplaySettingsBody, SafeMetadata } from '@maskin/shared'
+import type { DisplaySettingsBody, NotificationPrefs, SafeMetadata } from '@maskin/shared'
 
-export type { DisplaySettingsBody }
+export type { DisplaySettingsBody, NotificationPrefs }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -659,6 +659,7 @@ export interface ActorListItem {
 
 export interface ActorResponse extends ActorListItem {
 	bio: string | null
+	notification_prefs: NotificationPrefs | null
 	system_prompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
@@ -700,6 +701,7 @@ export interface UpdateActorInput {
 	email?: string
 	description?: string
 	bio?: string | null
+	notification_prefs?: NotificationPrefs
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	memory?: Record<string, unknown>

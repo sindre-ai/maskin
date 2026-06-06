@@ -34,6 +34,7 @@ const agent: ActorResponse = {
 	email: null,
 	description: null,
 	bio: null,
+	notification_prefs: null,
 	system_prompt: null,
 	tools: null,
 	memory: null,

@@ -2,11 +2,12 @@ import { PasswordRow } from '@/components/profile/password-row'
 import { RouteError } from '@/components/shared/route-error'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor } from '@/hooks/use-actors'
 import { useAutoSave } from '@/hooks/use-auto-save'
 import { trackEvent } from '@/lib/analytics'
-import { type ActorResponse, type UpdateActorInput, api } from '@/lib/api'
+import { type ActorResponse, type NotificationPrefs, type UpdateActorInput, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
@@ -24,11 +25,42 @@ export const Route = createFileRoute('/_authed/$workspaceId/profile')({
 })
 
 const accountRows = ['Email']
-const notificationRows = [
-	'Mentions and replies',
-	'Subscribed objects',
-	'Bet status changes',
-	'Weekly digest',
+
+// Defaults mirror notificationPrefsSchema in packages/shared. An actor row with
+// notification_prefs=null (pre-T2 backfill) is treated as if every key were at
+// its schema default.
+const NOTIFICATION_DEFAULTS: NotificationPrefs = {
+	mentions: true,
+	subscribed: true,
+	betStatusChanges: true,
+	weeklyDigest: false,
+}
+
+const NOTIFICATION_ROWS: ReadonlyArray<{
+	key: keyof NotificationPrefs
+	label: string
+	hint: string
+}> = [
+	{
+		key: 'mentions',
+		label: 'Mentions and replies',
+		hint: 'Notify me when someone @mentions me or replies to my comment.',
+	},
+	{
+		key: 'subscribed',
+		label: 'Subscribed objects',
+		hint: 'Notify me about activity on objects I follow.',
+	},
+	{
+		key: 'betStatusChanges',
+		label: 'Bet status changes',
+		hint: 'Notify me when a bet I own moves between proposed, active, paused, or completed.',
+	},
+	{
+		key: 'weeklyDigest',
+		label: 'Weekly digest',
+		hint: 'Send me a weekly email rollup of workspace activity.',
+	},
 ]
 
 function ProfilePage() {
@@ -63,9 +95,11 @@ function ProfilePage() {
 			</Section>
 
 			<Section label="Notifications">
-				{notificationRows.map((row) => (
-					<PlaceholderRow key={row} label={row} />
-				))}
+				{actor ? (
+					<NotificationPrefsRows actor={actor} />
+				) : (
+					NOTIFICATION_ROWS.map((row) => <SkeletonRow key={row.key} label={row.label} />)
+				)}
 			</Section>
 
 			<DangerZone />
@@ -269,6 +303,67 @@ function useProfileFieldSave(actorId: string) {
 	)
 
 	return { save, isError: mutation.isError }
+}
+
+function NotificationPrefsRows({ actor }: { actor: ActorResponse }) {
+	// Send the fully merged object on each toggle: the backend partial-merges
+	// either way, but the React Query cache update in useProfileFieldSave is a
+	// shallow `{ ...prev, ...input }` — passing a partial would optimistically
+	// drop the other three keys until the network response lands.
+	const prefs = { ...NOTIFICATION_DEFAULTS, ...(actor.notification_prefs ?? {}) }
+	const { save, isError } = useProfileFieldSave(actor.id)
+
+	return (
+		<>
+			{NOTIFICATION_ROWS.map((row) => (
+				<NotificationPrefRow
+					key={row.key}
+					prefKey={row.key}
+					label={row.label}
+					hint={row.hint}
+					checked={prefs[row.key]}
+					onChange={(next) => save({ notification_prefs: { ...prefs, [row.key]: next } })}
+					isError={isError}
+				/>
+			))}
+		</>
+	)
+}
+
+function NotificationPrefRow({
+	prefKey,
+	label,
+	hint,
+	checked,
+	onChange,
+	isError,
+}: {
+	prefKey: keyof NotificationPrefs
+	label: string
+	hint: string
+	checked: boolean
+	onChange: (next: boolean) => void
+	isError: boolean
+}) {
+	return (
+		<Row
+			label={label}
+			hint={
+				isError ? (
+					<span className="text-xs text-destructive">Save failed — try again.</span>
+				) : (
+					<span>{hint}</span>
+				)
+			}
+		>
+			<Switch
+				aria-label={label}
+				data-pref-key={prefKey}
+				checked={checked}
+				onCheckedChange={onChange}
+			/>
+		</Row>
+	)
 }
 
 function DangerZone() {
