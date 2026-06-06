@@ -43,6 +43,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: vi.fn(),
+	useUploadAvatar: () => ({ mutateAsync: vi.fn(), reset: vi.fn(), isPending: false }),
 }))
 
 import { useActor } from '@/hooks/use-actors'
@@ -60,6 +61,7 @@ function buildActor(overrides: Partial<ActorResponse> = {}): ActorResponse {
 		email: 'alice@example.com',
 		description: null,
 		bio: null,
+		avatar_storage_key: null,
 		notification_prefs: {
 			mentions: true,
 			subscribed: true,
@@ -273,11 +275,7 @@ describe('ProfilePage — Notification preference switches', () => {
 		fireEvent.click(screen.getByRole('switch', { name: 'Mentions and replies' }))
 
 		await waitFor(() => {
-			const cached = queryClient.getQueryData<ActorResponse>([
-				'actors',
-				'detail',
-				storedActor.id,
-			])
+			const cached = queryClient.getQueryData<ActorResponse>(['actors', 'detail', storedActor.id])
 			expect(cached?.notification_prefs?.mentions).toBe(false)
 		})
 

@@ -154,6 +154,47 @@ function uploadFileWithProgress(
 	})
 }
 
+/**
+ * Multipart POST to /actors/:id/avatar. fetch handles multipart bodies natively,
+ * but the actor-avatar route diverges from /files: it takes a single `file` form
+ * field and runs magic-byte + mime + size validation server-side. No upload
+ * progress because avatars cap at 5MB — a progress bar would flash by.
+ */
+async function uploadAvatarMultipart(actorId: string, file: File): Promise<ActorResponse> {
+	const apiKey = getApiKey()
+	const formData = new FormData()
+	formData.append('file', file)
+	const headers: Record<string, string> = {}
+	if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+	const res = await fetch(`${API_BASE}/actors/${actorId}/avatar`, {
+		method: 'POST',
+		headers,
+		body: formData,
+	})
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({ error: res.statusText }))
+		let fieldErrors: Record<string, string[]> | undefined
+		let message: string
+		if (typeof data.error === 'object' && data.error?.code) {
+			message = data.error.message
+			if (Array.isArray(data.error.details)) {
+				fieldErrors = {}
+				for (const d of data.error.details) {
+					const field = d.field || '_root'
+					if (!fieldErrors[field]) fieldErrors[field] = []
+					fieldErrors[field].push(d.message)
+				}
+			}
+		} else if (typeof data.error === 'string') {
+			message = data.error
+		} else {
+			message = data.error?.message || res.statusText
+		}
+		throw new ApiError(res.status, message, fieldErrors)
+	}
+	return res.json()
+}
+
 // Objects
 export const api = {
 	objects: {
@@ -211,6 +252,7 @@ export const api = {
 			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
+		uploadAvatar: (id: string, file: File) => uploadAvatarMultipart(id, file),
 	},
 
 	workspaces: {
@@ -659,6 +701,7 @@ export interface ActorListItem {
 
 export interface ActorResponse extends ActorListItem {
 	bio: string | null
+	avatar_storage_key: string | null
 	notification_prefs: NotificationPrefs | null
 	system_prompt: string | null
 	tools: Record<string, unknown> | null

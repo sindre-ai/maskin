@@ -8,11 +8,16 @@ export function ActorAvatar({
 }: {
 	name: string
 	type: string
-	size?: 'sm' | 'md'
+	size?: 'sm' | 'md' | 'lg'
 	className?: string
 }) {
 	const isAgent = type === 'agent'
-	const sizeClasses = size === 'sm' ? 'h-5 w-5 text-[10px]' : 'h-7 w-7 text-xs'
+	const sizeClasses =
+		size === 'sm'
+			? 'h-5 w-5 text-[10px]'
+			: size === 'md'
+				? 'h-7 w-7 text-xs'
+				: 'h-12 w-12 text-base'
 
 	return (
 		<span

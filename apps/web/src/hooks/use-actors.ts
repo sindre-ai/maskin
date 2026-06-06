@@ -64,6 +64,17 @@ export function useDeleteActor(workspaceId: string) {
 	})
 }
 
+export function useUploadAvatar(actorId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (file: File) => api.actors.uploadAvatar(actorId, file),
+		onSuccess: (updated) => {
+			queryClient.setQueryData(queryKeys.actors.detail(actorId), updated)
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
+		},
+	})
+}
+
 export function useResetActor(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

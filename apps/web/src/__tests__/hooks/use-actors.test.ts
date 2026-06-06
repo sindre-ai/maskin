@@ -53,6 +53,7 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		email: null,
 		description: null,
 		bio: null,
+		avatar_storage_key: null,
 		notification_prefs: null,
 		system_prompt: null,
 		tools: null,
