@@ -1,6 +1,7 @@
+import { useMutation } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback } from 'react'
-import { type CreateActorInput, type LoginInput, api } from '../lib/api'
+import { type ChangePasswordInput, type CreateActorInput, type LoginInput, api } from '../lib/api'
 import {
 	clearAuth,
 	getApiKey,
@@ -58,4 +59,16 @@ export function useAuth() {
 		signup,
 		logout,
 	}
+}
+
+// Rotates the API key on success so the current tab keeps a working session.
+// Per T1 contract: changing the password rotates the only credential — the
+// response contains the new api_key and we swap it in immediately.
+export function useChangePassword() {
+	return useMutation({
+		mutationFn: (data: ChangePasswordInput) => api.auth.changePassword(data),
+		onSuccess: (result) => {
+			setApiKey(result.api_key)
+		},
+	})
 }

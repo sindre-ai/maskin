@@ -1,3 +1,4 @@
+import { PasswordRow } from '@/components/profile/password-row'
 import { RouteError } from '@/components/shared/route-error'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -22,7 +23,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/profile')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const accountRows = ['Email', 'Password']
+const accountRows = ['Email']
 const notificationRows = [
 	'Mentions and replies',
 	'Subscribed objects',
@@ -58,6 +59,7 @@ function ProfilePage() {
 				{accountRows.map((row) => (
 					<PlaceholderRow key={row} label={row} />
 				))}
+				<PasswordRow />
 			</Section>
 
 			<Section label="Notifications">

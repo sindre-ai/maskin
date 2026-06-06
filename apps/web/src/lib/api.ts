@@ -190,6 +190,8 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+		changePassword: (data: ChangePasswordInput) =>
+			request<ActorWithKey>('/auth/password', { method: 'POST', body: data }),
 	},
 
 	actors: {
@@ -673,6 +675,11 @@ export interface ActorWithKey extends ActorResponse {
 export interface LoginInput {
 	email: string
 	password: string
+}
+
+export interface ChangePasswordInput {
+	current_password: string
+	new_password: string
 }
 
 export interface CreateActorInput {
