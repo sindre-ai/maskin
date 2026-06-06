@@ -69,7 +69,7 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 	if (usageQuery.isLoading) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Maskin Subscription</Label>
+				<Label className="mb-1 font-bold">Maskin Subscription</Label>
 				<p className="text-xs text-muted-foreground">Loading…</p>
 			</div>
 		)
@@ -78,7 +78,7 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 	if (usageQuery.isError || !usageQuery.data) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Maskin Subscription</Label>
+				<Label className="mb-1 font-bold">Maskin Subscription</Label>
 				<p className="text-xs text-error">
 					{usageQuery.error?.message ?? 'Could not load subscription state.'}
 				</p>
@@ -91,13 +91,15 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 	const isByo = usage.plan === 'byollm'
 	const isPaid = usage.plan === 'starter' || usage.plan === 'pro'
 	const isTrial = usage.plan === 'trial'
+	const needsPaymentFix = isPaid && (usage.status === 'past_due' || usage.status === 'incomplete')
+	const showUpgrades = isTrial || (!needsPaymentFix && usage.status !== 'active')
 	const cap = usage.hard_cap_tokens ?? 0
 	const pct = cap > 0 ? Math.min(100, Math.round((usage.tokens_used / cap) * 100)) : 0
 	const resetsIn = formatResetsIn(usage.period_resets_in_ms)
 
 	return (
 		<div>
-			<Label className="mb-1 text-bold">Maskin Subscription</Label>
+			<Label className="mb-1 font-bold">Maskin Subscription</Label>
 			<p className="text-xs text-muted-foreground mb-3">
 				Hosted LLM — pay Maskin, no API key needed. Hard-capped tokens per period so spend never
 				surprises you.
@@ -153,7 +155,14 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 				)}
 
 				<div className="flex flex-wrap items-center gap-2">
-					{(isTrial || usage.status !== 'active') && (
+					{needsPaymentFix && (
+						<Button size="sm" asChild>
+							<a href={STRIPE_BILLING_PORTAL} target="_blank" rel="noreferrer">
+								Fix payment
+							</a>
+						</Button>
+					)}
+					{showUpgrades && (
 						<>
 							<Button
 								size="sm"
