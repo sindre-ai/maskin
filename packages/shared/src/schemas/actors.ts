@@ -26,6 +26,25 @@ export const notificationPrefsSchema = z.object({
 })
 export type NotificationPrefs = z.infer<typeof notificationPrefsSchema>
 
+// Coerce a row's stored notification_prefs (JSONB, typed `unknown` after
+// serialize) into the response shape. Rows written via the PATCH path are
+// already a full NotificationPrefs object; rows from login / email-change /
+// cancel paths may still hold an empty `{}` from the column default — Zod's
+// defaults fill the missing keys so the response always advertises every flag.
+// On a safeParse failure (schema drift / corrupt JSONB) the caller's optional
+// `onMismatch` callback receives the Zod issues so it can surface them through
+// its own logger; the helper itself stays dependency-free for MCP / web reuse.
+export function reshapeNotificationPrefs(
+	value: unknown,
+	onMismatch?: (issues: z.ZodIssue[]) => void,
+): NotificationPrefs | null {
+	if (value === null || value === undefined) return null
+	const parsed = notificationPrefsSchema.safeParse(value)
+	if (parsed.success) return parsed.data
+	onMismatch?.(parsed.error.issues)
+	return null
+}
+
 export const createActorSchema = z.object({
 	id: z.string().uuid().optional(),
 	type: actorTypeSchema,
