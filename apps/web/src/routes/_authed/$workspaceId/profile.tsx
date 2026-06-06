@@ -1,3 +1,4 @@
+import { AvatarRow } from '@/components/profile/avatar-row'
 import { EmailRow } from '@/components/profile/email-row'
 import { PasswordRow } from '@/components/profile/password-row'
 import { RouteError } from '@/components/shared/route-error'
@@ -81,7 +82,7 @@ function ProfilePage() {
 			</header>
 
 			<Section label="Identity">
-				<PlaceholderRow label="Avatar" />
+				{actor ? <AvatarRow actor={actor} /> : <SkeletonRow label="Avatar" />}
 				{actor ? <DisplayNameRow actor={actor} /> : <SkeletonRow label="Display name" />}
 				{actor ? <BioRow actor={actor} /> : <SkeletonRow label="Bio" />}
 			</Section>

@@ -47,6 +47,7 @@ vi.mock('@/components/shared/route-error', () => ({
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: vi.fn(),
+	useUploadAvatar: () => ({ mutateAsync: vi.fn(), reset: vi.fn(), isPending: false }),
 }))
 
 import { useActor } from '@/hooks/use-actors'
@@ -64,6 +65,7 @@ function buildActor(overrides: Partial<ActorResponse> = {}): ActorResponse {
 		email: 'alice@example.com',
 		description: null,
 		bio: null,
+		avatar_storage_key: null,
 		notification_prefs: {
 			mentions: true,
 			subscribed: true,
