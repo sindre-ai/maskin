@@ -1,9 +1,11 @@
 import {
+	ACTOR_BIO_MAX_LENGTH,
 	COMMENT_MAX_ATTACHMENTS,
 	COMMENT_MAX_LENGTH,
 	createCommentSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
+	notificationPrefsSchema,
 	skillNameSchema,
 } from '@maskin/shared'
 import { z } from 'zod'
@@ -303,7 +305,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, and LLM config. Email cannot be changed via this tool — it requires the verified email-change flow on the web app.',
+			'Update an actor by ID. Can change name, description (short one-liner, max 80 chars), bio (longer profile blurb, max 300 chars; pass null to clear), notification_prefs (per-channel toggles: mentions, subscribed, betStatusChanges, weeklyDigest — pass a subset to patch individual flags), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, and LLM config. Email cannot be changed via this tool — it requires the verified email-change flow on the web app.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
@@ -312,6 +314,20 @@ export const tools = {
 				.max(80)
 				.optional()
 				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
+			bio: z
+				.string()
+				.max(ACTOR_BIO_MAX_LENGTH)
+				.nullable()
+				.optional()
+				.describe(
+					"Longer profile blurb shown on the user's profile page (max 300 chars). Pass null to clear.",
+				),
+			notification_prefs: notificationPrefsSchema
+				.partial()
+				.optional()
+				.describe(
+					'Per-channel notification toggles. Send only the keys you want to change — mentions, subscribed, betStatusChanges, weeklyDigest — and the backend merges them onto the stored prefs.',
+				),
 			system_prompt: z.string().optional(),
 			tools: z.record(z.unknown()).optional(),
 			memory: z.record(z.unknown()).optional(),
