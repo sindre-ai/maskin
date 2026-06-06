@@ -52,6 +52,7 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		name: 'Test Actor',
 		email: null,
 		description: null,
+		bio: null,
 		system_prompt: null,
 		tools: null,
 		memory: null,

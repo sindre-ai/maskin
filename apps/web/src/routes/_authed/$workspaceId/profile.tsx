@@ -1,17 +1,27 @@
 import { RouteError } from '@/components/shared/route-error'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { useActor } from '@/hooks/use-actors'
+import { useAutoSave } from '@/hooks/use-auto-save'
 import { trackEvent } from '@/lib/analytics'
+import { type ActorResponse, type UpdateActorInput, api } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { queryKeys } from '@/lib/query-keys'
+import { ACTOR_BIO_MAX_LENGTH } from '@maskin/shared'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/profile')({
 	component: ProfilePage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const identityRows = ['Avatar', 'Display name', 'Bio']
 const accountRows = ['Email', 'Password']
 const notificationRows = [
 	'Mentions and replies',
@@ -21,6 +31,10 @@ const notificationRows = [
 ]
 
 function ProfilePage() {
+	const stored = getStoredActor()
+	const actorId = stored?.id ?? ''
+	const { data: actor } = useActor(actorId)
+
 	useEffect(() => {
 		trackEvent('profile.viewed')
 	}, [])
@@ -34,39 +48,225 @@ function ProfilePage() {
 				</p>
 			</header>
 
-			<Section label="Identity" rows={identityRows} />
-			<Section label="Account" rows={accountRows} />
-			<Section label="Notifications" rows={notificationRows} />
+			<Section label="Identity">
+				<PlaceholderRow label="Avatar" />
+				{actor ? <DisplayNameRow actor={actor} /> : <SkeletonRow label="Display name" />}
+				{actor ? <BioRow actor={actor} /> : <SkeletonRow label="Bio" />}
+			</Section>
+
+			<Section label="Account">
+				{accountRows.map((row) => (
+					<PlaceholderRow key={row} label={row} />
+				))}
+			</Section>
+
+			<Section label="Notifications">
+				{notificationRows.map((row) => (
+					<PlaceholderRow key={row} label={row} />
+				))}
+			</Section>
+
 			<DangerZone />
 		</div>
 	)
 }
 
-function Section({ label, rows }: { label: string; rows: readonly string[] }) {
+function Section({ label, children }: { label: string; children: ReactNode }) {
 	return (
 		<section className="mt-7 first:mt-0">
 			<h2 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
 				{label}
 			</h2>
-			<div className="divide-y divide-border border-t border-border">
-				{rows.map((row) => (
-					<PlaceholderRow key={row} rowKey={row} />
-				))}
-			</div>
+			<div className="divide-y divide-border border-t border-border">{children}</div>
 		</section>
 	)
 }
 
-function PlaceholderRow({ rowKey }: { rowKey: string }) {
+function Row({
+	label,
+	children,
+	hint,
+}: {
+	label: string
+	children: ReactNode
+	hint?: ReactNode
+}) {
+	const rowKey = label.toLowerCase().replace(/\s+/g, '-')
 	return (
 		<div
-			data-row={rowKey.toLowerCase().replace(/\s+/g, '-')}
-			className="grid grid-cols-1 gap-1 py-3.5 md:grid-cols-[160px_1fr] md:items-center md:gap-4"
+			data-row={rowKey}
+			className="grid grid-cols-1 gap-1 py-3.5 md:grid-cols-[160px_1fr] md:items-start md:gap-4"
 		>
-			<div className="text-sm font-medium text-muted-foreground">{rowKey}</div>
-			<div className="text-sm italic text-muted-foreground/70">Coming soon</div>
+			<div className="pt-1 text-sm font-medium text-muted-foreground">{label}</div>
+			<div className="flex flex-col gap-1">
+				{children}
+				{hint ? <div className="text-xs text-muted-foreground/80">{hint}</div> : null}
+			</div>
 		</div>
 	)
+}
+
+function PlaceholderRow({ label }: { label: string }) {
+	return (
+		<Row label={label}>
+			<div className="pt-1 text-sm italic text-muted-foreground/70">Coming soon</div>
+		</Row>
+	)
+}
+
+function SkeletonRow({ label }: { label: string }) {
+	return (
+		<Row label={label}>
+			<div className="h-9 w-full max-w-xs animate-pulse rounded-md bg-muted/60" />
+		</Row>
+	)
+}
+
+function DisplayNameRow({ actor }: { actor: ActorResponse }) {
+	const [value, setValue] = useState(actor.name)
+	const { save, isError } = useProfileFieldSave(actor.id)
+	const trimmed = value.trim()
+	const tooLong = value.length > 80
+	const isValid = trimmed.length > 0 && !tooLong
+
+	const buildPayload = useCallback((): UpdateActorInput | null => {
+		if (!isValid || trimmed === actor.name) return null
+		return { name: trimmed }
+	}, [isValid, trimmed, actor.name])
+
+	const { showSaved } = useAutoSave({
+		isActive: true,
+		isValid,
+		buildPayload,
+		onSave: save,
+	})
+
+	return (
+		<Row
+			label="Display name"
+			hint={<SaveHint isValid={isValid} showSaved={showSaved} isError={isError} />}
+		>
+			<Input
+				aria-label="Display name"
+				value={value}
+				onChange={(e) => setValue(e.target.value)}
+				placeholder="Your name"
+				className={cn('max-w-sm', !isValid && 'border-destructive')}
+				maxLength={120}
+			/>
+			{trimmed.length === 0 ? (
+				<span className="text-xs text-destructive">Display name can't be empty.</span>
+			) : tooLong ? (
+				<span className="text-xs text-destructive">Display name is too long.</span>
+			) : null}
+		</Row>
+	)
+}
+
+function BioRow({ actor }: { actor: ActorResponse }) {
+	const initial = actor.bio ?? ''
+	const [value, setValue] = useState(initial)
+	const { save, isError } = useProfileFieldSave(actor.id)
+	const tooLong = value.length > ACTOR_BIO_MAX_LENGTH
+	const isValid = !tooLong
+
+	const buildPayload = useCallback((): UpdateActorInput | null => {
+		const next = value.length === 0 ? null : value
+		if (!isValid || next === (actor.bio ?? null)) return null
+		return { bio: next }
+	}, [isValid, value, actor.bio])
+
+	const { showSaved } = useAutoSave({
+		isActive: true,
+		isValid,
+		buildPayload,
+		onSave: save,
+	})
+
+	return (
+		<Row
+			label="Bio"
+			hint={
+				<div className="flex items-center justify-between gap-2">
+					<SaveHint isValid={isValid} showSaved={showSaved} isError={isError} />
+					<span
+						className={cn(
+							'text-xs tabular-nums text-muted-foreground/80',
+							tooLong && 'text-destructive',
+						)}
+					>
+						{value.length}/{ACTOR_BIO_MAX_LENGTH}
+					</span>
+				</div>
+			}
+		>
+			<Textarea
+				aria-label="Bio"
+				value={value}
+				onChange={(e) => setValue(e.target.value)}
+				placeholder="A short bio."
+				className={cn('min-h-[88px] max-w-xl', !isValid && 'border-destructive')}
+				autoResize
+			/>
+			{tooLong ? (
+				<span className="text-xs text-destructive">
+					Bio is over the {ACTOR_BIO_MAX_LENGTH}-character limit.
+				</span>
+			) : null}
+		</Row>
+	)
+}
+
+function SaveHint({
+	isValid,
+	showSaved,
+	isError,
+}: {
+	isValid: boolean
+	showSaved: boolean
+	isError: boolean
+}) {
+	if (!isValid) return null
+	if (isError) return <span className="text-xs text-destructive">Save failed — try again.</span>
+	if (showSaved) return <span className="text-xs text-muted-foreground">Saved</span>
+	return null
+}
+
+function useProfileFieldSave(actorId: string) {
+	const queryClient = useQueryClient()
+	const mutation = useMutation({
+		mutationFn: (input: UpdateActorInput) => api.actors.update(actorId, input),
+		onMutate: async (input) => {
+			const key = queryKeys.actors.detail(actorId)
+			await queryClient.cancelQueries({ queryKey: key })
+			const previous = queryClient.getQueryData<ActorResponse>(key)
+			if (previous) {
+				queryClient.setQueryData<ActorResponse>(key, { ...previous, ...input })
+			}
+			return { previous }
+		},
+		onError: (_err, _input, ctx) => {
+			if (ctx?.previous) {
+				queryClient.setQueryData(queryKeys.actors.detail(actorId), ctx.previous)
+			}
+			toast.error('Could not save profile change')
+		},
+		onSuccess: (_result, input) => {
+			for (const field of Object.keys(input)) {
+				trackEvent('profile.field_changed', { field })
+			}
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
+		},
+	})
+
+	const save = useCallback(
+		(payload: UpdateActorInput) => {
+			mutation.mutate(payload)
+		},
+		[mutation],
+	)
+
+	return { save, isError: mutation.isError }
 }
 
 function DangerZone() {

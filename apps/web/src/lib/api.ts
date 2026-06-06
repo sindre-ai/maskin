@@ -656,6 +656,7 @@ export interface ActorListItem {
 }
 
 export interface ActorResponse extends ActorListItem {
+	bio: string | null
 	system_prompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
@@ -691,6 +692,7 @@ export interface UpdateActorInput {
 	name?: string
 	email?: string
 	description?: string
+	bio?: string | null
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	memory?: Record<string, unknown>
