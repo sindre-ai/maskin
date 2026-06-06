@@ -305,6 +305,31 @@ describe('POST /api/billing/portal', () => {
 		expect(res.status).toBe(500)
 	})
 
+	it('returns 500 when Stripe returns a session without a url', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'starter', status: 'active', stripe_customer_id: 'cus_42' } },
+			},
+		]
+		vi.mocked(createBillingPortalSession).mockResolvedValue({
+			id: 'bps_test_no_url',
+			url: null,
+		} as unknown as Awaited<ReturnType<typeof createBillingPortalSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(500)
+	})
+
 	it('returns 400 for a malformed return_url', async () => {
 		const { app } = createTestApp(billingRoutes, '/api/billing')
 		const res = await app.request(
