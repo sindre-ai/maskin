@@ -816,6 +816,63 @@ describe('Profile — POST /api/auth/email-change/cancel', () => {
 		expect(updatePayload.pendingEmailToken).toBeNull()
 		expect(updatePayload.pendingEmailExpiresAt).toBeNull()
 	})
+
+	it('returns a notification_prefs object with every flag filled even when the column was the default empty object', async () => {
+		const actor = buildActor({
+			type: 'human',
+			notificationPrefs: {},
+			pendingEmail: 'new@x.com',
+			pendingEmailToken: 'token123',
+		})
+		const { app, mockResults } = createTestApp(authRoutes, '/api/auth', actor.id)
+		mockResults.update = [
+			{ ...actor, notificationPrefs: {}, pendingEmail: null, pendingEmailToken: null },
+		]
+
+		const res = await app.request(jsonRequest('POST', '/api/auth/email-change/cancel', {}))
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.notification_prefs).toEqual({
+			mentions: true,
+			subscribed: true,
+			betStatusChanges: true,
+			weeklyDigest: false,
+		})
+	})
+})
+
+describe('Profile — POST /api/auth/login', () => {
+	beforeEach(() => {
+		mockVerifyPassword.mockReset()
+	})
+
+	it('returns a notification_prefs object with every flag filled even when the column was the default empty object', async () => {
+		const actor = buildActor({
+			type: 'human',
+			passwordHash: 'hashed-password',
+			notificationPrefs: {},
+		})
+		const { app, mockResults } = createTestApp(authRoutes, '/api/auth')
+		mockResults.select = [actor]
+		mockVerifyPassword.mockResolvedValue(true)
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/auth/login', {
+				email: actor.email,
+				password: 'correct-password',
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.notification_prefs).toEqual({
+			mentions: true,
+			subscribed: true,
+			betStatusChanges: true,
+			weeklyDigest: false,
+		})
+	})
 })
 
 afterEach(() => {
