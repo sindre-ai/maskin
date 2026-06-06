@@ -1,9 +1,5 @@
 import { z } from '@hono/zod-openapi'
-import {
-	actorListItemSchema,
-	notificationPrefsSchema,
-	triggerResponseSchema,
-} from '@maskin/shared'
+import { actorListItemSchema, notificationPrefsSchema, triggerResponseSchema } from '@maskin/shared'
 import { apiErrorSchema } from './errors'
 
 // Re-exported so existing route handlers keep their `from '../lib/openapi-schemas'`
