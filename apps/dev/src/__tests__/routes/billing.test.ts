@@ -234,11 +234,11 @@ describe('GET /api/billing/usage', () => {
 					},
 				},
 			],
-			[
-				{ inputTokens: 1000, outputTokens: 200 },
-				{ inputTokens: 5000, outputTokens: 800 },
-				{ inputTokens: null, outputTokens: 50 },
-			],
+			// SQL SUM aggregate now returns a single row — the route reads
+			// `row.total` and Number()-coerces. 7050 = (1000+200)+(5000+800)+
+			// (0+50), matching the pre-aggregate per-row mock that summed
+			// (1000+200), (5000+800), and (null→0, 50) in JS.
+			[{ total: 7050 }],
 		]
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))

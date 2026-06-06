@@ -120,6 +120,15 @@ app.openapi(usageRoute, async (c) => {
 	}
 
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	if (!parsed.success) {
+		// Falling back to undefined billing treats the workspace as trial silently,
+		// which hides genuine settings corruption. Surface it so we can find the
+		// row before a user wonders why their paid plan looks like a trial.
+		logger.warn('Malformed workspace billing settings', {
+			workspaceId,
+			issues: parsed.error.issues,
+		})
+	}
 	const billing = parsed.success ? parsed.data.billing : undefined
 
 	// No billing row → workspace is on trial. Window starts whenever sessions
@@ -149,10 +158,16 @@ app.openapi(usageRoute, async (c) => {
 	let tokensUsed = 0
 	if (plan !== 'byollm') {
 		const since = new Date(periodStartMs)
-		const rows = await db
+		// Aggregate in SQL — the previous row-scan pulled every maskin_plan
+		// session of the period into JS to sum two columns, and this endpoint
+		// fires every 30s per open Settings tab. The partial index
+		// `sessions_maskin_plan_period_idx` (drizzle 0026) covers the WHERE.
+		// `SUM(...)` over no rows is NULL in Postgres, so COALESCE keeps the
+		// return numeric. Drivers may surface SUM as string|number depending on
+		// the column type; Number() normalises.
+		const [row] = await db
 			.select({
-				inputTokens: sessions.inputTokens,
-				outputTokens: sessions.outputTokens,
+				total: sql<number>`COALESCE(SUM(COALESCE(${sessions.inputTokens}, 0) + COALESCE(${sessions.outputTokens}, 0)), 0)`,
 			})
 			.from(sessions)
 			.where(
@@ -162,10 +177,7 @@ app.openapi(usageRoute, async (c) => {
 					sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
 				),
 			)
-		for (const row of rows) {
-			tokensUsed += row.inputTokens ?? 0
-			tokensUsed += row.outputTokens ?? 0
-		}
+		tokensUsed = Number(row?.total ?? 0)
 	}
 
 	const resetsIn = Math.max(0, periodEndMs - Date.now())
