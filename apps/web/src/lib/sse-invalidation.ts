@@ -1,6 +1,13 @@
 import type { QueryClient } from '@tanstack/react-query'
+import { trackAgentSessionCompleted, trackTriggerFired } from './analytics'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
+
+const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'timeout'>([
+	['session_completed', 'completed'],
+	['session_failed', 'failed'],
+	['session_timeout', 'timeout'],
+])
 
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
 	// Always invalidate events history
@@ -41,11 +48,28 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'trigger':
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			if (event.action === 'trigger_fired') {
+				trackTriggerFired({
+					entity_id: event.entity_id,
+					entity_type: 'trigger',
+					flow_id: event.event_id ?? null,
+				})
+			}
 			break
-		case 'session':
+		case 'session': {
 			// Broad prefix invalidation covers all session queries including byActor
 			queryClient.invalidateQueries({ queryKey: ['sessions'] })
+			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
+			if (outcome) {
+				trackAgentSessionCompleted({
+					entity_id: event.entity_id,
+					entity_type: 'session',
+					outcome,
+					flow_id: event.event_id ?? null,
+				})
+			}
 			break
+		}
 		case 'notification':
 			queryClient.invalidateQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
 			break

@@ -84,6 +84,8 @@ export const verifyEmailChangeSchema = z.object({
 // Field naming must match the corresponding write-schema keys so that agents doing
 // read-modify-write via MCP can pass response fields straight back into update_actor
 // without Zod silently stripping camelCase keys.
+const jsonbObject = z.record(z.string(), z.unknown()).nullable()
+
 export const actorResponseSchema = z.object({
 	id: z.string().uuid(),
 	type: z.string(),
@@ -95,13 +97,33 @@ export const actorResponseSchema = z.object({
 	notification_prefs: notificationPrefsSchema.nullable(),
 	pending_email: z.string().nullable(),
 	system_prompt: z.string().nullable(),
-	tools: z.unknown().nullable(),
-	memory: z.unknown().nullable(),
+	tools: jsonbObject,
+	memory: jsonbObject,
 	llm_provider: z.string().nullable(),
-	llm_config: z.unknown().nullable(),
+	llm_config: jsonbObject,
 	isSystem: z.boolean(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>
+
+// Compact actor row used by list endpoints (`GET /api/actors`,
+// `GET /api/objects/:id/actors`). The optional `role` and `workspaces` fields
+// are populated when the row comes from a workspace-members join — agent code
+// downstream of the MCP server reads `role`, so renaming or dropping it here
+// would silently null out the heroCard owner pill without a compile error.
+export const actorListItemSchema = z.object({
+	id: z.string().uuid(),
+	type: z.string(),
+	name: z.string(),
+	email: z.string().nullable(),
+	description: z.string().nullable(),
+	isSystem: z.boolean(),
+	role: z.string().optional(),
+	workspaces: z
+		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
+		.optional(),
+})
+
+export type ActorListItem = z.infer<typeof actorListItemSchema>

@@ -303,6 +303,36 @@ describe('Objects Routes', () => {
 		})
 	})
 
+	describe('GET /api/objects/board', () => {
+		it('returns column totals and paged objects', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
+			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[ws],
+				[
+					{ value: 'todo', total: 3 },
+					{ value: 'in_progress', total: 1 },
+				],
+				[obj1, obj2],
+				[],
+				[],
+				[],
+			]
+
+			const res = await app.request(
+				jsonGet('/api/objects/board?type=task&limit=2', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const todo = body.columns.find((column: { value: string }) => column.value === 'todo')
+			expect(todo.total).toBe(3)
+			expect(todo.objects).toHaveLength(2)
+		})
+	})
+
 	describe('GET /api/objects/:id/graph', () => {
 		it('returns 200 with object, relationships, connected objects, and events', async () => {
 			const obj = buildObject({ workspaceId: wsId, type: 'bet' })

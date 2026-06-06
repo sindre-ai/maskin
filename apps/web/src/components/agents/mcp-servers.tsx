@@ -41,12 +41,6 @@ interface McpServersProps {
 }
 
 const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
-	github: {
-		type: 'stdio',
-		command: 'npx',
-		args: ['-y', '@modelcontextprotocol/server-github'],
-		env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
-	},
 	linear: {
 		type: 'http',
 		url: 'https://mcp.linear.app/mcp',
@@ -62,6 +56,11 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		type: 'http',
 		url: 'https://gmailmcp.googleapis.com/mcp/v1',
 		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
+	},
+	posthog: {
+		type: 'http',
+		url: 'https://mcp.posthog.com/mcp',
+		headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
 	},
 }
 

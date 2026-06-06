@@ -97,9 +97,27 @@ describe('McpServers', () => {
 
 	it('does not show quick-add for integration already added as server', () => {
 		mockIntegrations.mockReturnValue([
+			buildIntegrationResponse({ provider: 'slack', status: 'active' }),
+		])
+		const slackTools = {
+			mcpServers: {
+				slack: {
+					type: 'stdio',
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-slack'],
+					env: { SLACK_BOT_TOKEN: 'tok' },
+				},
+			},
+		}
+		render(<McpServers tools={slackTools} onUpdate={vi.fn()} />)
+		expect(screen.queryByRole('button', { name: /Add slack/ })).not.toBeInTheDocument()
+	})
+
+	it('does not surface a quick-add for github (per-installation MCP entries are session-injected)', () => {
+		mockIntegrations.mockReturnValue([
 			buildIntegrationResponse({ provider: 'github', status: 'active' }),
 		])
-		render(<McpServers tools={stdioTools} onUpdate={vi.fn()} />)
+		render(<McpServers tools={null} onUpdate={vi.fn()} />)
 		expect(screen.queryByRole('button', { name: /Add github/ })).not.toBeInTheDocument()
 	})
 
