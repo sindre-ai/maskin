@@ -192,6 +192,9 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 		changePassword: (data: ChangePasswordInput) =>
 			request<ActorWithKey>('/auth/password', { method: 'POST', body: data }),
+		requestEmailChange: (data: RequestEmailChangeInput) =>
+			request<ActorWithKey>('/auth/email-change', { method: 'POST', body: data }),
+		cancelEmailChange: () => request<ActorWithKey>('/auth/email-change/cancel', { method: 'POST' }),
 	},
 
 	actors: {
@@ -660,6 +663,7 @@ export interface ActorListItem {
 export interface ActorResponse extends ActorListItem {
 	bio: string | null
 	notification_prefs: NotificationPrefs | null
+	pending_email: string | null
 	system_prompt: string | null
 	tools: Record<string, unknown> | null
 	memory: Record<string, unknown> | null
@@ -681,6 +685,11 @@ export interface LoginInput {
 export interface ChangePasswordInput {
 	current_password: string
 	new_password: string
+}
+
+export interface RequestEmailChangeInput {
+	new_email: string
+	current_password: string
 }
 
 export interface CreateActorInput {

@@ -1,7 +1,13 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback } from 'react'
-import { type ChangePasswordInput, type CreateActorInput, type LoginInput, api } from '../lib/api'
+import {
+	type ChangePasswordInput,
+	type CreateActorInput,
+	type LoginInput,
+	type RequestEmailChangeInput,
+	api,
+} from '../lib/api'
 import {
 	clearAuth,
 	getApiKey,
@@ -10,6 +16,7 @@ import {
 	setApiKey,
 	setStoredActor,
 } from '../lib/auth'
+import { queryKeys } from '../lib/query-keys'
 
 export function useAuth() {
 	const navigate = useNavigate()
@@ -69,6 +76,34 @@ export function useChangePassword() {
 		mutationFn: (data: ChangePasswordInput) => api.auth.changePassword(data),
 		onSuccess: (result) => {
 			setApiKey(result.api_key)
+		},
+	})
+}
+
+// Asks the backend to mint a verification token for `new_email`. The actor's
+// `pending_email` flips to the target on success; the persistent banner in
+// the profile page reads off that field and stays until verify or cancel
+// clears it. We invalidate the cached actor so the banner appears immediately
+// without waiting for an SSE refresh.
+export function useRequestEmailChange(actorId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: RequestEmailChangeInput) => api.auth.requestEmailChange(data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
+		},
+	})
+}
+
+// Clears `pending_email` for the authenticated user. Used by the Cancel
+// action on the verification banner. No body — the backend uses the auth'd
+// actor id.
+export function useCancelEmailChange(actorId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: () => api.auth.cancelEmailChange(),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
 		},
 	})
 }

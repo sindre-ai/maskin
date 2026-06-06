@@ -54,6 +54,7 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		description: null,
 		bio: null,
 		notification_prefs: null,
+		pending_email: null,
 		system_prompt: null,
 		tools: null,
 		memory: null,

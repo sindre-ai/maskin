@@ -1,3 +1,4 @@
+import { EmailRow } from '@/components/profile/email-row'
 import { PasswordRow } from '@/components/profile/password-row'
 import { RouteError } from '@/components/shared/route-error'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -23,8 +24,6 @@ export const Route = createFileRoute('/_authed/$workspaceId/profile')({
 	component: ProfilePage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
-
-const accountRows = ['Email']
 
 // Defaults mirror notificationPrefsSchema in packages/shared. An actor row with
 // notification_prefs=null (pre-T2 backfill) is treated as if every key were at
@@ -88,9 +87,7 @@ function ProfilePage() {
 			</Section>
 
 			<Section label="Account">
-				{accountRows.map((row) => (
-					<PlaceholderRow key={row} label={row} />
-				))}
+				{actor ? <EmailRow actor={actor} /> : <SkeletonRow label="Email" />}
 				<PasswordRow />
 			</Section>
 

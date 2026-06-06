@@ -22,6 +22,10 @@ vi.mock('@/lib/api', () => ({
 			get: vi.fn(),
 			update: (...args: unknown[]) => mockUpdate(...args),
 		},
+		auth: {
+			requestEmailChange: vi.fn(),
+			cancelEmailChange: vi.fn(),
+		},
 	},
 }))
 
@@ -34,7 +38,7 @@ vi.mock('@/lib/analytics', () => ({
 }))
 
 vi.mock('sonner', () => ({
-	toast: { error: (...args: unknown[]) => toastErrorSpy(...args) },
+	toast: { error: (...args: unknown[]) => toastErrorSpy(...args), success: vi.fn() },
 }))
 
 vi.mock('@/components/shared/route-error', () => ({
@@ -66,6 +70,7 @@ function buildActor(overrides: Partial<ActorResponse> = {}): ActorResponse {
 			betStatusChanges: true,
 			weeklyDigest: false,
 		},
+		pending_email: null,
 		isSystem: false,
 		system_prompt: null,
 		tools: null,
@@ -273,11 +278,7 @@ describe('ProfilePage — Notification preference switches', () => {
 		fireEvent.click(screen.getByRole('switch', { name: 'Mentions and replies' }))
 
 		await waitFor(() => {
-			const cached = queryClient.getQueryData<ActorResponse>([
-				'actors',
-				'detail',
-				storedActor.id,
-			])
+			const cached = queryClient.getQueryData<ActorResponse>(['actors', 'detail', storedActor.id])
 			expect(cached?.notification_prefs?.mentions).toBe(false)
 		})
 
@@ -303,5 +304,26 @@ describe('ProfilePage — Notification preference switches', () => {
 
 		const cached = queryClient.getQueryData<ActorResponse>(['actors', 'detail', storedActor.id])
 		expect(cached?.notification_prefs?.subscribed).toBe(true)
+	})
+})
+
+describe('ProfilePage — Email row + verification banner', () => {
+	it('renders the actor email and a Change button', () => {
+		renderPage()
+		expect(screen.getByText('alice@example.com')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /change email/i })).toBeInTheDocument()
+	})
+
+	it('does not render the verification banner when pending_email is null', () => {
+		renderPage()
+		expect(screen.queryByText(/verify your new email/i)).not.toBeInTheDocument()
+	})
+
+	it('renders the verification banner with the pending address when pending_email is set', () => {
+		renderPage(buildActor({ pending_email: 'new@example.com' }))
+		expect(screen.getByText(/verify your new email/i)).toBeInTheDocument()
+		expect(screen.getByText('new@example.com')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /resend verification email/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /cancel email change/i })).toBeInTheDocument()
 	})
 })
