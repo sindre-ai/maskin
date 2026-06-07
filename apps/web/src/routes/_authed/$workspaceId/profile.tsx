@@ -1,7 +1,9 @@
 import { AvatarRow } from '@/components/profile/avatar-row'
+import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { EmailRow } from '@/components/profile/email-row'
 import { PasswordRow } from '@/components/profile/password-row'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -13,6 +15,7 @@ import { type ActorResponse, type NotificationPrefs, type UpdateActorInput, api 
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
+import { useWorkspace } from '@/lib/workspace-context'
 import { ACTOR_BIO_MAX_LENGTH } from '@maskin/shared'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -100,7 +103,7 @@ function ProfilePage() {
 				)}
 			</Section>
 
-			<DangerZone />
+			{actor ? <DangerZone actor={actor} /> : null}
 		</div>
 	)
 }
@@ -364,8 +367,10 @@ function NotificationPrefRow({
 	)
 }
 
-function DangerZone() {
+function DangerZone({ actor }: { actor: ActorResponse }) {
 	const [open, setOpen] = useState(false)
+	const [dialogOpen, setDialogOpen] = useState(false)
+	const { workspaceId } = useWorkspace()
 	return (
 		<Collapsible open={open} onOpenChange={setOpen} className="mt-12">
 			<div className="overflow-hidden rounded-lg border border-border">
@@ -380,10 +385,30 @@ function DangerZone() {
 						className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-90')}
 					/>
 				</CollapsibleTrigger>
-				<CollapsibleContent className="px-4 pb-4 text-sm italic text-muted-foreground/70">
-					Coming soon
+				<CollapsibleContent
+					data-row="delete-account"
+					className="flex flex-col gap-3 px-4 pb-4 sm:flex-row sm:items-center sm:justify-between"
+				>
+					<p className="text-sm text-muted-foreground">
+						Permanently delete your account, profile, API keys, and any workspaces you solely own.
+					</p>
+					<Button
+						type="button"
+						variant="destructive"
+						size="sm"
+						onClick={() => setDialogOpen(true)}
+						aria-label="Delete account…"
+					>
+						Delete account…
+					</Button>
 				</CollapsibleContent>
 			</div>
+			<DeleteAccountDialog
+				open={dialogOpen}
+				onOpenChange={setDialogOpen}
+				actorId={actor.id}
+				workspaceId={workspaceId}
+			/>
 		</Collapsible>
 	)
 }

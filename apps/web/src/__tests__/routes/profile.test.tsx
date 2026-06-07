@@ -50,6 +50,10 @@ vi.mock('@/hooks/use-actors', () => ({
 	useUploadAvatar: () => ({ mutateAsync: vi.fn(), reset: vi.fn(), isPending: false }),
 }))
 
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
+
 import { useActor } from '@/hooks/use-actors'
 import { Route } from '@/routes/_authed/$workspaceId/profile'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
