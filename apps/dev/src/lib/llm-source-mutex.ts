@@ -129,11 +129,10 @@ export function billingAfterByoTransition(
 export function settingsAfterPaidPlanActivation(
 	settings: Record<string, unknown>,
 ): Record<string, unknown> {
-	const next: Record<string, unknown> = { ...settings }
-	delete next.custom_llm
-	delete next.claude_oauth
-	if (next.llm_keys && typeof next.llm_keys === 'object') {
-		const { anthropic: _, ...siblingKeys } = next.llm_keys as Record<string, unknown>
+	const { custom_llm: _customLlm, claude_oauth: _claudeOauth, llm_keys, ...rest } = settings
+	const next: Record<string, unknown> = { ...rest }
+	if (llm_keys && typeof llm_keys === 'object') {
+		const { anthropic: _anthropic, ...siblingKeys } = llm_keys as Record<string, unknown>
 		next.llm_keys = siblingKeys
 	}
 	return next

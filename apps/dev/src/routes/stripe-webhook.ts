@@ -241,9 +241,7 @@ async function applyEvent(
 						? session.subscription
 						: (session.subscription?.id ?? null)
 				const customerId =
-					typeof session.customer === 'string'
-						? session.customer
-						: (session.customer?.id ?? null)
+					typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null)
 				next = {
 					...next,
 					stripe_customer_id: customerId ?? next.stripe_customer_id,
