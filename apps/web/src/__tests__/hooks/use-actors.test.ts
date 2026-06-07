@@ -30,6 +30,7 @@ import {
 } from '@/hooks/use-actors'
 import type { ActorListItem, ActorResponse, ActorWithKey } from '@/lib/api'
 import { api } from '@/lib/api'
+import { notificationPrefsSchema } from '@maskin/shared'
 import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
@@ -54,7 +55,7 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		description: null,
 		bio: null,
 		avatar_storage_key: null,
-		notification_prefs: null,
+		notification_prefs: notificationPrefsSchema.parse({}),
 		pending_email: null,
 		system_prompt: null,
 		tools: null,

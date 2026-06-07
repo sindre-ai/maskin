@@ -240,14 +240,6 @@ describe('ProfilePage — Notification preference switches', () => {
 		expect(screen.getByRole('switch', { name: 'Weekly digest' })).toBeChecked()
 	})
 
-	it('falls back to schema defaults when notification_prefs is null', () => {
-		renderPage(buildActor({ notification_prefs: null }))
-		expect(screen.getByRole('switch', { name: 'Mentions and replies' })).toBeChecked()
-		expect(screen.getByRole('switch', { name: 'Subscribed objects' })).toBeChecked()
-		expect(screen.getByRole('switch', { name: 'Bet status changes' })).toBeChecked()
-		expect(screen.getByRole('switch', { name: 'Weekly digest' })).not.toBeChecked()
-	})
-
 	it('persists a toggle via PATCH /actors and fires telemetry with field=notification_prefs', async () => {
 		mockUpdate.mockResolvedValue(buildActor())
 		renderPage()
@@ -285,7 +277,7 @@ describe('ProfilePage — Notification preference switches', () => {
 
 		await waitFor(() => {
 			const cached = queryClient.getQueryData<ActorResponse>(['actors', 'detail', storedActor.id])
-			expect(cached?.notification_prefs?.mentions).toBe(false)
+			expect(cached?.notification_prefs.mentions).toBe(false)
 		})
 
 		resolveUpdate(
@@ -309,7 +301,7 @@ describe('ProfilePage — Notification preference switches', () => {
 		await waitFor(() => expect(toastErrorSpy).toHaveBeenCalled())
 
 		const cached = queryClient.getQueryData<ActorResponse>(['actors', 'detail', storedActor.id])
-		expect(cached?.notification_prefs?.subscribed).toBe(true)
+		expect(cached?.notification_prefs.subscribed).toBe(true)
 	})
 
 	it('describes each switch by its hint id, then swaps to the error id when the save fails', async () => {

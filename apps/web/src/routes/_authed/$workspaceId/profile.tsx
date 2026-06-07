@@ -16,7 +16,7 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
-import { ACTOR_BIO_MAX_LENGTH } from '@maskin/shared'
+import { ACTOR_BIO_MAX_LENGTH, notificationPrefsSchema } from '@maskin/shared'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
@@ -29,15 +29,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/profile')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-// Defaults mirror notificationPrefsSchema in packages/shared. An actor row with
-// notification_prefs=null (pre-T2 backfill) is treated as if every key were at
-// its schema default.
-const NOTIFICATION_DEFAULTS: NotificationPrefs = {
-	mentions: true,
-	subscribed: true,
-	betStatusChanges: true,
-	weeklyDigest: false,
-}
+const NOTIFICATION_DEFAULTS: NotificationPrefs = notificationPrefsSchema.parse({})
 
 const NOTIFICATION_ROWS: ReadonlyArray<{
 	key: keyof NotificationPrefs
@@ -311,7 +303,7 @@ function NotificationPrefsRows({ actor }: { actor: ActorResponse }) {
 	// either way, but the React Query cache update in useProfileFieldSave is a
 	// shallow `{ ...prev, ...input }` — passing a partial would optimistically
 	// drop the other three keys until the network response lands.
-	const prefs = { ...NOTIFICATION_DEFAULTS, ...(actor.notification_prefs ?? {}) }
+	const prefs = { ...NOTIFICATION_DEFAULTS, ...actor.notification_prefs }
 	const { save, isError } = useProfileFieldSave(actor.id)
 
 	return (

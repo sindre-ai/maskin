@@ -719,7 +719,7 @@ export interface MigrateObjectTypeResponse {
 export interface ActorResponse extends ActorListItem {
 	bio: string | null
 	avatar_storage_key: string | null
-	notification_prefs: NotificationPrefs | null
+	notification_prefs: NotificationPrefs
 	pending_email: string | null
 	system_prompt: string | null
 	tools: Record<string, unknown> | null
