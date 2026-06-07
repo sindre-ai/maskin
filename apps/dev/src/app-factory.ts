@@ -13,6 +13,7 @@ import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from '.
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
+import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
@@ -26,6 +27,7 @@ import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
+import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
 import subscriptionsRoutes from './routes/subscriptions'
@@ -192,6 +194,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
+	app.route('/api/public/landing-events', publicLandingEventsRoutes)
+	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)

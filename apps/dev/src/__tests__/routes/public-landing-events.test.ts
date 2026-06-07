@@ -1,0 +1,213 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import publicLandingEventsRoutes, {
+	_resetLandingEventBuckets,
+} from '../../routes/public-landing-events'
+import { jsonRequest } from '../helpers'
+import { createTestApp } from '../setup'
+
+// Capture structured log lines. The route logs via the shared logger, which
+// writes JSON to console.log/console.error. We hijack both so we can assert
+// on the emitted log records without leaking to stdout during tests.
+let logSpy: ReturnType<typeof vi.spyOn>
+
+function capturedLogs(): Array<Record<string, unknown>> {
+	return logSpy.mock.calls
+		.map(([line]) => {
+			try {
+				return JSON.parse(String(line)) as Record<string, unknown>
+			} catch {
+				return null
+			}
+		})
+		.filter((x): x is Record<string, unknown> => x !== null)
+}
+
+describe('POST /api/public/landing-events', () => {
+	beforeEach(() => {
+		_resetLandingEventBuckets()
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('accepts a valid batch, logs one landing-event per item, returns 204', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		const events = [
+			{
+				name: 'page_view',
+				anonId: 'anon-abcd1234',
+				sessionId: 'sess-abcd1234',
+				ts: '2026-06-07T20:30:00.000Z',
+				props: { referrer: 'https://news.example' },
+			},
+			{
+				name: 'prompt_submit',
+				anonId: 'anon-abcd1234',
+				sessionId: 'sess-abcd1234',
+				props: { kind: 'text', promptChars: 142 },
+			},
+		]
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/landing-events',
+				{ events },
+				{ 'X-Forwarded-For': '1.2.3.4' },
+			),
+		)
+
+		expect(res.status).toBe(204)
+		expect(await res.text()).toBe('')
+
+		const logs = capturedLogs().filter((l) => l.msg === 'landing-event')
+		expect(logs).toHaveLength(2)
+		expect(logs[0]).toMatchObject({
+			name: 'page_view',
+			known: true,
+			anonId: 'anon-abcd1234',
+			sessionId: 'sess-abcd1234',
+			ts: '2026-06-07T20:30:00.000Z',
+			ip: '1.2.3.4',
+		})
+		expect(logs[1]).toMatchObject({ name: 'prompt_submit', known: true })
+	})
+
+	it('marks unknown event names as known=false but still logs them', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/landing-events',
+				{ events: [{ name: 'experimental_event', anonId: 'anon-aaaa1111' }] },
+				{ 'X-Forwarded-For': '5.6.7.8' },
+			),
+		)
+
+		expect(res.status).toBe(204)
+		const logs = capturedLogs().filter((l) => l.msg === 'landing-event')
+		expect(logs).toHaveLength(1)
+		expect(logs[0]).toMatchObject({ name: 'experimental_event', known: false })
+	})
+
+	it('rejects an empty events array with 400 VALIDATION_ERROR', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		const res = await app.request(jsonRequest('POST', '/api/public/landing-events', { events: [] }))
+		expect(res.status).toBe(400)
+		const body = (await res.json()) as { error: { code: string } }
+		expect(body.error.code).toBe('VALIDATION_ERROR')
+	})
+
+	it('rejects malformed JSON with 400 VALIDATION_ERROR', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		const res = await app.request(
+			new Request('http://localhost/api/public/landing-events', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: 'not-json',
+			}),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('rejects a batch with too short an anonId', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		const res = await app.request(
+			jsonRequest('POST', '/api/public/landing-events', {
+				events: [{ name: 'page_view', anonId: 'short' }],
+			}),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('caps batch size at 20 events per request', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		const events = Array.from({ length: 21 }, (_, i) => ({
+			name: 'page_view',
+			anonId: `anon-batch${String(i).padStart(4, '0')}`,
+		}))
+		const res = await app.request(jsonRequest('POST', '/api/public/landing-events', { events }))
+		expect(res.status).toBe(400)
+	})
+
+	it('truncates oversized props so log lines stay bounded', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		const huge = 'x'.repeat(5_000)
+		const res = await app.request(
+			jsonRequest('POST', '/api/public/landing-events', {
+				events: [{ name: 'page_view', anonId: 'anon-trunc01', props: { blob: huge } }],
+			}),
+		)
+		expect(res.status).toBe(204)
+		const log = capturedLogs().find((l) => l.msg === 'landing-event')
+		expect(log).toBeDefined()
+		expect(log?.props).toMatchObject({ __truncated: true })
+	})
+
+	it('throttles a flood from the same IP with 429 RATE_LIMITED', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		const ip = '10.0.0.99'
+		// Capacity is 120. Six batches of 20 drain it; the 7th call should 429.
+		for (let i = 0; i < 6; i++) {
+			const events = Array.from({ length: 20 }, (_, n) => ({
+				name: 'page_view',
+				anonId: `anon-flood${String(i)}${String(n).padStart(3, '0')}`,
+			}))
+			const ok = await app.request(
+				jsonRequest('POST', '/api/public/landing-events', { events }, { 'X-Forwarded-For': ip }),
+			)
+			expect(ok.status).toBe(204)
+		}
+		const blocked = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/landing-events',
+				{ events: [{ name: 'page_view', anonId: 'anon-overflow01' }] },
+				{ 'X-Forwarded-For': ip },
+			),
+		)
+		expect(blocked.status).toBe(429)
+		expect(blocked.headers.get('Retry-After')).toBe('60')
+		const body = (await blocked.json()) as { error: { code: string } }
+		expect(body.error.code).toBe('RATE_LIMITED')
+	})
+
+	it('isolates buckets per IP so one floods does not block another', async () => {
+		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
+		// Drain ip-A.
+		for (let i = 0; i < 6; i++) {
+			const events = Array.from({ length: 20 }, (_, n) => ({
+				name: 'page_view',
+				anonId: `anon-ipA${String(i)}${String(n).padStart(3, '0')}`,
+			}))
+			await app.request(
+				jsonRequest(
+					'POST',
+					'/api/public/landing-events',
+					{ events },
+					{ 'X-Forwarded-For': '20.0.0.1' },
+				),
+			)
+		}
+		const blockedA = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/landing-events',
+				{ events: [{ name: 'page_view', anonId: 'anon-ipA-x01' }] },
+				{ 'X-Forwarded-For': '20.0.0.1' },
+			),
+		)
+		expect(blockedA.status).toBe(429)
+		const okB = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/landing-events',
+				{ events: [{ name: 'page_view', anonId: 'anon-ipB-y01' }] },
+				{ 'X-Forwarded-For': '20.0.0.2' },
+			),
+		)
+		expect(okB.status).toBe(204)
+	})
+})
