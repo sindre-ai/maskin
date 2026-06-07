@@ -4,6 +4,7 @@ import { sessions, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
@@ -198,9 +199,28 @@ app.openapi(usageRoute, async (c) => {
 	)
 })
 
+// Stripe redirects the browser to `return_url` when the user closes the
+// Billing Portal — whatever we send is where the user lands. Constrain the
+// origin to the configured app so a session-compromised caller can't drive
+// the user out to an attacker domain on the way back from Stripe. Origin is
+// resolved lazily so tests using `vi.stubEnv('FRONTEND_URL', ...)` and the
+// dev fallback both work without route-boot ordering tricks.
 const portalBodySchema = z.object({
-	return_url: z.string().url(),
+	return_url: z
+		.string()
+		.url()
+		.refine((u) => urlMatchesAppOrigin(u), {
+			message: 'return_url origin must match FRONTEND_URL',
+		}),
 })
+
+function urlMatchesAppOrigin(rawUrl: string): boolean {
+	try {
+		return new URL(rawUrl).origin === new URL(frontendBaseUrl()).origin
+	} catch {
+		return false
+	}
+}
 
 const portalResponseSchema = z.object({
 	url: z.string().url(),

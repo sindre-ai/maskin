@@ -26,8 +26,16 @@ const VALID_ENV = {
 	MASKIN_PRO_HARD_CAP_TOKENS: '96000000',
 }
 
+// Portal `return_url` is origin-gated against FRONTEND_URL. The portal happy-
+// path fixtures all use https://app.test/* URLs, so pin the env to the same
+// origin and keep it set even when `clearEnv` drops the Stripe block — the
+// "Stripe env not configured" tests still rely on the schema accepting the
+// fixture URL before the Stripe check runs.
+const FRONTEND_URL_TEST = 'https://app.test'
+
 const setupEnv = () => {
 	for (const [k, v] of Object.entries(VALID_ENV)) process.env[k] = v
+	process.env.FRONTEND_URL = FRONTEND_URL_TEST
 }
 
 const clearEnv = () => {
@@ -341,6 +349,22 @@ describe('POST /api/billing/portal', () => {
 			),
 		)
 		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when return_url origin does not match FRONTEND_URL', async () => {
+		// FRONTEND_URL is pinned to https://app.test in beforeEach; an
+		// attacker-origin return_url must be rejected before Stripe is touched.
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://attacker.example/landing' },
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(400)
+		expect(createBillingPortalSession).not.toHaveBeenCalled()
 	})
 })
 
