@@ -4,6 +4,7 @@ import { sessions, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
@@ -198,8 +199,30 @@ app.openapi(usageRoute, async (c) => {
 	)
 })
 
+// Stripe redirects the browser to `return_url` when the user closes the
+// portal. `authMiddleware` gates the route, but a session-compromised caller
+// could otherwise drive the user through Stripe out to an attacker origin.
+// Pin the origin to the app's own (FRONTEND_URL via frontendBaseUrl()).
 const portalBodySchema = z.object({
-	return_url: z.string().url(),
+	return_url: z
+		.string()
+		.url()
+		.refine(
+			(value) => {
+				let appOrigin: string
+				try {
+					appOrigin = new URL(frontendBaseUrl()).origin
+				} catch {
+					return false
+				}
+				try {
+					return new URL(value).origin === appOrigin
+				} catch {
+					return false
+				}
+			},
+			{ message: 'return_url origin must match the app origin' },
+		),
 })
 
 const portalResponseSchema = z.object({

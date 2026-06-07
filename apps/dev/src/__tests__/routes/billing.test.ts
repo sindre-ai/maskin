@@ -26,19 +26,35 @@ const VALID_ENV = {
 	MASKIN_PRO_HARD_CAP_TOKENS: '96000000',
 }
 
+// portalBodySchema pins return_url origin to FRONTEND_URL. All existing portal
+// tests already pass `https://app.test/...` as return_url, so this matches.
+// Kept outside VALID_ENV / clearEnv so the "Stripe env not configured" tests
+// can null out the Stripe block without flipping return_url validation.
+const APP_ORIGIN_ENV = { FRONTEND_URL: 'https://app.test' }
+
 const setupEnv = () => {
 	for (const [k, v] of Object.entries(VALID_ENV)) process.env[k] = v
+}
+
+const setupAppOriginEnv = () => {
+	for (const [k, v] of Object.entries(APP_ORIGIN_ENV)) process.env[k] = v
 }
 
 const clearEnv = () => {
 	for (const k of Object.keys(VALID_ENV)) delete process.env[k]
 }
 
+const clearAppOriginEnv = () => {
+	for (const k of Object.keys(APP_ORIGIN_ENV)) delete process.env[k]
+}
+
 beforeEach(() => {
 	vi.mocked(createCheckoutSession).mockReset()
 	vi.mocked(createBillingPortalSession).mockReset()
 	clearEnv()
+	clearAppOriginEnv()
 	setupEnv()
+	setupAppOriginEnv()
 })
 
 describe('POST /api/billing/checkout', () => {
@@ -341,6 +357,20 @@ describe('POST /api/billing/portal', () => {
 			),
 		)
 		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when return_url origin does not match FRONTEND_URL', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://attacker.example/steal' },
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(400)
+		expect(createBillingPortalSession).not.toHaveBeenCalled()
 	})
 })
 
