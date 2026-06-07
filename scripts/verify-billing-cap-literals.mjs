@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Enforces the four-site billing-cap literal contract.
+ * Enforces the three-site billing-cap literal contract.
  *
  * STARTER_HARD_CAP_DEFAULT_TOKENS and PRO_HARD_CAP_DEFAULT_TOKENS appear in:
  *
@@ -127,7 +127,7 @@ if (errors.length > 0) {
 	for (const e of errors) console.error(`  - ${e}`)
 	console.error('\nObserved values:')
 	for (const o of observed) console.error(`  ${JSON.stringify(o)}`)
-	console.error('\nFix by updating all four sites to the same numbers. See')
+	console.error('\nFix by updating all three sites to the same numbers. See')
 	console.error('apps/dev/src/lib/billing-defaults.ts for the source of truth.')
 	process.exit(1)
 }
