@@ -274,12 +274,10 @@ function useProfileFieldSave(actorId: string) {
 				// optimistic write merges into the previous prefs instead of replacing
 				// them — otherwise the other three switches blink to defaults until the
 				// network response lands.
-				const next: ActorResponse = { ...previous, ...input }
-				if (input.notification_prefs) {
-					next.notification_prefs = {
-						...previous.notification_prefs,
-						...input.notification_prefs,
-					}
+				const { notification_prefs: prefsPatch, ...rest } = input
+				const next: ActorResponse = { ...previous, ...rest }
+				if (prefsPatch) {
+					next.notification_prefs = { ...previous.notification_prefs, ...prefsPatch }
 				}
 				queryClient.setQueryData<ActorResponse>(key, next)
 			}
