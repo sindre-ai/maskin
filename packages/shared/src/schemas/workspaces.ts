@@ -37,8 +37,14 @@ export const workspaceSettingsSchema = z.object({
 	llm_keys: z
 		.object({
 			// `null` on PATCH signals deletion of that provider; see the deep-merge
-			// in PATCH /api/workspaces/:id.
-			anthropic: z.string().nullable().optional(),
+			// in PATCH /api/workspaces/:id. Empty / whitespace-only strings are
+			// rejected so a no-op write doesn't drag the BYOLLM ↔ paid plan mutex
+			// through a cancel + downgrade for a key that stores nothing usable.
+			anthropic: z
+				.string()
+				.refine((v) => v.trim().length > 0, { message: 'anthropic key cannot be empty' })
+				.nullable()
+				.optional(),
 			openai: z.string().nullable().optional(),
 		})
 		.default({}),

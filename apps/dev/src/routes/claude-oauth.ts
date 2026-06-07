@@ -9,11 +9,7 @@ import {
 	getValidOAuthToken,
 } from '../lib/claude-oauth'
 import { createApiError } from '../lib/errors'
-import {
-	billingAfterByoTransition,
-	cancelActivePaidSubscription,
-	hasActivePaidPlan,
-} from '../lib/llm-source-mutex'
+import { cancelPaidPlanAndDowngrade } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
@@ -224,62 +220,28 @@ app.openapi(importRoute, (async (c) => {
 	}
 
 	const tokens: ClaudeOAuthTokens = c.req.valid('json')
-
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	if (!ws) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
-
-	const settings = (ws.settings as WorkspaceSettings) ?? {}
+	const encryptedOauth = encryptOAuthTokens(tokens)
 
 	// BYOLLM ↔ paid plan mutex: importing Claude OAuth tokens is a BYOLLM
-	// selection. Cancel any live Stripe subscription via API first so the
-	// customer isn't charged for an inactive plan, then roll billing into
-	// the same update as the new OAuth blob.
-	const nextSettings: Record<string, unknown> = {
-		...settings,
-		claude_oauth: encryptOAuthTokens(tokens),
-	}
-	if (hasActivePaidPlan({ billing: settings.billing })) {
-		let stripeEnv: ReturnType<typeof readStripeEnv>
-		try {
-			stripeEnv = readStripeEnv()
-		} catch (err) {
-			logger.error('Cannot cancel paid plan for Claude OAuth import: Stripe is not configured', {
-				workspaceId,
-				error: err instanceof Error ? err.message : String(err),
-			})
-			return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
-		}
-		try {
-			await cancelActivePaidSubscription(
-				getStripeClient(stripeEnv),
-				// biome-ignore lint/style/noNonNullAssertion: hasActivePaidPlan guarantees this
-				settings.billing!.stripe_subscription_id!,
-			)
-		} catch (err) {
-			logger.error('Stripe subscription cancel failed during Claude OAuth import', {
-				workspaceId,
-				subscriptionId: settings.billing?.stripe_subscription_id,
-				error: err instanceof Error ? err.message : String(err),
-			})
-			return c.json(createApiError('INTERNAL_ERROR', 'Failed to cancel paid subscription'), 500)
-		}
-		const downgrade = billingAfterByoTransition(settings.billing)
-		if (downgrade) nextSettings.billing = downgrade
-		logger.info('Paid plan canceled during Claude OAuth import', {
-			workspaceId,
-			subscriptionId: settings.billing?.stripe_subscription_id,
-		})
-	}
+	// selection. The shared helper takes a row lock, cancels Stripe inside
+	// the lock if a paid plan is active, and writes the new claude_oauth
+	// blob + downgraded billing block in the same UPDATE.
+	const result = await cancelPaidPlanAndDowngrade({
+		db,
+		workspaceId,
+		getStripe: () => getStripeClient(readStripeEnv()),
+		flow: 'Claude OAuth import',
+		buildNextSettings: (lockedSettings, downgradedBilling) => {
+			const next: Record<string, unknown> = {
+				...lockedSettings,
+				claude_oauth: encryptedOauth,
+			}
+			if (downgradedBilling) next.billing = downgradedBilling
+			return next
+		},
+	})
 
-	await db
-		.update(workspaces)
-		.set({
-			settings: nextSettings,
-			updatedAt: new Date(),
-		})
-		.where(eq(workspaces.id, workspaceId))
+	if (!result.ok) return c.json(result.error, result.status)
 
 	logger.info('Claude OAuth tokens imported for workspace', {
 		workspaceId,
