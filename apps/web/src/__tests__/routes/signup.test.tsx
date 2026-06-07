@@ -1,11 +1,20 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockSignup = vi.fn()
+const mockClaim = vi.fn()
 
 vi.mock('@/hooks/use-auth', () => ({
 	useAuth: () => ({ signup: mockSignup }),
+}))
+
+vi.mock('@/lib/api', () => ({
+	api: {
+		publicBetStrategist: {
+			claim: (workspaceId: string) => mockClaim(workspaceId),
+		},
+	},
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -136,5 +145,80 @@ describe('SignupPage', () => {
 		expect(screen.getByText('Name is required')).toBeInTheDocument()
 		await user.type(screen.getByPlaceholderText('Your name'), 'a')
 		expect(screen.queryByText('Name is required')).not.toBeInTheDocument()
+	})
+
+	describe('guest draft claim handoff', () => {
+		const originalLocation = window.location
+
+		beforeEach(() => {
+			mockClaim.mockReset()
+		})
+
+		afterEach(() => {
+			Object.defineProperty(window, 'location', {
+				configurable: true,
+				value: originalLocation,
+			})
+		})
+
+		function setLocationSearch(search: string) {
+			Object.defineProperty(window, 'location', {
+				configurable: true,
+				value: { ...originalLocation, search },
+			})
+		}
+
+		async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
+			await user.type(screen.getByPlaceholderText('Your name'), 'Test User')
+			await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
+			await user.type(screen.getByPlaceholderText('At least 8 characters'), 'password123')
+			await user.type(screen.getByPlaceholderText('Repeat your password'), 'password123')
+			await user.click(screen.getByRole('button', { name: 'Create account' }))
+		}
+
+		it('calls claim with the new workspace_id when ?claim=1 is present', async () => {
+			setLocationSearch('?claim=1')
+			mockSignup.mockResolvedValue({ workspace_id: 'workspace-abc' })
+			mockClaim.mockResolvedValue({ claimed: [{ id: 'bet-1', title: 'My bet' }] })
+
+			const user = userEvent.setup()
+			render(<SignupPage />)
+			await fillAndSubmit(user)
+
+			await waitFor(() => {
+				expect(mockClaim).toHaveBeenCalledWith('workspace-abc')
+			})
+		})
+
+		it('does not call claim when ?claim=1 is absent', async () => {
+			setLocationSearch('')
+			mockSignup.mockResolvedValue({ workspace_id: 'workspace-abc' })
+
+			const user = userEvent.setup()
+			render(<SignupPage />)
+			await fillAndSubmit(user)
+
+			await waitFor(() => {
+				expect(mockSignup).toHaveBeenCalled()
+			})
+			expect(mockClaim).not.toHaveBeenCalled()
+		})
+
+		it('does not surface a claim failure as a signup error', async () => {
+			setLocationSearch('?claim=1')
+			mockSignup.mockResolvedValue({ workspace_id: 'workspace-abc' })
+			mockClaim.mockRejectedValue(new Error('claim boom'))
+
+			const user = userEvent.setup()
+			render(<SignupPage />)
+			await fillAndSubmit(user)
+
+			await waitFor(() => {
+				expect(mockClaim).toHaveBeenCalled()
+			})
+			// Signup proceeded; the form is not in an error state.
+			expect(screen.queryByText('claim boom')).not.toBeInTheDocument()
+			expect(screen.queryByText('Signup failed')).not.toBeInTheDocument()
+		})
 	})
 })

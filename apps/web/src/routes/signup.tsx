@@ -2,12 +2,26 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
+import { api } from '@/lib/api'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/signup')({
 	component: SignupPage,
 })
+
+// Signup → guest-draft handoff:
+// When a visitor drafted a bet on the landing page (sindre.ai) and clicks the
+// "Save this bet — sign up" CTA, the centre.ai page sends them here with
+// `?claim=1`. After signup, we POST to /api/public/bet-strategist/claim with
+// the new actor's bearer + workspace_id; the server reads the HttpOnly guest
+// cookie (set by /drafts during the visitor's prompt) and copies the draft
+// into the new workspace. Failure is non-fatal — the account is created
+// either way; the user just keeps the draft on the landing page.
+function shouldClaimGuestDraft(): boolean {
+	if (typeof window === 'undefined') return false
+	return new URLSearchParams(window.location.search).get('claim') === '1'
+}
 
 function SignupPage() {
 	const { signup } = useAuth()
@@ -38,12 +52,22 @@ function SignupPage() {
 		}
 		setLoading(true)
 		try {
-			await signup({
+			const result = await signup({
 				type: 'human',
 				name: name.trim(),
 				email: email.trim(),
 				password,
 			})
+			if (shouldClaimGuestDraft() && result?.workspace_id) {
+				try {
+					const { claimed } = await api.publicBetStrategist.claim(result.workspace_id)
+					console.info('[maskin] guest draft claim', { count: claimed.length })
+				} catch (claimErr) {
+					// Non-fatal: signup succeeded; surface in logs so a recurring
+					// claim failure shows up in observability.
+					console.error('[maskin] guest draft claim failed', claimErr)
+				}
+			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {

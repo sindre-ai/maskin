@@ -175,7 +175,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/auth/login: pre-auth credential exchange
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
-	//   - /api/public/*: landing-page guest endpoints (HMAC cookie + throttle in handler)
+	//   - POST /api/public/bet-strategist/drafts: landing-page guest streaming
+	//     endpoint (HMAC cookie + throttle inside the handler). The /claim
+	//     sibling under /api/public/bet-strategist is intentionally NOT in the
+	//     allowlist — it pairs the cookie with a bearer token, so it must run
+	//     under authMiddleware.
+	//   - POST /api/public/landing-events: landing-page funnel event ingest
+	//     (per-IP rate-limited inside the handler).
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -184,7 +190,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
-		if (path.startsWith('/api/public/')) return next()
+		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
+		if (path === '/api/public/landing-events' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)

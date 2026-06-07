@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { objects, sessions } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { z } from 'zod'
 import {
@@ -21,6 +21,7 @@ import {
 import { checkGuestThrottle } from '../lib/guest-throttle'
 import { AnthropicAdapter } from '../lib/llm/anthropic'
 import { logger } from '../lib/logger'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 // Public, no-auth endpoint that powers the landing-page prompt bar. Per A1's
 // ADR (Option C):
@@ -44,11 +45,19 @@ const MAX_PROMPT_CHARS = 4000
 type Env = {
 	Variables: {
 		db: Database
+		// Set by authMiddleware on /claim; absent on the public /drafts path
+		// because that route lives in the auth allowlist.
+		actorId: string
+		actorType: string
 	}
 }
 
 const draftBodySchema = z.object({
 	prompt: z.string().min(1).max(MAX_PROMPT_CHARS),
+})
+
+const claimBodySchema = z.object({
+	workspace_id: z.string().uuid(),
 })
 
 const app = new OpenAPIHono<Env>()
@@ -263,6 +272,152 @@ app.post('/drafts', async (c) => {
 			} catch {}
 		}
 	})
+})
+
+// POST /claim
+//
+// Copies a guest visitor's completed bet drafts (stored in the singleton
+// `landing_guests` workspace under the `landing_guest` system actor) into a
+// signed-up user's workspace. Per A1's ADR: copy, no FK reparenting — the
+// originals remain as an immutable telemetry record in the guests workspace.
+//
+// Authn: bearer-authed actor (auth middleware runs because this path is NOT
+// in the allowlist — only POST /drafts is exempt).
+// Authz: the actor must be a member of `workspace_id`.
+// Handoff token: the HttpOnly `maskin_guest` cookie that was set by /drafts.
+//   If the cookie is missing or invalid (the user didn't come from the landing
+//   page), the call is a 200 no-op so the signup flow doesn't need to
+//   pre-check whether there's anything to claim.
+// Idempotency: the original guest draft is stamped with `metadata.claimedBy`
+//   and `metadata.claimedAs`; re-claiming returns the existing bet ids
+//   without inserting duplicates.
+app.post('/claim', async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+
+	if (!actorId) {
+		// authMiddleware should always set this for non-allowlisted routes; if
+		// it's missing, the allowlist was misconfigured and we shouldn't silently
+		// expose a copy endpoint.
+		logger.error('public-bet-strategist/claim: actorId missing — allowlist misconfigured')
+		return c.json(createApiError('UNAUTHORIZED', 'Authentication required'), 401)
+	}
+
+	let body: { workspace_id: string }
+	try {
+		const parsed = claimBodySchema.safeParse(await c.req.json())
+		if (!parsed.success) {
+			return c.json(createApiError('VALIDATION_ERROR', 'workspace_id must be a UUID'), 400)
+		}
+		body = parsed.data
+	} catch {
+		return c.json(
+			createApiError('VALIDATION_ERROR', 'Body must be JSON with a `workspace_id` field'),
+			400,
+		)
+	}
+
+	const targetWorkspaceId = body.workspace_id
+
+	const isMember = await isWorkspaceMember(db, actorId, targetWorkspaceId)
+	if (!isMember) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of the target workspace'), 403)
+	}
+
+	const rawCookie = parseGuestCookie(c.req.header('Cookie'))
+	const guestSessionId = rawCookie ? verifyGuestCookieValue(rawCookie) : null
+
+	if (!guestSessionId) {
+		// No usable guest cookie — treat as a clean signup. 200 no-op so the
+		// signup flow can call claim unconditionally.
+		logger.info('public-bet-strategist/claim: no guest cookie, no-op', { actorId })
+		return c.json({ claimed: [] })
+	}
+
+	const candidates = await db
+		.select({
+			id: objects.id,
+			title: objects.title,
+			content: objects.content,
+			metadata: objects.metadata,
+		})
+		.from(objects)
+		.where(
+			and(
+				eq(objects.workspaceId, LANDING_GUESTS_WORKSPACE_ID),
+				eq(objects.type, 'bet_draft'),
+				eq(objects.status, 'completed'),
+				sql`metadata->>'guestSessionId' = ${guestSessionId}`,
+			),
+		)
+
+	if (candidates.length === 0) {
+		logger.info('public-bet-strategist/claim: no claimable drafts', { actorId, guestSessionId })
+		return c.json({ claimed: [] })
+	}
+
+	const claimed: Array<{ id: string; title: string | null }> = []
+
+	for (const draft of candidates) {
+		const meta = (draft.metadata ?? {}) as Record<string, unknown>
+		const previousClaim = meta.claimedAs as string | undefined
+		if (previousClaim) {
+			// Already claimed by a prior call for this session — return the same
+			// id so the caller can navigate to it. Idempotent.
+			claimed.push({ id: previousClaim, title: draft.title })
+			continue
+		}
+
+		const [created] = await db
+			.insert(objects)
+			.values({
+				workspaceId: targetWorkspaceId,
+				type: 'bet',
+				status: 'signal',
+				title: draft.title ?? 'Untitled bet',
+				content: draft.content ?? '',
+				metadata: {
+					claimedFromGuestDraft: draft.id,
+					claimedFromGuestSessionId: guestSessionId,
+				},
+				createdBy: actorId,
+			})
+			.returning({ id: objects.id })
+
+		if (!created) {
+			logger.error('public-bet-strategist/claim: failed to insert claimed bet', {
+				draftId: draft.id,
+				actorId,
+				targetWorkspaceId,
+			})
+			continue
+		}
+
+		await db
+			.update(objects)
+			.set({
+				metadata: {
+					...meta,
+					claimedAt: new Date().toISOString(),
+					claimedBy: actorId,
+					claimedIntoWorkspace: targetWorkspaceId,
+					claimedAs: created.id,
+				},
+				updatedAt: new Date(),
+			})
+			.where(eq(objects.id, draft.id))
+
+		claimed.push({ id: created.id, title: draft.title })
+	}
+
+	logger.info('public-bet-strategist/claim: drafts claimed', {
+		actorId,
+		guestSessionId,
+		targetWorkspaceId,
+		count: claimed.length,
+	})
+
+	return c.json({ claimed })
 })
 
 app.onError((err, c) => {

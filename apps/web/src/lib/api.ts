@@ -192,6 +192,16 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 	},
 
+	// Public landing-page handoffs. The /drafts endpoint is unauthenticated and
+	// called from sindre.ai; only /claim is reachable from the web app.
+	publicBetStrategist: {
+		claim: (workspaceId: string) =>
+			request<{ claimed: Array<{ id: string; title: string | null }> }>(
+				'/public/bet-strategist/claim',
+				{ method: 'POST', body: { workspace_id: workspaceId } },
+			),
+	},
+
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
@@ -667,6 +677,10 @@ export interface ActorResponse extends ActorListItem {
 
 export interface ActorWithKey extends ActorResponse {
 	api_key: string
+	// Set when the actor is created with `auto_create_workspace` (default for
+	// humans on signup). Used by the signup → guest-draft handoff to pick the
+	// workspace to claim into.
+	workspace_id?: string
 }
 
 export interface LoginInput {

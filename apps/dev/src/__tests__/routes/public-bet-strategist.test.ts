@@ -286,3 +286,205 @@ describe('POST /api/public/bet-strategist/drafts', () => {
 		expect(draftUpdate?.metadata?.isMalformed).toBe(false)
 	})
 })
+
+describe('POST /api/public/bet-strategist/claim', () => {
+	const ACTOR = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+	const TARGET_WORKSPACE = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+	const GUEST_SESSION = '0123456789abcdef0123456789abcdef'
+	const GUEST_DRAFT_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+	const NEW_BET_ID = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+
+	beforeEach(() => {
+		process.env.GUEST_SESSION_SECRET = SECRET
+	})
+
+	afterEach(() => {
+		clearEnv('GUEST_SESSION_SECRET')
+	})
+
+	function cookieHeader(sessionId = GUEST_SESSION): Record<string, string> {
+		const signed = signGuestSessionId(sessionId, SECRET)
+		return { Cookie: `maskin_guest=${signed}` }
+	}
+
+	it('copies a completed guest draft into the target workspace and returns the new bet id', async () => {
+		const { app, mockResults, calls } = createTestApp(
+			publicBetStrategistRoutes,
+			'/api/public/bet-strategist',
+			ACTOR,
+		)
+		// 1) isWorkspaceMember → 1 row
+		// 2) candidate drafts SELECT → 1 unclaimed draft
+		mockResults.selectQueue = [
+			[{ actorId: ACTOR }],
+			[
+				{
+					id: GUEST_DRAFT_ID,
+					title: 'Bet on growth experiments',
+					content: '## Hypothesis\n…',
+					metadata: { guestSessionId: GUEST_SESSION, isMalformed: false },
+				},
+			],
+		]
+		mockResults.insertQueue = [[{ id: NEW_BET_ID }]]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/bet-strategist/claim',
+				{ workspace_id: TARGET_WORKSPACE },
+				cookieHeader(),
+			),
+		)
+
+		expect(res.status).toBe(200)
+		const json = (await res.json()) as {
+			claimed: Array<{ id: string; title: string | null }>
+		}
+		expect(json.claimed).toEqual([{ id: NEW_BET_ID, title: 'Bet on growth experiments' }])
+
+		const inserted = calls.inserts as Array<Record<string, unknown>>
+		const betInsert = inserted.find((row) => row.type === 'bet')
+		expect(betInsert).toBeDefined()
+		expect(betInsert?.workspaceId).toBe(TARGET_WORKSPACE)
+		expect(betInsert?.status).toBe('signal')
+		expect(betInsert?.createdBy).toBe(ACTOR)
+		expect((betInsert?.metadata as { claimedFromGuestDraft?: string }).claimedFromGuestDraft).toBe(
+			GUEST_DRAFT_ID,
+		)
+
+		// Original guest draft stamped with claim metadata for idempotency.
+		const stamped = (calls.updates as Array<{ metadata?: Record<string, unknown> }>).find(
+			(u) => (u.metadata as { claimedAs?: string }).claimedAs === NEW_BET_ID,
+		)
+		expect(stamped).toBeDefined()
+		expect((stamped?.metadata as { claimedBy?: string }).claimedBy).toBe(ACTOR)
+	})
+
+	it('returns 200 with empty claimed list when no guest cookie is present', async () => {
+		const { app, mockResults, calls } = createTestApp(
+			publicBetStrategistRoutes,
+			'/api/public/bet-strategist',
+			ACTOR,
+		)
+		mockResults.selectQueue = [[{ actorId: ACTOR }]]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/public/bet-strategist/claim', {
+				workspace_id: TARGET_WORKSPACE,
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		const json = (await res.json()) as { claimed: unknown[] }
+		expect(json.claimed).toEqual([])
+		// No drafts inserted into the target workspace.
+		expect((calls.inserts as Array<{ type?: string }>).some((row) => row.type === 'bet')).toBe(
+			false,
+		)
+	})
+
+	it('returns 403 when the actor is not a member of the target workspace', async () => {
+		const { app, mockResults } = createTestApp(
+			publicBetStrategistRoutes,
+			'/api/public/bet-strategist',
+			ACTOR,
+		)
+		mockResults.selectQueue = [[]]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/bet-strategist/claim',
+				{ workspace_id: TARGET_WORKSPACE },
+				cookieHeader(),
+			),
+		)
+
+		expect(res.status).toBe(403)
+		const json = (await res.json()) as { error: { code: string } }
+		expect(json.error.code).toBe('FORBIDDEN')
+	})
+
+	it('is idempotent — re-claiming returns the existing bet id without inserting again', async () => {
+		const { app, mockResults, calls } = createTestApp(
+			publicBetStrategistRoutes,
+			'/api/public/bet-strategist',
+			ACTOR,
+		)
+		mockResults.selectQueue = [
+			[{ actorId: ACTOR }],
+			[
+				{
+					id: GUEST_DRAFT_ID,
+					title: 'Bet on growth experiments',
+					content: '## Hypothesis\n…',
+					metadata: {
+						guestSessionId: GUEST_SESSION,
+						claimedAt: '2026-06-07T00:00:00.000Z',
+						claimedBy: ACTOR,
+						claimedIntoWorkspace: TARGET_WORKSPACE,
+						claimedAs: NEW_BET_ID,
+					},
+				},
+			],
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/bet-strategist/claim',
+				{ workspace_id: TARGET_WORKSPACE },
+				cookieHeader(),
+			),
+		)
+
+		expect(res.status).toBe(200)
+		const json = (await res.json()) as {
+			claimed: Array<{ id: string }>
+		}
+		expect(json.claimed).toEqual([{ id: NEW_BET_ID, title: 'Bet on growth experiments' }])
+		// No new bet inserted because the draft was already claimed.
+		expect((calls.inserts as Array<{ type?: string }>).some((row) => row.type === 'bet')).toBe(
+			false,
+		)
+	})
+
+	it('rejects a malformed workspace_id with 400', async () => {
+		const { app } = createTestApp(publicBetStrategistRoutes, '/api/public/bet-strategist', ACTOR)
+		const res = await app.request(
+			jsonRequest('POST', '/api/public/bet-strategist/claim', {
+				workspace_id: 'not-a-uuid',
+			}),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('only considers completed drafts — failed and malformed rows are filtered out by the SELECT', async () => {
+		// The route's WHERE clause filters status='completed'; the test verifies
+		// the contract by setting up a query that returns nothing (simulating
+		// the filtered result) and confirming we don't insert.
+		const { app, mockResults, calls } = createTestApp(
+			publicBetStrategistRoutes,
+			'/api/public/bet-strategist',
+			ACTOR,
+		)
+		mockResults.selectQueue = [[{ actorId: ACTOR }], []]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/public/bet-strategist/claim',
+				{ workspace_id: TARGET_WORKSPACE },
+				cookieHeader(),
+			),
+		)
+
+		expect(res.status).toBe(200)
+		const json = (await res.json()) as { claimed: unknown[] }
+		expect(json.claimed).toEqual([])
+		expect((calls.inserts as Array<{ type?: string }>).some((row) => row.type === 'bet')).toBe(
+			false,
+		)
+	})
+})
