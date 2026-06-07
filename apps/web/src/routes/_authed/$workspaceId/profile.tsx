@@ -270,7 +270,18 @@ function useProfileFieldSave(actorId: string) {
 			await queryClient.cancelQueries({ queryKey: key })
 			const previous = queryClient.getQueryData<ActorResponse>(key)
 			if (previous) {
-				queryClient.setQueryData<ActorResponse>(key, { ...previous, ...input })
+				// `notification_prefs` is a partial PATCH (one key per toggle) so the
+				// optimistic write merges into the previous prefs instead of replacing
+				// them — otherwise the other three switches blink to defaults until the
+				// network response lands.
+				const next: ActorResponse = { ...previous, ...input }
+				if (input.notification_prefs) {
+					next.notification_prefs = {
+						...previous.notification_prefs,
+						...input.notification_prefs,
+					}
+				}
+				queryClient.setQueryData<ActorResponse>(key, next)
 			}
 			return { previous }
 		},
@@ -299,10 +310,10 @@ function useProfileFieldSave(actorId: string) {
 }
 
 function NotificationPrefsRows({ actor }: { actor: ActorResponse }) {
-	// Send the fully merged object on each toggle: the backend partial-merges
-	// either way, but the React Query cache update in useProfileFieldSave is a
-	// shallow `{ ...prev, ...input }` — passing a partial would optimistically
-	// drop the other three keys until the network response lands.
+	// One key per PATCH so two rapid toggles (or two tabs) can't revert each
+	// other through the stale-closure-on-`prefs` path. `useProfileFieldSave`
+	// deep-merges `notification_prefs` so the optimistic cache write keeps the
+	// other three switches at their current values until the response lands.
 	const prefs = { ...NOTIFICATION_DEFAULTS, ...actor.notification_prefs }
 	const { save, isError } = useProfileFieldSave(actor.id)
 
@@ -315,7 +326,7 @@ function NotificationPrefsRows({ actor }: { actor: ActorResponse }) {
 					label={row.label}
 					hint={row.hint}
 					checked={prefs[row.key]}
-					onChange={(next) => save({ notification_prefs: { ...prefs, [row.key]: next } })}
+					onChange={(next) => save({ notification_prefs: { [row.key]: next } })}
 					isError={isError}
 				/>
 			))}

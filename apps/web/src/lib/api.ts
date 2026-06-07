@@ -767,7 +767,7 @@ export interface UpdateActorInput {
 	email?: string
 	description?: string
 	bio?: string | null
-	notification_prefs?: NotificationPrefs
+	notification_prefs?: Partial<NotificationPrefs>
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	memory?: Record<string, unknown>

@@ -240,7 +240,7 @@ describe('ProfilePage — Notification preference switches', () => {
 		expect(screen.getByRole('switch', { name: 'Weekly digest' })).toBeChecked()
 	})
 
-	it('persists a toggle via PATCH /actors and fires telemetry with field=notification_prefs', async () => {
+	it('persists a toggle via a single-key PATCH and fires telemetry with field=notification_prefs', async () => {
 		mockUpdate.mockResolvedValue(buildActor())
 		renderPage()
 
@@ -248,12 +248,7 @@ describe('ProfilePage — Notification preference switches', () => {
 
 		await waitFor(() =>
 			expect(mockUpdate).toHaveBeenCalledWith('actor-1', {
-				notification_prefs: {
-					mentions: true,
-					subscribed: true,
-					betStatusChanges: true,
-					weeklyDigest: true,
-				},
+				notification_prefs: { weeklyDigest: true },
 			}),
 		)
 		await waitFor(() =>
@@ -261,6 +256,57 @@ describe('ProfilePage — Notification preference switches', () => {
 				field: 'notification_prefs',
 			}),
 		)
+	})
+
+	it('keeps two rapid toggles on different switches independent — neither reverts the other', async () => {
+		// Hold both responses open so the second click happens against a stale
+		// render-time snapshot. The pre-fix behaviour sent a full merged object
+		// captured from that snapshot, which silently reverted the first toggle.
+		const resolvers: Array<(value: ActorResponse) => void> = []
+		mockUpdate.mockImplementation(
+			() =>
+				new Promise<ActorResponse>((resolve) => {
+					resolvers.push(resolve)
+				}),
+		)
+		renderPage()
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Mentions and replies' }))
+		fireEvent.click(screen.getByRole('switch', { name: 'Subscribed objects' }))
+
+		await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2))
+
+		// Both calls carry exactly one key — the one the user just toggled —
+		// not a stale snapshot of the other.
+		expect(mockUpdate).toHaveBeenNthCalledWith(1, 'actor-1', {
+			notification_prefs: { mentions: false },
+		})
+		expect(mockUpdate).toHaveBeenNthCalledWith(2, 'actor-1', {
+			notification_prefs: { subscribed: false },
+		})
+
+		await waitFor(() => {
+			const cached = queryClient.getQueryData<ActorResponse>(['actors', 'detail', storedActor.id])
+			expect(cached?.notification_prefs).toEqual({
+				mentions: false,
+				subscribed: false,
+				betStatusChanges: true,
+				weeklyDigest: false,
+			})
+		})
+
+		for (const resolve of resolvers) {
+			resolve(
+				buildActor({
+					notification_prefs: {
+						mentions: false,
+						subscribed: false,
+						betStatusChanges: true,
+						weeklyDigest: false,
+					},
+				}),
+			)
+		}
 	})
 
 	it('writes the optimistic merged prefs into the actor cache before the network resolves', async () => {
