@@ -87,6 +87,20 @@ describe('readFallbackConfig', () => {
 		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: '-100' })
 		expect(cfg.dailyTokenLimit).toBe(550_000)
 	})
+
+	// Pins the strict-digit-string semantics introduced by the
+	// `parsePositiveIntEnv` migration. The prior `Number()`-based path silently
+	// accepted these inputs (`1e6` → 1_000_000, `500000.5` → 500_000) — a
+	// future revert of the parser swap must fail this file.
+	it('rejects scientific notation (`1e6`) and falls back to default', () => {
+		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: '1e6' })
+		expect(cfg.dailyTokenLimit).toBe(550_000)
+	})
+
+	it('rejects decimal notation (`500000.5`) and falls back to default', () => {
+		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: '500000.5' })
+		expect(cfg.dailyTokenLimit).toBe(550_000)
+	})
 })
 
 describe('getActorFallbackTokenUsage24h', () => {

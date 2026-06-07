@@ -48,7 +48,11 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		// surfaces at first request instead of silently falling back.
 		const parsed = parsePositiveIntEnv(key, env)
 		if (parsed === null) {
-			throw new Error(`${key} must be a positive number, got ${env[key]}`)
+			// Intentionally does not echo the raw env value — billing caps aren't
+			// secrets today, but normalising "no env values in thrown errors"
+			// prevents the next contributor from leaking a secret-bearing key
+			// through error monitors when they reuse this helper.
+			throw new Error(`${key} must be a positive integer string`)
 		}
 		return parsed
 	}

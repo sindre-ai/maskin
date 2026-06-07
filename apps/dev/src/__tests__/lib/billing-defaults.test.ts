@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../../lib/logger', () => ({
+	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+
+import { logger } from '../../lib/logger'
 import {
 	MAX_ENV_CAP,
 	PRO_HARD_CAP_DEFAULT_TOKENS,
@@ -12,6 +18,10 @@ const envOf = (value: string | undefined): NodeJS.ProcessEnv =>
 	value === undefined ? {} : { [KEY]: value }
 
 describe('parsePositiveIntEnv', () => {
+	beforeEach(() => {
+		vi.mocked(logger.warn).mockReset()
+	})
+
 	describe('rejects', () => {
 		// Each row mirrors a real-world misconfiguration the helper has to
 		// catch BEFORE the value reaches downstream arithmetic / `Number()`.
@@ -64,6 +74,66 @@ describe('parsePositiveIntEnv', () => {
 		} finally {
 			delete process.env[KEY]
 		}
+	})
+
+	describe('observability', () => {
+		it('warns on shape rejection with key + rawLength, never the raw value', () => {
+			parsePositiveIntEnv(KEY, envOf('1e6'))
+			expect(logger.warn).toHaveBeenCalledWith(
+				'parsePositiveIntEnv rejected env value',
+				expect.objectContaining({
+					key: KEY,
+					rawLength: 3,
+					kind: 'shape_check_failed',
+				}),
+			)
+			// Hard assertion that no log call contains the raw env value — this
+			// is the security guarantee, not just a coincidence of formatting.
+			for (const call of vi.mocked(logger.warn).mock.calls) {
+				const ctx = (call[1] ?? {}) as Record<string, unknown>
+				for (const value of Object.values(ctx)) {
+					expect(value).not.toBe('1e6')
+				}
+			}
+		})
+
+		it('does NOT warn when the env var is simply unset', () => {
+			parsePositiveIntEnv(KEY, envOf(undefined))
+			expect(logger.warn).not.toHaveBeenCalled()
+		})
+
+		it('does NOT warn when the env var is the empty string', () => {
+			parsePositiveIntEnv(KEY, envOf(''))
+			expect(logger.warn).not.toHaveBeenCalled()
+		})
+
+		it('does NOT warn on accepted normal-length values', () => {
+			parsePositiveIntEnv(KEY, envOf('32000000'))
+			expect(logger.warn).not.toHaveBeenCalled()
+		})
+
+		it('warns when clamp fires on a suspiciously long digit string (fat-finger signal)', () => {
+			// 19 digits — `Math.min(Math.floor(n), MAX_ENV_CAP)` would silently
+			// absorb this as MAX_SAFE_INTEGER (~9e15), turning a configuration
+			// error into "effectively unlimited tokens". The warn log is the
+			// breadcrumb ops needs to catch the typo.
+			const fatFinger = '9999999999999999999'
+			parsePositiveIntEnv(KEY, envOf(fatFinger))
+			expect(logger.warn).toHaveBeenCalledWith(
+				'parsePositiveIntEnv clamped suspiciously long value',
+				expect.objectContaining({
+					key: KEY,
+					rawLength: fatFinger.length,
+					clampedTo: MAX_ENV_CAP,
+					kind: 'clamp_fired',
+				}),
+			)
+		})
+
+		it('does NOT warn for the longest non-suspicious value (16-digit MAX_SAFE_INTEGER)', () => {
+			parsePositiveIntEnv(KEY, envOf(String(Number.MAX_SAFE_INTEGER)))
+			expect(logger.warn).not.toHaveBeenCalled()
+		})
 	})
 })
 
