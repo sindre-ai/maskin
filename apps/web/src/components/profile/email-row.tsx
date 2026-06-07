@@ -1,3 +1,4 @@
+import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -17,13 +18,15 @@ import { AlertTriangle } from 'lucide-react'
 import { type FormEvent, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+type RequestEmailChangeMutation = ReturnType<typeof useRequestEmailChange>
+
 interface ChangeEmailDialogProps {
-	actorId: string
 	currentEmail: string | null
 	presetEmail: string
 	open: boolean
 	onOpenChange: (open: boolean) => void
-	onSuccess: () => void
+	onSuccess: (resentTo: string | null) => void
+	mutation: RequestEmailChangeMutation
 }
 
 export function EmailRow({ actor }: { actor: ActorResponse }) {
@@ -32,6 +35,15 @@ export function EmailRow({ actor }: { actor: ActorResponse }) {
 	// re-enters their current password (the backend has no resend endpoint
 	// that bypasses it), and on submit we mint a fresh token.
 	const [presetEmail, setPresetEmail] = useState('')
+	// Set when the most recent successful submit was a resend to the same
+	// address. Drives the "Re-sent Xs ago" line in the banner so a successful
+	// resend isn't a silent no-op when `pending_email` doesn't change.
+	const [lastResendAt, setLastResendAt] = useState<string | null>(null)
+
+	// Lifted to the row so the banner's Resend gate and the dialog's Submit
+	// gate see the same `isPending` — without this, a fast operator can fire
+	// Resend while a Cancel (or another Submit) is already in flight.
+	const requestMutation = useRequestEmailChange(actor.id)
 
 	function openFresh() {
 		setPresetEmail('')
@@ -67,16 +79,22 @@ export function EmailRow({ actor }: { actor: ActorResponse }) {
 				<VerificationBanner
 					actorId={actor.id}
 					pendingEmail={actor.pending_email}
+					lastResendAt={lastResendAt}
+					requestPending={requestMutation.isPending}
 					onResend={() => openForResend(actor.pending_email ?? '')}
+					onCancelled={() => setLastResendAt(null)}
 				/>
 			) : null}
 			<ChangeEmailDialog
-				actorId={actor.id}
 				currentEmail={actor.email}
 				presetEmail={presetEmail}
 				open={dialogOpen}
 				onOpenChange={setDialogOpen}
-				onSuccess={() => setDialogOpen(false)}
+				mutation={requestMutation}
+				onSuccess={(resentTo) => {
+					setLastResendAt(resentTo ? new Date().toISOString() : null)
+					setDialogOpen(false)
+				}}
 			/>
 		</>
 	)
@@ -85,17 +103,28 @@ export function EmailRow({ actor }: { actor: ActorResponse }) {
 function VerificationBanner({
 	actorId,
 	pendingEmail,
+	lastResendAt,
+	requestPending,
 	onResend,
+	onCancelled,
 }: {
 	actorId: string
 	pendingEmail: string
+	lastResendAt: string | null
+	requestPending: boolean
 	onResend: () => void
+	onCancelled: () => void
 }) {
 	const cancelMutation = useCancelEmailChange(actorId)
+	// Gate both banner buttons on whichever mutation is mid-flight so a fast
+	// operator can't fire Resend while a Cancel is in flight (or vice-versa)
+	// and end up with one mutation overwriting the other.
+	const busy = requestPending || cancelMutation.isPending
 
 	async function handleCancel() {
 		try {
 			await cancelMutation.mutateAsync()
+			onCancelled()
 			toast.success('Email change cancelled')
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Could not cancel email change')
@@ -115,6 +144,11 @@ function VerificationBanner({
 					We sent a verification link to <span className="font-medium">{pendingEmail}</span>. Click
 					it to finish the change.
 				</p>
+				{lastResendAt ? (
+					<p className="mt-1 text-xs text-muted-foreground">
+						Re-sent <RelativeTime date={lastResendAt} />
+					</p>
+				) : null}
 			</div>
 			<div className="flex shrink-0 gap-2">
 				<Button
@@ -122,6 +156,7 @@ function VerificationBanner({
 					variant="outline"
 					size="sm"
 					onClick={onResend}
+					disabled={busy}
 					aria-label="Resend verification email"
 				>
 					Resend
@@ -131,7 +166,7 @@ function VerificationBanner({
 					variant="ghost"
 					size="sm"
 					onClick={handleCancel}
-					disabled={cancelMutation.isPending}
+					disabled={busy}
 					aria-label="Cancel email change"
 				>
 					{cancelMutation.isPending ? 'Cancelling…' : 'Cancel'}
@@ -142,14 +177,13 @@ function VerificationBanner({
 }
 
 function ChangeEmailDialog({
-	actorId,
 	currentEmail,
 	presetEmail,
 	open,
 	onOpenChange,
 	onSuccess,
+	mutation,
 }: ChangeEmailDialogProps) {
-	const mutation = useRequestEmailChange(actorId)
 	const mutationReset = mutation.reset
 	const [newEmail, setNewEmail] = useState('')
 	const [password, setPassword] = useState('')
@@ -189,6 +223,12 @@ function ChangeEmailDialog({
 	// Loose email shape — server runs the authoritative Zod email check; this
 	// gates the disabled state only.
 	const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)
+	// True when the dialog was opened for Resend (preset is the pending email)
+	// AND the user has typed a *different* non-empty address. Surfaces the
+	// otherwise silent "this replaces your pending change" effect. Empty input
+	// is excluded — the validation error already covers that case.
+	const divergesFromPending =
+		presetEmail !== '' && trimmedEmail !== '' && trimmedEmail !== presetEmail
 	const emailError = touched.email
 		? trimmedEmail.length === 0
 			? 'Enter a new email address.'
@@ -215,8 +255,13 @@ function ChangeEmailDialog({
 				current_password: password,
 			})
 			trackEvent('profile.field_changed', { field: 'pending_email' })
-			toast.success('Verification email sent')
-			onSuccess()
+			const isResend = presetEmail !== '' && trimmedEmail === presetEmail
+			toast.success(
+				isResend
+					? `Verification email re-sent to ${trimmedEmail}`
+					: `Verification email sent to ${trimmedEmail}`,
+			)
+			onSuccess(isResend ? trimmedEmail : null)
 			reset()
 		} catch (err) {
 			if (err instanceof ApiError) {
@@ -263,6 +308,12 @@ function ChangeEmailDialog({
 							/>
 							{(emailServerError ?? emailError) ? (
 								<span className="text-xs text-destructive">{emailServerError ?? emailError}</span>
+							) : null}
+							{divergesFromPending ? (
+								<span className="text-xs text-warning">
+									This replaces your current pending change to{' '}
+									<span className="font-medium">{presetEmail}</span>.
+								</span>
 							) : null}
 						</div>
 

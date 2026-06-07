@@ -26,7 +26,7 @@ vi.mock('sonner', () => ({
 
 import { EmailRow } from '@/components/profile/email-row'
 import { trackEvent } from '@/lib/analytics'
-import { type ActorResponse, ApiError, api } from '@/lib/api'
+import { type ActorResponse, type ActorWithKey, ApiError, api } from '@/lib/api'
 import { toast } from 'sonner'
 import { buildActorResponse, buildActorWithKey } from '../../factories'
 import { TestWrapper } from '../../setup'
@@ -52,6 +52,13 @@ function fillForm({
 }: { email?: string; password?: string } = {}) {
 	fireEvent.change(screen.getByLabelText(/new email/i), { target: { value: email } })
 	fireEvent.change(screen.getByLabelText(/current password/i), { target: { value: password } })
+}
+
+function bannerText(): string {
+	const banner = screen
+		.getByText(/verify your new email address/i)
+		.closest('[data-row="email-verification"]')
+	return banner?.textContent ?? ''
 }
 
 beforeEach(() => {
@@ -105,7 +112,7 @@ describe('EmailRow', () => {
 		expect(trackEvent).toHaveBeenCalledWith('profile.field_changed', {
 			field: 'pending_email',
 		})
-		expect(toast.success).toHaveBeenCalledWith('Verification email sent')
+		expect(toast.success).toHaveBeenCalledWith('Verification email sent to new@example.com')
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 	})
 
@@ -141,6 +148,8 @@ describe('EmailRow', () => {
 		expect(screen.getByText('new@example.com')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /resend verification email/i })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /cancel email change/i })).toBeInTheDocument()
+		// No "Re-sent" affordance until the user actually triggers a resend.
+		expect(bannerText()).not.toMatch(/re-sent/i)
 	})
 
 	it('cancels a pending change via the banner and toasts on success', async () => {
@@ -164,5 +173,71 @@ describe('EmailRow', () => {
 		await waitFor(() => expect(screen.getByLabelText(/new email/i)).toHaveValue('new@example.com'))
 		// Password is intentionally NOT pre-filled — we still require it on resend.
 		expect(screen.getByLabelText(/current password/i)).toHaveValue('')
+	})
+
+	it('toasts re-sent copy and surfaces a "Re-sent" line in the banner after a resend', async () => {
+		vi.mocked(api.auth.requestEmailChange).mockResolvedValue(
+			buildActorWithKey({ id: 'actor-1', pending_email: 'new@example.com' }),
+		)
+		renderRow({ pending_email: 'new@example.com' })
+
+		fireEvent.click(screen.getByRole('button', { name: /resend verification email/i }))
+		await screen.findByRole('dialog')
+		// Email is pre-filled — submit the same address to exercise the resend path.
+		fireEvent.change(screen.getByLabelText(/current password/i), { target: { value: 'pw' } })
+		fireEvent.click(screen.getByRole('button', { name: /^send verification email$/i }))
+
+		await waitFor(() =>
+			expect(toast.success).toHaveBeenCalledWith('Verification email re-sent to new@example.com'),
+		)
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+		await waitFor(() => expect(bannerText()).toMatch(/re-sent/i))
+	})
+
+	it('warns inline when the resend dialog is edited to a different address', async () => {
+		renderRow({ pending_email: 'new@example.com' })
+
+		fireEvent.click(screen.getByRole('button', { name: /resend verification email/i }))
+		await screen.findByRole('dialog')
+
+		// Pre-filled with the pending address — no warning yet.
+		expect(screen.queryByText(/replaces your current pending change/i)).not.toBeInTheDocument()
+
+		fireEvent.change(screen.getByLabelText(/new email/i), {
+			target: { value: 'other@example.com' },
+		})
+
+		expect(await screen.findByText(/replaces your current pending change/i)).toBeInTheDocument()
+	})
+
+	it('does not show the divergence warning in a fresh change dialog', async () => {
+		renderRow()
+		await openDialog()
+		fillForm({ email: 'other@example.com', password: 'pw' })
+		expect(screen.queryByText(/replaces your current pending change/i)).not.toBeInTheDocument()
+	})
+
+	it('disables Resend while a Cancel is in flight', async () => {
+		let resolveCancel: (value: ActorWithKey) => void = () => {}
+		vi.mocked(api.auth.cancelEmailChange).mockImplementation(
+			() =>
+				new Promise<ActorWithKey>((r) => {
+					resolveCancel = r
+				}),
+		)
+		renderRow({ pending_email: 'new@example.com' })
+
+		const cancelBtn = screen.getByRole('button', { name: /cancel email change/i })
+		const resendBtn = screen.getByRole('button', { name: /resend verification email/i })
+		expect(cancelBtn).not.toBeDisabled()
+		expect(resendBtn).not.toBeDisabled()
+
+		fireEvent.click(cancelBtn)
+
+		await waitFor(() => expect(cancelBtn).toBeDisabled())
+		expect(resendBtn).toBeDisabled()
+
+		resolveCancel(buildActorWithKey({ id: 'actor-1', pending_email: null }))
+		await waitFor(() => expect(cancelBtn).not.toBeDisabled())
 	})
 })
