@@ -45,13 +45,13 @@ describe('readStripeEnv', () => {
 
 	it('throws when a cap is non-numeric', () => {
 		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_STARTER_HARD_CAP_TOKENS: 'abc' })).toThrow(
-			/positive number/,
+			/positive integer string/,
 		)
 	})
 
 	it('throws when a cap is zero or negative', () => {
 		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_PRO_HARD_CAP_TOKENS: '0' })).toThrow(
-			/positive number/,
+			/positive integer string/,
 		)
 	})
 })

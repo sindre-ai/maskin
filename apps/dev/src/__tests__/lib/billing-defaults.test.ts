@@ -4,13 +4,13 @@ vi.mock('../../lib/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
-import { logger } from '../../lib/logger'
 import {
 	MAX_ENV_CAP,
 	PRO_HARD_CAP_DEFAULT_TOKENS,
 	STARTER_HARD_CAP_DEFAULT_TOKENS,
 	parsePositiveIntEnv,
 } from '../../lib/billing-defaults'
+import { logger } from '../../lib/logger'
 
 const KEY = 'MASKIN_TEST_CAP_TOKENS'
 
