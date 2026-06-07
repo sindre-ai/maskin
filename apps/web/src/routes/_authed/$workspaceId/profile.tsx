@@ -346,19 +346,24 @@ function NotificationPrefRow({
 	onChange: (next: boolean) => void
 	isError: boolean
 }) {
+	const hintId = `notification-pref-${prefKey}-hint`
+	const errorId = `notification-pref-${prefKey}-error`
 	return (
 		<Row
 			label={label}
 			hint={
 				isError ? (
-					<span className="text-xs text-destructive">Save failed — try again.</span>
+					<span id={errorId} className="text-xs text-destructive">
+						Save failed — try again.
+					</span>
 				) : (
-					<span>{hint}</span>
+					<span id={hintId}>{hint}</span>
 				)
 			}
 		>
 			<Switch
 				aria-label={label}
+				aria-describedby={isError ? errorId : hintId}
 				data-pref-key={prefKey}
 				checked={checked}
 				onCheckedChange={onChange}

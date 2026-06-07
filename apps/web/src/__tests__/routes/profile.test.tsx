@@ -311,6 +311,30 @@ describe('ProfilePage — Notification preference switches', () => {
 		const cached = queryClient.getQueryData<ActorResponse>(['actors', 'detail', storedActor.id])
 		expect(cached?.notification_prefs?.subscribed).toBe(true)
 	})
+
+	it('describes each switch by its hint id, then swaps to the error id when the save fails', async () => {
+		mockUpdate.mockRejectedValue(new Error('boom'))
+		renderPage()
+
+		const mentionsSwitch = screen.getByRole('switch', { name: 'Mentions and replies' })
+		expect(mentionsSwitch).toHaveAttribute('aria-describedby', 'notification-pref-mentions-hint')
+		expect(document.getElementById('notification-pref-mentions-hint')).toHaveTextContent(
+			/notify me when/i,
+		)
+
+		fireEvent.click(mentionsSwitch)
+
+		await waitFor(() => expect(toastErrorSpy).toHaveBeenCalled())
+		await waitFor(() =>
+			expect(screen.getByRole('switch', { name: 'Mentions and replies' })).toHaveAttribute(
+				'aria-describedby',
+				'notification-pref-mentions-error',
+			),
+		)
+		expect(document.getElementById('notification-pref-mentions-error')).toHaveTextContent(
+			/save failed/i,
+		)
+	})
 })
 
 describe('ProfilePage — Email row + verification banner', () => {
