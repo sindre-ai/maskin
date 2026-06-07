@@ -1,6 +1,5 @@
+import { Field } from '@/components/profile/_field'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
 	ResponsiveDialog,
 	ResponsiveDialogContent,
@@ -12,7 +11,6 @@ import {
 import { useChangePassword } from '@/hooks/use-auth'
 import { trackEvent } from '@/lib/analytics'
 import { ApiError } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { type FormEvent, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -144,6 +142,7 @@ function PasswordDialog({
 						<Field
 							id="current_password"
 							label="Current password"
+							type="password"
 							value={current}
 							onChange={(v) => {
 								setCurrent(v)
@@ -156,6 +155,7 @@ function PasswordDialog({
 						<Field
 							id="new_password"
 							label="New password"
+							type="password"
 							value={next}
 							onChange={setNext}
 							onBlur={() => setTouched((t) => ({ ...t, next: true }))}
@@ -166,6 +166,7 @@ function PasswordDialog({
 						<Field
 							id="confirm_password"
 							label="Confirm new password"
+							type="password"
 							value={confirm}
 							onChange={setConfirm}
 							onBlur={() => setTouched((t) => ({ ...t, confirm: true }))}
@@ -190,46 +191,5 @@ function PasswordDialog({
 				</form>
 			</ResponsiveDialogContent>
 		</ResponsiveDialog>
-	)
-}
-
-function Field({
-	id,
-	label,
-	value,
-	onChange,
-	onBlur,
-	error,
-	autoComplete,
-	hint,
-}: {
-	id: string
-	label: string
-	value: string
-	onChange: (value: string) => void
-	onBlur: () => void
-	error?: string
-	autoComplete: string
-	hint?: string
-}) {
-	return (
-		<div className="flex flex-col gap-1">
-			<Label htmlFor={id}>{label}</Label>
-			<Input
-				id={id}
-				type="password"
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-				onBlur={onBlur}
-				autoComplete={autoComplete}
-				aria-invalid={error ? true : undefined}
-				className={cn(error && 'border-destructive')}
-			/>
-			{error ? (
-				<span className="text-xs text-destructive">{error}</span>
-			) : hint ? (
-				<span className="text-xs text-muted-foreground/80">{hint}</span>
-			) : null}
-		</div>
 	)
 }
