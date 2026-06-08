@@ -1,12 +1,5 @@
 import { Button } from '@/components/ui/button'
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from '@/components/ui/dialog'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
 	Select,
 	SelectContent,
@@ -14,6 +7,14 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
@@ -26,6 +27,8 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { getStatusColor } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check } from 'lucide-react'
@@ -237,6 +240,18 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		}
 		return { asSource, asTarget }
 	}, [graph, object.id])
+	const childTasks = useMemo<DeleteDialogChildTask[] | undefined>(() => {
+		if (!graph || object.type !== 'bet') return undefined
+		const byId = new Map(graph.connected_objects.map((co) => [co.id, co]))
+		const out: DeleteDialogChildTask[] = []
+		for (const rel of graph.relationships) {
+			if (rel.type !== 'breaks_into' || rel.sourceId !== object.id) continue
+			const co = byId.get(rel.targetId)
+			if (!co || co.type !== 'task') continue
+			out.push({ id: co.id, title: co.title, status: co.status, relationshipId: rel.id })
+		}
+		return out
+	}, [graph, object.id, object.type])
 	const { data: events } = useEntityEvents(workspaceId, object.id)
 
 	const settings = workspace.settings as Record<string, unknown>
@@ -323,10 +338,16 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.type, object.id],
 	)
 
-	const handleConfirmDelete = useCallback(() => {
-		confirmedDeleteRef.current = true
-		handleDelete()
-	}, [handleDelete])
+	// T1 ships the UI shell only — accept the new {deleteTaskIds, detachRelationshipIds}
+	// signature but still call the existing single-mutation delete path. T2 will
+	// consume the selection to fire cascade deletes + detaches.
+	const handleConfirmDelete = useCallback(
+		(_selection: { deleteTaskIds: string[]; detachRelationshipIds: string[] }) => {
+			confirmedDeleteRef.current = true
+			handleDelete()
+		},
+		[handleDelete],
+	)
 
 	const [menuOpen, setMenuOpen] = useState(false)
 
@@ -363,6 +384,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onOpenChange={handleDeleteOpenChange}
 				objectType={object.type}
 				objectTitle={object.title}
+				childTasks={childTasks}
 				onConfirm={handleConfirmDelete}
 				isPending={deleteObject.isPending}
 			/>
@@ -386,11 +408,24 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	)
 }
 
+export interface DeleteDialogChildTask {
+	id: string
+	title: string | null
+	status: string
+	relationshipId: string
+}
+
+export interface DeleteConfirmSelection {
+	deleteTaskIds: string[]
+	detachRelationshipIds: string[]
+}
+
 export function DeleteConfirmDialog({
 	open,
 	onOpenChange,
 	objectType,
 	objectTitle,
+	childTasks,
 	onConfirm,
 	isPending,
 }: {
@@ -398,29 +433,161 @@ export function DeleteConfirmDialog({
 	onOpenChange: (open: boolean) => void
 	objectType: string
 	objectTitle: string | null
-	onConfirm: () => void
+	childTasks?: DeleteDialogChildTask[]
+	onConfirm: (selection: DeleteConfirmSelection) => void
 	isPending: boolean
 }) {
-	const description = objectTitle
+	const isBet = objectType === 'bet'
+	const tasks = useMemo<DeleteDialogChildTask[]>(
+		() => (isBet ? (childTasks ?? []) : []),
+		[isBet, childTasks],
+	)
+	const hasCascade = isBet && tasks.length > 0
+	// All-done bets flip the default to detach (every checkbox starts OFF).
+	const startChecked = !(hasCascade && tasks.every((t) => t.status === 'done'))
+
+	const [selected, setSelected] = useState<Set<string>>(() => new Set())
+	// Re-seed selection whenever the dialog opens or the task set changes —
+	// stale state between two different bets would otherwise leak across opens.
+	useEffect(() => {
+		if (!open) return
+		setSelected(new Set(hasCascade && startChecked ? tasks.map((t) => t.id) : []))
+	}, [open, hasCascade, startChecked, tasks])
+
+	const toggle = useCallback((id: string) => {
+		setSelected((prev) => {
+			const next = new Set(prev)
+			if (next.has(id)) next.delete(id)
+			else next.add(id)
+			return next
+		})
+	}, [])
+
+	const detachAll = useCallback(() => setSelected(new Set()), [])
+
+	const selectedCount = selected.size
+	const keptCount = tasks.length - selectedCount
+
+	const handleConfirm = () => {
+		if (!hasCascade) {
+			onConfirm({ deleteTaskIds: [], detachRelationshipIds: [] })
+			return
+		}
+		const deleteTaskIds: string[] = []
+		const detachRelationshipIds: string[] = []
+		for (const t of tasks) {
+			if (selected.has(t.id)) deleteTaskIds.push(t.id)
+			else detachRelationshipIds.push(t.relationshipId)
+		}
+		onConfirm({ deleteTaskIds, detachRelationshipIds })
+	}
+
+	const simpleDescription = objectTitle
 		? `This will permanently delete the ${objectType} '${objectTitle}'. This can't be undone.`
 		: `This will permanently delete this ${objectType}. This can't be undone.`
+
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-sm">
-				<DialogHeader>
-					<DialogTitle>Delete this {objectType}?</DialogTitle>
-					<DialogDescription>{description}</DialogDescription>
-				</DialogHeader>
-				<DialogFooter className="gap-2 sm:gap-0">
-					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
+		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+			<ResponsiveDialogContent
+				className={cn('flex flex-col', hasCascade ? 'sm:max-w-[520px]' : 'sm:max-w-sm')}
+			>
+				<ResponsiveDialogHeader>
+					<ResponsiveDialogTitle>
+						{hasCascade
+							? objectTitle
+								? `Delete '${objectTitle}'?`
+								: 'Delete this bet?'
+							: `Delete this ${objectType}?`}
+					</ResponsiveDialogTitle>
+					<ResponsiveDialogDescription>
+						{hasCascade
+							? 'Choose which child tasks to delete along with this bet. Unchecked tasks will be detached and kept.'
+							: simpleDescription}
+					</ResponsiveDialogDescription>
+				</ResponsiveDialogHeader>
+
+				{hasCascade && (
+					<div className="max-h-[220px] overflow-y-auto rounded-md border border-border">
+						<div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-background px-3 py-2 text-sm">
+							<span className="text-muted-foreground">
+								{selectedCount} of {tasks.length} will be deleted
+							</span>
+							<button
+								type="button"
+								onClick={detachAll}
+								className="text-xs text-primary hover:underline"
+							>
+								Detach all instead
+							</button>
+						</div>
+						<ul>
+							{tasks.map((t) => {
+								const checked = selected.has(t.id)
+								return (
+									<li
+										key={t.id}
+										className={cn(
+											'border-b border-border last:border-b-0',
+											!checked && 'bg-muted/30',
+										)}
+									>
+										<label className="flex min-h-[44px] cursor-pointer items-center gap-3 px-3 py-2">
+											<Checkbox
+												checked={checked}
+												onCheckedChange={() => toggle(t.id)}
+												disabled={isPending}
+											/>
+											<span
+												className={cn(
+													'flex-1 break-words text-sm',
+													!checked && 'text-muted-foreground line-through',
+												)}
+											>
+												{t.title ?? 'Untitled task'}
+											</span>
+											<StatusPill status={t.status} />
+										</label>
+									</li>
+								)
+							})}
+						</ul>
+					</div>
+				)}
+
+				<ResponsiveDialogFooter className="gap-2 pb-[max(env(safe-area-inset-bottom),0px)] sm:gap-0">
+					<Button
+						variant="ghost"
+						onClick={() => onOpenChange(false)}
+						disabled={isPending}
+						autoFocus
+					>
 						Cancel
 					</Button>
-					<Button variant="destructive" onClick={onConfirm} disabled={isPending}>
-						{isPending ? 'Deleting...' : 'Delete'}
+					<Button variant="destructive" onClick={handleConfirm} disabled={isPending}>
+						{hasCascade
+							? `Delete bet · ${selectedCount} deleted · ${keptCount} kept`
+							: isPending
+								? 'Deleting...'
+								: 'Delete'}
 					</Button>
-				</DialogFooter>
-			</DialogContent>
-		</Dialog>
+				</ResponsiveDialogFooter>
+			</ResponsiveDialogContent>
+		</ResponsiveDialog>
+	)
+}
+
+function StatusPill({ status }: { status: string }) {
+	const colors = getStatusColor(status)
+	return (
+		<span
+			className={cn(
+				'whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[10px] font-medium',
+				colors.bg,
+				colors.text,
+			)}
+		>
+			{status.replace(/_/g, ' ')}
+		</span>
 	)
 }
 
