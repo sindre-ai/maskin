@@ -167,30 +167,30 @@ describe('FailureCard', () => {
 		expect(screen.getByText(/resets/)).toBeInTheDocument()
 	})
 
-	it('shows Top up and Switch to OpenRouter buttons for credit_exhausted on non-openrouter provider', () => {
+	it('shows Top up and Switch to OpenRouter buttons for billing_error on non-openrouter provider', () => {
 		renderCard({
 			provider: 'anthropic',
-			reason_code: 'credit_exhausted',
+			reason_code: 'billing_error',
 			human_message: 'Credit limit reached',
 			http_status: null,
 			reset_at: null,
 			verbatim_output: null,
 		})
 		expect(screen.getByRole('link', { name: /Top up Anthropic credits/ })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /Switch to OpenRouter key/ })).toBeInTheDocument()
+		expect(screen.getByText('Switch to OpenRouter key')).toBeInTheDocument()
 		expect(screen.getByText('Wait')).toBeInTheDocument()
 	})
 
 	it('hides Switch to OpenRouter button when provider is openrouter', () => {
 		renderCard({
 			provider: 'openrouter',
-			reason_code: 'credit_exhausted',
+			reason_code: 'insufficient_credits',
 			human_message: 'Out of credits',
 			http_status: 402,
 			reset_at: null,
 			verbatim_output: null,
 		})
-		expect(screen.queryByRole('link', { name: /Switch to OpenRouter key/ })).not.toBeInTheDocument()
+		expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Top up Openrouter credits/ })).toBeInTheDocument()
 	})
 

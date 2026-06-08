@@ -59,13 +59,24 @@ const TOP_UP_URLS: Record<string, string> = {
 	openrouter: 'https://openrouter.ai/credits',
 }
 
+// Reason codes that represent credit/quota depletion (not transient rate limits).
+// Matches the codes emitted by credit-classifier.ts.
+const CREDIT_REASON_CODES = new Set([
+	'billing_error',
+	'credit_balance_low',
+	'insufficient_credits',
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+])
+
 export function FailureCard({
 	failureReason,
 	workspaceId,
 }: { failureReason: FailureReason; workspaceId: string }) {
 	const [showVerbatim, setShowVerbatim] = useState(false)
 	const topUpUrl = TOP_UP_URLS[failureReason.provider]
-	const isCredit = failureReason.reason_code === 'credit_exhausted'
+	const isCredit = CREDIT_REASON_CODES.has(failureReason.reason_code)
 	const isOpenRouter = failureReason.provider === 'openrouter'
 	const providerLabel =
 		failureReason.provider.charAt(0).toUpperCase() + failureReason.provider.slice(1)
