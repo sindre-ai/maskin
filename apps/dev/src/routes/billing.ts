@@ -211,14 +211,24 @@ const portalBodySchema = z.object({
 		.url()
 		.refine((u) => urlMatchesAppOrigin(u), {
 			message: 'return_url origin must match FRONTEND_URL',
+		})
+		.openapi({
+			description:
+				'URL Stripe redirects to after the user closes the Billing Portal. Must use the same origin (scheme + host + port) as the configured FRONTEND_URL — cross-origin values are rejected with a 400.',
 		}),
 })
 
 function urlMatchesAppOrigin(rawUrl: string): boolean {
 	try {
 		return new URL(rawUrl).origin === new URL(frontendBaseUrl()).origin
-	} catch {
-		return false
+	} catch (err) {
+		// Only swallow `new URL(...)` failures on user-supplied input — those
+		// resolve to "origin doesn't match" (return false → 400). Anything else,
+		// notably `frontendBaseUrl()` throwing because FRONTEND_URL is unset in
+		// production, is a configuration bug and must propagate as a 500 so the
+		// signal isn't lost in a sea of 400s.
+		if (err instanceof TypeError) return false
+		throw err
 	}
 }
 
@@ -242,6 +252,11 @@ const portalRoute = createRoute({
 		200: {
 			description: 'Billing portal session created',
 			content: { 'application/json': { schema: portalResponseSchema } },
+		},
+		400: {
+			description:
+				'Invalid request body (malformed return_url, or origin does not match FRONTEND_URL)',
+			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
 			description: 'Workspace not found or no Stripe customer on record',
