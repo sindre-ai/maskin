@@ -89,7 +89,11 @@ app.post('/', async (c) => {
 				workspaceId,
 			})
 			.onConflictDoNothing({
-				target: [webhookDeliveries.provider, webhookDeliveries.externalId, webhookDeliveries.workspaceId],
+				target: [
+					webhookDeliveries.provider,
+					webhookDeliveries.externalId,
+					webhookDeliveries.workspaceId,
+				],
 			})
 			.returning({ id: webhookDeliveries.id })
 		if (rows.length === 0) {

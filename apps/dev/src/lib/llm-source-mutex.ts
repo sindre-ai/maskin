@@ -165,7 +165,7 @@ export type ByoTransitionResult<TUpdatedRow> =
 	| { ok: true; updated: TUpdatedRow }
 	| { ok: false; status: 404 | 500; error: ApiErrorResponse }
 
-type CancelAndDowngradeArgs<TUpdatedRow extends Record<string, unknown>> = {
+type CancelAndDowngradeArgs = {
 	db: Database
 	workspaceId: string
 	/**
@@ -206,7 +206,7 @@ type CancelAndDowngradeArgs<TUpdatedRow extends Record<string, unknown>> = {
  * workspace is the right trade-off (only writers to the same row block).
  */
 export async function cancelPaidPlanAndDowngrade<TUpdatedRow extends Record<string, unknown>>(
-	args: CancelAndDowngradeArgs<TUpdatedRow>,
+	args: CancelAndDowngradeArgs,
 ): Promise<ByoTransitionResult<TUpdatedRow>> {
 	const { db, workspaceId, getStripe, flow, buildNextSettings, extraSet } = args
 
@@ -228,9 +228,11 @@ export async function cancelPaidPlanAndDowngrade<TUpdatedRow extends Record<stri
 
 		const lockedSettings = (locked.settings ?? {}) as Record<string, unknown>
 		const lockedBilling = lockedSettings.billing as WorkspaceSettings['billing'] | undefined
+		const billingState = { billing: lockedBilling }
 
 		let downgradedBilling: WorkspaceSettings['billing'] | undefined
-		if (hasActivePaidPlan({ billing: lockedBilling })) {
+		if (hasActivePaidPlan(billingState)) {
+			const activeBilling = billingState.billing
 			let stripe: Stripe
 			try {
 				stripe = getStripe()
@@ -246,11 +248,11 @@ export async function cancelPaidPlanAndDowngrade<TUpdatedRow extends Record<stri
 				}
 			}
 			try {
-				await cancelActivePaidSubscription(stripe, lockedBilling.stripe_subscription_id)
+				await cancelActivePaidSubscription(stripe, activeBilling.stripe_subscription_id)
 			} catch (err) {
 				logger.error(`Stripe subscription cancel failed during ${flow}`, {
 					workspaceId,
-					subscriptionId: lockedBilling.stripe_subscription_id,
+					subscriptionId: activeBilling.stripe_subscription_id,
 					error: err instanceof Error ? err.message : String(err),
 				})
 				return {
@@ -259,10 +261,10 @@ export async function cancelPaidPlanAndDowngrade<TUpdatedRow extends Record<stri
 					error: createApiError('INTERNAL_ERROR', 'Failed to cancel paid subscription'),
 				}
 			}
-			downgradedBilling = billingAfterByoTransition(lockedBilling)
+			downgradedBilling = billingAfterByoTransition(activeBilling)
 			logger.info(`Paid plan canceled during ${flow}`, {
 				workspaceId,
-				subscriptionId: lockedBilling.stripe_subscription_id,
+				subscriptionId: activeBilling.stripe_subscription_id,
 			})
 		}
 

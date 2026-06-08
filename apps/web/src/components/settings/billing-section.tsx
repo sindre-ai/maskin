@@ -145,10 +145,8 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 
 				<div className="flex flex-wrap items-center gap-2">
 					{needsPaymentFix && (
-						<Button size="sm" asChild>
-							<a href={STRIPE_BILLING_PORTAL} target="_blank" rel="noreferrer">
-								Fix payment
-							</a>
+						<Button size="sm" onClick={handleManageInStripe} disabled={portal.isPending}>
+							Fix payment
 						</Button>
 					)}
 					{showUpgrades && (

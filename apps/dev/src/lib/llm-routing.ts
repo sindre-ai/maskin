@@ -218,17 +218,24 @@ export async function checkPlanCap(params: {
 	if (!billing || !MASKIN_PLAN_ROUTED_PLANS.has(billing.plan)) return
 
 	const plan = billing.plan as MaskinPlan
-	const cap = effectivePlanCap(plan, billing.hard_cap_tokens)
+	const cap = effectivePlanCap(plan, billing.hard_cap_tokens ?? undefined)
 	if (cap === null) return
 
-	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, billing.period_start)
+	const used = await getWorkspacePlanTokenUsage(
+		params.db,
+		params.workspaceId,
+		billing.period_start ?? undefined,
+	)
 	if (used < cap) return
 
 	throw new PlanCapExceededError({
 		plan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(billing.period_start, billing.period_end),
+		periodEnd: effectivePeriodEnd(
+			billing.period_start ?? undefined,
+			billing.period_end ?? undefined,
+		),
 	})
 }
 

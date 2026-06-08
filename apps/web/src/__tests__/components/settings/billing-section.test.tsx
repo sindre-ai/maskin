@@ -132,9 +132,8 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Starter — $20/mo')
-		const fix = screen.getByRole('link', { name: 'Fix payment' })
+		const fix = screen.getByRole('button', { name: 'Fix payment' })
 		expect(fix).toBeInTheDocument()
-		expect(fix).toHaveAttribute('href', expect.stringContaining('billing.stripe.com'))
 		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
 		expect(
@@ -160,7 +159,7 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Starter — $20/mo')
-		expect(screen.getByRole('link', { name: 'Fix payment' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Fix payment' })).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
 	})

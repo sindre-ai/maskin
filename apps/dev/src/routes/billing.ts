@@ -62,7 +62,6 @@ function planHardCapFallback(plan: 'trial' | 'starter' | 'pro' | 'byollm'): numb
  */
 const LLM_ROUTE_MASKIN_PLAN = 'maskin_plan'
 
-
 type Env = {
 	Variables: {
 		db: Database
