@@ -1,3 +1,4 @@
+import { BillingSection } from '@/components/settings/billing-section'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +24,11 @@ function KeysPage() {
 
 	return (
 		<div className="max-w-lg space-y-6">
-			<ClaudeOAuthSection workspaceId={workspaceId} />
+			<BillingSection workspaceId={workspaceId} />
+
+			<div className="border-t border-border pt-6">
+				<ClaudeOAuthSection workspaceId={workspaceId} />
+			</div>
 
 			<div className="border-t border-border pt-6">
 				<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
