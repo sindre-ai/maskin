@@ -175,12 +175,17 @@ app.openapi(usageRoute, async (c) => {
 			: null
 	const periodStartMs =
 		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - TRIAL_WINDOW_MS
+	const rawPeriodEnd = billing?.period_end
+	const periodEndSec =
+		typeof rawPeriodEnd === 'number' && Number.isFinite(rawPeriodEnd) && rawPeriodEnd > 0
+			? Math.floor(rawPeriodEnd)
+			: null
 	const periodEndMs =
-		periodStartSec !== null
-			? // Stripe periods are 28-31d; we don't store period_end on this branch,
-				// so we approximate as "30d from period_start" for the resets-in hint.
-				periodStartSec * 1000 + TRIAL_WINDOW_MS
-			: Date.now() + TRIAL_WINDOW_MS
+		periodEndSec !== null
+			? periodEndSec * 1000
+			: periodStartSec !== null
+				? periodStartSec * 1000 + TRIAL_WINDOW_MS
+				: Date.now() + TRIAL_WINDOW_MS
 
 	let tokensUsed = 0
 	if (plan !== 'byollm') {

@@ -176,6 +176,7 @@ describe('POST /api/webhooks/stripe', () => {
 					customer: 'cus_99',
 					status: 'active',
 					current_period_start: 1_700_000_000,
+					current_period_end: 1_702_592_000,
 					metadata: { workspace_id: workspaceId },
 					items: { data: [{ price: { id: 'price_pro' } }] },
 				},
@@ -192,6 +193,7 @@ describe('POST /api/webhooks/stripe', () => {
 			status: 'active',
 			hard_cap_tokens: 96_000_000,
 			period_start: 1_700_000_000,
+			period_end: 1_702_592_000,
 		})
 	})
 
@@ -258,6 +260,36 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(res.status).toBe(200)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({ plan: 'starter', status: 'past_due' })
+	})
+
+	it('writes period_start and period_end on invoice.paid', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-inv' }]]
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'starter', status: 'active' } } }],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_inv_paid',
+			type: 'invoice.paid',
+			data: {
+				object: {
+					metadata: { workspace_id: workspaceId },
+					period_start: 1_700_000_000,
+					period_end: 1_702_592_000,
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({
+			status: 'active',
+			period_start: 1_700_000_000,
+			period_end: 1_702_592_000,
+		})
 	})
 
 	it('marks the webhook_deliveries claim as processed on success', async () => {

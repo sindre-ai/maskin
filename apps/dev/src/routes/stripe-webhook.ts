@@ -263,6 +263,7 @@ async function applyEvent(
 					status: mapSubscriptionStatus(sub.status),
 					hard_cap_tokens: plan ? hardCapForPlan(plan, stripeEnv) : next.hard_cap_tokens,
 					period_start: sub.current_period_start ?? next.period_start,
+					period_end: sub.current_period_end ?? next.period_end,
 				}
 				break
 			}
@@ -281,10 +282,12 @@ async function applyEvent(
 			case 'invoice.paid': {
 				const invoice = event.data.object as Stripe.Invoice
 				const periodStart = invoice.period_start ?? invoice.lines?.data?.[0]?.period?.start
+				const periodEnd = invoice.period_end ?? invoice.lines?.data?.[0]?.period?.end
 				next = {
 					...next,
 					status: 'active',
 					period_start: periodStart ?? next.period_start,
+					period_end: periodEnd ?? next.period_end,
 				}
 				break
 			}
