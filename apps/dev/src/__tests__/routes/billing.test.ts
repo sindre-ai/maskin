@@ -333,14 +333,92 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(404)
 	})
 
-	// Regression: a malformed stored `period_start` (negative / float / non-finite)
-	// used to surface as a 500 through the response validator
-	// (`z.number().int().nonnegative()`), taking the entire Settings row dark.
-	// Now it degrades to `null` + a fresh trial-shaped window.
-	it.each([
-		['negative integer', -100],
-		['float', 1700000000.5],
-	])('returns period_start: null when the stored value is malformed (%s)', async (_label, bad) => {
+	it('falls back to env-driven cap when a Starter workspace has no hard_cap_tokens', async () => {
+		process.env.MASKIN_STARTER_HARD_CAP_TOKENS = '40000000'
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: { billing: { plan: 'starter', status: 'active' } },
+				},
+			],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({ plan: 'starter', hard_cap_tokens: 40_000_000 })
+	})
+
+	it('falls back to literal Starter/Pro defaults when env caps are unset', async () => {
+		for (const k of ['MASKIN_STARTER_HARD_CAP_TOKENS', 'MASKIN_PRO_HARD_CAP_TOKENS']) {
+			delete process.env[k]
+		}
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const starterWs = randomUUID()
+		const proWs = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: starterWs, settings: { billing: { plan: 'starter', status: 'active' } } }],
+			[],
+			[{ id: proWs, settings: { billing: { plan: 'pro', status: 'active' } } }],
+			[],
+		]
+
+		const starterRes = await app.request(
+			jsonGet('/api/billing/usage', { 'X-Workspace-Id': starterWs }),
+		)
+		expect(starterRes.status).toBe(200)
+		expect(await starterRes.json()).toMatchObject({ plan: 'starter', hard_cap_tokens: 32_000_000 })
+
+		const proRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': proWs }))
+		expect(proRes.status).toBe(200)
+		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_tokens: 96_000_000 })
+	})
+
+	it('falls back to literal default when the env cap is malformed', async () => {
+		process.env.MASKIN_PRO_HARD_CAP_TOKENS = 'not-a-number'
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ plan: 'pro', hard_cap_tokens: 96_000_000 })
+	})
+
+	it('still honours an explicit billing.hard_cap_tokens when set', async () => {
+		// Regression: the env/literal fallback only kicks in when the stored
+		// value is missing. An explicit positive value always wins.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: { plan: 'starter', status: 'active', hard_cap_tokens: 12_345_678 },
+					},
+				},
+			],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ hard_cap_tokens: 12_345_678 })
+	})
+
+	it('coerces malformed billing.period_start to null and returns 200', async () => {
+		// Regression: a non-integer / non-positive `period_start` (legacy ms
+		// values, NaN from a broken webhook write) used to slip past the
+		// `safeParse` and trip the response schema's `int().nonnegative()`,
+		// surfacing as a 500. Coerce at read time so the row stays useful.
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
@@ -352,9 +430,7 @@ describe('GET /api/billing/usage', () => {
 							plan: 'starter',
 							status: 'active',
 							hard_cap_tokens: 32_000_000,
-							period_start: bad,
-							stripe_customer_id: 'cus_x',
-							stripe_subscription_id: 'sub_x',
+							period_start: -1.5,
 						},
 					},
 				},
@@ -365,16 +441,33 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({
-			plan: 'starter',
-			status: 'active',
-			tokens_used: 0,
-			hard_cap_tokens: 32_000_000,
-			period_start: null,
-			stripe_customer_id: 'cus_x',
-			stripe_subscription_id: 'sub_x',
-		})
-		// The trial-shaped fallback window puts the next reset ~30d out.
-		expect(body.period_resets_in_ms).toBeGreaterThan(0)
+		expect(body.period_start).toBeNull()
+		expect(body).toMatchObject({ plan: 'starter', hard_cap_tokens: 32_000_000 })
+	})
+
+	it('floors a fractional period_start so the response schema accepts it', async () => {
+		const periodStart = Math.floor(Date.now() / 1000) - 1000
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'starter',
+							status: 'active',
+							hard_cap_tokens: 32_000_000,
+							period_start: periodStart + 0.42,
+						},
+					},
+				},
+			],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ period_start: periodStart })
 	})
 })

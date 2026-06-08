@@ -16,6 +16,36 @@ import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/st
 const DEFAULT_TRIAL_HARD_CAP_TOKENS = 100_000
 const TRIAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 /**
+ * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
+ * populated yet (delayed Stripe webhook, partial state after a webhook failure).
+ * Read from env first, then fall through to the literal documented in the PR
+ * body for the Settings row. We parse env locally instead of reusing
+ * `readStripeEnv` because that helper throws when Stripe is unconfigured, and
+ * `/api/billing/usage` must keep serving usage to workspaces regardless.
+ */
+const STARTER_HARD_CAP_DEFAULT_TOKENS = 32_000_000
+const PRO_HARD_CAP_DEFAULT_TOKENS = 96_000_000
+
+function readPlanCapEnv(envKey: string): number | null {
+	const raw = process.env[envKey]
+	if (raw === undefined || raw === '') return null
+	const n = Number(raw)
+	return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+}
+
+function planHardCapFallback(plan: 'trial' | 'starter' | 'pro' | 'byollm'): number | null {
+	switch (plan) {
+		case 'trial':
+		case 'byollm':
+			return DEFAULT_TRIAL_HARD_CAP_TOKENS
+		case 'starter':
+			return readPlanCapEnv('MASKIN_STARTER_HARD_CAP_TOKENS') ?? STARTER_HARD_CAP_DEFAULT_TOKENS
+		case 'pro':
+			return readPlanCapEnv('MASKIN_PRO_HARD_CAP_TOKENS') ?? PRO_HARD_CAP_DEFAULT_TOKENS
+	}
+}
+
+/**
  * LLM-route tag the paid-plan + trial sessions write on `sessions.config.llm_route`.
  * Lives as a literal here so this task doesn't import from the hard-cap branch;
  * when the bet branch rebases everything together the constant in
@@ -23,18 +53,6 @@ const TRIAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
  */
 const LLM_ROUTE_MASKIN_PLAN = 'maskin_plan'
 
-/**
- * Mirror the response schema (`z.number().int().nonnegative()`) at read so a
- * malformed stored `period_start` (negative, float, non-finite) degrades to
- * `null` + a fresh trial window instead of crashing the OpenAPI response
- * validator and taking the whole row dark.
- */
-function normalizePeriodStart(raw: unknown): number | null {
-	if (typeof raw !== 'number') return null
-	if (!Number.isInteger(raw)) return null
-	if (raw < 0) return null
-	return raw
-}
 
 type Env = {
 	Variables: {
@@ -144,25 +162,23 @@ app.openapi(usageRoute, async (c) => {
 	const hardCap =
 		billing?.hard_cap_tokens && billing.hard_cap_tokens > 0
 			? billing.hard_cap_tokens
-			: plan === 'trial' || plan === 'byollm'
-				? DEFAULT_TRIAL_HARD_CAP_TOKENS
-				: null
+			: planHardCapFallback(plan)
 	// Trial workspaces have no Stripe `period_start`, so anchor the window to
-	// `workspaces.createdAt` and roll forward in fixed 30d cycles. Without a
-	// stable origin the row reads "resets in ~30d" forever — the countdown
-	// drifts with `Date.now()` while sessions burn the budget, so the displayed
-	// reset and the `tokens_used` sum describe different intervals.
+	// `workspaces.createdAt` and roll forward in fixed 30d cycles.
 	const now = Date.now()
 	const trialOrigin = workspace.createdAt?.getTime() ?? now
 	const elapsedSinceOrigin = Math.max(0, now - trialOrigin)
 	const trialCycleStartMs =
 		trialOrigin + Math.floor(elapsedSinceOrigin / TRIAL_WINDOW_MS) * TRIAL_WINDOW_MS
-	// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
-	// writes `subscription.current_period_start` straight through, and Stripe
-	// timestamps are seconds (not ms). Multiply by 1000 here so `new Date()`,
-	// `Date.now()`, and the resets-in arithmetic all operate in ms.
-	const periodStart = normalizePeriodStart(billing?.period_start)
-	const periodStartMs = periodStart !== null ? periodStart * 1000 : trialCycleStartMs
+	// `billing.period_start` is a Unix SECONDS value. Floor positive values so
+	// a Stripe-written float doesn't trip the response schema; null for anything
+	// malformed (negative, non-finite, non-number).
+	const rawPeriodStart = billing?.period_start
+	const periodStartSec =
+		typeof rawPeriodStart === 'number' && Number.isFinite(rawPeriodStart) && rawPeriodStart > 0
+			? Math.floor(rawPeriodStart)
+			: null
+	const periodStartMs = periodStartSec !== null ? periodStartSec * 1000 : trialCycleStartMs
 	const periodEndMs = periodStartMs + TRIAL_WINDOW_MS
 
 	let tokensUsed = 0
@@ -203,7 +219,7 @@ app.openapi(usageRoute, async (c) => {
 			status,
 			tokens_used: tokensUsed,
 			hard_cap_tokens: hardCap,
-			period_start: periodStart,
+			period_start: periodStartSec,
 			period_resets_in_ms: plan === 'byollm' ? null : resetsIn,
 			stripe_customer_id: billing?.stripe_customer_id ?? null,
 			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
