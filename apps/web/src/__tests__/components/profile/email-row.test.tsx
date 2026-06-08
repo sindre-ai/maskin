@@ -88,6 +88,8 @@ describe('EmailRow', () => {
 		expect(submit).toBeDisabled()
 		fillForm({ email: 'alice@example.com' }) // same as current
 		expect(submit).toBeDisabled()
+		fillForm({ email: 'ALICE@example.com' }) // same as current, different case
+		expect(submit).toBeDisabled()
 		fillForm({ email: 'new@example.com', password: '' })
 		expect(submit).toBeDisabled()
 		fillForm({ email: 'new@example.com', password: 'pw' })
@@ -114,6 +116,22 @@ describe('EmailRow', () => {
 		})
 		expect(toast.success).toHaveBeenCalledWith('Verification email sent to new@example.com')
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+	})
+
+	it('clears the password and email fields after a successful submit, even if reopened', async () => {
+		vi.mocked(api.auth.requestEmailChange).mockResolvedValue(
+			buildActorWithKey({ id: 'actor-1', pending_email: 'new@example.com' }),
+		)
+		renderRow()
+		await openDialog()
+		fillForm({ email: 'new@example.com', password: 'super-secret' })
+		fireEvent.click(screen.getByRole('button', { name: /send verification email/i }))
+
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+		await openDialog()
+		expect(screen.getByLabelText(/new email/i)).toHaveValue('')
+		expect(screen.getByLabelText(/current password/i)).toHaveValue('')
 	})
 
 	it('shows an inline password error when the endpoint returns 401', async () => {
@@ -148,6 +166,10 @@ describe('EmailRow', () => {
 		expect(screen.getByText('new@example.com')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /resend verification email/i })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /cancel email change/i })).toBeInTheDocument()
+		const banner = screen
+			.getByText(/verify your new email address/i)
+			.closest('[data-row="email-verification"]')
+		expect(banner).toHaveAttribute('aria-live', 'polite')
 		// No "Re-sent" affordance until the user actually triggers a resend.
 		expect(bannerText()).not.toMatch(/re-sent/i)
 	})
@@ -162,6 +184,17 @@ describe('EmailRow', () => {
 
 		await waitFor(() => expect(api.auth.cancelEmailChange).toHaveBeenCalled())
 		expect(toast.success).toHaveBeenCalledWith('Email change cancelled')
+	})
+
+	it('shows an error toast when cancelling the pending change fails', async () => {
+		vi.mocked(api.auth.cancelEmailChange).mockRejectedValue(new Error('network down'))
+		renderRow({ pending_email: 'new@example.com' })
+
+		fireEvent.click(screen.getByRole('button', { name: /cancel email change/i }))
+
+		await waitFor(() => expect(toast.error).toHaveBeenCalledWith('network down'))
+		// Banner stays — the cancel didn't succeed, so the user can retry.
+		expect(screen.getByText(/verify your new email/i)).toBeInTheDocument()
 	})
 
 	it('Resend reopens the dialog with the pending email pre-filled', async () => {

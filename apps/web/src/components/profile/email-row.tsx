@@ -261,8 +261,8 @@ function ChangeEmailDialog({
 					? `Verification email re-sent to ${trimmedEmail}`
 					: `Verification email sent to ${trimmedEmail}`,
 			)
-			onSuccess(isResend ? trimmedEmail : null)
 			reset()
+			onSuccess(isResend ? trimmedEmail : null)
 		} catch (err) {
 			if (err instanceof ApiError) {
 				if (err.status === 401) {
