@@ -292,6 +292,37 @@ describe('POST /api/webhooks/stripe', () => {
 		})
 	})
 
+	it('reads period_end from lines.data[0] when invoice.period_end is absent', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-inv-fallback' }]]
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'starter', status: 'active' } } }],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_inv_paid_fallback',
+			type: 'invoice.paid',
+			data: {
+				object: {
+					metadata: { workspace_id: workspaceId },
+					period_start: null,
+					period_end: null,
+					lines: { data: [{ period: { start: 1_700_000_000, end: 1_702_592_000 } }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({
+			status: 'active',
+			period_start: 1_700_000_000,
+			period_end: 1_702_592_000,
+		})
+	})
+
 	it('marks the webhook_deliveries claim as processed on success', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
