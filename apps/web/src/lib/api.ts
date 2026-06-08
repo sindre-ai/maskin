@@ -35,6 +35,41 @@ type RequestOptions = {
 	workspaceId?: string
 }
 
+// Single source of truth for parsing { error: { code, message, details? } } responses
+// into ApiError. Shared by request(), uploadFileWithProgress(), and uploadAvatarMultipart()
+// so the legacy-string + missing-body fallbacks stay aligned across fetch and XHR paths.
+function parseApiError(status: number, statusText: string, body: unknown): ApiError {
+	const data = (body && typeof body === 'object' ? body : {}) as { error?: unknown }
+	const err = data.error
+	let fieldErrors: Record<string, string[]> | undefined
+	let message: string
+
+	if (err && typeof err === 'object') {
+		const errObj = err as { code?: string; message?: string; details?: unknown }
+		if (errObj.code) {
+			// Structured error format: { error: { code, message, details?, suggestion? } }
+			message = errObj.message ?? statusText
+			if (Array.isArray(errObj.details)) {
+				fieldErrors = {}
+				for (const detail of errObj.details as Array<{ field?: string; message: string }>) {
+					const field = detail.field || '_root'
+					if (!fieldErrors[field]) fieldErrors[field] = []
+					fieldErrors[field].push(detail.message)
+				}
+			}
+		} else {
+			message = errObj.message || statusText
+		}
+	} else if (typeof err === 'string') {
+		// TODO: Remove legacy string format fallback once all API responses use structured errors
+		message = err
+	} else {
+		message = statusText
+	}
+
+	return new ApiError(status, message, fieldErrors)
+}
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	const { method = 'GET', body, headers = {}, workspaceId } = opts
 	const apiKey = getApiKey()
@@ -61,29 +96,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 	if (!res.ok) {
 		const data = await res.json().catch(() => ({ error: res.statusText }))
-
-		let fieldErrors: Record<string, string[]> | undefined
-		let message: string
-
-		if (typeof data.error === 'object' && data.error?.code) {
-			// Structured error format: { error: { code, message, details?, suggestion? } }
-			message = data.error.message
-			if (data.error.details && Array.isArray(data.error.details)) {
-				fieldErrors = {}
-				for (const detail of data.error.details) {
-					const field = detail.field || '_root'
-					if (!fieldErrors[field]) fieldErrors[field] = []
-					fieldErrors[field].push(detail.message)
-				}
-			}
-		} else if (typeof data.error === 'string') {
-			// TODO: Remove legacy string format fallback once all API responses use structured errors
-			message = data.error
-		} else {
-			message = data.error?.message || res.statusText
-		}
-
-		throw new ApiError(res.status, message, fieldErrors)
+		throw parseApiError(res.status, res.statusText, data)
 	}
 
 	return res.json()
@@ -123,27 +136,13 @@ function uploadFileWithProgress(
 				}
 				return
 			}
-			let message = xhr.statusText
-			let fieldErrors: Record<string, string[]> | undefined
+			let data: unknown
 			try {
-				const data = JSON.parse(xhr.responseText)
-				if (typeof data.error === 'object' && data.error?.message) {
-					message = data.error.message
-					if (Array.isArray(data.error.details)) {
-						fieldErrors = {}
-						for (const d of data.error.details) {
-							const field = d.field || '_root'
-							if (!fieldErrors[field]) fieldErrors[field] = []
-							fieldErrors[field].push(d.message)
-						}
-					}
-				} else if (typeof data.error === 'string') {
-					message = data.error
-				}
+				data = JSON.parse(xhr.responseText)
 			} catch {
-				// keep statusText
+				// Leave data undefined → parseApiError falls back to statusText
 			}
-			reject(new ApiError(xhr.status, message, fieldErrors))
+			reject(parseApiError(xhr.status, xhr.statusText, data))
 		}
 		xhr.onerror = () => reject(new ApiError(0, 'Network error'))
 		xhr.onabort = () => reject(new ApiError(0, 'Upload aborted'))
@@ -179,24 +178,7 @@ async function uploadAvatarMultipart(actorId: string, file: File): Promise<Actor
 	})
 	if (!res.ok) {
 		const data = await res.json().catch(() => ({ error: res.statusText }))
-		let fieldErrors: Record<string, string[]> | undefined
-		let message: string
-		if (typeof data.error === 'object' && data.error?.code) {
-			message = data.error.message
-			if (Array.isArray(data.error.details)) {
-				fieldErrors = {}
-				for (const d of data.error.details) {
-					const field = d.field || '_root'
-					if (!fieldErrors[field]) fieldErrors[field] = []
-					fieldErrors[field].push(d.message)
-				}
-			}
-		} else if (typeof data.error === 'string') {
-			message = data.error
-		} else {
-			message = data.error?.message || res.statusText
-		}
-		throw new ApiError(res.status, message, fieldErrors)
+		throw parseApiError(res.status, res.statusText, data)
 	}
 	return res.json()
 }
