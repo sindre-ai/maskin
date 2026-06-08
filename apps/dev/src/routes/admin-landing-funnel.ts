@@ -4,8 +4,8 @@ import { objects } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createApiError } from '../lib/errors'
+import { LANDING_GUESTS_WORKSPACE_ID } from '../lib/landing-guests'
 import { logger } from '../lib/logger'
-import { LANDING_GUESTS_WORKSPACE_ID } from './public-bet-strategist'
 
 // Authenticated read-only endpoint that surfaces the landing-page bet's
 // kill metric (≥10% malformed drafts in any 48h window) plus the unique-guest

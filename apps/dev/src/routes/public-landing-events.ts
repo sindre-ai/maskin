@@ -166,7 +166,7 @@ app.onError((err, c) => {
 
 // X-Forwarded-For is set by our edge; fall back to socket remoteAddress in
 // dev. We take the first hop because anything later is a chained proxy we
-// don't trust. Mirrors the helper in public-bet-strategist.ts.
+// don't trust. Mirrors the helper used by the landing-page routes.
 function extractClientIp(req: Request, fwd: string | undefined): string {
 	if (fwd) {
 		const first = fwd.split(',')[0]?.trim()

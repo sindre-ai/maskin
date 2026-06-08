@@ -39,10 +39,9 @@ export function useAuth() {
 				type: result.type,
 				email: result.email,
 			})
-			navigate({ to: '/' })
 			return result
 		},
-		[navigate],
+		[],
 	)
 
 	const logout = useCallback(() => {
