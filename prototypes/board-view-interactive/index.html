@@ -76,6 +76,7 @@
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
     user-select: none;
+    -webkit-user-select: none;
   }
 
   .topbar {
@@ -542,6 +543,7 @@ board.addEventListener("pointerdown", (e) => {
     flashColumn(cardEl.closest(".column"), "blocked");
     return;
   }
+  e.preventDefault();
 
   const rect = cardEl.getBoundingClientRect();
   drag = {
@@ -562,6 +564,7 @@ board.addEventListener("pointerdown", (e) => {
 
 board.addEventListener("pointermove", (e) => {
   if (!drag) return;
+  e.preventDefault();
   drag.movedPx += Math.abs(e.movementX) + Math.abs(e.movementY);
 
   if (!drag.ghost && drag.movedPx > 4) {
@@ -623,14 +626,14 @@ function finishDrag(e) {
   bumpMetric("drop");
   setTimeout(() => {
     if (!shouldFail) {
-      showToast(`Moved “${truncate(card.title)}” → ${labelFor(toStatus)}`, "success");
+      showToast(`Moved "${truncate(card.title)}" → ${labelFor(toStatus)}`, "success");
       return;
     }
     // rollback
     card.status = prevStatus;
     bumpMetric("fail");
     render();
-    showToast(`Couldn't move “${truncate(card.title)}” to ${labelFor(toStatus)}. Reverted.`, "fail");
+    showToast(`Couldn't move "${truncate(card.title)}" to ${labelFor(toStatus)}. Reverted.`, "fail");
     // snap-back hint on the rendered card
     const restored = board.querySelector(`.card[data-id="${card.id}"]`);
     if (restored) {
