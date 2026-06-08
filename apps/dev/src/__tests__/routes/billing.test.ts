@@ -369,21 +369,31 @@ describe('POST /api/billing/portal', () => {
 		expect(res.status).toBe(400)
 	})
 
-	it('returns 400 when return_url origin does not match FRONTEND_URL', async () => {
-		// FRONTEND_URL is pinned to https://app.test in beforeEach; an
-		// attacker-origin return_url must be rejected before Stripe is touched.
-		const { app } = createTestApp(billingRoutes, '/api/billing')
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/portal',
-				{ return_url: 'https://attacker.example/landing' },
-				{ 'X-Workspace-Id': randomUUID() },
-			),
-		)
-		expect(res.status).toBe(400)
-		expect(createBillingPortalSession).not.toHaveBeenCalled()
-	})
+	// FRONTEND_URL is pinned to https://app.test in beforeEach. URL.origin
+	// equality is scheme + host + port (no path/query/userinfo), so any deviation
+	// on any of those three must 400 before Stripe is touched. These cases lock
+	// that semantic so a future swap to e.g. host-only or hostname-suffix
+	// matching can't sneak past review.
+	it.each([
+		['different host', 'https://attacker.example/landing'],
+		['port mismatch', 'https://app.test:8443/x'],
+		['subdomain mismatch', 'https://evil.app.test/x'],
+	])(
+		'returns 400 when return_url origin does not match FRONTEND_URL (%s)',
+		async (_label, returnUrl) => {
+			const { app } = createTestApp(billingRoutes, '/api/billing')
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/billing/portal',
+					{ return_url: returnUrl },
+					{ 'X-Workspace-Id': randomUUID() },
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(createBillingPortalSession).not.toHaveBeenCalled()
+		},
+	)
 })
 
 describe('GET /api/billing/usage', () => {
