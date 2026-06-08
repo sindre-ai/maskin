@@ -11,7 +11,6 @@ import {
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { cancelPaidPlanAndDowngrade, patchAddsByoSource } from '../lib/llm-source-mutex'
-import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
@@ -191,34 +190,32 @@ const updateWorkspaceRoute = createRoute({
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		403: {
+			description: 'Caller is not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
 app.openapi(updateWorkspaceRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, actorId, id))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
 
 	// BYOLLM ↔ paid plan mutex: if the PATCH is adding a BYO Anthropic key
 	// or enabling custom_llm, the read-cancel-rewrite window must run inside
 	// a row lock so a concurrent webhook can't reactivate a paid plan
 	// underneath us. cancelPaidPlanAndDowngrade owns the whole transaction.
 	if (body.settings && patchAddsByoSource(body.settings)) {
-		let stripeEnv: ReturnType<typeof readStripeEnv>
-		try {
-			stripeEnv = readStripeEnv()
-		} catch (err) {
-			logger.error('Cannot cancel paid plan for BYOLLM transition: Stripe is not configured', {
-				workspaceId: id,
-				error: err instanceof Error ? err.message : String(err),
-			})
-			return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
-		}
-
 		const result = await cancelPaidPlanAndDowngrade<typeof workspaces.$inferSelect>({
 			db,
 			workspaceId: id,
-			getStripe: () => getStripeClient(stripeEnv),
+			getStripe: () => getStripeClient(readStripeEnv()),
 			flow: 'BYOLLM transition',
 			buildNextSettings: (lockedSettings, downgradedBilling) =>
 				mergeBodyIntoLockedSettings(lockedSettings, body.settings ?? {}, downgradedBilling),

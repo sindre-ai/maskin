@@ -111,9 +111,9 @@ export async function getActorFallbackTokenUsage24h(
 
 /**
  * Sums input+output tokens across the workspace's maskin_plan sessions since
- * `periodStart` (or all-time when undefined — used for trial buckets that don't
- * have a billing period yet). The route filter is what makes paid + trial usage
- * cheap to query, even as the sessions table grows.
+ * `periodStartMs` (or all-time when undefined — used for trial buckets that
+ * don't have a billing period yet). The route filter is what makes paid + trial
+ * usage cheap to query, even as the sessions table grows.
  */
 export async function getWorkspacePlanTokenUsage(
 	db: Database,
@@ -201,6 +201,16 @@ function effectivePeriodEnd(
 }
 
 /**
+ * Stripe subscription timestamps are stored as Unix seconds in workspace
+ * settings. A few early tests and hand-written rows used milliseconds, so keep
+ * that shape working while normalizing the production format for Date math.
+ */
+function billingTimestampToMs(value: number | null | undefined): number | undefined {
+	if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined
+	return value >= 1_000_000_000_000 ? Math.floor(value) : Math.floor(value) * 1000
+}
+
+/**
  * Pre-flight check on the maskin_plan route. Called from `createSession` so the
  * HTTP caller gets a 402 *before* a session row is created (the v1 contract
  * with the over-cap banner). Also invoked at route-resolution time as
@@ -221,21 +231,17 @@ export async function checkPlanCap(params: {
 	const cap = effectivePlanCap(plan, billing.hard_cap_tokens ?? undefined)
 	if (cap === null) return
 
-	const used = await getWorkspacePlanTokenUsage(
-		params.db,
-		params.workspaceId,
-		billing.period_start ?? undefined,
-	)
+	const periodStartMs = billingTimestampToMs(billing.period_start)
+	const periodEndMs = billingTimestampToMs(billing.period_end)
+
+	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs)
 	if (used < cap) return
 
 	throw new PlanCapExceededError({
 		plan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(
-			billing.period_start ?? undefined,
-			billing.period_end ?? undefined,
-		),
+		periodEnd: effectivePeriodEnd(periodStartMs, periodEndMs),
 	})
 }
 

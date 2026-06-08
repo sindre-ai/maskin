@@ -480,7 +480,7 @@ describe('checkPlanCap', () => {
 		'is a no-op for %s when Stripe has not written hard_cap_tokens (fail-open pre-Task 5)',
 		async (plan) => {
 			const settings = emptySettings()
-			settings.billing = { plan, period_start: Date.now() - 60_000 }
+			settings.billing = { plan, period_start: Math.floor(Date.now() / 1000) - 60 }
 			const db = dbWithSessionUsage([{ inputTokens: 50_000_000, outputTokens: 0 }])
 			await expect(
 				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
@@ -489,7 +489,7 @@ describe('checkPlanCap', () => {
 	)
 
 	it('throws PlanCapExceededError when usage equals hard_cap_tokens', async () => {
-		const periodStart = Date.now() - 60_000
+		const periodStart = Math.floor(Date.now() / 1000) - 60
 		const settings = emptySettings()
 		settings.billing = {
 			plan: 'starter',
@@ -509,10 +509,10 @@ describe('checkPlanCap', () => {
 		expect(err.used).toBe(1_000_000)
 		expect(err.cap).toBe(1_000_000)
 		// period_end defaults to period_start + 30 days when Stripe has not written one.
-		expect(err.periodEnd).toBe(periodStart + 30 * 24 * 60 * 60 * 1000)
+		expect(err.periodEnd).toBe(periodStart * 1000 + 30 * 24 * 60 * 60 * 1000)
 	})
 
-	it('honors explicit period_end on the error payload', async () => {
+	it('normalizes explicit Stripe period_end seconds on the error payload', async () => {
 		const settings = emptySettings()
 		settings.billing = {
 			plan: 'pro',
@@ -527,7 +527,7 @@ describe('checkPlanCap', () => {
 			wsSettings: settings,
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
-		expect(err.periodEnd).toBe(999_999)
+		expect(err.periodEnd).toBe(999_999_000)
 	})
 
 	it('uses MASKIN_TRIAL_HARD_CAP_TOKENS when trial has no explicit cap', async () => {

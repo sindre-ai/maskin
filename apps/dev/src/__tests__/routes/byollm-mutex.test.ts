@@ -74,6 +74,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('cancels live Stripe sub and writes billing.plan=byollm when setting llm_keys.anthropic', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
 			[
 				{
 					id: wsId,
@@ -117,6 +118,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('cancels live Stripe sub when enabling custom_llm with an api_key', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
 			[
 				{
 					id: wsId,
@@ -158,6 +160,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('does NOT call Stripe when llm_keys.anthropic is being deleted (null)', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
 			[
 				{
 					id: wsId,
@@ -193,6 +196,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	it('skips Stripe call when there is no live subscription to cancel', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
 			[
 				{
 					id: wsId,
@@ -213,6 +217,48 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		expect(calls.updates).toHaveLength(1)
 	})
 
+	it('does not require Stripe env when adding BYO to a workspace without an active paid plan', async () => {
+		clearStripeEnv()
+		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
+			[
+				{
+					id: wsId,
+					settings: { billing: { plan: 'byollm', status: 'canceled' } },
+				},
+			],
+		]
+		mockResults.update = [{ id: wsId, settings: {} }]
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/workspaces/${wsId}`, {
+				settings: { llm_keys: { anthropic: 'sk-ant-new' } },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(getStripeClientMock).not.toHaveBeenCalled()
+		expect(cancelMock).not.toHaveBeenCalled()
+		expect(calls.updates).toHaveLength(1)
+	})
+
+	it('rejects non-members before canceling a paid subscription', async () => {
+		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+		mockResults.selectQueue = [[]]
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/workspaces/${wsId}`, {
+				settings: { llm_keys: { anthropic: 'sk-ant-byo' } },
+			}),
+		)
+
+		expect(res.status).toBe(403)
+		expect(getStripeClientMock).not.toHaveBeenCalled()
+		expect(cancelMock).not.toHaveBeenCalled()
+		expect(calls.updates).toHaveLength(0)
+	})
+
 	it('does NOT cancel Stripe when the paid plan is in the SCA `incomplete` window', async () => {
 		// Reviewer-flagged asymmetry fix: a newly-created sub in `incomplete`
 		// (SCA pending) used to read as active via the broad ACTIVE_PAID_STATUSES
@@ -221,6 +267,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		// with the pending paid row — the webhook reconciles on SCA confirm.
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
 			[
 				{
 					id: wsId,
@@ -275,6 +322,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		cancelMock.mockRejectedValue(Object.assign(new Error('rate_limited'), { code: 'rate_limit' }))
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
 			[
 				{
 					id: wsId,
@@ -306,6 +354,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		)
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
+			[buildWorkspaceMember()],
 			[
 				{
 					id: wsId,
