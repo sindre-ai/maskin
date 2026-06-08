@@ -104,6 +104,34 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(body).toMatchObject({ skipped: true, reason: 'no_workspace' })
 	})
 
+	it('falls back to settings.billing.stripe_customer_id when event has no metadata.workspace_id', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		// 1st select = resolver fallback (filtered lookup by stripe_customer_id),
+		// 2nd select = applyEvent reading the workspace settings.
+		mockResults.selectQueue = [
+			[{ id: workspaceId }],
+			[{ id: workspaceId, settings: { billing: { plan: 'starter', status: 'active' } } }],
+		]
+		mockResults.insertQueue = [[{ id: 'claim-fallback' }]]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_fallback',
+			type: 'invoice.paid',
+			data: { object: { customer: 'cus_fb', metadata: null } },
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		// The apply-handler ran (status flipped to active via invoice.paid) — proves
+		// the resolver fallback returned the workspace, not a no_workspace skip.
+		const update = calls.updates.find(
+			(u): u is { settings: { billing: { status: string } } } =>
+				!!u && typeof u === 'object' && 'settings' in (u as Record<string, unknown>),
+		)
+		expect(update?.settings.billing.status).toBe('active')
+	})
+
 	it('writes plan + customer/subscription to settings.billing on checkout.session.completed', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()

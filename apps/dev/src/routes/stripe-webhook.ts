@@ -2,7 +2,7 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { webhookDeliveries, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -178,22 +178,18 @@ async function resolveWorkspaceId(db: Database, event: Stripe.Event): Promise<st
 
 	// Fallback: look up by stripe_customer_id stored on settings.billing.
 	// Subscription / invoice events don't always carry metadata, but they
-	// always carry `customer`. Drizzle doesn't expose a clean JSONB equality
-	// helper, so we raw-filter via sql tag below — bounded to a single
-	// indexable lookup once we have the customer id.
+	// always carry `customer`. The JSONB path matches the partial expression
+	// index `workspaces_billing_stripe_customer_id_idx` (migration 0026) so
+	// this is a single indexable lookup per webhook delivery.
 	const customerId = customerIdFromEvent(event)
 	if (!customerId) return null
 
 	const rows = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
+		.select({ id: workspaces.id })
 		.from(workspaces)
-	for (const row of rows) {
-		const parsed = workspaceSettingsSchema.partial().safeParse(row.settings ?? {})
-		if (parsed.success && parsed.data.billing?.stripe_customer_id === customerId) {
-			return row.id
-		}
-	}
-	return null
+		.where(sql`${workspaces.settings}->'billing'->>'stripe_customer_id' = ${customerId}`)
+		.limit(1)
+	return rows[0]?.id ?? null
 }
 
 function customerIdFromEvent(event: Stripe.Event): string | null {
