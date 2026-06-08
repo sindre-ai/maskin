@@ -10,20 +10,12 @@ import {
 } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
-import {
-	billingAfterByoTransition,
-	cancelActivePaidSubscription,
-	hasActivePaidPlan,
-	patchAddsByoSource,
-} from '../lib/llm-source-mutex'
+import { cancelPaidPlanAndDowngrade, patchAddsByoSource } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
-import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceMember } from '../lib/workspace-auth'
-
-type WorkspaceBilling = WorkspaceSettings['billing']
 
 type Env = {
 	Variables: {
@@ -207,6 +199,36 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
+	// BYOLLM ↔ paid plan mutex: if the PATCH is adding a BYO Anthropic key
+	// or enabling custom_llm, the read-cancel-rewrite window must run inside
+	// a row lock so a concurrent webhook can't reactivate a paid plan
+	// underneath us. cancelPaidPlanAndDowngrade owns the whole transaction.
+	if (body.settings && patchAddsByoSource(body.settings)) {
+		let stripeEnv: ReturnType<typeof readStripeEnv>
+		try {
+			stripeEnv = readStripeEnv()
+		} catch (err) {
+			logger.error('Cannot cancel paid plan for BYOLLM transition: Stripe is not configured', {
+				workspaceId: id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+		}
+
+		const result = await cancelPaidPlanAndDowngrade<typeof workspaces.$inferSelect>({
+			db,
+			workspaceId: id,
+			getStripe: () => getStripeClient(stripeEnv),
+			flow: 'BYOLLM transition',
+			buildNextSettings: (lockedSettings, downgradedBilling) =>
+				mergeBodyIntoLockedSettings(lockedSettings, body.settings ?? {}, downgradedBilling),
+			extraSet: body.name ? { name: body.name } : undefined,
+		})
+
+		if (!result.ok) return c.json(result.error, result.status)
+		return c.json(serialize(result.updated) as z.infer<typeof workspaceResponseSchema>)
+	}
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (body.settings) {
@@ -217,28 +239,7 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
 		if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 		const existingSettings = (existing.settings ?? {}) as Record<string, unknown>
-		const merged: Record<string, unknown> = { ...existingSettings, ...body.settings }
-		if (body.settings.llm_keys) {
-			const existingLlm = (existingSettings.llm_keys ?? {}) as Record<string, string>
-			const mergedLlm: Record<string, string> = { ...existingLlm }
-			for (const [k, v] of Object.entries(body.settings.llm_keys)) {
-				if (v === null || v === undefined) delete mergedLlm[k]
-				else mergedLlm[k] = v
-			}
-			merged.llm_keys = mergedLlm
-		}
-
-		// BYOLLM ↔ paid plan mutex: if the PATCH is adding a BYO Anthropic
-		// key or enabling custom_llm AND a live Stripe subscription exists,
-		// cancel the subscription via API first and roll the billing slot
-		// into the same merged write. The .deleted webhook will arrive
-		// shortly after and is idempotent against this exact terminal state.
-		if (patchAddsByoSource(body.settings)) {
-			const errorRes = await cancelPaidPlanForByoTransition(existingSettings, merged, id)
-			if (errorRes) return c.json(...errorRes)
-		}
-
-		updateData.settings = merged
+		updateData.settings = mergeBodyIntoLockedSettings(existingSettings, body.settings, undefined)
 	}
 
 	const [updated] = await db
@@ -255,58 +256,28 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 }) as RouteHandler<typeof updateWorkspaceRoute, Env>)
 
 /**
- * Shared by PATCH /api/workspaces/:id when the body adds a BYOLLM source.
- * Mutates `merged.billing` in place once the Stripe cancel succeeds.
- * Returns a `[body, status]` tuple for the route to surface on failure, or
- * `null` to proceed with the existing settings merge.
+ * Merge the PATCH body's settings into the existing (or locked) row.
+ * `llm_keys` is deep-merged with `null` meaning deletion so single-provider
+ * updates (UI + MCP) don't clobber siblings. If `downgradedBilling` is set,
+ * the shared mutex helper already canceled Stripe — embed it.
  */
-async function cancelPaidPlanForByoTransition(
-	existingSettings: Record<string, unknown>,
-	merged: Record<string, unknown>,
-	workspaceId: string,
-): Promise<[ReturnType<typeof createApiError>, 500] | null> {
-	const existingBilling = (existingSettings.billing as WorkspaceBilling) ?? undefined
-	if (!hasActivePaidPlan({ billing: existingBilling })) {
-		// Either no plan, or already canceled — still write the byollm
-		// downgrade so the local row reflects the user's intent.
-		const downgrade = billingAfterByoTransition(existingBilling)
-		if (downgrade) merged.billing = downgrade
-		return null
+function mergeBodyIntoLockedSettings(
+	lockedSettings: Record<string, unknown>,
+	bodySettings: NonNullable<z.infer<typeof updateWorkspaceSchema>['settings']>,
+	downgradedBilling: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...lockedSettings, ...bodySettings }
+	if (bodySettings.llm_keys) {
+		const lockedLlm = (lockedSettings.llm_keys ?? {}) as Record<string, string>
+		const mergedLlm: Record<string, string> = { ...lockedLlm }
+		for (const [k, v] of Object.entries(bodySettings.llm_keys)) {
+			if (v === null || v === undefined) delete mergedLlm[k]
+			else mergedLlm[k] = v
+		}
+		merged.llm_keys = mergedLlm
 	}
-
-	let stripeEnv: ReturnType<typeof readStripeEnv>
-	try {
-		stripeEnv = readStripeEnv()
-	} catch (err) {
-		logger.error('Cannot cancel paid plan for BYOLLM transition: Stripe is not configured', {
-			workspaceId,
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return [createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500]
-	}
-
-	try {
-		await cancelActivePaidSubscription(
-			getStripeClient(stripeEnv),
-			// biome-ignore lint/style/noNonNullAssertion: hasActivePaidPlan guarantees this
-			existingBilling!.stripe_subscription_id!,
-		)
-	} catch (err) {
-		logger.error('Stripe subscription cancel failed during BYOLLM transition', {
-			workspaceId,
-			subscriptionId: existingBilling?.stripe_subscription_id,
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return [createApiError('INTERNAL_ERROR', 'Failed to cancel paid subscription'), 500]
-	}
-
-	const downgrade = billingAfterByoTransition(existingBilling)
-	if (downgrade) merged.billing = downgrade
-	logger.info('Paid plan canceled during BYOLLM transition', {
-		workspaceId,
-		subscriptionId: existingBilling?.stripe_subscription_id,
-	})
-	return null
+	if (downgradedBilling) merged.billing = downgradedBilling
+	return merged
 }
 
 // POST /api/workspaces/:id/members

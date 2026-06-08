@@ -78,9 +78,6 @@ app.post('/', async (c) => {
 		return c.json({ ok: true, skipped: true, reason: 'no_workspace' })
 	}
 
-	// Claim BEFORE doing the workspace update. Without the claim, every Stripe
-	// retry (and they retry aggressively on 5xx) would re-apply the same
-	// state mutation. See packages/db/src/schema.ts:webhookDeliveries.
 	const db = c.get('db')
 	let claimRowId: string | null = null
 	try {
@@ -92,11 +89,7 @@ app.post('/', async (c) => {
 				workspaceId,
 			})
 			.onConflictDoNothing({
-				target: [
-					webhookDeliveries.provider,
-					webhookDeliveries.externalId,
-					webhookDeliveries.workspaceId,
-				],
+				target: [webhookDeliveries.provider, webhookDeliveries.externalId, webhookDeliveries.workspaceId],
 			})
 			.returning({ id: webhookDeliveries.id })
 		if (rows.length === 0) {
@@ -109,8 +102,6 @@ app.post('/', async (c) => {
 		}
 		claimRowId = rows[0]?.id ?? null
 	} catch (err) {
-		// Fail open: the dedup ledger going down must not block real billing
-		// updates. The reconciler will retry on the next event.
 		logger.error('Failed to claim Stripe webhook delivery; processing without dedup', {
 			eventId: event.id,
 			workspaceId,
@@ -213,6 +204,8 @@ async function applyEvent(
 	// serializes them on the workspace row; a single delivery still completes
 	// in one round-trip per query so the lock window stays bounded.
 	await db.transaction(async (tx) => {
+		// Row lock so concurrent writers can't interleave a read-modify-write
+		// cycle and accidentally merge stale settings back over a newer update.
 		const [workspace] = await tx
 			.select({ id: workspaces.id, settings: workspaces.settings })
 			.from(workspaces)
@@ -297,6 +290,8 @@ async function applyEvent(
 		// BYOLLM -> paid plan mutex: when the subscription lands in an active
 		// paid state, clear every BYO source in the same workspace update so we
 		// never keep both sides "active" at once.
+		// BYOLLM ↔ paid plan mutex: when this event leaves the workspace in an
+		// active paid state, drop every BYOLLM source in the same update.
 		const baseSettings = (workspace.settings ?? {}) as Record<string, unknown>
 		const carrierSettings =
 			next.status === 'active' ? settingsAfterPaidPlanActivation(baseSettings) : baseSettings

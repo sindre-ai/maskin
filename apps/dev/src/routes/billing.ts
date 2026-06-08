@@ -3,15 +3,22 @@ import type { Database } from '@maskin/db'
 import { sessions, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import type { Context } from 'hono'
 import {
 	PRO_HARD_CAP_DEFAULT_TOKENS,
 	STARTER_HARD_CAP_DEFAULT_TOKENS,
 	parsePositiveIntEnv,
 } from '../lib/billing-defaults'
 import { createApiError } from '../lib/errors'
+import { frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/stripe'
+import {
+	createBillingPortalSession,
+	createCheckoutSession,
+	getStripeClient,
+	readStripeEnv,
+} from '../lib/stripe'
 
 /**
  * Trial bucket sizing when no Stripe-driven `period_start` is set yet.
@@ -55,6 +62,7 @@ function planHardCapFallback(plan: 'trial' | 'starter' | 'pro' | 'byollm'): numb
  */
 const LLM_ROUTE_MASKIN_PLAN = 'maskin_plan'
 
+
 type Env = {
 	Variables: {
 		db: Database
@@ -65,10 +73,46 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+/**
+ * Resolve a Stripe client + env, or return the 500 response that should be sent
+ * back to the caller. Centralises the "Stripe is not configured" log so every
+ * Stripe-touching route surfaces misconfiguration with the same shape.
+ */
+function getStripeOrError(c: Context<Env>) {
+	let env: ReturnType<typeof readStripeEnv>
+	try {
+		env = readStripeEnv()
+	} catch (err) {
+		logger.error('Stripe is not configured', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return {
+			ok: false as const,
+			response: c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500),
+		}
+	}
+	return { ok: true as const, stripe: getStripeClient(env), env }
+}
+
+// Stripe redirects the browser to `success_url`/`cancel_url` after the
+// Checkout flow completes or is abandoned. Same threat model as the portal
+// `return_url`: a session-compromised caller could drive the user through
+// Stripe out to an attacker domain. Gate both fields with the same
+// `urlMatchesAppOrigin` refine used below (hoisted function declaration).
 const checkoutBodySchema = z.object({
 	plan: z.enum(['starter', 'pro']),
-	success_url: z.string().url(),
-	cancel_url: z.string().url(),
+	success_url: z
+		.string()
+		.url()
+		.refine((u) => urlMatchesAppOrigin(u), {
+			message: 'success_url origin must match FRONTEND_URL',
+		}),
+	cancel_url: z
+		.string()
+		.url()
+		.refine((u) => urlMatchesAppOrigin(u), {
+			message: 'cancel_url origin must match FRONTEND_URL',
+		}),
 })
 
 const checkoutResponseSchema = z.object({
@@ -142,7 +186,11 @@ app.openapi(usageRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [workspace] = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			createdAt: workspaces.createdAt,
+		})
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
@@ -152,43 +200,44 @@ app.openapi(usageRoute, async (c) => {
 	}
 
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	if (!parsed.success) {
+		logger.warn('Malformed workspace billing settings', { workspaceId })
+	}
 	const billing = parsed.success ? parsed.data.billing : undefined
 
-	// No billing row → workspace is on trial. Window starts whenever sessions
-	// first ran; we use a 30d rolling window so the trial usage never grows
-	// unbounded, and the row in Settings has a consistent "X / Y · resets in Zd".
 	const plan = billing?.plan ?? 'trial'
 	const status = billing?.status ?? 'active'
 	const hardCap =
 		billing?.hard_cap_tokens && billing.hard_cap_tokens > 0
 			? billing.hard_cap_tokens
 			: planHardCapFallback(plan)
-	// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
-	// writes `subscription.current_period_start` straight through, and Stripe
-	// timestamps are seconds (not ms). Coerce to a positive integer at read
-	// time so a partial / legacy / malformed stored value never trips the
-	// response schema (which requires `int().nonnegative()`).
+	// Trial workspaces have no Stripe `period_start`, so anchor the window to
+	// `workspaces.createdAt` and roll forward in fixed 30d cycles.
+	const now = Date.now()
+	const trialOrigin = workspace.createdAt?.getTime() ?? now
+	const elapsedSinceOrigin = Math.max(0, now - trialOrigin)
+	const trialCycleStartMs =
+		trialOrigin + Math.floor(elapsedSinceOrigin / TRIAL_WINDOW_MS) * TRIAL_WINDOW_MS
+	// `billing.period_start` is a Unix SECONDS value. Floor positive values so
+	// a Stripe-written float doesn't trip the response schema; null for anything
+	// malformed (negative, non-finite, non-number).
 	const rawPeriodStart = billing?.period_start
 	const periodStartSec =
 		typeof rawPeriodStart === 'number' && Number.isFinite(rawPeriodStart) && rawPeriodStart > 0
 			? Math.floor(rawPeriodStart)
 			: null
-	const periodStartMs =
-		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - TRIAL_WINDOW_MS
-	const periodEndMs =
-		periodStartSec !== null
-			? // Stripe periods are 28-31d; we don't store period_end on this branch,
-				// so we approximate as "30d from period_start" for the resets-in hint.
-				periodStartSec * 1000 + TRIAL_WINDOW_MS
-			: Date.now() + TRIAL_WINDOW_MS
+	const periodStartMs = periodStartSec !== null ? periodStartSec * 1000 : trialCycleStartMs
+	const periodEndMs = periodStartMs + TRIAL_WINDOW_MS
 
 	let tokensUsed = 0
 	if (plan !== 'byollm') {
 		const since = new Date(periodStartMs)
-		const rows = await db
+		// Single SQL aggregate keeps this route O(1) over sessions-per-period.
+		// Supported by the partial index `sessions_maskin_plan_period_idx` on
+		// `(workspace_id, created_at) WHERE config->>'llm_route' = 'maskin_plan'`.
+		const [agg] = await db
 			.select({
-				inputTokens: sessions.inputTokens,
-				outputTokens: sessions.outputTokens,
+				total: sql<number>`COALESCE(SUM(COALESCE(${sessions.inputTokens}, 0) + COALESCE(${sessions.outputTokens}, 0)), 0)::int`,
 			})
 			.from(sessions)
 			.where(
@@ -198,13 +247,10 @@ app.openapi(usageRoute, async (c) => {
 					sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
 				),
 			)
-		for (const row of rows) {
-			tokensUsed += row.inputTokens ?? 0
-			tokensUsed += row.outputTokens ?? 0
-		}
+		tokensUsed = agg?.total ?? 0
 	}
 
-	const resetsIn = Math.max(0, periodEndMs - Date.now())
+	const resetsIn = Math.max(0, periodEndMs - now)
 
 	logger.info('Billing usage read', {
 		workspaceId,
@@ -227,6 +273,130 @@ app.openapi(usageRoute, async (c) => {
 		},
 		200,
 	)
+})
+
+// Stripe redirects the browser to `return_url` when the user closes the
+// Billing Portal — whatever we send is where the user lands. Constrain the
+// origin to the configured app so a session-compromised caller can't drive
+// the user out to an attacker domain on the way back from Stripe. Origin is
+// resolved lazily so tests using `vi.stubEnv('FRONTEND_URL', ...)` and the
+// dev fallback both work without route-boot ordering tricks.
+const portalBodySchema = z.object({
+	return_url: z
+		.string()
+		.url()
+		.refine((u) => urlMatchesAppOrigin(u), {
+			message: 'return_url origin must match FRONTEND_URL',
+		})
+		.openapi({
+			description:
+				'URL Stripe redirects to after the user closes the Billing Portal. Must use the same origin (scheme + host + port) as the configured FRONTEND_URL — cross-origin values are rejected with a 400.',
+		}),
+})
+
+function urlMatchesAppOrigin(rawUrl: string): boolean {
+	try {
+		return new URL(rawUrl).origin === new URL(frontendBaseUrl()).origin
+	} catch (err) {
+		// Only swallow `new URL(...)` failures on user-supplied input — those
+		// resolve to "origin doesn't match" (return false → 400). Anything else,
+		// notably `frontendBaseUrl()` throwing because FRONTEND_URL is unset in
+		// production, is a configuration bug and must propagate as a 500 so the
+		// signal isn't lost in a sea of 400s.
+		if (err instanceof TypeError) return false
+		throw err
+	}
+}
+
+const portalResponseSchema = z.object({
+	url: z.string().url(),
+})
+
+const portalRoute = createRoute({
+	method: 'post',
+	path: '/portal',
+	tags: ['billing'],
+	summary: 'Open a Stripe Billing Portal session for this workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: portalBodySchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Billing portal session created',
+			content: { 'application/json': { schema: portalResponseSchema } },
+		},
+		400: {
+			description:
+				'Invalid request body (malformed return_url, or origin does not match FRONTEND_URL)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found or no Stripe customer on record',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe misconfigured or upstream failure',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(portalRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { return_url } = c.req.valid('json')
+
+	const [workspace] = await db
+		.select({ id: workspaces.id, settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	const customerId = settingsParse.success
+		? (settingsParse.data.billing?.stripe_customer_id ?? null)
+		: null
+
+	// The frontend gates the "Manage in Stripe" affordance behind
+	// `isPaid && usage.stripe_customer_id`, so reaching this endpoint without
+	// a customer id is a caller bug, not a user-facing state. 404 keeps the
+	// contract obvious: there is nothing to manage.
+	if (!customerId) {
+		return c.json(
+			createApiError('NOT_FOUND', 'No Stripe customer on record for this workspace'),
+			404,
+		)
+	}
+
+	const stripeOrError = getStripeOrError(c)
+	if (!stripeOrError.ok) return stripeOrError.response
+	const { stripe } = stripeOrError
+	try {
+		const session = await createBillingPortalSession(stripe, {
+			workspaceId,
+			customerId,
+			returnUrl: return_url,
+		})
+		if (!session.url) {
+			logger.error('Stripe billing portal session missing url', { sessionId: session.id })
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no portal url'), 500)
+		}
+		return c.json({ url: session.url }, 200)
+	} catch (err) {
+		logger.error('Stripe billing portal session creation failed', {
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create billing portal session'), 500)
+	}
 })
 
 app.openapi(checkoutRoute, async (c) => {
@@ -253,17 +423,9 @@ app.openapi(checkoutRoute, async (c) => {
 		? (settingsParse.data.billing?.stripe_customer_id ?? null)
 		: null
 
-	let stripeEnv: ReturnType<typeof readStripeEnv>
-	try {
-		stripeEnv = readStripeEnv()
-	} catch (err) {
-		logger.error('Stripe is not configured', {
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
-	}
-
-	const stripe = getStripeClient(stripeEnv)
+	const stripeOrError = getStripeOrError(c)
+	if (!stripeOrError.ok) return stripeOrError.response
+	const { stripe, env: stripeEnv } = stripeOrError
 	try {
 		const session = await createCheckoutSession(
 			stripe,

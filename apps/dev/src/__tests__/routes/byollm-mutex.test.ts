@@ -99,6 +99,9 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 
 		expect(res.status).toBe(200)
 		expect(cancelMock).toHaveBeenCalledWith('sub_live')
+		// Atomicity: the cancel + downgrade + BYO add must land as ONE row write.
+		// A future refactor that splits this into separate updates fails here.
+		expect(calls.updates).toHaveLength(1)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings).toMatchObject({
 			llm_keys: { anthropic: 'sk-ant-byo' },
@@ -144,6 +147,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 
 		expect(res.status).toBe(200)
 		expect(cancelMock).toHaveBeenCalledWith('sub_starter')
+		expect(calls.updates).toHaveLength(1)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings).toMatchObject({
 			custom_llm: { enabled: true, api_key: 'sk-or-byo' },
@@ -206,6 +210,65 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 
 		expect(res.status).toBe(200)
 		expect(cancelMock).not.toHaveBeenCalled()
+		expect(calls.updates).toHaveLength(1)
+	})
+
+	it('does NOT cancel Stripe when the paid plan is in the SCA `incomplete` window', async () => {
+		// Reviewer-flagged asymmetry fix: a newly-created sub in `incomplete`
+		// (SCA pending) used to read as active via the broad ACTIVE_PAID_STATUSES
+		// set, so a BYO write would cancel a sub the customer may yet authorize.
+		// With `hasActivePaidPlan` narrowed to `active`, the BYO write coexists
+		// with the pending paid row — the webhook reconciles on SCA confirm.
+		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+		mockResults.selectQueue = [
+			[
+				{
+					id: wsId,
+					settings: {
+						billing: {
+							plan: 'pro',
+							status: 'incomplete',
+							stripe_subscription_id: 'sub_sca_pending',
+						},
+					},
+				},
+			],
+		]
+		mockResults.update = [{ id: wsId, settings: {} }]
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/workspaces/${wsId}`, {
+				settings: { llm_keys: { anthropic: 'sk-ant-byo' } },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(cancelMock).not.toHaveBeenCalled()
+		expect(calls.updates).toHaveLength(1)
+		const update = findWorkspaceUpdate(calls.updates)
+		// The BYO key lands; billing stays exactly as the webhook left it so
+		// SCA confirmation can still flip it to active and clear BYO then.
+		expect(update.settings.llm_keys).toMatchObject({ anthropic: 'sk-ant-byo' })
+		expect(update.settings.billing).toMatchObject({
+			plan: 'pro',
+			status: 'incomplete',
+			stripe_subscription_id: 'sub_sca_pending',
+		})
+	})
+
+	it('rejects an empty / whitespace anthropic key at the schema layer with 400', async () => {
+		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+		mockResults.selectQueue = [[{ id: wsId, settings: {} }]]
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/workspaces/${wsId}`, {
+				settings: { llm_keys: { anthropic: '   ' } },
+			}),
+		)
+
+		expect(res.status).toBe(400)
+		expect(cancelMock).not.toHaveBeenCalled()
+		expect(calls.updates).toHaveLength(0)
 	})
 
 	it('returns 500 and does NOT apply local change if Stripe cancel throws a non-missing error', async () => {
@@ -295,6 +358,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 				},
 			],
 		]
+		mockResults.update = [{ id: wsId, settings: {} }]
 
 		const res = await app.request(
 			jsonRequest('POST', '/api/claude-oauth/import', importBody, headers),
@@ -302,6 +366,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 
 		expect(res.status).toBe(200)
 		expect(cancelMock).toHaveBeenCalledWith('sub_live')
+		expect(calls.updates).toHaveLength(1)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.claude_oauth).toBeDefined()
 		expect(update.settings.billing).toMatchObject({
@@ -337,6 +402,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 	it('skips Stripe entirely when the workspace has no active paid plan', async () => {
 		const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
 		mockResults.selectQueue = [[buildWorkspaceMember()], [{ id: wsId, settings: {} }]]
+		mockResults.update = [{ id: wsId, settings: {} }]
 
 		const res = await app.request(
 			jsonRequest('POST', '/api/claude-oauth/import', importBody, headers),
@@ -344,6 +410,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 
 		expect(res.status).toBe(200)
 		expect(cancelMock).not.toHaveBeenCalled()
+		expect(calls.updates).toHaveLength(1)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.claude_oauth).toBeDefined()
 		expect(update.settings.billing).toBeUndefined()

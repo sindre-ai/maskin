@@ -8,34 +8,11 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
+import { useBillingUsage, useStripeBillingPortal, useStripeCheckout } from '@/hooks/use-billing'
 import type { BillingPlan, BillingStatus } from '@/lib/api'
+import { PLAN_LABEL, formatResetsIn, formatTokens } from '@/lib/billing-format'
 import { ExternalLink } from 'lucide-react'
 import { useState } from 'react'
-
-const PLAN_LABEL: Record<BillingPlan, string> = {
-	trial: 'Trial',
-	starter: 'Starter — $20/mo',
-	pro: 'Pro — $60/mo',
-	byollm: 'Bring-your-own',
-}
-
-const STRIPE_BILLING_PORTAL = 'https://billing.stripe.com/p/login/maskin'
-
-export function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
-	if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
-	return `${n}`
-}
-
-export function formatResetsIn(ms: number | null): string {
-	if (ms == null || ms <= 0) return ''
-	const days = Math.floor(ms / (24 * 60 * 60 * 1000))
-	if (days > 0) return `resets in ${days}d`
-	const hours = Math.floor(ms / (60 * 60 * 1000))
-	if (hours > 0) return `resets in ${hours}h`
-	return 'resets soon'
-}
 
 function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string; tone: string } {
 	if (plan === 'byollm') return { label: 'Inactive', tone: 'bg-muted text-muted-foreground' }
@@ -48,6 +25,7 @@ function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string;
 export function BillingSection({ workspaceId }: { workspaceId: string }) {
 	const usageQuery = useBillingUsage(workspaceId)
 	const checkout = useStripeCheckout(workspaceId)
+	const portal = useStripeBillingPortal(workspaceId)
 	const [switchOpen, setSwitchOpen] = useState(false)
 
 	const handleUpgrade = (plan: 'starter' | 'pro') => {
@@ -66,11 +44,22 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 		)
 	}
 
+	const handleManageInStripe = () => {
+		portal.mutate(
+			{ return_url: window.location.href.split('?')[0] },
+			{
+				onSuccess: ({ url }) => {
+					window.location.href = url
+				},
+			},
+		)
+	}
+
 	if (usageQuery.isLoading) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Maskin Subscription</Label>
-				<p className="text-xs text-muted-foreground">Loading…</p>
+				<Label className="mb-1 font-bold">Maskin Subscription</Label>
+				<p className="text-xs text-muted-foreground">Loading...</p>
 			</div>
 		)
 	}
@@ -78,7 +67,7 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 	if (usageQuery.isError || !usageQuery.data) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Maskin Subscription</Label>
+				<Label className="mb-1 font-bold">Maskin Subscription</Label>
 				<p className="text-xs text-error">
 					{usageQuery.error?.message ?? 'Could not load subscription state.'}
 				</p>
@@ -91,15 +80,17 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 	const isByo = usage.plan === 'byollm'
 	const isPaid = usage.plan === 'starter' || usage.plan === 'pro'
 	const isTrial = usage.plan === 'trial'
+	const needsPaymentFix = isPaid && (usage.status === 'past_due' || usage.status === 'incomplete')
+	const showUpgrades = isTrial || (!needsPaymentFix && usage.status !== 'active')
 	const cap = usage.hard_cap_tokens ?? 0
 	const pct = cap > 0 ? Math.min(100, Math.round((usage.tokens_used / cap) * 100)) : 0
 	const resetsIn = formatResetsIn(usage.period_resets_in_ms)
 
 	return (
 		<div>
-			<Label className="mb-1 text-bold">Maskin Subscription</Label>
+			<Label className="mb-1 font-bold">Maskin Subscription</Label>
 			<p className="text-xs text-muted-foreground mb-3">
-				Hosted LLM — pay Maskin, no API key needed. Hard-capped tokens per period so spend never
+				Hosted LLM - pay Maskin, no API key needed. Hard-capped tokens per period so spend never
 				surprises you.
 			</p>
 
@@ -112,14 +103,14 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 						<span className={`rounded-full px-2 py-0.5 text-xs ${badge.tone}`}>{badge.label}</span>
 					</div>
 					{isPaid && usage.stripe_customer_id && (
-						<a
-							href={STRIPE_BILLING_PORTAL}
-							target="_blank"
-							rel="noreferrer"
-							className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+						<button
+							type="button"
+							onClick={handleManageInStripe}
+							disabled={portal.isPending}
+							className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-60"
 						>
 							Manage in Stripe <ExternalLink size={12} />
-						</a>
+						</button>
 					)}
 				</div>
 
@@ -153,7 +144,14 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 				)}
 
 				<div className="flex flex-wrap items-center gap-2">
-					{(isTrial || usage.status !== 'active') && (
+					{needsPaymentFix && (
+						<Button size="sm" asChild>
+							<a href={STRIPE_BILLING_PORTAL} target="_blank" rel="noreferrer">
+								Fix payment
+							</a>
+						</Button>
+					)}
+					{showUpgrades && (
 						<>
 							<Button
 								size="sm"
@@ -194,6 +192,11 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 						{checkout.error?.message ?? 'Could not start checkout.'}
 					</p>
 				)}
+				{portal.isError && (
+					<p className="text-xs text-error">
+						{portal.error?.message ?? 'Could not open billing portal.'}
+					</p>
+				)}
 			</div>
 
 			<SwitchToByoDialog open={switchOpen} onOpenChange={setSwitchOpen} />
@@ -214,7 +217,7 @@ function SwitchToByoDialog({
 				<DialogHeader>
 					<DialogTitle>Switch to bring-your-own?</DialogTitle>
 					<DialogDescription>
-						To cancel your paid plan, set up one of the bring-your-own options below — Claude
+						To cancel your paid plan, set up one of the bring-your-own options below - Claude
 						subscription, Anthropic API key, or a custom model endpoint. Saving any of them cancels
 						your active Maskin subscription atomically (you won't be charged again).
 					</DialogDescription>

@@ -439,6 +439,12 @@ export const api = {
 			}),
 		usage: (workspaceId: string) =>
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		portal: (workspaceId: string, body: BillingPortalInput) =>
+			request<BillingPortalResponse>('/billing/portal', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 	},
 
 	subscriptions: {
@@ -580,6 +586,14 @@ export interface BillingCheckoutInput {
 export interface BillingCheckoutResponse {
 	url: string
 	session_id: string
+}
+
+export interface BillingPortalInput {
+	return_url: string
+}
+
+export interface BillingPortalResponse {
+	url: string
 }
 
 export interface BillingUsageResponse {

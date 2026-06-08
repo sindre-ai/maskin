@@ -1,7 +1,8 @@
 // 32_000_000 / 96_000_000 below mirror STARTER_HARD_CAP_DEFAULT_TOKENS /
 // PRO_HARD_CAP_DEFAULT_TOKENS in apps/dev/src/lib/billing-defaults.ts and the
 // .env.example MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping.
-import { BillingSection, formatResetsIn, formatTokens } from '@/components/settings/billing-section'
+import { BillingSection } from '@/components/settings/billing-section'
+import { formatResetsIn, formatTokens } from '@/lib/billing-format'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TestWrapper } from '../../setup'
@@ -11,6 +12,7 @@ vi.mock('@/lib/api', () => ({
 		billing: {
 			usage: vi.fn(),
 			checkout: vi.fn(),
+			portal: vi.fn(),
 		},
 	},
 }))
@@ -60,6 +62,7 @@ describe('BillingSection', () => {
 	beforeEach(() => {
 		vi.mocked(api.billing.usage).mockReset()
 		vi.mocked(api.billing.checkout).mockReset()
+		vi.mocked(api.billing.portal).mockReset()
 	})
 
 	it('renders trial plan with both upgrade buttons and the usage line', async () => {
@@ -107,8 +110,59 @@ describe('BillingSection', () => {
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Switch to bring-your-own/ })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Manage in Stripe/ })).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
+	})
+
+	it('renders Fix payment alone on Starter + past_due — no Upgrade CTAs', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'past_due',
+			tokens_used: 12_000_000,
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — $20/mo')
+		const fix = screen.getByRole('link', { name: 'Fix payment' })
+		expect(fix).toBeInTheDocument()
+		expect(fix).toHaveAttribute('href', expect.stringContaining('billing.stripe.com'))
+		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
+		expect(
+			screen.queryByRole('button', { name: /Switch to bring-your-own/ }),
+		).not.toBeInTheDocument()
+	})
+
+	it('renders Fix payment alone on Starter + incomplete — no Upgrade CTAs', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'incomplete',
+			tokens_used: 0,
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — $20/mo')
+		expect(screen.getByRole('link', { name: 'Fix payment' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
 	})
 
 	it('renders Pro plan with Switch-to-BYO but no further upgrade', async () => {
@@ -190,6 +244,123 @@ describe('BillingSection', () => {
 		})
 
 		Object.defineProperty(window, 'location', { writable: true, value: original })
+	})
+
+	it('only renders Manage in Stripe when stripe_customer_id is set', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: null,
+			stripe_subscription_id: null,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — $20/mo')
+		expect(screen.queryByRole('button', { name: /Manage in Stripe/ })).not.toBeInTheDocument()
+	})
+
+	it('redirects to Stripe billing portal url on Manage click', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+		vi.mocked(api.billing.portal).mockResolvedValue({
+			url: 'https://billing.stripe.com/p/session/test_portal_1',
+		})
+
+		const original = window.location
+		Object.defineProperty(window, 'location', {
+			writable: true,
+			value: { ...original, href: 'http://localhost/settings/keys', assign: vi.fn() },
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await user.click(await screen.findByRole('button', { name: /Manage in Stripe/ }))
+
+		await vi.waitFor(() => {
+			expect(api.billing.portal).toHaveBeenCalledWith(
+				'ws-1',
+				expect.objectContaining({ return_url: 'http://localhost/settings/keys' }),
+			)
+		})
+		await vi.waitFor(() => {
+			expect(window.location.href).toBe('https://billing.stripe.com/p/session/test_portal_1')
+		})
+
+		Object.defineProperty(window, 'location', { writable: true, value: original })
+	})
+
+	it('renders the inline error when the portal mutation rejects', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+		vi.mocked(api.billing.portal).mockRejectedValue(new Error('Stripe is not configured'))
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await user.click(await screen.findByRole('button', { name: /Manage in Stripe/ }))
+
+		expect(await screen.findByText('Stripe is not configured')).toBeInTheDocument()
+	})
+
+	it('disables the Manage button while the portal mutation is pending', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+		// Hold the mutation open so we can observe `disabled === true` between
+		// click and resolution without leaning on `waitFor` to mask the state.
+		// The promise intentionally never resolves - the assertion is about the
+		// pending window, and leaving it pending also avoids jsdom navigation
+		// noise from the onSuccess `window.location.href = url` redirect.
+		vi.mocked(api.billing.portal).mockImplementation(() => new Promise(() => {}))
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		const manage = await screen.findByRole('button', { name: /Manage in Stripe/ })
+		expect((manage as HTMLButtonElement).disabled).toBe(false)
+
+		await user.click(manage)
+
+		await vi.waitFor(() => {
+			expect((manage as HTMLButtonElement).disabled).toBe(true)
+		})
 	})
 
 	it('opens the Switch-to-BYO dialog on click and explains the BYO flow', async () => {

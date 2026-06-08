@@ -21,6 +21,12 @@ export interface CheckoutInputs {
 	existingCustomerId?: string | null
 }
 
+export interface BillingPortalInputs {
+	workspaceId: string
+	customerId: string
+	returnUrl: string
+}
+
 let cachedClient: Stripe | null = null
 
 /**
@@ -129,6 +135,28 @@ export async function createCheckoutSession(
 	logger.info('Stripe checkout session created', {
 		workspaceId: inputs.workspaceId,
 		plan: inputs.plan,
+		sessionId: session.id,
+	})
+	return session
+}
+
+/**
+ * Build a Stripe Billing Portal session for an existing customer. The portal
+ * URL Stripe returns is a one-shot redirect — callers send the user straight
+ * to it from the browser and Stripe handles the rest (invoice history,
+ * payment method updates, cancellations).
+ */
+export async function createBillingPortalSession(
+	stripe: Stripe,
+	inputs: BillingPortalInputs,
+): Promise<Stripe.BillingPortal.Session> {
+	const session = await stripe.billingPortal.sessions.create({
+		customer: inputs.customerId,
+		return_url: inputs.returnUrl,
+	})
+	logger.info('Stripe billing portal session created', {
+		workspaceId: inputs.workspaceId,
+		customerId: inputs.customerId,
 		sessionId: session.id,
 	})
 	return session

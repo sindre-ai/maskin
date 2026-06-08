@@ -8,10 +8,11 @@ vi.mock('../../lib/stripe', async () => {
 		...actual,
 		getStripeClient: vi.fn(() => ({}) as unknown),
 		createCheckoutSession: vi.fn(),
+		createBillingPortalSession: vi.fn(),
 	}
 })
 
-import { createCheckoutSession } from '../../lib/stripe'
+import { createBillingPortalSession, createCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -32,18 +33,38 @@ const VALID_ENV = {
 	MASKIN_PRO_HARD_CAP_TOKENS: PRO_ENV_SENTINEL,
 }
 
+// Portal `return_url` is origin-gated against FRONTEND_URL. The portal happy-
+// path fixtures all use https://app.test/* URLs, so pin the env to the same
+// origin and keep it set even when `clearEnv` drops the Stripe block — the
+// "Stripe env not configured" tests still rely on the schema accepting the
+// fixture URL before the Stripe check runs.
+const FRONTEND_URL_TEST = 'https://app.test'
+const APP_ORIGIN_ENV = { FRONTEND_URL: 'https://app.test' }
+
 const setupEnv = () => {
 	for (const [k, v] of Object.entries(VALID_ENV)) process.env[k] = v
+	process.env.FRONTEND_URL = FRONTEND_URL_TEST
+}
+
+const setupAppOriginEnv = () => {
+	for (const [k, v] of Object.entries(APP_ORIGIN_ENV)) process.env[k] = v
 }
 
 const clearEnv = () => {
 	for (const k of Object.keys(VALID_ENV)) delete process.env[k]
 }
 
+const clearAppOriginEnv = () => {
+	for (const k of Object.keys(APP_ORIGIN_ENV)) delete process.env[k]
+}
+
 beforeEach(() => {
 	vi.mocked(createCheckoutSession).mockReset()
+	vi.mocked(createBillingPortalSession).mockReset()
 	clearEnv()
+	clearAppOriginEnv()
 	setupEnv()
+	setupAppOriginEnv()
 })
 
 describe('POST /api/billing/checkout', () => {
@@ -192,6 +213,225 @@ describe('POST /api/billing/checkout', () => {
 		)
 		expect(res.status).toBe(500)
 	})
+
+	it('returns 400 when success_url origin does not match FRONTEND_URL', async () => {
+		// FRONTEND_URL is pinned to https://app.test in beforeEach; an
+		// attacker-origin success_url must be rejected before Stripe is touched.
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'starter',
+					success_url: 'https://attacker.example/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(400)
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+	})
+
+	it('returns 400 when cancel_url origin does not match FRONTEND_URL', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'starter',
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://attacker.example/cancel',
+				},
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(400)
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+	})
+})
+
+describe('POST /api/billing/portal', () => {
+	it('returns the portal URL on success', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'starter', status: 'active', stripe_customer_id: 'cus_42' } },
+			},
+		]
+		vi.mocked(createBillingPortalSession).mockResolvedValue({
+			id: 'bps_test_1',
+			url: 'https://billing.stripe.com/p/session/test_1',
+		} as Awaited<ReturnType<typeof createBillingPortalSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toEqual({ url: 'https://billing.stripe.com/p/session/test_1' })
+		expect(createBillingPortalSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				workspaceId,
+				customerId: 'cus_42',
+				returnUrl: 'https://app.test/settings/keys',
+			}),
+		)
+	})
+
+	it('returns 404 when workspace is missing', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 404 when the workspace has no stripe_customer_id on record', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'trial', status: 'active' } },
+			},
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(404)
+		expect(createBillingPortalSession).not.toHaveBeenCalled()
+	})
+
+	it('returns 500 when Stripe env is not configured', async () => {
+		clearEnv()
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'starter', status: 'active', stripe_customer_id: 'cus_42' } },
+			},
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(500)
+	})
+
+	it('returns 500 when Stripe throws while creating the portal session', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_42' } },
+			},
+		]
+		vi.mocked(createBillingPortalSession).mockRejectedValue(new Error('stripe blew up'))
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(500)
+	})
+
+	it('returns 500 when Stripe returns a session without a url', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: { billing: { plan: 'starter', status: 'active', stripe_customer_id: 'cus_42' } },
+			},
+		]
+		vi.mocked(createBillingPortalSession).mockResolvedValue({
+			id: 'bps_test_no_url',
+			url: null,
+		} as unknown as Awaited<ReturnType<typeof createBillingPortalSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'https://app.test/settings/keys' },
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(500)
+	})
+
+	it('returns 400 for a malformed return_url', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/portal',
+				{ return_url: 'not-a-url' },
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	// FRONTEND_URL is pinned to https://app.test in beforeEach. URL.origin
+	// equality is scheme + host + port (no path/query/userinfo), so any deviation
+	// on any of those three must 400 before Stripe is touched. These cases lock
+	// that semantic so a future swap to e.g. host-only or hostname-suffix
+	// matching can't sneak past review.
+	it.each([
+		['different host', 'https://attacker.example/landing'],
+		['port mismatch', 'https://app.test:8443/x'],
+		['subdomain mismatch', 'https://evil.app.test/x'],
+	])(
+		'returns 400 when return_url origin does not match FRONTEND_URL (%s)',
+		async (_label, returnUrl) => {
+			const { app } = createTestApp(billingRoutes, '/api/billing')
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/billing/portal',
+					{ return_url: returnUrl },
+					{ 'X-Workspace-Id': randomUUID() },
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(createBillingPortalSession).not.toHaveBeenCalled()
+		},
+	)
 })
 
 describe('GET /api/billing/usage', () => {
@@ -199,7 +439,7 @@ describe('GET /api/billing/usage', () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: {} }],
+			[{ id: workspaceId, settings: {}, createdAt: new Date() }],
 			[], // sessions sum: no rows
 		]
 
@@ -216,6 +456,46 @@ describe('GET /api/billing/usage', () => {
 			period_start: null,
 		})
 		expect(body.period_resets_in_ms).toBeGreaterThan(0)
+	})
+
+	it('anchors the trial reset to workspaces.createdAt so the countdown actually decreases', async () => {
+		// Regression: previously the trial branch derived both periodStartMs
+		// and periodEndMs from Date.now(), so the row always read "resets in
+		// ~30d" no matter how old the workspace was. With the createdAt anchor,
+		// a workspace 5d into its current 30d cycle shows ~25d remaining.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {}, createdAt: fiveDaysAgo }],
+			[], // sessions sum: no rows
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const oneDay = 24 * 60 * 60 * 1000
+		expect(body.period_resets_in_ms).toBeGreaterThan(24 * oneDay)
+		expect(body.period_resets_in_ms).toBeLessThan(26 * oneDay)
+	})
+
+	it('rolls the trial window forward in 30d cycles from createdAt for older workspaces', async () => {
+		// A workspace 35d old is 5d into its second 30d cycle, so the row
+		// should read ~25d remaining — not "expired", not "reset to ~30d".
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		const thirtyFiveDaysAgo = new Date(Date.now() - 35 * 24 * 60 * 60 * 1000)
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {}, createdAt: thirtyFiveDaysAgo }],
+			[], // sessions sum: no rows
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const oneDay = 24 * 60 * 60 * 1000
+		expect(body.period_resets_in_ms).toBeGreaterThan(24 * oneDay)
+		expect(body.period_resets_in_ms).toBeLessThan(26 * oneDay)
 	})
 
 	it('sums input + output tokens across maskin_plan sessions since period_start', async () => {
@@ -239,13 +519,13 @@ describe('GET /api/billing/usage', () => {
 							stripe_subscription_id: 'sub_x',
 						},
 					},
+					createdAt: new Date(),
 				},
 			],
-			[
-				{ inputTokens: 1000, outputTokens: 200 },
-				{ inputTokens: 5000, outputTokens: 800 },
-				{ inputTokens: null, outputTokens: 50 },
-			],
+			// Single-row aggregate: the route now does
+			// `SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0))` in SQL,
+			// so the mock returns the already-summed total — 1200 + 5800 + 50.
+			[{ total: 7050 }],
 		]
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
@@ -277,6 +557,7 @@ describe('GET /api/billing/usage', () => {
 					settings: {
 						billing: { plan: 'byollm', status: 'canceled', stripe_subscription_id: null },
 					},
+					createdAt: new Date(),
 				},
 			],
 		]
