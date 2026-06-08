@@ -153,3 +153,20 @@ export const sessionUsageResponseSchema = z.object({
 	totals: sessionUsageTotalsSchema,
 })
 export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
+
+export const sessionResultFailureReasonSchema = z.object({
+	provider: z.string(),
+	reason_code: z.string(),
+	human_message: z.string(),
+	http_status: z.number().int().nullable(),
+	reset_at: z.string().nullable(),
+	verbatim_output: z.string().nullable(),
+})
+export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReasonSchema>
+
+export const sessionResultSchema = z.object({
+	exit_code: z.number().int().optional(),
+	error: z.string().optional(),
+	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
+})
+export type SessionResult = z.infer<typeof sessionResultSchema>

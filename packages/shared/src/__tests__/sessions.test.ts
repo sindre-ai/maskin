@@ -8,6 +8,8 @@ import {
 	sessionLogQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionResultFailureReasonSchema,
+	sessionResultSchema,
 	sessionRuntimeSchema,
 	sessionStatusSchema,
 	sessionUsageQuerySchema,
@@ -304,5 +306,90 @@ describe('sessionUsageQuerySchema', () => {
 
 	it('rejects non-ISO datetimes', () => {
 		expect(() => sessionUsageQuerySchema.parse({ ...valid, from: 'yesterday' })).toThrow()
+	})
+})
+
+describe('sessionResultFailureReasonSchema', () => {
+	const full = {
+		provider: 'anthropic',
+		reason_code: 'credit_exhausted',
+		human_message: 'Your Anthropic credits are exhausted.',
+		http_status: 402,
+		reset_at: '2026-07-01T00:00:00.000Z',
+		verbatim_output: 'Error: credit limit reached',
+	}
+
+	it('accepts a fully populated failure reason', () => {
+		const result = sessionResultFailureReasonSchema.parse(full)
+		expect(result.provider).toBe('anthropic')
+		expect(result.reason_code).toBe('credit_exhausted')
+		expect(result.http_status).toBe(402)
+	})
+
+	it('accepts nullable fields as null', () => {
+		const result = sessionResultFailureReasonSchema.parse({
+			...full,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(result.http_status).toBeNull()
+		expect(result.reset_at).toBeNull()
+		expect(result.verbatim_output).toBeNull()
+	})
+
+	it('accepts arbitrary reason_code strings', () => {
+		const result = sessionResultFailureReasonSchema.parse({
+			...full,
+			reason_code: 'rate_limit_exceeded',
+		})
+		expect(result.reason_code).toBe('rate_limit_exceeded')
+	})
+
+	it('rejects missing required fields', () => {
+		expect(() =>
+			sessionResultFailureReasonSchema.parse({ provider: 'anthropic' }),
+		).toThrow()
+	})
+})
+
+describe('sessionResultSchema', () => {
+	it('accepts a completed result with exit_code only', () => {
+		const result = sessionResultSchema.parse({ exit_code: 0 })
+		expect(result.exit_code).toBe(0)
+		expect(result.failure_reason).toBeUndefined()
+	})
+
+	it('accepts a failed result with error only', () => {
+		const result = sessionResultSchema.parse({ error: 'Session timed out' })
+		expect(result.error).toBe('Session timed out')
+	})
+
+	it('accepts failure_reason: null (unclassified)', () => {
+		const result = sessionResultSchema.parse({ exit_code: 1, failure_reason: null })
+		expect(result.failure_reason).toBeNull()
+	})
+
+	it('accepts a result with a populated failure_reason', () => {
+		const result = sessionResultSchema.parse({
+			exit_code: 1,
+			failure_reason: {
+				provider: 'openrouter',
+				reason_code: 'credit_exhausted',
+				human_message: 'Out of credits.',
+				http_status: 402,
+				reset_at: null,
+				verbatim_output: null,
+			},
+		})
+		expect(result.failure_reason?.provider).toBe('openrouter')
+		expect(result.failure_reason?.reason_code).toBe('credit_exhausted')
+	})
+
+	it('accepts an empty object (all fields optional)', () => {
+		const result = sessionResultSchema.parse({})
+		expect(result.exit_code).toBeUndefined()
+		expect(result.error).toBeUndefined()
+		expect(result.failure_reason).toBeUndefined()
 	})
 })
