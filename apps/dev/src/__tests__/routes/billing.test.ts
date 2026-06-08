@@ -195,6 +195,44 @@ describe('POST /api/billing/checkout', () => {
 		)
 		expect(res.status).toBe(500)
 	})
+
+	it('returns 400 when success_url origin does not match FRONTEND_URL', async () => {
+		// FRONTEND_URL is pinned to https://app.test in beforeEach; an
+		// attacker-origin success_url must be rejected before Stripe is touched.
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'starter',
+					success_url: 'https://attacker.example/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(400)
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+	})
+
+	it('returns 400 when cancel_url origin does not match FRONTEND_URL', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'starter',
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://attacker.example/cancel',
+				},
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(400)
+		expect(createCheckoutSession).not.toHaveBeenCalled()
+	})
 })
 
 describe('POST /api/billing/portal', () => {
