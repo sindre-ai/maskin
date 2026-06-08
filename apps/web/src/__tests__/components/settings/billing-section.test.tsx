@@ -255,6 +255,62 @@ describe('BillingSection', () => {
 		Object.defineProperty(window, 'location', { writable: true, value: original })
 	})
 
+	it('renders the inline error when the portal mutation rejects', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+		vi.mocked(api.billing.portal).mockRejectedValue(new Error('Stripe is not configured'))
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await user.click(await screen.findByRole('button', { name: /Manage in Stripe/ }))
+
+		expect(await screen.findByText('Stripe is not configured')).toBeInTheDocument()
+	})
+
+	it('disables the Manage button while the portal mutation is pending', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+		// Hold the mutation open so we can observe `disabled === true` between
+		// click and resolution without leaning on `waitFor` to mask the state.
+		// The promise intentionally never resolves — the assertion is about the
+		// pending window, and leaving it pending also avoids jsdom navigation
+		// noise from the onSuccess `window.location.href = url` redirect.
+		vi.mocked(api.billing.portal).mockImplementation(() => new Promise(() => {}))
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		const manage = await screen.findByRole('button', { name: /Manage in Stripe/ })
+		expect((manage as HTMLButtonElement).disabled).toBe(false)
+
+		await user.click(manage)
+
+		await vi.waitFor(() => {
+			expect((manage as HTMLButtonElement).disabled).toBe(true)
+		})
+	})
+
 	it('opens the Switch-to-BYO dialog on click and explains the BYO flow', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({

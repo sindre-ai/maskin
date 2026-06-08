@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { sessions, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import type { Context } from 'hono'
 import {
 	PRO_HARD_CAP_DEFAULT_TOKENS,
 	STARTER_HARD_CAP_DEFAULT_TOKENS,
@@ -71,6 +72,27 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>()
+
+/**
+ * Resolve a Stripe client + env, or return the 500 response that should be sent
+ * back to the caller. Centralises the "Stripe is not configured" log so every
+ * Stripe-touching route surfaces misconfiguration with the same shape.
+ */
+function getStripeOrError(c: Context<Env>) {
+	let env: ReturnType<typeof readStripeEnv>
+	try {
+		env = readStripeEnv()
+	} catch (err) {
+		logger.error('Stripe is not configured', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return {
+			ok: false as const,
+			response: c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500),
+		}
+	}
+	return { ok: true as const, stripe: getStripeClient(env), env }
+}
 
 const checkoutBodySchema = z.object({
 	plan: z.enum(['starter', 'pro']),
@@ -282,6 +304,10 @@ const portalRoute = createRoute({
 			description: 'Billing portal session created',
 			content: { 'application/json': { schema: portalResponseSchema } },
 		},
+		400: {
+			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Workspace not found or no Stripe customer on record',
 			content: { 'application/json': { schema: errorSchema } },
@@ -324,17 +350,9 @@ app.openapi(portalRoute, async (c) => {
 		)
 	}
 
-	let stripeEnv: ReturnType<typeof readStripeEnv>
-	try {
-		stripeEnv = readStripeEnv()
-	} catch (err) {
-		logger.error('Stripe is not configured', {
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
-	}
-
-	const stripe = getStripeClient(stripeEnv)
+	const stripeOrError = getStripeOrError(c)
+	if (!stripeOrError.ok) return stripeOrError.response
+	const { stripe } = stripeOrError
 	try {
 		const session = await createBillingPortalSession(stripe, {
 			workspaceId,
@@ -379,17 +397,9 @@ app.openapi(checkoutRoute, async (c) => {
 		? (settingsParse.data.billing?.stripe_customer_id ?? null)
 		: null
 
-	let stripeEnv: ReturnType<typeof readStripeEnv>
-	try {
-		stripeEnv = readStripeEnv()
-	} catch (err) {
-		logger.error('Stripe is not configured', {
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
-	}
-
-	const stripe = getStripeClient(stripeEnv)
+	const stripeOrError = getStripeOrError(c)
+	if (!stripeOrError.ok) return stripeOrError.response
+	const { stripe, env: stripeEnv } = stripeOrError
 	try {
 		const session = await createCheckoutSession(
 			stripe,
