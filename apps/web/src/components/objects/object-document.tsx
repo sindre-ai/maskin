@@ -1,13 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select'
-import {
 	ResponsiveDialog,
 	ResponsiveDialogContent,
 	ResponsiveDialogDescription,
@@ -15,6 +8,13 @@ import {
 	ResponsiveDialogHeader,
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
@@ -531,8 +531,12 @@ export function DeleteConfirmDialog({
 											!checked && 'bg-muted/30',
 										)}
 									>
-										<label className="flex min-h-[44px] cursor-pointer items-center gap-3 px-3 py-2">
+										<label
+											htmlFor={`delete-task-${t.id}`}
+											className="flex min-h-[44px] cursor-pointer items-center gap-3 px-3 py-2"
+										>
 											<Checkbox
+												id={`delete-task-${t.id}`}
 												checked={checked}
 												onCheckedChange={() => toggle(t.id)}
 												disabled={isPending}
