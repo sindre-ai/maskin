@@ -20,6 +20,7 @@ import { useWorkspaces } from '@/hooks/use-workspaces'
 import { clearAuth, getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useNavigate } from '@tanstack/react-router'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Check, LogOut, MoreVertical, UserCircle } from 'lucide-react'
 
 export function NavUser() {
@@ -43,7 +44,7 @@ export function NavUser() {
 						params={{ workspaceId }}
 						onClick={() => setOpenMobile(false)}
 					>
-						<UserCircle />
+						<ActorAvatar name={displayName} type={actor?.type ?? 'human'} size="sm" />
 						<span className="truncate">{displayName}</span>
 					</Link>
 				</SidebarMenuButton>
