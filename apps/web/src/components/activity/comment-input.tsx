@@ -4,6 +4,7 @@ import { useCreateComment } from '@/hooks/use-events'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { formatSize } from '@/lib/file-utils'
+import { newIdempotencyKey } from '@/lib/idempotency'
 import { useDraft } from '@/lib/pending-comments-context'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { ArrowUp, Paperclip, X } from 'lucide-react'
@@ -17,11 +18,6 @@ interface CommentInputProps {
 	objectId: string
 	parentEventId?: number
 	onSubmitted?: () => void
-}
-
-function randomDraftId(): string {
-	if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
-	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 // ~6 lines at text-sm (line-height 20px) + py-1.5 (12px) + 2px border
@@ -54,7 +50,7 @@ export function CommentInput({
 
 	// Stable per-mount draft id. The id is also used as the optimistic comment
 	// entry id once submitted, so the activity feed can render its placeholder.
-	const draftIdRef = useRef<string>(randomDraftId())
+	const draftIdRef = useRef<string>(newIdempotencyKey())
 	const draftId = draftIdRef.current
 	const draft = useDraft({ draftId, workspaceId, objectId, parentEventId })
 	const attachments = draft.files
@@ -153,7 +149,7 @@ export function CommentInput({
 	const resetComposer = useCallback(() => {
 		setContent('')
 		setMentions([])
-		draftIdRef.current = randomDraftId()
+		draftIdRef.current = newIdempotencyKey()
 	}, [])
 
 	const handleSubmit = useCallback(() => {
