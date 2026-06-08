@@ -80,10 +80,10 @@ export const workspaceSettingsSchema = z.object({
 			plan: z.enum(['trial', 'starter', 'pro', 'byollm']),
 			stripe_customer_id: z.string().nullable().optional(),
 			stripe_subscription_id: z.string().nullable().optional(),
-			period_start: z.number().int().nonnegative().optional(),
-			period_end: z.number().int().nonnegative().optional(),
-			hard_cap_tokens: z.number().int().nonnegative().optional(),
-			status: z.string().optional(),
+			period_start: z.number().nullable().optional(),
+			period_end: z.number().nullable().optional(),
+			hard_cap_tokens: z.number().nullable().optional(),
+			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']).optional(),
 		})
 		.optional(),
 })
