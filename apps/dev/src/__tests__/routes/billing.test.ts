@@ -39,21 +39,32 @@ const VALID_ENV = {
 // "Stripe env not configured" tests still rely on the schema accepting the
 // fixture URL before the Stripe check runs.
 const FRONTEND_URL_TEST = 'https://app.test'
+const APP_ORIGIN_ENV = { FRONTEND_URL: 'https://app.test' }
 
 const setupEnv = () => {
 	for (const [k, v] of Object.entries(VALID_ENV)) process.env[k] = v
 	process.env.FRONTEND_URL = FRONTEND_URL_TEST
 }
 
+const setupAppOriginEnv = () => {
+	for (const [k, v] of Object.entries(APP_ORIGIN_ENV)) process.env[k] = v
+}
+
 const clearEnv = () => {
 	for (const k of Object.keys(VALID_ENV)) delete process.env[k]
+}
+
+const clearAppOriginEnv = () => {
+	for (const k of Object.keys(APP_ORIGIN_ENV)) delete process.env[k]
 }
 
 beforeEach(() => {
 	vi.mocked(createCheckoutSession).mockReset()
 	vi.mocked(createBillingPortalSession).mockReset()
 	clearEnv()
+	clearAppOriginEnv()
 	setupEnv()
+	setupAppOriginEnv()
 })
 
 describe('POST /api/billing/checkout', () => {
