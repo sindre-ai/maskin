@@ -1,4 +1,4 @@
-import { SessionDetailPanel } from '@/components/agents/session-detail-panel'
+import { FailureCard, SessionDetailPanel, parseFailureReason } from '@/components/agents/session-detail-panel'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -51,6 +51,222 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks()
+})
+
+describe('parseFailureReason', () => {
+	it('returns null for null result', () => {
+		expect(parseFailureReason(null)).toBeNull()
+	})
+
+	it('returns null when failure_reason is absent', () => {
+		expect(parseFailureReason({ exit_code: 1 })).toBeNull()
+	})
+
+	it('returns null when failure_reason is missing required fields', () => {
+		expect(parseFailureReason({ failure_reason: { provider: 'anthropic' } })).toBeNull()
+	})
+
+	it('parses a complete failure_reason', () => {
+		const result = parseFailureReason({
+			failure_reason: {
+				provider: 'anthropic',
+				reason_code: 'credit_exhausted',
+				human_message: 'Credit limit reached',
+				http_status: 402,
+				reset_at: '2026-07-01T00:00:00Z',
+				verbatim_output: 'Billing error',
+			},
+		})
+		expect(result).toEqual({
+			provider: 'anthropic',
+			reason_code: 'credit_exhausted',
+			human_message: 'Credit limit reached',
+			http_status: 402,
+			reset_at: '2026-07-01T00:00:00Z',
+			verbatim_output: 'Billing error',
+		})
+	})
+
+	it('handles null optional fields', () => {
+		const result = parseFailureReason({
+			failure_reason: {
+				provider: 'openrouter',
+				reason_code: 'credit_exhausted',
+				human_message: 'Out of credits',
+				http_status: null,
+				reset_at: null,
+				verbatim_output: null,
+			},
+		})
+		expect(result?.http_status).toBeNull()
+		expect(result?.reset_at).toBeNull()
+		expect(result?.verbatim_output).toBeNull()
+	})
+})
+
+function renderCard(
+	failureReason: Parameters<typeof FailureCard>[0]['failureReason'],
+	workspaceId = 'ws-1',
+) {
+	const Wrapper = createWorkspaceWrapper()
+	return render(
+		<Wrapper>
+			<FailureCard failureReason={failureReason} workspaceId={workspaceId} />
+		</Wrapper>,
+	)
+}
+
+describe('FailureCard', () => {
+	it('shows provider label and human_message as title', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'credit_exhausted',
+			human_message: 'Credit limit reached',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.getByText('Anthropic — Credit limit reached')).toBeInTheDocument()
+	})
+
+	it('shows provider, reason_code, and http_status chips', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'credit_exhausted',
+			human_message: 'Credit limit reached',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.getByText('anthropic')).toBeInTheDocument()
+		expect(screen.getByText('credit_exhausted')).toBeInTheDocument()
+		expect(screen.getByText('HTTP 402')).toBeInTheDocument()
+	})
+
+	it('omits http_status chip when null', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'credit_exhausted',
+			human_message: 'Credit limit reached',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.queryByText(/HTTP/)).not.toBeInTheDocument()
+	})
+
+	it('shows reset countdown chip when reset_at is set', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'credit_exhausted',
+			human_message: 'Credit limit reached',
+			http_status: null,
+			reset_at: '2026-07-01T00:00:00Z',
+			verbatim_output: null,
+		})
+		expect(screen.getByText(/resets/)).toBeInTheDocument()
+	})
+
+	it('shows Top up and Switch to OpenRouter buttons for credit_exhausted on non-openrouter provider', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'credit_exhausted',
+			human_message: 'Credit limit reached',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.getByRole('link', { name: /Top up Anthropic credits/ })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Switch to OpenRouter key/ })).toBeInTheDocument()
+		expect(screen.getByText('Wait')).toBeInTheDocument()
+	})
+
+	it('hides Switch to OpenRouter button when provider is openrouter', () => {
+		renderCard({
+			provider: 'openrouter',
+			reason_code: 'credit_exhausted',
+			human_message: 'Out of credits',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.queryByRole('link', { name: /Switch to OpenRouter key/ })).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Top up Openrouter credits/ })).toBeInTheDocument()
+	})
+
+	it('hides recovery row for non-credit reason codes', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'rate_limited',
+			human_message: 'Too many requests',
+			http_status: 429,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
+		expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+	})
+
+	it('does not show verbatim section when verbatim_output is null', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'credit_exhausted',
+			human_message: 'Credit limit reached',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.queryByText('Provider output')).not.toBeInTheDocument()
+	})
+
+	it('toggles verbatim provider output on click', async () => {
+		const user = userEvent.setup()
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'credit_exhausted',
+			human_message: 'Credit limit reached',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: 'Billing limit exceeded. Please add credits.',
+		})
+		expect(screen.queryByText('Billing limit exceeded. Please add credits.')).not.toBeInTheDocument()
+		await user.click(screen.getByText('Provider output'))
+		expect(screen.getByText('Billing limit exceeded. Please add credits.')).toBeInTheDocument()
+		await user.click(screen.getByText('Provider output'))
+		expect(screen.queryByText('Billing limit exceeded. Please add credits.')).not.toBeInTheDocument()
+	})
+})
+
+describe('SessionDetailPanel failure display', () => {
+	it('shows FailureCard when session result has classified failure_reason', () => {
+		const session = buildSessionResponse({
+			status: 'failed',
+			result: {
+				exit_code: 1,
+				failure_reason: {
+					provider: 'anthropic',
+					reason_code: 'credit_exhausted',
+					human_message: 'Credit limit reached',
+					http_status: 402,
+					reset_at: null,
+					verbatim_output: null,
+				},
+			},
+		})
+		renderPanel(session)
+		expect(screen.getByText('Anthropic — Credit limit reached')).toBeInTheDocument()
+		expect(screen.queryByText(/Process exited/)).not.toBeInTheDocument()
+	})
+
+	it('falls back to thin red banner when failure_reason is absent', () => {
+		const session = buildSessionResponse({
+			status: 'failed',
+			result: { exit_code: 1 },
+		})
+		renderPanel(session)
+		expect(screen.getByText('Process exited with code 1')).toBeInTheDocument()
+		expect(screen.queryByText(/Credit limit/)).not.toBeInTheDocument()
+	})
 })
 
 describe('SessionDetailPanel Restart button', () => {
