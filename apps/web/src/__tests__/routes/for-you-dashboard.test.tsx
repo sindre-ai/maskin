@@ -5,6 +5,7 @@ import type { UnreadItem } from '@/lib/api'
 import { buildObjectResponse } from '../factories'
 
 const mockUseUnread = vi.fn()
+const mockUseBets = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -20,6 +21,14 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: (...args: unknown[]) => mockUseUnread(...args),
+}))
+
+vi.mock('@/hooks/use-bets', () => ({
+	useBets: (...args: unknown[]) => mockUseBets(...args),
+}))
+
+vi.mock('@/components/foryou/north-star-prompt-card', () => ({
+	NorthStarPromptCard: () => <div data-testid="north-star-prompt-card" />,
 }))
 
 vi.mock('@/components/foryou/unread-thread-card', () => ({
@@ -60,6 +69,8 @@ function buildUnreadItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 describe('ForYouDashboard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		// Default: workspace has existing bets so NorthStarPromptCard stays hidden
+		mockUseBets.mockReturnValue({ data: [{ id: 'bet-1' }], isLoading: false })
 	})
 
 	it('shows loading skeletons while loading', () => {
