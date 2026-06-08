@@ -23,6 +23,19 @@ const TRIAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
  */
 const LLM_ROUTE_MASKIN_PLAN = 'maskin_plan'
 
+/**
+ * Mirror the response schema (`z.number().int().nonnegative()`) at read so a
+ * malformed stored `period_start` (negative, float, non-finite) degrades to
+ * `null` + a fresh trial window instead of crashing the OpenAPI response
+ * validator and taking the whole row dark.
+ */
+function normalizePeriodStart(raw: unknown): number | null {
+	if (typeof raw !== 'number') return null
+	if (!Number.isInteger(raw)) return null
+	if (raw < 0) return null
+	return raw
+}
+
 type Env = {
 	Variables: {
 		db: Database
@@ -148,7 +161,8 @@ app.openapi(usageRoute, async (c) => {
 	// writes `subscription.current_period_start` straight through, and Stripe
 	// timestamps are seconds (not ms). Multiply by 1000 here so `new Date()`,
 	// `Date.now()`, and the resets-in arithmetic all operate in ms.
-	const periodStartMs = billing?.period_start ? billing.period_start * 1000 : trialCycleStartMs
+	const periodStart = normalizePeriodStart(billing?.period_start)
+	const periodStartMs = periodStart !== null ? periodStart * 1000 : trialCycleStartMs
 	const periodEndMs = periodStartMs + TRIAL_WINDOW_MS
 
 	let tokensUsed = 0
@@ -189,7 +203,7 @@ app.openapi(usageRoute, async (c) => {
 			status,
 			tokens_used: tokensUsed,
 			hard_cap_tokens: hardCap,
-			period_start: billing?.period_start ?? null,
+			period_start: periodStart,
 			period_resets_in_ms: plan === 'byollm' ? null : resetsIn,
 			stripe_customer_id: billing?.stripe_customer_id ?? null,
 			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
