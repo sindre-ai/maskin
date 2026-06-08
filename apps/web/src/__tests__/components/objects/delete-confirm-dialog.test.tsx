@@ -108,4 +108,63 @@ describe('DeleteConfirmDialog', () => {
 		expect(screen.getByRole('button', { name: /deleting/i })).toBeDisabled()
 		expect(screen.getByRole('button', { name: /cancel/i })).toBeDisabled()
 	})
+
+	it('shows the inline error block and "Retry delete" button when errorMessage and onRetry are provided', () => {
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="insight"
+				objectTitle="Some insight"
+				onConfirm={vi.fn()}
+				onRetry={vi.fn()}
+				errorMessage="Network timeout"
+				isPending={false}
+			/>,
+		)
+		expect(screen.getByRole('alert')).toBeInTheDocument()
+		expect(screen.getByText(/network timeout/i)).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /retry delete/i })).toBeInTheDocument()
+	})
+
+	it('calls onRetry and not onConfirm when the Retry delete button is clicked', async () => {
+		const user = userEvent.setup()
+		const onConfirm = vi.fn()
+		const onRetry = vi.fn()
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="My Bet"
+				onConfirm={onConfirm}
+				onRetry={onRetry}
+				errorMessage="Detach failed"
+				isPending={false}
+			/>,
+		)
+		await user.click(screen.getByRole('button', { name: /retry delete/i }))
+		expect(onRetry).toHaveBeenCalledTimes(1)
+		expect(onConfirm).not.toHaveBeenCalled()
+	})
+
+	it('locks checkboxes and the Detach all button when errorMessage is set', () => {
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="My Bet"
+				childTasks={[
+					{ id: 'task-1', title: 'Task one', status: 'todo', relationshipId: 'rel-1' },
+				]}
+				onConfirm={vi.fn()}
+				onRetry={vi.fn()}
+				errorMessage="Delete failed"
+				isPending={false}
+			/>,
+		)
+		expect(screen.getByRole('checkbox')).toBeDisabled()
+		expect(screen.getByRole('button', { name: /detach all instead/i })).toBeDisabled()
+	})
 })

@@ -1,12 +1,13 @@
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from '@/components/ui/dialog'
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import {
 	Select,
 	SelectContent,
@@ -16,7 +17,13 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
+import {
+	CascadeDeleteError,
+	type CascadeDeletePlan,
+	useCascadeDelete,
+	useObjectGraph,
+	useUpdateObject,
+} from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
 import type {
@@ -26,6 +33,8 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { getStatusColor } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check } from 'lucide-react'
@@ -223,7 +232,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const updateObject = useUpdateObject(workspaceId)
-	const deleteObject = useDeleteObject(workspaceId)
+	const cascadeDelete = useCascadeDelete(workspaceId)
 	const { data: creator } = useActor(object.createdBy)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
@@ -237,6 +246,18 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		}
 		return { asSource, asTarget }
 	}, [graph, object.id])
+	const childTasks = useMemo<DeleteDialogChildTask[] | undefined>(() => {
+		if (!graph || object.type !== 'bet') return undefined
+		const byId = new Map(graph.connected_objects.map((co) => [co.id, co]))
+		const out: DeleteDialogChildTask[] = []
+		for (const rel of graph.relationships) {
+			if (rel.type !== 'breaks_into' || rel.sourceId !== object.id) continue
+			const co = byId.get(rel.targetId)
+			if (!co || co.type !== 'task') continue
+			out.push({ id: co.id, title: co.title, status: co.status, relationshipId: rel.id })
+		}
+		return out
+	}, [graph, object.id, object.type])
 	const { data: events } = useEntityEvents(workspaceId, object.id)
 
 	const settings = workspace.settings as Record<string, unknown>
@@ -276,33 +297,53 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	// cancel. Reset every time the dialog reopens and on mutation error, so a
 	// cancel after a failed delete still emits the event.
 	const confirmedDeleteRef = useRef(false)
+	// On partial failure the cascade hook hands back `error.remaining` — stash
+	// it so the Retry button re-fires the mutation from the cursor instead of
+	// restarting completed work.
+	const [retryPlan, setRetryPlan] = useState<CascadeDeletePlan | null>(null)
+	const [cascadeErrorMessage, setCascadeErrorMessage] = useState<string | null>(null)
 
-	const handleDelete = useCallback(() => {
-		deleteObject.mutate(object.id, {
-			onSuccess: () => {
-				navigate({
-					to: '/$workspaceId/objects',
-					params: { workspaceId },
-					search: (prev) => ({
-						type: prev.type,
-						status: prev.status,
-						owner: prev.owner,
-						sort: prev.sort ?? 'createdAt',
-						order: prev.order ?? 'desc',
-						q: prev.q,
-						groupBy: prev.groupBy,
-						ids: prev.ids,
-					}),
-				})
-			},
-			onError: () => {
-				confirmedDeleteRef.current = false
-			},
-		})
-	}, [object.id, deleteObject, navigate, workspaceId])
+	const runCascade = useCallback(
+		(plan: CascadeDeletePlan) => {
+			setCascadeErrorMessage(null)
+			cascadeDelete.mutate(plan, {
+				onSuccess: () => {
+					setRetryPlan(null)
+					setCascadeErrorMessage(null)
+					navigate({
+						to: '/$workspaceId/objects',
+						params: { workspaceId },
+						search: (prev) => ({
+							type: prev.type,
+							status: prev.status,
+							owner: prev.owner,
+							sort: prev.sort ?? 'createdAt',
+							order: prev.order ?? 'desc',
+							q: prev.q,
+							groupBy: prev.groupBy,
+							ids: prev.ids,
+						}),
+					})
+				},
+				onError: (err) => {
+					confirmedDeleteRef.current = false
+					if (err instanceof CascadeDeleteError) {
+						setRetryPlan(err.remaining)
+						setCascadeErrorMessage(err.message)
+					} else {
+						setRetryPlan(plan)
+						setCascadeErrorMessage(err instanceof Error ? err.message : 'Delete failed')
+					}
+				},
+			})
+		},
+		[cascadeDelete, navigate, workspaceId],
+	)
 
 	const openDeleteConfirm = useCallback(() => {
 		confirmedDeleteRef.current = false
+		setRetryPlan(null)
+		setCascadeErrorMessage(null)
 		trackEvent('delete_confirmation_shown', {
 			object_type: object.type,
 			object_id: object.id,
@@ -312,21 +353,39 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 
 	const handleDeleteOpenChange = useCallback(
 		(open: boolean) => {
-			if (!open && !confirmedDeleteRef.current) {
-				trackEvent('delete_confirmation_cancelled', {
-					object_type: object.type,
-					object_id: object.id,
-				})
+			if (!open) {
+				if (!confirmedDeleteRef.current) {
+					trackEvent('delete_confirmation_cancelled', {
+						object_type: object.type,
+						object_id: object.id,
+					})
+				}
+				setRetryPlan(null)
+				setCascadeErrorMessage(null)
 			}
 			setConfirmDelete(open)
 		},
 		[object.type, object.id],
 	)
 
-	const handleConfirmDelete = useCallback(() => {
+	const handleConfirmDelete = useCallback(
+		(selection: DeleteConfirmSelection) => {
+			confirmedDeleteRef.current = true
+			runCascade({
+				betId: object.id,
+				betType: object.type,
+				detachRelationshipIds: selection.detachRelationshipIds,
+				deleteTaskIds: selection.deleteTaskIds,
+			})
+		},
+		[object.id, object.type, runCascade],
+	)
+
+	const handleRetryDelete = useCallback(() => {
+		if (!retryPlan) return
 		confirmedDeleteRef.current = true
-		handleDelete()
-	}, [handleDelete])
+		runCascade(retryPlan)
+	}, [retryPlan, runCascade])
 
 	const [menuOpen, setMenuOpen] = useState(false)
 
@@ -363,8 +422,11 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onOpenChange={handleDeleteOpenChange}
 				objectType={object.type}
 				objectTitle={object.title}
+				childTasks={childTasks}
 				onConfirm={handleConfirmDelete}
-				isPending={deleteObject.isPending}
+				onRetry={retryPlan ? handleRetryDelete : undefined}
+				errorMessage={cascadeErrorMessage}
+				isPending={cascadeDelete.isPending}
 			/>
 			<ObjectDocumentView
 				object={object}
@@ -379,11 +441,23 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
 				onUpdateOwner={handleUpdateOwner}
-				onDelete={handleDelete}
-				isDeleting={deleteObject.isPending}
+				onDelete={openDeleteConfirm}
+				isDeleting={cascadeDelete.isPending}
 			/>
 		</>
 	)
+}
+
+export interface DeleteDialogChildTask {
+	id: string
+	title: string | null
+	status: string
+	relationshipId: string
+}
+
+export interface DeleteConfirmSelection {
+	deleteTaskIds: string[]
+	detachRelationshipIds: string[]
 }
 
 export function DeleteConfirmDialog({
@@ -391,36 +465,204 @@ export function DeleteConfirmDialog({
 	onOpenChange,
 	objectType,
 	objectTitle,
+	childTasks,
 	onConfirm,
+	onRetry,
+	errorMessage,
 	isPending,
 }: {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	objectType: string
 	objectTitle: string | null
-	onConfirm: () => void
+	childTasks?: DeleteDialogChildTask[]
+	onConfirm: (selection: DeleteConfirmSelection) => void
+	// Set by the parent when a previous attempt failed mid-cascade. When
+	// provided alongside `errorMessage`, the destructive button switches to
+	// "Retry delete" and re-runs the remaining steps from the stashed cursor.
+	onRetry?: () => void
+	errorMessage?: string | null
 	isPending: boolean
 }) {
-	const description = objectTitle
+	const isBet = objectType === 'bet'
+	const tasks = useMemo<DeleteDialogChildTask[]>(
+		() => (isBet ? (childTasks ?? []) : []),
+		[isBet, childTasks],
+	)
+	const hasCascade = isBet && tasks.length > 0
+	// All-done bets flip the default to detach (every checkbox starts OFF).
+	const startChecked = !(hasCascade && tasks.every((t) => t.status === 'done'))
+
+	const [selected, setSelected] = useState<Set<string>>(() => new Set())
+	// Re-seed selection whenever the dialog opens or the task set changes —
+	// stale state between two different bets would otherwise leak across opens.
+	useEffect(() => {
+		if (!open) return
+		setSelected(new Set(hasCascade && startChecked ? tasks.map((t) => t.id) : []))
+	}, [open, hasCascade, startChecked, tasks])
+
+	const toggle = useCallback((id: string) => {
+		setSelected((prev) => {
+			const next = new Set(prev)
+			if (next.has(id)) next.delete(id)
+			else next.add(id)
+			return next
+		})
+	}, [])
+
+	const detachAll = useCallback(() => setSelected(new Set()), [])
+
+	const selectedCount = selected.size
+	const keptCount = tasks.length - selectedCount
+
+	const handleConfirm = () => {
+		if (!hasCascade) {
+			onConfirm({ deleteTaskIds: [], detachRelationshipIds: [] })
+			return
+		}
+		const deleteTaskIds: string[] = []
+		const detachRelationshipIds: string[] = []
+		for (const t of tasks) {
+			if (selected.has(t.id)) deleteTaskIds.push(t.id)
+			else detachRelationshipIds.push(t.relationshipId)
+		}
+		onConfirm({ deleteTaskIds, detachRelationshipIds })
+	}
+
+	const simpleDescription = objectTitle
 		? `This will permanently delete the ${objectType} '${objectTitle}'. This can't be undone.`
 		: `This will permanently delete this ${objectType}. This can't be undone.`
+
+	// Lock the selection controls while a previous attempt is being retried or
+	// has just failed — the retry path uses the stashed cursor on the parent,
+	// not the dialog's checkbox state, so toggling here would be misleading.
+	const selectionLocked = isPending || Boolean(errorMessage)
+
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-sm">
-				<DialogHeader>
-					<DialogTitle>Delete this {objectType}?</DialogTitle>
-					<DialogDescription>{description}</DialogDescription>
-				</DialogHeader>
-				<DialogFooter className="gap-2 sm:gap-0">
-					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
+		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+			<ResponsiveDialogContent
+				className={cn('flex flex-col', hasCascade ? 'sm:max-w-[520px]' : 'sm:max-w-sm')}
+			>
+				<ResponsiveDialogHeader>
+					<ResponsiveDialogTitle>
+						{hasCascade
+							? objectTitle
+								? `Delete '${objectTitle}'?`
+								: 'Delete this bet?'
+							: `Delete this ${objectType}?`}
+					</ResponsiveDialogTitle>
+					<ResponsiveDialogDescription>
+						{hasCascade
+							? 'Choose which child tasks to delete along with this bet. Unchecked tasks will be detached and kept.'
+							: simpleDescription}
+					</ResponsiveDialogDescription>
+				</ResponsiveDialogHeader>
+
+				{hasCascade && (
+					<div className="max-h-[220px] overflow-y-auto rounded-md border border-border">
+						<div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-background px-3 py-2 text-sm">
+							<span className="text-muted-foreground">
+								{selectedCount} of {tasks.length} will be deleted
+							</span>
+							<button
+								type="button"
+								onClick={detachAll}
+								disabled={selectionLocked}
+								className="text-xs text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
+							>
+								Detach all instead
+							</button>
+						</div>
+						<ul>
+							{tasks.map((t) => {
+								const checked = selected.has(t.id)
+								return (
+									<li
+										key={t.id}
+										className={cn(
+											'border-b border-border last:border-b-0',
+											!checked && 'bg-muted/30',
+										)}
+									>
+										<label
+											htmlFor={`delete-task-${t.id}`}
+											className="flex min-h-[44px] cursor-pointer items-center gap-3 px-3 py-2"
+										>
+											<Checkbox
+												id={`delete-task-${t.id}`}
+												checked={checked}
+												onCheckedChange={() => toggle(t.id)}
+												disabled={selectionLocked}
+											/>
+											<span
+												className={cn(
+													'flex-1 break-words text-sm',
+													!checked && 'text-muted-foreground line-through',
+												)}
+											>
+												{t.title ?? 'Untitled task'}
+											</span>
+											<StatusPill status={t.status} />
+										</label>
+									</li>
+								)
+							})}
+						</ul>
+					</div>
+				)}
+
+				{errorMessage && (
+					<div
+						role="alert"
+						className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+					>
+						<p className="font-medium">Delete failed</p>
+						<p className="mt-0.5 break-words text-xs text-destructive/80">{errorMessage}</p>
+					</div>
+				)}
+
+				<ResponsiveDialogFooter className="gap-2 pb-[max(env(safe-area-inset-bottom),0px)] sm:gap-0">
+					<Button
+						variant="ghost"
+						onClick={() => onOpenChange(false)}
+						disabled={isPending}
+						autoFocus
+					>
 						Cancel
 					</Button>
-					<Button variant="destructive" onClick={onConfirm} disabled={isPending}>
-						{isPending ? 'Deleting...' : 'Delete'}
+					<Button
+						variant="destructive"
+						onClick={errorMessage && onRetry ? onRetry : handleConfirm}
+						disabled={isPending}
+					>
+						{errorMessage && onRetry
+							? isPending
+								? 'Retrying...'
+								: 'Retry delete'
+							: hasCascade
+								? `Delete bet · ${selectedCount} deleted · ${keptCount} kept`
+								: isPending
+									? 'Deleting...'
+									: 'Delete'}
 					</Button>
-				</DialogFooter>
-			</DialogContent>
-		</Dialog>
+				</ResponsiveDialogFooter>
+			</ResponsiveDialogContent>
+		</ResponsiveDialog>
+	)
+}
+
+function StatusPill({ status }: { status: string }) {
+	const colors = getStatusColor(status)
+	return (
+		<span
+			className={cn(
+				'whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[10px] font-medium',
+				colors.bg,
+				colors.text,
+			)}
+		>
+			{status.replace(/_/g, ' ')}
+		</span>
 	)
 }
 

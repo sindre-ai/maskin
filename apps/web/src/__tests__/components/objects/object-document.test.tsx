@@ -1,5 +1,9 @@
-import { ObjectDocumentView } from '@/components/objects/object-document'
-import { render, screen } from '@testing-library/react'
+import {
+	DeleteConfirmDialog,
+	type DeleteDialogChildTask,
+	ObjectDocumentView,
+} from '@/components/objects/object-document'
+import { render, screen, within } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
 import { buildActorResponse, buildObjectResponse } from '../../factories'
 
@@ -188,5 +192,256 @@ describe('ObjectDocumentView', () => {
 
 			expect(onUpdateOwner).toHaveBeenCalledWith(null)
 		})
+	})
+})
+
+describe('DeleteConfirmDialog cascade', () => {
+	function buildChildTask(overrides: Partial<DeleteDialogChildTask> = {}): DeleteDialogChildTask {
+		return {
+			id: overrides.id ?? 'task-1',
+			title: overrides.title ?? 'Task 1',
+			status: overrides.status ?? 'in_progress',
+			relationshipId: overrides.relationshipId ?? `rel-${overrides.id ?? 'task-1'}`,
+		}
+	}
+
+	function getListbar() {
+		const summary = screen.getByText(/will be deleted$/)
+		// The summary span and the "Detach all instead" button share a parent.
+		const bar = summary.parentElement
+		if (!bar) throw new Error('Listbar parent missing')
+		return bar
+	}
+
+	it('renders the plain confirm path when a bet has 0 child tasks', () => {
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="Lonely bet"
+				childTasks={[]}
+				onConfirm={vi.fn()}
+				isPending={false}
+			/>,
+		)
+
+		expect(screen.getByRole('heading', { name: /delete this bet\?/i })).toBeInTheDocument()
+		expect(screen.queryByText(/will be deleted$/)).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /detach all instead/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^delete$/i })).toBeInTheDocument()
+	})
+
+	it('renders 3 rows all-checked with the cascade-default listbar and button', () => {
+		const childTasks = [
+			buildChildTask({ id: 't1', title: 'First task', status: 'todo' }),
+			buildChildTask({ id: 't2', title: 'Second task', status: 'in_progress' }),
+			buildChildTask({ id: 't3', title: 'Third task', status: 'in_review' }),
+		]
+
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="Big bet"
+				childTasks={childTasks}
+				onConfirm={vi.fn()}
+				isPending={false}
+			/>,
+		)
+
+		const checkboxes = screen.getAllByRole('checkbox')
+		expect(checkboxes).toHaveLength(3)
+		for (const cb of checkboxes) {
+			expect(cb).toHaveAttribute('aria-checked', 'true')
+		}
+		expect(within(getListbar()).getByText('3 of 3 will be deleted')).toBeInTheDocument()
+		expect(
+			screen.getByRole('button', { name: /delete bet · 3 deleted · 0 kept/i }),
+		).toBeInTheDocument()
+	})
+
+	it('updates listbar, button, and row styling when one row is unchecked', async () => {
+		const user = userEvent.setup()
+		const childTasks = [
+			buildChildTask({ id: 't1', title: 'First task' }),
+			buildChildTask({ id: 't2', title: 'Second task' }),
+			buildChildTask({ id: 't3', title: 'Third task' }),
+		]
+
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="Big bet"
+				childTasks={childTasks}
+				onConfirm={vi.fn()}
+				isPending={false}
+			/>,
+		)
+
+		const secondCheckbox = screen.getByRole('checkbox', { name: /second task/i })
+		await user.click(secondCheckbox)
+
+		expect(secondCheckbox).toHaveAttribute('aria-checked', 'false')
+		expect(within(getListbar()).getByText('2 of 3 will be deleted')).toBeInTheDocument()
+		expect(
+			screen.getByRole('button', { name: /delete bet · 2 deleted · 1 kept/i }),
+		).toBeInTheDocument()
+
+		const secondTitleSpan = screen.getByText('Second task')
+		expect(secondTitleSpan.className).toMatch(/line-through/)
+	})
+
+	it('starts every row OFF when every child task is done', () => {
+		const childTasks = [
+			buildChildTask({ id: 't1', title: 'Done one', status: 'done' }),
+			buildChildTask({ id: 't2', title: 'Done two', status: 'done' }),
+		]
+
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="Wrapped bet"
+				childTasks={childTasks}
+				onConfirm={vi.fn()}
+				isPending={false}
+			/>,
+		)
+
+		for (const cb of screen.getAllByRole('checkbox')) {
+			expect(cb).toHaveAttribute('aria-checked', 'false')
+		}
+		expect(within(getListbar()).getByText('0 of 2 will be deleted')).toBeInTheDocument()
+		expect(
+			screen.getByRole('button', { name: /delete bet · 0 deleted · 2 kept/i }),
+		).toBeInTheDocument()
+	})
+
+	it('unchecks every row when "Detach all instead" is clicked', async () => {
+		const user = userEvent.setup()
+		const childTasks = [
+			buildChildTask({ id: 't1', title: 'Task A' }),
+			buildChildTask({ id: 't2', title: 'Task B' }),
+			buildChildTask({ id: 't3', title: 'Task C' }),
+		]
+
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="Bet to drain"
+				childTasks={childTasks}
+				onConfirm={vi.fn()}
+				isPending={false}
+			/>,
+		)
+
+		await user.click(screen.getByRole('button', { name: /detach all instead/i }))
+
+		for (const cb of screen.getAllByRole('checkbox')) {
+			expect(cb).toHaveAttribute('aria-checked', 'false')
+		}
+		expect(
+			screen.getByRole('button', { name: /delete bet · 0 deleted · 3 kept/i }),
+		).toBeInTheDocument()
+	})
+
+	it('passes mixed selection to onConfirm — checked rows in deleteTaskIds, unchecked in detachRelationshipIds', async () => {
+		const user = userEvent.setup()
+		const onConfirm = vi.fn()
+		const childTasks = [
+			buildChildTask({ id: 't-keep', title: 'Task to keep', relationshipId: 'rel-keep' }),
+			buildChildTask({ id: 't-go-1', title: 'Task to delete 1', relationshipId: 'rel-go-1' }),
+			buildChildTask({ id: 't-go-2', title: 'Task to delete 2', relationshipId: 'rel-go-2' }),
+		]
+
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="bet"
+				objectTitle="Mixed bet"
+				childTasks={childTasks}
+				onConfirm={onConfirm}
+				isPending={false}
+			/>,
+		)
+
+		await user.click(screen.getByRole('checkbox', { name: /task to keep/i }))
+		await user.click(screen.getByRole('button', { name: /delete bet · 2 deleted · 1 kept/i }))
+
+		// The dialog's job is to partition the selection. The cascade hook
+		// (covered by use-objects.test.ts) runs detaches first, then deletes,
+		// then the bet — preserving the kept-task edge before any failure can
+		// drop it.
+		expect(onConfirm).toHaveBeenCalledTimes(1)
+		expect(onConfirm).toHaveBeenCalledWith({
+			deleteTaskIds: ['t-go-1', 't-go-2'],
+			detachRelationshipIds: ['rel-keep'],
+		})
+	})
+
+	it('renders inline error + Retry, leaves the dialog open, and Retry fires onRetry not onConfirm', async () => {
+		const user = userEvent.setup()
+		const onConfirm = vi.fn()
+		const onRetry = vi.fn()
+		const onOpenChange = vi.fn()
+		const childTasks = [
+			buildChildTask({ id: 't1', title: 'First task' }),
+			buildChildTask({ id: 't2', title: 'Second task' }),
+		]
+
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={onOpenChange}
+				objectType="bet"
+				objectTitle="Half-deleted bet"
+				childTasks={childTasks}
+				onConfirm={onConfirm}
+				onRetry={onRetry}
+				errorMessage="Network blew up halfway through"
+				isPending={false}
+			/>,
+		)
+
+		const alert = screen.getByRole('alert')
+		expect(within(alert).getByText('Delete failed')).toBeInTheDocument()
+		expect(within(alert).getByText(/network blew up halfway through/i)).toBeInTheDocument()
+
+		const retryButton = screen.getByRole('button', { name: /^retry delete$/i })
+		await user.click(retryButton)
+
+		expect(onRetry).toHaveBeenCalledTimes(1)
+		expect(onConfirm).not.toHaveBeenCalled()
+		// The dialog stays open through retry — onOpenChange is the cancel-or-
+		// close signal, never invoked by Retry.
+		expect(onOpenChange).not.toHaveBeenCalled()
+	})
+
+	it('uses the simple confirm path for non-bet object types even when childTasks is passed', () => {
+		render(
+			<DeleteConfirmDialog
+				open
+				onOpenChange={vi.fn()}
+				objectType="task"
+				objectTitle="A task"
+				childTasks={[buildChildTask({ id: 't1', title: 'Ignored sub-task' })]}
+				onConfirm={vi.fn()}
+				isPending={false}
+			/>,
+		)
+
+		expect(screen.queryByText(/will be deleted$/)).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /detach all instead/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^delete$/i })).toBeInTheDocument()
 	})
 })
