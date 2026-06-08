@@ -8,7 +8,7 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
+import { useBillingUsage, useStripeBillingPortal, useStripeCheckout } from '@/hooks/use-billing'
 import type { BillingPlan, BillingStatus } from '@/lib/api'
 import { ExternalLink } from 'lucide-react'
 import { useState } from 'react'
@@ -19,8 +19,6 @@ const PLAN_LABEL: Record<BillingPlan, string> = {
 	pro: 'Pro — $60/mo',
 	byollm: 'Bring-your-own',
 }
-
-const STRIPE_BILLING_PORTAL = 'https://billing.stripe.com/p/login/maskin'
 
 export function formatTokens(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
@@ -48,6 +46,7 @@ function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string;
 export function BillingSection({ workspaceId }: { workspaceId: string }) {
 	const usageQuery = useBillingUsage(workspaceId)
 	const checkout = useStripeCheckout(workspaceId)
+	const portal = useStripeBillingPortal(workspaceId)
 	const [switchOpen, setSwitchOpen] = useState(false)
 
 	const handleUpgrade = (plan: 'starter' | 'pro') => {
@@ -58,6 +57,17 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 				success_url: `${base}?billing=success`,
 				cancel_url: `${base}?billing=cancel`,
 			},
+			{
+				onSuccess: ({ url }) => {
+					window.location.href = url
+				},
+			},
+		)
+	}
+
+	const handleManageInStripe = () => {
+		portal.mutate(
+			{ return_url: window.location.href.split('?')[0] },
 			{
 				onSuccess: ({ url }) => {
 					window.location.href = url
@@ -112,14 +122,14 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 						<span className={`rounded-full px-2 py-0.5 text-xs ${badge.tone}`}>{badge.label}</span>
 					</div>
 					{isPaid && usage.stripe_customer_id && (
-						<a
-							href={STRIPE_BILLING_PORTAL}
-							target="_blank"
-							rel="noreferrer"
-							className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+						<button
+							type="button"
+							onClick={handleManageInStripe}
+							disabled={portal.isPending}
+							className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-60"
 						>
 							Manage in Stripe <ExternalLink size={12} />
-						</a>
+						</button>
 					)}
 				</div>
 
@@ -192,6 +202,11 @@ export function BillingSection({ workspaceId }: { workspaceId: string }) {
 				{checkout.isError && (
 					<p className="text-xs text-error">
 						{checkout.error?.message ?? 'Could not start checkout.'}
+					</p>
+				)}
+				{portal.isError && (
+					<p className="text-xs text-error">
+						{portal.error?.message ?? 'Could not open billing portal.'}
 					</p>
 				)}
 			</div>

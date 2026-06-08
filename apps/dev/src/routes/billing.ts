@@ -11,7 +11,12 @@ import {
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/stripe'
+import {
+	createBillingPortalSession,
+	createCheckoutSession,
+	getStripeClient,
+	readStripeEnv,
+} from '../lib/stripe'
 
 /**
  * Trial bucket sizing when no Stripe-driven `period_start` is set yet.
@@ -228,6 +233,104 @@ app.openapi(usageRoute, async (c) => {
 		},
 		200,
 	)
+})
+
+const portalBodySchema = z.object({
+	return_url: z.string().url(),
+})
+
+const portalResponseSchema = z.object({
+	url: z.string().url(),
+})
+
+const portalRoute = createRoute({
+	method: 'post',
+	path: '/portal',
+	tags: ['billing'],
+	summary: 'Open a Stripe Billing Portal session for this workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: portalBodySchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Billing portal session created',
+			content: { 'application/json': { schema: portalResponseSchema } },
+		},
+		404: {
+			description: 'Workspace not found or no Stripe customer on record',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe misconfigured or upstream failure',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(portalRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { return_url } = c.req.valid('json')
+
+	const [workspace] = await db
+		.select({ id: workspaces.id, settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	const customerId = settingsParse.success
+		? (settingsParse.data.billing?.stripe_customer_id ?? null)
+		: null
+
+	// The frontend gates the "Manage in Stripe" affordance behind
+	// `isPaid && usage.stripe_customer_id`, so reaching this endpoint without
+	// a customer id is a caller bug, not a user-facing state. 404 keeps the
+	// contract obvious: there is nothing to manage.
+	if (!customerId) {
+		return c.json(
+			createApiError('NOT_FOUND', 'No Stripe customer on record for this workspace'),
+			404,
+		)
+	}
+
+	let stripeEnv: ReturnType<typeof readStripeEnv>
+	try {
+		stripeEnv = readStripeEnv()
+	} catch (err) {
+		logger.error('Stripe is not configured', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
+
+	const stripe = getStripeClient(stripeEnv)
+	try {
+		const session = await createBillingPortalSession(stripe, {
+			workspaceId,
+			customerId,
+			returnUrl: return_url,
+		})
+		if (!session.url) {
+			logger.error('Stripe billing portal session missing url', { sessionId: session.id })
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no portal url'), 500)
+		}
+		return c.json({ url: session.url }, 200)
+	} catch (err) {
+		logger.error('Stripe billing portal session creation failed', {
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create billing portal session'), 500)
+	}
 })
 
 app.openapi(checkoutRoute, async (c) => {
