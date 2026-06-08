@@ -58,6 +58,7 @@ describe('Settings > General > Privacy & data', () => {
 			screen.getByRole('switch', { name: 'Share product usage with Maskin' }),
 		).toBeInTheDocument()
 		expect(screen.getByRole('switch', { name: 'Anonymize this workspace' })).toBeInTheDocument()
+		expect(screen.getByText(/SHA-256 hash of the actor id/)).toBeInTheDocument()
 	})
 
 	it('defaults share-usage on and anonymize off when settings.privacy is missing', () => {
