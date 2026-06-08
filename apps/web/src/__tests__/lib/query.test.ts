@@ -93,5 +93,21 @@ describe('queryClient', () => {
 			triggerMutationError(error)
 			expect(toast.error).not.toHaveBeenCalled()
 		})
+
+		it('on 402 PLAN_CAP_EXCEEDED invalidates billing queries and suppresses the toast', () => {
+			vi.mocked(toast.error).mockClear()
+			const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockImplementation(() => {
+				return Promise.resolve()
+			})
+			try {
+				triggerMutationError(new ApiError(402, 'Plan cap exceeded'))
+				expect(invalidate).toHaveBeenCalledWith({ queryKey: ['billing'] })
+				// Toast is suppressed — the UsageStateBanner + OverCapComposerNotice
+				// carry the message; a transient toast on top would be noise.
+				expect(toast.error).not.toHaveBeenCalled()
+			} finally {
+				invalidate.mockRestore()
+			}
+		})
 	})
 })

@@ -49,6 +49,15 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
+// Stub the over-cap composer block so the existing SindreChat tests (rendered
+// without a QueryClientProvider) don't hit useBillingUsage. Over-cap behavior
+// is covered by over-cap-composer-notice.test.tsx and the usage-state-banner
+// suite. Same pattern as instruction-log.test.tsx.
+vi.mock('@/components/billing/over-cap-composer-notice', () => ({
+	useOverCapBlock: () => false,
+	OverCapComposerNotice: () => null,
+}))
+
 import { api } from '@/lib/api'
 
 // cmdk + Radix Popover rely on these browser APIs when the picker content is

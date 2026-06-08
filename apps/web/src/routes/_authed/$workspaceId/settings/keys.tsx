@@ -1,3 +1,4 @@
+import { BillingSection } from '@/components/settings/billing-section'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +24,11 @@ function KeysPage() {
 
 	return (
 		<div className="max-w-lg space-y-6">
-			<ClaudeOAuthSection workspaceId={workspaceId} />
+			<BillingSection workspaceId={workspaceId} />
+
+			<div className="border-t border-border pt-6">
+				<ClaudeOAuthSection workspaceId={workspaceId} />
+			</div>
 
 			<div className="border-t border-border pt-6">
 				<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
@@ -93,14 +98,14 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 	return (
 		<div>
 			<div>
-				<Label className="mb-1 text-bold">Default LLM ($5 Free Usage)</Label>
+				<Label className="mb-1 font-bold">Default LLM ($5 Free Usage)</Label>
 				<p className="text-xs text-muted-foreground mb-6">
 					Uses Deepseek V4 Flash via OpenRouter as the default model when no API keys are
 					configured. <b>Provides up to $5 USD equivalent of free usage per day, per workspace.</b>
 					Automatically activates for users without Claude subscriptions, API keys or custom llm.
 				</p>
 			</div>
-			<Label className="mb-1 text-bold">Claude Subscription</Label>
+			<Label className="mb-1 font-bold">Claude Subscription</Label>
 			<p className="text-xs text-muted-foreground mb-3">
 				Connect your Claude Pro/Max/Teams subscription to use it for agent sessions instead of an
 				API key.
@@ -245,7 +250,7 @@ function LLMKeysEditor({
 
 	return (
 		<div>
-			<Label className="mb-1 text-bold">LLM API Keys</Label>
+			<Label className="mb-1 font-bold">LLM API Keys</Label>
 			<p className="text-xs text-muted-foreground mb-3">
 				Set API keys per provider. All agents in this workspace will use these keys.
 			</p>
@@ -339,7 +344,7 @@ function CustomLlmEditor({
 
 	return (
 		<div>
-			<Label className="mb-1 text-bold">Custom Model Endpoint (beta)</Label>
+			<Label className="mb-1 font-bold">Custom Model Endpoint (beta)</Label>
 			<p className="text-xs text-muted-foreground mb-3">
 				Point Claude Code at any Anthropic-compatible endpoint — OpenRouter, a self-hosted
 				vLLM/Ollama instance, or LM Studio. Takes precedence over the Claude subscription and

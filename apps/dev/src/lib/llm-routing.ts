@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import { parsePositiveIntEnv } from './billing-defaults'
 import { getValidOAuthToken } from './claude-oauth'
 import type { WorkspaceSettings } from './types'
 
@@ -47,8 +48,7 @@ export interface AgentLlmConfig {
  * upstream.
  */
 export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): FallbackConfig {
-	const rawLimit = Number(env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT)
-	const dailyTokenLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 550_000
+	const dailyTokenLimit = parsePositiveIntEnv('MASKIN_FALLBACK_DAILY_TOKEN_LIMIT', env) ?? 550_000
 	return {
 		apiKey: env.MASKIN_FALLBACK_OPENROUTER_KEY?.trim() || undefined,
 		baseUrl: env.MASKIN_FALLBACK_BASE_URL?.trim() || 'https://openrouter.ai/api',
