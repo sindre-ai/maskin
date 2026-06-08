@@ -257,6 +257,93 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(claimUpdate?.processedAt).toBeInstanceOf(Date)
 	})
 
+	it('preserves fields across interleaved deliveries (lost-update regression)', async () => {
+		// Two Stripe webhooks for the same workspace land within seconds:
+		//   delivery A: customer.subscription.created — writes plan, hard_cap_tokens, period_start
+		//   delivery B: checkout.session.completed   — writes stripe_customer_id, stripe_subscription_id, status
+		// Without SELECT … FOR UPDATE inside a transaction, B can read settings
+		// before A's UPDATE commits, mutate its own slice, and clobber A's plan
+		// + cap on UPDATE. With the fix in place, B's transaction blocks on the
+		// row lock until A commits, then re-reads the merged state — so its
+		// final UPDATE carries both A's and B's fields.
+		//
+		// The mock DB can't simulate Postgres locking, so we model the expected
+		// post-lock behaviour: B's select returns the settings A committed, and
+		// we assert B's UPDATE preserves A's plan/cap alongside its own writes.
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+
+		// Two claims (one per delivery) and two selects: A reads {}, B reads
+		// the billing slice A would have committed.
+		mockResults.insertQueue = [[{ id: 'claim-a' }], [{ id: 'claim-b' }]]
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {} }],
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'pro',
+							status: 'active',
+							hard_cap_tokens: 96_000_000,
+							period_start: 1_700_000_000,
+							stripe_subscription_id: 'sub_42',
+							stripe_customer_id: 'cus_42',
+						},
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook)
+			.mockReturnValueOnce({
+				id: 'evt_sub_created',
+				type: 'customer.subscription.created',
+				data: {
+					object: {
+						id: 'sub_42',
+						customer: 'cus_42',
+						status: 'active',
+						current_period_start: 1_700_000_000,
+						metadata: { workspace_id: workspaceId },
+						items: { data: [{ price: { id: 'price_pro' } }] },
+					},
+				},
+			} as unknown as Stripe.Event)
+			.mockReturnValueOnce({
+				id: 'evt_checkout',
+				type: 'checkout.session.completed',
+				data: {
+					object: {
+						client_reference_id: workspaceId,
+						customer: 'cus_42',
+						subscription: 'sub_42',
+					},
+				},
+			} as unknown as Stripe.Event)
+
+		const resA = await postWebhook(app, {})
+		expect(resA.status).toBe(200)
+		const resB = await postWebhook(app, {})
+		expect(resB.status).toBe(200)
+
+		const workspaceUpdates = calls.updates.filter(
+			(u): u is WorkspaceUpdate =>
+				!!u && typeof u === 'object' && 'settings' in (u as Record<string, unknown>),
+		)
+		expect(workspaceUpdates).toHaveLength(2)
+		// The final write must merge A's plan/cap with B's customer/subscription —
+		// the lost-update bug would surface here as plan='trial' or missing cap.
+		expect(workspaceUpdates[1]?.settings.billing).toMatchObject({
+			plan: 'pro',
+			hard_cap_tokens: 96_000_000,
+			period_start: 1_700_000_000,
+			stripe_customer_id: 'cus_42',
+			stripe_subscription_id: 'sub_42',
+			status: 'active',
+		})
+	})
+
 	it('short-circuits duplicate deliveries via webhook_deliveries dedup', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
