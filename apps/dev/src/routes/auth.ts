@@ -182,7 +182,15 @@ app.openapi(requestEmailChangeRoute, async (c) => {
 
 	const valid = await verifyPassword(body.current_password, actor.passwordHash)
 	if (!valid) {
-		return c.json(createApiError('UNAUTHORIZED', 'Current password is incorrect'), 401)
+		// Field-level detail lets the frontend tell wrong-password 401s apart
+		// from session-expired 401s — both share the same status code but need
+		// very different UI responses.
+		return c.json(
+			createApiError('UNAUTHORIZED', 'Current password is incorrect', [
+				{ field: 'current_password', message: 'Current password is incorrect' },
+			]),
+			401,
+		)
 	}
 
 	// Block if another actor already uses this email. We check current and

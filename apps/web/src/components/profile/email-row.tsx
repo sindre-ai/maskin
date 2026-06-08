@@ -18,6 +18,14 @@ import { AlertTriangle } from 'lucide-react'
 import { type FormEvent, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+// Fallback so non-secure-context jsdom tests still get a unique-ish key. The
+// API treats `Idempotency-Key` as an opaque string, so the format doesn't
+// matter as long as a double-tap submits the same value.
+function newIdempotencyKey(): string {
+	if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 type RequestEmailChangeMutation = ReturnType<typeof useRequestEmailChange>
 
 interface ChangeEmailDialogProps {
@@ -123,11 +131,14 @@ function VerificationBanner({
 
 	async function handleCancel() {
 		try {
-			await cancelMutation.mutateAsync()
+			await cancelMutation.mutateAsync({ idempotencyKey: newIdempotencyKey() })
 			onCancelled()
 			toast.success('Email change cancelled')
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Could not cancel email change')
+			// Generic copy — raw `err.message` can leak backend/Zod detail
+			// strings. The original error still goes to console for telemetry.
+			console.error('[email-change] cancel failed', err)
+			toast.error('Could not cancel email change. Please try again.')
 		}
 	}
 
@@ -251,8 +262,8 @@ function ChangeEmailDialog({
 		setPasswordServerError(null)
 		try {
 			await mutation.mutateAsync({
-				new_email: trimmedEmail,
-				current_password: password,
+				data: { new_email: trimmedEmail, current_password: password },
+				idempotencyKey: newIdempotencyKey(),
 			})
 			trackEvent('profile.field_changed', { field: 'pending_email' })
 			const isResend = presetEmail !== '' && trimmedEmail === presetEmail
@@ -265,7 +276,12 @@ function ChangeEmailDialog({
 			onSuccess(isResend ? trimmedEmail : null)
 		} catch (err) {
 			if (err instanceof ApiError) {
-				if (err.status === 401) {
+				// A 401 with a `current_password` field detail is the
+				// wrong-password case. Any other 401 (e.g. session expired
+				// mid-flight) falls through to the generic copy so we don't
+				// prompt the user to re-enter their password into an
+				// already-invalidated session.
+				if (err.status === 401 && err.fieldErrors.current_password?.length) {
 					setPasswordServerError('Current password is incorrect.')
 					return
 				}
@@ -274,7 +290,10 @@ function ChangeEmailDialog({
 					return
 				}
 			}
-			setEmailServerError(err instanceof Error ? err.message : 'Could not request email change.')
+			// Generic copy + telemetry — raw `err.message` can leak backend or
+			// Zod detail strings.
+			console.error('[email-change] request failed', err)
+			setEmailServerError('Could not request email change. Please try again.')
 		}
 	}
 
