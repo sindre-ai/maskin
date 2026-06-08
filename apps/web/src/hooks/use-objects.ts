@@ -202,27 +202,6 @@ export function useMigrateObjectType(workspaceId: string) {
 	})
 }
 
-export function useDeleteObject(workspaceId: string) {
-	const queryClient = useQueryClient()
-	return useMutation({
-		mutationFn: (id: string) => api.objects.delete(id),
-		onMutate: (id) => {
-			const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(id))
-			return { type: cached?.type ?? null, id }
-		},
-		onSuccess: (_data, _variables, ctx) => {
-			toast.success('Object deleted')
-			if (ctx?.type === 'bet') {
-				trackBetArchived({ entity_id: ctx.id, entity_type: 'bet' })
-			}
-		},
-		onSettled: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
-			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
-		},
-	})
-}
-
 export interface CascadeDeletePlan {
 	betId: string
 	// Object type of the parent being deleted. Drives the `trackBetArchived`
@@ -305,7 +284,11 @@ export function useCascadeDelete(workspaceId: string) {
 				queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(taskId) })
 				queryClient.removeQueries({ queryKey: queryKeys.objects.detail(taskId) })
 			}
-			queryClient.removeQueries({ queryKey: queryKeys.objects.detail(plan.betId) })
+			// Only drop the bet detail cache once the cascade fully completed — on
+			// partial failure the bet still exists and the Retry path needs it intact.
+			if (!_err) {
+				queryClient.removeQueries({ queryKey: queryKeys.objects.detail(plan.betId) })
+			}
 		},
 	})
 }

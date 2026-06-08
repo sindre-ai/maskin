@@ -28,7 +28,6 @@ import {
 	useBulkUpdateObjects,
 	useCascadeDelete,
 	useCreateObject,
-	useDeleteObject,
 	useObject,
 	useObjectGraph,
 	useObjects,
@@ -308,28 +307,6 @@ describe('useBulkUpdateObjects', () => {
 	})
 })
 
-describe('useDeleteObject', () => {
-	it('exposes error when delete fails', async () => {
-		vi.mocked(api.objects.delete).mockRejectedValue(new Error('Forbidden'))
-
-		const { result } = renderHook(() => useDeleteObject(workspaceId), { wrapper: TestWrapper })
-
-		result.current.mutate('obj-1')
-		await waitFor(() => expect(result.current.isError).toBe(true))
-		expect(result.current.error?.message).toBe('Forbidden')
-	})
-
-	it('calls api.objects.delete with id', async () => {
-		vi.mocked(api.objects.delete).mockResolvedValue({ deleted: true })
-
-		const { result } = renderHook(() => useDeleteObject(workspaceId), { wrapper: TestWrapper })
-
-		result.current.mutate('obj-1')
-		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(api.objects.delete).toHaveBeenCalledWith('obj-1')
-	})
-})
-
 describe('useCascadeDelete', () => {
 	function makeWrapper() {
 		const queryClient = new QueryClient({
@@ -448,5 +425,47 @@ describe('useCascadeDelete', () => {
 		expect(invalidateSpy).toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.graph('bet-1'),
 		})
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: queryKeys.relationships.all(workspaceId),
+		})
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.graph('task-1'),
+		})
+	})
+
+	it('re-fires from the failure cursor without repeating already-completed steps', async () => {
+		vi.mocked(api.objects.delete).mockResolvedValue({ deleted: true })
+		let relCallCount = 0
+		vi.mocked(api.relationships.delete).mockImplementation(async (id) => {
+			relCallCount++
+			// rel-3 fails on the first attempt only
+			if (id === 'rel-3' && relCallCount === 3) throw new Error('Network error')
+			return { deleted: true }
+		})
+
+		const { Wrapper } = makeWrapper()
+		const { result } = renderHook(() => useCascadeDelete(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({
+			betId: 'bet-1',
+			betType: 'bet',
+			detachRelationshipIds: ['rel-1', 'rel-2', 'rel-3'],
+			deleteTaskIds: ['task-1'],
+		})
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const remaining = (result.current.error as CascadeDeleteError).remaining
+		// rel-1 and rel-2 completed; only rel-3 remains at the cursor head
+		expect(remaining.detachRelationshipIds).toEqual(['rel-3'])
+
+		// Retry from the cursor — only rel-3 + task deletes fire again
+		result.current.mutate(remaining)
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		// Initial run: rel-1 (ok), rel-2 (ok), rel-3 (fail) = 3 calls.
+		// Retry fires rel-3 once more = 1 additional call. Total = 4.
+		// A fresh-start would re-call rel-1 + rel-2 + rel-3, giving 6.
+		expect(api.relationships.delete).toHaveBeenCalledTimes(4)
+		expect(api.objects.delete).toHaveBeenCalledWith('task-1')
+		expect(api.objects.delete).toHaveBeenCalledWith('bet-1')
 	})
 })
