@@ -135,6 +135,10 @@ function VerificationBanner({
 			onCancelled()
 			toast.success('Email change cancelled')
 		} catch (err) {
+			if (err instanceof ApiError && err.status === 401) {
+				toast.error('Your session has expired. Please sign in again.')
+				return
+			}
 			// Generic copy — raw `err.message` can leak backend/Zod detail
 			// strings. The original error still goes to console for telemetry.
 			console.error('[email-change] cancel failed', err)

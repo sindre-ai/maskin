@@ -218,6 +218,21 @@ describe('EmailRow', () => {
 		expect(toast.success).toHaveBeenCalledWith('Email change cancelled')
 	})
 
+	it('shows a session-expired toast when the cancel endpoint returns 401', async () => {
+		vi.mocked(api.auth.cancelEmailChange).mockRejectedValue(new ApiError(401, 'Unauthorized'))
+		renderRow({ pending_email: 'new@example.com' })
+
+		fireEvent.click(screen.getByRole('button', { name: /cancel email change/i }))
+
+		await waitFor(() =>
+			expect(toast.error).toHaveBeenCalledWith(
+				'Your session has expired. Please sign in again.',
+			),
+		)
+		// Banner stays — the cancel didn't succeed, so the user can see the state.
+		expect(screen.getByText(/verify your new email/i)).toBeInTheDocument()
+	})
+
 	it('shows a generic error toast when cancelling the pending change fails (does not leak raw err.message)', async () => {
 		vi.mocked(api.auth.cancelEmailChange).mockRejectedValue(
 			new Error('pendingEmail: Expected string, received number'),
