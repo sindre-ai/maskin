@@ -1,4 +1,5 @@
 import Stripe from 'stripe'
+import { parsePositiveIntEnv } from './billing-defaults'
 import { logger } from './logger'
 
 export type MaskinPlan = 'starter' | 'pro'
@@ -18,6 +19,12 @@ export interface CheckoutInputs {
 	successUrl: string
 	cancelUrl: string
 	existingCustomerId?: string | null
+}
+
+export interface BillingPortalInputs {
+	workspaceId: string
+	customerId: string
+	returnUrl: string
 }
 
 let cachedClient: Stripe | null = null
@@ -41,11 +48,15 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		throw new Error(`Stripe env vars missing: ${missing.join(', ')}`)
 	}
 	const parseTokenCap = (key: 'MASKIN_STARTER_HARD_CAP_TOKENS' | 'MASKIN_PRO_HARD_CAP_TOKENS') => {
-		const raw = Number(env[key])
-		if (!Number.isFinite(raw) || raw <= 0) {
+		// Boot-time strict variant: env was just confirmed non-empty by the
+		// `missing` check above, so a `null` return from the shared parser means
+		// the value is malformed (non-digit, zero, or negative). Throw so misconfig
+		// surfaces at first request instead of silently falling back.
+		const parsed = parsePositiveIntEnv(key, env)
+		if (parsed === null) {
 			throw new Error(`${key} must be a positive number, got ${env[key]}`)
 		}
-		return Math.floor(raw)
+		return parsed
 	}
 	return {
 		secretKey: env.STRIPE_SECRET_KEY as string,
@@ -120,6 +131,28 @@ export async function createCheckoutSession(
 	logger.info('Stripe checkout session created', {
 		workspaceId: inputs.workspaceId,
 		plan: inputs.plan,
+		sessionId: session.id,
+	})
+	return session
+}
+
+/**
+ * Build a Stripe Billing Portal session for an existing customer. The portal
+ * URL Stripe returns is a one-shot redirect — callers send the user straight
+ * to it from the browser and Stripe handles the rest (invoice history,
+ * payment method updates, cancellations).
+ */
+export async function createBillingPortalSession(
+	stripe: Stripe,
+	inputs: BillingPortalInputs,
+): Promise<Stripe.BillingPortal.Session> {
+	const session = await stripe.billingPortal.sessions.create({
+		customer: inputs.customerId,
+		return_url: inputs.returnUrl,
+	})
+	logger.info('Stripe billing portal session created', {
+		workspaceId: inputs.workspaceId,
+		customerId: inputs.customerId,
 		sessionId: session.id,
 	})
 	return session

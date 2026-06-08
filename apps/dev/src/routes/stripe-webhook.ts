@@ -5,6 +5,7 @@ import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { createApiError } from '../lib/errors'
+import { settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
 	getStripeClient,
@@ -68,8 +69,6 @@ app.post('/', async (c) => {
 
 	const workspaceId = await resolveWorkspaceId(c.get('db'), event)
 	if (!workspaceId) {
-		// We can't link this back to a workspace. Acknowledge so Stripe stops
-		// retrying — silent retries on orphaned events are noise, not a bug.
 		logger.warn('Stripe webhook could not resolve workspace_id', {
 			eventId: event.id,
 			type: event.type,
@@ -77,9 +76,6 @@ app.post('/', async (c) => {
 		return c.json({ ok: true, skipped: true, reason: 'no_workspace' })
 	}
 
-	// Claim BEFORE doing the workspace update. Without the claim, every Stripe
-	// retry (and they retry aggressively on 5xx) would re-apply the same
-	// state mutation. See packages/db/src/schema.ts:webhookDeliveries.
 	const db = c.get('db')
 	let claimRowId: string | null = null
 	try {
@@ -91,11 +87,7 @@ app.post('/', async (c) => {
 				workspaceId,
 			})
 			.onConflictDoNothing({
-				target: [
-					webhookDeliveries.provider,
-					webhookDeliveries.externalId,
-					webhookDeliveries.workspaceId,
-				],
+				target: [webhookDeliveries.provider, webhookDeliveries.externalId, webhookDeliveries.workspaceId],
 			})
 			.returning({ id: webhookDeliveries.id })
 		if (rows.length === 0) {
@@ -108,8 +100,6 @@ app.post('/', async (c) => {
 		}
 		claimRowId = rows[0]?.id ?? null
 	} catch (err) {
-		// Fail open: the dedup ledger going down must not block real billing
-		// updates. The reconciler will retry on the next event.
 		logger.error('Failed to claim Stripe webhook delivery; processing without dedup', {
 			eventId: event.id,
 			workspaceId,
@@ -120,13 +110,6 @@ app.post('/', async (c) => {
 	try {
 		await applyEvent(db, workspaceId, event, stripeEnv)
 		if (claimRowId) {
-			// Mark the claim processed so the reconciler doesn't release it after the
-			// 15m stale threshold. Without this, every successful Stripe delivery
-			// would become re-processable within ~20m, but Stripe retries old events
-			// for up to ~3 days — replaying a stale subscription.updated over current
-			// state would regress the workspace (e.g. resurrect a canceled sub). If
-			// the UPDATE itself fails we still ack the event: the work is done, the
-			// dedup metadata is best-effort, and on-call has the log line.
 			try {
 				await db
 					.update(webhookDeliveries)
@@ -176,17 +159,10 @@ async function resolveWorkspaceId(db: Database, event: Stripe.Event): Promise<st
 	const direct = resolveWorkspaceIdFromEvent(event)
 	if (direct) return direct
 
-	// Fallback: look up by stripe_customer_id stored on settings.billing.
-	// Subscription / invoice events don't always carry metadata, but they
-	// always carry `customer`. Drizzle doesn't expose a clean JSONB equality
-	// helper, so we raw-filter via sql tag below — bounded to a single
-	// indexable lookup once we have the customer id.
 	const customerId = customerIdFromEvent(event)
 	if (!customerId) return null
 
-	const rows = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
-		.from(workspaces)
+	const rows = await db.select({ id: workspaces.id, settings: workspaces.settings }).from(workspaces)
 	for (const row of rows) {
 		const parsed = workspaceSettingsSchema.partial().safeParse(row.settings ?? {})
 		if (parsed.success && parsed.data.billing?.stripe_customer_id === customerId) {
@@ -209,13 +185,9 @@ async function applyEvent(
 	event: Stripe.Event,
 	stripeEnv: StripeEnv,
 ): Promise<void> {
-	// Concurrent webhook deliveries on the same workspace each do a
-	// SELECT → mutate JSON → UPDATE. Without serialization, a later writer
-	// that read before an earlier writer's UPDATE silently clobbers fields
-	// only the earlier writer touched. A row lock inside a transaction
-	// serializes them on the workspace row; a single delivery still completes
-	// in one round-trip per query so the lock window stays bounded.
 	await db.transaction(async (tx) => {
+		// Row lock so concurrent writers can't interleave a read-modify-write
+		// cycle and accidentally merge stale settings back over a newer update.
 		const [workspace] = await tx
 			.select({ id: workspaces.id, settings: workspaces.settings })
 			.from(workspaces)
@@ -273,7 +245,6 @@ async function applyEvent(
 				const sub = event.data.object as Stripe.Subscription
 				next = {
 					...next,
-					// Paid sub ended → workspace falls back to BYOLLM (the no-paid-plan tier).
 					plan: 'byollm',
 					stripe_subscription_id: null,
 					status: 'canceled',
@@ -298,7 +269,13 @@ async function applyEvent(
 			}
 		}
 
-		const merged = { ...(workspace.settings ?? {}), billing: next }
+		// BYOLLM ↔ paid plan mutex: when this event leaves the workspace in an
+		// active paid state, drop every BYOLLM source in the same update.
+		const baseSettings = (workspace.settings ?? {}) as Record<string, unknown>
+		const carrierSettings =
+			next.status === 'active' ? settingsAfterPaidPlanActivation(baseSettings) : baseSettings
+		const merged = { ...carrierSettings, billing: next }
+
 		await tx
 			.update(workspaces)
 			.set({ settings: merged, updatedAt: new Date() })
