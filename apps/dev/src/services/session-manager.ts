@@ -1063,7 +1063,7 @@ export class SessionManager extends EventEmitter {
 				const status = await this.containers.inspect(containerId)
 				consecutiveFailures = 0
 				if (!status.running) {
-					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
+					await this.handleCompletion(sessionId, containerId, status.exitCode)
 					return
 				}
 			} catch (err) {
@@ -1096,7 +1096,7 @@ export class SessionManager extends EventEmitter {
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
-		exitCode: number,
+		exitCode: number | null,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1164,7 +1164,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		const failureReason =
-			exitCode !== 0
+			exitCode !== null && exitCode !== 0
 				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
 				: null
 		if (failureReason) {
