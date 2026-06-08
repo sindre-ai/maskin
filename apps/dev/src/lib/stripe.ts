@@ -1,4 +1,5 @@
 import Stripe from 'stripe'
+import { parsePositiveIntEnv } from './billing-defaults'
 import { logger } from './logger'
 
 export type MaskinPlan = 'starter' | 'pro'
@@ -41,11 +42,19 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		throw new Error(`Stripe env vars missing: ${missing.join(', ')}`)
 	}
 	const parseTokenCap = (key: 'MASKIN_STARTER_HARD_CAP_TOKENS' | 'MASKIN_PRO_HARD_CAP_TOKENS') => {
-		const raw = Number(env[key])
-		if (!Number.isFinite(raw) || raw <= 0) {
-			throw new Error(`${key} must be a positive number, got ${env[key]}`)
+		// Boot-time strict variant: env was just confirmed non-empty by the
+		// `missing` check above, so a `null` return from the shared parser means
+		// the value is malformed (non-digit, zero, or negative). Throw so misconfig
+		// surfaces at first request instead of silently falling back.
+		const parsed = parsePositiveIntEnv(key, env)
+		if (parsed === null) {
+			// Intentionally does not echo the raw env value — billing caps aren't
+			// secrets today, but normalising "no env values in thrown errors"
+			// prevents the next contributor from leaking a secret-bearing key
+			// through error monitors when they reuse this helper.
+			throw new Error(`${key} must be a positive integer string`)
 		}
-		return Math.floor(raw)
+		return parsed
 	}
 	return {
 		secretKey: env.STRIPE_SECRET_KEY as string,

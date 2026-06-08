@@ -5,6 +5,7 @@ import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { createApiError } from '../lib/errors'
+import { settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
 	getStripeClient,
@@ -69,7 +70,7 @@ app.post('/', async (c) => {
 	const workspaceId = await resolveWorkspaceId(c.get('db'), event)
 	if (!workspaceId) {
 		// We can't link this back to a workspace. Acknowledge so Stripe stops
-		// retrying — silent retries on orphaned events are noise, not a bug.
+		// retrying - silent retries on orphaned events are noise, not a bug.
 		logger.warn('Stripe webhook could not resolve workspace_id', {
 			eventId: event.id,
 			type: event.type,
@@ -123,7 +124,7 @@ app.post('/', async (c) => {
 			// Mark the claim processed so the reconciler doesn't release it after the
 			// 15m stale threshold. Without this, every successful Stripe delivery
 			// would become re-processable within ~20m, but Stripe retries old events
-			// for up to ~3 days — replaying a stale subscription.updated over current
+			// for up to ~3 days - replaying a stale subscription.updated over current
 			// state would regress the workspace (e.g. resurrect a canceled sub). If
 			// the UPDATE itself fails we still ack the event: the work is done, the
 			// dedup metadata is best-effort, and on-call has the log line.
@@ -206,7 +207,7 @@ async function applyEvent(
 	stripeEnv: StripeEnv,
 ): Promise<void> {
 	// Concurrent webhook deliveries on the same workspace each do a
-	// SELECT → mutate JSON → UPDATE. Without serialization, a later writer
+	// SELECT -> mutate JSON -> UPDATE. Without serialization, a later writer
 	// that read before an earlier writer's UPDATE silently clobbers fields
 	// only the earlier writer touched. A row lock inside a transaction
 	// serializes them on the workspace row; a single delivery still completes
@@ -293,7 +294,13 @@ async function applyEvent(
 			}
 		}
 
-		const merged = { ...(workspace.settings ?? {}), billing: next }
+		// BYOLLM -> paid plan mutex: when the subscription lands in an active
+		// paid state, clear every BYO source in the same workspace update so we
+		// never keep both sides "active" at once.
+		const baseSettings = (workspace.settings ?? {}) as Record<string, unknown>
+		const carrierSettings =
+			next.status === 'active' ? settingsAfterPaidPlanActivation(baseSettings) : baseSettings
+		const merged = { ...carrierSettings, billing: next }
 		await tx
 			.update(workspaces)
 			.set({ settings: merged, updatedAt: new Date() })
