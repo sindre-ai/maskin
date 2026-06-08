@@ -1,3 +1,7 @@
+import {
+	OverCapComposerNotice,
+	useOverCapBlock,
+} from '@/components/billing/over-cap-composer-notice'
 import { SelectionChips } from '@/components/sindre/selection-chips'
 import { SindreTranscript } from '@/components/sindre/sindre-transcript'
 import {
@@ -161,7 +165,11 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	const sindreBlocked =
 		sindre.status === 'starting' || sindre.status === 'error' || sindre.status === 'closed'
 	const oneShotBusy = oneShot.status === 'starting'
-	const disabled = selectedAgent ? oneShotBusy : sindreBlocked || !sindreActorId
+	// Block every paid-plan send (persistent Sindre and one-shot) when the
+	// workspace is over its plan cap. BYO workspaces are not blocked — the
+	// hook returns false in that case.
+	const overCapBlocked = useOverCapBlock(workspaceId)
+	const disabled = overCapBlocked || (selectedAgent ? oneShotBusy : sindreBlocked || !sindreActorId)
 	// Show the "Connecting to Sindre…" empty-state only while we're actively
 	// booting a session. `idle` is now the default-empty state and shouldn't
 	// trigger the connecting copy.
@@ -333,6 +341,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 					className="min-h-0 flex-1"
 				/>
 			)}
+			<OverCapComposerNotice workspaceId={workspaceId} />
 			<Composer
 				workspaceId={workspaceId}
 				onSend={handleSend}

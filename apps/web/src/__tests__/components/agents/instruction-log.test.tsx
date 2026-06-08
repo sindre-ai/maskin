@@ -27,6 +27,15 @@ vi.mock('@/components/ui/spinner', () => ({
 	Spinner: () => <span>spinner</span>,
 }))
 
+// Stub the billing-state hook so the existing InstructionLog tests (which
+// render without a QueryClientProvider) don't need to provide one. The
+// over-cap behavior is covered by over-cap-composer-notice.test.tsx and the
+// usage-state-banner test suite.
+vi.mock('@/components/billing/over-cap-composer-notice', () => ({
+	useOverCapBlock: () => false,
+	OverCapComposerNotice: () => null,
+}))
+
 const agent = buildActorResponse({ id: 'agent-1', name: 'Scout', type: 'agent' })
 
 // jsdom doesn't implement scrollIntoView
