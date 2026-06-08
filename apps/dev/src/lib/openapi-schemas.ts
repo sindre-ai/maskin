@@ -62,7 +62,7 @@ export const actorResponseSchema = z.object({
 	description: z.string().nullable(),
 	bio: z.string().nullable(),
 	avatar_storage_key: z.string().nullable(),
-	notification_prefs: notificationPrefsSchema.nullable(),
+	notification_prefs: notificationPrefsSchema,
 	pending_email: z.string().nullable(),
 	system_prompt: z.string().nullable(),
 	tools: jsonbField,

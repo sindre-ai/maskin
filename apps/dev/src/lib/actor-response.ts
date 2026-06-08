@@ -15,7 +15,7 @@ type JsonbField = z.infer<typeof actorResponseSchema>['tools']
 // mapping for the profile fields lives in one place. A notification_prefs
 // safeParse failure means schema drift or a corrupt JSONB row — log it with the
 // actor id so the offending row can be located; the shared helper still returns
-// null and the response stays nullable.
+// a full default NotificationPrefs so the wire stays non-nullable.
 export function serializeActor(actor: ActorRow): z.infer<typeof actorResponseSchema> {
 	const serialized = serialize(actor)
 	return {

@@ -31,18 +31,20 @@ export type NotificationPrefs = z.infer<typeof notificationPrefsSchema>
 // already a full NotificationPrefs object; rows from login / email-change /
 // cancel paths may still hold an empty `{}` from the column default — Zod's
 // defaults fill the missing keys so the response always advertises every flag.
-// On a safeParse failure (schema drift / corrupt JSONB) the caller's optional
-// `onMismatch` callback receives the Zod issues so it can surface them through
-// its own logger; the helper itself stays dependency-free for MCP / web reuse.
+// Null / undefined input and safeParse failures (schema drift / corrupt JSONB)
+// collapse to the schema defaults so the wire is non-nullable; on a parse
+// failure the caller's optional `onMismatch` callback receives the Zod issues
+// so the drift is still surfaced through its own logger. The helper stays
+// dependency-free for MCP / web reuse.
 export function reshapeNotificationPrefs(
 	value: unknown,
 	onMismatch?: (issues: z.ZodIssue[]) => void,
-): NotificationPrefs | null {
-	if (value === null || value === undefined) return null
-	const parsed = notificationPrefsSchema.safeParse(value)
+): NotificationPrefs {
+	const input = value === null || value === undefined ? {} : value
+	const parsed = notificationPrefsSchema.safeParse(input)
 	if (parsed.success) return parsed.data
 	onMismatch?.(parsed.error.issues)
-	return null
+	return notificationPrefsSchema.parse({})
 }
 
 export const createActorSchema = z.object({
@@ -113,7 +115,7 @@ export const actorResponseSchema = z.object({
 	description: z.string().nullable(),
 	bio: z.string().nullable(),
 	avatar_storage_key: z.string().nullable(),
-	notification_prefs: notificationPrefsSchema.nullable(),
+	notification_prefs: notificationPrefsSchema,
 	pending_email: z.string().nullable(),
 	system_prompt: z.string().nullable(),
 	tools: jsonbObject,

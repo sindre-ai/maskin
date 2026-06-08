@@ -213,7 +213,12 @@ describe('actorResponseSchema', () => {
 		description: null,
 		bio: null,
 		avatar_storage_key: null,
-		notification_prefs: null,
+		notification_prefs: {
+			mentions: true,
+			subscribed: true,
+			betStatusChanges: true,
+			weeklyDigest: false,
+		},
 		pending_email: null,
 		system_prompt: 'You are a helper',
 		tools: null,

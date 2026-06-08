@@ -44,7 +44,7 @@ describe('serializeActor — notification_prefs reshape', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('serializes a malformed JSONB row as notification_prefs: null and warns with the actor id', () => {
+	it('serializes a malformed JSONB row with schema defaults and warns with the actor id', () => {
 		// `mentions` declared as a string violates the boolean schema — drift / corrupt JSONB.
 		const row = buildRow({
 			id: 'actor-drifted',
@@ -53,7 +53,12 @@ describe('serializeActor — notification_prefs reshape', () => {
 
 		const result = serializeActor(row)
 
-		expect(result.notification_prefs).toBeNull()
+		expect(result.notification_prefs).toEqual({
+			mentions: true,
+			subscribed: true,
+			betStatusChanges: true,
+			weeklyDigest: false,
+		})
 		expect(warnSpy).toHaveBeenCalledOnce()
 		const [msg, ctx] = warnSpy.mock.calls[0] as [string, Record<string, unknown>]
 		expect(msg).toBe('Notification prefs schema mismatch')
@@ -78,12 +83,17 @@ describe('serializeActor — notification_prefs reshape', () => {
 		})
 	})
 
-	it('stays silent when notification_prefs is null', () => {
+	it('stays silent and fills schema defaults when notification_prefs is null', () => {
 		const row = buildRow({ notificationPrefs: null })
 
 		const result = serializeActor(row)
 
 		expect(warnSpy).not.toHaveBeenCalled()
-		expect(result.notification_prefs).toBeNull()
+		expect(result.notification_prefs).toEqual({
+			mentions: true,
+			subscribed: true,
+			betStatusChanges: true,
+			weeklyDigest: false,
+		})
 	})
 })
