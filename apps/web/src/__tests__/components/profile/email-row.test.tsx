@@ -117,6 +117,27 @@ describe('EmailRow', () => {
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 	})
 
+	it('generates a distinct Idempotency-Key on each submit click', async () => {
+		vi.mocked(api.auth.requestEmailChange).mockResolvedValue(
+			buildActorWithKey({ id: 'actor-1', pending_email: 'new@example.com' }),
+		)
+		renderRow()
+
+		await openDialog()
+		fillForm()
+		fireEvent.click(screen.getByRole('button', { name: /send verification email/i }))
+		await waitFor(() => expect(api.auth.requestEmailChange).toHaveBeenCalledTimes(1))
+
+		await openDialog()
+		fillForm()
+		fireEvent.click(screen.getByRole('button', { name: /send verification email/i }))
+		await waitFor(() => expect(api.auth.requestEmailChange).toHaveBeenCalledTimes(2))
+
+		const key1 = vi.mocked(api.auth.requestEmailChange).mock.calls[0][1]
+		const key2 = vi.mocked(api.auth.requestEmailChange).mock.calls[1][1]
+		expect(key1).not.toEqual(key2)
+	})
+
 	it('clears the password and email fields after a successful submit, even if reopened', async () => {
 		vi.mocked(api.auth.requestEmailChange).mockResolvedValue(
 			buildActorWithKey({ id: 'actor-1', pending_email: 'new@example.com' }),
@@ -160,6 +181,19 @@ describe('EmailRow', () => {
 		// user into re-entering credentials into an invalidated session.
 		expect(screen.queryByText(/current password is incorrect/i)).not.toBeInTheDocument()
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
+	})
+
+	it('falls through to generic copy when the 401 current_password error array is empty', async () => {
+		vi.mocked(api.auth.requestEmailChange).mockRejectedValue(
+			new ApiError(401, 'Unauthorized', { current_password: [] }),
+		)
+		renderRow()
+		await openDialog()
+		fillForm({ password: 'pw' })
+		fireEvent.click(screen.getByRole('button', { name: /send verification email/i }))
+
+		expect(await screen.findByText(/could not request email change/i)).toBeInTheDocument()
+		expect(screen.queryByText(/current password is incorrect/i)).not.toBeInTheDocument()
 	})
 
 	it('does not leak raw error messages on non-401/409 failures', async () => {
@@ -216,6 +250,24 @@ describe('EmailRow', () => {
 		expect(idempotencyKey).toEqual(expect.any(String))
 		expect(idempotencyKey).not.toEqual('')
 		expect(toast.success).toHaveBeenCalledWith('Email change cancelled')
+	})
+
+	it('generates a distinct Idempotency-Key on each cancel click', async () => {
+		// Return pending_email still set so the banner (and Cancel button) stays visible after the first cancel.
+		vi.mocked(api.auth.cancelEmailChange).mockResolvedValue(
+			buildActorWithKey({ id: 'actor-1', pending_email: 'new@example.com' }),
+		)
+		renderRow({ pending_email: 'new@example.com' })
+
+		fireEvent.click(screen.getByRole('button', { name: /cancel email change/i }))
+		await waitFor(() => expect(api.auth.cancelEmailChange).toHaveBeenCalledTimes(1))
+
+		fireEvent.click(screen.getByRole('button', { name: /cancel email change/i }))
+		await waitFor(() => expect(api.auth.cancelEmailChange).toHaveBeenCalledTimes(2))
+
+		const key1 = vi.mocked(api.auth.cancelEmailChange).mock.calls[0][0]
+		const key2 = vi.mocked(api.auth.cancelEmailChange).mock.calls[1][0]
+		expect(key1).not.toEqual(key2)
 	})
 
 	it('shows a session-expired toast when the cancel endpoint returns 401', async () => {
