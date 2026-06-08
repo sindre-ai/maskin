@@ -12,6 +12,9 @@ vi.mock('@/lib/api', () => ({
 			delete: vi.fn(),
 			bulkUpdate: vi.fn(),
 		},
+		relationships: {
+			delete: vi.fn(),
+		},
 	},
 }))
 
@@ -21,7 +24,9 @@ vi.mock('sonner', () => ({
 }))
 
 import {
+	CascadeDeleteError,
 	useBulkUpdateObjects,
+	useCascadeDelete,
 	useCreateObject,
 	useDeleteObject,
 	useObject,
@@ -322,5 +327,126 @@ describe('useDeleteObject', () => {
 		result.current.mutate('obj-1')
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.delete).toHaveBeenCalledWith('obj-1')
+	})
+})
+
+describe('useCascadeDelete', () => {
+	function makeWrapper() {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+		return { queryClient, Wrapper }
+	}
+
+	it('runs detaches before deletes and finishes with the bet delete', async () => {
+		vi.mocked(api.relationships.delete).mockResolvedValue({ deleted: true })
+		vi.mocked(api.objects.delete).mockResolvedValue({ deleted: true })
+		const order: string[] = []
+		vi.mocked(api.relationships.delete).mockImplementation(async (id) => {
+			order.push(`detach:${id}`)
+			return { deleted: true }
+		})
+		vi.mocked(api.objects.delete).mockImplementation(async (id) => {
+			order.push(`delete:${id}`)
+			return { deleted: true }
+		})
+
+		const { Wrapper } = makeWrapper()
+		const { result } = renderHook(() => useCascadeDelete(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({
+			betId: 'bet-1',
+			betType: 'bet',
+			detachRelationshipIds: ['rel-1', 'rel-2'],
+			deleteTaskIds: ['task-1', 'task-2'],
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(order).toEqual([
+			'detach:rel-1',
+			'detach:rel-2',
+			'delete:task-1',
+			'delete:task-2',
+			'delete:bet-1',
+		])
+	})
+
+	it('throws CascadeDeleteError with remaining items when a step fails', async () => {
+		vi.mocked(api.relationships.delete).mockImplementation(async (id) => {
+			if (id === 'rel-2') throw new Error('Relationship not found')
+			return { deleted: true }
+		})
+		vi.mocked(api.objects.delete).mockResolvedValue({ deleted: true })
+
+		const { Wrapper } = makeWrapper()
+		const { result } = renderHook(() => useCascadeDelete(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({
+			betId: 'bet-1',
+			betType: 'bet',
+			detachRelationshipIds: ['rel-1', 'rel-2', 'rel-3'],
+			deleteTaskIds: ['task-1'],
+		})
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const err = result.current.error
+		expect(err).toBeInstanceOf(CascadeDeleteError)
+		const cascadeErr = err as CascadeDeleteError
+		// rel-1 was completed; rel-2 failed and stays at the head of the queue so
+		// a Retry resumes from there rather than re-detaching rel-1.
+		expect(cascadeErr.remaining.detachRelationshipIds).toEqual(['rel-2', 'rel-3'])
+		expect(cascadeErr.remaining.deleteTaskIds).toEqual(['task-1'])
+		expect(cascadeErr.remaining.betId).toBe('bet-1')
+		// The bet delete itself never ran.
+		expect(api.objects.delete).not.toHaveBeenCalledWith('bet-1')
+	})
+
+	it('still deletes the bet when both arrays are empty (non-cascade path)', async () => {
+		vi.mocked(api.objects.delete).mockResolvedValue({ deleted: true })
+
+		const { Wrapper } = makeWrapper()
+		const { result } = renderHook(() => useCascadeDelete(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({
+			betId: 'obj-x',
+			betType: 'insight',
+			detachRelationshipIds: [],
+			deleteTaskIds: [],
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.relationships.delete).not.toHaveBeenCalled()
+		expect(api.objects.delete).toHaveBeenCalledTimes(1)
+		expect(api.objects.delete).toHaveBeenCalledWith('obj-x')
+	})
+
+	it('invalidates list, graph, and removes deleted detail caches on settle', async () => {
+		vi.mocked(api.relationships.delete).mockResolvedValue({ deleted: true })
+		vi.mocked(api.objects.delete).mockResolvedValue({ deleted: true })
+
+		const { queryClient, Wrapper } = makeWrapper()
+		queryClient.setQueryData(queryKeys.objects.detail('task-1'), buildObject({ id: 'task-1' }))
+		queryClient.setQueryData(queryKeys.objects.detail('bet-1'), buildObject({ id: 'bet-1' }))
+		const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+		const { result } = renderHook(() => useCascadeDelete(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({
+			betId: 'bet-1',
+			betType: 'bet',
+			detachRelationshipIds: ['rel-1'],
+			deleteTaskIds: ['task-1'],
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		// The deleted task and bet detail caches must be dropped — no zombie
+		// reads after the cascade lands.
+		expect(queryClient.getQueryData(queryKeys.objects.detail('task-1'))).toBeUndefined()
+		expect(queryClient.getQueryData(queryKeys.objects.detail('bet-1'))).toBeUndefined()
+		// And the bet's graph must be invalidated so subscribers re-fetch.
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.graph('bet-1'),
+		})
 	})
 })

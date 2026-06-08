@@ -35,7 +35,17 @@ vi.mock('@/hooks/use-workspaces', () => ({
 vi.mock('@/hooks/use-objects', () => ({
 	useObjectGraph: () => ({ data: undefined }),
 	useUpdateObject: () => ({ mutate: vi.fn() }),
-	useDeleteObject: () => ({ mutate: mutateMock, isPending: false }),
+	useCascadeDelete: () => ({ mutate: mutateMock, isPending: false }),
+	CascadeDeleteError: class CascadeDeleteError extends Error {
+		constructor(
+			message: string,
+			public remaining: unknown,
+			public cause: unknown,
+		) {
+			super(message)
+			this.name = 'CascadeDeleteError'
+		}
+	},
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({

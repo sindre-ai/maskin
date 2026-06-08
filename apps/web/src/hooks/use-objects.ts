@@ -222,3 +222,90 @@ export function useDeleteObject(workspaceId: string) {
 		},
 	})
 }
+
+export interface CascadeDeletePlan {
+	betId: string
+	// Object type of the parent being deleted. Drives the `trackBetArchived`
+	// event and the success toast wording. Non-bet types route through the same
+	// hook with empty arrays so there is one delete code path.
+	betType: string
+	// Run in order: detach edges first so a later cascade failure can't drop a
+	// task the user wanted to keep, then delete each task, then delete the bet.
+	detachRelationshipIds: string[]
+	deleteTaskIds: string[]
+}
+
+// Thrown when any step in the cascade fails. `remaining` carries the unfinished
+// portion of the plan (the failing step is left at the head of its list) so the
+// caller can retry from the cursor without restarting completed work.
+export class CascadeDeleteError extends Error {
+	remaining: CascadeDeletePlan
+	cause: unknown
+	constructor(message: string, remaining: CascadeDeletePlan, cause: unknown) {
+		super(message)
+		this.name = 'CascadeDeleteError'
+		this.remaining = remaining
+		this.cause = cause
+	}
+}
+
+export function useCascadeDelete(workspaceId: string) {
+	const queryClient = useQueryClient()
+	// Mutation error is typed as `Error` (not `CascadeDeleteError`) so callers
+	// can defensively narrow with `instanceof CascadeDeleteError` — in tests we
+	// stub the mutate path with a plain Error to assert the fallback branch.
+	return useMutation<{ plan: CascadeDeletePlan }, Error, CascadeDeletePlan>({
+		mutationFn: async (plan) => {
+			// Mutate a copy so callers can re-fire with `error.remaining` without
+			// the original plan being half-consumed.
+			const remaining: CascadeDeletePlan = {
+				...plan,
+				detachRelationshipIds: [...plan.detachRelationshipIds],
+				deleteTaskIds: [...plan.deleteTaskIds],
+			}
+			try {
+				while (remaining.detachRelationshipIds.length > 0) {
+					const id = remaining.detachRelationshipIds[0]
+					await api.relationships.delete(id, workspaceId)
+					remaining.detachRelationshipIds.shift()
+				}
+				while (remaining.deleteTaskIds.length > 0) {
+					const id = remaining.deleteTaskIds[0]
+					await api.objects.delete(id)
+					remaining.deleteTaskIds.shift()
+				}
+				await api.objects.delete(remaining.betId)
+				return { plan }
+			} catch (err) {
+				const message = err instanceof Error ? err.message : 'Cascade delete failed'
+				throw new CascadeDeleteError(message, remaining, err)
+			}
+		},
+		onSuccess: (_data, plan) => {
+			const cascaded = plan.deleteTaskIds.length + plan.detachRelationshipIds.length > 0
+			toast.success(
+				cascaded && plan.betType === 'bet' ? 'Deleted bet and child tasks' : 'Object deleted',
+			)
+			if (plan.betType === 'bet') {
+				trackBetArchived({ entity_id: plan.betId, entity_type: 'bet' })
+			}
+		},
+		onSettled: (_data, _err, plan) => {
+			// Whether the cascade fully or partially completed, every cache below
+			// is stale: list views lost rows, the bet's graph lost children, and
+			// orphan detail caches need to drop. Invalidate broadly, then remove
+			// the specific dead detail entries.
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(plan.betId) })
+			for (const taskId of plan.deleteTaskIds) {
+				// A deleted task may have other parents — invalidate its own graph
+				// so any cached parent that pulls children through it refreshes.
+				queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(taskId) })
+				queryClient.removeQueries({ queryKey: queryKeys.objects.detail(taskId) })
+			}
+			queryClient.removeQueries({ queryKey: queryKeys.objects.detail(plan.betId) })
+		},
+	})
+}

@@ -17,7 +17,13 @@ import {
 } from '@/components/ui/select'
 import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
+import {
+	CascadeDeleteError,
+	type CascadeDeletePlan,
+	useCascadeDelete,
+	useObjectGraph,
+	useUpdateObject,
+} from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { trackEvent } from '@/lib/analytics'
 import type {
@@ -226,7 +232,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const updateObject = useUpdateObject(workspaceId)
-	const deleteObject = useDeleteObject(workspaceId)
+	const cascadeDelete = useCascadeDelete(workspaceId)
 	const { data: creator } = useActor(object.createdBy)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
@@ -291,33 +297,53 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	// cancel. Reset every time the dialog reopens and on mutation error, so a
 	// cancel after a failed delete still emits the event.
 	const confirmedDeleteRef = useRef(false)
+	// On partial failure the cascade hook hands back `error.remaining` — stash
+	// it so the Retry button re-fires the mutation from the cursor instead of
+	// restarting completed work.
+	const [retryPlan, setRetryPlan] = useState<CascadeDeletePlan | null>(null)
+	const [cascadeErrorMessage, setCascadeErrorMessage] = useState<string | null>(null)
 
-	const handleDelete = useCallback(() => {
-		deleteObject.mutate(object.id, {
-			onSuccess: () => {
-				navigate({
-					to: '/$workspaceId/objects',
-					params: { workspaceId },
-					search: (prev) => ({
-						type: prev.type,
-						status: prev.status,
-						owner: prev.owner,
-						sort: prev.sort ?? 'createdAt',
-						order: prev.order ?? 'desc',
-						q: prev.q,
-						groupBy: prev.groupBy,
-						ids: prev.ids,
-					}),
-				})
-			},
-			onError: () => {
-				confirmedDeleteRef.current = false
-			},
-		})
-	}, [object.id, deleteObject, navigate, workspaceId])
+	const runCascade = useCallback(
+		(plan: CascadeDeletePlan) => {
+			setCascadeErrorMessage(null)
+			cascadeDelete.mutate(plan, {
+				onSuccess: () => {
+					setRetryPlan(null)
+					setCascadeErrorMessage(null)
+					navigate({
+						to: '/$workspaceId/objects',
+						params: { workspaceId },
+						search: (prev) => ({
+							type: prev.type,
+							status: prev.status,
+							owner: prev.owner,
+							sort: prev.sort ?? 'createdAt',
+							order: prev.order ?? 'desc',
+							q: prev.q,
+							groupBy: prev.groupBy,
+							ids: prev.ids,
+						}),
+					})
+				},
+				onError: (err) => {
+					confirmedDeleteRef.current = false
+					if (err instanceof CascadeDeleteError) {
+						setRetryPlan(err.remaining)
+						setCascadeErrorMessage(err.message)
+					} else {
+						setRetryPlan(plan)
+						setCascadeErrorMessage(err instanceof Error ? err.message : 'Delete failed')
+					}
+				},
+			})
+		},
+		[cascadeDelete, navigate, workspaceId],
+	)
 
 	const openDeleteConfirm = useCallback(() => {
 		confirmedDeleteRef.current = false
+		setRetryPlan(null)
+		setCascadeErrorMessage(null)
 		trackEvent('delete_confirmation_shown', {
 			object_type: object.type,
 			object_id: object.id,
@@ -327,27 +353,39 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 
 	const handleDeleteOpenChange = useCallback(
 		(open: boolean) => {
-			if (!open && !confirmedDeleteRef.current) {
-				trackEvent('delete_confirmation_cancelled', {
-					object_type: object.type,
-					object_id: object.id,
-				})
+			if (!open) {
+				if (!confirmedDeleteRef.current) {
+					trackEvent('delete_confirmation_cancelled', {
+						object_type: object.type,
+						object_id: object.id,
+					})
+				}
+				setRetryPlan(null)
+				setCascadeErrorMessage(null)
 			}
 			setConfirmDelete(open)
 		},
 		[object.type, object.id],
 	)
 
-	// T1 ships the UI shell only — accept the new {deleteTaskIds, detachRelationshipIds}
-	// signature but still call the existing single-mutation delete path. T2 will
-	// consume the selection to fire cascade deletes + detaches.
 	const handleConfirmDelete = useCallback(
-		(_selection: { deleteTaskIds: string[]; detachRelationshipIds: string[] }) => {
+		(selection: DeleteConfirmSelection) => {
 			confirmedDeleteRef.current = true
-			handleDelete()
+			runCascade({
+				betId: object.id,
+				betType: object.type,
+				detachRelationshipIds: selection.detachRelationshipIds,
+				deleteTaskIds: selection.deleteTaskIds,
+			})
 		},
-		[handleDelete],
+		[object.id, object.type, runCascade],
 	)
+
+	const handleRetryDelete = useCallback(() => {
+		if (!retryPlan) return
+		confirmedDeleteRef.current = true
+		runCascade(retryPlan)
+	}, [retryPlan, runCascade])
 
 	const [menuOpen, setMenuOpen] = useState(false)
 
@@ -386,7 +424,9 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				objectTitle={object.title}
 				childTasks={childTasks}
 				onConfirm={handleConfirmDelete}
-				isPending={deleteObject.isPending}
+				onRetry={retryPlan ? handleRetryDelete : undefined}
+				errorMessage={cascadeErrorMessage}
+				isPending={cascadeDelete.isPending}
 			/>
 			<ObjectDocumentView
 				object={object}
@@ -401,8 +441,8 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
 				onUpdateOwner={handleUpdateOwner}
-				onDelete={handleDelete}
-				isDeleting={deleteObject.isPending}
+				onDelete={openDeleteConfirm}
+				isDeleting={cascadeDelete.isPending}
 			/>
 		</>
 	)
@@ -427,6 +467,8 @@ export function DeleteConfirmDialog({
 	objectTitle,
 	childTasks,
 	onConfirm,
+	onRetry,
+	errorMessage,
 	isPending,
 }: {
 	open: boolean
@@ -435,6 +477,11 @@ export function DeleteConfirmDialog({
 	objectTitle: string | null
 	childTasks?: DeleteDialogChildTask[]
 	onConfirm: (selection: DeleteConfirmSelection) => void
+	// Set by the parent when a previous attempt failed mid-cascade. When
+	// provided alongside `errorMessage`, the destructive button switches to
+	// "Retry delete" and re-runs the remaining steps from the stashed cursor.
+	onRetry?: () => void
+	errorMessage?: string | null
 	isPending: boolean
 }) {
 	const isBet = objectType === 'bet'
@@ -486,6 +533,11 @@ export function DeleteConfirmDialog({
 		? `This will permanently delete the ${objectType} '${objectTitle}'. This can't be undone.`
 		: `This will permanently delete this ${objectType}. This can't be undone.`
 
+	// Lock the selection controls while a previous attempt is being retried or
+	// has just failed — the retry path uses the stashed cursor on the parent,
+	// not the dialog's checkbox state, so toggling here would be misleading.
+	const selectionLocked = isPending || Boolean(errorMessage)
+
 	return (
 		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
 			<ResponsiveDialogContent
@@ -515,7 +567,8 @@ export function DeleteConfirmDialog({
 							<button
 								type="button"
 								onClick={detachAll}
-								className="text-xs text-primary hover:underline"
+								disabled={selectionLocked}
+								className="text-xs text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
 							>
 								Detach all instead
 							</button>
@@ -539,7 +592,7 @@ export function DeleteConfirmDialog({
 												id={`delete-task-${t.id}`}
 												checked={checked}
 												onCheckedChange={() => toggle(t.id)}
-												disabled={isPending}
+												disabled={selectionLocked}
 											/>
 											<span
 												className={cn(
@@ -558,6 +611,16 @@ export function DeleteConfirmDialog({
 					</div>
 				)}
 
+				{errorMessage && (
+					<div
+						role="alert"
+						className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+					>
+						<p className="font-medium">Delete failed</p>
+						<p className="mt-0.5 break-words text-xs text-destructive/80">{errorMessage}</p>
+					</div>
+				)}
+
 				<ResponsiveDialogFooter className="gap-2 pb-[max(env(safe-area-inset-bottom),0px)] sm:gap-0">
 					<Button
 						variant="ghost"
@@ -567,12 +630,20 @@ export function DeleteConfirmDialog({
 					>
 						Cancel
 					</Button>
-					<Button variant="destructive" onClick={handleConfirm} disabled={isPending}>
-						{hasCascade
-							? `Delete bet · ${selectedCount} deleted · ${keptCount} kept`
-							: isPending
-								? 'Deleting...'
-								: 'Delete'}
+					<Button
+						variant="destructive"
+						onClick={errorMessage && onRetry ? onRetry : handleConfirm}
+						disabled={isPending}
+					>
+						{errorMessage && onRetry
+							? isPending
+								? 'Retrying...'
+								: 'Retry delete'
+							: hasCascade
+								? `Delete bet · ${selectedCount} deleted · ${keptCount} kept`
+								: isPending
+									? 'Deleting...'
+									: 'Delete'}
 					</Button>
 				</ResponsiveDialogFooter>
 			</ResponsiveDialogContent>
