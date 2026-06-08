@@ -70,7 +70,10 @@ describe('classifyCreditExhaustion', () => {
 		it('classifies billing_error as credit exhaustion', () => {
 			const tail = JSON.stringify({
 				type: 'error',
-				error: { type: 'error', error: { type: 'billing_error', message: 'Your account has run out of credits' } },
+				error: {
+					type: 'error',
+					error: { type: 'billing_error', message: 'Your account has run out of credits' },
+				},
 			})
 			const result = classifyCreditExhaustion(tail)
 			expect(result).toMatchObject({
@@ -101,7 +104,10 @@ describe('classifyCreditExhaustion', () => {
 		it('classifies rate_limit_error as 429', () => {
 			const tail = JSON.stringify({
 				type: 'error',
-				error: { type: 'error', error: { type: 'rate_limit_error', message: 'Rate limit exceeded' } },
+				error: {
+					type: 'error',
+					error: { type: 'rate_limit_error', message: 'Rate limit exceeded' },
+				},
 			})
 			const result = classifyCreditExhaustion(tail)
 			expect(result).toMatchObject({
@@ -134,13 +140,28 @@ describe('classifyCreditExhaustion', () => {
 		})
 
 		it('returns null for generic error output', () => {
-			expect(
-				classifyCreditExhaustion('Error: ENOENT: no such file or directory'),
-			).toBeNull()
+			expect(classifyCreditExhaustion('Error: ENOENT: no such file or directory')).toBeNull()
 		})
 
 		it('returns null for container OOM kill', () => {
 			expect(classifyCreditExhaustion('Killed\nProcess exited with code 137')).toBeNull()
+		})
+	})
+
+	describe('false-positive risk (known behavior)', () => {
+		it('triggers billing_error classification on unrelated tool output containing the substring', () => {
+			// An agent session echoing an API error envelope in its stdout will false-positive.
+			// This is a known trade-off; see the comment in credit-classifier.ts.
+			const tail = 'Tool result: {"error":"billing_error: connection refused"}'
+			const result = classifyCreditExhaustion(tail)
+			expect(result?.reason_code).toBe('billing_error')
+		})
+
+		it('triggers rate_limit_error classification on unrelated tool output containing the substring', () => {
+			// Same risk applies to rate_limit_error.
+			const tail = 'Caught upstream rate_limit_error from external service'
+			const result = classifyCreditExhaustion(tail)
+			expect(result?.reason_code).toBe('rate_limit_error')
 		})
 	})
 

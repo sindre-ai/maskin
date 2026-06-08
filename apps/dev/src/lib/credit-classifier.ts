@@ -62,10 +62,20 @@ export function classifyCreditExhaustion(tail: string): SessionResultFailureReas
 		}
 	}
 
+	// False-positive risk: `billing_error` and `rate_limit_error` are matched as bare
+	// substrings anywhere in stdoutTail, which spans the full stdout of the agent session.
+	// A Maskin agent session can echo these strings in tool output (e.g. when inspecting
+	// an API error envelope, or when code under test prints these strings), triggering a
+	// false credit-exhaustion classification.
+	//
+	// Narrowing to a JSON envelope match (e.g. `"type":"billing_error"`) would reduce
+	// false positives but breaks the Max plan 402 path, which surfaces
+	// "billing_error — usage/rate limit exceeded" as plain CLI text, not JSON.
+	// Accepted trade-off: the classifier is best-effort at session boundary; false-positive
+	// rate is low in practice since these are uncommon substrings in typical tool output.
 	if (tail.includes('billing_error')) {
 		// Max plan returns 402 for temporary rate limits; distinguish by body text
-		const isMaxRateLimit =
-			tail.includes('try again') || tail.includes('usage/rate limit')
+		const isMaxRateLimit = tail.includes('try again') || tail.includes('usage/rate limit')
 		return {
 			provider: 'anthropic',
 			reason_code: isMaxRateLimit ? 'max_plan_rate_limit' : 'billing_error',
