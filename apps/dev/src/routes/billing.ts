@@ -3,6 +3,11 @@ import type { Database } from '@maskin/db'
 import { sessions, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import {
+	PRO_HARD_CAP_DEFAULT_TOKENS,
+	STARTER_HARD_CAP_DEFAULT_TOKENS,
+	parsePositiveIntEnv,
+} from '../lib/billing-defaults'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -10,38 +15,35 @@ import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/st
 
 /**
  * Trial bucket sizing when no Stripe-driven `period_start` is set yet.
- * Mirrors `MASKIN_TRIAL_HARD_CAP_TOKENS` consumed by the hard-cap enforcement
- * path so the row + the enforcement read the same number.
+ * The trial fallback is intentionally a literal — the hard-cap enforcement
+ * path reads `MASKIN_TRIAL_HARD_CAP_TOKENS` for trial workspaces, but this
+ * route is the Settings row's display value and stays on a deterministic
+ * literal so the UI never depends on a deploy-time env var being set.
  */
 const DEFAULT_TRIAL_HARD_CAP_TOKENS = 100_000
 const TRIAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+
 /**
  * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
- * populated yet (delayed Stripe webhook, partial state after a webhook failure).
- * Read from env first, then fall through to the literal documented in the PR
- * body for the Settings row. We parse env locally instead of reusing
- * `readStripeEnv` because that helper throws when Stripe is unconfigured, and
- * `/api/billing/usage` must keep serving usage to workspaces regardless.
+ * populated yet (delayed Stripe webhook, partial state after a webhook
+ * failure). Read from env first via the shared `parsePositiveIntEnv` (so
+ * `lib/stripe.ts`'s boot-time strict parse and this defensive read agree on
+ * what a "valid" cap looks like), then fall through to the documented
+ * literals. We parse env locally instead of reusing `readStripeEnv` because
+ * that helper throws when Stripe is unconfigured, and `/api/billing/usage`
+ * must keep serving usage to workspaces regardless.
  */
-const STARTER_HARD_CAP_DEFAULT_TOKENS = 32_000_000
-const PRO_HARD_CAP_DEFAULT_TOKENS = 96_000_000
-
-function readPlanCapEnv(envKey: string): number | null {
-	const raw = process.env[envKey]
-	if (raw === undefined || raw === '') return null
-	const n = Number(raw)
-	return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
-}
-
 function planHardCapFallback(plan: 'trial' | 'starter' | 'pro' | 'byollm'): number | null {
 	switch (plan) {
 		case 'trial':
 		case 'byollm':
 			return DEFAULT_TRIAL_HARD_CAP_TOKENS
 		case 'starter':
-			return readPlanCapEnv('MASKIN_STARTER_HARD_CAP_TOKENS') ?? STARTER_HARD_CAP_DEFAULT_TOKENS
+			return (
+				parsePositiveIntEnv('MASKIN_STARTER_HARD_CAP_TOKENS') ?? STARTER_HARD_CAP_DEFAULT_TOKENS
+			)
 		case 'pro':
-			return readPlanCapEnv('MASKIN_PRO_HARD_CAP_TOKENS') ?? PRO_HARD_CAP_DEFAULT_TOKENS
+			return parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_TOKENS') ?? PRO_HARD_CAP_DEFAULT_TOKENS
 	}
 }
 

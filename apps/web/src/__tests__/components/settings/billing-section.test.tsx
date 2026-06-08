@@ -1,3 +1,6 @@
+// 32_000_000 / 96_000_000 below mirror STARTER_HARD_CAP_DEFAULT_TOKENS /
+// PRO_HARD_CAP_DEFAULT_TOKENS in apps/dev/src/lib/billing-defaults.ts and the
+// .env.example MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping.
 import { BillingSection, formatResetsIn, formatTokens } from '@/components/settings/billing-section'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

@@ -16,13 +16,20 @@ import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
+// Sentinel cap values that are intentionally NOT the literal defaults
+// (32_000_000 / 96_000_000), AND chosen arithmetically far from them so that
+// a swapped or off-by-one test value couldn't accidentally satisfy a literal-
+// default assertion. Pi / Euler digits keep them memorable.
+const STARTER_ENV_SENTINEL = '31415926'
+const PRO_ENV_SENTINEL = '27182818'
+
 const VALID_ENV = {
 	STRIPE_SECRET_KEY: 'sk_test_x',
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_STARTER: 'price_starter',
 	STRIPE_PRICE_PRO: 'price_pro',
-	MASKIN_STARTER_HARD_CAP_TOKENS: '32000000',
-	MASKIN_PRO_HARD_CAP_TOKENS: '96000000',
+	MASKIN_STARTER_HARD_CAP_TOKENS: STARTER_ENV_SENTINEL,
+	MASKIN_PRO_HARD_CAP_TOKENS: PRO_ENV_SENTINEL,
 }
 
 const setupEnv = () => {
@@ -351,6 +358,93 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body).toMatchObject({ plan: 'starter', hard_cap_tokens: 40_000_000 })
+	})
+
+	it('falls back to env-driven cap when a Pro workspace has no hard_cap_tokens', async () => {
+		process.env.MASKIN_PRO_HARD_CAP_TOKENS = '80000000'
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: { billing: { plan: 'pro', status: 'active' } },
+				},
+			],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_tokens: 80_000_000 })
+	})
+
+	it('falls back to plan default when stored hard_cap_tokens is zero or negative', async () => {
+		// Regression: the `billing?.hard_cap_tokens && billing.hard_cap_tokens > 0`
+		// guard's false branch was untested. A 0 (or negative) value stored on the
+		// workspace must NOT be treated as "an explicit cap" — the env/literal
+		// fallback should kick in just like when the field is missing. Also pin
+		// `hard_cap_tokens: 1` as the boundary value of the `> 0` guard: a
+		// positive integer is honored verbatim, even at the smallest possible
+		// value, so callers can't accidentally tip into the fallback by saving 1.
+		// And with env unset, the Starter response must equal the literal 32M
+		// default — the env-driven test above only proves the false branch hits
+		// the sentinel, not the literal that fires in prod when the env is
+		// missing.
+		for (const k of ['MASKIN_STARTER_HARD_CAP_TOKENS']) delete process.env[k]
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const zeroWs = randomUUID()
+		const negWs = randomUUID()
+		const oneWs = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: zeroWs,
+					settings: { billing: { plan: 'starter', status: 'active', hard_cap_tokens: 0 } },
+				},
+			],
+			[],
+			[
+				{
+					id: negWs,
+					settings: { billing: { plan: 'pro', status: 'active', hard_cap_tokens: -5 } },
+				},
+			],
+			[],
+			[
+				{
+					id: oneWs,
+					settings: { billing: { plan: 'starter', status: 'active', hard_cap_tokens: 1 } },
+				},
+			],
+			[],
+		]
+
+		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
+		expect(zeroRes.status).toBe(200)
+		// Env is unset, so the fallback path resolves to the literal 32M default
+		// — the actual prod failure mode (no env, stored 0). Proves the route
+		// took the `> 0` false branch all the way to the literal.
+		expect(await zeroRes.json()).toMatchObject({
+			plan: 'starter',
+			hard_cap_tokens: 32_000_000,
+		})
+
+		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
+		expect(negRes.status).toBe(200)
+		// Pro env is still set to the sentinel by setupEnv — fallback hits env.
+		expect(await negRes.json()).toMatchObject({
+			plan: 'pro',
+			hard_cap_tokens: Number(PRO_ENV_SENTINEL),
+		})
+
+		const oneRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': oneWs }))
+		expect(oneRes.status).toBe(200)
+		expect(await oneRes.json()).toMatchObject({
+			plan: 'starter',
+			hard_cap_tokens: 1,
+		})
 	})
 
 	it('falls back to literal Starter/Pro defaults when env caps are unset', async () => {
