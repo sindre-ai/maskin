@@ -10,19 +10,6 @@ export const Route = createFileRoute('/signup')({
 	component: SignupPage,
 })
 
-// Signup → guest-draft handoff:
-// When a visitor drafted a bet on the landing page (sindre.ai) and clicks the
-// "Save this bet — sign up" CTA, the centre.ai page sends them here with
-// `?claim=1`. After signup, we POST to /api/public/bet-strategist/claim with
-// the new actor's bearer + workspace_id; the server reads the HttpOnly guest
-// cookie (set by /drafts during the visitor's prompt) and copies the draft
-// into the new workspace. Failure is non-fatal — the account is created
-// either way; the user just keeps the draft on the landing page.
-function shouldClaimGuestDraft(): boolean {
-	if (typeof window === 'undefined') return false
-	return new URLSearchParams(window.location.search).get('claim') === '1'
-}
-
 function SignupPage() {
 	const { signup } = useAuth()
 	const [name, setName] = useState('')
@@ -52,20 +39,29 @@ function SignupPage() {
 		}
 		setLoading(true)
 		try {
+			const pendingPrompt = localStorage.getItem('maskin_pending_prompt')
 			const result = await signup({
 				type: 'human',
 				name: name.trim(),
 				email: email.trim(),
 				password,
 			})
-			if (shouldClaimGuestDraft() && result?.workspace_id) {
-				try {
-					const { claimed } = await api.publicBetStrategist.claim(result.workspace_id)
-					console.info('[maskin] guest draft claim', { count: claimed.length })
-				} catch (claimErr) {
-					// Non-fatal: signup succeeded; surface in logs so a recurring
-					// claim failure shows up in observability.
-					console.error('[maskin] guest draft claim failed', claimErr)
+			if (pendingPrompt) {
+				localStorage.removeItem('maskin_pending_prompt')
+				const workspaceId = (result as { workspace_id?: string }).workspace_id
+				if (workspaceId) {
+					try {
+						const actors = await api.actors.list(workspaceId)
+						const agent = actors.find((a) => a.type === 'agent')
+						if (agent) {
+							await api.sessions.create(workspaceId, {
+								actor_id: agent.id,
+								action_prompt: pendingPrompt,
+							})
+						}
+					} catch {
+						console.error('[maskin] failed to create session from pending prompt')
+					}
 				}
 			}
 		} catch (err) {

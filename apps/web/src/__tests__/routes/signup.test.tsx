@@ -1,9 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const mockSignup = vi.fn()
-const mockClaim = vi.fn()
 
 vi.mock('@/hooks/use-auth', () => ({
 	useAuth: () => ({ signup: mockSignup }),
@@ -11,9 +10,8 @@ vi.mock('@/hooks/use-auth', () => ({
 
 vi.mock('@/lib/api', () => ({
 	api: {
-		publicBetStrategist: {
-			claim: (workspaceId: string) => mockClaim(workspaceId),
-		},
+		actors: { list: vi.fn() },
+		sessions: { create: vi.fn() },
 	},
 }))
 
@@ -25,13 +23,27 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
+import { api } from '@/lib/api'
 import { Route } from '@/routes/signup'
 
 const SignupPage = (Route as unknown as { component: React.FC }).component
 
+async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
+	await user.type(screen.getByPlaceholderText('Your name'), 'Test User')
+	await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
+	await user.type(screen.getByPlaceholderText('At least 8 characters'), 'password123')
+	await user.type(screen.getByPlaceholderText('Repeat your password'), 'password123')
+	await user.click(screen.getByRole('button', { name: 'Create account' }))
+}
+
 describe('SignupPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		localStorage.clear()
+	})
+
+	afterEach(() => {
+		localStorage.clear()
 	})
 
 	it('renders signup form with all fields', () => {
@@ -147,78 +159,47 @@ describe('SignupPage', () => {
 		expect(screen.queryByText('Name is required')).not.toBeInTheDocument()
 	})
 
-	describe('guest draft claim handoff', () => {
-		const originalLocation = window.location
+	it('creates session from pending prompt after signup', async () => {
+		localStorage.setItem('maskin_pending_prompt', 'Help me pick the right growth experiment')
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.actors.list).mockResolvedValue([{ id: 'agent-1', type: 'agent', name: 'Sindre', email: null, description: null, isSystem: false }])
+		vi.mocked(api.sessions.create).mockResolvedValue({ id: 'session-1' } as never)
 
-		beforeEach(() => {
-			mockClaim.mockReset()
-		})
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
 
-		afterEach(() => {
-			Object.defineProperty(window, 'location', {
-				configurable: true,
-				value: originalLocation,
+		await waitFor(() => {
+			expect(api.sessions.create).toHaveBeenCalledWith('ws-1', {
+				actor_id: 'agent-1',
+				action_prompt: 'Help me pick the right growth experiment',
 			})
 		})
+		expect(localStorage.getItem('maskin_pending_prompt')).toBeNull()
+	})
 
-		function setLocationSearch(search: string) {
-			Object.defineProperty(window, 'location', {
-				configurable: true,
-				value: { ...originalLocation, search },
-			})
-		}
+	it('does not create session when no pending prompt', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
 
-		async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
-			await user.type(screen.getByPlaceholderText('Your name'), 'Test User')
-			await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
-			await user.type(screen.getByPlaceholderText('At least 8 characters'), 'password123')
-			await user.type(screen.getByPlaceholderText('Repeat your password'), 'password123')
-			await user.click(screen.getByRole('button', { name: 'Create account' }))
-		}
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
 
-		it('calls claim with the new workspace_id when ?claim=1 is present', async () => {
-			setLocationSearch('?claim=1')
-			mockSignup.mockResolvedValue({ workspace_id: 'workspace-abc' })
-			mockClaim.mockResolvedValue({ claimed: [{ id: 'bet-1', title: 'My bet' }] })
+		await waitFor(() => expect(mockSignup).toHaveBeenCalled())
+		expect(api.sessions.create).not.toHaveBeenCalled()
+	})
 
-			const user = userEvent.setup()
-			render(<SignupPage />)
-			await fillAndSubmit(user)
+	it('does not surface error when session creation fails', async () => {
+		localStorage.setItem('maskin_pending_prompt', 'some prompt')
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.actors.list).mockResolvedValue([{ id: 'agent-1', type: 'agent', name: 'Sindre', email: null, description: null, isSystem: false }])
+		vi.mocked(api.sessions.create).mockRejectedValue(new Error('session failed'))
 
-			await waitFor(() => {
-				expect(mockClaim).toHaveBeenCalledWith('workspace-abc')
-			})
-		})
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
 
-		it('does not call claim when ?claim=1 is absent', async () => {
-			setLocationSearch('')
-			mockSignup.mockResolvedValue({ workspace_id: 'workspace-abc' })
-
-			const user = userEvent.setup()
-			render(<SignupPage />)
-			await fillAndSubmit(user)
-
-			await waitFor(() => {
-				expect(mockSignup).toHaveBeenCalled()
-			})
-			expect(mockClaim).not.toHaveBeenCalled()
-		})
-
-		it('does not surface a claim failure as a signup error', async () => {
-			setLocationSearch('?claim=1')
-			mockSignup.mockResolvedValue({ workspace_id: 'workspace-abc' })
-			mockClaim.mockRejectedValue(new Error('claim boom'))
-
-			const user = userEvent.setup()
-			render(<SignupPage />)
-			await fillAndSubmit(user)
-
-			await waitFor(() => {
-				expect(mockClaim).toHaveBeenCalled()
-			})
-			// Signup proceeded; the form is not in an error state.
-			expect(screen.queryByText('claim boom')).not.toBeInTheDocument()
-			expect(screen.queryByText('Signup failed')).not.toBeInTheDocument()
-		})
+		await waitFor(() => expect(api.sessions.create).toHaveBeenCalled())
+		expect(screen.queryByText(/session failed/i)).not.toBeInTheDocument()
 	})
 })
