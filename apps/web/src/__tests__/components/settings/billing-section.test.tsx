@@ -114,6 +114,57 @@ describe('BillingSection', () => {
 		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
 	})
 
+	it('renders Fix payment alone on Starter + past_due — no Upgrade CTAs', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'past_due',
+			tokens_used: 12_000_000,
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — $20/mo')
+		const fix = screen.getByRole('link', { name: 'Fix payment' })
+		expect(fix).toBeInTheDocument()
+		expect(fix).toHaveAttribute('href', expect.stringContaining('billing.stripe.com'))
+		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
+		expect(
+			screen.queryByRole('button', { name: /Switch to bring-your-own/ }),
+		).not.toBeInTheDocument()
+	})
+
+	it('renders Fix payment alone on Starter + incomplete — no Upgrade CTAs', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'incomplete',
+			tokens_used: 0,
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — $20/mo')
+		expect(screen.getByRole('link', { name: 'Fix payment' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
+	})
+
 	it('renders Pro plan with Switch-to-BYO but no further upgrade', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
