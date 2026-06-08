@@ -1,4 +1,4 @@
-﻿import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -29,6 +29,7 @@ import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-sto
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 
 export interface CreateSessionParams {
 	actorId: string
@@ -1162,6 +1163,18 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const failureReason =
+			exitCode !== 0
+				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
+				: null
+		if (failureReason) {
+			logger.info('Session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -1172,7 +1185,7 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status,
-					result: { exit_code: exitCode },
+					result: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
 					completedAt: new Date(),
 					updatedAt: new Date(),
 					...(usage
@@ -1202,7 +1215,7 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
 			})
 		} catch (err) {
 			logger.error('Failed to insert completion event in handleCompletion', {
