@@ -162,6 +162,9 @@ app.openapi(usageRoute, async (c) => {
 	}
 
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	if (!parsed.success) {
+		logger.warn('Malformed workspace billing settings', { workspaceId })
+	}
 	const billing = parsed.success ? parsed.data.billing : undefined
 
 	const plan = billing?.plan ?? 'trial'
@@ -191,10 +194,12 @@ app.openapi(usageRoute, async (c) => {
 	let tokensUsed = 0
 	if (plan !== 'byollm') {
 		const since = new Date(periodStartMs)
-		const rows = await db
+		// Single SQL aggregate keeps this route O(1) over sessions-per-period.
+		// Supported by the partial index `sessions_maskin_plan_period_idx` on
+		// `(workspace_id, created_at) WHERE config->>'llm_route' = 'maskin_plan'`.
+		const [agg] = await db
 			.select({
-				inputTokens: sessions.inputTokens,
-				outputTokens: sessions.outputTokens,
+				total: sql<number>`COALESCE(SUM(COALESCE(${sessions.inputTokens}, 0) + COALESCE(${sessions.outputTokens}, 0)), 0)::int`,
 			})
 			.from(sessions)
 			.where(
@@ -204,10 +209,7 @@ app.openapi(usageRoute, async (c) => {
 					sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
 				),
 			)
-		for (const row of rows) {
-			tokensUsed += row.inputTokens ?? 0
-			tokensUsed += row.outputTokens ?? 0
-		}
+		tokensUsed = agg?.total ?? 0
 	}
 
 	const resetsIn = Math.max(0, periodEndMs - now)

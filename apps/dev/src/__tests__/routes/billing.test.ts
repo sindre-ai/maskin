@@ -439,11 +439,10 @@ describe('GET /api/billing/usage', () => {
 					createdAt: new Date(),
 				},
 			],
-			[
-				{ inputTokens: 1000, outputTokens: 200 },
-				{ inputTokens: 5000, outputTokens: 800 },
-				{ inputTokens: null, outputTokens: 50 },
-			],
+			// Single-row aggregate: the route now does
+			// `SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0))` in SQL,
+			// so the mock returns the already-summed total — 1200 + 5800 + 50.
+			[{ total: 7050 }],
 		]
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
