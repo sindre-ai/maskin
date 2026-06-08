@@ -94,10 +94,25 @@ function getStripeOrError(c: Context<Env>) {
 	return { ok: true as const, stripe: getStripeClient(env), env }
 }
 
+// Stripe redirects the browser to `success_url`/`cancel_url` after the
+// Checkout flow completes or is abandoned. Same threat model as the portal
+// `return_url`: a session-compromised caller could drive the user through
+// Stripe out to an attacker domain. Gate both fields with the same
+// `urlMatchesAppOrigin` refine used below (hoisted function declaration).
 const checkoutBodySchema = z.object({
 	plan: z.enum(['starter', 'pro']),
-	success_url: z.string().url(),
-	cancel_url: z.string().url(),
+	success_url: z
+		.string()
+		.url()
+		.refine((u) => urlMatchesAppOrigin(u), {
+			message: 'success_url origin must match FRONTEND_URL',
+		}),
+	cancel_url: z
+		.string()
+		.url()
+		.refine((u) => urlMatchesAppOrigin(u), {
+			message: 'cancel_url origin must match FRONTEND_URL',
+		}),
 })
 
 const checkoutResponseSchema = z.object({
