@@ -1,0 +1,1109 @@
+<!--
+  Bet: Objects Page — Board View (Kanban) (b761a26b-d7eb-4645-9df4-243acb3fdaf0)
+  Spec: ## UX Decision approved 2026-05-31 — multi-column Kanban, draggable cards,
+        active-agent pulse dot, bet "Gated" chip, empty/loading states, responsive.
+  How to open: double-click this file in any browser. No server needed.
+  Skill: design-agent-interactive-html
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Board View — Objects Page (Kanban Prototype)</title>
+<style>
+  /* ── Reset + tokens ───────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --surface-2: #1a1a1a;
+    --surface-3: #222222;
+    --border: #2a2a2a;
+    --border-hover: #3a3a3a;
+    --text-primary: #efefef;
+    --text-secondary: #888;
+    --text-muted: #555;
+    --accent: #5b8af7;
+
+    /* Status colours — mirrors app.css token pattern */
+    --status-todo-bg: #1f1f1f;
+    --status-todo-fg: #888;
+    --status-todo-dot: #555;
+
+    --status-in-progress-bg: #1a2035;
+    --status-in-progress-fg: #5b8af7;
+    --status-in-progress-dot: #5b8af7;
+
+    --status-in-review-bg: #1e1a2e;
+    --status-in-review-fg: #9b7ff7;
+    --status-in-review-dot: #9b7ff7;
+
+    --status-done-bg: #0d1f14;
+    --status-done-fg: #3ecf6e;
+    --status-done-dot: #3ecf6e;
+
+    --status-signal-bg: #1a1a1a;
+    --status-signal-fg: #888;
+    --status-signal-dot: #555;
+
+    --status-define-bg: #1f1a10;
+    --status-define-fg: #e8a84a;
+    --status-define-dot: #e8a84a;
+
+    --status-active-bg: #1a2035;
+    --status-active-fg: #5b8af7;
+    --status-active-dot: #5b8af7;
+
+    --status-live-bg: #0d1f14;
+    --status-live-fg: #3ecf6e;
+    --status-live-dot: #3ecf6e;
+
+    --status-succeeded-bg: #0d1f14;
+    --status-succeeded-fg: #3ecf6e;
+    --status-succeeded-dot: #3ecf6e;
+
+    --status-failed-bg: #1f0f0f;
+    --status-failed-fg: #e85050;
+    --status-failed-dot: #e85050;
+
+    --status-paused-bg: #1f1a10;
+    --status-paused-fg: #e8a84a;
+    --status-paused-dot: #e8a84a;
+
+    /* Agent indicators */
+    --agent-active: #10b981;
+    --agent-paused: #f59e0b;
+
+    --col-width: 280px;
+    --card-radius: 8px;
+    --col-gap: 12px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .agent-halo { animation: none !important; }
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 13px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Top bar ───────────────────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    height: 44px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--surface);
+  }
+
+  .topbar-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+  }
+
+  .topbar-sep { color: var(--text-muted); }
+
+  .view-toggle {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: var(--surface-3);
+    border-radius: 6px;
+    padding: 2px;
+    margin-left: auto;
+  }
+
+  .view-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .view-btn:hover { background: var(--surface-2); color: var(--text-primary); }
+  .view-btn.active { background: var(--surface-2); color: var(--text-primary); }
+
+  .display-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .display-btn:hover { border-color: var(--border-hover); color: var(--text-primary); }
+
+  /* ── Gated banner ─────────────────────────────────────────────── */
+  .gated-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    background: #1a1508;
+    border-bottom: 1px solid #2e2510;
+    font-size: 12px;
+    color: #b08a3a;
+    flex-shrink: 0;
+  }
+
+  .gated-banner svg { flex-shrink: 0; }
+
+  /* ── Object type selector ─────────────────────────────────────── */
+  .type-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 16px 0;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--surface);
+  }
+
+  .type-tab {
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .type-tab:hover { color: var(--text-primary); }
+  .type-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+
+  /* ── Board layout ─────────────────────────────────────────────── */
+  .board-wrapper {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .board {
+    display: flex;
+    gap: var(--col-gap);
+    padding: 16px;
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Hide scrollbar on desktop, keep on mobile */
+  .board::-webkit-scrollbar { height: 4px; }
+  .board::-webkit-scrollbar-track { background: transparent; }
+  .board::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── Column ───────────────────────────────────────────────────── */
+  .column {
+    flex: 0 0 var(--col-width);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-height: 0;
+    scroll-snap-align: start;
+    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    transition: border-color 0.15s;
+  }
+
+  .column.drag-over {
+    border-color: var(--accent);
+    background: #0f1520;
+  }
+
+  .col-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: capitalize;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .col-count {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .col-cards {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 80px;
+  }
+
+  .col-cards::-webkit-scrollbar { width: 3px; }
+  .col-cards::-webkit-scrollbar-track { background: transparent; }
+  .col-cards::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── Empty state ──────────────────────────────────────────────── */
+  .empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-align: center;
+    line-height: 1.4;
+    border: 1.5px dashed var(--border);
+    border-radius: 6px;
+    margin: 4px 0;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* ── Skeleton ─────────────────────────────────────────────────── */
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  .skeleton-card {
+    background: var(--surface-2);
+    border-radius: var(--card-radius);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .skeleton-line {
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-2) 50%, var(--surface-3) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite linear;
+  }
+
+  .skeleton-line.w-full { height: 10px; width: 100%; }
+  .skeleton-line.w-3q { height: 10px; width: 75%; }
+  .skeleton-line.w-half { height: 8px; width: 50%; }
+  .skeleton-line.w-q { height: 8px; width: 25%; }
+
+  /* ── Card ─────────────────────────────────────────────────────── */
+  .card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    padding: 10px;
+    cursor: grab;
+    user-select: none;
+    transition: border-color 0.15s, transform 0.12s, box-shadow 0.15s, background 0.15s;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .card:hover {
+    border-color: var(--border-hover);
+    background: #1f1f1f;
+  }
+
+  .card:active { cursor: grabbing; }
+
+  .card.dragging {
+    opacity: 0.45;
+    transform: scale(0.97);
+  }
+
+  .card.is-bet {
+    border-style: dashed;
+    cursor: default;
+  }
+
+  .card.is-bet:active { cursor: default; }
+
+  .card-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .card-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1.45;
+    flex: 1;
+  }
+
+  .gated-chip {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #1f1a10;
+    border: 1px solid #2e2510;
+    color: #b08a3a;
+    font-size: 10px;
+    font-weight: 600;
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+  }
+
+  .card-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .type-badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  .type-badge.task {
+    background: #1a2035;
+    color: #5b8af7;
+  }
+
+  .type-badge.bet {
+    background: #1f1a10;
+    color: #e8a84a;
+  }
+
+  .type-badge.insight {
+    background: #1a1f2e;
+    color: #7b9cf7;
+  }
+
+  .card-id {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Agent indicator ──────────────────────────────────────────── */
+  .agent-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 7px;
+    border-radius: 5px;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--text-secondary);
+    line-height: 1.3;
+  }
+
+  .agent-dot-wrap {
+    position: relative;
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+  }
+
+  .agent-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    position: relative;
+    z-index: 1;
+  }
+
+  .agent-dot.active { background: var(--agent-active); }
+  .agent-dot.paused { background: var(--agent-paused); }
+
+  @keyframes halo-pulse {
+    0%   { transform: scale(1);   opacity: 0.6; }
+    60%  { transform: scale(2.5); opacity: 0; }
+    100% { transform: scale(1);   opacity: 0; }
+  }
+
+  .agent-halo {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--agent-active);
+    animation: halo-pulse 1.6s ease-out infinite;
+    z-index: 0;
+  }
+
+  .agent-text {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+  }
+
+  /* ── Drag ghost ───────────────────────────────────────────────── */
+  #drag-ghost {
+    position: fixed;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.88;
+    transform: rotate(2deg) scale(1.03);
+    transition: transform 0.08s;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    border-radius: var(--card-radius);
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    width: 260px;
+    padding: 10px;
+    display: none;
+  }
+
+  /* ── Rollback toast ───────────────────────────────────────────── */
+  #toast {
+    position: fixed;
+    bottom: 52px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #2a1212;
+    border: 1px solid #5a1f1f;
+    color: #e85050;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+    z-index: 10000;
+    white-space: nowrap;
+  }
+
+  #toast.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ── Debug strip ──────────────────────────────────────────────── */
+  #debug-strip {
+    flex-shrink: 0;
+    height: 32px;
+    background: #0d0d0d;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 16px;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  #debug-strip span { color: var(--text-secondary); }
+  #debug-strip .dbg-label { color: var(--text-muted); }
+
+  /* ── Mobile ───────────────────────────────────────────────────── */
+  @media (max-width: 639px) {
+    :root { --col-width: calc(100vw - 32px); }
+
+    .board {
+      padding: 12px;
+      gap: 12px;
+      scroll-snap-type: x mandatory;
+    }
+
+    .column { scroll-snap-align: start; }
+
+    .topbar { padding: 0 12px; }
+    .type-tabs { padding: 8px 12px 0; }
+  }
+
+  /* ── Tablet ───────────────────────────────────────────────────── */
+  @media (min-width: 640px) and (max-width: 1023px) {
+    :root { --col-width: 240px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <span class="topbar-title">Objects</span>
+  <span class="topbar-sep">/</span>
+
+  <div class="view-toggle" role="group" aria-label="View mode">
+    <button class="view-btn" id="view-list" onclick="switchView('list')" title="List view">
+      <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="2" width="11" height="1.5" rx="0.75" fill="currentColor"/><rect x="1" y="5.75" width="11" height="1.5" rx="0.75" fill="currentColor"/><rect x="1" y="9.5" width="11" height="1.5" rx="0.75" fill="currentColor"/></svg>
+      List
+    </button>
+    <button class="view-btn active" id="view-board" onclick="switchView('board')" title="Board view">
+      <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="1" width="3.5" height="11" rx="1" fill="currentColor"/><rect x="5.5" y="1" width="3.5" height="11" rx="1" fill="currentColor"/><rect x="10" y="1" width="3.5" height="11" rx="1" fill="currentColor"/></svg>
+      Board
+    </button>
+  </div>
+
+  <button class="display-btn" title="Display settings">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 3h10M3 6h6M5 9h2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    Display
+  </button>
+</div>
+
+<!-- Gated banner (shown when Bets tab active) -->
+<div class="gated-banner" id="gated-banner" style="display:none">
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 1.5a2.5 2.5 0 0 0-2.5 2.5V5H3a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H9V4a2.5 2.5 0 0 0-2.5-2.5zm-1.5 2.5a1.5 1.5 0 0 1 3 0V5h-3V4z" fill="currentColor"/></svg>
+  Bet status transitions are gate-controlled — column drag is disabled for bets.
+</div>
+
+<!-- Object type tabs -->
+<div class="type-tabs">
+  <button class="type-tab active" onclick="switchType('tasks')">Tasks</button>
+  <button class="type-tab" onclick="switchType('bets')">Bets</button>
+  <button class="type-tab" onclick="switchType('insights')">Insights</button>
+</div>
+
+<!-- Board -->
+<div class="board-wrapper">
+  <div class="board" id="board" role="main"></div>
+</div>
+
+<!-- Drag ghost -->
+<div id="drag-ghost"></div>
+
+<!-- Rollback toast -->
+<div id="toast" role="alert" aria-live="assertive"></div>
+
+<!-- Debug strip -->
+<div id="debug-strip">
+  <span class="dbg-label">events</span>
+  <span>drag-start: <span id="dbg-drag-start">0</span></span>
+  <span>drag-end: <span id="dbg-drag-end">0</span></span>
+  <span>commits: <span id="dbg-commits">0</span></span>
+  <span>rollbacks: <span id="dbg-rollbacks">0</span></span>
+  <span>last: <span id="dbg-last">—</span></span>
+  <span style="margin-left:auto" id="dbg-drag-col">—</span>
+</div>
+
+<script>
+'use strict';
+
+// ── Security ────────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ── Debug counters ──────────────────────────────────────────────────────────
+const dbg = { dragStart: 0, dragEnd: 0, commits: 0, rollbacks: 0 };
+function updateDebug(last, col) {
+  document.getElementById('dbg-drag-start').textContent = dbg.dragStart;
+  document.getElementById('dbg-drag-end').textContent   = dbg.dragEnd;
+  document.getElementById('dbg-commits').textContent    = dbg.commits;
+  document.getElementById('dbg-rollbacks').textContent  = dbg.rollbacks;
+  if (last) document.getElementById('dbg-last').textContent = last;
+  if (col != null) document.getElementById('dbg-drag-col').textContent = col ? 'over: ' + col : '—';
+}
+
+// ── State ────────────────────────────────────────────────────────────────────
+let currentType = 'tasks';
+let loading = false;
+
+const TASK_STATUSES = [
+  { key: 'todo',        label: 'Todo' },
+  { key: 'in_progress', label: 'In Progress' },
+  { key: 'in_review',   label: 'In Review' },
+  { key: 'done',        label: 'Done' },
+];
+
+const BET_STATUSES = [
+  { key: 'signal',    label: 'Signal' },
+  { key: 'define',    label: 'Define' },
+  { key: 'active',    label: 'Active' },
+  { key: 'live',      label: 'Live' },
+  { key: 'succeeded', label: 'Succeeded' },
+  { key: 'failed',    label: 'Failed' },
+  { key: 'paused',    label: 'Paused' },
+];
+
+// Sample data — realistic objects
+const OBJECTS = {
+  tasks: [
+    {
+      id: 'T-001',
+      title: 'BoardView scaffold — column layout + status derivation',
+      status: 'done',
+      type: 'task',
+      agent: null,
+    },
+    {
+      id: 'T-002',
+      title: 'BoardCard component — reuse Object Card metadata layout',
+      status: 'done',
+      type: 'task',
+      agent: null,
+    },
+    {
+      id: 'T-003',
+      title: 'Drag-to-status — pointer events, optimistic update, rollback toast',
+      status: 'in_progress',
+      type: 'task',
+      agent: { role: 'Developer', state: 'active', text: 'Developer: wiring pointer-event drag handler with setPointerCapture' },
+    },
+    {
+      id: 'T-004',
+      title: 'View-switcher wiring — List | Board toggle in Display panel',
+      status: 'todo',
+      type: 'task',
+      agent: null,
+    },
+    {
+      id: 'T-005',
+      title: 'Active-agent indicator — pulsing dot variant on AgentWorkingBadge',
+      status: 'in_review',
+      type: 'task',
+      agent: { role: 'Reviewer', state: 'paused', text: 'Reviewer: checking emerald pulse animation against prefers-reduced-motion' },
+    },
+    {
+      id: 'T-006',
+      title: 'Mobile responsive — horizontal scroll-snap, long-press drag',
+      status: 'todo',
+      type: 'task',
+      agent: null,
+    },
+    {
+      id: 'T-007',
+      title: 'Empty + loading states — skeleton cards, next-action prompt',
+      status: 'in_progress',
+      type: 'task',
+      agent: { role: 'Designer', state: 'active', text: 'Designer: verifying skeleton shimmer cadence matches card rhythm' },
+    },
+  ],
+  bets: [
+    {
+      id: 'B-001',
+      title: 'Objects Page — Board View (Kanban)',
+      status: 'active',
+      type: 'bet',
+      agent: { role: 'Developer', state: 'active', text: 'Developer: building BoardView scaffold on bet/objects-board-view-kanban' },
+    },
+    {
+      id: 'B-002',
+      title: 'Linear-inspired Display Control & Persistent Settings',
+      status: 'active',
+      type: 'bet',
+      agent: null,
+    },
+    {
+      id: 'B-003',
+      title: 'Design-agent prototypes don\'t expose interaction bugs until after build',
+      status: 'live',
+      type: 'bet',
+      agent: { role: 'Designer', state: 'active', text: 'Designer: producing interactive HTML prototype for Board View' },
+    },
+    {
+      id: 'B-004',
+      title: 'Operator onboarding — first drag to status within 5 minutes',
+      status: 'define',
+      type: 'bet',
+      agent: null,
+    },
+    {
+      id: 'B-005',
+      title: 'Signal-to-live latency — measure average bet duration',
+      status: 'signal',
+      type: 'bet',
+      agent: null,
+    },
+    {
+      id: 'B-006',
+      title: 'Work surface consolidation — /work route vs objects board',
+      status: 'paused',
+      type: 'bet',
+      agent: null,
+    },
+  ],
+  insights: [],
+};
+
+// ── Status style map ─────────────────────────────────────────────────────────
+const STATUS_STYLES = {
+  todo:        { bg: 'var(--status-todo-bg)',        fg: 'var(--status-todo-fg)',        dot: 'var(--status-todo-dot)' },
+  in_progress: { bg: 'var(--status-in-progress-bg)', fg: 'var(--status-in-progress-fg)', dot: 'var(--status-in-progress-dot)' },
+  in_review:   { bg: 'var(--status-in-review-bg)',   fg: 'var(--status-in-review-fg)',   dot: 'var(--status-in-review-dot)' },
+  done:        { bg: 'var(--status-done-bg)',        fg: 'var(--status-done-fg)',        dot: 'var(--status-done-dot)' },
+  signal:      { bg: 'var(--status-signal-bg)',      fg: 'var(--status-signal-fg)',      dot: 'var(--status-signal-dot)' },
+  define:      { bg: 'var(--status-define-bg)',      fg: 'var(--status-define-fg)',      dot: 'var(--status-define-dot)' },
+  active:      { bg: 'var(--status-active-bg)',      fg: 'var(--status-active-fg)',      dot: 'var(--status-active-dot)' },
+  live:        { bg: 'var(--status-live-bg)',        fg: 'var(--status-live-fg)',        dot: 'var(--status-live-dot)' },
+  succeeded:   { bg: 'var(--status-succeeded-bg)',   fg: 'var(--status-succeeded-fg)',   dot: 'var(--status-succeeded-dot)' },
+  failed:      { bg: 'var(--status-failed-bg)',      fg: 'var(--status-failed-fg)',      dot: 'var(--status-failed-dot)' },
+  paused:      { bg: 'var(--status-paused-bg)',      fg: 'var(--status-paused-fg)',      dot: 'var(--status-paused-dot)' },
+};
+
+function getStatusStyle(key) {
+  return STATUS_STYLES[key] || STATUS_STYLES['todo'];
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function renderBoard() {
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+
+  const statuses = currentType === 'bets' ? BET_STATUSES : TASK_STATUSES;
+  const objects  = OBJECTS[currentType] || [];
+
+  statuses.forEach(status => {
+    const cards = objects.filter(o => o.status === status.key);
+    const col   = buildColumn(status, cards);
+    board.appendChild(col);
+  });
+
+  bindDragHandlers();
+  console.log('[BoardView] rendered', { type: currentType, columns: statuses.length });
+}
+
+function buildColumn(status, cards) {
+  const style  = getStatusStyle(status.key);
+  const isBet  = currentType === 'bets';
+  const label  = escapeHtml(status.label);
+  const count  = cards.length;
+
+  const col = document.createElement('div');
+  col.className = 'column';
+  col.dataset.status = status.key;
+
+  col.innerHTML = `
+    <div class="col-header">
+      <div class="status-pill" style="background:${style.bg};color:${style.fg}">
+        <div class="status-dot" style="background:${style.dot}"></div>
+        ${label}
+      </div>
+      <span class="col-count">${count}</span>
+    </div>
+    <div class="col-cards" id="col-${escapeHtml(status.key)}">
+      ${count === 0 ? renderEmpty(isBet) : cards.map(renderCard).join('')}
+    </div>
+  `;
+
+  return col;
+}
+
+function renderEmpty(isBet) {
+  const msg = isBet
+    ? 'Bet transitions are gate-controlled'
+    : 'Move a task here when work starts';
+  return `<div class="empty-state">${escapeHtml(msg)}</div>`;
+}
+
+function renderCard(obj) {
+  const isBet   = obj.type === 'bet';
+  const classes = ['card', isBet ? 'is-bet' : ''].filter(Boolean).join(' ');
+  const agent   = obj.agent;
+
+  const gatedChip = isBet
+    ? `<div class="gated-chip"><svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M4 .75a1.5 1.5 0 0 0-1.5 1.5V3H2a.75.75 0 0 0-.75.75v3c0 .414.336.75.75.75h4a.75.75 0 0 0 .75-.75v-3A.75.75 0 0 0 6 3h-.5V2.25A1.5 1.5 0 0 0 4 .75zm-.75 1.5a.75.75 0 0 1 1.5 0V3h-1.5V2.25z" fill="currentColor"/></svg>Gated</div>`
+    : '';
+
+  const agentHtml = agent ? `
+    <div class="agent-indicator">
+      <div class="agent-dot-wrap">
+        <div class="agent-dot ${escapeHtml(agent.state)}"></div>
+        ${agent.state === 'active' ? '<div class="agent-halo"></div>' : ''}
+      </div>
+      <span class="agent-text">${escapeHtml(agent.text)}</span>
+    </div>
+  ` : '';
+
+  return `
+    <div class="card ${escapeHtml(classes)}" data-id="${escapeHtml(obj.id)}" data-type="${escapeHtml(obj.type)}" draggable="false">
+      <div class="card-top">
+        <span class="card-title">${escapeHtml(obj.title)}</span>
+        ${gatedChip}
+      </div>
+      <div class="card-meta">
+        <span class="type-badge ${escapeHtml(obj.type)}">${escapeHtml(obj.type)}</span>
+        <span class="card-id">${escapeHtml(obj.id)}</span>
+      </div>
+      ${agentHtml}
+    </div>
+  `;
+}
+
+function renderSkeletons() {
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+
+  const statuses = currentType === 'bets' ? BET_STATUSES : TASK_STATUSES;
+  statuses.forEach(status => {
+    const style = getStatusStyle(status.key);
+    const label = escapeHtml(status.label);
+
+    const col = document.createElement('div');
+    col.className = 'column';
+    col.innerHTML = `
+      <div class="col-header">
+        <div class="status-pill" style="background:${style.bg};color:${style.fg}">
+          <div class="status-dot" style="background:${style.dot}"></div>
+          ${label}
+        </div>
+        <span class="col-count">—</span>
+      </div>
+      <div class="col-cards">
+        ${[0,1].map(() => `
+          <div class="skeleton-card">
+            <div class="skeleton-line w-full"></div>
+            <div class="skeleton-line w-3q"></div>
+            <div class="skeleton-line w-q"></div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    board.appendChild(col);
+  });
+
+  console.log('[BoardView] loading skeleton shown');
+}
+
+// ── Drag-and-drop — pointer events ──────────────────────────────────────────
+let drag = {
+  active: false,
+  cardEl: null,
+  cardId: null,
+  cardType: null,
+  srcStatus: null,
+  ghost: null,
+  offsetX: 0,
+  offsetY: 0,
+  overCol: null,
+};
+
+function bindDragHandlers() {
+  document.querySelectorAll('.card:not(.is-bet)').forEach(card => {
+    card.addEventListener('pointerdown', onPointerDown);
+  });
+}
+
+function onPointerDown(e) {
+  if (e.button !== 0) return;
+  const card = e.currentTarget;
+
+  drag.active   = true;
+  drag.cardEl   = card;
+  drag.cardId   = card.dataset.id;
+  drag.cardType = card.dataset.type;
+  drag.srcStatus = card.closest('.column').dataset.status;
+
+  const rect     = card.getBoundingClientRect();
+  drag.offsetX   = e.clientX - rect.left;
+  drag.offsetY   = e.clientY - rect.top;
+
+  card.setPointerCapture(e.pointerId);
+  card.classList.add('dragging');
+
+  // Clone into ghost
+  const ghost = document.getElementById('drag-ghost');
+  ghost.innerHTML = card.innerHTML;
+  ghost.style.display = 'block';
+  ghost.style.left = (e.clientX - drag.offsetX) + 'px';
+  ghost.style.top  = (e.clientY - drag.offsetY) + 'px';
+  ghost.style.width = rect.width + 'px';
+  drag.ghost = ghost;
+
+  document.addEventListener('pointermove', onPointerMove);
+  document.addEventListener('pointerup',   onPointerUp);
+
+  dbg.dragStart++;
+  updateDebug('drag-start:' + drag.cardId, null);
+  console.log('[BoardView] drag-start', { id: drag.cardId, from: drag.srcStatus });
+}
+
+function onPointerMove(e) {
+  if (!drag.active) return;
+
+  drag.ghost.style.left = (e.clientX - drag.offsetX) + 'px';
+  drag.ghost.style.top  = (e.clientY - drag.offsetY) + 'px';
+
+  // Find column under pointer (temporarily hide ghost)
+  drag.ghost.style.pointerEvents = 'none';
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  drag.ghost.style.pointerEvents = '';
+
+  const col = el ? el.closest('.column') : null;
+
+  // Update drag-over highlight
+  document.querySelectorAll('.column').forEach(c => c.classList.remove('drag-over'));
+  if (col) {
+    col.classList.add('drag-over');
+    drag.overCol = col.dataset.status;
+    updateDebug(null, drag.overCol);
+  } else {
+    drag.overCol = null;
+    updateDebug(null, null);
+  }
+}
+
+function onPointerUp(e) {
+  document.removeEventListener('pointermove', onPointerMove);
+  document.removeEventListener('pointerup', onPointerUp);
+
+  if (!drag.active) return;
+  drag.active = false;
+
+  drag.cardEl.classList.remove('dragging');
+  drag.ghost.style.display = 'none';
+  document.querySelectorAll('.column').forEach(c => c.classList.remove('drag-over'));
+
+  dbg.dragEnd++;
+  const targetStatus = drag.overCol;
+
+  if (targetStatus && targetStatus !== drag.srcStatus) {
+    commitMove(drag.cardId, drag.srcStatus, targetStatus);
+  } else {
+    updateDebug('drag-cancel', null);
+    console.log('[BoardView] drag-cancel — no valid target');
+  }
+
+  drag.overCol = null;
+  updateDebug(null, null);
+}
+
+function commitMove(cardId, fromStatus, toStatus) {
+  const objects = OBJECTS[currentType];
+  const obj = objects.find(o => o.id === cardId);
+  if (!obj) return;
+
+  // Simulate ~5% failure rate for rollback demo
+  const willFail = Math.random() < 0.05;
+
+  // Optimistic update
+  obj.status = toStatus;
+  renderBoard();
+  dbg.commits++;
+  updateDebug('commit:' + cardId + '->' + toStatus, null);
+  console.log('[BoardView] commit', { id: cardId, from: fromStatus, to: toStatus });
+
+  if (willFail) {
+    // Rollback after 800ms
+    setTimeout(() => {
+      obj.status = fromStatus;
+      renderBoard();
+      dbg.rollbacks++;
+      showToast('Status update failed — rolled back to "' + fromStatus + '"');
+      updateDebug('rollback:' + cardId, null);
+      console.log('[BoardView] rollback', { id: cardId, restoredTo: fromStatus });
+    }, 800);
+  }
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = escapeHtml(msg);
+  t.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('visible'), 3500);
+}
+
+// ── View / type switching ────────────────────────────────────────────────────
+function switchView(v) {
+  document.getElementById('view-list').classList.toggle('active', v === 'list');
+  document.getElementById('view-board').classList.toggle('active', v === 'board');
+  console.log('[BoardView] view-switch', { to: v });
+  if (v === 'list') {
+    showToast('List view not implemented in this prototype');
+  }
+}
+
+function switchType(type) {
+  currentType = type;
+  document.querySelectorAll('.type-tab').forEach((t, i) => {
+    t.classList.toggle('active', ['tasks','bets','insights'][i] === type);
+  });
+
+  const banner = document.getElementById('gated-banner');
+  banner.style.display = type === 'bets' ? 'flex' : 'none';
+
+  console.log('[BoardView] type-switch', { to: type });
+
+  // Show loading skeleton for 600ms, then real data
+  loading = true;
+  renderSkeletons();
+  setTimeout(() => {
+    loading = false;
+    renderBoard();
+  }, 600);
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+console.log('[BoardView] init — Board View prototype v2');
+loading = true;
+renderSkeletons();
+setTimeout(() => {
+  loading = false;
+  renderBoard();
+  updateDebug('init', null);
+}, 700);
+</script>
+</body>
+</html>
