@@ -209,92 +209,101 @@ async function applyEvent(
 	event: Stripe.Event,
 	stripeEnv: StripeEnv,
 ): Promise<void> {
-	const [workspace] = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
-		.from(workspaces)
-		.where(eq(workspaces.id, workspaceId))
-		.limit(1)
-	if (!workspace) {
-		throw new Error(`workspace ${workspaceId} not found while applying ${event.type}`)
-	}
+	// Concurrent webhook deliveries on the same workspace each do a
+	// SELECT → mutate JSON → UPDATE. Without serialization, a later writer
+	// that read before an earlier writer's UPDATE silently clobbers fields
+	// only the earlier writer touched. A row lock inside a transaction
+	// serializes them on the workspace row; a single delivery still completes
+	// in one round-trip per query so the lock window stays bounded.
+	await db.transaction(async (tx) => {
+		const [workspace] = await tx
+			.select({ id: workspaces.id, settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!workspace) {
+			throw new Error(`workspace ${workspaceId} not found while applying ${event.type}`)
+		}
 
-	const currentSettings =
-		workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {}).data ?? {}
-	const current = currentSettings.billing ?? {
-		plan: 'trial' as const,
-		status: 'incomplete' as const,
-	}
-	let next = { ...current }
+		const currentSettings =
+			workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {}).data ?? {}
+		const current = currentSettings.billing ?? {
+			plan: 'trial' as const,
+			status: 'incomplete' as const,
+		}
+		let next = { ...current }
 
-	switch (event.type) {
-		case 'checkout.session.completed': {
-			const session = event.data.object as Stripe.Checkout.Session
-			const subscriptionId =
-				typeof session.subscription === 'string'
-					? session.subscription
-					: (session.subscription?.id ?? null)
-			const customerId =
-				typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null)
-			next = {
-				...next,
-				stripe_customer_id: customerId ?? next.stripe_customer_id,
-				stripe_subscription_id: subscriptionId ?? next.stripe_subscription_id,
-				status: 'active',
+		switch (event.type) {
+			case 'checkout.session.completed': {
+				const session = event.data.object as Stripe.Checkout.Session
+				const subscriptionId =
+					typeof session.subscription === 'string'
+						? session.subscription
+						: (session.subscription?.id ?? null)
+				const customerId =
+					typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null)
+				next = {
+					...next,
+					stripe_customer_id: customerId ?? next.stripe_customer_id,
+					stripe_subscription_id: subscriptionId ?? next.stripe_subscription_id,
+					status: 'active',
+				}
+				break
 			}
-			break
-		}
-		case 'customer.subscription.created':
-		case 'customer.subscription.updated': {
-			const sub = event.data.object as Stripe.Subscription
-			const priceId = priceIdFromSubscription(sub)
-			const plan = priceId ? planForPriceId(priceId, stripeEnv) : null
-			next = {
-				...next,
-				plan: plan ?? next.plan,
-				stripe_customer_id:
-					(typeof sub.customer === 'string' ? sub.customer : (sub.customer?.id ?? null)) ??
-					next.stripe_customer_id,
-				stripe_subscription_id: sub.id,
-				status: mapSubscriptionStatus(sub.status),
-				hard_cap_tokens: plan ? hardCapForPlan(plan, stripeEnv) : next.hard_cap_tokens,
-				period_start: sub.current_period_start ?? next.period_start,
+			case 'customer.subscription.created':
+			case 'customer.subscription.updated': {
+				const sub = event.data.object as Stripe.Subscription
+				const priceId = priceIdFromSubscription(sub)
+				const plan = priceId ? planForPriceId(priceId, stripeEnv) : null
+				next = {
+					...next,
+					plan: plan ?? next.plan,
+					stripe_customer_id:
+						(typeof sub.customer === 'string' ? sub.customer : (sub.customer?.id ?? null)) ??
+						next.stripe_customer_id,
+					stripe_subscription_id: sub.id,
+					status: mapSubscriptionStatus(sub.status),
+					hard_cap_tokens: plan ? hardCapForPlan(plan, stripeEnv) : next.hard_cap_tokens,
+					period_start: sub.current_period_start ?? next.period_start,
+				}
+				break
 			}
-			break
-		}
-		case 'customer.subscription.deleted': {
-			const sub = event.data.object as Stripe.Subscription
-			next = {
-				...next,
-				// Paid sub ended → workspace falls back to BYOLLM (the no-paid-plan tier).
-				plan: 'byollm',
-				stripe_subscription_id: null,
-				status: 'canceled',
-				hard_cap_tokens: null,
-				period_start: sub.canceled_at ?? next.period_start,
+			case 'customer.subscription.deleted': {
+				const sub = event.data.object as Stripe.Subscription
+				next = {
+					...next,
+					// Paid sub ended → workspace falls back to BYOLLM (the no-paid-plan tier).
+					plan: 'byollm',
+					stripe_subscription_id: null,
+					status: 'canceled',
+					hard_cap_tokens: null,
+					period_start: sub.canceled_at ?? next.period_start,
+				}
+				break
 			}
-			break
-		}
-		case 'invoice.paid': {
-			const invoice = event.data.object as Stripe.Invoice
-			const periodStart = invoice.period_start ?? invoice.lines?.data?.[0]?.period?.start
-			next = {
-				...next,
-				status: 'active',
-				period_start: periodStart ?? next.period_start,
+			case 'invoice.paid': {
+				const invoice = event.data.object as Stripe.Invoice
+				const periodStart = invoice.period_start ?? invoice.lines?.data?.[0]?.period?.start
+				next = {
+					...next,
+					status: 'active',
+					period_start: periodStart ?? next.period_start,
+				}
+				break
 			}
-			break
+			case 'invoice.payment_failed': {
+				next = { ...next, status: 'past_due' }
+				break
+			}
 		}
-		case 'invoice.payment_failed': {
-			next = { ...next, status: 'past_due' }
-			break
-		}
-	}
 
-	const merged = { ...(workspace.settings ?? {}), billing: next }
-	await db
-		.update(workspaces)
-		.set({ settings: merged, updatedAt: new Date() })
-		.where(eq(workspaces.id, workspaceId))
+		const merged = { ...(workspace.settings ?? {}), billing: next }
+		await tx
+			.update(workspaces)
+			.set({ settings: merged, updatedAt: new Date() })
+			.where(eq(workspaces.id, workspaceId))
+	})
 }
 
 export default app
