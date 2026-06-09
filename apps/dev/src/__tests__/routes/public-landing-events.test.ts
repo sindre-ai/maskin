@@ -301,7 +301,7 @@ describe('extractClientIp — trusted-proxy CIDR validation', () => {
 		_resetTrustedCidrs()
 		expect(extractClientIp('10.1.2.3', '1.2.3.4')).toBe('1.2.3.4')
 		expect(extractClientIp('192.168.1.1', '1.2.3.4')).toBe('192.168.1.1')
-		process.env.TRUSTED_PROXY_CIDRS = undefined
+		delete process.env.TRUSTED_PROXY_CIDRS
 	})
 
 	it('takes the first hop of a multi-hop XFF when proxy is trusted', () => {
@@ -312,6 +312,6 @@ describe('extractClientIp — trusted-proxy CIDR validation', () => {
 		process.env.TRUSTED_PROXY_CIDRS = ''
 		_resetTrustedCidrs()
 		expect(extractClientIp('127.0.0.1', '1.2.3.4')).toBe('127.0.0.1')
-		process.env.TRUSTED_PROXY_CIDRS = undefined
+		delete process.env.TRUSTED_PROXY_CIDRS
 	})
 })
