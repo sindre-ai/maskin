@@ -303,7 +303,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, and LLM config.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
@@ -318,6 +318,14 @@ export const tools = {
 			memory: z.record(z.unknown()).optional(),
 			llm_provider: z.string().optional(),
 			llm_config: z.record(z.unknown()).optional(),
+			attach_skill_ids: z
+				.array(z.string().uuid())
+				.optional()
+				.describe('Workspace skill IDs to attach to this actor.'),
+			detach_skill_ids: z
+				.array(z.string().uuid())
+				.optional()
+				.describe('Workspace skill IDs to detach from this actor.'),
 		}),
 	},
 	regenerate_api_key: {

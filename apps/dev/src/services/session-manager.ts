@@ -16,6 +16,7 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
 import { frontendBaseUrl } from '../lib/file-urls'
@@ -777,10 +778,11 @@ export class SessionManager extends EventEmitter {
 		// (e.g. PostHog → Synthesizer) belong here; tools an agent opts into
 		// per-config still go through the agent/session MCP paths.
 		//
-		// GitHub installations also get a per-owner env var plus a synthesized
-		// MCP server entry so a workspace can expose multiple installations at once.
+		// GitHub installations only get a per-owner env var here; the MCP server
+		// entry is not auto-injected — agents opt in per their tools.mcpServers
+		// config (github-{owner} key). The env var is available for envsubst
+		// substitution when the container resolves the agent's configured entry.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
-		const githubMcpServers: Record<string, unknown> = {}
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
@@ -790,16 +792,7 @@ export class SessionManager extends EventEmitter {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
 					if (!ownerLogin) continue
 
-					const sanitizedOwner = ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
-					const envVarName = `GITHUB_TOKEN_${sanitizedOwner}`
-					envVars[envVarName] = accessToken
-
-					const mcpName = `github-${ownerLogin.toLowerCase()}`
-					githubMcpServers[mcpName] = {
-						command: resolved.config.mcp?.command ?? 'npx',
-						args: resolved.config.mcp?.args ?? ['-y', '@modelcontextprotocol/server-github'],
-						env: { GITHUB_TOKEN: `\${${envVarName}}` },
-					}
+					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
 				} else {
 					const envVarName =
 						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
@@ -864,7 +857,7 @@ export class SessionManager extends EventEmitter {
 		// merged with any auto-injected workspace MCPs and GitHub installation MCPs.
 		// Keys are namespaced so the sources can't collide.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
-		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers, ...githubMcpServers }
+		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp
