@@ -29,20 +29,17 @@ export function useAuth() {
 		[navigate],
 	)
 
-	const signup = useCallback(
-		async (data: CreateActorInput) => {
-			const result = await api.actors.create(data)
-			setApiKey(result.api_key)
-			setStoredActor({
-				id: result.id,
-				name: result.name,
-				type: result.type,
-				email: result.email,
-			})
-			return result
-		},
-		[],
-	)
+	const signup = useCallback(async (data: CreateActorInput) => {
+		const result = await api.actors.create(data)
+		setApiKey(result.api_key)
+		setStoredActor({
+			id: result.id,
+			name: result.name,
+			type: result.type,
+			email: result.email,
+		})
+		return result
+	}, [])
 
 	const logout = useCallback(() => {
 		clearAuth()

@@ -192,6 +192,11 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 	},
 
+	landingEvents: {
+		emit: (events: Array<{ name: string; anonId: string; props?: Record<string, unknown> }>) =>
+			request<void>('/public/landing-events', { method: 'POST', body: { events } }),
+	},
+
 	// Public landing-page handoffs. The /drafts endpoint is unauthenticated and
 	// called from sindre.ai; only /claim is reachable from the web app.
 	publicBetStrategist: {

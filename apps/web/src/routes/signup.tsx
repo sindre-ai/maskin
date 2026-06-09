@@ -22,23 +22,29 @@ function SignupPage() {
 	useEffect(() => {
 		const url = new URL(window.location.href)
 		const pendingPrompt = url.searchParams.get('pending_prompt')
-		if (!pendingPrompt) return
+		const anonId = url.searchParams.get('anon_id')
+		if (!pendingPrompt && !anonId) return
 
 		try {
-			console.info('[maskin] imported pending prompt from URL', { promptChars: pendingPrompt.length })
-			localStorage.setItem('maskin_pending_prompt', pendingPrompt)
+			if (pendingPrompt) {
+				console.info('[maskin] imported pending prompt from URL', {
+					promptChars: pendingPrompt.length,
+				})
+				localStorage.setItem('maskin_pending_prompt', pendingPrompt)
+			}
+			if (anonId) {
+				localStorage.setItem('maskin_anon_id', anonId)
+			}
 		} catch (err) {
-			console.error('[maskin] failed to import pending prompt from URL', err)
+			console.error('[maskin] failed to import landing params from URL', err)
 		}
 
 		url.searchParams.delete('pending_prompt')
+		url.searchParams.delete('anon_id')
 		window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
 	}, [])
 
-	const createSessionFromPendingPrompt = async (
-		pendingPrompt: string,
-		signupResult: unknown,
-	) => {
+	const createSessionFromPendingPrompt = async (pendingPrompt: string, signupResult: unknown) => {
 		const result = signupResult as { workspace_id?: string; id?: string }
 		let workspaceId = result.workspace_id
 
@@ -95,12 +101,23 @@ function SignupPage() {
 		setLoading(true)
 		try {
 			const pendingPrompt = localStorage.getItem('maskin_pending_prompt')
+			const anonId = localStorage.getItem('maskin_anon_id')
 			const result = await signup({
 				type: 'human',
 				name: name.trim(),
 				email: email.trim(),
 				password,
 			})
+			if (anonId) {
+				try {
+					await api.landingEvents.emit([
+						{ name: 'signup_complete', anonId, props: { fromGuest: true } },
+					])
+					localStorage.removeItem('maskin_anon_id')
+				} catch {
+					console.error('[maskin] failed to emit signup_complete')
+				}
+			}
 			if (pendingPrompt) {
 				try {
 					await createSessionFromPendingPrompt(pendingPrompt, result)
@@ -108,7 +125,11 @@ function SignupPage() {
 					window.location.assign('/')
 				} catch (sessionErr) {
 					console.error('[maskin] failed to create session from pending prompt', sessionErr)
-					setError(sessionErr instanceof Error ? sessionErr.message : 'Could not start session from your prompt')
+					setError(
+						sessionErr instanceof Error
+							? sessionErr.message
+							: 'Could not start session from your prompt',
+					)
 				}
 			} else {
 				window.location.assign('/')

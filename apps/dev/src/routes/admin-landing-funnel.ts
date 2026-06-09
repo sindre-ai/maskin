@@ -97,6 +97,19 @@ app.get('/', async (c) => {
 		)
 	const uniqueGuests = Number(guestRows[0]?.uniqueGuests ?? 0)
 
+	const signupRows = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(objects)
+		.where(
+			and(
+				eq(objects.workspaceId, LANDING_GUESTS_WORKSPACE_ID),
+				eq(objects.type, 'landing_signup'),
+				gte(objects.createdAt, successSince),
+			),
+		)
+	const signupsFromGuests = Number(signupRows[0]?.count ?? 0)
+	const conversionRate = uniqueGuests > 0 ? signupsFromGuests / uniqueGuests : null
+
 	return c.json({
 		generatedAt: new Date(now).toISOString(),
 		killMetric: {
@@ -110,11 +123,8 @@ app.get('/', async (c) => {
 		successMetric: {
 			windowDays: successWindowDays,
 			uniqueGuests,
-			// Signup attribution closes through the log stream — see T7 contract
-			// and the funnel-events log topic. This endpoint reports the
-			// denominator only.
-			signupsFromGuests: null,
-			conversionRate: null,
+			signupsFromGuests,
+			conversionRate,
 			threshold: 0.15,
 		},
 	})

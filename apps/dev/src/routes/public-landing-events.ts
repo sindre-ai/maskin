@@ -1,7 +1,9 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
+import { objects } from '@maskin/db/schema'
 import { z } from 'zod'
 import { createApiError } from '../lib/errors'
+import { LANDING_GUESTS_ACTOR_ID, LANDING_GUESTS_WORKSPACE_ID } from '../lib/landing-guests'
 import { logger } from '../lib/logger'
 
 // Public, no-auth endpoint for the landing-page funnel emitter (T8). Receives
@@ -151,6 +153,24 @@ app.post('/', async (c) => {
 			ip,
 			ua,
 		})
+
+		if (ev.name === 'signup_complete') {
+			const db = c.get('db')
+			try {
+				await db.insert(objects).values({
+					workspaceId: LANDING_GUESTS_WORKSPACE_ID,
+					type: 'landing_signup',
+					status: 'done',
+					createdBy: LANDING_GUESTS_ACTOR_ID,
+					metadata: { anonId: ev.anonId, props: ev.props ?? null },
+				})
+			} catch (dbErr) {
+				logger.error('landing-events: failed to persist signup_complete', {
+					err: dbErr instanceof Error ? dbErr.message : String(dbErr),
+					anonId: ev.anonId,
+				})
+			}
+		}
 	}
 
 	return c.body(null, 204)

@@ -13,7 +13,7 @@ describe('GET /api/admin/landing-funnel', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('returns kill metric + unique-guest denominator with defaults', async () => {
+	it('returns kill metric + success metric with signups when data exists', async () => {
 		const { app, mockResults } = createTestApp(
 			adminLandingFunnelRoutes,
 			'/api/admin/landing-funnel',
@@ -21,6 +21,7 @@ describe('GET /api/admin/landing-funnel', () => {
 		mockResults.selectQueue = [
 			[{ total: 100, malformed: 5 }], // kill-window aggregate
 			[{ uniqueGuests: 73 }], // success-window unique guests
+			[{ count: 12 }], // landing_signup count
 		]
 
 		const res = await app.request(jsonGet('/api/admin/landing-funnel'))
@@ -54,11 +55,26 @@ describe('GET /api/admin/landing-funnel', () => {
 
 		expect(body.successMetric.windowDays).toBe(7)
 		expect(body.successMetric.uniqueGuests).toBe(73)
-		expect(body.successMetric.signupsFromGuests).toBeNull()
-		expect(body.successMetric.conversionRate).toBeNull()
+		expect(body.successMetric.signupsFromGuests).toBe(12)
+		expect(body.successMetric.conversionRate).toBeCloseTo(12 / 73, 5)
 		expect(body.successMetric.threshold).toBe(0.15)
 
 		expect(typeof body.generatedAt).toBe('string')
+	})
+
+	it('returns conversionRate null when uniqueGuests is zero', async () => {
+		const { app, mockResults } = createTestApp(
+			adminLandingFunnelRoutes,
+			'/api/admin/landing-funnel',
+		)
+		mockResults.selectQueue = [[{ total: 0, malformed: 0 }], [{ uniqueGuests: 0 }], [{ count: 0 }]]
+
+		const res = await app.request(jsonGet('/api/admin/landing-funnel'))
+		const body = (await res.json()) as {
+			successMetric: { signupsFromGuests: number | null; conversionRate: number | null }
+		}
+		expect(body.successMetric.signupsFromGuests).toBe(0)
+		expect(body.successMetric.conversionRate).toBeNull()
 	})
 
 	it('flags the kill metric as breached when malformed rate hits 10% with enough samples', async () => {
@@ -100,7 +116,7 @@ describe('GET /api/admin/landing-funnel', () => {
 			adminLandingFunnelRoutes,
 			'/api/admin/landing-funnel',
 		)
-		mockResults.selectQueue = [[{ total: 0, malformed: 0 }], [{ uniqueGuests: 0 }]]
+		mockResults.selectQueue = [[{ total: 0, malformed: 0 }], [{ uniqueGuests: 0 }], [{ count: 0 }]]
 		const res = await app.request(jsonGet('/api/admin/landing-funnel'))
 		const body = (await res.json()) as {
 			killMetric: { totalDrafts: number; malformedRate: number; breached: boolean }
