@@ -99,6 +99,58 @@ describe('Triggers Integration', () => {
 		})
 	})
 
+	describe('name and config update semantics', () => {
+		it('persists name to database when updated via PATCH', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const actorId = getTestActorId()
+
+			const trigger = await insertTrigger(db, workspaceId, actorId, targetActorId)
+			const newName = 'Updated trigger name'
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { name: newName }, headers),
+			)
+			expect(res.status).toBe(200)
+
+			const [row] = await db.select().from(triggers).where(eq(triggers.id, trigger.id))
+			expect(row.name).toBe(newName)
+		})
+
+		it('leaves name unchanged when omitted from PATCH', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const actorId = getTestActorId()
+
+			const trigger = await insertTrigger(db, workspaceId, actorId, targetActorId)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { enabled: false }, headers),
+			)
+			expect(res.status).toBe(200)
+
+			const [row] = await db.select().from(triggers).where(eq(triggers.id, trigger.id))
+			expect(row.name).toBe(trigger.name)
+		})
+
+		it('persists config to database when updated via PATCH', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const actorId = getTestActorId()
+
+			const trigger = await insertTrigger(db, workspaceId, actorId, targetActorId)
+			const newConfig = { entity_type: 'task', action: 'updated' }
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { config: newConfig }, headers),
+			)
+			expect(res.status).toBe(200)
+
+			const [row] = await db.select().from(triggers).where(eq(triggers.id, trigger.id))
+			expect(row.config).toMatchObject(newConfig)
+		})
+	})
+
 	describe('event matching config', () => {
 		it('stores trigger with complex event config', async () => {
 			const app = createApp()

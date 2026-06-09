@@ -220,8 +220,8 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
-	if (body.name) updateData.name = body.name
-	if (body.config) updateData.config = body.config
+	if (body.name !== undefined) updateData.name = body.name
+	if (body.config !== undefined) updateData.config = body.config
 	if (body.action_prompt) updateData.actionPrompt = body.action_prompt
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id
 	if (body.enabled !== undefined) updateData.enabled = body.enabled
