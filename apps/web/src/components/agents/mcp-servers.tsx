@@ -150,18 +150,18 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 	}, [servers, onUpdate])
 
 	// Active GitHub installations not yet added to this agent's MCP servers
-	const unadddedGithubInstallations = (integrations ?? []).filter(
+	const unaddedGithubInstallations = (integrations ?? []).filter(
 		(i: IntegrationResponse) =>
 			i.provider === 'github' &&
 			i.status === 'active' &&
 			typeof i.config.owner_login === 'string' &&
 			!servers[`github-${(i.config.owner_login as string).toLowerCase()}`],
 	)
-	const showAddGithub = unadddedGithubInstallations.length > 0
+	const showAddGithub = unaddedGithubInstallations.length > 0
 
 	const handleAddGithub = useCallback(() => {
 		const updated = { ...servers }
-		for (const i of unadddedGithubInstallations) {
+		for (const i of unaddedGithubInstallations) {
 			const ownerLogin = i.config.owner_login as string
 			const sanitized = ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
 			updated[`github-${ownerLogin.toLowerCase()}`] = {
@@ -172,7 +172,7 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 			}
 		}
 		onUpdate({ mcpServers: updated })
-	}, [servers, unadddedGithubInstallations, onUpdate])
+	}, [servers, unaddedGithubInstallations, onUpdate])
 
 	// Quick-add items for static-preset providers (GitHub handled separately above)
 	const availableQuickAdds: Array<{ id: string; name: string; label: string; preset: McpServer }> =

@@ -428,9 +428,17 @@ describe('SessionManager', () => {
 			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_token_sindre_ai')
 			expect(createArgs.env.GITHUB_TOKEN_VAERKSTED_AI).toBe('ghs_token_vaerksted_ai')
 			expect(createArgs.env.GITHUB_TOKEN).toBeUndefined()
-			// GitHub MCP server entries are not auto-injected — agents configure them
-			// via tools.mcpServers (github-{owner} keys) and opt in per-agent
-			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+			// GitHub MCP server entries are not auto-injected — agents opt in per-agent
+			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+				? Object.keys(
+						(
+							JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, unknown>
+							}
+						).mcpServers,
+					)
+				: []
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(0)
 		})
 
 		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
@@ -460,7 +468,16 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.GITHUB_TOKEN_ACME_ORG).toBe('ghs_token_acme')
-			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+				? Object.keys(
+						(
+							JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, unknown>
+							}
+						).mcpServers,
+					)
+				: []
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(0)
 		})
 
 		it('skips the integration when owner_login backfill fails (does not kill the session)', async () => {
