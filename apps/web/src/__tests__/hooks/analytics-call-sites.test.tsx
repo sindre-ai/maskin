@@ -25,6 +25,7 @@ vi.mock('@/lib/analytics', async () => {
 		trackAgentSessionStarted: vi.fn(),
 		trackCommentPosted: vi.fn(),
 		trackRelationshipCreated: vi.fn(),
+		trackObjectAttachedFile: vi.fn(),
 		trackEvent: vi.fn(),
 	}
 })
@@ -36,6 +37,7 @@ import {
 	trackBetStatusChanged,
 	trackCommentPosted,
 	trackEvent,
+	trackObjectAttachedFile,
 	trackRelationshipCreated,
 } from '@/lib/analytics'
 
@@ -290,8 +292,7 @@ describe('useCreateRelationship — relationship_created + object_attached_file'
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
 		expect(trackRelationshipCreated).toHaveBeenCalledTimes(1)
-		expect(trackEvent).toHaveBeenCalledWith(
-			'object_attached_file',
+		expect(trackObjectAttachedFile).toHaveBeenCalledWith(
 			expect.objectContaining({
 				entity_id: 'bet-1',
 				entity_type: 'bet',
@@ -300,5 +301,64 @@ describe('useCreateRelationship — relationship_created + object_attached_file'
 				flow_id: 'rel-2',
 			}),
 		)
+		expect(trackEvent).not.toHaveBeenCalled()
+	})
+
+	it('does not emit object_attached_file when type is attached but targetType is not file', async () => {
+		vi.mocked(api.relationships.create).mockResolvedValue({
+			id: 'rel-3',
+			sourceType: 'bet',
+			sourceId: 'bet-1',
+			targetType: 'object',
+			targetId: 'obj-5',
+			type: 'attached',
+			createdBy: 'actor-1',
+			createdAt: null,
+		})
+		const { Wrapper } = makeWrapper()
+		const { result } = renderHook(() => useCreateRelationship(workspaceId, 'bet-1'), {
+			wrapper: Wrapper,
+		})
+
+		result.current.mutate({
+			source_type: 'bet',
+			source_id: 'bet-1',
+			target_type: 'object',
+			target_id: 'obj-5',
+			type: 'attached',
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		expect(trackRelationshipCreated).toHaveBeenCalledTimes(1)
+		expect(trackEvent).not.toHaveBeenCalled()
+	})
+
+	it('does not emit object_attached_file when targetType is file but type is not attached', async () => {
+		vi.mocked(api.relationships.create).mockResolvedValue({
+			id: 'rel-4',
+			sourceType: 'bet',
+			sourceId: 'bet-1',
+			targetType: 'file',
+			targetId: 'file-9',
+			type: 'breaks_into',
+			createdBy: 'actor-1',
+			createdAt: null,
+		})
+		const { Wrapper } = makeWrapper()
+		const { result } = renderHook(() => useCreateRelationship(workspaceId, 'bet-1'), {
+			wrapper: Wrapper,
+		})
+
+		result.current.mutate({
+			source_type: 'bet',
+			source_id: 'bet-1',
+			target_type: 'file',
+			target_id: 'file-9',
+			type: 'breaks_into',
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		expect(trackRelationshipCreated).toHaveBeenCalledTimes(1)
+		expect(trackEvent).not.toHaveBeenCalled()
 	})
 })

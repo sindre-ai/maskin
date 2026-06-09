@@ -28,7 +28,7 @@ export function trackEvent(name: string, props: AnalyticsProps = {}): void {
 // the per-event contract: entity_id, entity_type, source, flow_id, plus any
 // event-specific fields.
 
-type TaxonomyEntityType =
+export type TaxonomyEntityType =
 	| 'bet'
 	| 'task'
 	| 'insight'
@@ -38,6 +38,21 @@ type TaxonomyEntityType =
 	| 'trigger'
 	| 'relationship'
 	| 'file'
+
+export function isTaxonomyEntityType(s: string): s is TaxonomyEntityType {
+	const valid: readonly string[] = [
+		'bet',
+		'task',
+		'insight',
+		'knowledge',
+		'meeting',
+		'session',
+		'trigger',
+		'relationship',
+		'file',
+	]
+	return valid.includes(s)
+}
 
 type EventSource = 'web' | 'mcp' | 'trigger'
 

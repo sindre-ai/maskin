@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { trackEvent, trackRelationshipCreated } from '../lib/analytics'
+import {
+	isTaxonomyEntityType,
+	trackObjectAttachedFile,
+	trackRelationshipCreated,
+} from '../lib/analytics'
 import { type CreateRelationshipInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -29,8 +33,12 @@ export function useCreateRelationship(workspaceId: string, objectId: string) {
 			// `attached` edges from any object → file are the file-attach v1 event.
 			// Trigger fires from the object-files panel and any future direct-attach
 			// flow; the comment-attachment path emits this from the queue directly.
-			if (created.type === 'attached' && created.targetType === 'file') {
-				trackEvent('object_attached_file', {
+			if (
+				created.type === 'attached' &&
+				created.targetType === 'file' &&
+				isTaxonomyEntityType(created.sourceType)
+			) {
+				trackObjectAttachedFile({
 					entity_id: created.sourceId,
 					entity_type: created.sourceType,
 					source: 'web',
