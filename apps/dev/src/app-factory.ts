@@ -26,6 +26,7 @@ import integrationsRoutes, { webhookApp } from './routes/integrations'
 import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
+import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
@@ -185,6 +186,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
+		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
+		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)
@@ -194,6 +197,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
+	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
