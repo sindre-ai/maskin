@@ -158,7 +158,12 @@ export class SessionManager extends EventEmitter {
 			.where(eq(workspaces.id, workspaceId))
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
-		await checkPlanCap({ db: this.db, workspaceId, wsSettings })
+		await checkPlanCap({
+			db: this.db,
+			workspaceId,
+			wsSettings,
+			workspaceCreatedAt: ws?.createdAt,
+		})
 
 		const [session] = await this.db
 			.insert(sessions)
@@ -710,6 +715,7 @@ export class SessionManager extends EventEmitter {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				wsSettings,
+				workspaceCreatedAt: ws?.createdAt,
 				agent: {
 					provider: agent.llmProvider,
 					apiKey: (llmConfig.api_key as string | undefined) ?? null,

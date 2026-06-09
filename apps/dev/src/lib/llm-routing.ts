@@ -186,7 +186,7 @@ function readTrialDefaultCap(env: NodeJS.ProcessEnv = process.env): number {
  * — we fail open until Task 5 lands).
  */
 function effectivePlanCap(plan: MaskinPlan, hardCap: number | undefined): number | null {
-	if (typeof hardCap === 'number' && hardCap >= 0) return hardCap
+	if (typeof hardCap === 'number' && hardCap > 0) return hardCap
 	if (plan === 'trial') return readTrialDefaultCap()
 	return null
 }
@@ -198,6 +198,16 @@ function effectivePeriodEnd(
 	if (typeof periodEndMs === 'number') return periodEndMs
 	if (typeof periodStartMs === 'number') return periodStartMs + DEFAULT_PERIOD_LENGTH_MS
 	return null
+}
+
+export function trialCycleStartMs(
+	workspaceCreatedAt: Date | null | undefined,
+	nowMs = Date.now(),
+): number | undefined {
+	const originMs = workspaceCreatedAt?.getTime()
+	if (typeof originMs !== 'number' || !Number.isFinite(originMs)) return undefined
+	const elapsedSinceOrigin = Math.max(0, nowMs - originMs)
+	return originMs + Math.floor(elapsedSinceOrigin / DEFAULT_PERIOD_LENGTH_MS) * DEFAULT_PERIOD_LENGTH_MS
 }
 
 /**
@@ -223,6 +233,7 @@ export async function checkPlanCap(params: {
 	db: Database
 	workspaceId: string
 	wsSettings: WorkspaceSettings
+	workspaceCreatedAt?: Date | null
 }): Promise<void> {
 	const billing = params.wsSettings.billing
 	if (!billing || !MASKIN_PLAN_ROUTED_PLANS.has(billing.plan)) return
@@ -231,7 +242,10 @@ export async function checkPlanCap(params: {
 	const cap = effectivePlanCap(plan, billing.hard_cap_tokens ?? undefined)
 	if (cap === null) return
 
-	const periodStartMs = billingTimestampToMs(billing.period_start)
+	const storedPeriodStartMs = billingTimestampToMs(billing.period_start)
+	const periodStartMs =
+		storedPeriodStartMs ??
+		(plan === 'trial' ? trialCycleStartMs(params.workspaceCreatedAt) : undefined)
 	const periodEndMs = billingTimestampToMs(billing.period_end)
 
 	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs)
@@ -327,9 +341,10 @@ export async function resolveLlmRoute(params: {
 	workspaceId: string
 	actorId: string
 	wsSettings: WorkspaceSettings
+	workspaceCreatedAt?: Date | null
 	agent: AgentLlmConfig
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent } = params
+	const { db, workspaceId, actorId, wsSettings, workspaceCreatedAt, agent } = params
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior).
@@ -355,7 +370,7 @@ export async function resolveLlmRoute(params: {
 	//    402 to the user; this guards background callers that skipped it.
 	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
 	if (maskinPlanEnv) {
-		await checkPlanCap({ db, workspaceId, wsSettings })
+		await checkPlanCap({ db, workspaceId, wsSettings, workspaceCreatedAt })
 		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
 	}
 

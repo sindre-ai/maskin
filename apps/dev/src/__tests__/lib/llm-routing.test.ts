@@ -24,6 +24,7 @@ import {
 	getWorkspacePlanTokenUsage,
 	readFallbackConfig,
 	resolveLlmRoute,
+	trialCycleStartMs,
 } from '../../lib/llm-routing'
 import type { WorkspaceSettings } from '../../lib/types'
 
@@ -43,6 +44,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	process.env = { ...ORIGINAL_ENV }
+	vi.useRealTimers()
 })
 
 function emptySettings(): WorkspaceSettings {
@@ -476,6 +478,19 @@ describe('checkPlanCap', () => {
 		).resolves.toBeUndefined()
 	})
 
+	it('is a no-op for starter when hard_cap_tokens is 0 — treats zero as unset, falls through to fail-open', async () => {
+		// Regression for effectivePlanCap using `>= 0` instead of `> 0`:
+		// with `>= 0`, a stored 0 would be treated as a valid cap and permanently
+		// block all sessions (used >= 0 is always true). With `> 0`, zero falls
+		// through to the same fail-open path as a missing cap.
+		const settings = emptySettings()
+		settings.billing = { plan: 'starter', hard_cap_tokens: 0, period_start: 0 }
+		const db = dbWithSessionUsage([{ inputTokens: 50_000_000, outputTokens: 0 }])
+		await expect(
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
+		).resolves.toBeUndefined()
+	})
+
 	it.each(['starter', 'pro'] as const)(
 		'is a no-op for %s when Stripe has not written hard_cap_tokens (fail-open pre-Task 5)',
 		async (plan) => {
@@ -545,6 +560,26 @@ describe('checkPlanCap', () => {
 		expect(err.cap).toBe(50_000)
 		// Trial with no period_start has periodEnd: null — frontend handles it.
 		expect(err.periodEnd).toBeNull()
+	})
+
+	it('anchors trial over-cap reset to the current rolling window when workspaceCreatedAt is provided', async () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(new Date('2026-06-09T00:00:00.000Z'))
+		const workspaceCreatedAt = new Date('2026-05-05T00:00:00.000Z')
+		const currentCycleStart = trialCycleStartMs(workspaceCreatedAt)
+		expect(currentCycleStart).toBe(new Date('2026-06-04T00:00:00.000Z').getTime())
+
+		const settings = emptySettings()
+		settings.billing = { plan: 'trial' }
+		const db = dbWithSessionUsage([{ inputTokens: 100_000, outputTokens: 0 }])
+		const err = await checkPlanCap({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: settings,
+			workspaceCreatedAt,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(PlanCapExceededError)
+		expect(err.periodEnd).toBe(currentCycleStart + 30 * 24 * 60 * 60 * 1000)
 	})
 
 	it('falls back to 100k trial default when env var is unset/invalid', async () => {

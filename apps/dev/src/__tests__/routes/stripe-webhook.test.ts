@@ -47,7 +47,7 @@ function postWebhook(app: { request: (req: Request) => Promise<Response> }, body
 	)
 }
 
-type WorkspaceUpdate = { settings: { billing: Record<string, unknown> } }
+type WorkspaceUpdate = { settings: Record<string, unknown> & { billing: Record<string, unknown> } }
 function findWorkspaceUpdate(updates: unknown[]): WorkspaceUpdate {
 	const match = updates.find(
 		(u): u is WorkspaceUpdate =>
@@ -232,6 +232,65 @@ describe('POST /api/webhooks/stripe', () => {
 			plan: 'byollm',
 			stripe_subscription_id: null,
 			status: 'canceled',
+		})
+	})
+
+	it('does not clear BYO sources for invoice.paid when the current plan is byollm', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-invoice-byo' }]]
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'byollm',
+							status: 'canceled',
+							stripe_customer_id: 'cus_late',
+							stripe_subscription_id: null,
+						},
+						llm_keys: { anthropic: 'sk-ant-byo', openai: 'sk-openai' },
+						custom_llm: {
+							enabled: true,
+							base_url: 'https://openrouter.ai/api',
+							api_key: 'sk-or-byo',
+							model: 'deepseek/deepseek-v4-flash',
+						},
+						claude_oauth: {
+							encryptedAccessToken: 'enc-access',
+							encryptedRefreshToken: 'enc-refresh',
+							expiresAt: 1_800_000_000,
+						},
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_late_invoice_paid',
+			type: 'invoice.paid',
+			data: {
+				object: {
+					customer: 'cus_late',
+					metadata: { workspace_id: workspaceId },
+					period_start: 1_700_010_000,
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.llm_keys).toMatchObject({
+			anthropic: 'sk-ant-byo',
+			openai: 'sk-openai',
+		})
+		expect(update.settings.custom_llm).toMatchObject({ api_key: 'sk-or-byo' })
+		expect(update.settings.claude_oauth).toMatchObject({ encryptedAccessToken: 'enc-access' })
+		expect(update.settings.billing).toMatchObject({
+			plan: 'byollm',
+			stripe_subscription_id: null,
 		})
 	})
 

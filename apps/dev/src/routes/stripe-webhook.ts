@@ -195,6 +195,19 @@ function customerIdFromEvent(event: Stripe.Event): string | null {
 	return obj.customer.id ?? null
 }
 
+function isActivePaidBilling(billing: {
+	plan?: unknown
+	status?: unknown
+	stripe_subscription_id?: unknown
+}): boolean {
+	return (
+		(billing.plan === 'starter' || billing.plan === 'pro') &&
+		billing.status === 'active' &&
+		typeof billing.stripe_subscription_id === 'string' &&
+		billing.stripe_subscription_id.length > 0
+	)
+}
+
 async function applyEvent(
 	db: Database,
 	workspaceId: string,
@@ -297,8 +310,9 @@ async function applyEvent(
 		// BYOLLM ↔ paid plan mutex: when this event leaves the workspace in an
 		// active paid state, drop every BYOLLM source in the same update.
 		const baseSettings = (workspace.settings ?? {}) as Record<string, unknown>
-		const carrierSettings =
-			next.status === 'active' ? settingsAfterPaidPlanActivation(baseSettings) : baseSettings
+		const carrierSettings = isActivePaidBilling(next)
+			? settingsAfterPaidPlanActivation(baseSettings)
+			: baseSettings
 		const merged = { ...carrierSettings, billing: next }
 		await tx
 			.update(workspaces)
