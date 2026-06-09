@@ -502,6 +502,50 @@ describe('SessionManager', () => {
 			expect(githubKeys).toEqual([])
 			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
 		})
+
+		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			// Agent has opted into the GitHub MCP server for this org
+			fixtures.agent.tools = {
+				mcpServers: {
+					'github-sindre-ai': {
+						type: 'stdio',
+						command: 'npx',
+						args: ['-y', '@modelcontextprotocol/server-github'],
+						env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+					},
+				},
+			}
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_real_token')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			// Token env var is present for envsubst to substitute into the MCP config
+			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_real_token')
+
+			// AGENT_MCP_JSON carries the MCP config with the placeholder intact —
+			// the container entrypoint runs envsubst to resolve it at startup
+			expect(createArgs.env.AGENT_MCP_JSON).toBeDefined()
+			const agentMcp = JSON.parse(createArgs.env.AGENT_MCP_JSON) as {
+				mcpServers: Record<string, { env: Record<string, string> }>
+			}
+			expect(agentMcp.mcpServers['github-sindre-ai']).toBeDefined()
+			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
+				'${GITHUB_TOKEN_SINDRE_AI}',
+			)
+		})
 	})
 
 	describe('stopSession()', () => {
