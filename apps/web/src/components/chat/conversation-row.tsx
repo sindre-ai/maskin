@@ -30,18 +30,11 @@ export function ConversationRow({
 	className,
 }: ConversationRowProps) {
 	return (
-		<div
-			role="button"
-			tabIndex={0}
+		<button
+			type="button"
 			onClick={onClick}
-			onKeyDown={(e) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault()
-					onClick?.()
-				}
-			}}
 			className={cn(
-				'flex min-h-[44px] cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-1',
+				'flex min-h-[44px] w-full cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-1',
 				className,
 			)}
 		>
@@ -59,9 +52,7 @@ export function ConversationRow({
 
 			<div className="min-w-0 flex-1">
 				<div className="mb-0.5 flex items-center justify-between gap-1.5">
-					<span className="truncate text-sm font-medium leading-none">
-						{title ?? 'Untitled'}
-					</span>
+					<span className="truncate text-sm font-medium leading-none">{title ?? 'Untitled'}</span>
 					{timestamp && (
 						<RelativeTime
 							date={timestamp}
@@ -80,7 +71,7 @@ export function ConversationRow({
 					className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-success"
 				/>
 			)}
-		</div>
+		</button>
 	)
 }
 
@@ -92,14 +83,16 @@ function Facepile({ participants }: { participants: ConversationParticipant[] })
 	}
 
 	if (visible.length === 1) {
-		return <ActorAvatar name={visible[0]!.name} type={visible[0]!.type} size="md" />
+		return (
+			<ActorAvatar name={visible[0]?.name ?? '?'} type={visible[0]?.type ?? 'agent'} size="md" />
+		)
 	}
 
 	return (
 		<div className="relative flex h-7 w-7 items-center justify-center">
 			{visible.map((p, i) => (
 				<span
-					key={i}
+					key={p.name}
 					className="absolute"
 					style={{
 						zIndex: visible.length - i,
