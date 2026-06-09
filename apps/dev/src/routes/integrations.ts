@@ -186,6 +186,10 @@ app.openapi(connectRoute, (async (c) => {
 		const encryptedCredentials = encrypt(JSON.stringify(credentials))
 		const externalId = `${providerName}-personal`
 
+		// config intentionally unset — api_key providers have no webhook routing today.
+		// If you add an api_key provider with a webhook config, mirror the OAuth callback
+		// path: create a system actor and set config: { system_actor_id } here, otherwise
+		// the webhook handler will warn and drop events for this integration.
 		const [row] = await db
 			.insert(integrations)
 			.values({
