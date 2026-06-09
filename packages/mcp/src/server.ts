@@ -2003,13 +2003,81 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
+			const { id, attach_skill_ids, detach_skill_ids, ...body } = args
+			const attachIds = attach_skill_ids ?? []
+			const detachIds = detach_skill_ids ?? []
+			const hasSkillOps = attachIds.length > 0 || detachIds.length > 0
+
+			const overlapping = attachIds.filter((sid) => detachIds.includes(sid))
+			if (overlapping.length > 0) {
+				throw new Error(
+					`Skill IDs appear in both attach_skill_ids and detach_skill_ids: ${overlapping.join(', ')}`,
+				)
+			}
+
+			// Run actor PATCH first so a failure here throws before any skill ops fire.
+			const actor = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
 				skipWorkspace: true,
 			})
+
+			if (!hasSkillOps) {
+				return {
+					_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(actor, null, 2) }],
+				}
+			}
+
+			// Skill ops run concurrently but with allSettled so a single failure doesn't
+			// discard the results of operations that already succeeded.
+			const skillSettled = await Promise.allSettled([
+				...attachIds.map((skillId) =>
+					apiCall(
+						config,
+						'POST',
+						`/api/actors/${id}/workspace-skills`,
+						{ workspaceSkillId: skillId },
+						{ skipWorkspace: true },
+					),
+				),
+				...detachIds.map((skillId) =>
+					apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
+						skipWorkspace: true,
+					}),
+				),
+			])
+
+			const toErrorEntry = (reason: unknown, skillId: string) => ({
+				skill_id: skillId,
+				error: reason instanceof Error ? reason.message : String(reason),
+			})
+			const toAttachEntry = (s: PromiseSettledResult<unknown>, skillId: string) =>
+				s.status === 'fulfilled' ? s.value : toErrorEntry(s.reason, skillId)
+			const toDetachEntry = (s: PromiseSettledResult<unknown>, skillId: string) =>
+				s.status === 'fulfilled'
+					? { skill_id: skillId, deleted: true }
+					: toErrorEntry(s.reason, skillId)
+
+			const attachCount = attachIds.length
+			const output: Record<string, unknown> = { actor }
+			if (attachIds.length) {
+				output.attached_skills = skillSettled
+					.slice(0, attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match attachIds
+					.map((s, i) => toAttachEntry(s, attachIds[i]!))
+			}
+			if (detachIds.length) {
+				output.detached_skills = skillSettled
+					.slice(attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match detachIds
+					.map((s, i) => toDetachEntry(s, detachIds[i]!))
+			}
+			if (skillSettled.some((s) => s.status === 'rejected')) {
+				output.partial_failure = true
+			}
+
 			return {
 				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
 			}
 		},
 	)
