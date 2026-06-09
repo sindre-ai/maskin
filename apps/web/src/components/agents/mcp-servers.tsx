@@ -18,8 +18,8 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useIntegrations } from '@/hooks/use-integrations'
 import type { IntegrationResponse } from '@/lib/api'
-import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import { useWorkspace } from '@/lib/workspace-context'
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import { FileJson, Globe, Pencil, Plus, Terminal, Trash2, Zap } from 'lucide-react'
 import { useCallback, useState } from 'react'
 

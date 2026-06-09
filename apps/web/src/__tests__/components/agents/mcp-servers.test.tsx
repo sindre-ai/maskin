@@ -115,8 +115,18 @@ describe('McpServers', () => {
 
 	it('shows a single "Add github" button when any GitHub installation has owner_login', () => {
 		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ id: 'g1', provider: 'github', status: 'active', config: { owner_login: 'sindre-ai' } }),
-			buildIntegrationResponse({ id: 'g2', provider: 'github', status: 'active', config: { owner_login: 'vaerksted-ai' } }),
+			buildIntegrationResponse({
+				id: 'g1',
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'sindre-ai' },
+			}),
+			buildIntegrationResponse({
+				id: 'g2',
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'vaerksted-ai' },
+			}),
 		])
 		render(<McpServers tools={null} onUpdate={vi.fn()} />)
 		expect(screen.getAllByRole('button', { name: /Add github/ })).toHaveLength(1)
@@ -132,9 +142,22 @@ describe('McpServers', () => {
 
 	it('does not show "Add github" when all installations are already added', () => {
 		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ provider: 'github', status: 'active', config: { owner_login: 'sindre-ai' } }),
+			buildIntegrationResponse({
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'sindre-ai' },
+			}),
 		])
-		const tools = { mcpServers: { 'github-sindre-ai': { type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' } } } }
+		const tools = {
+			mcpServers: {
+				'github-sindre-ai': {
+					type: 'stdio',
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-github'],
+					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+				},
+			},
+		}
 		render(<McpServers tools={tools} onUpdate={vi.fn()} />)
 		expect(screen.queryByRole('button', { name: /Add github/ })).not.toBeInTheDocument()
 	})
@@ -143,8 +166,18 @@ describe('McpServers', () => {
 		const user = userEvent.setup()
 		const onUpdate = vi.fn()
 		mockIntegrations.mockReturnValue([
-			buildIntegrationResponse({ id: 'g1', provider: 'github', status: 'active', config: { owner_login: 'sindre-ai' } }),
-			buildIntegrationResponse({ id: 'g2', provider: 'github', status: 'active', config: { owner_login: 'vaerksted-ai' } }),
+			buildIntegrationResponse({
+				id: 'g1',
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'sindre-ai' },
+			}),
+			buildIntegrationResponse({
+				id: 'g2',
+				provider: 'github',
+				status: 'active',
+				config: { owner_login: 'vaerksted-ai' },
+			}),
 		])
 		render(<McpServers tools={null} onUpdate={onUpdate} />)
 
@@ -152,8 +185,12 @@ describe('McpServers', () => {
 
 		expect(onUpdate).toHaveBeenCalledWith({
 			mcpServers: expect.objectContaining({
-				'github-sindre-ai': expect.objectContaining({ env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' } }),
-				'github-vaerksted-ai': expect.objectContaining({ env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' } }),
+				'github-sindre-ai': expect.objectContaining({
+					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+				}),
+				'github-vaerksted-ai': expect.objectContaining({
+					env: { GITHUB_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
+				}),
 			}),
 		})
 	})
