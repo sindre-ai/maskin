@@ -60,7 +60,7 @@ interface ObjectDocumentViewProps {
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
 	onUpdateStatus: (status: string) => void
-	onUpdateOwner: (owner: string | null) => void
+	onUpdateDriver: (driver: string | null) => void
 	onDelete: () => void
 	isDeleting?: boolean
 	showSaved?: boolean
@@ -78,7 +78,7 @@ export function ObjectDocumentView({
 	onUpdateTitle,
 	onUpdateContent,
 	onUpdateStatus,
-	onUpdateOwner,
+	onUpdateDriver,
 	onDelete,
 	isDeleting = false,
 	showSaved = false,
@@ -156,8 +156,8 @@ export function ObjectDocumentView({
 				{members && (
 					<OwnerSelect
 						members={members}
-						currentOwnerId={object.owner ?? null}
-						onChange={onUpdateOwner}
+						currentOwnerId={object.driver ?? null}
+						onChange={onUpdateDriver}
 					/>
 				)}
 				<SubscribeToggle
@@ -263,9 +263,9 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
-	const handleUpdateOwner = useCallback(
-		(owner: string | null) => {
-			updateObject.mutate({ id: object.id, data: { owner } })
+	const handleUpdateDriver = useCallback(
+		(driver: string | null) => {
+			updateObject.mutate({ id: object.id, data: { driver } })
 		},
 		[object.id, updateObject],
 	)
@@ -286,7 +286,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					search: (prev) => ({
 						type: prev.type,
 						status: prev.status,
-						owner: prev.owner,
+						driver: prev.driver,
 						sort: prev.sort ?? 'createdAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,
@@ -378,7 +378,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
-				onUpdateOwner={handleUpdateOwner}
+				onUpdateDriver={handleUpdateDriver}
 				onDelete={handleDelete}
 				isDeleting={deleteObject.isPending}
 			/>

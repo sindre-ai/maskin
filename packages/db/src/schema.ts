@@ -81,7 +81,7 @@ export const objects = pgTable(
 		content: text('content'),
 		status: text('status').notNull(),
 		metadata: jsonb('metadata'),
-		owner: uuid('owner').references(() => actors.id),
+		driver: uuid('driver').references(() => actors.id),
 		activeSessionId: uuid('active_session_id'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)

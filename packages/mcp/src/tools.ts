@@ -127,6 +127,7 @@ export const tools = {
 							.describe(
 								'Key-value metadata. Call get_workspace_schema to discover available fields and types.',
 							),
+						driver: z.string().uuid().optional().describe('UUID of the driver actor responsible for this object'),
 						file_ids: z
 							.array(z.string().uuid())
 							.optional()
@@ -188,6 +189,7 @@ export const tools = {
 							.describe(
 								'IDs of existing files to attach to this object (upload first with create_file). Each becomes an `attached` relationship; already-attached files are skipped.',
 							),
+						driver: z.string().uuid().nullable().optional().describe('Set or clear the driver'),
 						detach_file_ids: z
 							.array(z.string().uuid())
 							.optional()
@@ -221,11 +223,12 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or driver. Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
+			driver: z.string().uuid().optional().describe('Filter to objects with this driver actor UUID'),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),

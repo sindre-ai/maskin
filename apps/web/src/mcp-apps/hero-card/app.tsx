@@ -21,7 +21,7 @@ interface HeroCardObject {
 	type: string
 	title: string | null
 	status: string | null
-	owner: HeroCardActor | null
+	driver: HeroCardActor | null
 	contextLine: string
 	badges?: string[]
 }
@@ -149,9 +149,9 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 				{object.contextLine}
 			</p>
 			<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
-				{object.owner?.name && (
+				{object.driver?.name && (
 					<span className="text-[11.5px] text-muted-foreground tabular-nums">
-						Owner: {object.owner.name}
+						Driver: {object.driver.name}
 					</span>
 				)}
 				{href ? (
