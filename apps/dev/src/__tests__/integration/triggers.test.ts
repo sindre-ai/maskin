@@ -99,6 +99,25 @@ describe('Triggers Integration', () => {
 		})
 	})
 
+	describe('actionPrompt persistence', () => {
+		it('persists actionPrompt to database when updated via PATCH', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const actorId = getTestActorId()
+
+			const trigger = await insertTrigger(db, workspaceId, actorId, targetActorId)
+
+			const newPrompt = 'Updated action prompt for integration test'
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { actionPrompt: newPrompt }, headers),
+			)
+			expect(res.status).toBe(200)
+
+			const [row] = await db.select().from(triggers).where(eq(triggers.id, trigger.id))
+			expect(row.actionPrompt).toBe(newPrompt)
+		})
+	})
+
 	describe('event matching config', () => {
 		it('stores trigger with complex event config', async () => {
 			const app = createApp()
