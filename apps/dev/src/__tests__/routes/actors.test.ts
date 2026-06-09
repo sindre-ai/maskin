@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { PLATFORM_MCP_PRESET, SINDRE_DEFAULT } from '@maskin/shared'
 import { buildActor, buildCreateActorBody, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createImportTestApp, createTestApp } from '../setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 
@@ -786,6 +786,67 @@ describe('Actors Routes', () => {
 			expect(body.name).toBe('Sindre')
 			expect(body.email).toBe('sindre@maskin')
 			expect(body.memory).toEqual({ notes: 'user preference: concise replies' })
+		})
+	})
+
+	describe('GET /api/actors/:id/avatar', () => {
+		it('serves blob with correct Content-Type and cache headers', async () => {
+			const actorId = randomUUID()
+			const actor = buildActor({ id: actorId, avatarStorageKey: `actors/${actorId}/avatar.jpg` })
+			const imageBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
+			const { app, mockResults, storageProvider } = createImportTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [actor]
+			vi.mocked(storageProvider.get).mockResolvedValue(imageBytes)
+
+			const res = await app.request(
+				new Request(`http://localhost/api/actors/${actorId}/avatar`),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('Content-Type')).toBe('image/jpeg')
+			expect(res.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable')
+		})
+
+		it('derives image/png content-type for .png storage key', async () => {
+			const actorId = randomUUID()
+			const actor = buildActor({ id: actorId, avatarStorageKey: `actors/${actorId}/avatar.png` })
+			const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+			const { app, mockResults, storageProvider } = createImportTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [actor]
+			vi.mocked(storageProvider.get).mockResolvedValue(imageBytes)
+
+			const res = await app.request(
+				new Request(`http://localhost/api/actors/${actorId}/avatar`),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('Content-Type')).toBe('image/png')
+		})
+
+		it('returns 404 when actor has no avatar_storage_key', async () => {
+			const actor = buildActor({ avatarStorageKey: null })
+			const { app, mockResults } = createImportTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [actor]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/actors/${actor.id}/avatar`),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when storage.get throws', async () => {
+			const actorId = randomUUID()
+			const actor = buildActor({ id: actorId, avatarStorageKey: `actors/${actorId}/avatar.png` })
+			const { app, mockResults, storageProvider } = createImportTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [actor]
+			vi.mocked(storageProvider.get).mockRejectedValue(new Error('blob missing'))
+
+			const res = await app.request(
+				new Request(`http://localhost/api/actors/${actorId}/avatar`),
+			)
+
+			expect(res.status).toBe(404)
 		})
 	})
 })
