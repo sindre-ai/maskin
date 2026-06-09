@@ -16,10 +16,12 @@ import {
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { useChat } from '@/lib/chat-context'
 import { usePageHeader } from '@/lib/page-header-context'
+import { ConversationDrawer } from '@/components/chat/conversation-drawer'
+import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Bot, Layers, Plus, Sparkles, Zap } from 'lucide-react'
-import { Fragment } from 'react'
+import { ArrowLeft, Bot, Layers, MessageSquare, Plus, Sparkles, Zap } from 'lucide-react'
+import { Fragment, useState } from 'react'
 
 interface RouteConfig {
 	label: string
@@ -114,6 +116,7 @@ export function Header() {
 	const router = useRouter()
 	const navigate = useNavigate()
 	const { workspaceId } = useWorkspace()
+	const [conversationsOpen, setConversationsOpen] = useState(false)
 
 	// Find the leaf (last non-hidden) match
 	const leafMatch = [...matches].reverse().find((m) => !hiddenRoutes.has(m.routeId))
@@ -218,13 +221,22 @@ export function Header() {
 						variant="ghost"
 						size="icon"
 						className="h-7 w-7"
-						onClick={() => setChatOpen(true)}
-						aria-label="Open chat"
+						onClick={() => setConversationsOpen(true)}
+						aria-label="Open conversations"
 					>
+						<MessageSquare size={15} />
+					</Button>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7"
+						onClick={() => setSindreOpen(true)}
+						aria-label="Open Sindre"
 						<Sparkles size={15} />
 					</Button>
 				</div>
 			</div>
+			<ConversationDrawer open={conversationsOpen} onOpenChange={setConversationsOpen} />
 		</header>
 	)
 }

@@ -621,6 +621,26 @@ export const api = {
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
 	},
+	conversations: {
+		list: (workspaceId: string) =>
+			request<ConversationResponse[]>('/conversations', { workspaceId }),
+		create: (workspaceId: string, data: CreateConversationInput) =>
+			request<ConversationResponse>('/conversations', { method: 'POST', body: data, workspaceId }),
+		messages: (workspaceId: string, id: string, params?: { limit?: number; offset?: number }) => {
+			const qs = params
+				? `?${new URLSearchParams(
+						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
+							if (v !== undefined) acc[k] = String(v)
+							return acc
+						}, {}),
+					)}`
+				: ''
+			return request<{ data: MessageResponse[]; total: number }>(
+				`/conversations/${id}/messages${qs}`,
+				{ workspaceId },
+			)
+		},
+	},
 }
 
 export type ClaudeOAuthSlot = 'primary' | 'backup'
@@ -1305,4 +1325,30 @@ interface InstalledPackageForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface ConversationResponse {
+	id: string
+	workspaceId: string
+	title: string | null
+	type: 'dm' | 'room'
+	lastMessagePreview: string | null
+	lastActivityAt: string | null
+	createdAt: string
+	participantCount: number
+}
+
+export interface CreateConversationInput {
+	title?: string | null
+	type: 'dm' | 'room'
+	participant_actor_ids: string[]
+}
+
+export interface MessageResponse {
+	id: string
+	conversationId: string
+	actorId: string
+	content: string
+	createdAt: string
+}
 }
