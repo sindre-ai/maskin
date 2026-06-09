@@ -2042,7 +2042,13 @@ export function createMcpServer(config: McpConfig) {
 			const toEntry = (settled: PromiseSettledResult<unknown>, skillId: string) =>
 				settled.status === 'fulfilled'
 					? settled.value
-					: { skill_id: skillId, error: (settled.reason as Error).message }
+					: {
+							skill_id: skillId,
+							error:
+								settled.reason instanceof Error
+									? settled.reason.message
+									: String(settled.reason),
+						}
 
 			const attachCount = attachIds.length
 			const output: Record<string, unknown> = { actor }
