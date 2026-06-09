@@ -11,7 +11,8 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 	RESOURCE_MIME_TYPE: 'text/html',
 }))
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
+	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
