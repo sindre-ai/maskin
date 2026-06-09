@@ -116,7 +116,8 @@ app.post('/', async (c) => {
 		return c.json(createApiError('VALIDATION_ERROR', 'Body must be JSON'), 400)
 	}
 
-	const ip = extractClientIp(c.req.raw, c.req.header('X-Forwarded-For'))
+	const socketIp = (c.req.raw as unknown as { remoteAddress?: string }).remoteAddress
+	const ip = extractClientIp(socketIp, c.req.header('X-Forwarded-For'))
 	const ua = c.req.header('User-Agent') ?? null
 	const now = Date.now()
 
@@ -184,16 +185,103 @@ app.onError((err, c) => {
 	return c.json(createApiError('INTERNAL_ERROR', 'An unexpected error occurred'), 500)
 })
 
-// X-Forwarded-For is set by our edge; fall back to socket remoteAddress in
-// dev. We take the first hop because anything later is a chained proxy we
-// don't trust. Mirrors the helper used by the landing-page routes.
-function extractClientIp(req: Request, fwd: string | undefined): string {
-	if (fwd) {
-		const first = fwd.split(',')[0]?.trim()
-		if (first) return first
+// ---------------------------------------------------------------------------
+// Trusted-proxy CIDR validation
+//
+// X-Forwarded-For is only honoured when the socket-level remote address
+// belongs to a known edge proxy, preventing per-IP throttle spoofing if the
+// endpoint is ever reached without the edge in front. Configure via the
+// TRUSTED_PROXY_CIDRS env var (comma-separated CIDR blocks).
+// Default: loopback only (127.0.0.1/32,::1/128).
+// ---------------------------------------------------------------------------
+
+type Ipv4Cidr = { family: 4; network: number; mask: number }
+type Ipv6Prefix = { family: 6; address: string }
+type ParsedCidr = Ipv4Cidr | Ipv6Prefix
+
+function parseIpv4Int(addr: string): number | null {
+	const parts = addr.split('.')
+	if (parts.length !== 4) return null
+	let result = 0
+	for (const part of parts) {
+		const octet = Number(part)
+		if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null
+		result = ((result << 8) | octet) >>> 0
 	}
-	const remote = (req as unknown as { remoteAddress?: string }).remoteAddress
-	return remote || 'unknown'
+	return result
+}
+
+function parseIpv4Cidr(cidr: string): Ipv4Cidr | null {
+	const slashIdx = cidr.indexOf('/')
+	if (slashIdx === -1) return null
+	const addr = cidr.slice(0, slashIdx)
+	const prefix = Number(cidr.slice(slashIdx + 1))
+	if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return null
+	const ip = parseIpv4Int(addr)
+	if (ip === null) return null
+	const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0
+	return { family: 4, network: ip & mask, mask }
+}
+
+function parseCidrs(raw: string): ParsedCidr[] {
+	const result: ParsedCidr[] = []
+	for (const entry of raw.split(',')) {
+		const cidr = entry.trim()
+		if (!cidr) continue
+		if (cidr.includes(':')) {
+			// IPv6: store the address portion for equality matching (supports /128).
+			result.push({ family: 6, address: cidr.split('/')[0] ?? cidr })
+			continue
+		}
+		const parsed = parseIpv4Cidr(cidr)
+		if (!parsed) {
+			logger.warn('landing-events: invalid TRUSTED_PROXY_CIDRS entry, skipping', { cidr })
+			continue
+		}
+		result.push(parsed)
+	}
+	return result
+}
+
+function isInCidr(socketIp: string, cidr: ParsedCidr): boolean {
+	// Strip IPv4-mapped IPv6 prefix (::ffff:1.2.3.4 → 1.2.3.4) for uniform matching.
+	const ip = socketIp.replace(/^::ffff:/i, '')
+	if (cidr.family === 6) {
+		return ip === cidr.address || socketIp === cidr.address
+	}
+	const ipInt = parseIpv4Int(ip)
+	if (ipInt === null) return false
+	return (ipInt & cidr.mask) === cidr.network
+}
+
+let _trustedCidrs: ParsedCidr[] | null = null
+
+function getTrustedCidrs(): ParsedCidr[] {
+	if (_trustedCidrs === null) {
+		_trustedCidrs = parseCidrs(process.env.TRUSTED_PROXY_CIDRS ?? '127.0.0.1/32,::1/128')
+	}
+	return _trustedCidrs
+}
+
+// Test-only: re-parse TRUSTED_PROXY_CIDRS after env changes.
+export function _resetTrustedCidrs(): void {
+	_trustedCidrs = null
+}
+
+// Resolves the real client IP. X-Forwarded-For is only trusted when the
+// socket-level remote address is in the configured trusted proxy CIDR list.
+// Falls back to the socket address directly (or 'unknown') when the request
+// does not arrive from a known proxy — making spoofing impossible even if the
+// endpoint is accidentally exposed without the edge in front.
+export function extractClientIp(socketIp: string | undefined, fwd: string | undefined): string {
+	if (socketIp && fwd) {
+		const cidrs = getTrustedCidrs()
+		if (cidrs.some((c) => isInCidr(socketIp, c))) {
+			const first = fwd.split(',')[0]?.trim()
+			if (first) return first
+		}
+	}
+	return socketIp || 'unknown'
 }
 
 export default app

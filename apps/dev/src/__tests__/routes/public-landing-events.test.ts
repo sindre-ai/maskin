@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import publicLandingEventsRoutes, {
 	_resetLandingEventBuckets,
+	_resetTrustedCidrs,
+	extractClientIp,
 } from '../../routes/public-landing-events'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -25,6 +27,7 @@ function capturedLogs(): Array<Record<string, unknown>> {
 describe('POST /api/public/landing-events', () => {
 	beforeEach(() => {
 		_resetLandingEventBuckets()
+		_resetTrustedCidrs()
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
 		vi.spyOn(console, 'error').mockImplementation(() => undefined)
 	})
@@ -56,6 +59,8 @@ describe('POST /api/public/landing-events', () => {
 				'/api/public/landing-events',
 				{ events },
 				{ 'X-Forwarded-For': '1.2.3.4' },
+				// 127.0.0.1 is in the default trusted CIDR list, so XFF is honoured.
+				{ remoteAddress: '127.0.0.1' },
 			),
 		)
 
@@ -83,6 +88,7 @@ describe('POST /api/public/landing-events', () => {
 				'/api/public/landing-events',
 				{ events: [{ name: 'experimental_event', anonId: 'anon-aaaa1111' }] },
 				{ 'X-Forwarded-For': '5.6.7.8' },
+				{ remoteAddress: '127.0.0.1' },
 			),
 		)
 
@@ -150,13 +156,20 @@ describe('POST /api/public/landing-events', () => {
 		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
 		const ip = '10.0.0.99'
 		// Capacity is 120. Six batches of 20 drain it; the 7th call should 429.
+		// Socket 127.0.0.1 is in the default trusted CIDR list so XFF is used.
 		for (let i = 0; i < 6; i++) {
 			const events = Array.from({ length: 20 }, (_, n) => ({
 				name: 'page_view',
 				anonId: `anon-flood${String(i)}${String(n).padStart(3, '0')}`,
 			}))
 			const ok = await app.request(
-				jsonRequest('POST', '/api/public/landing-events', { events }, { 'X-Forwarded-For': ip }),
+				jsonRequest(
+					'POST',
+					'/api/public/landing-events',
+					{ events },
+					{ 'X-Forwarded-For': ip },
+					{ remoteAddress: '127.0.0.1' },
+				),
 			)
 			expect(ok.status).toBe(204)
 		}
@@ -166,6 +179,7 @@ describe('POST /api/public/landing-events', () => {
 				'/api/public/landing-events',
 				{ events: [{ name: 'page_view', anonId: 'anon-overflow01' }] },
 				{ 'X-Forwarded-For': ip },
+				{ remoteAddress: '127.0.0.1' },
 			),
 		)
 		expect(blocked.status).toBe(429)
@@ -174,9 +188,9 @@ describe('POST /api/public/landing-events', () => {
 		expect(body.error.code).toBe('RATE_LIMITED')
 	})
 
-	it('isolates buckets per IP so one floods does not block another', async () => {
+	it('isolates buckets per IP so one flood does not block another', async () => {
 		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
-		// Drain ip-A.
+		// Drain ip-A. Both use 127.0.0.1 as the trusted socket so XFF is honoured.
 		for (let i = 0; i < 6; i++) {
 			const events = Array.from({ length: 20 }, (_, n) => ({
 				name: 'page_view',
@@ -188,6 +202,7 @@ describe('POST /api/public/landing-events', () => {
 					'/api/public/landing-events',
 					{ events },
 					{ 'X-Forwarded-For': '20.0.0.1' },
+					{ remoteAddress: '127.0.0.1' },
 				),
 			)
 		}
@@ -197,6 +212,7 @@ describe('POST /api/public/landing-events', () => {
 				'/api/public/landing-events',
 				{ events: [{ name: 'page_view', anonId: 'anon-ipA-x01' }] },
 				{ 'X-Forwarded-For': '20.0.0.1' },
+				{ remoteAddress: '127.0.0.1' },
 			),
 		)
 		expect(blockedA.status).toBe(429)
@@ -206,8 +222,54 @@ describe('POST /api/public/landing-events', () => {
 				'/api/public/landing-events',
 				{ events: [{ name: 'page_view', anonId: 'anon-ipB-y01' }] },
 				{ 'X-Forwarded-For': '20.0.0.2' },
+				{ remoteAddress: '127.0.0.1' },
 			),
 		)
 		expect(okB.status).toBe(204)
+	})
+})
+
+describe('extractClientIp — trusted-proxy CIDR validation', () => {
+	beforeEach(() => {
+		_resetTrustedCidrs()
+	})
+
+	it('uses XFF when socket is a loopback address (default trusted CIDR)', () => {
+		expect(extractClientIp('127.0.0.1', '1.2.3.4')).toBe('1.2.3.4')
+	})
+
+	it('uses XFF when socket is an IPv6 loopback (default trusted CIDR)', () => {
+		expect(extractClientIp('::1', '5.6.7.8')).toBe('5.6.7.8')
+	})
+
+	it('falls back to socket IP when socket is not a trusted proxy', () => {
+		expect(extractClientIp('203.0.113.5', '1.2.3.4')).toBe('203.0.113.5')
+	})
+
+	it('falls back to unknown when socket is undefined', () => {
+		expect(extractClientIp(undefined, '1.2.3.4')).toBe('unknown')
+	})
+
+	it('returns unknown when both socket and XFF are absent', () => {
+		expect(extractClientIp(undefined, undefined)).toBe('unknown')
+	})
+
+	it('respects TRUSTED_PROXY_CIDRS env var for private ranges', () => {
+		process.env.TRUSTED_PROXY_CIDRS = '10.0.0.0/8'
+		_resetTrustedCidrs()
+		expect(extractClientIp('10.1.2.3', '1.2.3.4')).toBe('1.2.3.4')
+		expect(extractClientIp('192.168.1.1', '1.2.3.4')).toBe('192.168.1.1')
+		process.env.TRUSTED_PROXY_CIDRS = undefined
+	})
+
+	it('takes the first hop of a multi-hop XFF when proxy is trusted', () => {
+		expect(extractClientIp('127.0.0.1', '1.2.3.4, 10.0.0.1, 172.16.0.1')).toBe('1.2.3.4')
+	})
+
+	it('ignores XFF when no trusted CIDRs are configured', () => {
+		process.env.TRUSTED_PROXY_CIDRS = ''
+		_resetTrustedCidrs()
+		expect(extractClientIp('127.0.0.1', '1.2.3.4')).toBe('127.0.0.1')
+		process.env.TRUSTED_PROXY_CIDRS = undefined
 	})
 })

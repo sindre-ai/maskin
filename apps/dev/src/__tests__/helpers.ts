@@ -7,8 +7,9 @@ export function jsonRequest(
 	path: string,
 	body?: unknown,
 	headers?: Record<string, string>,
+	options?: { remoteAddress?: string },
 ) {
-	return new Request(`http://localhost${path}`, {
+	const req = new Request(`http://localhost${path}`, {
 		method,
 		headers: {
 			'Content-Type': 'application/json',
@@ -16,6 +17,10 @@ export function jsonRequest(
 		},
 		body: body ? JSON.stringify(body) : undefined,
 	})
+	if (options?.remoteAddress) {
+		;(req as unknown as { remoteAddress: string }).remoteAddress = options.remoteAddress
+	}
+	return req
 }
 
 export function jsonGet(path: string, headers?: Record<string, string>) {
