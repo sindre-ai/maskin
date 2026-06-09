@@ -28,7 +28,7 @@ import type {
 } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check } from 'lucide-react'
+import { Check, User } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
@@ -472,6 +472,10 @@ function OwnerSelect({
 				<SelectValue>
 					{current ? (
 						<span className="inline-flex items-center gap-1.5">
+							{current.type !== 'agent' && (
+								<User className="size-3 text-amber-600 shrink-0" />
+							)}
+							<span className="text-muted-foreground text-[11px]">Driver:</span>
 							<ActorAvatar name={current.name} type={current.type} size="sm" />
 							{current.name}
 						</span>
@@ -480,7 +484,7 @@ function OwnerSelect({
 							Unknown ({currentOwnerId.slice(0, 8)})
 						</span>
 					) : (
-						<span className="text-muted-foreground">Unassigned</span>
+						<span className="text-muted-foreground">Driver: Unassigned</span>
 					)}
 				</SelectValue>
 			</SelectTrigger>
