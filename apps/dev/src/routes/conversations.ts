@@ -7,12 +7,14 @@ import {
 	conversations,
 	messages,
 	sessions,
+	workspaceMembers,
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
 	addParticipantSchema,
 	createConversationSchema,
 	messagesQuerySchema,
+	participantActorSchema,
 	sendMessageSchema,
 } from '@maskin/shared'
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
@@ -46,13 +48,6 @@ const app = new OpenAPIHono<Env>({
 		}
 		return undefined
 	},
-})
-
-const participantActorSchema = z.object({
-	actorId: z.string().uuid(),
-	name: z.string(),
-	type: z.string(),
-	isOnline: z.boolean(),
 })
 
 const conversationResponseSchema = z.object({
@@ -128,6 +123,12 @@ app.openapi(listConversationsRoute, (async (c) => {
 		)
 		.limit(1)
 
+	// Subquery: conversation IDs where the current actor is a participant
+	const actorConversationIds = db
+		.select({ conversationId: conversationParticipants.conversationId })
+		.from(conversationParticipants)
+		.where(eq(conversationParticipants.actorId, actorId))
+
 	const rows = await db
 		.select({
 			id: conversations.id,
@@ -141,7 +142,12 @@ app.openapi(listConversationsRoute, (async (c) => {
 			unreadCount: sql<number>`coalesce((${unreadCountSubquery}), 0)`,
 		})
 		.from(conversations)
-		.where(eq(conversations.workspaceId, workspaceId))
+		.where(
+			and(
+				eq(conversations.workspaceId, workspaceId),
+				inArray(conversations.id, actorConversationIds),
+			),
+		)
 		.orderBy(desc(conversations.lastActivityAt))
 		.limit(5)
 
@@ -389,12 +395,19 @@ app.openapi(sendMessageRoute, (async (c) => {
 			entityId: id,
 		})
 
-		// Resolve @mentioned agent actors for session dispatch
+		// Resolve @mentioned agent actors for session dispatch — scoped to workspace members only
 		const mentions: Array<{ agentId: string; name: string }> = []
 		if (body.mentions?.length) {
 			const mentionedActors = await tx
 				.select({ id: actors.id, type: actors.type, name: actors.name })
 				.from(actors)
+				.innerJoin(
+					workspaceMembers,
+					and(
+						eq(workspaceMembers.actorId, actors.id),
+						eq(workspaceMembers.workspaceId, workspaceId),
+					),
+				)
 				.where(inArray(actors.id, body.mentions))
 
 			for (const actor of mentionedActors) {
@@ -414,8 +427,8 @@ app.openapi(sendMessageRoute, (async (c) => {
 		sessionManager
 			.createSession(workspaceId, {
 				actorId: mention.agentId,
-				actionPrompt: `You were @mentioned in conversation "${conversation.title ?? id}". Message: ${body.content}`,
-				config: { conversation_id: id },
+				actionPrompt: `You were @mentioned in conversation "${conversation.title ?? id}".`,
+				config: { conversation_id: id, message_content: body.content },
 				createdBy: actorId,
 				autoStart: true,
 			})
