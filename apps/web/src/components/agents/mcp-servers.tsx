@@ -18,6 +18,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useIntegrations } from '@/hooks/use-integrations'
 import type { IntegrationResponse } from '@/lib/api'
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import { useWorkspace } from '@/lib/workspace-context'
 import { FileJson, Globe, Pencil, Plus, Terminal, Trash2, Zap } from 'lucide-react'
 import { useCallback, useState } from 'react'
@@ -163,12 +164,11 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 		const updated = { ...servers }
 		for (const i of unaddedGithubInstallations) {
 			const ownerLogin = i.config.owner_login as string
-			const sanitized = ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
 			updated[`github-${ownerLogin.toLowerCase()}`] = {
 				type: 'stdio',
 				command: 'npx',
 				args: ['-y', '@modelcontextprotocol/server-github'],
-				env: { GITHUB_TOKEN: `\${GITHUB_TOKEN_${sanitized}}` },
+				env: { GITHUB_TOKEN: `\${GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}}` },
 			}
 		}
 		onUpdate({ mcpServers: updated })

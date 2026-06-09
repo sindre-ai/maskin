@@ -16,6 +16,7 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
 import { frontendBaseUrl } from '../lib/file-urls'
@@ -790,8 +791,7 @@ export class SessionManager extends EventEmitter {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
 					if (!ownerLogin) continue
 
-					const sanitizedOwner = ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
-					envVars[`GITHUB_TOKEN_${sanitizedOwner}`] = accessToken
+					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
 				} else {
 					const envVarName =
 						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
