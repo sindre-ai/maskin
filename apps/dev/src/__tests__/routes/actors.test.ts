@@ -807,6 +807,22 @@ describe('Actors Routes', () => {
 			expect(res.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable')
 		})
 
+		it('derives image/png content-type for .png storage key', async () => {
+			const actorId = randomUUID()
+			const actor = buildActor({ id: actorId, avatarStorageKey: `actors/${actorId}/avatar.png` })
+			const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+			const { app, mockResults, storageProvider } = createImportTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = [actor]
+			vi.mocked(storageProvider.get).mockResolvedValue(imageBytes)
+
+			const res = await app.request(
+				new Request(`http://localhost/api/actors/${actorId}/avatar`),
+			)
+
+			expect(res.status).toBe(200)
+			expect(res.headers.get('Content-Type')).toBe('image/png')
+		})
+
 		it('returns 404 when actor has no avatar_storage_key', async () => {
 			const actor = buildActor({ avatarStorageKey: null })
 			const { app, mockResults } = createImportTestApp(actorsRoutes, '/api/actors')

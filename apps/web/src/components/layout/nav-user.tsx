@@ -1,4 +1,3 @@
-import { ActorAvatar } from '@/components/shared/actor-avatar'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -44,7 +43,7 @@ export function NavUser() {
 						params={{ workspaceId }}
 						onClick={() => setOpenMobile(false)}
 					>
-						<ActorAvatar name={displayName} type={actor?.type ?? 'human'} size="sm" />
+						<UserCircle />
 						<span className="truncate">{displayName}</span>
 					</Link>
 				</SidebarMenuButton>
