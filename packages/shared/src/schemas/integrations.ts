@@ -37,3 +37,8 @@ export const gmailPubsubMessageDataSchema = z.object({
 	emailAddress: z.string().email(),
 	historyId: z.union([z.string(), z.number()]).transform((v) => String(v)),
 })
+
+/** Converts a GitHub org/user login to the env var suffix used for its token (e.g. "sindre-ai" → "SINDRE_AI"). */
+export function githubOwnerLoginToEnvKey(ownerLogin: string): string {
+	return ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
+}
