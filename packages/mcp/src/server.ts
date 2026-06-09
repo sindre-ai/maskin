@@ -2013,49 +2013,53 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 
+			if (!hasSkillOps) {
+				return {
+					_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(actor, null, 2) }],
+				}
+			}
+
+			// Skill ops run concurrently but with allSettled so a single failure doesn't
+			// discard the results of operations that already succeeded.
+			const skillSettled = await Promise.allSettled([
+				...attachIds.map((skillId) =>
+					apiCall(
+						config,
+						'POST',
+						`/api/actors/${id}/workspace-skills`,
+						{ workspaceSkillId: skillId },
+						{ skipWorkspace: true },
+					),
+				),
+				...detachIds.map((skillId) =>
+					apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
+						skipWorkspace: true,
+					}),
+				),
+			])
+
+			const toEntry = (settled: PromiseSettledResult<unknown>, skillId: string) =>
+				settled.status === 'fulfilled'
+					? settled.value
+					: { skill_id: skillId, error: (settled.reason as Error).message }
+
+			const attachCount = attachIds.length
 			const output: Record<string, unknown> = { actor }
-
-			if (hasSkillOps) {
-				// Skill ops run concurrently but with allSettled so a single failure doesn't
-				// discard the results of operations that already succeeded.
-				const skillSettled = await Promise.allSettled([
-					...attachIds.map((skillId) =>
-						apiCall(
-							config,
-							'POST',
-							`/api/actors/${id}/workspace-skills`,
-							{ workspaceSkillId: skillId },
-							{ skipWorkspace: true },
-						),
-					),
-					...detachIds.map((skillId) =>
-						apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
-							skipWorkspace: true,
-						}),
-					),
-				])
-
-				const toEntry = (settled: PromiseSettledResult<unknown>, skillId: string) =>
-					settled.status === 'fulfilled'
-						? settled.value
-						: { skill_id: skillId, error: (settled.reason as Error).message }
-
-				const attachCount = attachIds.length
-				if (attachIds.length) {
-					output.attached_skills = skillSettled
-						.slice(0, attachCount)
-						// biome-ignore lint/style/noNonNullAssertion: slice bounds match attachIds
-						.map((s, i) => toEntry(s, attachIds[i]!))
-				}
-				if (detachIds.length) {
-					output.detached_skills = skillSettled
-						.slice(attachCount)
-						// biome-ignore lint/style/noNonNullAssertion: slice bounds match detachIds
-						.map((s, i) => toEntry(s, detachIds[i]!))
-				}
-				if (skillSettled.some((s) => s.status === 'rejected')) {
-					output.partial_failure = true
-				}
+			if (attachIds.length) {
+				output.attached_skills = skillSettled
+					.slice(0, attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match attachIds
+					.map((s, i) => toEntry(s, attachIds[i]!))
+			}
+			if (detachIds.length) {
+				output.detached_skills = skillSettled
+					.slice(attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match detachIds
+					.map((s, i) => toEntry(s, detachIds[i]!))
+			}
+			if (skillSettled.some((s) => s.status === 'rejected')) {
+				output.partial_failure = true
 			}
 
 			return {
