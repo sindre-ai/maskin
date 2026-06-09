@@ -1,9 +1,10 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createApiError } from '../lib/errors'
+import { checkGuestThrottle } from '../lib/guest-throttle'
 import {
 	LANDING_GUESTS_ACTOR_ID,
 	LANDING_GUESTS_WORKSPACE_ID,
@@ -225,20 +226,14 @@ app.post('/drafts', async (c) => {
 	const todayUtcMidnight = new Date()
 	todayUtcMidnight.setUTCHours(0, 0, 0, 0)
 
-	const cookieRows = await db
-		.select({ count: sql<number>`count(*)::int` })
-		.from(objects)
-		.where(
-			and(
-				eq(objects.workspaceId, LANDING_GUESTS_WORKSPACE_ID),
-				eq(objects.type, 'bet_draft'),
-				sql`${objects.metadata}->>'guestSessionId' = ${body.guestSessionId}`,
-				gte(objects.createdAt, todayUtcMidnight),
-			),
-		)
+	const { allowed: cookieAllowed, count: cookieCount } = await checkGuestThrottle(
+		db,
+		body.guestSessionId,
+		caps.perCookie,
+		todayUtcMidnight,
+	)
 
-	const cookieCount = Number(cookieRows[0]?.count ?? 0)
-	if (cookieCount >= caps.perCookie) {
+	if (!cookieAllowed) {
 		logger.info('public-bet-strategist: per-cookie cap reached', {
 			guestSessionId: body.guestSessionId,
 			count: cookieCount,
