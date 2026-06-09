@@ -102,6 +102,26 @@ export const objectQuerySchema = z.object({
 	offset: z.coerce.number().int().min(0).default(0),
 })
 
+export const boardObjectQuerySchema = objectQuerySchema.extend({
+	type: objectTypeSchema,
+	q: z.string().optional(),
+	groupBy: z.string().max(200).optional(),
+	column: z.string().max(200).optional(),
+	limit: z.coerce.number().int().min(1).max(100).default(20),
+})
+
+export const boardObjectColumnSchema = z.object({
+	id: z.string(),
+	label: z.string(),
+	value: z.string(),
+	total: z.number().int().nonnegative(),
+	objects: z.array(z.unknown()),
+})
+
+export const boardObjectResponseSchema = z.object({
+	columns: z.array(boardObjectColumnSchema),
+})
+
 export const searchObjectsSchema = z.object({
 	q: z.string().min(1),
 	type: objectTypeSchema.optional(),

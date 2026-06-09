@@ -70,14 +70,50 @@ describe('DisplayPanel', () => {
 		expect(screen.getByText('Properties')).toBeInTheDocument()
 	})
 
-	it('renders List active and Board disabled in View section', async () => {
+	it('renders both List and Board pills when board is supported (default)', async () => {
 		const user = userEvent.setup()
 		renderPanel()
 		await user.click(screen.getByRole('button', { name: /display/i }))
+		expect(screen.getByRole('button', { name: 'List' })).toBeInTheDocument()
+		const board = screen.getByRole('button', { name: 'Board' })
+		expect(board).toBeInTheDocument()
+		expect(board).not.toBeDisabled()
+	})
+
+	it('disables Board pill when boardSupported is false', async () => {
+		const user = userEvent.setup()
+		renderPanel({ boardSupported: false })
+		await user.click(screen.getByRole('button', { name: /display/i }))
 		const board = screen.getByRole('button', { name: 'Board' })
 		expect(board).toBeDisabled()
-		expect(board).toHaveAttribute('title', expect.stringContaining('coming soon'))
-		expect(screen.getByRole('button', { name: 'List' })).toBeInTheDocument()
+		expect(board).toHaveAttribute('title', expect.stringContaining('statuses'))
+	})
+
+	it('calls onViewChange when Board is clicked', async () => {
+		const user = userEvent.setup()
+		const onViewChange = vi.fn()
+		renderPanel({ view: 'list', onViewChange })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		await user.click(screen.getByRole('button', { name: 'Board' }))
+		expect(onViewChange).toHaveBeenCalledWith('board')
+	})
+
+	it('calls onViewChange when List is clicked from board view', async () => {
+		const user = userEvent.setup()
+		const onViewChange = vi.fn()
+		renderPanel({ view: 'board', onViewChange })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		await user.click(screen.getByRole('button', { name: 'List' }))
+		expect(onViewChange).toHaveBeenCalledWith('list')
+	})
+
+	it('does not call onViewChange when disabled Board is clicked', async () => {
+		const user = userEvent.setup()
+		const onViewChange = vi.fn()
+		renderPanel({ boardSupported: false, onViewChange })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		await user.click(screen.getByRole('button', { name: 'Board' }))
+		expect(onViewChange).not.toHaveBeenCalled()
 	})
 
 	it('toggles order when the asc/desc affordance is clicked', async () => {
@@ -86,6 +122,25 @@ describe('DisplayPanel', () => {
 		await user.click(screen.getByRole('button', { name: /display/i }))
 		await user.click(screen.getByRole('button', { name: /descending/i }))
 		expect(props.onOrderChange).toHaveBeenCalledWith('asc')
+	})
+
+	it('offers Manual ordering only in board view', async () => {
+		const user = userEvent.setup()
+		const { props } = renderPanel({ view: 'board' })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		const orderingSection = screen.getByText('Ordering').closest('div') as HTMLElement
+		await user.click(within(orderingSection).getByRole('button', { name: /created/i }))
+		await user.click(screen.getByRole('menuitem', { name: /manual/i }))
+		expect(props.onSortChange).toHaveBeenCalledWith('boardOrder')
+	})
+
+	it('hides the direction toggle for Manual board ordering', async () => {
+		const user = userEvent.setup()
+		renderPanel({ view: 'board', sort: 'boardOrder', order: 'asc' })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		expect(screen.getByRole('button', { name: /manual/i })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /ascending/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /descending/i })).not.toBeInTheDocument()
 	})
 
 	it('clears both filters when Reset is clicked', async () => {

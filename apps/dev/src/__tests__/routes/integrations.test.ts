@@ -19,8 +19,22 @@ vi.mock('../../lib/integrations/registry', async () => {
 	}
 })
 
+// Stub fetchInstallationOwnerLogin so the github callback path doesn't make a
+// live api.github.com call during unit tests. Keep `githubAuth` as-is so the
+// registry's customAuth handler still works.
+vi.mock('../../lib/integrations/providers/github/auth', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../lib/integrations/providers/github/auth')
+	>('../../lib/integrations/providers/github/auth')
+	return {
+		...actual,
+		fetchInstallationOwnerLogin: vi.fn(async (installationId: string) => `owner-${installationId}`),
+	}
+})
+
 const { getProvider } = await import('../../lib/integrations/registry')
 const { default: integrationsRoutes, webhookApp } = await import('../../routes/integrations')
+const { fetchInstallationOwnerLogin } = await import('../../lib/integrations/providers/github/auth')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 
@@ -101,6 +115,106 @@ describe('Integrations Routes', () => {
 			const body = await res.json()
 			expect(body.install_url).toBeDefined()
 			expect(body.install_url).toContain('github.com')
+		})
+
+		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {
+			const originalFrontendUrl = process.env.FRONTEND_URL
+			process.env.FRONTEND_URL = 'http://localhost:5173'
+			try {
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.insert = [{ id: '11111111-1111-1111-1111-111111111111' }]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/integrations/posthog/connect',
+						{ api_key: 'phx_test_personal_key' },
+						{
+							'x-workspace-id': wsId,
+						},
+					),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.install_url).toBe(`http://localhost:5173/${wsId}/settings/integrations`)
+
+				const integrationInsert = calls.inserts[0] as Record<string, unknown>
+				expect(integrationInsert.provider).toBe('posthog')
+				expect(integrationInsert.status).toBe('active')
+				expect(integrationInsert.externalId).toBe('posthog-personal')
+				expect(typeof integrationInsert.credentials).toBe('string')
+				expect((integrationInsert.credentials as string).length).toBeGreaterThan(0)
+				// Credentials must be encrypted, not the plain request value
+				expect(integrationInsert.credentials).not.toBe('phx_test_personal_key')
+
+				const eventInsert = calls.inserts[1] as Record<string, unknown>
+				expect(eventInsert.entityType).toBe('integration')
+				expect(eventInsert.action).toBe('created')
+				expect((eventInsert.data as Record<string, unknown>).provider).toBe('posthog')
+				expect((eventInsert.data as Record<string, unknown>).auth_type).toBe('api_key')
+			} finally {
+				if (originalFrontendUrl === undefined) {
+					Reflect.deleteProperty(process.env, 'FRONTEND_URL')
+				} else {
+					process.env.FRONTEND_URL = originalFrontendUrl
+				}
+			}
+		})
+
+		it('refreshes an existing active api_key integration instead of inserting a duplicate', async () => {
+			try {
+				const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+				mockResults.selectQueue = [[{ id: 'existing-integration-id' }]]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/integrations/posthog/connect',
+						{ api_key: 'phx_test_personal_key' },
+						{
+							'x-workspace-id': wsId,
+						},
+					),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.inserts.length).toBeGreaterThanOrEqual(1)
+				expect(
+					calls.inserts.find(
+						(entry: Record<string, unknown>) =>
+							entry.action === 'created' &&
+							entry.entityType === 'integration' &&
+							(entry.data as Record<string, unknown>)?.provider === 'posthog',
+					),
+				).toMatchObject({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					action: 'created',
+					entityType: 'integration',
+					data: {
+						provider: 'posthog',
+						external_id: 'posthog-personal',
+						auth_type: 'api_key',
+					},
+				})
+			} finally {
+				// No env state to restore for PostHog anymore.
+			}
+		})
+
+		it('returns 400 when api_key provider request body is missing', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/posthog/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('requires an API key')
 		})
 
 		it('returns 200 with install_url for standard oauth2 provider (slack)', async () => {
@@ -408,7 +522,7 @@ describe('Integrations Routes', () => {
 			}
 		})
 
-		it('uses installation_id as external ID when provided in github callback', async () => {
+		it('uses installation_id as external ID and persists config.owner_login in github callback', async () => {
 			const { encrypt } = await import('../../lib/crypto')
 			const nonce = 'fallback-nonce-1234567890'
 			const state = encrypt(
@@ -426,12 +540,13 @@ describe('Integrations Routes', () => {
 			})
 			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
 			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
-			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
 			mockResults.selectQueue = [
 				[pendingIntegration], // pending integration lookup
 				[member], // membership check
 				[systemActor], // system actor lookup
 				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				[], // existing-active-row lookup — first time seeing this installation
 			]
 
 			// GitHub callback with installation_id — uses installation_id as externalId
@@ -442,6 +557,144 @@ describe('Integrations Routes', () => {
 			)
 
 			expect(res.status).toBe(302)
+			expect(fetchInstallationOwnerLogin).toHaveBeenCalledWith('42')
+
+			const activateCall = calls.updates.find(
+				(u): u is { status?: string; externalId?: string; config?: { owner_login?: string } } =>
+					!!u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCall).toBeDefined()
+			expect(activateCall?.externalId).toBe('42')
+			expect(activateCall?.config).toEqual({
+				system_actor_id: 'system-actor-id',
+				owner_login: 'owner-42',
+			})
+		})
+
+		it('connecting a second github installation creates a new row and leaves the first untouched', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'second-install-nonce'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup (the row for THIS connect)
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				// existing-active-row lookup for installation_id=200 — empty because the
+				// already-connected installation_id=100 doesn't match this externalId
+				[],
+			]
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=200`,
+				),
+			)
+
+			expect(res.status).toBe(302)
+
+			// Exactly one update — the pending row activates as a NEW active row.
+			// Crucially: nothing else got UPDATE'd (the first installation row, if it
+			// existed, would have its own externalId=100 and the WHERE clause never
+			// matches it).
+			const activateCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCalls).toHaveLength(1)
+			expect(activateCalls[0]).toMatchObject({
+				status: 'active',
+				externalId: '200',
+				config: { system_actor_id: 'system-actor-id', owner_login: 'owner-200' },
+			})
+
+			// No refresh-shaped update (no status field set) — the existing row was untouched.
+			const refreshCalls = calls.updates.filter(
+				(u) =>
+					u &&
+					typeof u === 'object' &&
+					!('status' in (u as Record<string, unknown>)) &&
+					'credentials' in (u as Record<string, unknown>),
+			)
+			expect(refreshCalls).toHaveLength(0)
+		})
+
+		it('re-connecting the same github installation refreshes the existing row in place (no duplicate)', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'reconnect-nonce'
+			const state = encrypt(
+				JSON.stringify({
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					ts: Date.now(),
+					nonce,
+				}),
+			)
+			const pendingIntegration = buildIntegration({
+				workspaceId: wsId,
+				status: 'pending',
+				externalId: nonce,
+			})
+			const existingActive = buildIntegration({
+				workspaceId: wsId,
+				provider: 'github',
+				status: 'active',
+				externalId: '300',
+				config: { system_actor_id: 'system-actor-id', owner_login: 'owner-300' },
+			})
+			const member = buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })
+			const systemActor = { id: 'system-actor-id', type: 'system', name: 'GitHub' }
+			const { app, mockResults, calls } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[pendingIntegration], // pending integration lookup
+				[member], // membership check
+				[systemActor], // system actor lookup
+				[{ workspaceId: wsId, actorId: systemActor.id }], // existing member check
+				[existingActive], // existing-active-row lookup — finds the already-active installation
+			]
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=300`,
+				),
+			)
+
+			expect(res.status).toBe(302)
+
+			// Refresh-shaped update: sets credentials + config but does NOT touch status
+			// (that's how we distinguish "in-place refresh" from "activate pending").
+			const refreshCall = calls.updates.find(
+				(u) =>
+					u &&
+					typeof u === 'object' &&
+					!('status' in (u as Record<string, unknown>)) &&
+					'credentials' in (u as Record<string, unknown>),
+			) as { credentials?: string; config?: { owner_login?: string } } | undefined
+			expect(refreshCall).toBeDefined()
+			expect(refreshCall?.config).toEqual({
+				system_actor_id: 'system-actor-id',
+				owner_login: 'owner-300',
+			})
+
+			// No activate-shaped update — the pending row was NOT promoted to active.
+			const activateCalls = calls.updates.filter(
+				(u) => u && typeof u === 'object' && (u as { status?: string }).status === 'active',
+			)
+			expect(activateCalls).toHaveLength(0)
 		})
 	})
 

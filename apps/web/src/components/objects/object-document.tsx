@@ -36,6 +36,7 @@ import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
+import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
 import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
@@ -146,6 +147,7 @@ export function ObjectDocumentView({
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
+				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
 					<StatusSelect current={object.status} options={statuses} onChange={handleStatusChange} />
 				) : (

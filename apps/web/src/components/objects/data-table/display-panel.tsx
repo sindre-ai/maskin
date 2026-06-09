@@ -25,7 +25,14 @@ export interface DisplayPanelColumn {
 	canHide: boolean
 }
 
+export type DisplayPanelView = 'list' | 'board'
+
 export interface DisplayPanelProps {
+	// View (List | Board)
+	view?: DisplayPanelView
+	onViewChange?: (view: DisplayPanelView) => void
+	// Whether the active type supports board view (false hides Board and forces List)
+	boardSupported?: boolean
 	// Column visibility (Properties section)
 	columns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
@@ -116,8 +123,12 @@ function PickerRow({
 }
 
 const DROPDOWN_CLS = 'min-w-[10rem] max-h-64 overflow-y-auto'
+const BOARD_MANUAL_SORT = 'boardOrder'
 
 export function DisplayPanel({
+	view = 'list',
+	onViewChange,
+	boardSupported = true,
 	columns = [],
 	columnVisibility,
 	onColumnVisibilityChange,
@@ -146,8 +157,12 @@ export function DisplayPanel({
 	const showFilters = !!onStatusFilterChange || !!onOwnerFilterChange
 	const hideableColumns = columns.filter((col) => col.canHide)
 	const showProperties = !!onColumnVisibilityChange && hideableColumns.length > 0
+	const orderingColumns =
+		view === 'board'
+			? [{ id: BOARD_MANUAL_SORT, label: 'Manual', canHide: false }, ...columns]
+			: columns
 
-	const sortLabel = columns.find((c) => c.id === sort)?.label
+	const sortLabel = orderingColumns.find((c) => c.id === sort)?.label
 	const groupLabel = columns.find((c) => c.id === groupBy)?.label
 
 	const typeEntries = Object.entries(statusesByType).filter(([, statuses]) => statuses.length > 0)
@@ -215,16 +230,21 @@ export function DisplayPanel({
 				)}
 			</ResponsivePopoverTrigger>
 			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-0">
-				<div className="max-h-[480px] overflow-y-auto text-left">
+				<div className="min-h-0 overflow-y-auto md:max-h-[480px] text-left">
 					{/* View */}
 					<div className="p-3 space-y-2">
 						<SectionHeader>View</SectionHeader>
 						<div className="flex items-center gap-1.5">
-							<PillButton active>List</PillButton>
+							<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
+								List
+							</PillButton>
 							<PillButton
-								disabled
-								title="Board view — coming soon"
-								aria-label="Board view (coming soon)"
+								active={view === 'board'}
+								disabled={!boardSupported}
+								onClick={boardSupported ? () => onViewChange?.('board') : undefined}
+								title={
+									boardSupported ? undefined : 'Board view needs configured statuses for this type'
+								}
 							>
 								Board
 							</PillButton>
@@ -250,7 +270,7 @@ export function DisplayPanel({
 											</Button>
 										</DropdownMenuTrigger>
 										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-											{columns.map((col) => (
+											{orderingColumns.map((col) => (
 												<DropdownMenuItem
 													key={col.id}
 													onClick={() => onSortChange?.(col.id)}
@@ -262,15 +282,17 @@ export function DisplayPanel({
 											))}
 										</DropdownMenuContent>
 									</DropdownMenu>
-									<button
-										type="button"
-										aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
-										title={order === 'asc' ? 'Ascending' : 'Descending'}
-										onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
-										className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary hover:text-foreground hover:border-border-hover transition-colors"
-									>
-										{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-									</button>
+									{sort !== BOARD_MANUAL_SORT && (
+										<button
+											type="button"
+											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
+											title={order === 'asc' ? 'Ascending' : 'Descending'}
+											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
+											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary hover:text-foreground hover:border-border-hover transition-colors"
+										>
+											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+										</button>
+									)}
 								</PickerRow>
 							</div>
 							<Separator />

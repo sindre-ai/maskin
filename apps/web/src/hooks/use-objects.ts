@@ -2,6 +2,7 @@ import type { createObjectSchema, updateObjectSchema } from '@maskin/shared'
 import { type InfiniteData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { z } from 'zod'
+import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
 import type {
 	BulkUpdateObjectsInput,
 	BulkUpdateObjectsResponse,
@@ -43,6 +44,9 @@ export function useCreateObject(workspaceId: string) {
 		mutationFn: (data: CreateObjectInput) => api.objects.create(workspaceId, data),
 		onSuccess: (data) => {
 			queryClient.setQueryData(queryKeys.objects.detail(data.id), data)
+			if (data.type === 'bet') {
+				trackBetCreated({ entity_id: data.id, entity_type: 'bet' })
+			}
 		},
 		onSettled: (_data, _err, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
@@ -58,6 +62,26 @@ export function useUpdateObject(workspaceId: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateObjectInput }) =>
 			api.objects.update(id, data),
+		onMutate: ({ id }) => {
+			const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(id))
+			return { prevStatus: cached?.status ?? null, type: cached?.type ?? null }
+		},
+		onSuccess: (data, variables, ctx) => {
+			const nextStatus = variables.data.status
+			if (
+				nextStatus &&
+				ctx?.prevStatus &&
+				nextStatus !== ctx.prevStatus &&
+				(data.type === 'bet' || data.type === 'task' || data.type === 'insight')
+			) {
+				trackBetStatusChanged({
+					entity_id: data.id,
+					entity_type: data.type,
+					from: ctx.prevStatus,
+					to: nextStatus,
+				})
+			}
+		},
 		onSettled: (_data, _err, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
@@ -182,8 +206,15 @@ export function useDeleteObject(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (id: string) => api.objects.delete(id),
-		onSuccess: () => {
+		onMutate: (id) => {
+			const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(id))
+			return { type: cached?.type ?? null, id }
+		},
+		onSuccess: (_data, _variables, ctx) => {
 			toast.success('Object deleted')
+			if (ctx?.type === 'bet') {
+				trackBetArchived({ entity_id: ctx.id, entity_type: 'bet' })
+			}
 		},
 		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })

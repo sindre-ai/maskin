@@ -48,6 +48,12 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
+		useQuery: () => ({
+			data: { columns: [] },
+			isLoading: false,
+			isSuccess: true,
+			isError: false,
+		}),
 		useInfiniteQuery: () => ({
 			data: { pages: [[]] },
 			hasNextPage: false,
@@ -58,6 +64,10 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 		}),
 		useQueryClient: () => ({
 			invalidateQueries: vi.fn(),
+			getQueriesData: vi.fn(() => []),
+			setQueryData: vi.fn(),
+			removeQueries: vi.fn(),
+			cancelQueries: vi.fn(),
 		}),
 	}
 })
@@ -113,7 +123,10 @@ vi.mock('@/lib/api', () => ({
 
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
-		objects: { listInfinite: () => ['objects'] },
+		objects: {
+			listInfinite: () => ['objects'],
+			board: () => ['objects', 'board'],
+		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [

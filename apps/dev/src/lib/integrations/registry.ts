@@ -13,6 +13,7 @@ import {
 	resolveExternalId as linearResolveExternalId,
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
+import { config as posthogConfig } from './providers/posthog/config'
 import {
 	config as slackConfig,
 	slackExtractDeliveryId,
@@ -60,6 +61,10 @@ providers.set('gmail', {
 	postInstall: setupGmailWatch,
 	webhookFanOut: fanOutGmailHistory,
 	preDisconnect: stopGmailWatch,
+})
+
+providers.set('posthog', {
+	config: posthogConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

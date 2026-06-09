@@ -1,6 +1,12 @@
-import type { DisplaySettingsBody, SafeMetadata } from '@maskin/shared'
+import type {
+	ActorListItem,
+	ActorResponse,
+	DisplaySettingsBody,
+	SafeMetadata,
+	TriggerResponse,
+} from '@maskin/shared'
 
-export type { DisplaySettingsBody }
+export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -161,6 +167,10 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
 		},
+		board: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<BoardObjectResponse>(`/objects/board${qs}`, { workspaceId })
+		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
 			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
@@ -281,9 +291,10 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string) =>
+		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
 			request<{ install_url: string }>(`/integrations/${provider}/connect`, {
 				method: 'POST',
+				body,
 				workspaceId,
 			}),
 		disconnect: (id: string, workspaceId: string) =>
@@ -581,6 +592,18 @@ export interface ObjectResponse {
 	subscriber_count?: number
 }
 
+export interface BoardObjectColumn {
+	id: string
+	label: string
+	value: string
+	total: number
+	objects: ObjectResponse[]
+}
+
+export interface BoardObjectResponse {
+	columns: BoardObjectColumn[]
+}
+
 export interface SubscribersResponse {
 	actors: Array<{ id: string; type: string; name: string }>
 }
@@ -659,25 +682,6 @@ export interface MigrateObjectTypeResponse {
 	fromType: string
 	toType?: string
 	count: number
-}
-
-export interface ActorListItem {
-	id: string
-	type: string
-	name: string
-	email: string | null
-	description: string | null
-	isSystem: boolean
-}
-
-export interface ActorResponse extends ActorListItem {
-	system_prompt: string | null
-	tools: Record<string, unknown> | null
-	memory: Record<string, unknown> | null
-	llm_provider: string | null
-	llm_config: Record<string, unknown> | null
-	createdAt: string | null
-	updatedAt: string | null
 }
 
 export interface ActorWithKey extends ActorResponse {
@@ -771,20 +775,6 @@ export interface CreateRelationshipInput {
 	type: string
 }
 
-export interface TriggerResponse {
-	id: string
-	workspaceId: string
-	name: string
-	type: string
-	config: Record<string, unknown> | null
-	actionPrompt: string
-	targetActorId: string
-	enabled: boolean
-	createdBy: string
-	createdAt: string | null
-	updatedAt: string | null
-}
-
 export interface CreateTriggerInput {
 	name: string
 	type: 'cron' | 'event' | 'reminder'
@@ -823,6 +813,7 @@ export interface ProviderEventDefinition {
 export interface ProviderInfo {
 	name: string
 	displayName: string
+	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
 	events: ProviderEventDefinition[]
 }
 
