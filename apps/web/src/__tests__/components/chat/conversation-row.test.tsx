@@ -108,13 +108,7 @@ describe('ConversationRow', () => {
 
 	it('falls back to "Untitled" when title is null', () => {
 		render(
-			<ConversationRow
-				type="dm"
-				title={null}
-				preview={null}
-				timestamp={null}
-				unread={false}
-			/>,
+			<ConversationRow type="dm" title={null} preview={null} timestamp={null} unread={false} />,
 		)
 		expect(screen.getByText('Untitled')).toBeInTheDocument()
 	})
