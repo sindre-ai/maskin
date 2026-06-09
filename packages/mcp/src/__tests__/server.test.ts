@@ -2896,5 +2896,12 @@ describe('tool handlers', () => {
 			expect(parsed.partial_failure).toBe(true)
 			expect(parsed.attached_skills[0].error).toBe('plain string rejection')
 		})
+
+		it('throws when the same skill ID appears in both attach and detach arrays', async () => {
+			const handler = getHandler('update_actor')
+			await expect(
+				handler({ id: actorId, attach_skill_ids: [skillId1], detach_skill_ids: [skillId1] }),
+			).rejects.toThrow(/attach_skill_ids and detach_skill_ids/)
+		})
 	})
 })

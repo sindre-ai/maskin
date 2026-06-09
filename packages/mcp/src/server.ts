@@ -2008,6 +2008,11 @@ export function createMcpServer(config: McpConfig) {
 			const detachIds = detach_skill_ids ?? []
 			const hasSkillOps = attachIds.length > 0 || detachIds.length > 0
 
+			const overlapping = attachIds.filter((sid) => detachIds.includes(sid))
+			if (overlapping.length > 0) {
+				throw new Error(`Skill IDs appear in both attach_skill_ids and detach_skill_ids: ${overlapping.join(', ')}`)
+			}
+
 			// Run actor PATCH first so a failure here throws before any skill ops fire.
 			const actor = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
 				skipWorkspace: true,
