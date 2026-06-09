@@ -2010,7 +2010,9 @@ export function createMcpServer(config: McpConfig) {
 
 			const overlapping = attachIds.filter((sid) => detachIds.includes(sid))
 			if (overlapping.length > 0) {
-				throw new Error(`Skill IDs appear in both attach_skill_ids and detach_skill_ids: ${overlapping.join(', ')}`)
+				throw new Error(
+					`Skill IDs appear in both attach_skill_ids and detach_skill_ids: ${overlapping.join(', ')}`,
+				)
 			}
 
 			// Run actor PATCH first so a failure here throws before any skill ops fire.
