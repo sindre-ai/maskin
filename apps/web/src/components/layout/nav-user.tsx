@@ -1,3 +1,4 @@
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -20,7 +21,6 @@ import { useWorkspaces } from '@/hooks/use-workspaces'
 import { clearAuth, getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Check, LogOut, MoreVertical, UserCircle } from 'lucide-react'
 
 export function NavUser() {

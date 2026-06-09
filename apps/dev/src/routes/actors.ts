@@ -917,12 +917,11 @@ app.get('/:id/avatar', async (c) => {
 	}
 
 	const ext = actor.avatarStorageKey.split('.').pop() ?? ''
-	const contentType =
-		ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+	const contentType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
 
 	logger.info('Avatar serve: hit', { actorId: id, sizeBytes: bytes.length })
 
-	return c.newResponse(bytes, 200, {
+	return c.newResponse(new Uint8Array(bytes), 200, {
 		'Content-Type': contentType,
 		'Cache-Control': 'public, max-age=31536000, immutable',
 	})

@@ -37,11 +37,11 @@ export function AvatarRow({ actor }: { actor: ActorResponse }) {
 			<div className="pt-1 text-sm font-medium text-muted-foreground">Avatar</div>
 			<div className="flex items-center justify-between gap-4">
 				<ActorAvatar
-						name={actor.name}
-						type={actor.type}
-						size="lg"
-						avatarUrl={actor.avatar_storage_key ? `/api/actors/${actor.id}/avatar` : null}
-					/>
+					name={actor.name}
+					type={actor.type}
+					size="lg"
+					avatarUrl={actor.avatar_storage_key ? `/api/actors/${actor.id}/avatar` : null}
+				/>
 				<div className="flex items-center gap-3">
 					{showSaved ? <span className="text-xs text-muted-foreground">Saved</span> : null}
 					<Button
