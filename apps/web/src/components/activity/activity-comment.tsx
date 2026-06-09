@@ -11,6 +11,7 @@ import { AttachedFileCard } from '../shared/attached-file-card'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
+import { DecisionChips, hasDecisionChips } from './decision-chips'
 import { MentionSessionCard } from './mention-session-card'
 
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
@@ -167,6 +168,12 @@ export function ActivityComment({
 				workspaceId={workspaceId}
 				onReply={hasReplies ? undefined : openReplyInput}
 			/>
+
+			{hasDecisionChips(event) && (
+				<div className="ml-7 mt-1.5">
+					<DecisionChips event={event} objectId={objectId} workspaceId={workspaceId} />
+				</div>
+			)}
 
 			{mentionSessions.length > 0 && (
 				<div className="ml-7 mt-1 space-y-1">
