@@ -115,7 +115,7 @@ describe('useCreateTrigger', () => {
 			name: 'New Trigger',
 			type: 'cron',
 			config: { expression: '0 * * * *' },
-			action_prompt: 'Run it',
+			actionPrompt: 'Run it',
 			target_actor_id: 'actor-1',
 		})
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
@@ -123,7 +123,7 @@ describe('useCreateTrigger', () => {
 			name: 'New Trigger',
 			type: 'cron',
 			config: { expression: '0 * * * *' },
-			action_prompt: 'Run it',
+			actionPrompt: 'Run it',
 			target_actor_id: 'actor-1',
 		})
 	})
@@ -137,7 +137,7 @@ describe('useCreateTrigger', () => {
 			name: 'Bad',
 			type: 'cron',
 			config: { expression: '' },
-			action_prompt: 'Nope',
+			actionPrompt: 'Nope',
 			target_actor_id: 'actor-1',
 		})
 		await waitFor(() => expect(result.current.isError).toBe(true))

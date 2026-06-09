@@ -126,7 +126,7 @@ describe('createTriggerSchema', () => {
 		const result = createTriggerSchema.parse({
 			type: 'cron',
 			name: 'Daily check',
-			action_prompt: 'Check tasks',
+			actionPrompt: 'Check tasks',
 			target_actor_id: uuid,
 			config: { expression: '0 0 * * *' },
 		})
@@ -138,7 +138,7 @@ describe('createTriggerSchema', () => {
 		const result = createTriggerSchema.parse({
 			type: 'event',
 			name: 'On task created',
-			action_prompt: 'Process task',
+			actionPrompt: 'Process task',
 			target_actor_id: uuid,
 			config: { entity_type: 'task', action: 'created' },
 		})
@@ -149,7 +149,7 @@ describe('createTriggerSchema', () => {
 		const result = createTriggerSchema.parse({
 			type: 'reminder',
 			name: 'Review reminder',
-			action_prompt: 'Review bets',
+			actionPrompt: 'Review bets',
 			target_actor_id: uuid,
 			config: { scheduled_at: '2025-06-15T10:00:00Z' },
 		})
@@ -160,7 +160,7 @@ describe('createTriggerSchema', () => {
 		const result = createTriggerSchema.parse({
 			type: 'cron',
 			name: 'Test',
-			action_prompt: 'Do',
+			actionPrompt: 'Do',
 			target_actor_id: uuid,
 			config: { expression: '* * * * *' },
 		})
@@ -171,7 +171,7 @@ describe('createTriggerSchema', () => {
 		const result = createTriggerSchema.parse({
 			type: 'cron',
 			name: 'Test',
-			action_prompt: 'Do',
+			actionPrompt: 'Do',
 			target_actor_id: uuid,
 			config: { expression: '* * * * *' },
 			enabled: false,
@@ -183,7 +183,7 @@ describe('createTriggerSchema', () => {
 		expect(() =>
 			createTriggerSchema.parse({
 				type: 'cron',
-				action_prompt: 'Do',
+				actionPrompt: 'Do',
 				target_actor_id: uuid,
 				config: { expression: '* * * * *' },
 			}),
@@ -195,7 +195,7 @@ describe('createTriggerSchema', () => {
 			createTriggerSchema.parse({
 				type: 'webhook',
 				name: 'Test',
-				action_prompt: 'Do',
+				actionPrompt: 'Do',
 				target_actor_id: uuid,
 				config: {},
 			}),
@@ -207,7 +207,7 @@ describe('createTriggerSchema', () => {
 			createTriggerSchema.parse({
 				type: 'cron',
 				name: 'Test',
-				action_prompt: 'Do',
+				actionPrompt: 'Do',
 				target_actor_id: uuid,
 				config: { entity_type: 'task', action: 'created' },
 			}),

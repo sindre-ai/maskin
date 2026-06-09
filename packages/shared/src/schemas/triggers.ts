@@ -50,7 +50,7 @@ export const triggerConfigSchema = z.union([
 const baseTriggerFields = {
 	id: z.string().uuid().optional(),
 	name: z.string().min(1),
-	action_prompt: z.string().min(1),
+	actionPrompt: z.string().min(1),
 	target_actor_id: z.string().uuid(),
 	enabled: z.boolean().default(true),
 }
@@ -76,7 +76,7 @@ export const createTriggerSchema = z.discriminatedUnion('type', [
 export const updateTriggerSchema = z.object({
 	name: z.string().min(1).optional(),
 	config: triggerConfigSchema.optional(),
-	action_prompt: z.string().min(1).optional(),
+	actionPrompt: z.string().min(1).optional(),
 	target_actor_id: z.string().uuid().optional(),
 	enabled: z.boolean().optional(),
 })

@@ -779,7 +779,7 @@ export interface CreateTriggerInput {
 	name: string
 	type: 'cron' | 'event' | 'reminder'
 	config: Record<string, unknown>
-	action_prompt: string
+	actionPrompt: string
 	target_actor_id: string
 	enabled?: boolean
 }
@@ -787,7 +787,7 @@ export interface CreateTriggerInput {
 export interface UpdateTriggerInput {
 	name?: string
 	config?: Record<string, unknown>
-	action_prompt?: string
+	actionPrompt?: string
 	target_actor_id?: string
 	enabled?: boolean
 }
