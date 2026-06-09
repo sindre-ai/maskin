@@ -100,4 +100,8 @@ export const queryKeys = {
 		detail: (workspaceId: string, objectType: string) =>
 			['user-display-settings', workspaceId, 'detail', objectType] as const,
 	},
+	conversations: {
+		all: (workspaceId: string) => ['conversations', workspaceId] as const,
+		messages: (conversationId: string) => ['conversations', 'messages', conversationId] as const,
+	},
 } as const
