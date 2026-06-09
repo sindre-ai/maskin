@@ -77,10 +77,28 @@ export function MarkdownContent({
 		if (editing) adjustHeight()
 	}, [editing, adjustHeight])
 
-	const components = useMemo<Components | undefined>(() => {
-		if (!mentionActors) return undefined
+	const components = useMemo<Components>(() => {
+		// Inline code spans that contain a bare URL render as a clickable link instead
+		// of styled monospace — agents commonly write URLs in backticks and the
+		// remark-breaks + remark-gfm combination doesn't always autolink them.
+		const code: Components['code'] = ({ children, className }) => {
+			if (!className) {
+				const text = typeof children === 'string' ? children.trim() : ''
+				if (!text.includes('\n') && /^https?:\/\/\S+$/.test(text)) {
+					return (
+						<a href={text} target="_blank" rel="noopener noreferrer">
+							{text}
+						</a>
+					)
+				}
+			}
+			return <code className={className}>{children}</code>
+		}
+
+		if (!mentionActors) return { code }
 		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors)
 		return {
+			code,
 			p: ({ children }) => <p>{wrap(children)}</p>,
 			li: ({ children }) => <li>{wrap(children)}</li>,
 			em: ({ children }) => <em>{wrap(children)}</em>,
