@@ -154,9 +154,24 @@ export const sessionUsageResponseSchema = z.object({
 })
 export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
 
+// Keep in sync with the reason codes emitted by credit-classifier.ts.
+export const failureReasonCodeSchema = z.enum([
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'server_rate_limit',
+	'request_rejected_429',
+	'credit_balance_low',
+	'max_plan_rate_limit',
+	'billing_error',
+	'rate_limit_error',
+	'insufficient_credits',
+])
+export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
+
 export const sessionResultFailureReasonSchema = z.object({
 	provider: z.string(),
-	reason_code: z.string(),
+	reason_code: failureReasonCodeSchema,
 	human_message: z.string(),
 	http_status: z.number().int().nullable(),
 	reset_at: z.string().nullable(),

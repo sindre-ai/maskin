@@ -312,7 +312,7 @@ describe('sessionUsageQuerySchema', () => {
 describe('sessionResultFailureReasonSchema', () => {
 	const full = {
 		provider: 'anthropic',
-		reason_code: 'credit_exhausted',
+		reason_code: 'billing_error',
 		human_message: 'Your Anthropic credits are exhausted.',
 		http_status: 402,
 		reset_at: '2026-07-01T00:00:00.000Z',
@@ -322,7 +322,7 @@ describe('sessionResultFailureReasonSchema', () => {
 	it('accepts a fully populated failure reason', () => {
 		const result = sessionResultFailureReasonSchema.parse(full)
 		expect(result.provider).toBe('anthropic')
-		expect(result.reason_code).toBe('credit_exhausted')
+		expect(result.reason_code).toBe('billing_error')
 		expect(result.http_status).toBe(402)
 	})
 
@@ -338,12 +338,10 @@ describe('sessionResultFailureReasonSchema', () => {
 		expect(result.verbatim_output).toBeNull()
 	})
 
-	it('accepts arbitrary reason_code strings', () => {
-		const result = sessionResultFailureReasonSchema.parse({
-			...full,
-			reason_code: 'rate_limit_exceeded',
-		})
-		expect(result.reason_code).toBe('rate_limit_exceeded')
+	it('rejects unknown reason_code values', () => {
+		expect(() =>
+			sessionResultFailureReasonSchema.parse({ ...full, reason_code: 'credit_exhausted' }),
+		).toThrow()
 	})
 
 	it('rejects missing required fields', () => {
@@ -375,7 +373,7 @@ describe('sessionResultSchema', () => {
 			exit_code: 1,
 			failure_reason: {
 				provider: 'openrouter',
-				reason_code: 'credit_exhausted',
+				reason_code: 'insufficient_credits',
 				human_message: 'Out of credits.',
 				http_status: 402,
 				reset_at: null,
@@ -383,7 +381,7 @@ describe('sessionResultSchema', () => {
 			},
 		})
 		expect(result.failure_reason?.provider).toBe('openrouter')
-		expect(result.failure_reason?.reason_code).toBe('credit_exhausted')
+		expect(result.failure_reason?.reason_code).toBe('insufficient_credits')
 	})
 
 	it('accepts an empty object (all fields optional)', () => {

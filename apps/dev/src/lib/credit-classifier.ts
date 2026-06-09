@@ -47,6 +47,9 @@ const CLI_BANNERS: ReadonlyArray<{
  * 2. Anthropic HTTP error type strings — billing_error (402) / rate_limit_error (429)
  *    with Max plan 402 distinguished by body text
  * 3. OpenRouter 402 — 'insufficient credits' substring
+ *
+ * Every `reasonCode` value emitted here must exist in `failureReasonCodeSchema`
+ * in packages/shared/src/schemas/sessions.ts — add new codes there first.
  */
 export function classifyCreditExhaustion(tail: string): SessionResultFailureReason | null {
 	for (const banner of CLI_BANNERS) {
