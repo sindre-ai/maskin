@@ -1,3 +1,4 @@
+import { Input } from '@/components/ui/input'
 import { useCreateComment } from '@/hooks/use-events'
 import type { EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -15,9 +16,7 @@ function extractChips(event: EventResponse): string[] {
 
 export function hasDecisionChips(event: EventResponse): boolean {
 	if (event.action !== 'commented') return false
-	const metadata = event.data?.metadata as Record<string, unknown> | undefined
-	const chips = metadata?.chips
-	return Array.isArray(chips) && chips.length > 0
+	return extractChips(event).length > 0
 }
 
 interface DecisionChipsProps {
@@ -74,18 +73,12 @@ export function DecisionChips({ event, objectId, workspaceId }: DecisionChipsPro
 				}}
 				className="flex gap-1.5"
 			>
-				<input
-					type="text"
+				<Input
 					value={freeText}
 					onChange={(e) => setFreeText(e.target.value)}
 					placeholder="Or type a reply…"
 					disabled={createComment.isPending}
-					className={cn(
-						'flex-1 min-w-0 rounded-md border border-border bg-transparent',
-						'px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground',
-						'outline-none focus:ring-1 focus:ring-ring',
-						'disabled:opacity-50',
-					)}
+					className="flex-1 min-w-0 h-auto py-1 text-xs"
 				/>
 				<button
 					type="submit"
