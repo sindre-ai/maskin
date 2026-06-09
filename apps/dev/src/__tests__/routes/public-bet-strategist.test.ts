@@ -42,10 +42,10 @@ describe('POST /api/public/bet-strategist/drafts', () => {
 	afterEach(() => {
 		vi.restoreAllMocks()
 		vi.unstubAllGlobals()
-		delete process.env.MASKIN_FALLBACK_OPENROUTER_KEY
-		delete process.env.WORKSPACE_DAILY_DRAFT_CAP
-		delete process.env.PER_COOKIE_DRAFT_CAP
-		delete process.env.PER_IP_DRAFT_CAP_DAY
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = undefined
+		process.env.WORKSPACE_DAILY_DRAFT_CAP = undefined
+		process.env.PER_COOKIE_DRAFT_CAP = undefined
+		process.env.PER_IP_DRAFT_CAP_DAY = undefined
 	})
 
 	it('returns 200 with draft content on happy path', async () => {
@@ -168,7 +168,7 @@ describe('POST /api/public/bet-strategist/claim', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks()
-		delete process.env.PER_IP_DRAFT_CAP_DAY
+		process.env.PER_IP_DRAFT_CAP_DAY = undefined
 	})
 
 	it('returns claimed drafts for a valid guestSessionId', async () => {
@@ -286,7 +286,7 @@ describe('POST /api/public/bet-strategist/claim', () => {
 		)
 
 		expect(res.status).toBe(200)
-		delete process.env.GUEST_CLAIM_TTL_HOURS
+		process.env.GUEST_CLAIM_TTL_HOURS = undefined
 	})
 
 	it('returns identical results for two concurrent calls (idempotent read)', async () => {

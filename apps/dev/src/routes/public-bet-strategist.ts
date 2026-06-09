@@ -369,7 +369,7 @@ app.post('/claim', async (c) => {
 		})
 		c.header('Retry-After', String(secondsUntilNextUtcMidnight(now)))
 		return c.json(
-			createApiError('RATE_LIMITED', `Too many claim requests from this IP today.`),
+			createApiError('RATE_LIMITED', 'Too many claim requests from this IP today.'),
 			429,
 		)
 	}

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import publicLandingEventsRoutes, { _resetLandingEventBuckets } from '../../routes/public-landing-events'
 import { _resetTrustedCidrs, extractClientIp } from '../../lib/trusted-proxy'
+import publicLandingEventsRoutes, {
+	_resetLandingEventBuckets,
+} from '../../routes/public-landing-events'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -299,7 +301,7 @@ describe('extractClientIp — trusted-proxy CIDR validation', () => {
 		_resetTrustedCidrs()
 		expect(extractClientIp('10.1.2.3', '1.2.3.4')).toBe('1.2.3.4')
 		expect(extractClientIp('192.168.1.1', '1.2.3.4')).toBe('192.168.1.1')
-		delete process.env.TRUSTED_PROXY_CIDRS
+		process.env.TRUSTED_PROXY_CIDRS = undefined
 	})
 
 	it('takes the first hop of a multi-hop XFF when proxy is trusted', () => {
@@ -310,6 +312,6 @@ describe('extractClientIp — trusted-proxy CIDR validation', () => {
 		process.env.TRUSTED_PROXY_CIDRS = ''
 		_resetTrustedCidrs()
 		expect(extractClientIp('127.0.0.1', '1.2.3.4')).toBe('127.0.0.1')
-		delete process.env.TRUSTED_PROXY_CIDRS
+		process.env.TRUSTED_PROXY_CIDRS = undefined
 	})
 })
