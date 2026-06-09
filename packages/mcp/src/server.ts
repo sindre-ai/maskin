@@ -2004,9 +2004,26 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { id, attach_skill_ids, detach_skill_ids, ...body } = args
-			const [result, ...skillResults] = await Promise.all([
-				apiCall(config, 'PATCH', `/api/actors/${id}`, body, { skipWorkspace: true }),
-				...(attach_skill_ids ?? []).map((skillId: string) =>
+			const attachIds = attach_skill_ids ?? []
+			const detachIds = detach_skill_ids ?? []
+			const hasSkillOps = attachIds.length > 0 || detachIds.length > 0
+
+			// Run actor PATCH first so a failure here throws before any skill ops fire.
+			const actor = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
+				skipWorkspace: true,
+			})
+
+			if (!hasSkillOps) {
+				return {
+					_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(actor, null, 2) }],
+				}
+			}
+
+			// Skill ops run concurrently but with allSettled so a single failure doesn't
+			// discard the results of operations that already succeeded.
+			const skillSettled = await Promise.allSettled([
+				...attachIds.map((skillId) =>
 					apiCall(
 						config,
 						'POST',
@@ -2015,25 +2032,36 @@ export function createMcpServer(config: McpConfig) {
 						{ skipWorkspace: true },
 					),
 				),
-				...(detach_skill_ids ?? []).map((skillId: string) =>
+				...detachIds.map((skillId) =>
 					apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
 						skipWorkspace: true,
 					}),
 				),
 			])
-			const hasSkillOps = attach_skill_ids?.length || detach_skill_ids?.length
-			const attachCount = attach_skill_ids?.length ?? 0
-			const output: unknown = hasSkillOps
-				? {
-						actor: result,
-						...(attach_skill_ids?.length && {
-							attached_skills: skillResults.slice(0, attachCount),
-						}),
-						...(detach_skill_ids?.length && {
-							detached_skills: skillResults.slice(attachCount),
-						}),
-					}
-				: result
+
+			const toEntry = (settled: PromiseSettledResult<unknown>, skillId: string) =>
+				settled.status === 'fulfilled'
+					? settled.value
+					: { skill_id: skillId, error: (settled.reason as Error).message }
+
+			const attachCount = attachIds.length
+			const output: Record<string, unknown> = { actor }
+			if (attachIds.length) {
+				output.attached_skills = skillSettled
+					.slice(0, attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match attachIds
+					.map((s, i) => toEntry(s, attachIds[i]!))
+			}
+			if (detachIds.length) {
+				output.detached_skills = skillSettled
+					.slice(attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match detachIds
+					.map((s, i) => toEntry(s, detachIds[i]!))
+			}
+			if (skillSettled.some((s) => s.status === 'rejected')) {
+				output.partial_failure = true
+			}
+
 			return {
 				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
