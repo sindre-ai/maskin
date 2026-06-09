@@ -531,6 +531,108 @@ describe('Events Routes', () => {
 			expect(rows[0]?.actorId).toBe(otherId)
 		})
 
+		it('auto-subscribes the thread OP when a reply is posted', async () => {
+			const objectId = randomUUID()
+			const opActorId = randomUUID()
+			const rootCommentId = 90010
+			const rootComment = buildEvent({
+				id: rootCommentId,
+				workspaceId: wsId,
+				actorId: opActorId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Root comment' },
+			})
+			const replyEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Reply', parentEventId: rootCommentId },
+			})
+			const { app, mockResults, calls } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }], // object lookup
+				[rootComment], // parent walk: root terminates
+			]
+			mockResults.insert = [replyEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'Reply', parent_event_id: rootCommentId },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const opInserts = (calls.inserts as unknown[]).filter((arg) => {
+				if (Array.isArray(arg)) return false
+				const row = arg as { source?: string; actorId?: string }
+				return typeof row === 'object' && row !== null && row.source === 'commenter' && row.actorId === opActorId
+			})
+			expect(opInserts).toHaveLength(1)
+		})
+
+		it('does not double-subscribe the OP when the OP is also the commenter', async () => {
+			const objectId = randomUUID()
+			const commenterAndOpId = 'test-actor-id'
+			const rootCommentId = 90020
+			const rootComment = buildEvent({
+				id: rootCommentId,
+				workspaceId: wsId,
+				actorId: commenterAndOpId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Root comment' },
+			})
+			const replyEvent = buildEvent({
+				workspaceId: wsId,
+				actorId: commenterAndOpId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Self-reply', parentEventId: rootCommentId },
+			})
+			const { app, mockResults, calls } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+				commenterAndOpId,
+			)
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }], // object lookup
+				[rootComment], // parent walk: root terminates
+			]
+			mockResults.insert = [replyEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'Self-reply', parent_event_id: rootCommentId },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			// Only one 'commenter' subscription insert for the current actor, not a
+			// duplicate for the OP (same actor).
+			const commenterInserts = (calls.inserts as unknown[]).filter((arg) => {
+				if (Array.isArray(arg)) return false
+				const row = arg as { source?: string; actorId?: string }
+				return (
+					typeof row === 'object' &&
+					row !== null &&
+					row.source === 'commenter' &&
+					row.actorId === commenterAndOpId
+				)
+			})
+			expect(commenterInserts).toHaveLength(1)
+		})
+
 		it('keeps parent_event_id when parent is already a top-level comment', async () => {
 			const objectId = randomUUID()
 			const rootCommentId = 76660
