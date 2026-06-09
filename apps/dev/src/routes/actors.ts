@@ -897,7 +897,10 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 	return c.json(serializeActor(updated))
 }) as RouteHandler<typeof uploadAvatarRoute, Env>)
 
-// GET /:id/avatar — serve the stored avatar blob (public, no auth required)
+// GET /:id/avatar — serves the stored avatar blob without auth.
+// Uses app.get() rather than app.openapi() because the response is a binary
+// Uint8Array via c.newResponse(), which can't be expressed as a typed JSON
+// schema. The path is listed in isAuthBypassed so browsers load it header-free.
 app.get('/:id/avatar', async (c) => {
 	const db = c.get('db')
 	const storage = c.get('storageProvider')
