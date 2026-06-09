@@ -5,6 +5,7 @@ import { cn } from '@/lib/cn'
 export interface ConversationParticipant {
 	name: string
 	type: string
+	online?: boolean
 }
 
 export interface ConversationRowProps {
@@ -40,11 +41,13 @@ export function ConversationRow({
 		>
 			<div className="mt-0.5 flex-shrink-0">
 				{type === 'dm' ? (
-					<ActorAvatar
-						name={participants[0]?.name ?? '?'}
-						type={participants[0]?.type ?? 'agent'}
-						size="md"
-					/>
+					<span className={cn(participants[0]?.online === false && 'opacity-40')}>
+						<ActorAvatar
+							name={participants[0]?.name ?? '?'}
+							type={participants[0]?.type ?? 'agent'}
+							size="md"
+						/>
+					</span>
 				) : (
 					<Facepile participants={participants} />
 				)}
@@ -93,7 +96,7 @@ function Facepile({ participants }: { participants: ConversationParticipant[] })
 			{visible.map((p, i) => (
 				<span
 					key={p.name}
-					className="absolute"
+					className={cn('absolute', p.online === false && 'opacity-40')}
 					style={{
 						zIndex: visible.length - i,
 						transform: `translate(${(i - (visible.length - 1) / 2) * 6}px, ${(i - (visible.length - 1) / 2) * 3}px)`,

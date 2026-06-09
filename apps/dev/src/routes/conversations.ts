@@ -1,18 +1,34 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { conversationParticipants, conversations, messages } from '@maskin/db/schema'
-import { addParticipantSchema, createConversationSchema, messagesQuerySchema } from '@maskin/shared'
-import { and, count, desc, eq, sql } from 'drizzle-orm'
+import {
+	events,
+	actors,
+	conversationParticipants,
+	conversations,
+	messages,
+	sessions,
+} from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
+import {
+	addParticipantSchema,
+	createConversationSchema,
+	messagesQuerySchema,
+	sendMessageSchema,
+} from '@maskin/shared'
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		notifyBridge: PgNotifyBridge
+		sessionManager: SessionManager
 	}
 }
 
@@ -32,6 +48,13 @@ const app = new OpenAPIHono<Env>({
 	},
 })
 
+const participantActorSchema = z.object({
+	actorId: z.string().uuid(),
+	name: z.string(),
+	type: z.string(),
+	isOnline: z.boolean(),
+})
+
 const conversationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
@@ -41,6 +64,8 @@ const conversationResponseSchema = z.object({
 	lastActivityAt: z.string().nullable(),
 	createdAt: z.string(),
 	participantCount: z.number().int(),
+	unreadCount: z.number().int(),
+	participants: z.array(participantActorSchema),
 })
 
 const messageResponseSchema = z.object({
@@ -67,7 +92,7 @@ async function loadConversationWithAuth(db: Database, conversationId: string, wo
 	return row ?? null
 }
 
-// GET / — last 5 conversations by last_activity_at, with participant count
+// GET / — last 5 conversations by last_activity_at, with participant count, unread count, and participant actors
 const listConversationsRoute = createRoute({
 	method: 'get',
 	path: '/',
@@ -84,12 +109,24 @@ const listConversationsRoute = createRoute({
 
 app.openapi(listConversationsRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const participantCountSubquery = db
 		.select({ cnt: count() })
 		.from(conversationParticipants)
 		.where(eq(conversationParticipants.conversationId, conversations.id))
+
+	const unreadCountSubquery = db
+		.select({ unread: conversationParticipants.unreadCount })
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, conversations.id),
+				eq(conversationParticipants.actorId, actorId),
+			),
+		)
+		.limit(1)
 
 	const rows = await db
 		.select({
@@ -101,16 +138,57 @@ app.openapi(listConversationsRoute, (async (c) => {
 			lastActivityAt: conversations.lastActivityAt,
 			createdAt: conversations.createdAt,
 			participantCount: sql<number>`(${participantCountSubquery})`,
+			unreadCount: sql<number>`coalesce((${unreadCountSubquery}), 0)`,
 		})
 		.from(conversations)
 		.where(eq(conversations.workspaceId, workspaceId))
 		.orderBy(desc(conversations.lastActivityAt))
 		.limit(5)
 
+	// Fetch participant actors with online status (running session in workspace) for all returned conversations
+	const conversationIds = rows.map((r) => r.id)
+	const participantsByConversation = new Map<string, z.infer<typeof participantActorSchema>[]>()
+
+	if (conversationIds.length > 0) {
+		const participantRows = await db
+			.select({
+				conversationId: conversationParticipants.conversationId,
+				actorId: actors.id,
+				name: actors.name,
+				type: actors.type,
+				runningSession: sql<number>`count(${sessions.id}) filter (where ${sessions.status} = 'running')`,
+			})
+			.from(conversationParticipants)
+			.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
+			.leftJoin(
+				sessions,
+				and(eq(sessions.actorId, actors.id), eq(sessions.workspaceId, workspaceId)),
+			)
+			.where(inArray(conversationParticipants.conversationId, conversationIds))
+			.groupBy(conversationParticipants.conversationId, actors.id, actors.name, actors.type)
+
+		for (const pr of participantRows) {
+			const list = participantsByConversation.get(pr.conversationId) ?? []
+			list.push({
+				actorId: pr.actorId,
+				name: pr.name,
+				type: pr.type,
+				// Agents: online when they have a running session. Humans: always online.
+				isOnline: pr.type === 'agent' ? Number(pr.runningSession) > 0 : true,
+			})
+			participantsByConversation.set(pr.conversationId, list)
+		}
+	}
+
+	const result = rows.map((row) => ({
+		...serialize(row),
+		type: row.type as 'dm' | 'room',
+		unreadCount: Number(row.unreadCount),
+		participants: participantsByConversation.get(row.id) ?? [],
+	}))
+
 	logger.info('conversations listed', { workspaceId, count: rows.length })
-	return c.json(
-		serializeArray(rows) as z.infer<ReturnType<typeof conversationResponseSchema.array>>,
-	)
+	return c.json(result as z.infer<ReturnType<typeof conversationResponseSchema.array>>)
 }) as RouteHandler<typeof listConversationsRoute, Env>)
 
 // POST / — create conversation with participants
@@ -169,6 +247,8 @@ app.openapi(createConversationRoute, (async (c) => {
 		...serialize(conversation),
 		type: conversation.type as 'dm' | 'room',
 		participantCount: participantIds.length,
+		unreadCount: 0,
+		participants: [],
 	}
 	return c.json(result as z.infer<typeof conversationResponseSchema>, 201)
 }) as RouteHandler<typeof createConversationRoute, Env>)
@@ -232,6 +312,171 @@ app.openapi(listMessagesRoute, (async (c) => {
 		total,
 	})
 }) as RouteHandler<typeof listMessagesRoute, Env>)
+
+// POST /:id/messages — send a message, fire SSE event, handle @mention routing
+const sendMessageRoute = createRoute({
+	method: 'post',
+	path: '/:id/messages',
+	tags: ['Conversations'],
+	summary: 'Send a message to a conversation',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: sendMessageSchema } } },
+	},
+	responses: {
+		201: {
+			content: { 'application/json': { schema: messageResponseSchema } },
+			description: 'Message sent',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Conversation not found',
+		},
+	},
+})
+
+app.openapi(sendMessageRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const sessionManager = c.get('sessionManager')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	const conversation = await loadConversationWithAuth(db, id, workspaceId)
+	if (!conversation) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const preview = body.content.length > 100 ? `${body.content.slice(0, 100)}…` : body.content
+
+	const { message, agentMentions } = await db.transaction(async (tx) => {
+		const [msg] = await tx
+			.insert(messages)
+			.values({ conversationId: id, actorId, content: body.content })
+			.returning()
+
+		if (!msg) throw new Error('Failed to insert message')
+
+		// Update conversation preview + activity timestamp
+		await tx
+			.update(conversations)
+			.set({ lastMessagePreview: preview, lastActivityAt: new Date() })
+			.where(eq(conversations.id, id))
+
+		// Increment unread_count for all participants except the sender
+		await tx
+			.update(conversationParticipants)
+			.set({ unreadCount: sql`${conversationParticipants.unreadCount} + 1` })
+			.where(
+				and(
+					eq(conversationParticipants.conversationId, id),
+					sql`${conversationParticipants.actorId} != ${actorId}`,
+				),
+			)
+
+		// Insert SSE event — DB trigger fires pg_notify which the SSE stream picks up
+		await tx.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'message_sent',
+			entityType: 'conversation',
+			entityId: id,
+		})
+
+		// Resolve @mentioned agent actors for session dispatch
+		const mentions: Array<{ agentId: string; name: string }> = []
+		if (body.mentions?.length) {
+			const mentionedActors = await tx
+				.select({ id: actors.id, type: actors.type, name: actors.name })
+				.from(actors)
+				.where(inArray(actors.id, body.mentions))
+
+			for (const actor of mentionedActors) {
+				if (actor.type === 'agent') {
+					mentions.push({ agentId: actor.id, name: actor.name })
+				}
+			}
+		}
+
+		return { message: msg, agentMentions: mentions }
+	})
+
+	logger.info('message sent', { conversationId: id, messageId: message.id, workspaceId })
+
+	// Fire-and-forget: spawn a session per @mentioned agent in the room context
+	for (const mention of agentMentions) {
+		sessionManager
+			.createSession(workspaceId, {
+				actorId: mention.agentId,
+				actionPrompt: `You were @mentioned in conversation "${conversation.title ?? id}". Message: ${body.content}`,
+				config: { conversation_id: id },
+				createdBy: actorId,
+				autoStart: true,
+			})
+			.catch((err: unknown) => {
+				logger.error('Failed to spawn session for @mentioned agent in room', {
+					agentId: mention.agentId,
+					conversationId: id,
+					err,
+				})
+			})
+	}
+
+	return c.json(serialize(message) as z.infer<typeof messageResponseSchema>, 201)
+}) as RouteHandler<typeof sendMessageRoute, Env>)
+
+// POST /:id/read — mark conversation as read for the current actor
+const markReadRoute = createRoute({
+	method: 'post',
+	path: '/:id/read',
+	tags: ['Conversations'],
+	summary: 'Mark a conversation as read',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.object({ ok: z.boolean() }) } },
+			description: 'Marked as read',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Conversation not found',
+		},
+	},
+})
+
+app.openapi(markReadRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+
+	const conversation = await loadConversationWithAuth(db, id, workspaceId)
+	if (!conversation) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	await db
+		.update(conversationParticipants)
+		.set({ unreadCount: 0, lastReadAt: new Date() })
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, id),
+				eq(conversationParticipants.actorId, actorId),
+			),
+		)
+
+	logger.info('conversation marked read', { conversationId: id, actorId })
+	return c.json({ ok: true })
+}) as RouteHandler<typeof markReadRoute, Env>)
 
 // POST /:id/participants — add a participant to a conversation
 const addParticipantRoute = createRoute({

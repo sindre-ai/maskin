@@ -10,6 +10,14 @@ export const createConversationSchema = z.object({
 })
 export type CreateConversationInput = z.infer<typeof createConversationSchema>
 
+export const participantActorSchema = z.object({
+	actorId: z.string().uuid(),
+	name: z.string(),
+	type: z.string(),
+	isOnline: z.boolean(),
+})
+export type ParticipantActor = z.infer<typeof participantActorSchema>
+
 export const conversationResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
@@ -19,6 +27,8 @@ export const conversationResponseSchema = z.object({
 	lastActivityAt: z.string().nullable(),
 	createdAt: z.string(),
 	participantCount: z.number().int(),
+	unreadCount: z.number().int(),
+	participants: z.array(participantActorSchema),
 })
 export type ConversationResponse = z.infer<typeof conversationResponseSchema>
 
@@ -36,6 +46,12 @@ export const messagesQuerySchema = z.object({
 	offset: z.coerce.number().int().min(0).default(0),
 })
 export type MessagesQuery = z.infer<typeof messagesQuerySchema>
+
+export const sendMessageSchema = z.object({
+	content: z.string().min(1).max(10000),
+	mentions: z.array(z.string().uuid()).optional(),
+})
+export type SendMessageInput = z.infer<typeof sendMessageSchema>
 
 export const addParticipantSchema = z.object({
 	actor_id: z.string().uuid(),

@@ -70,6 +70,13 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		}
+		case 'conversation':
+			// A message was sent or the conversation changed — refresh the list and the message thread
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.conversations.messages(event.entity_id),
+			})
+			break
 		case 'notification':
 			queryClient.invalidateQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
 			break

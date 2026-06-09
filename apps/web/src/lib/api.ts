@@ -640,6 +640,14 @@ export const api = {
 				{ workspaceId },
 			)
 		},
+		sendMessage: (workspaceId: string, id: string, data: SendMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		markRead: (workspaceId: string, id: string) =>
+			request<{ ok: boolean }>(`/conversations/${id}/read`, { method: 'POST', workspaceId }),
 	},
 }
 
@@ -1324,7 +1332,13 @@ interface InstalledPackageForkResponse {
 	forkedAt: string | null
 	installedAt: string | null
 	updatedAt: string | null
-	detached: { actors: number; triggers: number; skills: number; integrations: number }
+
+}
+export interface ConversationParticipantActor {
+	actorId: string
+	name: string
+	type: string
+	isOnline: boolean
 }
 
 export interface ConversationResponse {
@@ -1336,6 +1350,8 @@ export interface ConversationResponse {
 	lastActivityAt: string | null
 	createdAt: string
 	participantCount: number
+	unreadCount: number
+	participants: ConversationParticipantActor[]
 }
 
 export interface CreateConversationInput {
@@ -1344,11 +1360,15 @@ export interface CreateConversationInput {
 	participant_actor_ids: string[]
 }
 
+export interface SendMessageInput {
+	content: string
+	mentions?: string[]
+}
+
 export interface MessageResponse {
 	id: string
 	conversationId: string
 	actorId: string
 	content: string
 	createdAt: string
-}
 }
