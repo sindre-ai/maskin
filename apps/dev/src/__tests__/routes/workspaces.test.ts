@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { buildActor, buildCreateWorkspaceBody, buildWorkspace } from '../factories'
+import {
+	buildActor,
+	buildCreateWorkspaceBody,
+	buildWorkspace,
+	buildWorkspaceMember,
+} from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -96,6 +101,7 @@ describe('Workspaces Routes', () => {
 			const ws = buildWorkspace()
 			const updated = { ...ws, name: 'Updated Workspace' }
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[buildWorkspaceMember({ workspaceId: ws.id })]]
 			mockResults.update = [updated]
 
 			const res = await app.request(
@@ -106,8 +112,9 @@ describe('Workspaces Routes', () => {
 		})
 
 		it('returns 404 when workspace not found for settings merge', async () => {
-			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			const id = '00000000-0000-0000-0000-000000000099'
+			mockResults.selectQueue = [[buildWorkspaceMember({ workspaceId: id })], []]
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${id}`, {
@@ -116,6 +123,19 @@ describe('Workspaces Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 when caller is not a workspace member', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Updated Workspace' }),
+			)
+
+			expect(res.status).toBe(403)
+			expect(calls.updates).toHaveLength(0)
 		})
 	})
 

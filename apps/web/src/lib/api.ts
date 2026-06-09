@@ -430,6 +430,23 @@ export const api = {
 			}),
 	},
 
+	billing: {
+		checkout: (workspaceId: string, body: BillingCheckoutInput) =>
+			request<BillingCheckoutResponse>('/billing/checkout', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		usage: (workspaceId: string) =>
+			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		portal: (workspaceId: string, body: BillingPortalInput) =>
+			request<BillingPortalResponse>('/billing/portal', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+	},
+
 	subscriptions: {
 		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
 			request<{ subscribed: true }>('/subscriptions', {
@@ -555,6 +572,39 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
+}
+
+export type BillingPlan = 'trial' | 'starter' | 'pro' | 'byollm'
+export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
+
+export interface BillingCheckoutInput {
+	plan: 'starter' | 'pro'
+	success_url: string
+	cancel_url: string
+}
+
+export interface BillingCheckoutResponse {
+	url: string
+	session_id: string
+}
+
+export interface BillingPortalInput {
+	return_url: string
+}
+
+export interface BillingPortalResponse {
+	url: string
+}
+
+export interface BillingUsageResponse {
+	plan: BillingPlan
+	status: BillingStatus
+	tokens_used: number
+	hard_cap_tokens: number | null
+	period_start: number | null
+	period_resets_in_ms: number | null
+	stripe_customer_id: string | null
+	stripe_subscription_id: string | null
 }
 
 // Types derived from backend response schemas

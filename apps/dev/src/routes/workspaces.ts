@@ -10,8 +10,10 @@ import {
 } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { cancelPaidPlanAndDowngrade, patchAddsByoSource } from '../lib/llm-source-mutex'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { getStripeClient, readStripeEnv } from '../lib/stripe'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
@@ -188,13 +190,41 @@ const updateWorkspaceRoute = createRoute({
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		403: {
+			description: 'Caller is not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
 app.openapi(updateWorkspaceRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, actorId, id))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	// BYOLLM ↔ paid plan mutex: if the PATCH is adding a BYO Anthropic key
+	// or enabling custom_llm, the read-cancel-rewrite window must run inside
+	// a row lock so a concurrent webhook can't reactivate a paid plan
+	// underneath us. cancelPaidPlanAndDowngrade owns the whole transaction.
+	if (body.settings && patchAddsByoSource(body.settings)) {
+		const result = await cancelPaidPlanAndDowngrade<typeof workspaces.$inferSelect>({
+			db,
+			workspaceId: id,
+			getStripe: () => getStripeClient(readStripeEnv()),
+			flow: 'BYOLLM transition',
+			buildNextSettings: (lockedSettings, downgradedBilling) =>
+				mergeBodyIntoLockedSettings(lockedSettings, body.settings ?? {}, downgradedBilling),
+			extraSet: body.name ? { name: body.name } : undefined,
+		})
+
+		if (!result.ok) return c.json(result.error, result.status)
+		return c.json(serialize(result.updated) as z.infer<typeof workspaceResponseSchema>)
+	}
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
@@ -206,17 +236,7 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
 		if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 		const existingSettings = (existing.settings ?? {}) as Record<string, unknown>
-		const merged: Record<string, unknown> = { ...existingSettings, ...body.settings }
-		if (body.settings.llm_keys) {
-			const existingLlm = (existingSettings.llm_keys ?? {}) as Record<string, string>
-			const mergedLlm: Record<string, string> = { ...existingLlm }
-			for (const [k, v] of Object.entries(body.settings.llm_keys)) {
-				if (v === null || v === undefined) delete mergedLlm[k]
-				else mergedLlm[k] = v
-			}
-			merged.llm_keys = mergedLlm
-		}
-		updateData.settings = merged
+		updateData.settings = mergeBodyIntoLockedSettings(existingSettings, body.settings, undefined)
 	}
 
 	const [updated] = await db
@@ -231,6 +251,31 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 
 	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
 }) as RouteHandler<typeof updateWorkspaceRoute, Env>)
+
+/**
+ * Merge the PATCH body's settings into the existing (or locked) row.
+ * `llm_keys` is deep-merged with `null` meaning deletion so single-provider
+ * updates (UI + MCP) don't clobber siblings. If `downgradedBilling` is set,
+ * the shared mutex helper already canceled Stripe — embed it.
+ */
+function mergeBodyIntoLockedSettings(
+	lockedSettings: Record<string, unknown>,
+	bodySettings: NonNullable<z.infer<typeof updateWorkspaceSchema>['settings']>,
+	downgradedBilling: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...lockedSettings, ...bodySettings }
+	if (bodySettings.llm_keys) {
+		const lockedLlm = (lockedSettings.llm_keys ?? {}) as Record<string, string>
+		const mergedLlm: Record<string, string> = { ...lockedLlm }
+		for (const [k, v] of Object.entries(bodySettings.llm_keys)) {
+			if (v === null || v === undefined) delete mergedLlm[k]
+			else mergedLlm[k] = v
+		}
+		merged.llm_keys = mergedLlm
+	}
+	if (downgradedBilling) merged.billing = downgradedBilling
+	return merged
+}
 
 // POST /api/workspaces/:id/members
 const addMemberRoute = createRoute({

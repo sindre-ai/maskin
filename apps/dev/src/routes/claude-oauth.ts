@@ -9,8 +9,10 @@ import {
 	getValidOAuthToken,
 } from '../lib/claude-oauth'
 import { createApiError } from '../lib/errors'
+import { cancelPaidPlanAndDowngrade } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { getStripeClient, readStripeEnv } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
 
 type Env = {
@@ -218,20 +220,28 @@ app.openapi(importRoute, (async (c) => {
 	}
 
 	const tokens: ClaudeOAuthTokens = c.req.valid('json')
+	const encryptedOauth = encryptOAuthTokens(tokens)
 
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	if (!ws) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
+	// BYOLLM ↔ paid plan mutex: importing Claude OAuth tokens is a BYOLLM
+	// selection. The shared helper takes a row lock, cancels Stripe inside
+	// the lock if a paid plan is active, and writes the new claude_oauth
+	// blob + downgraded billing block in the same UPDATE.
+	const result = await cancelPaidPlanAndDowngrade({
+		db,
+		workspaceId,
+		getStripe: () => getStripeClient(readStripeEnv()),
+		flow: 'Claude OAuth import',
+		buildNextSettings: (lockedSettings, downgradedBilling) => {
+			const next: Record<string, unknown> = {
+				...lockedSettings,
+				claude_oauth: encryptedOauth,
+			}
+			if (downgradedBilling) next.billing = downgradedBilling
+			return next
+		},
+	})
 
-	const settings = (ws.settings as WorkspaceSettings) ?? {}
-	await db
-		.update(workspaces)
-		.set({
-			settings: { ...settings, claude_oauth: encryptOAuthTokens(tokens) },
-			updatedAt: new Date(),
-		})
-		.where(eq(workspaces.id, workspaceId))
+	if (!result.ok) return c.json(result.error, result.status)
 
 	logger.info('Claude OAuth tokens imported for workspace', {
 		workspaceId,
