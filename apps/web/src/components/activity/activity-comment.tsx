@@ -1,7 +1,9 @@
+import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { Link } from '@tanstack/react-router'
 import { Reply } from 'lucide-react'
 import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
@@ -42,55 +44,103 @@ function CommentRow({ event, actors, workspaceId, onReply }: CommentRowProps) {
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
 	const { data: workspaceFiles } = useFiles(workspaceId)
+	const [humanDetailOpen, setHumanDetailOpen] = useState(false)
+
+	const isAgent = actor?.type === 'agent'
+
+	const avatarEl = actor ? (
+		isAgent ? (
+			<Link
+				to="/$workspaceId/agents/$agentId"
+				params={{ workspaceId, agentId: actor.id }}
+				aria-hidden="true"
+				tabIndex={-1}
+			>
+				<ActorAvatar name={actor.name} type={actor.type} size="sm" />
+			</Link>
+		) : (
+			<ActorAvatar
+				name={actor.name}
+				type={actor.type}
+				size="sm"
+				onClick={() => setHumanDetailOpen(true)}
+			/>
+		)
+	) : null
+
+	const nameEl = !actor ? (
+		<span className="text-sm font-medium text-foreground">Unknown</span>
+	) : isAgent ? (
+		<Link
+			to="/$workspaceId/agents/$agentId"
+			params={{ workspaceId, agentId: actor.id }}
+			className={cn('text-sm font-medium text-primary hover:underline transition-colors')}
+		>
+			{actor.name}
+		</Link>
+	) : (
+		<button
+			type="button"
+			onClick={() => setHumanDetailOpen(true)}
+			className={cn(
+				'text-sm font-medium text-foreground cursor-pointer hover:underline transition-colors',
+			)}
+		>
+			{actor.name}
+		</button>
+	)
 
 	return (
-		<div className="flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors">
-			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
-			<div className="flex-1 min-w-0">
-				<div className="flex items-baseline gap-1.5">
-					<span
-						className={cn(
-							'text-sm font-medium',
-							actor?.type === 'agent' ? 'text-primary' : 'text-foreground',
-						)}
-					>
-						{actor?.name ?? 'Unknown'}
-					</span>
-					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+		<>
+			<div className="flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors">
+				{avatarEl}
+				<div className="flex-1 min-w-0">
+					<div className="flex items-baseline gap-1.5">
+						{nameEl}
+						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+					</div>
+					<MarkdownContent
+						content={content}
+						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
+						mentionActors={actors}
+						size="sm"
+						className={COMMENT_PROSE_OVERRIDES}
+					/>
+					{attachmentFileIds.length > 0 && (
+						<ul className="mt-1.5 space-y-1">
+							{attachmentFileIds.map((fileId) => {
+								const file = workspaceFiles?.find((f) => f.id === fileId)
+								if (!file) return null
+								return (
+									<li key={fileId}>
+										<AttachedFileCard workspaceId={workspaceId} file={file} />
+									</li>
+								)
+							})}
+						</ul>
+					)}
 				</div>
-				<MarkdownContent
-					content={content}
-					disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
-					mentionActors={actors}
-					size="sm"
-					className={COMMENT_PROSE_OVERRIDES}
-				/>
-				{attachmentFileIds.length > 0 && (
-					<ul className="mt-1.5 space-y-1">
-						{attachmentFileIds.map((fileId) => {
-							const file = workspaceFiles?.find((f) => f.id === fileId)
-							if (!file) return null
-							return (
-								<li key={fileId}>
-									<AttachedFileCard workspaceId={workspaceId} file={file} />
-								</li>
-							)
-						})}
-					</ul>
+				{onReply && (
+					<button
+						type="button"
+						onClick={onReply}
+						aria-label="Reply"
+						/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
+						className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1"
+					>
+						<Reply size={14} />
+					</button>
 				)}
 			</div>
-			{onReply && (
-				<button
-					type="button"
-					onClick={onReply}
-					aria-label="Reply"
-					/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
-					className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1"
-				>
-					<Reply size={14} />
-				</button>
+			{actor?.type === 'human' && (
+				<HumanDetailDialog
+					actorId={actor.id}
+					workspaceId={workspaceId}
+					open={humanDetailOpen}
+					onOpenChange={setHumanDetailOpen}
+				/>
 			)}
-		</div>
+		</>
 	)
 }
 
