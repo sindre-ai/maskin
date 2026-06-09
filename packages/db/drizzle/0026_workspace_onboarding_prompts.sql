@@ -9,4 +9,4 @@ CREATE TABLE "workspace_onboarding_prompts" (
 );
 --> statement-breakpoint
 ALTER TABLE "workspace_onboarding_prompts" ADD CONSTRAINT "workspace_onboarding_prompts_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "workspace_onboarding_prompts" ADD CONSTRAINT "workspace_onboarding_prompts_prompt_type_check" CHECK ("prompt_type" IN ('product_vision','icp','first_bet_hypothesis','north_star_metric','customer_evidence','competitive_context','hard_constraints','strategic_priorities'));
+ALTER TABLE "workspace_onboarding_prompts" ADD CONSTRAINT "workspace_onboarding_prompts_prompt_type_check" CHECK ("prompt_type" IN ('product_vision','icp','first_bet_hypothesis','north_star_metric','customer_evidence'));
