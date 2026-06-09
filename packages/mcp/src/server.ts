@@ -2003,13 +2003,32 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
-				skipWorkspace: true,
-			})
+			const { id, attach_skill_ids, detach_skill_ids, ...body } = args
+			const [result, ...skillResults] = await Promise.all([
+				apiCall(config, 'PATCH', `/api/actors/${id}`, body, { skipWorkspace: true }),
+				...(attach_skill_ids ?? []).map((skillId: string) =>
+					apiCall(
+						config,
+						'POST',
+						`/api/actors/${id}/workspace-skills`,
+						{ workspaceSkillId: skillId },
+						{ skipWorkspace: true },
+					),
+				),
+				...(detach_skill_ids ?? []).map((skillId: string) =>
+					apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
+						skipWorkspace: true,
+					}),
+				),
+			])
+			const output: Record<string, unknown> = { actor: result }
+			if (attach_skill_ids?.length)
+				output.attached_skills = skillResults.slice(0, attach_skill_ids.length)
+			if (detach_skill_ids?.length)
+				output.detached_skills = skillResults.slice(attach_skill_ids?.length ?? 0)
 			return {
 				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
 			}
 		},
 	)
