@@ -2817,6 +2817,7 @@ describe('tool handlers', () => {
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.actor).toEqual(mockActor)
 			expect(parsed.detached_skills).toHaveLength(1)
+			expect(parsed.detached_skills[0]).toEqual({ skill_id: skillId1, deleted: true })
 			expect(parsed.attached_skills).toBeUndefined()
 		})
 
@@ -2849,6 +2850,7 @@ describe('tool handlers', () => {
 			expect(parsed.actor).toEqual(mockActor)
 			expect(parsed.attached_skills).toHaveLength(1)
 			expect(parsed.detached_skills).toHaveLength(1)
+			expect(parsed.detached_skills[0]).toEqual({ skill_id: skillId2, deleted: true })
 			expect(parsed.partial_failure).toBeUndefined()
 		})
 
