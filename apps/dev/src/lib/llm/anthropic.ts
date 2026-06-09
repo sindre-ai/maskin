@@ -74,8 +74,7 @@ export class AnthropicAdapter implements LLMAdapter {
 		}))
 
 		const stopReason = data.stop_reason as string
-		const finishReason =
-			stopReason === 'tool_use' ? ('tool_calls' as const) : ('stop' as const)
+		const finishReason = stopReason === 'tool_use' ? ('tool_calls' as const) : ('stop' as const)
 
 		return {
 			content: (textContent?.text as string) ?? null,
