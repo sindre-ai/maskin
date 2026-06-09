@@ -3518,6 +3518,7 @@ export function createMcpServer(config: McpConfig) {
 				undefined,
 				{ workspaceId: args.workspace_id },
 			)) as {
+				redirect_url: string
 				install_url: string
 			}
 			return {
@@ -3529,7 +3530,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `Open this URL in your browser to complete the installation:\n\n${result.install_url}\n\n${JSON.stringify(result, null, 2)}`,
+						text: `Open this URL in your browser to complete the installation:\n\n${result.redirect_url}\n\n${JSON.stringify(result, null, 2)}`,
 					},
 				],
 			}
