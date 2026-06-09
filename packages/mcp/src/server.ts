@@ -2021,11 +2021,19 @@ export function createMcpServer(config: McpConfig) {
 					}),
 				),
 			])
-			const output: Record<string, unknown> = { actor: result }
-			if (attach_skill_ids?.length)
-				output.attached_skills = skillResults.slice(0, attach_skill_ids.length)
-			if (detach_skill_ids?.length)
-				output.detached_skills = skillResults.slice(attach_skill_ids?.length ?? 0)
+			const hasSkillOps = attach_skill_ids?.length || detach_skill_ids?.length
+			const attachCount = attach_skill_ids?.length ?? 0
+			const output: unknown = hasSkillOps
+				? {
+						actor: result,
+						...(attach_skill_ids?.length && {
+							attached_skills: skillResults.slice(0, attachCount),
+						}),
+						...(detach_skill_ids?.length && {
+							detached_skills: skillResults.slice(attachCount),
+						}),
+					}
+				: result
 			return {
 				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
