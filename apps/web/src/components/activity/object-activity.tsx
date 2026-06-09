@@ -66,14 +66,10 @@ export function ObjectActivity({
 
 	// The most recent `unreadCount` comment events (by descending ID) are considered unread.
 	// This mirrors the high-water-mark the server uses for mark-read tracking.
-	const unreadEventIds = useMemo(() => {
-		if (!events || unreadCount <= 0) return new Set<number>()
-		const sorted = events
-			.filter((e) => e.action === 'commented')
-			.sort((a, b) => b.id - a.id)
-			.slice(0, unreadCount)
-		return new Set(sorted.map((e) => e.id))
-	}, [events, unreadCount])
+	const unreadEventIds = useMemo(
+		() => computeUnreadEventIds(events, unreadCount),
+		[events, unreadCount],
+	)
 
 	const handleSeenBottom = useCallback(
 		(eventId: number) => {
@@ -251,6 +247,18 @@ export function ObjectActivity({
 			</div>
 		</div>
 	)
+}
+
+export function computeUnreadEventIds(
+	events: EventResponse[] | undefined,
+	unreadCount: number,
+): Set<number> {
+	if (!events || unreadCount <= 0) return new Set<number>()
+	const sorted = events
+		.filter((e) => e.action === 'commented')
+		.sort((a, b) => b.id - a.id)
+		.slice(0, unreadCount)
+	return new Set(sorted.map((e) => e.id))
 }
 
 function PendingComments({ objectId }: { objectId: string }) {
