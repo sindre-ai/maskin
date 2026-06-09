@@ -45,6 +45,7 @@ export const workspaces = pgTable('workspaces', {
 	id: uuid('id').defaultRandom().primaryKey(),
 	name: text('name').notNull(),
 	settings: jsonb('settings').notNull().default({}),
+	onboardingEnabled: boolean('onboarding_enabled').notNull().default(false),
 	createdBy: uuid('created_by').references(() => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),

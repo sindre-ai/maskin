@@ -477,4 +477,17 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		actionPrompt:
 			'Analyze CTO validation sessions from the past 7 days. When the CTO finds issues, both the Senior Developer (author) AND the Code Reviewer (reviewer) missed something — these sessions reveal systemic gaps.\n\n1. Find CTO sessions (last 7d). Read each and note: task, bet, verdict (PASS/FAIL/CONDITIONAL PASS), and specifically what was wrong (for FAIL/CONDITIONAL PASS).\n2. Classify failure types — unwired integrations, missing infrastructure, silent failures, version mismatches, incomplete flows, missing dependencies.\n3. Attribution — Senior Developer gap, Code Reviewer gap, systemic gap (neither could reasonably catch alone).\n4. Look for patterns across sessions and against prior analyses.\n5. Create insights for notable findings. Tag with metadata tags "cto-validation-pattern".\n6. If no notable patterns, exit silently.',
 	},
+	{
+		name: 'New Workspace Onboarding',
+		type: 'event',
+		config: {
+			entity_type: 'workspace',
+			action: 'updated',
+			conditions: [{ field: 'onboardingEnabled', operator: 'equals', value: true }],
+		},
+		targetActor$id: 'workspace_observer',
+		enabled: true,
+		actionPrompt:
+			'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. Capture each reply as a knowledge object.\n5. Close the session when all prompts are answered (or after 24h).',
+	},
 ]
