@@ -237,6 +237,101 @@ describe('FailureCard', () => {
 	})
 })
 
+// These are the exact failure_reason objects that classifyCreditExhaustion emits
+// for each of the six reason codes that should produce a recovery row in FailureCard.
+// Each case exercises the pipeline: classifier output -> parseFailureReason -> FailureCard.
+const CLASSIFIER_OUTPUTS: Array<{
+	code: string
+	failureReason: Parameters<typeof FailureCard>[0]['failureReason']
+}> = [
+	{
+		code: 'billing_error',
+		// triggered by: tail.includes('billing_error') without Max plan markers
+		failureReason: {
+			provider: 'anthropic',
+			reason_code: 'billing_error',
+			human_message: 'Anthropic billing error — credit balance may be exhausted',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		},
+	},
+	{
+		code: 'credit_balance_low',
+		// triggered by: 'Credit balance is too low' CLI banner
+		failureReason: {
+			provider: 'anthropic',
+			reason_code: 'credit_balance_low',
+			human_message: 'Claude credit balance is too low',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: 'Credit balance is too low',
+		},
+	},
+	{
+		code: 'insufficient_credits',
+		// triggered by: 'insufficient credits' (OpenRouter 402)
+		failureReason: {
+			provider: 'openrouter',
+			reason_code: 'insufficient_credits',
+			human_message: 'OpenRouter: insufficient credits',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		},
+	},
+	{
+		code: 'session_limit',
+		// triggered by: "You've hit your session limit" CLI banner
+		failureReason: {
+			provider: 'anthropic',
+			reason_code: 'session_limit',
+			human_message: 'Claude session limit reached',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: "You've hit your session limit",
+		},
+	},
+	{
+		code: 'weekly_limit',
+		// triggered by: "You've hit your weekly limit" CLI banner
+		failureReason: {
+			provider: 'anthropic',
+			reason_code: 'weekly_limit',
+			human_message: 'Claude weekly limit reached',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: "You've hit your weekly limit",
+		},
+	},
+	{
+		code: 'opus_limit',
+		// triggered by: "You've hit your Opus limit" CLI banner
+		failureReason: {
+			provider: 'anthropic',
+			reason_code: 'opus_limit',
+			human_message: 'Claude Opus limit reached',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: "You've hit your Opus limit",
+		},
+	},
+]
+
+describe('classifier codes -> FailureCard recovery row', () => {
+	it.each(CLASSIFIER_OUTPUTS)(
+		'$code: parseFailureReason round-trips and FailureCard shows recovery row',
+		({ failureReason }) => {
+			const sessionResult = { exit_code: 1, failure_reason: failureReason }
+			const parsed = parseFailureReason(sessionResult)
+			expect(parsed).not.toBeNull()
+			expect(parsed!.reason_code).toBe(failureReason.reason_code)
+			renderCard(parsed!)
+			expect(screen.getByText('Wait')).toBeInTheDocument()
+		},
+	)
+})
+
 describe('SessionDetailPanel failure display', () => {
 	it('shows FailureCard when session result has classified failure_reason', () => {
 		const session = buildSessionResponse({
