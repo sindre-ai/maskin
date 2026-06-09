@@ -897,6 +897,36 @@ app.openapi(uploadAvatarRoute, (async (c) => {
 	return c.json(serializeActor(updated))
 }) as RouteHandler<typeof uploadAvatarRoute, Env>)
 
+// GET /:id/avatar — serve the stored avatar blob (public, no auth required)
+app.get('/:id/avatar', async (c) => {
+	const db = c.get('db')
+	const storage = c.get('storageProvider')
+	const id = c.req.param('id')
+
+	const [actor] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!actor?.avatarStorageKey) {
+		return c.json(createApiError('NOT_FOUND', 'No avatar'), 404)
+	}
+
+	let bytes: Buffer
+	try {
+		bytes = await storage.get(actor.avatarStorageKey)
+	} catch (err) {
+		logger.warn('Avatar serve: storage get failed', { actorId: id, error: String(err) })
+		return c.json(createApiError('NOT_FOUND', 'Avatar not found'), 404)
+	}
+
+	const ext = actor.avatarStorageKey.split('.').pop() ?? ''
+	const contentType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+
+	logger.info('Avatar serve: hit', { actorId: id, sizeBytes: bytes.length })
+
+	return c.newResponse(new Uint8Array(bytes), 200, {
+		'Content-Type': contentType,
+		'Cache-Control': 'public, max-age=31536000, immutable',
+	})
+})
+
 // POST /:id/reset - Reset system actor to factory defaults (Sindre)
 const resetActorRoute = createRoute({
 	method: 'post',

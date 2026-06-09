@@ -106,6 +106,7 @@ export function isAuthBypassed(path: string, method: string): boolean {
 	if (path === '/api/auth/email-change/verify' && method === 'POST') return true
 	if (path.startsWith('/api/webhooks/')) return true
 	if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return true
+	if (/^\/api\/actors\/[^/]+\/avatar$/.test(path) && method === 'GET') return true
 	return false
 }
 
