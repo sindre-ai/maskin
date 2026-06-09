@@ -23,6 +23,10 @@ vi.mock('@/lib/sindre-context', () => ({
 	useSindre: () => ({ setOpen: setSindreOpen }),
 }))
 
+vi.mock('@/components/chat/conversation-drawer', () => ({
+	ConversationDrawer: () => null,
+}))
+
 vi.mock('@/components/ui/sidebar', () => ({
 	SidebarTrigger: ({ className }: { className?: string }) => (
 		<button type="button" className={className}>

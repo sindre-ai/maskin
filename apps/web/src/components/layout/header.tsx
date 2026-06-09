@@ -1,3 +1,4 @@
+import { ConversationDrawer } from '@/components/chat/conversation-drawer'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -15,7 +16,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { usePageHeader } from '@/lib/page-header-context'
-import { ConversationDrawer } from '@/components/chat/conversation-drawer'
 import { useSindre } from '@/lib/sindre-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'

@@ -4,14 +4,16 @@ import {
 	useConversationMessages,
 	useConversations,
 	useCreateConversation,
+	useMarkConversationRead,
+	useSendMessage,
 } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { cn } from '@/lib/cn'
+import type { ConversationResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { ChevronLeft, MessageSquarePlus, Plus, Send, X } from 'lucide-react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import type { ConversationResponse } from '@/lib/api'
 import { ConversationRow } from './conversation-row'
 
 interface ConversationDrawerProps {
@@ -25,6 +27,7 @@ export function ConversationDrawer({ open, onOpenChange }: ConversationDrawerPro
 	const [active, setActive] = useState<ConversationResponse | null>(null)
 	const { data: conversations = [], isLoading } = useConversations(workspaceId)
 	const createConversation = useCreateConversation(workspaceId)
+	const markRead = useMarkConversationRead(workspaceId)
 
 	// Reset active view when drawer closes
 	useEffect(() => {
@@ -52,9 +55,7 @@ export function ConversationDrawer({ open, onOpenChange }: ConversationDrawerPro
 				side={isMobile ? 'bottom' : 'right'}
 				className={cn(
 					'flex flex-col gap-0 p-0 [&>button]:hidden',
-					isMobile
-						? 'h-[90dvh] rounded-t-xl'
-						: 'w-[400px] max-w-[400px] sm:max-w-[400px]',
+					isMobile ? 'h-[90dvh] rounded-t-xl' : 'w-[400px] max-w-[400px] sm:max-w-[400px]',
 				)}
 			>
 				{active ? (
@@ -63,6 +64,7 @@ export function ConversationDrawer({ open, onOpenChange }: ConversationDrawerPro
 						conversation={active}
 						onBack={() => setActive(null)}
 						onClose={() => onOpenChange(false)}
+						onMarkRead={(id) => markRead.mutate(id)}
 					/>
 				) : (
 					<ConversationListView
@@ -122,10 +124,7 @@ function ConversationListView({
 			<div className="flex-1 overflow-y-auto">
 				{isEmpty ? (
 					<div className="flex h-full items-center justify-center">
-						<EmptyState
-							title="No conversations yet"
-							description="Start your first conversation"
-						/>
+						<EmptyState title="No conversations yet" description="Start your first conversation" />
 					</div>
 				) : (
 					<div className="px-1.5 py-1.5">
@@ -139,7 +138,12 @@ function ConversationListView({
 										title={c.title}
 										preview={c.lastMessagePreview}
 										timestamp={c.lastActivityAt ?? c.createdAt}
-										unread={false}
+										unread={c.unreadCount > 0}
+										participants={c.participants.map((p) => ({
+											name: p.name,
+											type: p.type,
+											online: p.isOnline,
+										}))}
 										onClick={() => onSelect(c)}
 									/>
 								))}
@@ -155,7 +159,12 @@ function ConversationListView({
 										title={c.title}
 										preview={c.lastMessagePreview}
 										timestamp={c.lastActivityAt ?? c.createdAt}
-										unread={false}
+										unread={c.unreadCount > 0}
+										participants={c.participants.map((p) => ({
+											name: p.name,
+											type: p.type,
+											online: p.isOnline,
+										}))}
 										onClick={() => onSelect(c)}
 									/>
 								))}
@@ -185,6 +194,7 @@ interface ActiveConversationViewProps {
 	conversation: ConversationResponse
 	onBack: () => void
 	onClose: () => void
+	onMarkRead: (id: string) => void
 }
 
 function ActiveConversationView({
@@ -192,12 +202,33 @@ function ActiveConversationView({
 	conversation,
 	onBack,
 	onClose,
+	onMarkRead,
 }: ActiveConversationViewProps) {
 	const { data, isLoading } = useConversationMessages(workspaceId, conversation.id)
+	const sendMessage = useSendMessage(workspaceId, conversation.id)
 	const composerRef = useRef<HTMLTextAreaElement>(null)
+
+	// Mark as read when conversation opens; only re-fire if conversation changes, not on every render
+	// biome-ignore lint/correctness/useExhaustiveDependencies: onMarkRead is an inline function that recreates each render; dep on conversation.id is sufficient
+	useEffect(() => {
+		onMarkRead(conversation.id)
+	}, [conversation.id])
 
 	// Messages are returned newest-first; reverse for display
 	const messages = data ? [...data.data].reverse() : []
+
+	function handleSend() {
+		const content = composerRef.current?.value.trim()
+		if (!content) return
+		sendMessage.mutate(
+			{ content },
+			{
+				onSuccess: () => {
+					if (composerRef.current) composerRef.current.value = ''
+				},
+			},
+		)
+	}
 
 	return (
 		<>
@@ -230,10 +261,7 @@ function ActiveConversationView({
 				{isLoading && <LoadingSkeleton />}
 				{messages.length === 0 && !isLoading && (
 					<div className="flex h-full items-center justify-center">
-						<EmptyState
-							title="No messages yet"
-							description="Start the conversation below"
-						/>
+						<EmptyState title="No messages yet" description="Start the conversation below" />
 					</div>
 				)}
 				<div className="flex flex-col gap-3.5">
@@ -263,18 +291,21 @@ function ActiveConversationView({
 					ref={composerRef}
 					rows={1}
 					placeholder="Continue conversation…"
-					className="flex-1 resize-none rounded-lg border bg-muted/50 px-2.5 py-2 text-sm leading-snug placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+					disabled={sendMessage.isPending}
+					className="flex-1 resize-none rounded-lg border bg-muted/50 px-2.5 py-2 text-sm leading-snug placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
 					onKeyDown={(e) => {
 						if (e.key === 'Enter' && !e.shiftKey) {
 							e.preventDefault()
+							handleSend()
 						}
 					}}
 				/>
 				<button
 					type="button"
-					disabled
+					onClick={handleSend}
+					disabled={sendMessage.isPending}
 					aria-label="Send"
-					className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-foreground text-background opacity-40"
+					className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-foreground text-background transition-opacity hover:opacity-80 disabled:opacity-40"
 				>
 					<Send size={13} />
 				</button>
