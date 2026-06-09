@@ -27,9 +27,6 @@ function ForYouDashboard() {
 		)
 	}
 
-	const onboardingItems = items.filter((item) => item.object?.type === 'onboarding_session')
-	const regularItems = items.filter((item) => item.object?.type !== 'onboarding_session')
-
 	if (items.length === 0) {
 		return (
 			<EmptyState
@@ -38,6 +35,9 @@ function ForYouDashboard() {
 			/>
 		)
 	}
+
+	const onboardingItems = items.filter((item) => item.object?.type === 'onboarding_session')
+	const regularItems = items.filter((item) => item.object?.type !== 'onboarding_session')
 
 	return (
 		<div className="space-y-4">
