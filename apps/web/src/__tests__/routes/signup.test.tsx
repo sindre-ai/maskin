@@ -10,8 +10,6 @@ vi.mock('@/hooks/use-auth', () => ({
 
 vi.mock('@/lib/api', () => ({
 	api: {
-		actors: { list: vi.fn() },
-		sessions: { create: vi.fn() },
 		landingEvents: { emit: vi.fn() },
 	},
 }))
@@ -160,36 +158,8 @@ describe('SignupPage', () => {
 		expect(screen.queryByText('Name is required')).not.toBeInTheDocument()
 	})
 
-	it('creates session from pending prompt after signup', async () => {
+	it('leaves pending prompt in localStorage after signup for workspace to handle', async () => {
 		localStorage.setItem('maskin_pending_prompt', 'Help me pick the right growth experiment')
-		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
-		vi.mocked(api.actors.list).mockResolvedValue([
-			{
-				id: 'agent-1',
-				type: 'agent',
-				name: 'Sindre',
-				email: null,
-				description: null,
-				isSystem: false,
-			},
-		])
-		vi.mocked(api.sessions.create).mockResolvedValue({ id: 'session-1' } as never)
-
-		const user = userEvent.setup()
-		render(<SignupPage />)
-		await fillAndSubmit(user)
-
-		await waitFor(() => {
-			expect(api.sessions.create).toHaveBeenCalledWith('ws-1', {
-				actor_id: 'agent-1',
-				action_prompt: 'Help me pick the right growth experiment',
-				auto_start: true,
-			})
-		})
-		expect(localStorage.getItem('maskin_pending_prompt')).toBeNull()
-	})
-
-	it('does not create session when no pending prompt', async () => {
 		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
 
 		const user = userEvent.setup()
@@ -197,29 +167,9 @@ describe('SignupPage', () => {
 		await fillAndSubmit(user)
 
 		await waitFor(() => expect(mockSignup).toHaveBeenCalled())
-		expect(api.sessions.create).not.toHaveBeenCalled()
-	})
-
-	it('surfaces error when session creation fails', async () => {
-		localStorage.setItem('maskin_pending_prompt', 'some prompt')
-		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
-		vi.mocked(api.actors.list).mockResolvedValue([
-			{
-				id: 'agent-1',
-				type: 'agent',
-				name: 'Sindre',
-				email: null,
-				description: null,
-				isSystem: false,
-			},
-		])
-		vi.mocked(api.sessions.create).mockRejectedValue(new Error('session failed'))
-
-		const user = userEvent.setup()
-		render(<SignupPage />)
-		await fillAndSubmit(user)
-
-		await waitFor(() => expect(screen.getByText('session failed')).toBeInTheDocument())
+		expect(localStorage.getItem('maskin_pending_prompt')).toBe(
+			'Help me pick the right growth experiment',
+		)
 	})
 
 	it('emits signup_complete with anonId when maskin_anon_id is in localStorage', async () => {

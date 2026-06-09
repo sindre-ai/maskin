@@ -44,42 +44,6 @@ function SignupPage() {
 		window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
 	}, [])
 
-	const createSessionFromPendingPrompt = async (pendingPrompt: string, signupResult: unknown) => {
-		const result = signupResult as { workspace_id?: string; id?: string }
-		let workspaceId = result.workspace_id
-
-		if (!workspaceId) {
-			const workspaces = await api.workspaces.list()
-			const ownedWorkspace = workspaces.find((workspace) => workspace.role === 'owner')
-			workspaceId = ownedWorkspace?.id
-		}
-
-		if (!workspaceId) {
-			throw new Error('Could not find your workspace')
-		}
-
-		console.info('[maskin] creating session from pending prompt', {
-			workspaceId,
-			promptChars: pendingPrompt.length,
-		})
-		const actors = await api.actors.list(workspaceId)
-		const agent =
-			actors.find((actor) => actor.type === 'agent' && actor.name === 'Sindre') ??
-			actors.find((actor) => actor.type === 'agent') ??
-			null
-
-		if (!agent) {
-			throw new Error('Could not find an agent in your workspace')
-		}
-
-		await api.sessions.create(workspaceId, {
-			actor_id: agent.id,
-			action_prompt: pendingPrompt,
-			auto_start: true,
-		})
-		console.info('[maskin] pending prompt session created', { workspaceId, agentId: agent.id })
-	}
-
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
 		if (!name.trim()) {
@@ -100,9 +64,8 @@ function SignupPage() {
 		}
 		setLoading(true)
 		try {
-			const pendingPrompt = localStorage.getItem('maskin_pending_prompt')
 			const anonId = localStorage.getItem('maskin_anon_id')
-			const result = await signup({
+			await signup({
 				type: 'human',
 				name: name.trim(),
 				email: email.trim(),
@@ -118,22 +81,7 @@ function SignupPage() {
 					console.error('[maskin] failed to emit signup_complete')
 				}
 			}
-			if (pendingPrompt) {
-				try {
-					await createSessionFromPendingPrompt(pendingPrompt, result)
-					localStorage.removeItem('maskin_pending_prompt')
-					window.location.assign('/')
-				} catch (sessionErr) {
-					console.error('[maskin] failed to create session from pending prompt', sessionErr)
-					setError(
-						sessionErr instanceof Error
-							? sessionErr.message
-							: 'Could not start session from your prompt',
-					)
-				}
-			} else {
-				window.location.assign('/')
-			}
+			window.location.assign('/')
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {
