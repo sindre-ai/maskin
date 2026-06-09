@@ -204,4 +204,26 @@ describe('POST /api/public/bet-strategist/claim', () => {
 
 		expect(res.status).toBe(400)
 	})
+
+	it('returns identical results for two concurrent calls (idempotent read)', async () => {
+		const { app, mockResults } = createTestApp(publicBetStrategistRoutes, BASE)
+		mockResults.select = [{ id: 'draft-1', title: 'Async standup bet' }]
+
+		const claimBody = {
+			workspace_id: 'a0000000-0000-0000-0000-000000000001',
+			guestSessionId: 'gsid-concurrent',
+		}
+
+		const [res1, res2] = await Promise.all([
+			app.request(jsonRequest('POST', `${BASE}/claim`, claimBody)),
+			app.request(jsonRequest('POST', `${BASE}/claim`, claimBody)),
+		])
+
+		expect(res1.status).toBe(200)
+		expect(res2.status).toBe(200)
+
+		const [body1, body2] = await Promise.all([res1.json(), res2.json()])
+		expect(body1).toEqual(body2)
+		expect(body1.claimed).toHaveLength(1)
+	})
 })
