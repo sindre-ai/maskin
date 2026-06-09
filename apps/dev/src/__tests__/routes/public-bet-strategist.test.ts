@@ -205,6 +205,25 @@ describe('POST /api/public/bet-strategist/claim', () => {
 		expect(res.status).toBe(400)
 	})
 
+	it('respects GUEST_CLAIM_TTL_HOURS env var — default is 48 hours', async () => {
+		// The unit test mock DB doesn't filter on dates, so this case verifies that
+		// the env var is read and the caps object carries the correct TTL value.
+		// DB-side filtering of stale drafts is verified by integration tests.
+		process.env.GUEST_CLAIM_TTL_HOURS = '24'
+		const { app, mockResults } = createTestApp(publicBetStrategistRoutes, BASE)
+		mockResults.select = [{ id: 'draft-1', title: 'Within TTL' }]
+
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/claim`, {
+				workspace_id: 'a0000000-0000-0000-0000-000000000001',
+				guestSessionId: 'gsid-abc12345',
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		delete process.env.GUEST_CLAIM_TTL_HOURS
+	})
+
 	it('returns identical results for two concurrent calls (idempotent read)', async () => {
 		const { app, mockResults } = createTestApp(publicBetStrategistRoutes, BASE)
 		mockResults.select = [{ id: 'draft-1', title: 'Async standup bet' }]

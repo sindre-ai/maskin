@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createApiError } from '../lib/errors'
 import { checkGuestThrottle } from '../lib/guest-throttle'
@@ -43,10 +43,14 @@ function readCaps() {
 	const rawWorkspace = Number(process.env.WORKSPACE_DAILY_DRAFT_CAP)
 	const rawCookie = Number(process.env.PER_COOKIE_DRAFT_CAP)
 	const rawIpDay = Number(process.env.PER_IP_DRAFT_CAP_DAY)
+	const rawClaimTtl = Number(process.env.GUEST_CLAIM_TTL_HOURS)
 	return {
 		workspaceDaily: Number.isFinite(rawWorkspace) && rawWorkspace > 0 ? rawWorkspace : 1_000,
 		perCookie: Number.isFinite(rawCookie) && rawCookie > 0 ? rawCookie : 3,
 		perIpDay: Number.isFinite(rawIpDay) && rawIpDay > 0 ? rawIpDay : 30,
+		// Drafts older than this are not returned by /claim, limiting the window
+		// during which a leaked guestSessionId can enumerate a visitor's drafts.
+		claimTtlHours: Number.isFinite(rawClaimTtl) && rawClaimTtl > 0 ? rawClaimTtl : 48,
 	}
 }
 
@@ -316,9 +320,14 @@ app.post('/claim', async (c) => {
 	}
 
 	const db = c.get('db')
+	const caps = readCaps()
+
+	const claimCutoff = new Date(Date.now() - caps.claimTtlHours * 60 * 60 * 1000)
 
 	// Return any non-malformed drafts for this session so the client can
 	// re-create them as bets in the user's real workspace.
+	// Only drafts created within the TTL window are returned — a leaked
+	// guestSessionId cannot enumerate drafts after the window closes.
 	const rows = await db
 		.select({ id: objects.id, title: objects.title })
 		.from(objects)
@@ -326,6 +335,7 @@ app.post('/claim', async (c) => {
 			and(
 				eq(objects.workspaceId, LANDING_GUESTS_WORKSPACE_ID),
 				eq(objects.type, 'bet_draft'),
+				gte(objects.createdAt, claimCutoff),
 				sql`${objects.metadata}->>'guestSessionId' = ${guestSessionId}`,
 				sql`(${objects.metadata}->>'isMalformed')::boolean IS NOT TRUE`,
 			),
