@@ -17,10 +17,10 @@ import { MentionSessionCard } from './mention-session-card'
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
 
 const COMMENT_PROSE_OVERRIDES = cn(
-	'mt-0.5',
+	'mt-1',
 	'[&_p]:!text-foreground [&_li]:!text-foreground [&_blockquote]:!text-foreground',
-	'[&_p]:!my-0 [&_ul]:!my-1 [&_ol]:!my-1 [&_blockquote]:!my-1 [&_pre]:!my-1',
-	'[&_p]:!leading-snug [&_li]:!leading-snug',
+	'[&_p]:!my-1.5 [&_ul]:!my-1 [&_ol]:!my-1 [&_blockquote]:!my-1 [&_pre]:!my-1',
+	'[&_p]:!leading-normal [&_li]:!leading-normal',
 )
 
 interface ActivityCommentProps {
@@ -222,7 +222,7 @@ export function ActivityComment({
 			)}
 
 			{hasReplies && (
-				<div className="ml-7 space-y-0.5">
+				<div className="ml-7 space-y-1.5">
 					{replies.map((reply, idx) => (
 						<div key={reply.id}>
 							{divider && dividerBeforeReplyId === reply.id && divider}
