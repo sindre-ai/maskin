@@ -4620,6 +4620,27 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 								{ workspaceId: workspace.id },
 							)
 						}
+						// Create and attach seed skills for this agent.
+						for (const skill of agent.skills ?? []) {
+							try {
+								const createdSkill = (await apiCall(
+									config,
+									'POST',
+									`/api/workspaces/${workspace.id}/skills`,
+									{ name: skill.name, content: skill.content },
+									{ workspaceId: workspace.id },
+								)) as { id: string }
+								await apiCall(
+									config,
+									'POST',
+									`/api/actors/${created.id}/workspace-skills`,
+									{ workspaceSkillId: createdSkill.id },
+									{ workspaceId: workspace.id },
+								)
+							} catch (err) {
+								seedSummary += ` Failed to create/attach skill "${skill.name}" for agent "${agent.name}": ${String(err)}.`
+							}
+						}
 						agentsCreated++
 					} catch (err) {
 						seedSummary += ` Failed to create agent "${agent.name}": ${String(err)}.`
