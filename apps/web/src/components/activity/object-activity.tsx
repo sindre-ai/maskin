@@ -64,6 +64,17 @@ export function ObjectActivity({
 	}, [object.id])
 	const unreadCount = object.unread_count ?? 0
 
+	// The most recent `unreadCount` comment events (by descending ID) are considered unread.
+	// This mirrors the high-water-mark the server uses for mark-read tracking.
+	const unreadEventIds = useMemo(() => {
+		if (!events || unreadCount <= 0) return new Set<number>()
+		const sorted = events
+			.filter((e) => e.action === 'commented')
+			.sort((a, b) => b.id - a.id)
+			.slice(0, unreadCount)
+		return new Set(sorted.map((e) => e.id))
+	}, [events, unreadCount])
+
 	const handleSeenBottom = useCallback(
 		(eventId: number) => {
 			if (eventId <= 0) return
@@ -202,6 +213,7 @@ export function ObjectActivity({
 													workspaceId={workspaceId}
 													objectId={object.id}
 													mentionSessions={sessionsByComment.get(event.id) ?? []}
+													isUnread={unreadEventIds.has(event.id)}
 												/>
 											) : (
 												<ActivityItem

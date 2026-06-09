@@ -31,6 +31,7 @@ interface ActivityCommentProps {
 	mentionSessions?: SessionResponse[]
 	dividerBeforeReplyId?: number
 	divider?: React.ReactNode
+	isUnread?: boolean
 }
 
 interface CommentRowProps {
@@ -38,9 +39,18 @@ interface CommentRowProps {
 	actors: ActorListItem[]
 	workspaceId: string
 	onReply?: () => void
+	isUnread?: boolean
+	isDecisionPoint?: boolean
 }
 
-function CommentRow({ event, actors, workspaceId, onReply }: CommentRowProps) {
+function CommentRow({
+	event,
+	actors,
+	workspaceId,
+	onReply,
+	isUnread,
+	isDecisionPoint,
+}: CommentRowProps) {
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
@@ -93,12 +103,36 @@ function CommentRow({ event, actors, workspaceId, onReply }: CommentRowProps) {
 
 	return (
 		<>
-			<div className="flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors">
-				{avatarEl}
+			<div
+				className={cn(
+					'relative flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors',
+					isDecisionPoint && 'pl-3',
+				)}
+			>
+				{isDecisionPoint && (
+					<span
+						aria-hidden
+						className="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-accent"
+					/>
+				)}
+				<div className="relative shrink-0">
+					{avatarEl}
+					{isUnread && (
+						<span
+							aria-label="Unread"
+							className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent ring-1 ring-background"
+						/>
+					)}
+				</div>
 				<div className="flex-1 min-w-0">
-					<div className="flex items-baseline gap-1.5">
+					<div className="flex items-baseline gap-1.5 flex-wrap">
 						{nameEl}
 						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+						{isDecisionPoint && (
+							<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
+								Needs you
+							</span>
+						)}
 					</div>
 					<MarkdownContent
 						content={content}
@@ -153,12 +187,14 @@ export function ActivityComment({
 	mentionSessions = [],
 	dividerBeforeReplyId,
 	divider,
+	isUnread,
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
 	const openReplyInput = () => setShowReplyInput(true)
 	const hasReplies = replies.length > 0
 	const actorList = actors ?? []
+	const isDecisionPoint = hasDecisionChips(event)
 
 	return (
 		<div className="group">
@@ -167,6 +203,8 @@ export function ActivityComment({
 				actors={actorList}
 				workspaceId={workspaceId}
 				onReply={hasReplies ? undefined : openReplyInput}
+				isUnread={isUnread}
+				isDecisionPoint={isDecisionPoint}
 			/>
 
 			{hasDecisionChips(event) && (
