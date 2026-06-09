@@ -43,21 +43,32 @@ function buildParticipant(overrides?: Record<string, unknown>) {
 
 describe('Conversations Routes', () => {
 	describe('GET /api/conversations', () => {
-		it('returns 200 with list of conversations', async () => {
+		it('returns 200 with list of conversations the caller participates in', async () => {
 			const conv = buildConversation()
 			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.select = [{ ...conv, participantCount: 2 }]
+			// The handler builds 3 subquery objects (participantCount, unreadCount, actorConversationIds)
+			// before executing 2 real queries (conversations, then participant actors).
+			// Each db.select() call shifts one entry off the queue.
+			mockResults.selectQueue = [
+				[], // participantCountSubquery builder
+				[], // unreadCountSubquery builder
+				[], // actorConversationIds builder
+				[{ ...conv, participantCount: 2, unreadCount: 0 }], // main conversations query
+				[], // participant actors query
+			]
 
 			const res = await app.request(jsonGet('/api/conversations', { 'x-workspace-id': wsId }))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(Array.isArray(body)).toBe(true)
+			expect(body).toHaveLength(1)
 		})
 
-		it('returns empty array when no conversations exist', async () => {
+		it('returns empty array when caller is not a participant in any conversation', async () => {
 			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.select = []
+			// 3 subquery builders + 1 main query returning empty (no participant match)
+			mockResults.selectQueue = [[], [], [], []]
 
 			const res = await app.request(jsonGet('/api/conversations', { 'x-workspace-id': wsId }))
 
