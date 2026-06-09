@@ -67,13 +67,18 @@ export function setCapturingEnabled(enabled: boolean): void {
 	}
 }
 
-// SHA-256 hash used when the workspace is anonymised. Returns the raw actor id
-// when Web Crypto isn't available (legacy browsers, jsdom without `subtle`) so
-// the caller still produces a usable distinct_id — better than silently
-// dropping identification.
+// SHA-256 hash used when the workspace is anonymised. When Web Crypto is
+// unavailable (non-HTTPS context, legacy jsdom) the distinct_id is sent
+// unhashed — a known privacy tradeoff: Anonymize reads "on" in the UI but the
+// raw actor id still leaves the browser. Production HTTPS always has crypto.subtle.
 export async function hashDistinctId(value: string): Promise<string> {
 	const subtle = globalThis.crypto?.subtle
-	if (!subtle) return value
+	if (!subtle) {
+		console.warn(
+			'[analytics] Anonymize fallback: crypto.subtle unavailable, distinct_id sent unhashed',
+		)
+		return value
+	}
 	const bytes = new TextEncoder().encode(value)
 	const digest = await subtle.digest('SHA-256', bytes)
 	return Array.from(new Uint8Array(digest))

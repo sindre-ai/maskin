@@ -96,7 +96,8 @@ describe('posthog helper', () => {
 		expect(await hashDistinctId('actor-2')).not.toBe(hash)
 	})
 
-	it('hashDistinctId falls back to the raw value when Web Crypto is unavailable', async () => {
+	it('hashDistinctId falls back to the raw value and warns when Web Crypto is unavailable', async () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 		const original = globalThis.crypto
 		Object.defineProperty(globalThis, 'crypto', {
 			value: undefined,
@@ -104,6 +105,10 @@ describe('posthog helper', () => {
 		})
 		try {
 			expect(await hashDistinctId('actor-1')).toBe('actor-1')
+			expect(warnSpy).toHaveBeenCalledOnce()
+			expect(warnSpy).toHaveBeenCalledWith(
+				'[analytics] Anonymize fallback: crypto.subtle unavailable, distinct_id sent unhashed',
+			)
 		} finally {
 			Object.defineProperty(globalThis, 'crypto', {
 				value: original,
