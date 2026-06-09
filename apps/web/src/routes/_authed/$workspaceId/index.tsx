@@ -1,3 +1,4 @@
+import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
@@ -26,6 +27,9 @@ function ForYouDashboard() {
 		)
 	}
 
+	const onboardingItems = items.filter((item) => item.object?.type === 'onboarding_session')
+	const regularItems = items.filter((item) => item.object?.type !== 'onboarding_session')
+
 	if (items.length === 0) {
 		return (
 			<EmptyState
@@ -37,7 +41,14 @@ function ForYouDashboard() {
 
 	return (
 		<div className="space-y-4">
-			{items.map((item) => (
+			{onboardingItems.map((item) => (
+				<OnboardingPromptCard
+					key={`${item.entity_type}-${item.entity_id}`}
+					workspaceId={workspaceId}
+					item={item}
+				/>
+			))}
+			{regularItems.map((item) => (
 				<UnreadThreadCard
 					key={`${item.entity_type}-${item.entity_id}`}
 					workspaceId={workspaceId}
