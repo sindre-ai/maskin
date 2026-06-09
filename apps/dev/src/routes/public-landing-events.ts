@@ -229,7 +229,17 @@ function parseCidrs(raw: string): ParsedCidr[] {
 		const cidr = entry.trim()
 		if (!cidr) continue
 		if (cidr.includes(':')) {
-			// IPv6: store the address portion for equality matching (supports /128).
+			// IPv6: equality-only match on the address portion. The prefix length is
+			// silently ignored — only /128 (single host) behaves correctly. A subnet
+			// like fd00::/8 will only match fd00:: exactly, not the full subnet.
+			const slashIdx = cidr.indexOf('/')
+			const prefix = slashIdx !== -1 ? Number(cidr.slice(slashIdx + 1)) : 128
+			if (prefix !== 128) {
+				logger.warn(
+					'landing-events: IPv6 CIDR is not /128 — subnet matching is not supported; only the exact host address will be trusted',
+					{ cidr },
+				)
+			}
 			result.push({ family: 6, address: cidr.split('/')[0] ?? cidr })
 			continue
 		}
