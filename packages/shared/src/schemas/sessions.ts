@@ -154,7 +154,26 @@ export const sessionUsageResponseSchema = z.object({
 })
 export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
 
-// Keep in sync with the reason codes emitted by credit-classifier.ts.
+/**
+ * Reason codes for classified session failures. All codes originate from
+ * credit-exhaustion or rate-limit signals detected in the session stdout tail.
+ *
+ * CLI banner codes (Claude Code exits with a user-visible banner):
+ * - session_limit         "You've hit your session limit"
+ * - weekly_limit          "You've hit your weekly limit"
+ * - opus_limit            "You've hit your Opus limit"
+ * - server_rate_limit     "Server is temporarily limiting requests"
+ * - request_rejected_429  "Request rejected (429)"
+ * - credit_balance_low    "Credit balance is too low"
+ *
+ * Anthropic HTTP error codes (matched from stdout tail):
+ * - billing_error         402 — credit balance exhausted
+ * - max_plan_rate_limit   402 — Max plan temporary rate limit
+ * - rate_limit_error      429 — Anthropic rate limit
+ *
+ * OpenRouter HTTP error codes:
+ * - insufficient_credits  402 — OpenRouter credit balance exhausted
+ */
 export const failureReasonCodeSchema = z.enum([
 	'session_limit',
 	'weekly_limit',
@@ -162,8 +181,8 @@ export const failureReasonCodeSchema = z.enum([
 	'server_rate_limit',
 	'request_rejected_429',
 	'credit_balance_low',
-	'max_plan_rate_limit',
 	'billing_error',
+	'max_plan_rate_limit',
 	'rate_limit_error',
 	'insufficient_credits',
 ])
