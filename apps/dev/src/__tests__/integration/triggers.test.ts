@@ -61,6 +61,23 @@ describe('Triggers Integration', () => {
 			const updated = await updateRes.json()
 			expect(updated.enabled).toBe(false)
 
+			// Update action_prompt and confirm it persists
+			const newPrompt = 'Updated action prompt for test'
+			const promptUpdateRes = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${created.id}`, { action_prompt: newPrompt }, headers),
+			)
+			expect(promptUpdateRes.status).toBe(200)
+			const promptUpdated = await promptUpdateRes.json()
+			expect(promptUpdated.actionPrompt).toBe(newPrompt)
+
+			// Verify persisted: re-read the trigger and confirm actionPrompt matches
+			const [persisted] = await db
+				.select()
+				.from(triggers)
+				.where(eq(triggers.id, created.id))
+				.limit(1)
+			expect(persisted.actionPrompt).toBe(newPrompt)
+
 			// Delete
 			const deleteRes = await app.request(
 				jsonRequest('DELETE', `/api/triggers/${created.id}`, undefined, headers),

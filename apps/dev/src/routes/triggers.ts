@@ -219,15 +219,19 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		}
 	}
 
-	const updateData: Record<string, unknown> = { updatedAt: new Date() }
-	if (body.name) updateData.name = body.name
-	if (body.config) updateData.config = body.config
-	if (body.action_prompt) updateData.actionPrompt = body.action_prompt
-	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id
-	if (body.enabled !== undefined) updateData.enabled = body.enabled
-
 	const updated = await db.transaction(async (tx) => {
-		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
+		const [row] = await tx
+			.update(triggers)
+			.set({
+				...(body.name !== undefined && { name: body.name }),
+				...(body.config !== undefined && { config: body.config }),
+				...(body.action_prompt !== undefined && { actionPrompt: body.action_prompt }),
+				...(body.target_actor_id !== undefined && { targetActorId: body.target_actor_id }),
+				...(body.enabled !== undefined && { enabled: body.enabled }),
+				updatedAt: new Date(),
+			})
+			.where(eq(triggers.id, id))
+			.returning()
 		if (!row) return null
 
 		await tx.insert(events).values({
