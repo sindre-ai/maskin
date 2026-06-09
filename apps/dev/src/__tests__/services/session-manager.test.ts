@@ -395,7 +395,7 @@ describe('SessionManager', () => {
 			}
 		}
 
-		it('produces per-owner env vars and MCP entries for two GitHub installations', async () => {
+		it('produces per-owner env vars for two GitHub installations (agents opt into MCP servers via tools config)', async () => {
 			const wsId = randomUUID()
 			const integrationA = buildIntegration({
 				workspaceId: wsId,
@@ -428,25 +428,9 @@ describe('SessionManager', () => {
 			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_token_sindre_ai')
 			expect(createArgs.env.GITHUB_TOKEN_VAERKSTED_AI).toBe('ghs_token_vaerksted_ai')
 			expect(createArgs.env.GITHUB_TOKEN).toBeUndefined()
-
-			const mcpConfig = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
-			}
-			expect(Object.keys(mcpConfig.mcpServers).sort()).toEqual([
-				'github-sindre-ai',
-				'github-vaerksted-ai',
-			])
-			expect(mcpConfig.mcpServers['github-sindre-ai'].command).toBe('npx')
-			expect(mcpConfig.mcpServers['github-sindre-ai'].args).toEqual([
-				'-y',
-				'@modelcontextprotocol/server-github',
-			])
-			expect(mcpConfig.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
-				'${GITHUB_TOKEN_SINDRE_AI}',
-			)
-			expect(mcpConfig.mcpServers['github-vaerksted-ai'].env.GITHUB_TOKEN).toBe(
-				'${GITHUB_TOKEN_VAERKSTED_AI}',
-			)
+			// GitHub MCP server entries are not auto-injected — agents configure them
+			// via tools.mcpServers (github-{owner} keys) and opt in per-agent
+			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
 		})
 
 		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
@@ -476,10 +460,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.GITHUB_TOKEN_ACME_ORG).toBe('ghs_token_acme')
-			const mcpConfig = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, unknown>
-			}
-			expect(Object.keys(mcpConfig.mcpServers)).toEqual(['github-acme-org'])
+			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
 		})
 
 		it('skips the integration when owner_login backfill fails (does not kill the session)', async () => {

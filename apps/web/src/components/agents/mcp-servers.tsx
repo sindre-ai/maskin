@@ -132,10 +132,8 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 	)
 
 	const handleQuickAdd = useCallback(
-		(provider: string) => {
-			const preset = INTEGRATION_MCP_PRESETS[provider]
-			if (!preset) return
-			const updated = { ...servers, [provider]: preset }
+		(name: string, preset: McpServer) => {
+			const updated = { ...servers, [name]: preset }
 			onUpdate({ mcpServers: updated })
 		},
 		[servers, onUpdate],
@@ -151,11 +149,40 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 		onUpdate({ mcpServers: updated })
 	}, [servers, onUpdate])
 
-	// Integrations that have MCP presets and are active but not yet added
-	const availableQuickAdds = (integrations ?? []).filter(
+	// Active GitHub installations not yet added to this agent's MCP servers
+	const unadddedGithubInstallations = (integrations ?? []).filter(
 		(i: IntegrationResponse) =>
-			i.status === 'active' && INTEGRATION_MCP_PRESETS[i.provider] && !servers[i.provider],
+			i.provider === 'github' &&
+			i.status === 'active' &&
+			typeof i.config.owner_login === 'string' &&
+			!servers[`github-${(i.config.owner_login as string).toLowerCase()}`],
 	)
+	const showAddGithub = unadddedGithubInstallations.length > 0
+
+	const handleAddGithub = useCallback(() => {
+		const updated = { ...servers }
+		for (const i of unadddedGithubInstallations) {
+			const ownerLogin = i.config.owner_login as string
+			const sanitized = ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
+			updated[`github-${ownerLogin.toLowerCase()}`] = {
+				type: 'stdio',
+				command: 'npx',
+				args: ['-y', '@modelcontextprotocol/server-github'],
+				env: { GITHUB_TOKEN: `\${GITHUB_TOKEN_${sanitized}}` },
+			}
+		}
+		onUpdate({ mcpServers: updated })
+	}, [servers, unadddedGithubInstallations, onUpdate])
+
+	// Quick-add items for static-preset providers (GitHub handled separately above)
+	const availableQuickAdds: Array<{ id: string; name: string; label: string; preset: McpServer }> =
+		[]
+	for (const i of integrations ?? []) {
+		if (i.status !== 'active' || i.provider === 'github') continue
+		const preset = INTEGRATION_MCP_PRESETS[i.provider]
+		if (!preset || servers[i.provider]) continue
+		availableQuickAdds.push({ id: i.id, name: i.provider, label: i.provider, preset })
+	}
 
 	const hasMaskin = !!servers.maskin
 	const hasBrowser = !!servers.playwright
@@ -219,17 +246,23 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 						<FileJson className="h-3.5 w-3.5 mr-1" />
 						Import .mcp.json
 					</Button>
-					{availableQuickAdds.map((integration: IntegrationResponse) => (
+					{availableQuickAdds.map(({ id, name, label, preset }) => (
 						<Button
-							key={integration.id}
+							key={id}
 							size="sm"
 							variant="outline"
-							onClick={() => handleQuickAdd(integration.provider)}
+							onClick={() => handleQuickAdd(name, preset)}
 						>
 							<Zap className="h-3.5 w-3.5 mr-1" />
-							Add {integration.provider}
+							Add {label}
 						</Button>
 					))}
+					{showAddGithub && (
+						<Button size="sm" variant="outline" onClick={handleAddGithub}>
+							<Zap className="h-3.5 w-3.5 mr-1" />
+							Add github
+						</Button>
+					)}
 				</div>
 			)}
 
