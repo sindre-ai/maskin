@@ -665,13 +665,13 @@ export const tools = {
 	},
 	update_trigger: {
 		description:
-			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state.',
+			'Update a trigger by ID. Can change name, schedule/event config, actionPrompt, target agent, or enabled/disabled state.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
 			config: z.record(z.unknown()).optional(),
-			action_prompt: z.string().min(1).optional(),
+			actionPrompt: z.string().min(1).optional(),
 			target_actor_id: z.string().uuid().optional(),
 			enabled: z.boolean().optional(),
 		}),
