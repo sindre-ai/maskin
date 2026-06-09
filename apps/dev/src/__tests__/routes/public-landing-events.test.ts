@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import publicLandingEventsRoutes, {
-	_resetLandingEventBuckets,
-	_resetTrustedCidrs,
-	extractClientIp,
-} from '../../routes/public-landing-events'
+import publicLandingEventsRoutes, { _resetLandingEventBuckets } from '../../routes/public-landing-events'
+import { _resetTrustedCidrs, extractClientIp } from '../../lib/trusted-proxy'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
+
+// Typed helper so tests can read inserts without casting.
+type InsertValues = Record<string, unknown>
 
 // Capture structured log lines. The route logs via the shared logger, which
 // writes JSON to console.log/console.error. We hijack both so we can assert
@@ -152,6 +152,46 @@ describe('POST /api/public/landing-events', () => {
 		expect(log?.props).toMatchObject({ __truncated: true })
 	})
 
+	it('inserts a landing_signup row for signup_complete when no prior record exists', async () => {
+		const { app, mockResults, calls } = createTestApp(
+			publicLandingEventsRoutes,
+			'/api/public/landing-events',
+		)
+		// select returns empty — no existing signup for this anonId
+		mockResults.select = []
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/public/landing-events', {
+				events: [{ name: 'signup_complete', anonId: 'anon-newuser01' }],
+			}),
+		)
+
+		expect(res.status).toBe(204)
+		expect((calls.inserts as InsertValues[]).length).toBe(1)
+		expect((calls.inserts as InsertValues[])[0]).toMatchObject({
+			type: 'landing_signup',
+			metadata: { anonId: 'anon-newuser01' },
+		})
+	})
+
+	it('skips insert for signup_complete when a landing_signup row already exists (dedup)', async () => {
+		const { app, mockResults, calls } = createTestApp(
+			publicLandingEventsRoutes,
+			'/api/public/landing-events',
+		)
+		// select returns a row — this anonId has already been counted
+		mockResults.select = [{ id: 'existing-signup-id' }]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/public/landing-events', {
+				events: [{ name: 'signup_complete', anonId: 'anon-dupuser01' }],
+			}),
+		)
+
+		expect(res.status).toBe(204)
+		expect((calls.inserts as InsertValues[]).length).toBe(0)
+	})
+
 	it('throttles a flood from the same IP with 429 RATE_LIMITED', async () => {
 		const { app } = createTestApp(publicLandingEventsRoutes, '/api/public/landing-events')
 		const ip = '10.0.0.99'
@@ -259,7 +299,7 @@ describe('extractClientIp — trusted-proxy CIDR validation', () => {
 		_resetTrustedCidrs()
 		expect(extractClientIp('10.1.2.3', '1.2.3.4')).toBe('1.2.3.4')
 		expect(extractClientIp('192.168.1.1', '1.2.3.4')).toBe('192.168.1.1')
-		process.env.TRUSTED_PROXY_CIDRS = undefined
+		delete process.env.TRUSTED_PROXY_CIDRS
 	})
 
 	it('takes the first hop of a multi-hop XFF when proxy is trusted', () => {
@@ -270,6 +310,6 @@ describe('extractClientIp — trusted-proxy CIDR validation', () => {
 		process.env.TRUSTED_PROXY_CIDRS = ''
 		_resetTrustedCidrs()
 		expect(extractClientIp('127.0.0.1', '1.2.3.4')).toBe('127.0.0.1')
-		process.env.TRUSTED_PROXY_CIDRS = undefined
+		delete process.env.TRUSTED_PROXY_CIDRS
 	})
 })

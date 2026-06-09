@@ -72,14 +72,9 @@ function SignupPage() {
 				password,
 			})
 			if (anonId) {
-				try {
-					await api.landingEvents.emit([
-						{ name: 'signup_complete', anonId, props: { fromGuest: true } },
-					])
-					localStorage.removeItem('maskin_anon_id')
-				} catch {
-					console.error('[maskin] failed to emit signup_complete')
-				}
+				api.landingEvents
+					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
+					.catch(() => console.error('[maskin] failed to emit signup_complete'))
 			}
 			window.location.assign('/')
 		} catch (err) {

@@ -210,10 +210,10 @@ export const api = {
 	// Public landing-page handoffs. The /drafts endpoint is unauthenticated and
 	// called from sindre.ai; only /claim is reachable from the web app.
 	publicBetStrategist: {
-		claim: (workspaceId: string) =>
-			request<{ claimed: Array<{ id: string; title: string | null }> }>(
+		claim: (workspaceId: string, guestSessionId: string) =>
+			request<{ claimed: Array<{ id: string; title: string | null; content: string | null }> }>(
 				'/public/bet-strategist/claim',
-				{ method: 'POST', body: { workspace_id: workspaceId } },
+				{ method: 'POST', body: { workspace_id: workspaceId, guestSessionId } },
 			),
 	},
 

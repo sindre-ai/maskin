@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import publicBetStrategistRoutes, { _resetIpBuckets } from '../../routes/public-bet-strategist'
+import publicBetStrategistRoutes, {
+	_resetClaimIpDailyBuckets,
+	_resetIpBuckets,
+} from '../../routes/public-bet-strategist'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -26,20 +29,23 @@ function mockFetch(content: string, status = 200) {
 describe('POST /api/public/bet-strategist/drafts', () => {
 	beforeEach(() => {
 		_resetIpBuckets()
+		_resetClaimIpDailyBuckets()
 		vi.spyOn(console, 'log').mockImplementation(() => undefined)
 		vi.spyOn(console, 'error').mockImplementation(() => undefined)
 		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
 		process.env.WORKSPACE_DAILY_DRAFT_CAP = '1000'
 		process.env.PER_COOKIE_DRAFT_CAP = '3'
+		process.env.PER_IP_DRAFT_CAP_DAY = '30'
 	})
 
 	afterEach(() => {
 		vi.restoreAllMocks()
 		vi.unstubAllGlobals()
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = undefined
-		process.env.WORKSPACE_DAILY_DRAFT_CAP = undefined
-		process.env.PER_COOKIE_DRAFT_CAP = undefined
+		delete process.env.MASKIN_FALLBACK_OPENROUTER_KEY
+		delete process.env.WORKSPACE_DAILY_DRAFT_CAP
+		delete process.env.PER_COOKIE_DRAFT_CAP
+		delete process.env.PER_IP_DRAFT_CAP_DAY
 	})
 
 	it('returns 200 with draft content on happy path', async () => {
@@ -153,19 +159,23 @@ describe('POST /api/public/bet-strategist/drafts', () => {
 
 describe('POST /api/public/bet-strategist/claim', () => {
 	beforeEach(() => {
+		_resetIpBuckets()
+		_resetClaimIpDailyBuckets()
 		vi.spyOn(console, 'log').mockImplementation(() => undefined)
 		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+		process.env.PER_IP_DRAFT_CAP_DAY = '30'
 	})
 
 	afterEach(() => {
 		vi.restoreAllMocks()
+		delete process.env.PER_IP_DRAFT_CAP_DAY
 	})
 
 	it('returns claimed drafts for a valid guestSessionId', async () => {
 		const { app, mockResults } = createTestApp(publicBetStrategistRoutes, BASE)
 		mockResults.select = [
-			{ id: 'draft-1', title: 'Async standup bet' },
-			{ id: 'draft-2', title: null },
+			{ id: 'draft-1', title: 'Async standup bet', content: 'This is the bet write-up.' },
+			{ id: 'draft-2', title: null, content: null },
 		]
 
 		const res = await app.request(
@@ -178,7 +188,11 @@ describe('POST /api/public/bet-strategist/claim', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.claimed).toHaveLength(2)
-		expect(body.claimed[0]).toMatchObject({ id: 'draft-1', title: 'Async standup bet' })
+		expect(body.claimed[0]).toMatchObject({
+			id: 'draft-1',
+			title: 'Async standup bet',
+			content: 'This is the bet write-up.',
+		})
 	})
 
 	it('returns empty claimed array when no guestSessionId is provided', async () => {
@@ -205,13 +219,64 @@ describe('POST /api/public/bet-strategist/claim', () => {
 		expect(res.status).toBe(400)
 	})
 
+	it('returns 429 when claim per-IP per-minute bucket is exhausted', async () => {
+		const { app, mockResults } = createTestApp(publicBetStrategistRoutes, BASE)
+		mockResults.select = []
+
+		const claimBody = {
+			workspace_id: 'a0000000-0000-0000-0000-000000000001',
+			guestSessionId: 'gsid-claim-rate',
+		}
+
+		for (let i = 0; i < 5; i++) {
+			const ok = await app.request(
+				jsonRequest('POST', `${BASE}/claim`, claimBody, {}, { remoteAddress: '10.0.0.1' }),
+			)
+			expect(ok.status).toBe(200)
+		}
+
+		const blocked = await app.request(
+			jsonRequest('POST', `${BASE}/claim`, claimBody, {}, { remoteAddress: '10.0.0.1' }),
+		)
+
+		expect(blocked.status).toBe(429)
+		const body = await blocked.json()
+		expect(body.error.code).toBe('RATE_LIMITED')
+	})
+
+	it('returns 429 when claim per-IP daily cap is reached', async () => {
+		process.env.PER_IP_DRAFT_CAP_DAY = '2'
+		const { app, mockResults } = createTestApp(publicBetStrategistRoutes, BASE)
+		mockResults.select = []
+
+		const claimBody = {
+			workspace_id: 'a0000000-0000-0000-0000-000000000001',
+			guestSessionId: 'gsid-claim-daily',
+		}
+
+		for (let i = 0; i < 2; i++) {
+			const ok = await app.request(
+				jsonRequest('POST', `${BASE}/claim`, claimBody, {}, { remoteAddress: '10.0.0.2' }),
+			)
+			expect(ok.status).toBe(200)
+		}
+
+		const blocked = await app.request(
+			jsonRequest('POST', `${BASE}/claim`, claimBody, {}, { remoteAddress: '10.0.0.2' }),
+		)
+
+		expect(blocked.status).toBe(429)
+		const body = await blocked.json()
+		expect(body.error.code).toBe('RATE_LIMITED')
+	})
+
 	it('respects GUEST_CLAIM_TTL_HOURS env var — default is 48 hours', async () => {
 		// The unit test mock DB doesn't filter on dates, so this case verifies that
 		// the env var is read and the caps object carries the correct TTL value.
 		// DB-side filtering of stale drafts is verified by integration tests.
 		process.env.GUEST_CLAIM_TTL_HOURS = '24'
 		const { app, mockResults } = createTestApp(publicBetStrategistRoutes, BASE)
-		mockResults.select = [{ id: 'draft-1', title: 'Within TTL' }]
+		mockResults.select = [{ id: 'draft-1', title: 'Within TTL', content: 'Draft content.' }]
 
 		const res = await app.request(
 			jsonRequest('POST', `${BASE}/claim`, {
@@ -226,7 +291,7 @@ describe('POST /api/public/bet-strategist/claim', () => {
 
 	it('returns identical results for two concurrent calls (idempotent read)', async () => {
 		const { app, mockResults } = createTestApp(publicBetStrategistRoutes, BASE)
-		mockResults.select = [{ id: 'draft-1', title: 'Async standup bet' }]
+		mockResults.select = [{ id: 'draft-1', title: 'Async standup bet', content: 'Draft content.' }]
 
 		const claimBody = {
 			workspace_id: 'a0000000-0000-0000-0000-000000000001',

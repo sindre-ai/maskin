@@ -16,6 +16,7 @@ import {
 	registerWorkspaceProperties,
 	setCapturingEnabled,
 } from '@/lib/posthog'
+import { api } from '@/lib/api'
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
@@ -112,6 +113,7 @@ function WorkspaceLayout() {
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<SindreProvider workspaceId={workspaceId}>
 				<PendingPromptBootstrap sindreActorId={sindreActorId} />
+				<GuestDraftClaimBootstrap workspaceId={workspaceId} />
 				<PendingCommentsProvider workspaceId={workspaceId}>
 					<PageHeaderProvider>
 						<SindrePinShell>
@@ -132,6 +134,44 @@ function WorkspaceLayout() {
 			</SindreProvider>
 		</WorkspaceContext.Provider>
 	)
+}
+
+/**
+ * Claims any guest bet drafts created on the landing page (identified by
+ * `maskin_anon_id` in localStorage) and creates them as bets in the workspace.
+ * Fires at most once — the key is removed before the API call so a failed
+ * claim does not retry on the next render.
+ */
+function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
+	const firedRef = useRef(false)
+
+	useEffect(() => {
+		if (firedRef.current) return
+		const guestSessionId = localStorage.getItem('maskin_anon_id')
+		if (!guestSessionId) return
+		firedRef.current = true
+		localStorage.removeItem('maskin_anon_id')
+
+		api.publicBetStrategist
+			.claim(workspaceId, guestSessionId)
+			.then(({ claimed }) =>
+				Promise.allSettled(
+					claimed
+						.filter((d) => d.content)
+						.map((d) =>
+							api.objects.create(workspaceId, {
+								type: 'bet',
+								title: d.title ?? undefined,
+								content: d.content ?? undefined,
+								status: 'signal',
+							}),
+						),
+				),
+			)
+			.catch(() => console.error('[maskin] failed to claim guest drafts'))
+	}, [workspaceId])
+
+	return null
 }
 
 /**

@@ -11,6 +11,7 @@ vi.mock('@/hooks/use-auth', () => ({
 vi.mock('@/lib/api', () => ({
 	api: {
 		landingEvents: { emit: vi.fn() },
+		publicBetStrategist: { claim: vi.fn() },
 	},
 }))
 
@@ -186,7 +187,8 @@ describe('SignupPage', () => {
 				{ name: 'signup_complete', anonId: 'anon-landing-abc123', props: { fromGuest: true } },
 			])
 		})
-		expect(localStorage.getItem('maskin_anon_id')).toBeNull()
+		// maskin_anon_id is kept for the workspace component to use for claiming guest drafts
+		expect(localStorage.getItem('maskin_anon_id')).toBe('anon-landing-abc123')
 	})
 
 	it('does not emit signup_complete when maskin_anon_id is absent', async () => {

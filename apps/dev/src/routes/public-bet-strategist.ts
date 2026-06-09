@@ -11,7 +11,7 @@ import {
 	getWorkspaceDailyDraftCount,
 } from '../lib/landing-guests'
 import { logger } from '../lib/logger'
-import { extractClientIp } from './public-landing-events'
+import { extractClientIp } from '../lib/trusted-proxy'
 
 // Public, no-auth endpoint for the landing-page Bet Strategist prompt bar (T3).
 // Accepts a guest's raw problem statement, calls the LLM, stores the result as a
@@ -21,6 +21,9 @@ import { extractClientIp } from './public-landing-events'
 //   1. Per-IP per-minute  — in-memory token bucket (5 tokens/min)
 //   2. Workspace daily    — DB count of all bet_draft for today → 503 when tripped
 //   3. Per-cookie daily   — DB count of bet_draft for this guestSessionId today
+// Claim endpoint:
+//   1. Per-IP per-minute  — in-memory token bucket (5 requests/min)
+//   2. Per-IP daily       — in-memory counter (default 30/day)
 //
 // The workspace daily cap is the billing guard (cross-instance, DB-backed).
 // The per-minute IP bucket is a burst guard (in-process, best-effort).
@@ -88,6 +91,47 @@ function takeIpToken(ip: string, now: number): boolean {
 // Test-only: reset the per-IP bucket between cases.
 export function _resetIpBuckets(): void {
 	ipBuckets.clear()
+}
+
+type DailyBucket = { count: number; dayKey: string }
+const claimIpDailyBuckets = new Map<string, DailyBucket>()
+
+function getUtcDayKey(now: number): string {
+	return new Date(now).toISOString().slice(0, 10)
+}
+
+function secondsUntilNextUtcMidnight(now: number): number {
+	const nextMidnight = Date.UTC(
+		new Date(now).getUTCFullYear(),
+		new Date(now).getUTCMonth(),
+		new Date(now).getUTCDate() + 1,
+	)
+	return Math.max(1, Math.ceil((nextMidnight - now) / 1000))
+}
+
+function takeClaimIpDailyToken(ip: string, now: number, cap: number): boolean {
+	const dayKey = getUtcDayKey(now)
+	const existing = claimIpDailyBuckets.get(ip)
+	const count = existing && existing.dayKey === dayKey ? existing.count : 0
+	if (count >= cap) {
+		claimIpDailyBuckets.set(ip, { count, dayKey })
+		return false
+	}
+	claimIpDailyBuckets.set(ip, { count: count + 1, dayKey })
+	if (claimIpDailyBuckets.size > IP_BUCKET_MAP_CAP) {
+		const drop = Math.floor(IP_BUCKET_MAP_CAP * 0.1)
+		let i = 0
+		for (const key of claimIpDailyBuckets.keys()) {
+			if (i++ >= drop) break
+			claimIpDailyBuckets.delete(key)
+		}
+	}
+	return true
+}
+
+// Test-only: reset the claim IP bucket between cases.
+export function _resetClaimIpDailyBuckets(): void {
+	claimIpDailyBuckets.clear()
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +355,34 @@ app.post('/claim', async (c) => {
 		return c.json(createApiError('VALIDATION_ERROR', 'Body must be JSON'), 400)
 	}
 
+	const socketIp = (c.req.raw as unknown as { remoteAddress?: string }).remoteAddress
+	const ip = extractClientIp(socketIp, c.req.header('X-Forwarded-For'))
+	const now = Date.now()
+	const caps = readCaps()
+
+	// Claim requests are public and can be replayed if a session ID leaks, so we
+	// apply the same lightweight IP guards as the draft endpoint.
+	if (!takeClaimIpDailyToken(ip, now, caps.perIpDay)) {
+		logger.info('public-bet-strategist: claim per-IP daily cap reached', {
+			ip,
+			cap: caps.perIpDay,
+		})
+		c.header('Retry-After', String(secondsUntilNextUtcMidnight(now)))
+		return c.json(
+			createApiError('RATE_LIMITED', `Too many claim requests from this IP today.`),
+			429,
+		)
+	}
+
+	if (!takeIpToken(ip, now)) {
+		logger.info('public-bet-strategist: claim per-IP rate limit hit', { ip })
+		c.header('Retry-After', '60')
+		return c.json(
+			createApiError('RATE_LIMITED', 'Too many claim requests. Try again in a minute.'),
+			429,
+		)
+	}
+
 	// guestSessionId can come from cookie or request body (client may send both
 	// during the post-signup flow; body takes precedence).
 	const guestSessionId = body.guestSessionId ?? c.req.header('Cookie')?.match(/_gsid=([^;]+)/)?.[1]
@@ -320,16 +392,15 @@ app.post('/claim', async (c) => {
 	}
 
 	const db = c.get('db')
-	const caps = readCaps()
 
-	const claimCutoff = new Date(Date.now() - caps.claimTtlHours * 60 * 60 * 1000)
+	const claimCutoff = new Date(now - caps.claimTtlHours * 60 * 60 * 1000)
 
 	// Return any non-malformed drafts for this session so the client can
 	// re-create them as bets in the user's real workspace.
 	// Only drafts created within the TTL window are returned — a leaked
 	// guestSessionId cannot enumerate drafts after the window closes.
 	const rows = await db
-		.select({ id: objects.id, title: objects.title })
+		.select({ id: objects.id, title: objects.title, content: objects.content })
 		.from(objects)
 		.where(
 			and(
