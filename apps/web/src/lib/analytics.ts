@@ -40,7 +40,7 @@ export type TaxonomyEntityType =
 	| 'file'
 
 export function isTaxonomyEntityType(s: string): s is TaxonomyEntityType {
-	const valid: readonly string[] = [
+	const valid = [
 		'bet',
 		'task',
 		'insight',
@@ -50,8 +50,8 @@ export function isTaxonomyEntityType(s: string): s is TaxonomyEntityType {
 		'trigger',
 		'relationship',
 		'file',
-	]
-	return valid.includes(s)
+	] satisfies TaxonomyEntityType[]
+	return valid.includes(s as TaxonomyEntityType)
 }
 
 type EventSource = 'web' | 'mcp' | 'trigger'
