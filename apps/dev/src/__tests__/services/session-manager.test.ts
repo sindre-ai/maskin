@@ -1253,5 +1253,29 @@ describe('SessionManager', () => {
 			)
 			expect(sessionUpdate?.result as Record<string, unknown>).not.toHaveProperty('failure_reason')
 		})
+
+		it('does not call classifier when exitCode is null (OOM kill)', async () => {
+			const session = buildSession({ status: 'running' })
+
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(
+						sessionId: string,
+						containerId: string,
+						exitCode: number | null,
+					): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', null)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+		})
 	})
 })
