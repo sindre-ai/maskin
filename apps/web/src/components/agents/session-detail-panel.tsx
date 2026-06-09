@@ -374,7 +374,9 @@ export function SessionDetailPanel({
 	const duration = session ? formatDurationBetween(session.startedAt, session.completedAt) : null
 	const result = session?.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
-	const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
+	const rawExitCode = result?.exit_code
+	const exitCode: number | null | undefined =
+		typeof rawExitCode === 'number' || rawExitCode === null ? rawExitCode : undefined
 	const failureReason = parseFailureReason(result)
 
 	const lastResult = useMemo(() => getSessionResultDisplay(logs ?? []), [logs])
@@ -424,7 +426,10 @@ export function SessionDetailPanel({
 								(errorMessage || (exitCode !== undefined && exitCode !== 0)) && (
 									<div className="rounded-md bg-error/10 border border-error/20 px-3 py-2">
 										<p className="text-sm text-error font-medium">
-											{errorMessage ?? `Process exited with code ${exitCode}`}
+											{errorMessage ??
+									(exitCode !== null
+										? `Process exited with code ${exitCode}`
+										: 'Container process was killed')}
 										</p>
 									</div>
 								)

@@ -362,6 +362,15 @@ describe('SessionDetailPanel failure display', () => {
 		expect(screen.getByText('Process exited with code 1')).toBeInTheDocument()
 		expect(screen.queryByText(/Credit limit/)).not.toBeInTheDocument()
 	})
+
+	it('shows killed message when exit_code is null (OOM kill)', () => {
+		const session = buildSessionResponse({
+			status: 'failed',
+			result: { exit_code: null },
+		})
+		renderPanel(session)
+		expect(screen.getByText('Container process was killed')).toBeInTheDocument()
+	})
 })
 
 describe('SessionDetailPanel Restart button', () => {

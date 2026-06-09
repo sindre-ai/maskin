@@ -199,7 +199,7 @@ export const sessionResultFailureReasonSchema = z.object({
 export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReasonSchema>
 
 export const sessionResultSchema = z.object({
-	exit_code: z.number().int().optional(),
+	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
 })

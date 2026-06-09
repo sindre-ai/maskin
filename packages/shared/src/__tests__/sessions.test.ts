@@ -384,6 +384,11 @@ describe('sessionResultSchema', () => {
 		expect(result.failure_reason?.reason_code).toBe('insufficient_credits')
 	})
 
+	it('accepts exit_code: null (OOM kill)', () => {
+		const result = sessionResultSchema.parse({ exit_code: null })
+		expect(result.exit_code).toBeNull()
+	})
+
 	it('accepts an empty object (all fields optional)', () => {
 		const result = sessionResultSchema.parse({})
 		expect(result.exit_code).toBeUndefined()

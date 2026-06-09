@@ -513,7 +513,9 @@ function SessionRow({
 
 	const result = session.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
-	const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
+	const rawExitCode = result?.exit_code
+	const exitCode: number | null | undefined =
+		typeof rawExitCode === 'number' || rawExitCode === null ? rawExitCode : undefined
 	const hasResultError = !!errorMessage || (exitCode !== undefined && exitCode !== 0)
 	const failureReason = parseFailureReason(result)
 
@@ -524,7 +526,12 @@ function SessionRow({
 	)
 
 	const errorDetail =
-		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
+		errorMessage ??
+		(exitCode !== undefined
+			? exitCode !== null
+				? `Process exited with code ${exitCode}`
+				: 'Container process was killed'
+			: null)
 	const displayError = errorDetail ?? stderrLog
 
 	return (
