@@ -675,7 +675,7 @@ describe('HeroCardApp — customer variant (organization + person + new type par
 		render(<HeroCardApp />)
 		await waitFor(() => expect(screen.getByText('Jane Doe')).toBeInTheDocument())
 		expect(screen.getByText('last touch 1d ago · engaged')).toBeInTheDocument()
-		expect(screen.getByText('Person')).toBeInTheDocument()
+		await waitFor(() => expect(screen.getByText('Person')).toBeInTheDocument())
 	})
 
 	it('renders a hypothetical new object type (e.g. `customer`) identically given the same payload shape', async () => {
