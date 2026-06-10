@@ -279,7 +279,11 @@ function SkillRow({
 	onDelete: () => void
 }) {
 	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
+		// biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete
+		<div
+			onClick={onEdit}
+			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 cursor-pointer transition-colors hover:border-border-hover hover:bg-bg-hover"
+		>
 			<div className="flex-1 min-w-0">
 				<div className="flex items-center gap-2">
 					{!skill.isValid && (
@@ -309,11 +313,12 @@ function SkillRow({
 						size="icon"
 						className="text-muted-foreground"
 						aria-label={`Actions for ${skill.name}`}
+						onClick={(e) => e.stopPropagation()}
 					>
 						<MoreHorizontal size={16} />
 					</Button>
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end">
+				<DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
 					<DropdownMenuItem onClick={onEdit}>
 						<Pencil size={14} className="mr-2" />
 						Edit
