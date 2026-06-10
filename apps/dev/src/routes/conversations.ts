@@ -506,6 +506,10 @@ const addParticipantRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not authorized to add participants',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Conversation not found',
@@ -519,6 +523,7 @@ const addParticipantRoute = createRoute({
 
 app.openapi(addParticipantRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
@@ -526,6 +531,21 @@ app.openapi(addParticipantRoute, (async (c) => {
 	const conversation = await loadConversationWithAuth(db, id, workspaceId)
 	if (!conversation) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [callerParticipant] = await db
+		.select()
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, id),
+				eq(conversationParticipants.actorId, actorId),
+			),
+		)
+		.limit(1)
+
+	if (!callerParticipant) {
+		return c.json(createApiError('FORBIDDEN', 'Not authorized to add participants'), 403)
 	}
 
 	const [existing] = await db
