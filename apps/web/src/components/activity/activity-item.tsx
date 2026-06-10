@@ -83,9 +83,14 @@ export function ActivityItemView({
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<div className="flex-1 min-w-0">
 				<div className="flex items-baseline gap-1.5 text-sm flex-wrap">
-					<span className={cn('font-medium', isAgent ? 'text-primary' : 'text-foreground')}>
-						{actor?.name ?? 'Unknown'}
-					</span>
+					{isAgent ? (
+						<span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-1.5 py-0.5 text-xs font-medium shrink-0">
+							{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
+							<span>{actor?.name ?? 'Agent'}</span>
+						</span>
+					) : (
+						<span className="font-medium text-foreground">{actor?.name ?? 'Unknown'}</span>
+					)}
 					<span className="text-muted-foreground break-words min-w-0">{description}</span>
 					{showTitle &&
 						(workspaceId && isObjectEntity(event.entityType) ? (

@@ -39,6 +39,17 @@ export function useCreateSession(workspaceId: string) {
 	})
 }
 
+export function useStopSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (sessionId: string) => api.sessions.stop(sessionId, workspaceId),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
 export function useMentionSessionsForObject(workspaceId: string, objectId: string | null) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byMentionObject(workspaceId, objectId ?? ''),
