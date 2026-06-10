@@ -2177,7 +2177,9 @@ describe('tool handlers', () => {
 			const handler = getHandler('search_objects')
 			const result = (await handler({ q: 'bet' })) as {
 				structuredContent: {
-					heroCard: { objects?: Array<{ driver?: { id: string; name: string | null; type: string | null } }> }
+					heroCard: {
+						objects?: Array<{ driver?: { id: string; name: string | null; type: string | null } }>
+					}
 				}
 			}
 			const drivers = result.structuredContent.heroCard.objects?.map((o) => o.driver)

@@ -59,7 +59,7 @@ describe('BoardCard', () => {
 			type: 'task',
 			status: 'in_progress',
 			title: 'Wire up board',
-			owner: 'actor-7',
+			driver: 'actor-7',
 			updatedAt: new Date(Date.now() - 60_000).toISOString(),
 		})
 		render(<BoardCard object={obj} workspaceId="ws-1" actors={actors} />)
@@ -90,7 +90,7 @@ describe('BoardCard', () => {
 			type: 'task',
 			status: 'todo',
 			title: 'Visible properties',
-			owner: 'actor-7',
+			driver: 'actor-7',
 			metadata: { priority: 'High' },
 		})
 		render(

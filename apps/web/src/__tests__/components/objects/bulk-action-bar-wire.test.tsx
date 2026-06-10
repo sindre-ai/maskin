@@ -34,7 +34,7 @@ function buildObject(o: Partial<ObjectResponse> & { id: string }): ObjectRespons
 		content: null,
 		status: 'todo',
 		metadata: null,
-		owner: null,
+		driver: null,
 		activeSessionId: null,
 		createdBy: 'actor-1',
 		createdAt: null,

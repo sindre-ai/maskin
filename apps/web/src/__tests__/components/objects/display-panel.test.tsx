@@ -21,8 +21,8 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof DisplayPanel
 		statusFilter: undefined,
 		onStatusFilterChange: vi.fn(),
 		statuses: ['active', 'closed'],
-		ownerFilter: undefined,
-		onOwnerFilterChange: vi.fn(),
+		driverFilter: undefined,
+		onDriverFilterChange: vi.fn(),
 		actors: [],
 		sort: 'createdAt',
 		onSortChange: vi.fn(),
@@ -53,7 +53,7 @@ describe('DisplayPanel', () => {
 	})
 
 	it('shows badge with count 2 when both status and owner are set', () => {
-		renderPanel({ statusFilter: 'active', ownerFilter: 'actor-1' })
+		renderPanel({ statusFilter: 'active', driverFilter: 'actor-1' })
 		expect(screen.getByText('2')).toBeInTheDocument()
 	})
 
@@ -145,11 +145,11 @@ describe('DisplayPanel', () => {
 
 	it('clears both filters when Reset is clicked', async () => {
 		const user = userEvent.setup()
-		const { props } = renderPanel({ statusFilter: 'active', ownerFilter: 'a1' })
+		const { props } = renderPanel({ statusFilter: 'active', driverFilter: 'a1' })
 		await user.click(screen.getByRole('button', { name: /display/i }))
 		await user.click(screen.getByRole('button', { name: /reset/i }))
 		expect(props.onStatusFilterChange).toHaveBeenCalledWith(undefined)
-		expect(props.onOwnerFilterChange).toHaveBeenCalledWith(undefined)
+		expect(props.onDriverFilterChange).toHaveBeenCalledWith(undefined)
 	})
 
 	it('renders one pill per hideable column in Properties', async () => {

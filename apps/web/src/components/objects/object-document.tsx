@@ -474,9 +474,7 @@ function OwnerSelect({
 				<SelectValue>
 					{current ? (
 						<span className="inline-flex items-center gap-1.5">
-							{current.type !== 'agent' && (
-								<User className="size-3 text-amber-600 shrink-0" />
-							)}
+							{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
 							<span className="text-muted-foreground text-[11px]">Driver:</span>
 							<ActorAvatar name={current.name} type={current.type} size="sm" />
 							{current.name}
