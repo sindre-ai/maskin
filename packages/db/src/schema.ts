@@ -46,6 +46,7 @@ export const workspaces = pgTable('workspaces', {
 	id: uuid('id').defaultRandom().primaryKey(),
 	name: text('name').notNull(),
 	settings: jsonb('settings').notNull().default({}),
+	onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
 	createdBy: uuid('created_by').references(() => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
@@ -606,3 +607,32 @@ export const userDisplaySettings = pgTable(
 
 export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
 export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert
+
+// ── Workspace Onboarding Prompts ──────────────────────────────────────────────
+//
+// One row per prompt type per workspace. Written when onboarding is enabled;
+// `answered_at` and `object_id` are filled in once the owner replies and the
+// knowledge object is created.
+
+export const workspaceOnboardingPrompts = pgTable(
+	'workspace_onboarding_prompts',
+	{
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		promptType: text('prompt_type').notNull(),
+		sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+		answeredAt: timestamp('answered_at', { withTimezone: true }),
+		objectId: uuid('object_id'),
+	},
+	(t) => [
+		primaryKey({ columns: [t.workspaceId, t.promptType] }),
+		check(
+			'workspace_onboarding_prompts_prompt_type_check',
+			sql`${t.promptType} IN ('product_vision','icp','first_bet_hypothesis','north_star_metric','customer_evidence')`,
+		),
+	],
+)
+
+export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
+export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
