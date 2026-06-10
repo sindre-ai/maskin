@@ -11,14 +11,13 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useActors, useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
+import { useActors, useAgentPause, useAgentRun, useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
 	useActiveSessionsForActor,
 	useActorSessionsInfinite,
 	useCreateSession,
-	useSession,
 	useSessionErrorLog,
 	useSessionLogs,
 } from '@/hooks/use-sessions'
@@ -35,17 +34,17 @@ import {
 	Clock,
 	MinusCircle,
 	PauseCircle,
+	Play,
 	RotateCcw,
 	Trash2,
 	XCircle,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
 import { AgentUsageChart } from './agent-usage-chart'
-import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
 import { SessionDetailPanel } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
@@ -67,6 +66,10 @@ interface AgentDocumentViewProps {
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
 	onUpdateTools: (tools: Record<string, unknown>) => void
 	onUpdateMemory: (memory: Record<string, unknown>) => void
+	onRun: () => void
+	onPause: () => void
+	isRunPending?: boolean
+	isPausePending?: boolean
 	showSaved?: boolean
 }
 
@@ -103,6 +106,10 @@ export function AgentDocumentView({
 	onUpdateLlmConfig,
 	onUpdateTools,
 	onUpdateMemory,
+	onRun,
+	onPause,
+	isRunPending = false,
+	isPausePending = false,
 	showSaved = false,
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
@@ -160,8 +167,7 @@ export function AgentDocumentView({
 	}, [memoryDraft, onUpdateMemory])
 
 	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
-	const [viewSessionId, setViewSessionId] = useState<string | null>(null)
-	const { data: fetchedSession } = useSession(viewSessionId, workspaceId)
+	const createSession = useCreateSession(workspaceId)
 
 	const { data: actors } = useActors(workspaceId)
 	const actorsById = useMemo(() => {
@@ -169,29 +175,6 @@ export function AgentDocumentView({
 		for (const actor of actors ?? []) map.set(actor.id, actor)
 		return map
 	}, [actors])
-
-	// When a session is fetched by ID (from instruction log), select it
-	useEffect(() => {
-		if (fetchedSession && viewSessionId) {
-			setSelectedSession(fetchedSession)
-			setViewSessionId(null)
-		}
-	}, [fetchedSession, viewSessionId])
-
-	const handleViewSession = useCallback(
-		(sessionId: string) => {
-			// Check if we already have the session in our local data
-			const existing =
-				recentSessions?.find((s) => s.id === sessionId) ??
-				activeSessions?.find((s) => s.id === sessionId)
-			if (existing) {
-				setSelectedSession(existing)
-			} else {
-				setViewSessionId(sessionId)
-			}
-		},
-		[recentSessions, activeSessions],
-	)
 
 	// Filter out active sessions from recent sessions to avoid duplicates
 	const activeIds = useMemo(
@@ -260,8 +243,40 @@ export function AgentDocumentView({
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
 
-			{/* Instruction Log */}
-			<InstructionLog agent={agent} workspaceId={workspaceId} onViewSession={handleViewSession} />
+			{/* Run/Pause + New Conversation */}
+			<div className="flex items-center gap-2 mb-6">
+				{isActive ? (
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={onPause}
+						disabled={isPausePending}
+					>
+						<PauseCircle size={14} />
+						{isPausePending ? 'Pausing…' : 'Pause'}
+					</Button>
+				) : (
+					<Button
+						size="sm"
+						onClick={onRun}
+						disabled={isRunPending}
+					>
+						<Play size={14} />
+						{isRunPending ? 'Starting…' : 'Run'}
+					</Button>
+				)}
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => createSession.mutate({ actor_id: agent.id, action_prompt: '' })}
+					disabled={createSession.isPending}
+				>
+					{createSession.isPending ? 'Starting…' : 'New Conversation'}
+				</Button>
+			</div>
+
+			{/* Usage chart */}
+			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
 
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (
@@ -317,9 +332,6 @@ export function AgentDocumentView({
 					if (!open) setSelectedSession(null)
 				}}
 			/>
-
-			{/* Usage chart */}
-			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
@@ -585,6 +597,8 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const updateActor = useUpdateActor(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
 	const resetActor = useResetActor(workspaceId)
+	const run = useAgentRun(workspaceId)
+	const pause = useAgentPause(workspaceId)
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
@@ -742,6 +756,10 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onUpdateLlmConfig={handleUpdateLlmConfig}
 				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
+				onRun={() => run.mutate({ id: agent.id })}
+				onPause={() => pause.mutate(agent.id)}
+				isRunPending={run.isPending}
+				isPausePending={pause.isPending}
 			/>
 		</>
 	)
