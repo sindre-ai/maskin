@@ -77,4 +77,12 @@ describe('AgentPortraitCard', () => {
 		await userEvent.click(screen.getByRole('button', { name: 'Pause agent' }))
 		expect(mockMutate).toHaveBeenCalledWith('agent-1', expect.any(Object))
 	})
+
+	it('ring wrapper has animate-pulse when running', () => {
+		const agent = buildActorResponse({ name: 'Scout', type: 'agent', agentState: 'running' })
+		render(<AgentPortraitCard agent={agent} />)
+		// avatar span → AgentAvatar div → MomentumRing div
+		const ring = screen.getByTitle('Scout').parentElement!.parentElement!
+		expect(ring).toHaveClass('animate-pulse')
+	})
 })
