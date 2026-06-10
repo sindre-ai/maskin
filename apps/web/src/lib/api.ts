@@ -980,6 +980,7 @@ export interface SessionResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	currentActivity: string | null
 }
 
 export interface SessionInputAttachment {
