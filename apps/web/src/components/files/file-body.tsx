@@ -5,6 +5,7 @@ import { ButtonGroup } from '@/components/ui/button-group'
 import { compileAnnotations } from '@/lib/annotations'
 import type { AnnotationJson } from '@/lib/annotations'
 import type { FileDetail } from '@/lib/api'
+import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
 import { Bot, Clipboard, Pin } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
@@ -43,24 +44,6 @@ export function isPlainText(mimeType: string): boolean {
 		mimeType === 'application/xml' ||
 		mimeType === 'application/x-yaml'
 	)
-}
-
-export function base64ToBytes(base64: string): Uint8Array {
-	if (typeof atob === 'undefined') return new Uint8Array()
-	try {
-		const binary = atob(base64)
-		const bytes = new Uint8Array(binary.length)
-		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-		return bytes
-	} catch {
-		return new Uint8Array()
-	}
-}
-
-export function decodeBase64Utf8(base64: string): string {
-	const bytes = base64ToBytes(base64)
-	if (bytes.length === 0) return ''
-	return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
 }
 
 type ViewMode = 'rendered' | 'source'

@@ -1,4 +1,4 @@
-import { FileBody, base64ToBytes, decodeBase64Utf8 } from '@/components/files/file-body'
+import { FileBody } from '@/components/files/file-body'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
@@ -8,7 +8,9 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useFile } from '@/hooks/use-files'
 import type { AnnotationJson } from '@/lib/annotations'
+import { buildRevisePrompt } from '@/lib/annotations'
 import { ApiError, type FileDetail, api } from '@/lib/api'
+import { base64ToBytes } from '@/lib/file-utils'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Download } from 'lucide-react'
@@ -39,19 +41,6 @@ function formatSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function buildRevisePrompt(file: FileDetail, annotationJson: AnnotationJson): string {
-	const html = file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content)
-	return [
-		'Revise the HTML prototype based on the pinned annotations. Each annotation references an element by CSS selector and describes the requested change — apply all of them.',
-		'',
-		'## Annotations',
-		JSON.stringify(annotationJson, null, 2),
-		'',
-		`## Current file: ${file.name}`,
-		html,
-	].join('\n')
 }
 
 function FileViewerPage() {
