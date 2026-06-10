@@ -1,4 +1,4 @@
-ALTER TABLE "workspaces" ADD COLUMN "onboarding_enabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "workspaces" ADD COLUMN "onboarding_enabled" boolean DEFAULT true NOT NULL;--> statement-breakpoint
 CREATE TABLE "workspace_onboarding_prompts" (
 	"workspace_id" uuid NOT NULL,
 	"prompt_type" text NOT NULL,

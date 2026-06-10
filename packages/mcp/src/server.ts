@@ -4646,7 +4646,32 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			const actorIdMap: Record<string, string> = {}
 			let agentsCreated = 0
 			if (template.seedAgents && template.seedAgents.length > 0) {
+				// Pre-fetch existing workspace members so we can skip agents that
+				// were already seeded (e.g. by the automatic workspace bootstrap).
+				// Best-effort: if the fetch fails, dedup is skipped and agents may
+				// be re-created (non-fatal).
+				let existingActorsByName = new Map<string, string>()
+				try {
+					const existingMembers = (await apiCall(
+						config,
+						'GET',
+						`/api/workspaces/${workspace.id}/members`,
+						undefined,
+						{ workspaceId: workspace.id },
+					)) as Array<{ actorId: string; name: string }>
+					existingActorsByName = new Map(existingMembers.map((m) => [m.name, m.actorId]))
+				} catch {
+					// dedup unavailable — proceed without it
+				}
+
 				for (const agent of template.seedAgents) {
+					// If this agent already exists as a workspace member, record its id
+					// and skip all creation steps.
+					const existingId = existingActorsByName.get(agent.name)
+					if (existingId) {
+						actorIdMap[agent.$id] = existingId
+						continue
+					}
 					try {
 						const created = (await apiCall(
 							config,
@@ -4719,7 +4744,19 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			// Create seed triggers, resolving targetActor$id to a real UUID.
 			let triggersCreated = 0
 			if (template.seedTriggers && template.seedTriggers.length > 0) {
+				// Pre-fetch existing triggers to skip any already seeded. Best-effort.
+				let existingTriggerNames = new Set<string>()
+				try {
+					const existingTriggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+						workspaceId: workspace.id,
+					})) as Array<{ name: string }>
+					existingTriggerNames = new Set(existingTriggers.map((t) => t.name))
+				} catch {
+					// dedup unavailable — proceed without it
+				}
+
 				for (const trigger of template.seedTriggers) {
+					if (existingTriggerNames.has(trigger.name)) continue
 					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
 					try {
 						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)

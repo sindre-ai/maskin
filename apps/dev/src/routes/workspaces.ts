@@ -17,15 +17,19 @@ import {
 } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
+import type { AgentStorageManager } from '../services/agent-storage'
+import { bootstrapWorkspaceObserver } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -133,6 +137,10 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	if (!workspace) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
 	}
+
+	bootstrapWorkspaceObserver(c.get('db'), c.get('agentStorage'), workspace.id, actorId).catch(
+		(err) => logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
+	)
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
 })
