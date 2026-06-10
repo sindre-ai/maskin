@@ -1,7 +1,7 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, events, workspaceMembers, workspaces } from '@maskin/db/schema'
+import { events, actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
 	SINDRE_DEFAULT,
 	createWorkspaceSchema,
