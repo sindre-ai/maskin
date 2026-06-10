@@ -55,8 +55,7 @@ function CommentRow({
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
 	const { data: workspaceFiles } = useFiles(workspaceId)
-	const [humanDetailOpen, setHumanDetailOpen] = useState(false)
-	const [mentionedHumanId, setMentionedHumanId] = useState<string | null>(null)
+	const [humanDialogActorId, setHumanDialogActorId] = useState<string | null>(null)
 	const navigate = useNavigate()
 
 	const handleMentionClick = (mentioned: ActorListItem) => {
@@ -66,7 +65,7 @@ function CommentRow({
 				params: { workspaceId, agentId: mentioned.id },
 			})
 		} else {
-			setMentionedHumanId(mentioned.id)
+			setHumanDialogActorId(mentioned.id)
 		}
 	}
 
@@ -87,7 +86,7 @@ function CommentRow({
 				name={actor.name}
 				type={actor.type}
 				size="sm"
-				onClick={() => setHumanDetailOpen(true)}
+				onClick={() => setHumanDialogActorId(actor.id)}
 			/>
 		)
 	) : null
@@ -105,7 +104,7 @@ function CommentRow({
 	) : (
 		<button
 			type="button"
-			onClick={() => setHumanDetailOpen(true)}
+			onClick={() => setHumanDialogActorId(actor.id)}
 			className={cn(
 				'text-sm font-medium text-foreground cursor-pointer hover:underline transition-colors',
 			)}
@@ -181,21 +180,13 @@ function CommentRow({
 					</button>
 				)}
 			</div>
-			{actor?.type === 'human' && (
+			{humanDialogActorId && (
 				<HumanDetailDialog
-					actorId={actor.id}
-					workspaceId={workspaceId}
-					open={humanDetailOpen}
-					onOpenChange={setHumanDetailOpen}
-				/>
-			)}
-			{mentionedHumanId && (
-				<HumanDetailDialog
-					actorId={mentionedHumanId}
+					actorId={humanDialogActorId}
 					workspaceId={workspaceId}
 					open={true}
 					onOpenChange={(open) => {
-						if (!open) setMentionedHumanId(null)
+						if (!open) setHumanDialogActorId(null)
 					}}
 				/>
 			)}

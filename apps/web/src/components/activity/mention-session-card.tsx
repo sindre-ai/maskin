@@ -37,11 +37,7 @@ export function MentionSessionCard({ session, workspaceId }: MentionSessionCardP
 			{isTerminal ? (
 				<TerminalCard session={session} onOpen={() => setPanelOpen(true)} />
 			) : (
-				<ActiveCard
-					session={session}
-					workspaceId={workspaceId}
-					onOpen={() => setPanelOpen(true)}
-				/>
+				<ActiveCard session={session} workspaceId={workspaceId} onOpen={() => setPanelOpen(true)} />
 			)}
 			<SessionDetailPanel
 				session={session}
@@ -95,9 +91,7 @@ function ActiveCard({
 				{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 				<span className="text-sm font-medium shrink-0">{label}</span>
 				{preview && (
-					<span className="text-sm text-muted-foreground truncate min-w-0 flex-1">
-						{preview}
-					</span>
+					<span className="text-sm text-muted-foreground truncate min-w-0 flex-1">{preview}</span>
 				)}
 				<div className="ml-auto shrink-0 flex items-center gap-0.5">
 					<button
@@ -149,7 +143,7 @@ function ActiveCard({
 				<div className="border-t border-border px-3 py-2 flex flex-col gap-1">
 					{activities.map((activity, idx) => (
 						<ActivityRow
-							key={idx}
+							key={activity.id}
 							activity={activity}
 							isCurrent={idx === activities.length - 1 && !idle}
 						/>
@@ -161,12 +155,14 @@ function ActiveCard({
 }
 
 interface SemanticActivity {
+	id: number
 	label: string
 	kind: 'thinking' | 'tool' | 'text' | 'waiting'
 }
 
 function extractSemanticActivities(logs: SessionLogResponse[]): SemanticActivity[] {
 	const activities: SemanticActivity[] = []
+	let seq = 0
 
 	for (const log of logs) {
 		if (log.stream !== 'stdout') continue
@@ -176,14 +172,14 @@ function extractSemanticActivities(logs: SessionLogResponse[]): SemanticActivity
 			if (!activity) continue
 			const last = activities[activities.length - 1]
 			if (last && last.label === activity.label) continue
-			activities.push(activity)
+			activities.push({ ...activity, id: seq++ })
 		}
 	}
 
 	return activities.slice(-8)
 }
 
-function eventToSemanticActivity(event: SindreEvent): SemanticActivity | null {
+function eventToSemanticActivity(event: SindreEvent): Omit<SemanticActivity, 'id'> | null {
 	switch (event.kind) {
 		case 'thinking':
 			return { label: 'Thinking', kind: 'thinking' }
@@ -200,11 +196,15 @@ function eventToSemanticActivity(event: SindreEvent): SemanticActivity | null {
 
 function friendlyToolName(name: string): string {
 	const lower = name.toLowerCase()
-	if (lower.includes('read') || lower.includes('glob') || lower.includes('grep')) return 'Reading files'
-	if (lower.includes('write') || lower.includes('edit') || lower.includes('notebook')) return 'Editing files'
-	if (lower.includes('bash') || lower.includes('run') || lower.includes('exec')) return 'Running commands'
+	if (lower.includes('read') || lower.includes('glob') || lower.includes('grep'))
+		return 'Reading files'
+	if (lower.includes('write') || lower.includes('edit') || lower.includes('notebook'))
+		return 'Editing files'
+	if (lower.includes('bash') || lower.includes('run') || lower.includes('exec'))
+		return 'Running commands'
 	if (lower.includes('agent') || lower.includes('spawn')) return 'Running agent'
-	if (lower.includes('web') || lower.includes('fetch') || lower.includes('search')) return 'Searching'
+	if (lower.includes('web') || lower.includes('fetch') || lower.includes('search'))
+		return 'Searching'
 	if (lower.includes('todo')) return 'Updating plan'
 	return `Using ${name}`
 }

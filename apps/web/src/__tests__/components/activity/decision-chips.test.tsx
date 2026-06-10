@@ -66,13 +66,20 @@ describe('DecisionChips', () => {
 	it('caps chips at 5 even when more are provided', () => {
 		const event = chipEvent(['A', 'B', 'C', 'D', 'E', 'F', 'G'])
 		render(<DecisionChips event={event} {...defaultProps} />)
-		const chipButtons = screen.getAllByRole('button').filter((b) => /^[A-E]$/.test(b.textContent ?? ''))
+		const chipButtons = screen
+			.getAllByRole('button')
+			.filter((b) => /^[A-E]$/.test(b.textContent ?? ''))
 		expect(chipButtons).toHaveLength(5)
 		expect(screen.queryByRole('button', { name: 'F' })).not.toBeInTheDocument()
 	})
 
 	it('truncates chip labels longer than 20 characters', () => {
-		render(<DecisionChips event={chipEvent(['This label is way too long for a chip'])} {...defaultProps} />)
+		render(
+			<DecisionChips
+				event={chipEvent(['This label is way too long for a chip'])}
+				{...defaultProps}
+			/>,
+		)
 		expect(screen.getByRole('button', { name: 'This label is way to' })).toBeInTheDocument()
 	})
 
@@ -93,7 +100,9 @@ describe('DecisionChips', () => {
 	})
 
 	it('dismisses after successful chip selection', async () => {
-		mockMutate.mockImplementation((_data: unknown, { onSuccess }: { onSuccess: () => void }) => onSuccess())
+		mockMutate.mockImplementation((_data: unknown, { onSuccess }: { onSuccess: () => void }) =>
+			onSuccess(),
+		)
 		const { container } = render(<DecisionChips event={chipEvent(['Approve'])} {...defaultProps} />)
 		await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
 		expect(container).toBeEmptyDOMElement()

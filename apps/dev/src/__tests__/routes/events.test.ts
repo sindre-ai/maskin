@@ -571,7 +571,12 @@ describe('Events Routes', () => {
 			const opInserts = (calls.inserts as unknown[]).filter((arg) => {
 				if (Array.isArray(arg)) return false
 				const row = arg as { source?: string; actorId?: string }
-				return typeof row === 'object' && row !== null && row.source === 'commenter' && row.actorId === opActorId
+				return (
+					typeof row === 'object' &&
+					row !== null &&
+					row.source === 'commenter' &&
+					row.actorId === opActorId
+				)
 			})
 			expect(opInserts).toHaveLength(1)
 		})
