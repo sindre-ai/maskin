@@ -42,6 +42,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
+import { ObjectReference } from '../shared/object-reference'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
 import { AgentUsageChart } from './agent-usage-chart'
@@ -495,6 +496,28 @@ function SessionStatusIcon({ status }: { status: string }) {
 	}
 }
 
+function getSessionSummary(session: SessionResponse): string {
+	const MAX = 120
+	const prompt = session.actionPrompt ?? ''
+	const truncated = prompt.length > MAX ? `${prompt.slice(0, MAX)}…` : prompt
+	const fallback = truncated || 'Untitled session'
+
+	switch (session.status) {
+		case 'running':
+		case 'starting':
+			return fallback === 'Untitled session' ? fallback : `Working on: ${fallback}`
+		case 'paused':
+		case 'snapshotting':
+			return fallback === 'Untitled session' ? fallback : `Paused: ${fallback}`
+		case 'completed':
+		case 'failed':
+		case 'timeout':
+			return fallback
+		default:
+			return fallback
+	}
+}
+
 function SessionRow({
 	session,
 	workspaceId,
@@ -526,6 +549,13 @@ function SessionRow({
 		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
 	const displayError = errorDetail ?? stderrLog
 
+	const resultObjects = Array.isArray(result?.objects)
+		? (result.objects as unknown[]).filter(
+				(item): item is { id: string } =>
+					typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).id === 'string',
+			)
+		: []
+
 	return (
 		<div>
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
@@ -535,7 +565,7 @@ function SessionRow({
 			>
 				<SessionStatusIcon status={session.status} />
 				<span className={`text-sm truncate flex-1 min-w-0 ${isFailed ? 'text-error' : ''}`}>
-					{session.actionPrompt || 'Untitled session'}
+					{getSessionSummary(session)}
 				</span>
 				{isFailed && (
 					<>
@@ -561,7 +591,7 @@ function SessionRow({
 							}}
 							disabled={createSession.isPending}
 						>
-							{createSession.isPending ? 'Retrying…' : 'Retry'}
+							{createSession.isPending ? 'Restarting…' : 'Restart'}
 						</button>
 					</>
 				)}
@@ -575,6 +605,19 @@ function SessionRow({
 				<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
 					{displayError}
 				</pre>
+			)}
+			{resultObjects.length > 0 && (
+				<div className="flex flex-wrap gap-1.5 px-3 pb-1.5 pt-0.5">
+					{resultObjects.map((item) => (
+						<ObjectReference
+							key={item.id}
+							variant="inline"
+							objectId={item.id}
+							workspaceId={workspaceId}
+							showStatus={false}
+						/>
+					))}
+				</div>
 			)}
 		</div>
 	)
