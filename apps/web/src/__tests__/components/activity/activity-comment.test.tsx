@@ -70,7 +70,7 @@ describe('ActivityComment', () => {
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 		const chip = screen.getByText('@Senior Developer')
 		expect(chip).toBeInTheDocument()
-		expect(chip.tagName).toBe('SPAN')
+		expect(chip.tagName).toBe('BUTTON')
 		expect(screen.queryByText('@Senior')).not.toBeInTheDocument()
 	})
 
@@ -240,7 +240,7 @@ describe('ActivityComment', () => {
 			<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />,
 		)
 		const chip = screen.getByText('@Bob')
-		expect(chip.tagName).toBe('SPAN')
+		expect(chip.tagName).toBe('BUTTON')
 		expect(container.querySelector('strong')?.textContent).toBe('important')
 	})
 

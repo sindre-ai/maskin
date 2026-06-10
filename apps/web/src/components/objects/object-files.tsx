@@ -2,7 +2,7 @@ import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { Button } from '@/components/ui/button'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
-import type { FileListItem, RelationshipResponse } from '@/lib/api'
+import type { RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
 import { Loader2, Plus, Upload } from 'lucide-react'
@@ -36,17 +36,7 @@ export function ObjectFiles({
 		return [...ids]
 	}, [relationships])
 
-	const { data: workspaceFiles } = useFiles(workspaceId)
-	const files = useMemo(() => {
-		if (!workspaceFiles || fileIds.length === 0) return [] as FileListItem[]
-		const lookup = new Map(workspaceFiles.map((f) => [f.id, f] as const))
-		const result: FileListItem[] = []
-		for (const id of fileIds) {
-			const file = lookup.get(id)
-			if (file) result.push(file)
-		}
-		return result
-	}, [workspaceFiles, fileIds])
+	const { data: files = [] } = useFiles(workspaceId, { ids: fileIds })
 
 	const createFile = useCreateFile(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
