@@ -1,4 +1,4 @@
-import { AgentDocument, AgentDocumentView } from '@/components/agents/agent-document'
+import { AgentDocument, AgentDocumentView, getSessionSummary } from '@/components/agents/agent-document'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorResponse, buildEventResponse, buildSessionResponse } from '../../factories'
@@ -328,5 +328,64 @@ describe('AgentDocument — header actions', () => {
 
 		expect(screen.getByText('Reset to default')).toBeInTheDocument()
 		expect(resetMutate).not.toHaveBeenCalled()
+	})
+})
+
+describe('getSessionSummary', () => {
+	it('prefixes "Working on:" for running status', () => {
+		const session = buildSessionResponse({ status: 'running', actionPrompt: 'Scanning logs' })
+		expect(getSessionSummary(session)).toBe('Working on: Scanning logs')
+	})
+
+	it('returns "Untitled session" for running with no prompt', () => {
+		const session = buildSessionResponse({ status: 'running', actionPrompt: null })
+		expect(getSessionSummary(session)).toBe('Untitled session')
+	})
+
+	it('prefixes "Working on:" for starting status', () => {
+		const session = buildSessionResponse({ status: 'starting', actionPrompt: 'Booting up' })
+		expect(getSessionSummary(session)).toBe('Working on: Booting up')
+	})
+
+	it('prefixes "Paused:" for paused status', () => {
+		const session = buildSessionResponse({ status: 'paused', actionPrompt: 'Halfway done' })
+		expect(getSessionSummary(session)).toBe('Paused: Halfway done')
+	})
+
+	it('prefixes "Paused:" for snapshotting status', () => {
+		const session = buildSessionResponse({ status: 'snapshotting', actionPrompt: 'Saving state' })
+		expect(getSessionSummary(session)).toBe('Paused: Saving state')
+	})
+
+	it('returns just the prompt for completed status', () => {
+		const session = buildSessionResponse({ status: 'completed', actionPrompt: 'All done' })
+		expect(getSessionSummary(session)).toBe('All done')
+	})
+
+	it('returns just the prompt for failed status', () => {
+		const session = buildSessionResponse({ status: 'failed', actionPrompt: 'Crashed' })
+		expect(getSessionSummary(session)).toBe('Crashed')
+	})
+
+	it('returns just the prompt for timeout status', () => {
+		const session = buildSessionResponse({ status: 'timeout', actionPrompt: 'Timed out' })
+		expect(getSessionSummary(session)).toBe('Timed out')
+	})
+
+	it('returns just the prompt for an unrecognised status', () => {
+		const session = buildSessionResponse({ status: 'unknown', actionPrompt: 'Mystery' })
+		expect(getSessionSummary(session)).toBe('Mystery')
+	})
+
+	it('does not truncate a prompt of exactly 120 characters', () => {
+		const prompt = 'a'.repeat(120)
+		const session = buildSessionResponse({ status: 'completed', actionPrompt: prompt })
+		expect(getSessionSummary(session)).toBe(prompt)
+	})
+
+	it('truncates a prompt longer than 120 characters and appends an ellipsis', () => {
+		const prompt = 'a'.repeat(121)
+		const session = buildSessionResponse({ status: 'completed', actionPrompt: prompt })
+		expect(getSessionSummary(session)).toBe(`${'a'.repeat(120)}…`)
 	})
 })

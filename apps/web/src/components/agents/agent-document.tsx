@@ -496,7 +496,7 @@ function SessionStatusIcon({ status }: { status: string }) {
 	}
 }
 
-function getSessionSummary(session: SessionResponse): string {
+export function getSessionSummary(session: SessionResponse): string {
 	const MAX = 120
 	const prompt = session.actionPrompt ?? ''
 	const truncated = prompt.length > MAX ? `${prompt.slice(0, MAX)}…` : prompt
