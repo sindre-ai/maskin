@@ -161,7 +161,7 @@ function SkillsPage() {
 		<div className="flex items-center gap-2 shrink-0">
 			<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
 				<FileUp size={14} className="mr-1" />
-				Browse files
+				Import from file
 			</Button>
 			<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
 				<Plus size={14} className="mr-1" />
@@ -203,7 +203,7 @@ function SkillsPage() {
 							<div className="flex items-center gap-2">
 								<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
 									<FileUp size={14} className="mr-1" />
-									Browse files
+									Import from file
 								</Button>
 								<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
 									<Plus size={14} className="mr-1" />
