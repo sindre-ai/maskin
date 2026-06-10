@@ -24,7 +24,8 @@
 		"db:seed": "tsx src/seed.ts",
 		"db:seed-agent-servers": "tsx src/seed-agent-servers.ts",
 		"build": "tsc",
-		"type-check": "tsc --noEmit"
+		"type-check": "tsc --noEmit",
+		"test": "vitest"
 	},
 	"dependencies": {
 		"@maskin/shared": "workspace:*",
@@ -34,6 +35,7 @@
 	"devDependencies": {
 		"drizzle-kit": "^0.31.10",
 		"tsx": "^4.19.0",
-		"typescript": "^5.7.0"
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
 	}
 }
