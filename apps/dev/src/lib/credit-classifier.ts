@@ -1,8 +1,8 @@
-import type { SessionResultFailureReason } from '@maskin/shared'
+import type { FailureReasonCode, SessionResultFailureReason } from '@maskin/shared'
 
 const CLI_BANNERS: ReadonlyArray<{
 	match: string
-	reasonCode: string
+	reasonCode: FailureReasonCode
 	humanMessage: string
 }> = [
 	{
