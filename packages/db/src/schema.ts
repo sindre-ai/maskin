@@ -216,6 +216,7 @@ export const sessions = pgTable(
 		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
 		cacheReadInputTokens: integer('cache_read_input_tokens'),
 		durationMs: integer('duration_ms'),
+		currentActivity: text('current_activity'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),

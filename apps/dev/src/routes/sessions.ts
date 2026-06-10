@@ -300,6 +300,61 @@ app.openapi(getSessionRoute, (async (c) => {
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof getSessionRoute, Env>)
 
+// PATCH /:id - Update mutable session fields (agents call this to record active step)
+const updateSessionSchema = z.object({
+	current_activity: z.string().max(500).nullable(),
+})
+
+const patchSessionRoute = createRoute({
+	method: 'patch',
+	path: '/{id}',
+	tags: ['Sessions'],
+	summary: 'Update mutable session fields',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: {
+			content: { 'application/json': { schema: updateSessionSchema } },
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionResponseSchema } },
+			description: 'Session updated',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(patchSessionRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	await db
+		.update(sessions)
+		.set({ currentActivity: body.current_activity, updatedAt: new Date() })
+		.where(eq(sessions.id, id))
+
+	logger.info('Session current_activity updated', { sessionId: id })
+
+	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+}) as RouteHandler<typeof patchSessionRoute, Env>)
+
 // POST /:id/stop - Stop a running session
 const stopSessionRoute = createRoute({
 	method: 'post',

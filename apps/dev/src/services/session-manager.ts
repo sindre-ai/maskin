@@ -381,6 +381,7 @@ export class SessionManager extends EventEmitter {
 					status: 'paused',
 					snapshotPath: snapshotKey,
 					containerId: null,
+					currentActivity: null,
 					updatedAt: new Date(),
 				})
 				.where(eq(sessions.id, sessionId))
@@ -430,6 +431,7 @@ export class SessionManager extends EventEmitter {
 				status: 'failed',
 				containerId: null,
 				completedAt: new Date(),
+				currentActivity: null,
 				updatedAt: new Date(),
 			})
 			.where(eq(sessions.id, sessionId))
@@ -1168,6 +1170,7 @@ export class SessionManager extends EventEmitter {
 					result: { exit_code: exitCode },
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					currentActivity: null,
 					...(usage
 						? {
 								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
@@ -1297,6 +1300,7 @@ export class SessionManager extends EventEmitter {
 					status: 'timeout',
 					result: { error: 'Session timed out' },
 					completedAt: now,
+					currentActivity: null,
 					updatedAt: now,
 				})
 				.where(eq(sessions.id, session.id))

@@ -7,6 +7,7 @@ import {
 	objects,
 	readState,
 	relationships,
+	sessions,
 	subscriptions,
 	workspaces,
 } from '@maskin/db/schema'
@@ -599,10 +600,18 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		description: formatEventDescription(event, { actorsById }),
 	}))
 
-	const [subscribed, unreadCount, subscriberCount] = await Promise.all([
+	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
 		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
+		object.activeSessionId
+			? db
+					.select({ currentActivity: sessions.currentActivity })
+					.from(sessions)
+					.where(eq(sessions.id, object.activeSessionId))
+					.limit(1)
+					.then((rows) => rows[0] ?? null)
+			: Promise.resolve(null),
 	])
 
 	// Build a title lookup keyed by object id so each relationship can carry the
@@ -671,6 +680,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		{
 			object: {
 				...serialize(object),
+				activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 				is_subscribed: subscribed,
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
@@ -720,7 +730,7 @@ app.openapi(getObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	const [subscribed, unreadCount, subscriberCount] = await Promise.all([
+	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, {
 			workspaceId: object.workspaceId,
@@ -733,11 +743,20 @@ app.openapi(getObjectRoute, async (c) => {
 			entityType: 'object',
 			entityId: id,
 		}),
+		object.activeSessionId
+			? db
+					.select({ currentActivity: sessions.currentActivity })
+					.from(sessions)
+					.where(eq(sessions.id, object.activeSessionId))
+					.limit(1)
+					.then((rows) => rows[0] ?? null)
+			: Promise.resolve(null),
 	])
 
 	return c.json(
 		{
 			...serialize(object),
+			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			is_subscribed: subscribed,
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
