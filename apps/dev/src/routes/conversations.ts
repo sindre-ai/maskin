@@ -548,10 +548,18 @@ app.openapi(addParticipantRoute, (async (c) => {
 		return c.json(createApiError('CONFLICT', 'Actor is already a participant'), 409)
 	}
 
-	const [participant] = await db
-		.insert(conversationParticipants)
-		.values({ conversationId: id, actorId: body.actor_id })
-		.returning()
+	let participant: typeof conversationParticipants.$inferSelect | undefined
+	try {
+		;[participant] = await db
+			.insert(conversationParticipants)
+			.values({ conversationId: id, actorId: body.actor_id })
+			.returning()
+	} catch (err) {
+		if ((err as { code?: string }).code === '23505') {
+			return c.json(createApiError('CONFLICT', 'Actor is already a participant'), 409)
+		}
+		throw err
+	}
 
 	if (!participant) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to add participant'), 500)
