@@ -525,15 +525,20 @@ export const api = {
 	},
 
 	files: {
-		list: (workspaceId: string, params?: { q?: string; limit?: number; offset?: number }) => {
-			const qs = params
-				? `?${new URLSearchParams(
-						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
-							if (v !== undefined && v !== '') acc[k] = String(v)
-							return acc
-						}, {}),
-					)}`
-				: ''
+		list: (
+			workspaceId: string,
+			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+		) => {
+			if (!params) return request<FileListItem[]>('/files', { workspaceId })
+			const { ids, ...rest } = params
+			const searchParams = new URLSearchParams(
+				Object.entries(rest).reduce<Record<string, string>>((acc, [k, v]) => {
+					if (v !== undefined && v !== '') acc[k] = String(v)
+					return acc
+				}, {}),
+			)
+			if (ids?.length) searchParams.set('ids', ids.join(','))
+			const qs = searchParams.size > 0 ? `?${searchParams}` : ''
 			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
 		},
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
