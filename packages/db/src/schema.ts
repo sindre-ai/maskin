@@ -1,3 +1,4 @@
+import type { SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	bigint,
@@ -205,7 +206,7 @@ export const sessions = pgTable(
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
-		result: jsonb('result'),
+		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),

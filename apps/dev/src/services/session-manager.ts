@@ -1,4 +1,4 @@
-﻿import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -19,6 +19,7 @@ import {
 import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
@@ -1055,7 +1056,7 @@ export class SessionManager extends EventEmitter {
 				const status = await this.containers.inspect(containerId)
 				consecutiveFailures = 0
 				if (!status.running) {
-					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
+					await this.handleCompletion(sessionId, containerId, status.exitCode)
 					return
 				}
 			} catch (err) {
@@ -1088,7 +1089,7 @@ export class SessionManager extends EventEmitter {
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
-		exitCode: number,
+		exitCode: number | null,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1155,6 +1156,18 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const failureReason =
+			exitCode !== null && exitCode !== 0
+				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
+				: null
+		if (failureReason) {
+			logger.info('Session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -1165,7 +1178,10 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status,
-					result: { exit_code: exitCode },
+					result: {
+						exit_code: exitCode,
+						...(failureReason ? { failure_reason: failureReason } : {}),
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
 					...(usage
@@ -1195,7 +1211,7 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
 			})
 		} catch (err) {
 			logger.error('Failed to insert completion event in handleCompletion', {
