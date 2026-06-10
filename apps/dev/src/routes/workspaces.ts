@@ -1,7 +1,13 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { events, actors, workspaceMembers, workspaces } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	workspaceMembers,
+	workspaceOnboardingPrompts,
+	workspaces,
+} from '@maskin/db/schema'
 import {
 	SINDRE_DEFAULT,
 	createWorkspaceSchema,
@@ -13,7 +19,7 @@ import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -248,7 +254,7 @@ const updateWorkspaceOnboardingRoute = createRoute({
 	method: 'patch',
 	path: '/admin/{id}',
 	tags: ['workspaces'],
-	summary: 'Set onboarding_enabled flag (admin)',
+	summary: 'Set onboarding_enabled flag (owner only)',
 	request: {
 		params: idParamSchema,
 		body: {
@@ -265,7 +271,7 @@ const updateWorkspaceOnboardingRoute = createRoute({
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
 		403: {
-			description: 'Caller is not a workspace member',
+			description: 'Caller is not the workspace owner',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -274,6 +280,14 @@ const updateWorkspaceOnboardingRoute = createRoute({
 		},
 	},
 })
+
+const ONBOARDING_PROMPT_TYPES = [
+	'product_vision',
+	'icp',
+	'first_bet_hypothesis',
+	'north_star_metric',
+	'customer_evidence',
+] as const
 
 app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 	const db = c.get('db')
@@ -284,8 +298,8 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 	const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 
-	if (!(await isWorkspaceMember(db, actorId, id))) {
-		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	if (!(await isWorkspaceOwner(db, actorId, id))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a workspace owner'), 403)
 	}
 
 	const [updated] = await db
@@ -296,6 +310,13 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	if (body.onboarding_enabled) {
+		await db
+			.insert(workspaceOnboardingPrompts)
+			.values(ONBOARDING_PROMPT_TYPES.map((promptType) => ({ workspaceId: id, promptType })))
+			.onConflictDoNothing()
 	}
 
 	await db.insert(events).values({
