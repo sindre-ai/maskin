@@ -522,7 +522,7 @@ describe('BoardView', () => {
 				objectType="task"
 				workspaceId="ws-1"
 				statusesByType={{ task: ['todo'] }}
-				groupBy="owner"
+				groupBy="driver"
 				actors={[buildActorListItem({ id: 'actor-1', name: 'Ada' })]}
 				objects={[
 					buildObjectResponse({

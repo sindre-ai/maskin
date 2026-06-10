@@ -184,13 +184,13 @@ describe('DisplayPanel', () => {
 		expect(screen.getByText('Ordering')).toBeInTheDocument()
 	})
 
-	it('shows "+ Status" / "+ Owner" affordances when no filter is set', async () => {
+	it('shows "+ Status" / "+ Driver" affordances when no filter is set', async () => {
 		const user = userEvent.setup()
 		renderPanel({
 			actors: [{ id: 'a1', name: 'Alice', type: 'human', createdAt: '', updatedAt: '' } as never],
 		})
 		await user.click(screen.getByRole('button', { name: /display/i }))
 		expect(screen.getByRole('button', { name: /\+ Status/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /\+ Owner/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /\+ Driver/i })).toBeInTheDocument()
 	})
 })

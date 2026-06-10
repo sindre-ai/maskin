@@ -134,7 +134,7 @@ describe('ObjectDocumentView', () => {
 		it('shows "Unassigned" when owner is null', () => {
 			const object = buildObjectResponse({ driver: null })
 			render(<ObjectDocumentView {...baseProps} object={object} members={members} />)
-			expect(screen.getByText('Unassigned')).toBeInTheDocument()
+			expect(screen.getByText('Driver: Unassigned')).toBeInTheDocument()
 		})
 
 		it('shows owner name when owner is a current member', () => {
