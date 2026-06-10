@@ -88,4 +88,26 @@ describe('AgentWorkingBadge', () => {
 		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/3m 15s/)).toBeInTheDocument()
 	})
+
+	it('shows current_activity row in banner variant when set', () => {
+		vi.mocked(useSession).mockReturnValue({
+			data: buildSessionResponse({ actorId: 'actor-1', currentActivity: 'Searching codebase' }),
+		} as ReturnType<typeof useSession>)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText('Searching codebase')).toBeInTheDocument()
+	})
+
+	it('omits the activity row in banner variant when current_activity is null', () => {
+		vi.mocked(useSession).mockReturnValue({
+			data: buildSessionResponse({ actorId: 'actor-1', currentActivity: null }),
+		} as ReturnType<typeof useSession>)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.queryByRole('status')).not.toBeInTheDocument()
+		// The activity dot span has no accessible role, so verify no extra text content
+		expect(screen.queryByText(/Searching/)).not.toBeInTheDocument()
+	})
 })

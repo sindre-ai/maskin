@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
 	buildCreateObjectBody,
 	buildEvent,
@@ -203,6 +204,38 @@ describe('Objects Routes', () => {
 			const res = await app.request(jsonGet('/api/objects/00000000-0000-0000-0000-000000000099'))
 
 			expect(res.status).toBe(404)
+		})
+
+		it('returns null activeSessionCurrentActivity when object has no active session', async () => {
+			const obj = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.activeSessionCurrentActivity).toBeNull()
+		})
+
+		it('embeds activeSessionCurrentActivity when session is active', async () => {
+			const sessionId = randomUUID()
+			const obj = buildObject({ activeSessionId: sessionId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[obj], // object lookup
+				[obj], // isWorkspaceMember
+				[], // isSubscribed
+				[], // getUnreadCount
+				[], // getSubscriberCount
+				[{ currentActivity: 'Searching codebase' }], // session currentActivity query
+			]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.activeSessionCurrentActivity).toBe('Searching codebase')
 		})
 	})
 
