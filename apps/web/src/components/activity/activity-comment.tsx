@@ -9,20 +9,13 @@ import { Reply } from 'lucide-react'
 import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AttachedFileCard } from '../shared/attached-file-card'
-import { MarkdownContent } from '../shared/markdown-content'
+import { AgentOutput } from '../shared/agent-output'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
 import { DecisionChips, hasDecisionChips } from './decision-chips'
 import { MentionSessionCard } from './mention-session-card'
 
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
-
-const COMMENT_PROSE_OVERRIDES = cn(
-	'mt-1',
-	'[&_p]:!text-foreground [&_li]:!text-foreground [&_blockquote]:!text-foreground',
-	'[&_p]:!my-1.5 [&_ul]:!my-1 [&_ol]:!my-1 [&_blockquote]:!my-1 [&_pre]:!my-1',
-	'[&_p]:!leading-normal [&_li]:!leading-normal',
-)
 
 interface ActivityCommentProps {
 	event: EventResponse
@@ -147,13 +140,13 @@ function CommentRow({
 							</span>
 						)}
 					</div>
-					<MarkdownContent
+					<AgentOutput
 						content={content}
 						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
 						mentionActors={actors}
 						onMentionClick={handleMentionClick}
 						size="sm"
-						className={COMMENT_PROSE_OVERRIDES}
+						className="mt-1"
 					/>
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">

@@ -278,6 +278,23 @@
 	.agent-output li {
 		color: var(--foreground);
 	}
+	/* Compact vertical rhythm — matches comment-surface density so agent
+	   output doesn't balloon the feed with default prose spacing. */
+	.agent-output p {
+		margin-top: 0.375rem;
+		margin-bottom: 0.375rem;
+		line-height: 1.5;
+	}
+	.agent-output li {
+		line-height: 1.5;
+	}
+	.agent-output ul,
+	.agent-output ol,
+	.agent-output blockquote,
+	.agent-output pre {
+		margin-top: 0.25rem;
+		margin-bottom: 0.25rem;
+	}
 	/* Code blocks get a muted background with a visible border instead of the
 	   plain card background, keeping them distinct without dark inversion. */
 	.agent-output pre {
