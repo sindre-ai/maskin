@@ -187,10 +187,15 @@ app.openapi(listFilesRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const limit = Number.isFinite(query.limit) && query.limit ? Math.min(query.limit, 200) : 50
-	const offset = Number.isFinite(query.offset) && query.offset ? query.offset : 0
+	const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+	const ids = query.ids ? query.ids.split(',').filter((id) => UUID_RE.test(id)) : null
 
-	const ids = query.ids ? query.ids.split(',').filter(Boolean) : null
+	const limit = ids?.length
+		? ids.length
+		: Number.isFinite(query.limit) && query.limit
+			? Math.min(query.limit, 200)
+			: 50
+	const offset = Number.isFinite(query.offset) && query.offset ? query.offset : 0
 
 	const conditions = [eq(files.workspaceId, workspaceId)]
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
