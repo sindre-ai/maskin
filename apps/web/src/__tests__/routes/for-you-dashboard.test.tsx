@@ -5,6 +5,7 @@ import type { UnreadItem } from '@/lib/api'
 import { buildObjectResponse } from '../factories'
 
 const mockUseUnread = vi.fn()
+const mockMarkReadMutate = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -20,6 +21,11 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: (...args: unknown[]) => mockUseUnread(...args),
+	useMarkRead: () => ({ mutate: mockMarkReadMutate, isPending: false }),
+}))
+
+vi.mock('@/components/foryou/persistent-reply-bar', () => ({
+	PersistentReplyBar: () => null,
 }))
 
 vi.mock('@/components/foryou/unread-thread-card', () => ({
