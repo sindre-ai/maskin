@@ -10,14 +10,17 @@ import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
+import { CheckIcon } from 'lucide-react'
 import {
 	type MouseEvent as ReactMouseEvent,
+	type PointerEvent as ReactPointerEvent,
 	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
 	useState,
 } from 'react'
+import { toast } from 'sonner'
 
 interface UnreadThreadCardProps {
 	workspaceId: string
@@ -45,6 +48,30 @@ export function UnreadThreadCard({
 
 	const cardRef = useRef<HTMLDivElement>(null)
 	const [hasBeenVisible, setHasBeenVisible] = useState(false)
+
+	// Swipe-right-to-mark-read gesture state
+	const swipeRef = useRef({
+		startX: 0,
+		startY: 0,
+		lastX: 0,
+		lastTime: 0,
+		vel: 0,
+		dx: 0,
+		locked: false,
+		isHoriz: false,
+		active: false,
+	})
+	const [dragOffset, setDragOffset] = useState(0)
+	const [isDragging, setIsDragging] = useState(false)
+	const [swipePending, setSwipePending] = useState(false)
+	const pendingReadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+	// Cancel pending timer on unmount
+	useEffect(() => {
+		return () => {
+			if (pendingReadTimer.current) clearTimeout(pendingReadTimer.current)
+		}
+	}, [])
 	useEffect(() => {
 		if (hasBeenVisible) return
 		const node = cardRef.current
@@ -179,127 +206,235 @@ export function UnreadThreadCard({
 		[onActivate],
 	)
 
+	// Swipe-right to mark as read with a 4.5s undo window before the mutation fires.
+	const triggerMarkReadWithUndo = useCallback(() => {
+		setSwipePending(true)
+		pendingReadTimer.current = setTimeout(() => {
+			handleMarkRead()
+			setSwipePending(false)
+			pendingReadTimer.current = null
+		}, 4500)
+		toast('Marked as read', {
+			duration: 4500,
+			action: {
+				label: 'Undo',
+				onClick: () => {
+					if (pendingReadTimer.current) {
+						clearTimeout(pendingReadTimer.current)
+						pendingReadTimer.current = null
+					}
+					setSwipePending(false)
+				},
+			},
+		})
+	}, [handleMarkRead])
+
+	const SWIPE_THRESHOLD = 80
+	const VELOCITY_THRESHOLD = 0.42
+
+	const handlePointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+		const s = swipeRef.current
+		s.startX = e.clientX
+		s.startY = e.clientY
+		s.lastX = e.clientX
+		s.lastTime = Date.now()
+		s.vel = 0
+		s.dx = 0
+		s.locked = false
+		s.isHoriz = false
+		s.active = true
+		const el = e.currentTarget as HTMLDivElement
+		// setPointerCapture is not available in jsdom — guard for test environments
+		if (el.setPointerCapture) el.setPointerCapture(e.pointerId)
+		setIsDragging(true)
+	}, [])
+
+	const handlePointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+		const s = swipeRef.current
+		if (!s.active) return
+		const dx = e.clientX - s.startX
+		const dy = e.clientY - s.startY
+		if (!s.locked) {
+			if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+				s.locked = true
+				s.isHoriz = Math.abs(dx) > Math.abs(dy) * 1.5
+			}
+		}
+		if (!s.isHoriz) return
+		s.dx = Math.max(dx, 0) // right-swipe only
+		e.preventDefault()
+		const now = Date.now()
+		s.vel = (e.clientX - s.lastX) / (now - s.lastTime || 1)
+		s.lastX = e.clientX
+		s.lastTime = now
+		setDragOffset(s.dx)
+	}, [])
+
+	const handlePointerUp = useCallback(() => {
+		const s = swipeRef.current
+		if (!s.active) return
+		s.active = false
+		setIsDragging(false)
+		const { dx, vel } = s
+		s.dx = 0
+		setDragOffset(0)
+		if (dx > SWIPE_THRESHOLD || (vel > VELOCITY_THRESHOLD && dx > 20)) {
+			triggerMarkReadWithUndo()
+		}
+	}, [triggerMarkReadWithUndo])
+
+	const handlePointerCancel = useCallback(() => {
+		const s = swipeRef.current
+		s.active = false
+		s.dx = 0
+		setIsDragging(false)
+		setDragOffset(0)
+	}, [])
+
 	const title = item.object?.title ?? 'Untitled'
 	const objectType = item.object?.type
 
+	const swipeBgOpacity = dragOffset > 10 ? Math.min(dragOffset / SWIPE_THRESHOLD, 1) : 0
+
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements inner buttons/links, which keyboard users tab to and activate directly
-		<div
-			ref={cardRef}
-			className={cn(
-				'rounded-lg border bg-card transition-colors duration-150 cursor-pointer',
-				isActive
-					? 'border-ring shadow-[0_0_0_1px_hsl(var(--ring))]'
-					: 'border-border hover:shadow-sm',
-			)}
-			onClick={handleCardClick}
-		>
-			{/* Header: bet context pill + type badge + title | time + @you + unread */}
-			<div className="flex items-center gap-2 px-3 py-2.5 border-b border-border">
-				<div className="flex min-w-0 flex-1 items-center gap-1.5">
-					{objectType === 'bet' && (
-						<TooltipProvider>
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<span className="inline-flex shrink-0 items-center rounded bg-[var(--tp-bet-bg)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--tp-bet-text)]">
-										B
-									</span>
-								</TooltipTrigger>
-								<TooltipContent side="bottom" className="text-xs">
-									{title}
-								</TooltipContent>
-							</Tooltip>
-						</TooltipProvider>
-					)}
-					{objectType && <TypeBadge type={objectType} />}
-					<Link
-						to="/$workspaceId/objects/$objectId"
-						params={{ workspaceId, objectId }}
-						className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
-						title={title}
-						onClick={(e) => e.stopPropagation()}
-					>
-						{title}
-					</Link>
-				</div>
-				<div className="flex shrink-0 items-center gap-1.5">
-					{item.latest_activity_at && (
-						<RelativeTime
-							date={item.latest_activity_at}
-							className="text-xs text-muted-foreground"
-						/>
-					)}
-					{item.mentions_you && (
-						<span
-							aria-label="Mentioned"
-							title="You were @-mentioned in an unread comment"
-							className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-foreground"
-						>
-							@you
-						</span>
-					)}
-					<UnreadBadge count={item.unread_count} />
-				</div>
+		// Outer wrapper holds the green swipe-reveal background; the card translates over it.
+		<div ref={cardRef} className="relative overflow-hidden rounded-lg">
+			{/* Green background revealed on swipe-right */}
+			<div
+				aria-hidden
+				className="pointer-events-none absolute inset-0 flex items-center gap-2 bg-[#dcfce7] px-5 text-xs font-medium text-[#166534]"
+				style={{ opacity: isDragging ? swipeBgOpacity : 0 }}
+			>
+				<CheckIcon size={14} />
+				Mark read
 			</div>
 
-			{/* Thread — all messages inline, page scrolls naturally */}
-			<div className="px-3 py-2.5">
-				{nodes.length === 0 ? (
-					<p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
-				) : (
-					<div className="space-y-1">
-						{nodes.map((node) => {
-							const dividerOnRoot =
-								firstUnreadEventId !== null && firstUnreadEventId === node.root.id
-							const dividerInsideThread =
-								firstUnreadRootId === node.root.id &&
-								firstUnreadEventId !== null &&
-								firstUnreadEventId !== node.root.id
-							return (
-								<div key={node.root.id}>
-									{dividerOnRoot && <NewDivider />}
-									<ActivityComment
-										event={node.root}
-										replies={node.replies}
-										workspaceId={workspaceId}
-										objectId={objectId}
-										dividerBeforeReplyId={
-											dividerInsideThread ? (firstUnreadEventId ?? undefined) : undefined
-										}
-										divider={dividerInsideThread ? <NewDivider /> : undefined}
-									/>
-								</div>
-							)
-						})}
-					</div>
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements inner buttons/links, which keyboard users tab to and activate directly */}
+			<div
+				className={cn(
+					'relative rounded-lg border bg-card cursor-pointer touch-pan-y',
+					isDragging
+						? 'transition-none'
+						: 'transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
+					swipePending ? 'opacity-35' : 'transition-opacity duration-200',
+					isActive
+						? 'border-ring shadow-[0_0_0_1px_hsl(var(--ring))]'
+						: 'border-border hover:shadow-sm',
 				)}
-			</div>
+				style={{ transform: `translateX(${dragOffset}px)` }}
+				onClick={handleCardClick}
+				onPointerDown={handlePointerDown}
+				onPointerMove={handlePointerMove}
+				onPointerUp={handlePointerUp}
+				onPointerCancel={handlePointerCancel}
+			>
+				{/* Header: bet context pill + type badge + title | time + @you + unread */}
+				<div className="flex items-center gap-2 px-3 py-2.5 border-b border-border">
+					<div className="flex min-w-0 flex-1 items-center gap-1.5">
+						{objectType === 'bet' && (
+							<TooltipProvider>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<span className="inline-flex shrink-0 items-center rounded bg-[var(--tp-bet-bg)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--tp-bet-text)]">
+											B
+										</span>
+									</TooltipTrigger>
+									<TooltipContent side="bottom" className="text-xs">
+										{title}
+									</TooltipContent>
+								</Tooltip>
+							</TooltipProvider>
+						)}
+						{objectType && <TypeBadge type={objectType} />}
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId }}
+							className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+							title={title}
+							onClick={(e) => e.stopPropagation()}
+						>
+							{title}
+						</Link>
+					</div>
+					<div className="flex shrink-0 items-center gap-1.5">
+						{item.latest_activity_at && (
+							<RelativeTime
+								date={item.latest_activity_at}
+								className="text-xs text-muted-foreground"
+							/>
+						)}
+						{item.mentions_you && (
+							<span
+								aria-label="Mentioned"
+								title="You were @-mentioned in an unread comment"
+								className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-foreground"
+							>
+								@you
+							</span>
+						)}
+						<UnreadBadge count={item.unread_count} />
+					</div>
+				</div>
 
-			{/* Footer: Reply + Mark read */}
-			<div className="flex items-center gap-1 border-t border-border px-2 py-1.5">
-				<Button
-					size="sm"
-					variant="outline"
-					className={cn(
-						'h-7 px-2 text-xs font-medium',
-						isActive && 'bg-foreground text-background border-foreground hover:bg-foreground/90',
+				{/* Thread — all messages inline, page scrolls naturally */}
+				<div className="px-3 py-2.5">
+					{nodes.length === 0 ? (
+						<p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
+					) : (
+						<div className="space-y-1">
+							{nodes.map((node) => {
+								const dividerOnRoot =
+									firstUnreadEventId !== null && firstUnreadEventId === node.root.id
+								const dividerInsideThread =
+									firstUnreadRootId === node.root.id &&
+									firstUnreadEventId !== null &&
+									firstUnreadEventId !== node.root.id
+								return (
+									<div key={node.root.id}>
+										{dividerOnRoot && <NewDivider />}
+										<ActivityComment
+											event={node.root}
+											replies={node.replies}
+											workspaceId={workspaceId}
+											objectId={objectId}
+											dividerBeforeReplyId={
+												dividerInsideThread ? (firstUnreadEventId ?? undefined) : undefined
+											}
+											divider={dividerInsideThread ? <NewDivider /> : undefined}
+										/>
+									</div>
+								)
+							})}
+						</div>
 					)}
-					onClick={handleReplyClick}
-				>
-					{isActive ? 'Replying…' : 'Reply'}
-				</Button>
-				<Button
-					size="sm"
-					variant="ghost"
-					className="h-7 px-2 text-xs"
-					onClick={(e) => {
-						e.stopPropagation()
-						handleMarkRead()
-					}}
-					disabled={markRead.isPending}
-				>
-					Mark as read
-				</Button>
+				</div>
+
+				{/* Footer: Reply + Mark read */}
+				<div className="flex items-center gap-1 border-t border-border px-2 py-1.5">
+					<Button
+						size="sm"
+						variant="outline"
+						className={cn(
+							'h-7 px-2 text-xs font-medium',
+							isActive && 'bg-foreground text-background border-foreground hover:bg-foreground/90',
+						)}
+						onClick={handleReplyClick}
+					>
+						{isActive ? 'Replying…' : 'Reply'}
+					</Button>
+					<Button
+						size="sm"
+						variant="ghost"
+						className="h-7 px-2 text-xs"
+						onClick={(e) => {
+							e.stopPropagation()
+							handleMarkRead()
+						}}
+						disabled={markRead.isPending}
+					>
+						Mark as read
+					</Button>
+				</div>
 			</div>
 		</div>
 	)

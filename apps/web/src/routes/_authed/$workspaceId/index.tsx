@@ -2,7 +2,8 @@ import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { useUnread } from '@/hooks/use-subscriptions'
+import { Button } from '@/components/ui/button'
+import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -17,6 +18,22 @@ function ForYouDashboard() {
 	const { data, isLoading } = useUnread(workspaceId)
 	const items = data?.items ?? []
 	const [activeId, setActiveId] = useState<string | null>(null)
+	const markRead = useMarkRead(workspaceId)
+
+	const totalUnread = items.reduce((sum, item) => sum + (item.unread_count ?? 0), 0)
+
+	function handleMarkAllRead() {
+		for (const item of items) {
+			const eventId = item.latest_event_id ?? 0
+			if (eventId > 0) {
+				markRead.mutate({
+					entityType: item.entity_type,
+					entityId: item.entity_id,
+					lastEventId: eventId,
+				})
+			}
+		}
+	}
 
 	if (isLoading) {
 		return (
@@ -38,16 +55,37 @@ function ForYouDashboard() {
 	}
 
 	return (
-		<div className="space-y-4">
-			{items.map((item) => (
-				<UnreadThreadCard
-					key={`${item.entity_type}-${item.entity_id}`}
-					workspaceId={workspaceId}
-					item={item}
-					isActive={activeId === item.entity_id}
-					onActivate={() => setActiveId(item.entity_id)}
-				/>
-			))}
+		<div className="flex flex-col gap-4">
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-2">
+					<span className="text-sm font-medium text-foreground">For You</span>
+					{totalUnread > 0 && (
+						<span className="min-w-[18px] rounded-full bg-foreground px-1.5 py-0.5 text-center text-[10px] font-semibold text-background">
+							{totalUnread}
+						</span>
+					)}
+				</div>
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-7 px-2 text-xs"
+					onClick={handleMarkAllRead}
+					disabled={markRead.isPending || totalUnread === 0}
+				>
+					Mark all read
+				</Button>
+			</div>
+			<div className="space-y-4">
+				{items.map((item) => (
+					<UnreadThreadCard
+						key={`${item.entity_type}-${item.entity_id}`}
+						workspaceId={workspaceId}
+						item={item}
+						isActive={activeId === item.entity_id}
+						onActivate={() => setActiveId(item.entity_id)}
+					/>
+				))}
+			</div>
 		</div>
 	)
 }

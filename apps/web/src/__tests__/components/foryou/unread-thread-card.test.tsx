@@ -186,7 +186,8 @@ describe('UnreadThreadCard', () => {
 			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={true} onActivate={noop} />,
 			{ wrapper: TestWrapper },
 		)
-		const card = container.firstChild as HTMLElement
+		// The outer wrapper is the firstChild; the inner card is the second child of the wrapper.
+		const card = container.firstChild?.childNodes[1] as HTMLElement
 		expect(card.className).toMatch(/border-ring/)
 	})
 
@@ -196,7 +197,7 @@ describe('UnreadThreadCard', () => {
 			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
 			{ wrapper: TestWrapper },
 		)
-		const card = container.firstChild as HTMLElement
+		const card = container.firstChild?.childNodes[1] as HTMLElement
 		expect(card.className).not.toMatch(/border-ring/)
 	})
 
@@ -213,7 +214,9 @@ describe('UnreadThreadCard', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		await user.click(container.firstChild as HTMLElement)
+		// Click on the inner card (second child of the wrapper)
+		const card = container.firstChild?.childNodes[1] as HTMLElement
+		await user.click(card)
 		expect(onActivate).toHaveBeenCalled()
 	})
 
@@ -348,5 +351,26 @@ describe('UnreadThreadCard', () => {
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.queryByText('B')).not.toBeInTheDocument()
+	})
+
+	it('renders the swipe-to-mark-read green background element', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		const { container } = render(
+			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			{ wrapper: TestWrapper },
+		)
+		// The green reveal background is the first child of the outer wrapper
+		const wrapper = container.firstChild as HTMLElement
+		const swipeBg = wrapper.firstChild as HTMLElement
+		expect(swipeBg).toHaveAttribute('aria-hidden')
+	})
+
+	it('renders Mark as read button in the card footer', () => {
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByRole('button', { name: /mark as read/i })).toBeInTheDocument()
 	})
 })
