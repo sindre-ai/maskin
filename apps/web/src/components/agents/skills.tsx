@@ -79,12 +79,7 @@ export function Skills({ actorId }: SkillsProps) {
 		<div>
 			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} />
 
-			<SkillsSectionHeader
-				icon={User}
-				label="Personal"
-				count={skillList.length}
-				className="mt-4"
-			/>
+			<SkillsSectionHeader icon={User} label="Personal" count={skillList.length} className="mt-4" />
 
 			{skillList.length > 0 ? (
 				<div className="space-y-2 mb-3">
@@ -289,11 +284,16 @@ function SkillsSectionHeader({
 }) {
 	return (
 		<h3
-			className={cn('flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2', className)}
+			className={cn(
+				'flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2',
+				className,
+			)}
 		>
 			<Icon className="h-3.5 w-3.5" aria-hidden="true" />
 			<span>{label}</span>
-			{count !== undefined && <span aria-label={`${count} ${label.toLowerCase()} skills`}>· {count}</span>}
+			{count !== undefined && (
+				<span aria-label={`${count} ${label.toLowerCase()} skills`}>· {count}</span>
+			)}
 		</h3>
 	)
 }

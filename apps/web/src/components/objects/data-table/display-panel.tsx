@@ -248,7 +248,9 @@ export function DisplayPanel({
 										disabled={!boardSupported}
 										onClick={boardSupported ? () => onViewChange?.('board') : undefined}
 										title={
-											boardSupported ? undefined : 'Board view needs configured statuses for this type'
+											boardSupported
+												? undefined
+												: 'Board view needs configured statuses for this type'
 										}
 									>
 										Board
