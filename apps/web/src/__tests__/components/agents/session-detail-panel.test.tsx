@@ -191,7 +191,21 @@ describe('FailureCard', () => {
 			verbatim_output: null,
 		})
 		expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /Top up Openrouter credits/ })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Top up OpenRouter credits/ })).toBeInTheDocument()
+	})
+
+	it('shows only Wait chip for max_plan_rate_limit (no Top up or Switch button)', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'max_plan_rate_limit',
+			human_message: 'Claude Max plan rate limit reached — try again later',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.getByText('Wait')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
+		expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
 	})
 
 	it('hides recovery row for non-credit reason codes', () => {
@@ -238,7 +252,7 @@ describe('FailureCard', () => {
 })
 
 // These are the exact failure_reason objects that classifyCreditExhaustion emits
-// for each of the six reason codes that should produce a recovery row in FailureCard.
+// for each of the seven reason codes that should produce a recovery row in FailureCard.
 // Each case exercises the pipeline: classifier output -> parseFailureReason -> FailureCard.
 const CLASSIFIER_OUTPUTS: Array<{
 	code: string
@@ -314,6 +328,18 @@ const CLASSIFIER_OUTPUTS: Array<{
 			http_status: null,
 			reset_at: null,
 			verbatim_output: "You've hit your Opus limit",
+		},
+	},
+	{
+		code: 'max_plan_rate_limit',
+		// triggered by: tail.includes('billing_error') with 'try again' or 'usage/rate limit'
+		failureReason: {
+			provider: 'anthropic',
+			reason_code: 'max_plan_rate_limit',
+			human_message: 'Claude Max plan rate limit reached — try again later',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
 		},
 	},
 ]

@@ -102,6 +102,9 @@ export function classifyCreditExhaustion(tail: string): SessionResultFailureReas
 		}
 	}
 
+	// False-positive risk: `insufficient credits` is matched as a bare substring and can
+	// appear in non-OpenRouter tool output (e.g. a DB error or upstream API response).
+	// Accepted trade-off: uncommon enough in practice that false-positive rate is low.
 	if (tail.includes('insufficient credits')) {
 		return {
 			provider: 'openrouter',

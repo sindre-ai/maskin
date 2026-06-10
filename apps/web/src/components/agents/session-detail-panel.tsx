@@ -59,9 +59,26 @@ const TOP_UP_URLS: Record<string, string> = {
 	openrouter: 'https://openrouter.ai/credits',
 }
 
-// Reason codes that represent credit/quota depletion (not transient rate limits).
+const PROVIDER_LABELS: Record<string, string> = {
+	anthropic: 'Anthropic',
+	openrouter: 'OpenRouter',
+}
+
+// Reason codes that show the recovery row (credit depletion + temporary quota limits).
 // Matches the codes emitted by credit-classifier.ts.
 const CREDIT_REASON_CODES = new Set([
+	'billing_error',
+	'credit_balance_low',
+	'insufficient_credits',
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'max_plan_rate_limit',
+])
+
+// Codes that require topping up credits (subset of CREDIT_REASON_CODES).
+// max_plan_rate_limit is excluded — it's a temporary rate limit, not credit depletion.
+const TOPUP_REASON_CODES = new Set([
 	'billing_error',
 	'credit_balance_low',
 	'insufficient_credits',
@@ -77,9 +94,11 @@ export function FailureCard({
 	const [showVerbatim, setShowVerbatim] = useState(false)
 	const topUpUrl = TOP_UP_URLS[failureReason.provider]
 	const isCredit = CREDIT_REASON_CODES.has(failureReason.reason_code)
+	const isTopUp = TOPUP_REASON_CODES.has(failureReason.reason_code)
 	const isOpenRouter = failureReason.provider === 'openrouter'
 	const providerLabel =
-		failureReason.provider.charAt(0).toUpperCase() + failureReason.provider.slice(1)
+		PROVIDER_LABELS[failureReason.provider] ??
+		(failureReason.provider.charAt(0).toUpperCase() + failureReason.provider.slice(1))
 
 	return (
 		<div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 space-y-2">
@@ -107,7 +126,7 @@ export function FailureCard({
 			</div>
 			{isCredit && (
 				<div className="flex flex-wrap items-center gap-2">
-					{topUpUrl && (
+					{isTopUp && topUpUrl && (
 						<Button size="sm" asChild>
 							<a href={topUpUrl} target="_blank" rel="noreferrer">
 								Top up {providerLabel} credits
@@ -115,7 +134,7 @@ export function FailureCard({
 							</a>
 						</Button>
 					)}
-					{!isOpenRouter && (
+					{isTopUp && !isOpenRouter && (
 						<Button size="sm" variant="outline" asChild>
 							<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
 								Switch to OpenRouter key
