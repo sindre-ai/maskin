@@ -199,9 +199,10 @@ describe('Conversations Routes', () => {
 			const convId = randomUUID()
 			const conv = buildConversation({ id: convId })
 			const newActorId = randomUUID()
+			const callerParticipant = buildParticipant({ conversationId: convId, actorId })
 			const participant = buildParticipant({ conversationId: convId, actorId: newActorId })
 			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.selectQueue = [[conv], []]
+			mockResults.selectQueue = [[conv], [callerParticipant], []]
 			mockResults.insert = [participant]
 
 			const res = await app.request(
@@ -216,6 +217,24 @@ describe('Conversations Routes', () => {
 			expect(res.status).toBe(201)
 			const body = await res.json()
 			expect(body.actorId).toBe(newActorId)
+		})
+
+		it('returns 403 when caller is not a participant', async () => {
+			const convId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
+			mockResults.selectQueue = [[conv], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/participants`,
+					{ actor_id: randomUUID() },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
 		})
 
 		it('returns 404 when conversation not found', async () => {
@@ -238,12 +257,13 @@ describe('Conversations Routes', () => {
 			const convId = randomUUID()
 			const existingActorId = randomUUID()
 			const conv = buildConversation({ id: convId })
+			const callerParticipant = buildParticipant({ conversationId: convId, actorId })
 			const existingParticipant = buildParticipant({
 				conversationId: convId,
 				actorId: existingActorId,
 			})
 			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.selectQueue = [[conv], [existingParticipant]]
+			mockResults.selectQueue = [[conv], [callerParticipant], [existingParticipant]]
 
 			const res = await app.request(
 				jsonRequest(
