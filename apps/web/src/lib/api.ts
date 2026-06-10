@@ -202,6 +202,21 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 	},
 
+	landingEvents: {
+		emit: (events: Array<{ name: string; anonId: string; props?: Record<string, unknown> }>) =>
+			request<void>('/public/landing-events', { method: 'POST', body: { events } }),
+	},
+
+	// Public landing-page handoffs. The /drafts endpoint is unauthenticated and
+	// called from sindre.ai; only /claim is reachable from the web app.
+	publicBetStrategist: {
+		claim: (workspaceId: string, guestSessionId: string) =>
+			request<{ claimed: Array<{ id: string; title: string | null; content: string | null }> }>(
+				'/public/bet-strategist/claim',
+				{ method: 'POST', body: { workspace_id: workspaceId, guestSessionId } },
+			),
+	},
+
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
@@ -510,15 +525,20 @@ export const api = {
 	},
 
 	files: {
-		list: (workspaceId: string, params?: { q?: string; limit?: number; offset?: number }) => {
-			const qs = params
-				? `?${new URLSearchParams(
-						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
-							if (v !== undefined && v !== '') acc[k] = String(v)
-							return acc
-						}, {}),
-					)}`
-				: ''
+		list: (
+			workspaceId: string,
+			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+		) => {
+			if (!params) return request<FileListItem[]>('/files', { workspaceId })
+			const { ids, ...rest } = params
+			const searchParams = new URLSearchParams(
+				Object.entries(rest).reduce<Record<string, string>>((acc, [k, v]) => {
+					if (v !== undefined && v !== '') acc[k] = String(v)
+					return acc
+				}, {}),
+			)
+			if (ids?.length) searchParams.set('ids', ids.join(','))
+			const qs = searchParams.size > 0 ? `?${searchParams}` : ''
 			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
 		},
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
@@ -671,6 +691,10 @@ export interface MigrateObjectTypeResponse {
 
 export interface ActorWithKey extends ActorResponse {
 	api_key: string
+	// Set when the actor is created with `auto_create_workspace` (default for
+	// humans on signup). Used by the signup → guest-draft handoff to pick the
+	// workspace to claim into.
+	workspace_id?: string
 }
 
 export interface LoginInput {

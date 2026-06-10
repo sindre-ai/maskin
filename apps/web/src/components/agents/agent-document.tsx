@@ -47,7 +47,7 @@ import { TypeBadge } from '../shared/type-badge'
 import { AgentUsageChart } from './agent-usage-chart'
 import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
-import { SessionDetailPanel } from './session-detail-panel'
+import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
 
@@ -513,17 +513,25 @@ function SessionRow({
 
 	const result = session.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
-	const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
+	const rawExitCode = result?.exit_code
+	const exitCode: number | null | undefined =
+		typeof rawExitCode === 'number' || rawExitCode === null ? rawExitCode : undefined
 	const hasResultError = !!errorMessage || (exitCode !== undefined && exitCode !== 0)
+	const failureReason = parseFailureReason(result)
 
 	const { data: stderrLog } = useSessionErrorLog(
 		session.id,
 		workspaceId,
-		showError && !hasResultError,
+		showError && !hasResultError && !failureReason,
 	)
 
 	const errorDetail =
-		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
+		errorMessage ??
+		(exitCode !== undefined
+			? exitCode !== null
+				? `Process exited with code ${exitCode}`
+				: 'Container process was killed'
+			: null)
 	const displayError = errorDetail ?? stderrLog
 
 	return (
@@ -571,11 +579,18 @@ function SessionRow({
 					className="text-xs text-muted-foreground shrink-0"
 				/>
 			</div>
-			{showError && displayError && (
-				<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
-					{displayError}
-				</pre>
-			)}
+			{showError &&
+				(failureReason ? (
+					<div className="mx-3 mt-1">
+						<FailureCard failureReason={failureReason} workspaceId={workspaceId} />
+					</div>
+				) : (
+					displayError && (
+						<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
+							{displayError}
+						</pre>
+					)
+				))}
 		</div>
 	)
 }

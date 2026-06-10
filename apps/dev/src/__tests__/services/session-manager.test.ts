@@ -78,6 +78,14 @@ vi.mock('../../services/workspace-briefing', () => ({
 	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
+const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
+	mockClassifyCreditExhaustion: vi.fn(),
+}))
+
+vi.mock('../../lib/credit-classifier', () => ({
+	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+}))
+
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
@@ -395,7 +403,7 @@ describe('SessionManager', () => {
 			}
 		}
 
-		it('produces per-owner env vars and MCP entries for two GitHub installations', async () => {
+		it('produces per-owner env vars for two GitHub installations (agents opt into MCP servers via tools config)', async () => {
 			const wsId = randomUUID()
 			const integrationA = buildIntegration({
 				workspaceId: wsId,
@@ -428,25 +436,17 @@ describe('SessionManager', () => {
 			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_token_sindre_ai')
 			expect(createArgs.env.GITHUB_TOKEN_VAERKSTED_AI).toBe('ghs_token_vaerksted_ai')
 			expect(createArgs.env.GITHUB_TOKEN).toBeUndefined()
-
-			const mcpConfig = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
-			}
-			expect(Object.keys(mcpConfig.mcpServers).sort()).toEqual([
-				'github-sindre-ai',
-				'github-vaerksted-ai',
-			])
-			expect(mcpConfig.mcpServers['github-sindre-ai'].command).toBe('npx')
-			expect(mcpConfig.mcpServers['github-sindre-ai'].args).toEqual([
-				'-y',
-				'@modelcontextprotocol/server-github',
-			])
-			expect(mcpConfig.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
-				'${GITHUB_TOKEN_SINDRE_AI}',
-			)
-			expect(mcpConfig.mcpServers['github-vaerksted-ai'].env.GITHUB_TOKEN).toBe(
-				'${GITHUB_TOKEN_VAERKSTED_AI}',
-			)
+			// GitHub MCP server entries are not auto-injected — agents opt in per-agent
+			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+				? Object.keys(
+						(
+							JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, unknown>
+							}
+						).mcpServers,
+					)
+				: []
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(0)
 		})
 
 		it('lazily backfills owner_login and persists it when the row is missing it', async () => {
@@ -476,10 +476,16 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.GITHUB_TOKEN_ACME_ORG).toBe('ghs_token_acme')
-			const mcpConfig = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, unknown>
-			}
-			expect(Object.keys(mcpConfig.mcpServers)).toEqual(['github-acme-org'])
+			const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+				? Object.keys(
+						(
+							JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, unknown>
+							}
+						).mcpServers,
+					)
+				: []
+			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(0)
 		})
 
 		it('skips the integration when owner_login backfill fails (does not kill the session)', async () => {
@@ -503,6 +509,50 @@ describe('SessionManager', () => {
 			const githubKeys = Object.keys(createArgs.env).filter((k) => k.startsWith('GITHUB_TOKEN_'))
 			expect(githubKeys).toEqual([])
 			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
+		})
+
+		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
+			const integration = buildIntegration({
+				provider: 'github',
+				externalId: 'install-aaa',
+				config: { owner_login: 'sindre-ai' },
+			})
+			const fixtures = buildLaunchFixtures([integration])
+			// Agent has opted into the GitHub MCP server for this org
+			fixtures.agent.tools = {
+				mcpServers: {
+					'github-sindre-ai': {
+						type: 'stdio',
+						command: 'npx',
+						args: ['-y', '@modelcontextprotocol/server-github'],
+						env: { GITHUB_TOKEN: '${GITHUB_TOKEN_SINDRE_AI}' },
+					},
+				},
+			}
+
+			vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+			mockGetValidToken.mockResolvedValueOnce('ghs_real_token')
+
+			setupLaunchMocks(fixtures)
+			await manager.startSession(fixtures.session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+
+			// Token env var is present for envsubst to substitute into the MCP config
+			expect(createArgs.env.GITHUB_TOKEN_SINDRE_AI).toBe('ghs_real_token')
+
+			// AGENT_MCP_JSON carries the MCP config with the placeholder intact —
+			// the container entrypoint runs envsubst to resolve it at startup
+			expect(createArgs.env.AGENT_MCP_JSON).toBeDefined()
+			const agentMcp = JSON.parse(createArgs.env.AGENT_MCP_JSON) as {
+				mcpServers: Record<string, { env: Record<string, string> }>
+			}
+			expect(agentMcp.mcpServers['github-sindre-ai']).toBeDefined()
+			expect(agentMcp.mcpServers['github-sindre-ai'].env.GITHUB_TOKEN).toBe(
+				'${GITHUB_TOKEN_SINDRE_AI}',
+			)
 		})
 	})
 
@@ -1151,6 +1201,112 @@ describe('SessionManager', () => {
 					(i as { content?: string }).content === 'recovered-chunk',
 			)
 			expect(recovered).toBeDefined()
+		})
+	})
+
+	describe('handleCompletion() — credit-exhaustion classification', () => {
+		const knownReason = {
+			provider: 'anthropic',
+			reason_code: 'billing_error',
+			human_message: 'Anthropic billing error — credit balance may be exhausted',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		}
+
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(knownReason)
+		})
+
+		it('writes failure_reason to both the DB result payload and the event data payload', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: 'billing_error',
+			})
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			// DB sessions.result must contain failure_reason
+			const sessionUpdate = calls.updates.find(
+				(u): u is { result: { exit_code: number; failure_reason: unknown } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.result).toMatchObject({ failure_reason: knownReason })
+
+			// Event insert data must contain failure_reason
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: { exit_code: number; failure_reason: unknown } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					typeof (i as Record<string, unknown>).action === 'string' &&
+					(i as { action: string }).action.startsWith('session_'),
+			)
+			expect(eventInsert?.data).toMatchObject({ failure_reason: knownReason })
+		})
+
+		it('does not call classifier and omits failure_reason when exitCode is 0', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+			const sessionUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate?.result as Record<string, unknown>).not.toHaveProperty('failure_reason')
+		})
+
+		it('does not call classifier when exitCode is null (OOM kill)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(
+						sessionId: string,
+						containerId: string,
+						exitCode: number | null,
+					): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', null)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
 		})
 	})
 })

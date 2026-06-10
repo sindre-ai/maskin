@@ -8,6 +8,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { PageHeaderProvider } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
@@ -19,7 +20,7 @@ import {
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { WorkspaceContext } from '@/lib/workspace-context'
 import { Outlet, createFileRoute } from '@tanstack/react-router'
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const STORAGE_KEY = 'maskin-sidebar-open'
 
@@ -111,6 +112,8 @@ function WorkspaceLayout() {
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<SindreProvider workspaceId={workspaceId}>
+				<PendingPromptBootstrap sindreActorId={sindreActorId} />
+				<GuestDraftClaimBootstrap workspaceId={workspaceId} />
 				<PendingCommentsProvider workspaceId={workspaceId}>
 					<PageHeaderProvider>
 						<SindrePinShell>
@@ -131,6 +134,66 @@ function WorkspaceLayout() {
 			</SindreProvider>
 		</WorkspaceContext.Provider>
 	)
+}
+
+/**
+ * Claims any guest bet drafts created on the landing page (identified by
+ * `maskin_anon_id` in localStorage) and creates them as bets in the workspace.
+ * Fires at most once — the key is removed before the API call so a failed
+ * claim does not retry on the next render.
+ */
+function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
+	const firedRef = useRef(false)
+
+	useEffect(() => {
+		if (firedRef.current) return
+		const guestSessionId = localStorage.getItem('maskin_anon_id')
+		if (!guestSessionId) return
+		firedRef.current = true
+		localStorage.removeItem('maskin_anon_id')
+
+		api.publicBetStrategist
+			.claim(workspaceId, guestSessionId)
+			.then(({ claimed }) =>
+				Promise.allSettled(
+					claimed
+						.filter((d) => d.content)
+						.map((d) =>
+							api.objects.create(workspaceId, {
+								type: 'bet',
+								title: d.title ?? undefined,
+								content: d.content ?? undefined,
+								status: 'signal',
+							}),
+						),
+				),
+			)
+			.catch(() => console.error('[maskin] failed to claim guest drafts'))
+	}, [workspaceId])
+
+	return null
+}
+
+/**
+ * Reads `maskin_pending_prompt` from localStorage once Sindre's actor ID
+ * resolves, then opens the Sindre panel with that prompt as the first message.
+ * Fires at most once per mount — the ref guard prevents a re-trigger if
+ * `sindreActorId` changes identity while remaining non-null.
+ */
+function PendingPromptBootstrap({ sindreActorId }: { sindreActorId: string | null }) {
+	const { openWithContext } = useSindre()
+	const firedRef = useRef(false)
+
+	useEffect(() => {
+		if (!sindreActorId || firedRef.current) return
+		const prompt = localStorage.getItem('maskin_pending_prompt')
+		if (!prompt) return
+		firedRef.current = true
+		localStorage.removeItem('maskin_pending_prompt')
+		openWithContext([], prompt)
+	}, [sindreActorId, openWithContext])
+
+	return null
 }
 
 /**
