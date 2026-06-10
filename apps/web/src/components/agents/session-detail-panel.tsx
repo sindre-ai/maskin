@@ -1,11 +1,11 @@
 import { MarkdownContent } from '@/components/shared/markdown-content'
-import { type AffectedObject, useSessionAffectedObjects } from '@/hooks/use-events'
+import { ObjectReference } from '@/components/shared/object-reference'
+import { useSessionAffectedObjects } from '@/hooks/use-events'
 import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
-import { Link } from '@tanstack/react-router'
 import {
 	CheckCircle2,
 	ChevronDown,
@@ -98,52 +98,6 @@ function SessionStatusBadge({ status }: { status: string }) {
 			<Icon size={12} />
 			{label}
 		</span>
-	)
-}
-
-function formatAction(actions: string[]): string {
-	return actions
-		.map((a) => {
-			if (a === 'status_changed') return 'status changed'
-			return a
-		})
-		.join(', ')
-}
-
-function AffectedObjectsList({
-	objects,
-	workspaceId,
-}: { objects: AffectedObject[]; workspaceId: string }) {
-	if (objects.length === 0) {
-		return <p className="text-sm text-muted-foreground py-2 text-center">No objects affected</p>
-	}
-
-	return (
-		<div className="space-y-1">
-			{objects.map((obj) => (
-				<Link
-					key={obj.entityId}
-					to="/$workspaceId/objects/$objectId"
-					params={{ workspaceId, objectId: obj.entityId }}
-					className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors group"
-				>
-					<FileText
-						size={14}
-						className="mt-0.5 shrink-0 text-muted-foreground group-hover:text-foreground"
-					/>
-					<div className="min-w-0 flex-1">
-						<p className="text-sm truncate group-hover:text-foreground">
-							{obj.title || obj.entityId}
-						</p>
-						<p className="text-[11px] text-muted-foreground">
-							<span className="capitalize">{obj.entityType}</span>
-							{' — '}
-							{formatAction(obj.actions)}
-						</p>
-					</div>
-				</Link>
-			))}
-		</div>
 	)
 }
 
@@ -337,8 +291,19 @@ export function SessionDetailPanel({
 								<div className="flex items-center justify-center py-4">
 									<Spinner />
 								</div>
+							) : affectedObjects.length === 0 ? (
+								<p className="text-sm text-muted-foreground py-2 text-center">No objects affected</p>
 							) : (
-								<AffectedObjectsList objects={affectedObjects} workspaceId={workspaceId} />
+								<div className="space-y-1">
+									{affectedObjects.map((obj) => (
+										<ObjectReference
+											key={obj.entityId}
+											objectId={obj.entityId}
+											workspaceId={workspaceId}
+											variant="block"
+										/>
+									))}
+								</div>
 							)}
 						</div>
 
