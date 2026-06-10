@@ -43,6 +43,19 @@ const dmConversation = {
 	participants: [],
 }
 
+const roomConversation = {
+	id: 'c2',
+	workspaceId: 'ws-test',
+	title: 'Engineering room',
+	type: 'room' as const,
+	lastMessagePreview: null,
+	lastActivityAt: new Date().toISOString(),
+	createdAt: new Date().toISOString(),
+	participantCount: 3,
+	unreadCount: 0,
+	participants: [],
+}
+
 function Harness({
 	open = true,
 	onOpenChange = vi.fn(),
@@ -128,5 +141,15 @@ describe('ConversationDrawer', () => {
 	it('does not render the panel when closed', () => {
 		render(<Harness open={false} />)
 		expect(screen.queryByText('Conversations')).not.toBeInTheDocument()
+	})
+
+	it('renders a Rooms section with room-type conversations', async () => {
+		const { api } = await import('@/lib/api')
+		vi.mocked(api.conversations.list).mockResolvedValueOnce([roomConversation])
+
+		render(<Harness />)
+
+		expect(await screen.findByText('Rooms')).toBeInTheDocument()
+		expect(screen.getByText('Engineering room')).toBeInTheDocument()
 	})
 })
