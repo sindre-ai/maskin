@@ -954,7 +954,7 @@ export class SessionManager extends EventEmitter {
 
 	private computeTimeout(session: typeof sessions.$inferSelect): Date {
 		const sessionConfig = session.config as Record<string, unknown>
-		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 3600
+		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 7200
 		return new Date(Date.now() + timeoutSeconds * 1000)
 	}
 
