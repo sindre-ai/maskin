@@ -124,7 +124,7 @@ function CommentRow({
 				{isDecisionPoint && (
 					<span
 						aria-hidden
-						className="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-accent"
+						className="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-primary"
 					/>
 				)}
 				<div className="relative shrink-0">
@@ -132,7 +132,7 @@ function CommentRow({
 					{isUnread && (
 						<span
 							aria-label="Unread"
-							className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent ring-1 ring-background"
+							className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary ring-1 ring-background"
 						/>
 					)}
 				</div>

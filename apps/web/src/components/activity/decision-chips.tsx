@@ -48,9 +48,9 @@ export function DecisionChips({ event, objectId, workspaceId }: DecisionChipsPro
 	return (
 		<div className="flex flex-col gap-1.5">
 			<div className="flex flex-wrap gap-1.5">
-				{chips.map((chip) => (
+				{chips.map((chip, idx) => (
 					<button
-						key={chip}
+						key={`${chip}-${idx}`}
 						type="button"
 						onClick={() => sendReply(chip)}
 						disabled={createComment.isPending}
