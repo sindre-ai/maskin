@@ -11,7 +11,7 @@ export function useFile(workspaceId: string, fileId: string | null) {
 	})
 }
 
-export function useFiles(workspaceId: string, params?: { q?: string }) {
+export function useFiles(workspaceId: string, params?: { q?: string; ids?: string[] }) {
 	return useQuery({
 		queryKey: [...queryKeys.files.all(workspaceId), 'list', params],
 		queryFn: () => api.files.list(workspaceId, params),

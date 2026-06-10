@@ -10,7 +10,7 @@ import {
 	updateFileSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, desc, eq, ilike } from 'drizzle-orm'
+import { and, desc, eq, ilike, inArray } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
@@ -40,6 +40,7 @@ function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUr
 
 const listQuerySchema = z.object({
 	q: z.string().trim().min(1).max(255).optional(),
+	ids: z.string().optional(),
 	limit: z.coerce.number().int().positive().max(200).optional(),
 	offset: z.coerce.number().int().nonnegative().optional(),
 })
@@ -189,8 +190,11 @@ app.openapi(listFilesRoute, (async (c) => {
 	const limit = Number.isFinite(query.limit) && query.limit ? Math.min(query.limit, 200) : 50
 	const offset = Number.isFinite(query.offset) && query.offset ? query.offset : 0
 
+	const ids = query.ids ? query.ids.split(',').filter(Boolean) : null
+
 	const conditions = [eq(files.workspaceId, workspaceId)]
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
+	if (ids?.length) conditions.push(inArray(files.id, ids))
 
 	const rows = await db
 		.select({
