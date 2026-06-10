@@ -9,6 +9,7 @@ import { TestWrapper } from '../../setup'
 const mockUseEntityEvents = vi.fn()
 const mockMarkReadMutate = vi.fn()
 const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: false }))
+const mockCreateCommentMutate = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -17,7 +18,7 @@ vi.mock('@tanstack/react-router', async () => {
 
 vi.mock('@/hooks/use-events', () => ({
 	useEntityEvents: (...args: unknown[]) => mockUseEntityEvents(...args),
-	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
+	useCreateComment: () => ({ mutate: mockCreateCommentMutate, isPending: false }),
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({
@@ -71,6 +72,7 @@ describe('UnreadThreadCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockMarkReadMutate.mockReset()
+		mockCreateCommentMutate.mockReset()
 	})
 
 	it('renders the object title and unread count', () => {
@@ -372,5 +374,19 @@ describe('UnreadThreadCard', () => {
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.getByRole('button', { name: /mark as read/i })).toBeInTheDocument()
+	})
+
+	it('fires create-comment mutation with the right payload when a quick-reply chip is tapped', async () => {
+		const user = userEvent.setup()
+		mockUseEntityEvents.mockReturnValue({ data: [] })
+		render(
+			<UnreadThreadCard workspaceId="ws-1" item={buildItem()} isActive={false} onActivate={noop} />,
+			{ wrapper: TestWrapper },
+		)
+		await user.click(screen.getByRole('button', { name: 'On it' }))
+		expect(mockCreateCommentMutate).toHaveBeenCalledWith(
+			{ entity_id: 'obj-1', content: 'On it' },
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		)
 	})
 })
