@@ -7,15 +7,20 @@ import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import { MentionedText } from './mentioned-text'
 
-function wrapWithMentions(children: ReactNode, actors: ActorListItem[]): ReactNode {
+function wrapWithMentions(
+	children: ReactNode,
+	actors: ActorListItem[],
+	onMentionClick?: (actor: ActorListItem) => void,
+): ReactNode {
 	if (typeof children === 'string') {
-		return <MentionedText content={children} actors={actors} />
+		return <MentionedText content={children} actors={actors} onMentionClick={onMentionClick} />
 	}
 	if (Array.isArray(children)) {
+		const mentionProps = { actors, onMentionClick }
 		return children.map((child, idx) =>
 			typeof child === 'string' ? (
 				// biome-ignore lint/suspicious/noArrayIndexKey: children come from a deterministic markdown AST; order is stable across renders
-				<MentionedText key={`m-${idx}`} content={child} actors={actors} />
+				<MentionedText key={`m-${idx}`} content={child} {...mentionProps} />
 			) : (
 				child
 			),
@@ -32,6 +37,7 @@ export function MarkdownContent({
 	size = 'sm',
 	disallowedElements,
 	mentionActors,
+	onMentionClick,
 }: {
 	content: string
 	onChange?: (value: string) => void
@@ -40,6 +46,7 @@ export function MarkdownContent({
 	size?: 'sm' | 'xs'
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
+	onMentionClick?: (actor: ActorListItem) => void
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
@@ -96,7 +103,7 @@ export function MarkdownContent({
 		}
 
 		if (!mentionActors) return { code }
-		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors)
+		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
 		return {
 			code,
 			p: ({ children }) => <p>{wrap(children)}</p>,
@@ -109,7 +116,7 @@ export function MarkdownContent({
 			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
 			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
 		}
-	}, [mentionActors])
+	}, [mentionActors, onMentionClick])
 
 	if (editable && editing) {
 		return (

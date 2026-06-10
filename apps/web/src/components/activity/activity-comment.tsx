@@ -3,7 +3,7 @@ import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { Reply } from 'lucide-react'
 import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
@@ -56,6 +56,19 @@ function CommentRow({
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
 	const { data: workspaceFiles } = useFiles(workspaceId)
 	const [humanDetailOpen, setHumanDetailOpen] = useState(false)
+	const [mentionedHumanId, setMentionedHumanId] = useState<string | null>(null)
+	const navigate = useNavigate()
+
+	const handleMentionClick = (mentioned: ActorListItem) => {
+		if (mentioned.type === 'agent') {
+			navigate({
+				to: '/$workspaceId/agents/$agentId',
+				params: { workspaceId, agentId: mentioned.id },
+			})
+		} else {
+			setMentionedHumanId(mentioned.id)
+		}
+	}
 
 	const isAgent = actor?.type === 'agent'
 
@@ -138,6 +151,7 @@ function CommentRow({
 						content={content}
 						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
 						mentionActors={actors}
+						onMentionClick={handleMentionClick}
 						size="sm"
 						className={COMMENT_PROSE_OVERRIDES}
 					/>
@@ -175,6 +189,16 @@ function CommentRow({
 					onOpenChange={setHumanDetailOpen}
 				/>
 			)}
+			{mentionedHumanId && (
+				<HumanDetailDialog
+					actorId={mentionedHumanId}
+					workspaceId={workspaceId}
+					open={true}
+					onOpenChange={(open) => {
+						if (!open) setMentionedHumanId(null)
+					}}
+				/>
+			)}
 		</>
 	)
 }
@@ -197,7 +221,7 @@ export function ActivityComment({
 	const isDecisionPoint = hasDecisionChips(event)
 
 	return (
-		<div className="group">
+		<div id={`comment-${event.id}`} className="group">
 			<CommentRow
 				event={event}
 				actors={actorList}
