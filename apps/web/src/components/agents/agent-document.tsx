@@ -11,7 +11,14 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useActors, useAgentPause, useAgentRun, useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
+import {
+	useActors,
+	useAgentPause,
+	useAgentRun,
+	useDeleteActor,
+	useResetActor,
+	useUpdateActor,
+} from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
@@ -200,6 +207,7 @@ export function AgentDocumentView({
 					onBlur={handleNameBlur}
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Agent name"
+					aria-label="Agent name"
 					rows={1}
 					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 					ref={(el) => {
@@ -224,6 +232,7 @@ export function AgentDocumentView({
 				onBlur={handleDescriptionBlur}
 				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Short description shown on the Agents page"
+				aria-label="Short description"
 				maxLength={80}
 				className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
 			/>
@@ -233,6 +242,7 @@ export function AgentDocumentView({
 				<TypeBadge type="agent" />
 				<span className="flex items-center gap-1.5 text-xs">
 					<span
+						aria-hidden="true"
 						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
 					/>
 					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
@@ -246,21 +256,12 @@ export function AgentDocumentView({
 			{/* Run/Pause + New Conversation */}
 			<div className="flex items-center gap-2 mb-6">
 				{isActive ? (
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={onPause}
-						disabled={isPausePending}
-					>
+					<Button variant="outline" size="sm" onClick={onPause} disabled={isPausePending}>
 						<PauseCircle size={14} />
 						{isPausePending ? 'Pausing…' : 'Pause'}
 					</Button>
 				) : (
-					<Button
-						size="sm"
-						onClick={onRun}
-						disabled={isRunPending}
-					>
+					<Button size="sm" onClick={onRun} disabled={isRunPending}>
 						<Play size={14} />
 						{isRunPending ? 'Starting…' : 'Run'}
 					</Button>
@@ -540,7 +541,7 @@ function SessionRow({
 
 	return (
 		<div>
-			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements keyboard-accessible inner buttons and sr-only open button */}
 			<div
 				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 min-h-[44px] min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
 				onClick={() => onSelect?.(session)}
@@ -674,6 +675,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				size="icon"
 				className="h-7 w-7 text-muted-foreground hover:text-error"
 				onClick={() => setConfirmDelete(true)}
+				aria-label="Delete agent"
 			>
 				<Trash2 size={15} />
 			</Button>
