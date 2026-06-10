@@ -1491,6 +1491,7 @@ export class SessionManager extends EventEmitter {
 				data: { error: 'Session stuck in starting state' },
 			})
 
+			await this.cleanupBrowserSidecar(session.id).catch(() => {})
 			await this.clearActiveSession(session.id)
 			await this.cleanupSession(session.id)
 
