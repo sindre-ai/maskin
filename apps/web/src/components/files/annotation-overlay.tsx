@@ -47,10 +47,24 @@ window.addEventListener('message',function(e){
 });
 })();<\/script>`
 
-function injectScript(html: string): string {
-	const headIdx = html.toLowerCase().indexOf('<head>')
+export function injectScript(html: string): string {
+	const lower = html.toLowerCase()
+	const headIdx = lower.indexOf('<head>')
 	if (headIdx !== -1) {
 		return html.slice(0, headIdx + 6) + LISTENER_SCRIPT + html.slice(headIdx + 6)
+	}
+	// Insert after the doctype declaration's closing > so the script never precedes <!DOCTYPE>
+	const doctypeIdx = lower.indexOf('<!doctype')
+	if (doctypeIdx !== -1) {
+		const closeIdx = html.indexOf('>', doctypeIdx)
+		if (closeIdx !== -1) {
+			return html.slice(0, closeIdx + 1) + LISTENER_SCRIPT + html.slice(closeIdx + 1)
+		}
+	}
+	// Second fallback: before <body
+	const bodyIdx = lower.indexOf('<body')
+	if (bodyIdx !== -1) {
+		return html.slice(0, bodyIdx) + LISTENER_SCRIPT + html.slice(bodyIdx)
 	}
 	return LISTENER_SCRIPT + html
 }
