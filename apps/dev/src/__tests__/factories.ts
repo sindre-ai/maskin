@@ -57,6 +57,7 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 			field_definitions: {},
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
 		},
+		onboardingEnabled: false,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),
