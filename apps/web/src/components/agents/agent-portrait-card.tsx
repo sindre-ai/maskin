@@ -9,12 +9,6 @@ import { Spinner } from '../ui/spinner'
 
 export type PortraitStatus = 'running' | 'paused' | 'idle' | 'failed'
 
-/**
- * Minimal viable AgentPortraitCard — placeholder for Task #4 of bet 8e0f9fd0.
- * Task #4 will build the full primitive (extending ActorAvatar to a `lg` size,
- * polishing the momentum ring, adding shared/dashboard reuse). Until that lands,
- * this card is scoped to the agents overview surface only.
- */
 export function AgentPortraitCard({
 	agent,
 	status,
