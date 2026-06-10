@@ -28,7 +28,8 @@
 			".turbo",
 			"coverage",
 			"routeTree.gen.ts",
-			".claude"
+			".claude",
+			".codex"
 		]
 	}
 }

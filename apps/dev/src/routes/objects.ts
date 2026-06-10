@@ -13,6 +13,8 @@ import {
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
+	boardObjectQuerySchema,
+	boardObjectResponseSchema,
 	bulkUpdateObjectsResponseSchema,
 	bulkUpdateObjectsSchema,
 	createObjectSchema,
@@ -23,7 +25,19 @@ import {
 	searchObjectsSchema,
 	updateObjectSchema,
 } from '@maskin/shared'
-import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import {
+	type Column,
+	type SQL,
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	ilike,
+	inArray,
+	or,
+	sql,
+} from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
@@ -65,6 +79,7 @@ const sortColumns: Record<string, Column | SQL> = {
 	type: objects.type,
 	owner: objects.owner,
 	createdBy: objects.createdBy,
+	boardOrder: sql`coalesce((${objects.metadata}->>'board_order')::numeric, 2147483647)`,
 }
 
 /** Resolve sort expression — built-in column or metadata->>'field_name'. Returns null for unknown/unsafe fields. */
@@ -91,6 +106,64 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
 	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
+}
+
+function buildObjectListConditions(query: {
+	type?: string
+	status?: string
+	owner?: string
+	ids?: string
+	q?: string
+}) {
+	const conditions: SQL[] = []
+	if (query.type) conditions.push(eq(objects.type, query.type))
+	if (query.status) {
+		const statuses = query.status.split(',').filter(Boolean)
+		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
+		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
+	}
+	if (query.owner) {
+		const owners = query.owner.split(',').filter((id) => UUID_RE.test(id))
+		if (owners.length === 1) conditions.push(eq(objects.owner, owners[0] as string))
+		else if (owners.length > 1) conditions.push(inArray(objects.owner, owners))
+	}
+	if (query.ids) {
+		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
+		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
+	}
+	if (query.q) {
+		const escaped = query.q.replace(/[%_\\]/g, '\\$&')
+		const pattern = `%${escaped}%`
+		const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
+		if (textMatch) conditions.push(textMatch)
+	}
+	return conditions
+}
+
+function resolveBoardGroupExpression(groupBy?: string): SQL {
+	if (!groupBy || groupBy === 'status') return sql`${objects.status}`
+	if (groupBy === 'owner') return sql`coalesce(${objects.owner}::text, '')`
+	if (groupBy === 'createdBy') return sql`coalesce(${objects.createdBy}::text, '')`
+	if (groupBy === 'type') return sql`${objects.type}`
+	if (groupBy.startsWith('metadata.')) {
+		const fieldName = groupBy.slice('metadata.'.length)
+		if (/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) {
+			return sql`coalesce(${objects.metadata}->>'${sql.raw(fieldName)}', '')`
+		}
+	}
+	return sql`${objects.status}`
+}
+
+function columnLabel(groupBy: string | undefined, value: string) {
+	if (!value) return 'No value'
+	if (!groupBy || groupBy === 'status') return value
+	return value
+}
+
+function toCount(value: unknown) {
+	if (typeof value === 'number') return value
+	if (typeof value === 'string') return Number.parseInt(value, 10) || 0
+	return 0
 }
 
 // POST / - Create object
@@ -251,22 +324,7 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = [eq(objects.workspaceId, workspaceId)]
-	if (query.type) conditions.push(eq(objects.type, query.type))
-	if (query.status) {
-		const statuses = query.status.split(',').filter(Boolean)
-		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
-		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
-	}
-	if (query.owner) {
-		const owners = query.owner.split(',').filter((id) => UUID_RE.test(id))
-		if (owners.length === 1) conditions.push(eq(objects.owner, owners[0] as string))
-		else if (owners.length > 1) conditions.push(inArray(objects.owner, owners))
-	}
-	if (query.ids) {
-		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
-		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
-	}
+	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
 
 	const orderBy = resolveOrderBy(query)
 
@@ -279,6 +337,124 @@ app.openapi(listObjectsRoute, async (c) => {
 		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+})
+
+// GET /board - List board columns with per-column pagination
+const boardObjectsRoute = createRoute({
+	method: 'get',
+	path: '/board',
+	tags: ['Objects'],
+	summary: 'List board columns',
+	request: {
+		headers: workspaceIdHeader,
+		query: boardObjectQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: boardObjectResponseSchema } },
+			description: 'Board columns with paged objects and totals',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Workspace not found',
+		},
+	},
+})
+
+app.openapi(boardObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const rawQuery = c.req.query()
+	const query = c.req.valid('query') ?? {
+		...rawQuery,
+		sort: rawQuery.sort ?? 'createdAt',
+		order: rawQuery.order === 'asc' ? 'asc' : 'desc',
+		limit: rawQuery.limit ? Number.parseInt(rawQuery.limit, 10) : 20,
+		offset: rawQuery.offset ? Number.parseInt(rawQuery.offset, 10) : 0,
+	}
+	const groupBy = query.groupBy
+	const groupExpr = resolveBoardGroupExpression(groupBy)
+	const orderBy = resolveOrderBy(query)
+
+	const [workspace] = await db
+		.select()
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const baseConditions = [
+		eq(objects.workspaceId, workspaceId),
+		...buildObjectListConditions({
+			type: query.type,
+			status: query.status,
+			owner: query.owner,
+			ids: query.ids,
+			q: query.q,
+		}),
+	]
+
+	const countRows = await db
+		.select({ value: groupExpr, total: count() })
+		.from(objects)
+		.where(and(...baseConditions))
+		.groupBy(groupExpr)
+
+	const totals = new Map<string, number>()
+	for (const row of countRows as Array<{ value: unknown; total: unknown }>) {
+		totals.set(String(row.value ?? ''), toCount(row.total))
+	}
+
+	let columnValues: string[]
+	if (!groupBy || groupBy === 'status') {
+		const settings = workspace.settings as WorkspaceSettings
+		const configured = settings?.statuses?.[query.type] ?? []
+		const requested = query.status ? new Set(query.status.split(',').filter(Boolean)) : null
+		columnValues = configured.filter((status) => !requested || requested.has(status))
+		for (const value of totals.keys()) {
+			if (!columnValues.includes(value)) columnValues.push(value)
+		}
+	} else {
+		columnValues = [...totals.keys()].sort((a, b) =>
+			columnLabel(groupBy, a).localeCompare(columnLabel(groupBy, b), undefined, {
+				numeric: true,
+				sensitivity: 'base',
+			}),
+		)
+	}
+
+	if (query.column !== undefined) {
+		columnValues = columnValues.filter((value) => value === query.column)
+	}
+
+	const columns = []
+	for (const value of columnValues) {
+		const columnConditions = [...baseConditions, eq(groupExpr, value)]
+		const rows = await db
+			.select()
+			.from(objects)
+			.where(and(...columnConditions))
+			.limit(query.limit)
+			.offset(query.offset)
+			.orderBy(...orderBy)
+
+		columns.push({
+			id: `${groupBy ?? 'status'}:${value || 'none'}`,
+			label: columnLabel(groupBy, value),
+			value,
+			total: totals.get(value) ?? 0,
+			objects: serializeArray(rows),
+		})
+	}
+
+	return c.json({ columns } as z.infer<typeof boardObjectResponseSchema>, 200)
 })
 
 // GET /search - Search objects by text
@@ -308,17 +484,7 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const escaped = query.q.replace(/[%_\\]/g, '\\$&')
-	const pattern = `%${escaped}%`
-	const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
-	const conditions = [eq(objects.workspaceId, workspaceId)]
-	if (textMatch) conditions.push(textMatch)
-	if (query.type) conditions.push(eq(objects.type, query.type))
-	if (query.status) {
-		const statuses = query.status.split(',').filter(Boolean)
-		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
-		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
-	}
+	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
 
 	const orderBy = resolveOrderBy(query)
 

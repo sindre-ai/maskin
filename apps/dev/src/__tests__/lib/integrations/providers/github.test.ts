@@ -1,6 +1,9 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { githubAuth } from '../../../../lib/integrations/providers/github/auth'
+import {
+	fetchInstallationOwnerLogin,
+	githubAuth,
+} from '../../../../lib/integrations/providers/github/auth'
 import { config } from '../../../../lib/integrations/providers/github/config'
 import { githubEventNormalizer } from '../../../../lib/integrations/providers/github/webhooks'
 
@@ -159,6 +162,73 @@ describe('githubAuth', () => {
 
 			const token = await githubAuth.getAccessToken({ installation_id: '77' })
 			expect(token).toBe('ghs_base64')
+		})
+	})
+
+	describe('fetchInstallationOwnerLogin', () => {
+		const originalFetch = globalThis.fetch
+		const originalAppId = process.env.GITHUB_APP_ID
+		const originalKey = process.env.GITHUB_APP_PRIVATE_KEY
+
+		beforeAll(() => {
+			process.env.GITHUB_APP_ID = '12345'
+			process.env.GITHUB_APP_PRIVATE_KEY = testPrivateKeyPem
+		})
+
+		afterEach(() => {
+			globalThis.fetch = originalFetch
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_APP_ID = originalAppId
+			process.env.GITHUB_APP_PRIVATE_KEY = originalKey
+		})
+
+		it('returns account.login on successful response', async () => {
+			globalThis.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ account: { login: 'sindre-ai' } }),
+			})
+
+			const login = await fetchInstallationOwnerLogin('42')
+
+			expect(login).toBe('sindre-ai')
+			expect(globalThis.fetch).toHaveBeenCalledWith(
+				'https://api.github.com/app/installations/42',
+				expect.objectContaining({
+					headers: expect.objectContaining({
+						Accept: 'application/vnd.github+json',
+					}),
+				}),
+			)
+			const call = vi.mocked(globalThis.fetch).mock.calls[0]
+			const headers = (call?.[1] as RequestInit)?.headers as Record<string, string>
+			expect(headers.Authorization).toMatch(
+				/^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+			)
+		})
+
+		it('throws on 404 when installation no longer exists', async () => {
+			globalThis.fetch = vi.fn().mockResolvedValue({
+				ok: false,
+				status: 404,
+				text: () => Promise.resolve('Not Found'),
+			})
+
+			await expect(fetchInstallationOwnerLogin('999')).rejects.toThrow(
+				'Failed to fetch installation owner: 404 Not Found',
+			)
+		})
+
+		it('throws when response is missing account.login', async () => {
+			globalThis.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ account: {} }),
+			})
+
+			await expect(fetchInstallationOwnerLogin('42')).rejects.toThrow(
+				'GitHub installation response missing account.login',
+			)
 		})
 	})
 })

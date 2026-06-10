@@ -1,6 +1,12 @@
-import type { DisplaySettingsBody, SafeMetadata } from '@maskin/shared'
+import type {
+	ActorListItem,
+	ActorResponse,
+	DisplaySettingsBody,
+	SafeMetadata,
+	TriggerResponse,
+} from '@maskin/shared'
 
-export type { DisplaySettingsBody }
+export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -161,6 +167,10 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
 		},
+		board: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<BoardObjectResponse>(`/objects/board${qs}`, { workspaceId })
+		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
 			request<ObjectGraphResponse>(`/objects/${id}/graph`, { workspaceId }),
@@ -190,6 +200,21 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+	},
+
+	landingEvents: {
+		emit: (events: Array<{ name: string; anonId: string; props?: Record<string, unknown> }>) =>
+			request<void>('/public/landing-events', { method: 'POST', body: { events } }),
+	},
+
+	// Public landing-page handoffs. The /drafts endpoint is unauthenticated and
+	// called from sindre.ai; only /claim is reachable from the web app.
+	publicBetStrategist: {
+		claim: (workspaceId: string, guestSessionId: string) =>
+			request<{ claimed: Array<{ id: string; title: string | null; content: string | null }> }>(
+				'/public/bet-strategist/claim',
+				{ method: 'POST', body: { workspace_id: workspaceId, guestSessionId } },
+			),
 	},
 
 	actors: {
@@ -266,9 +291,10 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string) =>
+		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
 			request<{ install_url: string }>(`/integrations/${provider}/connect`, {
 				method: 'POST',
+				body,
 				workspaceId,
 			}),
 		disconnect: (id: string, workspaceId: string) =>
@@ -499,15 +525,20 @@ export const api = {
 	},
 
 	files: {
-		list: (workspaceId: string, params?: { q?: string; limit?: number; offset?: number }) => {
-			const qs = params
-				? `?${new URLSearchParams(
-						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
-							if (v !== undefined && v !== '') acc[k] = String(v)
-							return acc
-						}, {}),
-					)}`
-				: ''
+		list: (
+			workspaceId: string,
+			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+		) => {
+			if (!params) return request<FileListItem[]>('/files', { workspaceId })
+			const { ids, ...rest } = params
+			const searchParams = new URLSearchParams(
+				Object.entries(rest).reduce<Record<string, string>>((acc, [k, v]) => {
+					if (v !== undefined && v !== '') acc[k] = String(v)
+					return acc
+				}, {}),
+			)
+			if (ids?.length) searchParams.set('ids', ids.join(','))
+			const qs = searchParams.size > 0 ? `?${searchParams}` : ''
 			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
 		},
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
@@ -564,6 +595,18 @@ export interface ObjectResponse {
 	is_subscribed?: boolean
 	unread_count?: number
 	subscriber_count?: number
+}
+
+export interface BoardObjectColumn {
+	id: string
+	label: string
+	value: string
+	total: number
+	objects: ObjectResponse[]
+}
+
+export interface BoardObjectResponse {
+	columns: BoardObjectColumn[]
 }
 
 export interface SubscribersResponse {
@@ -646,27 +689,12 @@ export interface MigrateObjectTypeResponse {
 	count: number
 }
 
-export interface ActorListItem {
-	id: string
-	type: string
-	name: string
-	email: string | null
-	description: string | null
-	isSystem: boolean
-}
-
-export interface ActorResponse extends ActorListItem {
-	system_prompt: string | null
-	tools: Record<string, unknown> | null
-	memory: Record<string, unknown> | null
-	llm_provider: string | null
-	llm_config: Record<string, unknown> | null
-	createdAt: string | null
-	updatedAt: string | null
-}
-
 export interface ActorWithKey extends ActorResponse {
 	api_key: string
+	// Set when the actor is created with `auto_create_workspace` (default for
+	// humans on signup). Used by the signup → guest-draft handoff to pick the
+	// workspace to claim into.
+	workspace_id?: string
 }
 
 export interface LoginInput {
@@ -752,20 +780,6 @@ export interface CreateRelationshipInput {
 	type: string
 }
 
-export interface TriggerResponse {
-	id: string
-	workspaceId: string
-	name: string
-	type: string
-	config: Record<string, unknown> | null
-	actionPrompt: string
-	targetActorId: string
-	enabled: boolean
-	createdBy: string
-	createdAt: string | null
-	updatedAt: string | null
-}
-
 export interface CreateTriggerInput {
 	name: string
 	type: 'cron' | 'event' | 'reminder'
@@ -804,6 +818,7 @@ export interface ProviderEventDefinition {
 export interface ProviderInfo {
 	name: string
 	displayName: string
+	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
 	events: ProviderEventDefinition[]
 }
 

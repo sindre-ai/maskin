@@ -2,10 +2,11 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
-import { useToolResult } from '../shared/mcp-app-provider'
+import { useToolResult, useWebAppContext } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { MemberResponse, WorkspaceResponse } from '../shared/types'
+import { WebAppLink, useWebAppHref } from '../shared/web-app-link'
 
 interface TypeSchema {
 	display_name: string
@@ -126,24 +127,43 @@ function WorkspaceListView({ workspaces }: { workspaces: WorkspaceResponse[] }) 
 	return (
 		<div className="p-4 space-y-1">
 			{workspaces.map((ws) => (
-				<div
-					key={ws.id}
-					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
-				>
-					<span className="text-sm text-foreground flex-1">{ws.name}</span>
-					{ws.createdAt && (
-						<RelativeTime date={ws.createdAt} className="text-xs text-muted-foreground" />
-					)}
-				</div>
+				<WorkspaceListRow key={ws.id} workspace={ws} />
 			))}
 		</div>
+	)
+}
+
+function WorkspaceListRow({ workspace }: { workspace: WorkspaceResponse }) {
+	const ctx = useWebAppContext()
+	const href = ctx ? `${ctx.baseUrl}/${workspace.id}` : null
+	const content = (
+		<>
+			<span className="text-sm text-foreground flex-1">{workspace.name}</span>
+			{workspace.createdAt && (
+				<RelativeTime date={workspace.createdAt} className="text-xs text-muted-foreground" />
+			)}
+		</>
+	)
+	if (!href) return <div className="flex items-center gap-3 px-3 py-2 rounded-lg">{content}</div>
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+		>
+			{content}
+		</a>
 	)
 }
 
 function WorkspaceDetailView({ workspace }: { workspace: WorkspaceResponse }) {
 	return (
 		<div className="p-4 max-w-2xl">
-			<h1 className="text-xl font-semibold text-foreground mb-2">{workspace.name}</h1>
+			<div className="flex items-start justify-between gap-3 mb-2">
+				<h1 className="text-xl font-semibold text-foreground">{workspace.name}</h1>
+				<WebAppLink target={{ kind: 'workspace' }} />
+			</div>
 			<div className="text-xs text-muted-foreground mb-4">ID: {workspace.id}</div>
 			{workspace.settings && Object.keys(workspace.settings).length > 0 && (
 				<SettingsView settings={workspace.settings as Record<string, unknown>} />
@@ -300,20 +320,35 @@ function ExtensionListView({ extensions }: { extensions: Extension[] }) {
 	return (
 		<div className="p-4 space-y-1">
 			{extensions.map((ext) => (
-				<div
-					key={ext.id}
-					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
-				>
-					<span
-						className={`w-2 h-2 rounded-full ${ext.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
-					/>
-					<span className="text-sm text-foreground flex-1">{ext.name}</span>
-					<span className="text-xs text-muted-foreground">
-						{ext.object_types.length} type{ext.object_types.length !== 1 ? 's' : ''}
-					</span>
-				</div>
+				<ExtensionListRow key={ext.id} ext={ext} />
 			))}
 		</div>
+	)
+}
+
+function ExtensionListRow({ ext }: { ext: Extension }) {
+	const href = useWebAppHref({ kind: 'settings' })
+	const content = (
+		<>
+			<span
+				className={`w-2 h-2 rounded-full ${ext.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
+			/>
+			<span className="text-sm text-foreground flex-1">{ext.name}</span>
+			<span className="text-xs text-muted-foreground">
+				{ext.object_types.length} type{ext.object_types.length !== 1 ? 's' : ''}
+			</span>
+		</>
+	)
+	if (!href) return <div className="flex items-center gap-3 px-3 py-2 rounded-lg">{content}</div>
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+		>
+			{content}
+		</a>
 	)
 }
 
@@ -377,16 +412,31 @@ function MemberListView({ members }: { members: MemberResponse[] }) {
 	return (
 		<div className="p-4 space-y-1">
 			{members.map((member) => (
-				<div
-					key={member.actorId}
-					className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
-				>
-					<ActorAvatar name={member.name} type={member.type} size="sm" />
-					<span className="text-sm text-foreground flex-1">{member.name}</span>
-					<span className="text-xs text-muted-foreground capitalize">{member.role}</span>
-				</div>
+				<MemberListRow key={member.actorId} member={member} />
 			))}
 		</div>
+	)
+}
+
+function MemberListRow({ member }: { member: MemberResponse }) {
+	const href = useWebAppHref({ kind: 'actor', id: member.actorId })
+	const content = (
+		<>
+			<ActorAvatar name={member.name} type={member.type} size="sm" />
+			<span className="text-sm text-foreground flex-1">{member.name}</span>
+			<span className="text-xs text-muted-foreground capitalize">{member.role}</span>
+		</>
+	)
+	if (!href) return <div className="flex items-center gap-3 px-3 py-2 rounded-lg">{content}</div>
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+		>
+			{content}
+		</a>
 	)
 }
 
