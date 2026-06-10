@@ -44,6 +44,7 @@ function buildSession(overrides: Partial<SessionResponse> & { id: string }): Ses
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
+		currentActivity: null,
 		...overrides,
 	}
 }

@@ -255,6 +255,7 @@ export function buildSession(overrides?: Record<string, unknown>) {
 		interactive: false,
 		result: null,
 		snapshotPath: null,
+		currentActivity: null,
 		startedAt: new Date(),
 		completedAt: null,
 		timeoutAt: null,

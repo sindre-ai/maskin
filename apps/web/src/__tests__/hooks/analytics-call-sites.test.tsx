@@ -191,6 +191,7 @@ describe('useCreateSession — agent_session_started', () => {
 			createdBy: 'human-1',
 			createdAt: null,
 			updatedAt: null,
+			currentActivity: null,
 		})
 		const { Wrapper } = makeWrapper()
 		const { result } = renderHook(() => useCreateSession(workspaceId), { wrapper: Wrapper })
