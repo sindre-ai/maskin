@@ -132,10 +132,10 @@ describe('Sessions Routes', () => {
 	})
 
 	describe('PATCH /api/sessions/:id', () => {
-		it('writes currentActivity and returns updated session', async () => {
+		it('writes currentActivity, fires session_updated event, and returns updated session', async () => {
 			const session = buildSession({ workspaceId: wsId })
 			const updated = { ...session, currentActivity: 'Searching codebase' }
-			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
 			mockResults.selectQueue = [[session], [updated]]
 
 			const res = await app.request(
@@ -150,6 +150,13 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.currentActivity).toBe('Searching codebase')
+			expect(calls.inserts).toContainEqual(
+				expect.objectContaining({
+					action: 'session_updated',
+					entityType: 'session',
+					entityId: session.id,
+				}),
+			)
 		})
 
 		it('clears currentActivity to null', async () => {

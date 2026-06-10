@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions } from '@maskin/db/schema'
+import { events, sessionLogs, sessions } from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	sessionInputSchema,
@@ -346,6 +346,15 @@ app.openapi(patchSessionRoute, (async (c) => {
 		.update(sessions)
 		.set({ currentActivity: body.current_activity, updatedAt: new Date() })
 		.where(eq(sessions.id, id))
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId: session.actorId,
+		action: 'session_updated',
+		entityType: 'session',
+		entityId: id,
+		data: {},
+	})
 
 	logger.info('Session current_activity updated', { sessionId: id })
 
