@@ -257,6 +257,10 @@ const listMessagesRoute = createRoute({
 			},
 			description: 'Paginated message list',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a participant in this conversation',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Conversation not found',
@@ -266,6 +270,7 @@ const listMessagesRoute = createRoute({
 
 app.openapi(listMessagesRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id } = c.req.valid('param')
 	const { limit, offset } = c.req.valid('query')
@@ -273,6 +278,21 @@ app.openapi(listMessagesRoute, (async (c) => {
 	const conversation = await loadConversationWithAuth(db, id, workspaceId)
 	if (!conversation) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [participant] = await db
+		.select()
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, id),
+				eq(conversationParticipants.actorId, actorId),
+			),
+		)
+		.limit(1)
+
+	if (!participant) {
+		return c.json(createApiError('FORBIDDEN', 'Not a participant in this conversation'), 403)
 	}
 
 	const [rows, countRows] = await Promise.all([

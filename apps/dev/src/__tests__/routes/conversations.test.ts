@@ -139,8 +139,9 @@ describe('Conversations Routes', () => {
 			const convId = randomUUID()
 			const conv = buildConversation({ id: convId })
 			const msg = buildMessage({ conversationId: convId })
-			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.selectQueue = [[conv], [msg], [{ cnt: 1 }]]
+			const participant = buildParticipant({ conversationId: convId, actorId })
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations', actorId)
+			mockResults.selectQueue = [[conv], [participant], [msg], [{ cnt: 1 }]]
 
 			const res = await app.request(
 				jsonGet(`/api/conversations/${convId}/messages`, { 'x-workspace-id': wsId }),
@@ -150,6 +151,19 @@ describe('Conversations Routes', () => {
 			const body = await res.json()
 			expect(Array.isArray(body.data)).toBe(true)
 			expect(typeof body.total).toBe('number')
+		})
+
+		it('returns 403 when caller is not a participant', async () => {
+			const convId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations', actorId)
+			mockResults.selectQueue = [[conv], []]
+
+			const res = await app.request(
+				jsonGet(`/api/conversations/${convId}/messages`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(403)
 		})
 
 		it('returns 404 when conversation not found', async () => {
@@ -166,8 +180,9 @@ describe('Conversations Routes', () => {
 		it('accepts limit and offset query params', async () => {
 			const convId = randomUUID()
 			const conv = buildConversation({ id: convId })
-			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.selectQueue = [[conv], [], [{ cnt: 0 }]]
+			const participant = buildParticipant({ conversationId: convId, actorId })
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations', actorId)
+			mockResults.selectQueue = [[conv], [participant], [], [{ cnt: 0 }]]
 
 			const res = await app.request(
 				jsonGet(`/api/conversations/${convId}/messages?limit=10&offset=20`, {
