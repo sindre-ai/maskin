@@ -227,6 +227,7 @@ app.openapi(createCommentRoute, (async (c) => {
 					mentions: body.mentions,
 					parentEventId,
 					attachmentFileIds: body.attachment_file_ids,
+					metadata: body.metadata,
 				},
 			})
 			.returning()

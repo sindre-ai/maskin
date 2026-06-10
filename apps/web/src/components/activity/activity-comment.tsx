@@ -2,6 +2,7 @@ import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Reply } from 'lucide-react'
@@ -210,6 +211,8 @@ export function ActivityComment({
 	const hasReplies = replies.length > 0
 	const actorList = actors ?? []
 	const isDecisionPoint = hasDecisionChips(event)
+	const currentActorId = getStoredActor()?.id
+	const alreadyReplied = !!currentActorId && replies.some((r) => r.actorId === currentActorId)
 
 	return (
 		<div id={`comment-${event.id}`} className="group">
@@ -222,7 +225,7 @@ export function ActivityComment({
 				isDecisionPoint={isDecisionPoint}
 			/>
 
-			{hasDecisionChips(event) && (
+			{isDecisionPoint && !alreadyReplied && (
 				<div className="ml-7 mt-1.5">
 					<DecisionChips event={event} objectId={objectId} workspaceId={workspaceId} />
 				</div>
