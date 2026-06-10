@@ -19,10 +19,7 @@ describe('listMigrationFiles', () => {
 			'0001_init.sql',
 		] as unknown as ReturnType<typeof readdirSync>)
 
-		expect(listMigrationFiles('/fake/dir')).toEqual([
-			'0001_init.sql',
-			'0002_add_index.sql',
-		])
+		expect(listMigrationFiles('/fake/dir')).toEqual(['0001_init.sql', '0002_add_index.sql'])
 	})
 
 	it('excludes .down.sql files', () => {
@@ -33,10 +30,7 @@ describe('listMigrationFiles', () => {
 			'0002_add_table.down.sql',
 		] as unknown as ReturnType<typeof readdirSync>)
 
-		expect(listMigrationFiles('/fake/dir')).toEqual([
-			'0001_init.sql',
-			'0002_add_table.sql',
-		])
+		expect(listMigrationFiles('/fake/dir')).toEqual(['0001_init.sql', '0002_add_table.sql'])
 	})
 
 	it('excludes non-sql files', () => {
