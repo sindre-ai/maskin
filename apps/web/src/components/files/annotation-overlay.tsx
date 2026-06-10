@@ -16,6 +16,8 @@ export interface Annotation {
 interface AnnotationOverlayProps {
 	html: string
 	name: string
+	annotations: Annotation[]
+	onAnnotationsChange: (annotations: Annotation[]) => void
 }
 
 // Injected into the sandboxed iframe to respond to elementFromPoint queries.
@@ -53,13 +55,19 @@ function injectScript(html: string): string {
 	return LISTENER_SCRIPT + html
 }
 
-export function AnnotationOverlay({ html, name }: AnnotationOverlayProps) {
+export function AnnotationOverlay({
+	html,
+	name,
+	annotations,
+	onAnnotationsChange,
+}: AnnotationOverlayProps) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
-	const [annotations, setAnnotations] = useState<Annotation[]>([])
 	const [openPinId, setOpenPinId] = useState<string | null>(null)
 	const [draft, setDraft] = useState('')
-	const nextPin = useRef(1)
+	const nextPin = useRef(
+		annotations.length > 0 ? Math.max(...annotations.map((a) => a.pinNumber)) + 1 : 1,
+	)
 
 	const injectedHtml = useMemo(() => injectScript(html), [html])
 
@@ -73,48 +81,51 @@ export function AnnotationOverlay({ html, name }: AnnotationOverlayProps) {
 				selector: string
 				bounds: { x: number; y: number; w: number; h: number }
 			}
-			setAnnotations((prev) =>
-				prev.map((a) =>
+			onAnnotationsChange(
+				annotations.map((a) =>
 					a.id === id ? { ...a, selector: selector ?? '', bounds: bounds ?? a.bounds } : a,
 				),
 			)
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [])
+	}, [annotations, onAnnotationsChange])
 
-	const placePin = useCallback((clientX: number, clientY: number) => {
-		const overlay = overlayRef.current
-		const iframe = iframeRef.current
-		if (!overlay || !iframe) return
+	const placePin = useCallback(
+		(clientX: number, clientY: number) => {
+			const overlay = overlayRef.current
+			const iframe = iframeRef.current
+			if (!overlay || !iframe) return
 
-		const rect = overlay.getBoundingClientRect()
-		const fx = (clientX - rect.left) / rect.width
-		const fy = (clientY - rect.top) / rect.height
+			const rect = overlay.getBoundingClientRect()
+			const fx = (clientX - rect.left) / rect.width
+			const fy = (clientY - rect.top) / rect.height
 
-		// Pixel coordinates inside the iframe viewport
-		const ix = fx * iframe.clientWidth
-		const iy = fy * iframe.clientHeight
+			// Pixel coordinates inside the iframe viewport
+			const ix = fx * iframe.clientWidth
+			const iy = fy * iframe.clientHeight
 
-		const id = crypto.randomUUID()
-		const pinNumber = nextPin.current++
+			const id = crypto.randomUUID()
+			const pinNumber = nextPin.current++
 
-		setAnnotations((prev) => [
-			...prev,
-			{
-				id,
-				pinNumber,
-				selector: '',
-				bounds: { x: 0, y: 0, w: 0, h: 0 },
-				comment: '',
-				position: { x: fx, y: fy },
-			},
-		])
-		setOpenPinId(id)
-		setDraft('')
+			onAnnotationsChange([
+				...annotations,
+				{
+					id,
+					pinNumber,
+					selector: '',
+					bounds: { x: 0, y: 0, w: 0, h: 0 },
+					comment: '',
+					position: { x: fx, y: fy },
+				},
+			])
+			setOpenPinId(id)
+			setDraft('')
 
-		iframe.contentWindow?.postMessage({ type: 'MASKIN_GET_ELEMENT', id, x: ix, y: iy }, '*')
-	}, [])
+			iframe.contentWindow?.postMessage({ type: 'MASKIN_GET_ELEMENT', id, x: ix, y: iy }, '*')
+		},
+		[annotations, onAnnotationsChange],
+	)
 
 	const handleOverlayClick = useCallback(
 		(e: React.MouseEvent<HTMLDivElement>) => {
@@ -143,12 +154,12 @@ export function AnnotationOverlay({ html, name }: AnnotationOverlayProps) {
 	}
 
 	function saveComment(id: string) {
-		setAnnotations((prev) => prev.map((a) => (a.id === id ? { ...a, comment: draft } : a)))
+		onAnnotationsChange(annotations.map((a) => (a.id === id ? { ...a, comment: draft } : a)))
 		setOpenPinId(null)
 	}
 
 	function removeAnnotation(id: string) {
-		setAnnotations((prev) => prev.filter((a) => a.id !== id))
+		onAnnotationsChange(annotations.filter((a) => a.id !== id))
 		if (openPinId === id) setOpenPinId(null)
 	}
 

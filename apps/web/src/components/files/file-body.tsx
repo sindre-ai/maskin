@@ -2,10 +2,11 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
+import { compileAnnotations } from '@/lib/annotations'
 import type { FileDetail } from '@/lib/api'
-import { Pin } from 'lucide-react'
-import { useState } from 'react'
-import { AnnotationOverlay } from './annotation-overlay'
+import { Clipboard, Pin } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { type Annotation, AnnotationOverlay } from './annotation-overlay'
 
 // MIME types whose bytes the browser would happily execute (or interpret as HTML)
 // if we let them anywhere near `dangerouslySetInnerHTML` or an `<img src>`. HTML
@@ -123,6 +124,11 @@ function fileText(file: FileDetail): string {
 export function FileBody({ file }: { file: FileDetail }) {
 	const [mode, setMode] = useState<ViewMode>('rendered')
 	const [annotateMode, setAnnotateMode] = useState(false)
+	const [annotations, setAnnotations] = useState<Annotation[]>([])
+
+	const handleCopyAnnotations = useCallback(() => {
+		navigator.clipboard.writeText(JSON.stringify(compileAnnotations(annotations), null, 2))
+	}, [annotations])
 
 	if (isMarkdown(file.mimeType)) {
 		const text = fileText(file)
@@ -141,6 +147,12 @@ export function FileBody({ file }: { file: FileDetail }) {
 		return (
 			<div className="space-y-3">
 				<div className="flex items-center justify-end gap-2">
+					{annotations.length > 0 && (
+						<Button type="button" variant="ghost" size="sm" onClick={handleCopyAnnotations}>
+							<Clipboard size={14} />
+							Copy annotation JSON
+						</Button>
+					)}
 					{mode === 'rendered' && (
 						<Button
 							type="button"
@@ -162,7 +174,12 @@ export function FileBody({ file }: { file: FileDetail }) {
 				</div>
 				{mode === 'rendered' ? (
 					annotateMode ? (
-						<AnnotationOverlay html={text} name={file.name} />
+						<AnnotationOverlay
+							html={text}
+							name={file.name}
+							annotations={annotations}
+							onAnnotationsChange={setAnnotations}
+						/>
 					) : (
 						<HtmlPreview html={text} name={file.name} />
 					)
