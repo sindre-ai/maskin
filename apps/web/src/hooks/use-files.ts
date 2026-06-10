@@ -15,6 +15,9 @@ export function useFiles(workspaceId: string, params?: { q?: string; ids?: strin
 	return useQuery({
 		queryKey: [...queryKeys.files.all(workspaceId), 'list', params],
 		queryFn: () => api.files.list(workspaceId, params),
+		// Skip the query when ids is explicitly empty — callers pass [] when an object has no
+		// attachments yet, and we don't want to fetch all workspace files in that case.
+		// Equivalent to: params?.ids === undefined || params.ids.length > 0
 		enabled: !!workspaceId && !(params?.ids !== undefined && params.ids.length === 0),
 	})
 }
