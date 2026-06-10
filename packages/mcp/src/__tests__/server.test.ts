@@ -926,6 +926,79 @@ describe('tool handlers', () => {
 			expect(text).toContain("can't reach your workspace")
 			expect(text).toContain('create_actor')
 		})
+
+		it('creates and attaches seed skills to the Workspace Observer on confirm', async () => {
+			const workspace = { id: 'ws-1', name: 'My Workspace', settings: {} }
+			const observerActorId = 'actor-workspace-observer'
+			const onboardingSkillId = 'skill-onboarding-1'
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockImplementation(async (url: unknown, options?: unknown): Promise<Response> => {
+					const u = url as string
+					const opts = options as RequestInit | undefined
+					const method = opts?.method ?? 'GET'
+					const body = opts?.body ? JSON.parse(opts.body as string) : {}
+
+					if (method === 'GET') {
+						return { ok: true, json: () => Promise.resolve([workspace]) } as Response
+					}
+					// PATCH workspace settings (URL ends with the workspace id, no trailing path)
+					if (method === 'PATCH' && /\/api\/workspaces\/[^/]+$/.test(u)) {
+						return { ok: true, json: () => Promise.resolve({ id: 'ws-1' }) } as Response
+					}
+					if (method === 'POST' && u.endsWith('/api/graph')) {
+						return {
+							ok: true,
+							json: () => Promise.resolve({ objects: [], relationships: [] }),
+						} as Response
+					}
+					// POST /api/actors — return predictable id for Workspace Observer
+					if (method === 'POST' && u.endsWith('/api/actors')) {
+						const id =
+							body.name === 'Workspace Observer' ? observerActorId : `actor-${body.name ?? 'x'}`
+						return { ok: true, json: () => Promise.resolve({ id }) } as Response
+					}
+					// POST /api/workspaces/:id/skills — skill creation
+					if (method === 'POST' && /\/api\/workspaces\/[^/]+\/skills$/.test(u)) {
+						return {
+							ok: true,
+							json: () => Promise.resolve({ id: onboardingSkillId }),
+						} as Response
+					}
+					// Everything else (members, PATCH actors, workspace-skills, triggers)
+					return { ok: true, json: () => Promise.resolve({ id: 'generic-id' }) } as Response
+				})
+
+			const handler = getHandler('get_started')
+			const result = (await handler({ template: 'development', confirm: true })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(result.content[0].text).toContain('Development')
+			expect(result.content[0].text).toContain('template applied')
+
+			// Skill creation: POST /api/workspaces/ws-1/skills with correct payload
+			const skillCreateCall = fetchSpy.mock.calls.find(
+				([u, opts]) =>
+					(u as string).includes('/api/workspaces/ws-1/skills') &&
+					(opts as RequestInit)?.method === 'POST',
+			)
+			if (!skillCreateCall) throw new Error('skill create call not found')
+			const skillBody = JSON.parse((skillCreateCall[1] as RequestInit).body as string)
+			expect(skillBody.name).toBe('workspace-observer-onboarding')
+			expect(skillBody.content).toContain('workspace-observer-onboarding')
+
+			// Skill attachment: POST /api/actors/:observerActorId/workspace-skills
+			const skillAttachCall = fetchSpy.mock.calls.find(
+				([u, opts]) =>
+					(u as string).endsWith(`/api/actors/${observerActorId}/workspace-skills`) &&
+					(opts as RequestInit)?.method === 'POST',
+			)
+			if (!skillAttachCall) throw new Error('skill attach call not found')
+			const attachBody = JSON.parse((skillAttachCall[1] as RequestInit).body as string)
+			expect(attachBody.workspaceSkillId).toBe(onboardingSkillId)
+		})
 	})
 
 	describe('error handling', () => {

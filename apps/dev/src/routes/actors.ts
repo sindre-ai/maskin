@@ -29,6 +29,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -39,12 +40,15 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import type { AgentStorageManager } from '../services/agent-storage'
+import { bootstrapWorkspaceObserver } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -205,7 +209,15 @@ app.openapi(createActorRoute, async (c) => {
 			return workspace
 		})
 
-		if (created) workspaceId = created.id
+		if (created) {
+			workspaceId = created.id
+			const agentStorage = c.get('agentStorage')
+			if (agentStorage) {
+				bootstrapWorkspaceObserver(db, agentStorage, created.id, actor.id).catch((err) =>
+					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
+				)
+			}
+		}
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.

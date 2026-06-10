@@ -109,6 +109,10 @@ export const updateWorkspaceSchema = z.object({
 	settings: workspaceSettingsSchema.partial().optional(),
 })
 
+export const updateWorkspaceAdminSchema = z.object({
+	onboarding_enabled: z.boolean(),
+})
+
 export const workspaceParamsSchema = z.object({
 	id: z.string().uuid(),
 })
