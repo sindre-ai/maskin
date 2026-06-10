@@ -98,9 +98,6 @@ export function useAgentPause(workspaceId: string) {
 		onSuccess: (_result, id) => {
 			invalidateAgentControls(queryClient, workspaceId, id)
 		},
-		onError: () => {
-			toast.error('Failed to pause agent')
-		},
 	})
 }
 
@@ -111,9 +108,6 @@ export function useAgentRun(workspaceId: string) {
 			api.actors.run(id, workspaceId, body),
 		onSuccess: (_result, { id }) => {
 			invalidateAgentControls(queryClient, workspaceId, id)
-		},
-		onError: () => {
-			toast.error('Failed to run agent')
 		},
 	})
 }

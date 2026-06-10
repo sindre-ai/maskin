@@ -7,6 +7,10 @@ const mockUseWorkspaceSessions = vi.fn()
 const mockRunMutate = vi.fn()
 const mockPauseMutate = vi.fn()
 
+vi.mock('sonner', () => ({
+	toast: { error: vi.fn(), success: vi.fn() },
+}))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
@@ -162,7 +166,10 @@ describe('AgentsPage', () => {
 		const user = userEvent.setup()
 		render(<AgentsPage />)
 		await user.click(screen.getByRole('button', { name: /Run-a1/ }))
-		expect(mockRunMutate).toHaveBeenCalledWith({ id: 'a1' })
+		expect(mockRunMutate).toHaveBeenCalledWith(
+			{ id: 'a1' },
+			expect.objectContaining({ onError: expect.any(Function) }),
+		)
 	})
 
 	it('wires Pause handler to useAgentPause', async () => {
@@ -173,7 +180,40 @@ describe('AgentsPage', () => {
 		const user = userEvent.setup()
 		render(<AgentsPage />)
 		await user.click(screen.getByRole('button', { name: /Pause-a1/ }))
-		expect(mockPauseMutate).toHaveBeenCalledWith('a1')
+		expect(mockPauseMutate).toHaveBeenCalledWith(
+			'a1',
+			expect.objectContaining({ onError: expect.any(Function) }),
+		)
+	})
+
+	it('toasts agent name when run fails', async () => {
+		const { toast } = await import('sonner')
+		mockUseActors.mockReturnValue({
+			data: [{ id: 'a1', name: 'Agent One', type: 'agent', email: null }],
+			isLoading: false,
+		})
+		mockRunMutate.mockImplementation((_vars: unknown, opts?: { onError?: () => void }) => {
+			opts?.onError?.()
+		})
+		const user = userEvent.setup()
+		render(<AgentsPage />)
+		await user.click(screen.getByRole('button', { name: /Run-a1/ }))
+		expect(toast.error).toHaveBeenCalledWith("Couldn't start Agent One")
+	})
+
+	it('toasts agent name when pause fails', async () => {
+		const { toast } = await import('sonner')
+		mockUseActors.mockReturnValue({
+			data: [{ id: 'a1', name: 'Agent One', type: 'agent', email: null }],
+			isLoading: false,
+		})
+		mockPauseMutate.mockImplementation((_id: unknown, opts?: { onError?: () => void }) => {
+			opts?.onError?.()
+		})
+		const user = userEvent.setup()
+		render(<AgentsPage />)
+		await user.click(screen.getByRole('button', { name: /Pause-a1/ }))
+		expect(toast.error).toHaveBeenCalledWith("Couldn't pause Agent One")
 	})
 
 	it('counts a running agent under the Working tab', () => {
