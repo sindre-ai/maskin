@@ -30,6 +30,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, User } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
@@ -366,6 +367,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onConfirm={handleConfirmDelete}
 				isPending={deleteObject.isPending}
 			/>
+			<ActionBanner events={events} workspaceId={workspaceId} />
 			<ObjectDocumentView
 				object={object}
 				workspaceId={workspaceId}

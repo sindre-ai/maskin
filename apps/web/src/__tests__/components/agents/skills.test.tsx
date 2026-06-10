@@ -59,7 +59,7 @@ describe('Skills', () => {
 
 	it('shows empty message when no skills', () => {
 		render(<Skills actorId="agent-1" />)
-		expect(screen.getByText(/No skills configured/)).toBeInTheDocument()
+		expect(screen.getByText(/No personal skills configured/)).toBeInTheDocument()
 	})
 
 	it('shows "Add Skill" and "Import SKILL.md" buttons', () => {

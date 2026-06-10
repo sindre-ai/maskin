@@ -2747,4 +2747,165 @@ describe('tool handlers', () => {
 			})
 		})
 	})
+
+	describe('update_actor handler', () => {
+		const actorId = '550e8400-e29b-41d4-a716-446655440000'
+		const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+		const skillId2 = '660e8400-e29b-41d4-a716-446655440002'
+		const mockActor = { id: actorId, name: 'Test Actor' }
+		const mockSkill = { id: skillId1, name: 'My Skill' }
+
+		it('returns actor directly when no skill ops are requested', async () => {
+			mockFetchSuccess(mockActor)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({ id: actorId, name: 'Updated' })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual(mockActor)
+		})
+
+		it('attaches skills and wraps response under actor key', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockSkill),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledTimes(2)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.attached_skills).toHaveLength(1)
+			expect(parsed.attached_skills[0]).toEqual(mockSkill)
+			expect(parsed.detached_skills).toBeUndefined()
+			expect(parsed.partial_failure).toBeUndefined()
+		})
+
+		it('detaches skills and includes detached_skills in response', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ deleted: true }),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				detach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.detached_skills).toHaveLength(1)
+			expect(parsed.detached_skills[0]).toEqual({ skill_id: skillId1, deleted: true })
+			expect(parsed.attached_skills).toBeUndefined()
+		})
+
+		it('handles attach and detach simultaneously', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockSkill),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ deleted: true }),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+				detach_skill_ids: [skillId2],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.attached_skills).toHaveLength(1)
+			expect(parsed.detached_skills).toHaveLength(1)
+			expect(parsed.detached_skills[0]).toEqual({ skill_id: skillId2, deleted: true })
+			expect(parsed.partial_failure).toBeUndefined()
+		})
+
+		it('sets partial_failure and records error string when a skill op fails', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 404,
+					text: () => Promise.resolve('Not found'),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills[0].skill_id).toBe(skillId1)
+			expect(typeof parsed.attached_skills[0].error).toBe('string')
+			expect(parsed.attached_skills[0].error).not.toBe('')
+		})
+
+		it('surfaces a non-Error rejection as a string rather than undefined', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockRejectedValueOnce('plain string rejection')
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills[0].error).toBe('plain string rejection')
+		})
+
+		it('throws when the same skill ID appears in both attach and detach arrays', async () => {
+			const handler = getHandler('update_actor')
+			await expect(
+				handler({ id: actorId, attach_skill_ids: [skillId1], detach_skill_ids: [skillId1] }),
+			).rejects.toThrow(/attach_skill_ids and detach_skill_ids/)
+		})
+	})
 })
