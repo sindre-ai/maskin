@@ -3,7 +3,9 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import type { FileDetail } from '@/lib/api'
+import { Pin } from 'lucide-react'
 import { useState } from 'react'
+import { AnnotationOverlay } from './annotation-overlay'
 
 // MIME types whose bytes the browser would happily execute (or interpret as HTML)
 // if we let them anywhere near `dangerouslySetInnerHTML` or an `<img src>`. HTML
@@ -120,6 +122,7 @@ function fileText(file: FileDetail): string {
 
 export function FileBody({ file }: { file: FileDetail }) {
 	const [mode, setMode] = useState<ViewMode>('rendered')
+	const [annotateMode, setAnnotateMode] = useState(false)
 
 	if (isMarkdown(file.mimeType)) {
 		const text = fileText(file)
@@ -137,11 +140,32 @@ export function FileBody({ file }: { file: FileDetail }) {
 		const text = fileText(file)
 		return (
 			<div className="space-y-3">
-				<div className="flex justify-end">
-					<ViewToggle mode={mode} onChange={setMode} />
+				<div className="flex items-center justify-end gap-2">
+					{mode === 'rendered' && (
+						<Button
+							type="button"
+							variant={annotateMode ? 'secondary' : 'ghost'}
+							size="sm"
+							onClick={() => setAnnotateMode((v) => !v)}
+						>
+							<Pin size={14} />
+							{annotateMode ? 'Exit annotate' : 'Annotate'}
+						</Button>
+					)}
+					<ViewToggle
+						mode={mode}
+						onChange={(m) => {
+							setMode(m)
+							setAnnotateMode(false)
+						}}
+					/>
 				</div>
 				{mode === 'rendered' ? (
-					<HtmlPreview html={text} name={file.name} />
+					annotateMode ? (
+						<AnnotationOverlay html={text} name={file.name} />
+					) : (
+						<HtmlPreview html={text} name={file.name} />
+					)
 				) : (
 					<SourceView text={text} />
 				)}
