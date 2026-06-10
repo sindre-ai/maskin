@@ -23,6 +23,7 @@ await sql`
 // Get already-applied migrations
 const applied = new Set((await sql`SELECT name FROM "_migrations"`).map((r) => r.name))
 
+// .down.sql files are rollback scripts — excluded here so they never run automatically.
 const files = readdirSync(migrationsDir)
 	.filter((f) => f.endsWith('.sql') && !f.endsWith('.down.sql'))
 	.sort()
