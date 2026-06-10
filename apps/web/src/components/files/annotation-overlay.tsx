@@ -88,6 +88,9 @@ export function AnnotationOverlay({
 	// Listen for elementFromPoint responses from the sandboxed iframe
 	useEffect(() => {
 		function onMessage(e: MessageEvent) {
+			// Sandboxed srcdoc iframes without allow-same-origin always have origin 'null';
+			// any message with a real origin is not from our iframe.
+			if (e.origin !== 'null') return
 			if (e.source !== iframeRef.current?.contentWindow) return
 			if (!e.data || typeof e.data !== 'object') return
 			if (e.data.type !== 'MASKIN_ELEMENT_RESULT') return
