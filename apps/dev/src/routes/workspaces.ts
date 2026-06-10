@@ -264,6 +264,10 @@ const updateWorkspaceOnboardingRoute = createRoute({
 			description: 'Workspace updated',
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
+		403: {
+			description: 'Caller is not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -279,6 +283,10 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 
 	const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	if (!(await isWorkspaceMember(db, actorId, id))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
 
 	const [updated] = await db
 		.update(workspaces)

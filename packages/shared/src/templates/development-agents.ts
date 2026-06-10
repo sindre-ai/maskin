@@ -237,6 +237,7 @@ description: Guides the Workspace Observer to run onboarding for a new workspace
 ## When to run
 
 Run this skill when your observation detects a workspace that:
+- Has \`onboarding_enabled = true\` (read from \`list_workspaces\` — exit silently if \`false\`)
 - Was created within the last 24 hours (check \`createdAt\` on the workspace)
 - Has zero bets (no objects of type \`bet\` exist in the workspace)
 
