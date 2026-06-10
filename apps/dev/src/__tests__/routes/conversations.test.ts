@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: conversationsRoutes } = await import('../../routes/conversations')
 
@@ -191,6 +191,73 @@ describe('Conversations Routes', () => {
 			)
 
 			expect(res.status).toBe(200)
+		})
+	})
+
+	describe('POST /api/conversations/:id/messages', () => {
+		it('sends a message and returns 201', async () => {
+			const convId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const participant = buildParticipant({ conversationId: convId, actorId })
+			const msg = buildMessage({ conversationId: convId, actorId, content: 'Hello world' })
+			const { app, mockResults } = createSessionTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+				actorId,
+			)
+			mockResults.selectQueue = [[conv], [participant]]
+			mockResults.insert = [msg]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/messages`,
+					{ content: 'Hello world' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.content).toBe('Hello world')
+		})
+
+		it('returns 403 when caller is not a participant', async () => {
+			const convId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const { app, mockResults } = createSessionTestApp(
+				conversationsRoutes,
+				'/api/conversations',
+				actorId,
+			)
+			mockResults.selectQueue = [[conv], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/messages`,
+					{ content: 'Hello' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when conversation not found', async () => {
+			const { app, mockResults } = createSessionTestApp(conversationsRoutes, '/api/conversations')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${randomUUID()}/messages`,
+					{ content: 'Hello' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
 		})
 	})
 

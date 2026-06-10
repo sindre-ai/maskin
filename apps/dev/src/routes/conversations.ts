@@ -334,6 +334,10 @@ const sendMessageRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a participant in this conversation',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Conversation not found',
@@ -352,6 +356,21 @@ app.openapi(sendMessageRoute, (async (c) => {
 	const conversation = await loadConversationWithAuth(db, id, workspaceId)
 	if (!conversation) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [callerParticipant] = await db
+		.select()
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, id),
+				eq(conversationParticipants.actorId, actorId),
+			),
+		)
+		.limit(1)
+
+	if (!callerParticipant) {
+		return c.json(createApiError('FORBIDDEN', 'Not a participant in this conversation'), 403)
 	}
 
 	const preview = body.content.length > 100 ? `${body.content.slice(0, 100)}…` : body.content
