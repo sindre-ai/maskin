@@ -292,7 +292,9 @@ export function SessionDetailPanel({
 									<Spinner />
 								</div>
 							) : affectedObjects.length === 0 ? (
-								<p className="text-sm text-muted-foreground py-2 text-center">No objects affected</p>
+								<p className="text-sm text-muted-foreground py-2 text-center">
+									No objects affected
+								</p>
 							) : (
 								<div className="space-y-1">
 									{affectedObjects.map((obj) => (
