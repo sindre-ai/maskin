@@ -12,9 +12,12 @@ import {
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
 	addParticipantSchema,
+	conversationResponseSchema,
 	createConversationSchema,
+	messageResponseSchema,
 	messagesQuerySchema,
-	participantActorSchema,
+	type participantActorSchema,
+	participantResponseSchema,
 	sendMessageSchema,
 } from '@maskin/shared'
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
@@ -48,34 +51,6 @@ const app = new OpenAPIHono<Env>({
 		}
 		return undefined
 	},
-})
-
-const conversationResponseSchema = z.object({
-	id: z.string().uuid(),
-	workspaceId: z.string().uuid(),
-	title: z.string().nullable(),
-	type: z.enum(['dm', 'room']),
-	lastMessagePreview: z.string().nullable(),
-	lastActivityAt: z.string().nullable(),
-	createdAt: z.string(),
-	participantCount: z.number().int(),
-	unreadCount: z.number().int(),
-	participants: z.array(participantActorSchema),
-})
-
-const messageResponseSchema = z.object({
-	id: z.string().uuid(),
-	conversationId: z.string().uuid(),
-	actorId: z.string().uuid(),
-	content: z.string(),
-	createdAt: z.string(),
-})
-
-const participantResponseSchema = z.object({
-	conversationId: z.string().uuid(),
-	actorId: z.string().uuid(),
-	unreadCount: z.number().int(),
-	lastReadAt: z.string().nullable(),
 })
 
 async function loadConversationWithAuth(db: Database, conversationId: string, workspaceId: string) {
