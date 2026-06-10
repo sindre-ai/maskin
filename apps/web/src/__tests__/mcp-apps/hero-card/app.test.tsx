@@ -1,4 +1,4 @@
-﻿import { __resetSchemaCacheForTests } from '@/mcp-apps/shared/use-workspace-schema'
+import { __resetSchemaCacheForTests } from '@/mcp-apps/shared/use-workspace-schema'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 const callTool = vi.fn()
@@ -29,7 +29,7 @@ function makeBetToolResult() {
 						type: 'bet',
 						title: 'Best-in-class MCP widget UX for Maskin',
 						status: 'active',
-						owner: { id: 'actor-1', name: 'Sebastian' },
+						driver: { id: 'actor-1', name: 'Sebastian', type: 'human' },
 						contextLine: 'active · 6-week bet',
 					},
 				},
@@ -76,7 +76,7 @@ describe('HeroCardApp — bet single render', () => {
 		})
 		expect(screen.getByText('active')).toBeInTheDocument()
 		expect(screen.getByText('active · 6-week bet')).toBeInTheDocument()
-		expect(screen.getByText('Owner: Sebastian')).toBeInTheDocument()
+		expect(screen.getByText('Driver: Sebastian')).toBeInTheDocument()
 		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
 		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/objects/bet-9')
 	})
@@ -142,7 +142,7 @@ describe('HeroCardApp — bet single render', () => {
 							type: 'actor',
 							title: 'Designer',
 							status: 'running',
-							owner: null,
+							driver: null,
 							contextLine: 'Mocking up MCP widget directions',
 						},
 					},
@@ -206,7 +206,7 @@ function makeToolResult(object: {
 	type: string
 	title: string
 	status: string
-	owner: { id: string; name: string } | null
+	driver: { id: string; name: string; type: string } | null
 	contextLine: string
 }) {
 	return {
@@ -303,7 +303,7 @@ function makeCustomerToolResult(
 						type,
 						title: overrides.title ?? 'Acme Co',
 						status: overrides.status ?? 'qualifying',
-						owner: { id: 'actor-1', name: 'Sebastian' },
+						driver: { id: 'actor-1', name: 'Sebastian', type: 'human' },
 						contextLine: overrides.contextLine ?? 'last touch 3d ago · qualifying',
 					},
 				},
@@ -556,11 +556,11 @@ describe('HeroCardApp — schema-driven render per type', () => {
 				type: 'task',
 				title: 'Write tests',
 				status: 'in_progress',
-				owner: { id: 'actor-2', name: 'Magnus' },
-				contextLine: 'in_progress · owner Magnus',
+				driver: { id: 'actor-2', name: 'Magnus', type: 'human' },
+				contextLine: 'in_progress · driver Magnus',
 			},
 			expectedTypeLabel: 'Task',
-			expectedOwner: 'Owner: Magnus',
+			expectedDriver: 'Driver: Magnus',
 		},
 		{
 			label: 'insight',
@@ -569,11 +569,11 @@ describe('HeroCardApp — schema-driven render per type', () => {
 				type: 'insight',
 				title: 'Pricing pain',
 				status: 'clustered',
-				owner: null,
+				driver: null,
 				contextLine: 'clustered · anchor #3+#6 · 4 sources',
 			},
 			expectedTypeLabel: 'Insight',
-			expectedOwner: null,
+			expectedDriver: null,
 		},
 		{
 			label: 'trigger',
@@ -582,11 +582,11 @@ describe('HeroCardApp — schema-driven render per type', () => {
 				type: 'trigger',
 				title: 'Nightly sweep',
 				status: 'enabled',
-				owner: { id: 'actor-3', name: 'Observer' },
+				driver: { id: 'actor-3', name: 'Observer', type: 'human' },
 				contextLine: 'enabled · 0 0 * * * (UTC) · next in 6h',
 			},
 			expectedTypeLabel: 'Trigger',
-			expectedOwner: 'Owner: Observer',
+			expectedDriver: 'Driver: Observer',
 		},
 	] as const
 
@@ -603,10 +603,10 @@ describe('HeroCardApp — schema-driven render per type', () => {
 			expect(screen.getByText(c.object.status)).toBeInTheDocument()
 			expect(screen.getByText(c.object.contextLine)).toBeInTheDocument()
 
-			if (c.expectedOwner) {
-				expect(screen.getByText(c.expectedOwner)).toBeInTheDocument()
+			if (c.expectedDriver) {
+				expect(screen.getByText(c.expectedDriver)).toBeInTheDocument()
 			} else {
-				expect(screen.queryByText(/^Owner:/)).toBeNull()
+				expect(screen.queryByText(/^Driver:/)).toBeNull()
 			}
 
 			const cta = screen.getByRole('link', { name: /Open in Maskin/ })
@@ -694,6 +694,64 @@ describe('HeroCardApp — customer variant (organization + person + new type par
 			'href',
 			'https://maskin.test/ws-1/objects/customer-1',
 		)
+	})
+})
+
+describe('HeroCardSingle — driver type pill', () => {
+	beforeEach(() => {
+		__resetSchemaCacheForTests()
+		callTool.mockReset()
+		useToolResultMock.mockReset()
+		callTool.mockImplementation((name) => {
+			if (name === 'get_workspace_schema') return Promise.resolve(makeSchemaResponse())
+			return Promise.resolve({ content: [] })
+		})
+	})
+
+	function makeDriverSingleResult(driver: { id: string; name: string; type: string } | null) {
+		return {
+			toolName: 'get_objects',
+			workspaceId: 'ws-1',
+			webAppBaseUrl: 'https://maskin.test',
+			input: null,
+			result: {
+				content: [{ type: 'text', text: '[]' }],
+				structuredContent: {
+					heroCard: {
+						kind: 'single',
+						tool: 'get_objects',
+						object: {
+							id: 'bet-1',
+							type: 'bet',
+							title: 'Test bet',
+							status: 'active',
+							driver,
+							contextLine: 'active',
+						},
+					},
+				},
+			},
+		}
+	}
+
+	it('renders an amber pill when driver.type is not "agent" (human driver)', async () => {
+		useToolResultMock.mockReturnValue(
+			makeDriverSingleResult({ id: 'human-1', name: 'Sebastian', type: 'human' }),
+		)
+		render(<HeroCardApp />)
+		const pill = await screen.findByText('Driver: Sebastian')
+		expect(pill.closest('span')).toHaveClass('bg-amber-100')
+		expect(pill.closest('span')).toHaveClass('text-amber-800')
+	})
+
+	it('renders muted text without amber pill when driver.type is "agent"', async () => {
+		useToolResultMock.mockReturnValue(
+			makeDriverSingleResult({ id: 'agent-1', name: 'Strategist', type: 'agent' }),
+		)
+		render(<HeroCardApp />)
+		const span = await screen.findByText('Driver: Strategist')
+		expect(span).toHaveClass('text-muted-foreground')
+		expect(span).not.toHaveClass('bg-amber-100')
 	})
 })
 
