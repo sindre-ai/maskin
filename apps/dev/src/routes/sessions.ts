@@ -342,10 +342,13 @@ app.openapi(patchSessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	await db
+	const [updated] = await db
 		.update(sessions)
 		.set({ currentActivity: body.current_activity, updatedAt: new Date() })
 		.where(eq(sessions.id, id))
+		.returning()
+
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
 	await db.insert(events).values({
 		workspaceId,
@@ -357,9 +360,6 @@ app.openapi(patchSessionRoute, (async (c) => {
 	})
 
 	logger.info('Session current_activity updated', { sessionId: id })
-
-	const [updated] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1)
-	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
 	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof patchSessionRoute, Env>)

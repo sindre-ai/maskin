@@ -43,7 +43,7 @@ export const objectResponseSchema = z.object({
 	metadata: jsonbField,
 	owner: z.string().uuid().nullable(),
 	activeSessionId: z.string().uuid().nullable(),
-	activeSessionCurrentActivity: z.string().nullable().optional(),
+	activeSessionCurrentActivity: z.string().nullable(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),

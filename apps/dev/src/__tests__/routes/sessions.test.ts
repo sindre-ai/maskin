@@ -136,7 +136,8 @@ describe('Sessions Routes', () => {
 			const session = buildSession({ workspaceId: wsId })
 			const updated = { ...session, currentActivity: 'Searching codebase' }
 			const { app, mockResults, calls } = createSessionTestApp(sessionsRoutes, '/api/sessions')
-			mockResults.selectQueue = [[session], [updated]]
+			mockResults.select = [session]
+			mockResults.update = [updated]
 
 			const res = await app.request(
 				jsonRequest(
@@ -163,7 +164,8 @@ describe('Sessions Routes', () => {
 			const session = buildSession({ workspaceId: wsId, currentActivity: 'Old activity' })
 			const updated = { ...session, currentActivity: null }
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
-			mockResults.selectQueue = [[session], [updated]]
+			mockResults.select = [session]
+			mockResults.update = [updated]
 
 			const res = await app.request(
 				jsonRequest(
