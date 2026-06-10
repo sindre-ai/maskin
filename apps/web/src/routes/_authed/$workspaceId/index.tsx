@@ -5,6 +5,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: ForYouDashboard,
@@ -15,6 +16,7 @@ function ForYouDashboard() {
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading } = useUnread(workspaceId)
 	const items = data?.items ?? []
+	const [activeId, setActiveId] = useState<string | null>(null)
 
 	if (isLoading) {
 		return (
@@ -42,6 +44,8 @@ function ForYouDashboard() {
 					key={`${item.entity_type}-${item.entity_id}`}
 					workspaceId={workspaceId}
 					item={item}
+					isActive={activeId === item.entity_id}
+					onActivate={() => setActiveId(item.entity_id)}
 				/>
 			))}
 		</div>

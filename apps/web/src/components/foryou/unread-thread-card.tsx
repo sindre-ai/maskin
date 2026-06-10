@@ -1,19 +1,29 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
-import { CommentInput } from '@/components/activity/comment-input'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { UnreadBadge } from '@/components/shared/unread-badge'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+	type MouseEvent as ReactMouseEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 
 interface UnreadThreadCardProps {
 	workspaceId: string
 	item: UnreadItem
+	isActive: boolean
+	onActivate: () => void
 }
 
 interface CommentNode {
@@ -25,28 +35,12 @@ interface CommentNode {
 // the next card or two below the fold is ready by the time the user scrolls.
 const PREFETCH_ROOT_MARGIN = '400px'
 
-/**
- * Unread thread card: shows the comment thread for one subscribed object with
- * a red "New" divider directly above the first unread comment (Slack-style),
- * not above the whole thread the comment belongs to. CommentInput is pinned
- * below the scroll area and posts as a reply to the unread thread when one
- * exists, so the user's "Thanks!" lands inline instead of starting a new
- * top-level thread.
- *
- * Lazy-fetches per-entity events: `useEntityEvents` only fires once the card
- * is within PREFETCH_ROOT_MARGIN of the viewport, so a page with N unread
- * threads doesn't fan out into N parallel network requests on mount.
- *
- * On first load the scroll body is pinned to the bottom so the most recent
- * activity is visible (and older threads are reachable by scrolling up).
- * This fires once per card; new comments arriving via SSE never re-yank the
- * scroll position.
- *
- * Mark-read is explicit: it only fires when the user clicks "Mark as read" or
- * successfully posts a reply. Mounting the card does not advance the read
- * high-water-mark.
- */
-export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
+export function UnreadThreadCard({
+	workspaceId,
+	item,
+	isActive,
+	onActivate,
+}: UnreadThreadCardProps) {
 	const objectId = item.entity_id
 
 	const cardRef = useRef<HTMLDivElement>(null)
@@ -115,9 +109,7 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 			// from the newest backward, counting comments that don't belong to
 			// the viewer. item.unread_count anchors the boundary so the divider
 			// always reflects the server's count even when the local event list
-			// is partial. Capture both the exact event the divider sits above
-			// (drawn between read/unread comments inside a thread) and the
-			// containing root (the reply target for the composer).
+			// is partial.
 			const flat: { rootId: number; eventId: number; actorId: string }[] = []
 			for (const node of built) {
 				flat.push({ rootId: node.root.id, eventId: node.root.id, actorId: node.root.actorId })
@@ -146,10 +138,8 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 			}
 
 			// If the server reports more unread events than we have loaded (the
-			// events query is capped at 50), the loop never hits targetCount and
-			// no divider would be drawn. Anchor to the oldest non-viewer comment
-			// in the loaded window so the divider still appears above visible
-			// unread activity.
+			// events query is capped at 50), anchor to the oldest non-viewer comment
+			// in the loaded window so the divider still appears above visible unread activity.
 			if (boundaryEventId === null && targetCount > 0 && oldestUnreadEventId !== null) {
 				boundaryRootId = oldestUnreadRootId
 				boundaryEventId = oldestUnreadEventId
@@ -168,78 +158,94 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 
 	const markRead = useMarkRead(workspaceId)
 	const handleMarkRead = useCallback(() => {
-		// Prefer the server's latest_event_id (authoritative even when local
-		// events are partial), and fall back to whatever we have loaded.
 		const target = Math.max(item.latest_event_id ?? 0, latestEventId)
 		if (target <= 0) return
 		markRead.mutate({ entityType: item.entity_type, entityId: objectId, lastEventId: target })
 	}, [markRead, item.entity_type, objectId, item.latest_event_id, latestEventId])
 
-	// Pin the scroll body to the bottom on first render so the most recent
-	// thread is visible at the bottom (Slack-style). Older threads sit above
-	// and are reachable by scrolling up. Done manually instead of
-	// `scrollIntoView` so the page scroll position never moves. Fires once
-	// per card; later SSE-driven event arrivals never re-yank the position.
-	const scrollBodyRef = useRef<HTMLDivElement>(null)
-	const didScrollInitiallyRef = useRef(false)
-	useEffect(() => {
-		if (didScrollInitiallyRef.current) return
-		if (nodes.length === 0) return
-		const body = scrollBodyRef.current
-		if (!body) return
-		body.scrollTop = body.scrollHeight
-		didScrollInitiallyRef.current = true
-	}, [nodes.length])
+	const handleCardClick = useCallback(
+		(e: ReactMouseEvent) => {
+			if ((e.target as HTMLElement).closest('button, a')) return
+			onActivate()
+		},
+		[onActivate],
+	)
+
+	const handleReplyClick = useCallback(
+		(e: ReactMouseEvent) => {
+			e.stopPropagation()
+			onActivate()
+		},
+		[onActivate],
+	)
 
 	const title = item.object?.title ?? 'Untitled'
 	const objectType = item.object?.type
 
 	return (
-		<div ref={cardRef} className="rounded-lg border border-border bg-card">
-			<div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-4 py-3">
-				{/* Title row: takes the full row on mobile so a long title gets room
-				    to breathe; on sm+ collapses back to a single inline cell. */}
-				<div className="flex min-w-0 basis-full items-center gap-2 sm:basis-auto sm:flex-1">
+		// biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements inner buttons/links, which keyboard users tab to and activate directly
+		<div
+			ref={cardRef}
+			className={cn(
+				'rounded-lg border bg-card transition-colors duration-150 cursor-pointer',
+				isActive
+					? 'border-ring shadow-[0_0_0_1px_hsl(var(--ring))]'
+					: 'border-border hover:shadow-sm',
+			)}
+			onClick={handleCardClick}
+		>
+			{/* Header: bet context pill + type badge + title | time + @you + unread */}
+			<div className="flex items-center gap-2 px-3 py-2.5 border-b border-border">
+				<div className="flex min-w-0 flex-1 items-center gap-1.5">
+					{objectType === 'bet' && (
+						<TooltipProvider>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<span className="inline-flex shrink-0 items-center rounded bg-[var(--tp-bet-bg)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--tp-bet-text)]">
+										B
+									</span>
+								</TooltipTrigger>
+								<TooltipContent side="bottom" className="text-xs">
+									{title}
+								</TooltipContent>
+							</Tooltip>
+						</TooltipProvider>
+					)}
 					{objectType && <TypeBadge type={objectType} />}
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId }}
 						className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
 						title={title}
+						onClick={(e) => e.stopPropagation()}
 					>
 						{title}
 					</Link>
 				</div>
-				{item.latest_activity_at && (
-					<RelativeTime
-						date={item.latest_activity_at}
-						className="shrink-0 text-xs text-muted-foreground"
-					/>
-				)}
-				{item.mentions_you && (
-					<span
-						aria-label="Mentioned"
-						title="You were @-mentioned in an unread comment"
-						className="shrink-0 rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-foreground"
-					>
-						@you
-					</span>
-				)}
-				<UnreadBadge count={item.unread_count} className="shrink-0" />
-				<Button
-					size="sm"
-					variant="ghost"
-					className="shrink-0 h-7 px-2 text-xs"
-					onClick={handleMarkRead}
-					disabled={markRead.isPending}
-				>
-					Mark as read
-				</Button>
+				<div className="flex shrink-0 items-center gap-1.5">
+					{item.latest_activity_at && (
+						<RelativeTime
+							date={item.latest_activity_at}
+							className="text-xs text-muted-foreground"
+						/>
+					)}
+					{item.mentions_you && (
+						<span
+							aria-label="Mentioned"
+							title="You were @-mentioned in an unread comment"
+							className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-foreground"
+						>
+							@you
+						</span>
+					)}
+					<UnreadBadge count={item.unread_count} />
+				</div>
 			</div>
 
-			<div ref={scrollBodyRef} className="h-72 overflow-y-auto px-4 py-3 sm:h-96">
+			{/* Thread — all messages inline, page scrolls naturally */}
+			<div className="px-3 py-2.5">
 				{nodes.length === 0 ? (
-					<p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
+					<p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
 				) : (
 					<div className="space-y-1">
 						{nodes.map((node) => {
@@ -269,13 +275,31 @@ export function UnreadThreadCard({ workspaceId, item }: UnreadThreadCardProps) {
 				)}
 			</div>
 
-			<div className="border-t border-border px-4 py-3">
-				<CommentInput
-					workspaceId={workspaceId}
-					objectId={objectId}
-					parentEventId={firstUnreadRootId ?? latestRootId ?? undefined}
-					onSubmitted={handleMarkRead}
-				/>
+			{/* Footer: Reply + Mark read */}
+			<div className="flex items-center gap-1 border-t border-border px-2 py-1.5">
+				<Button
+					size="sm"
+					variant="outline"
+					className={cn(
+						'h-7 px-2 text-xs font-medium',
+						isActive && 'bg-foreground text-background border-foreground hover:bg-foreground/90',
+					)}
+					onClick={handleReplyClick}
+				>
+					{isActive ? 'Replying…' : 'Reply'}
+				</Button>
+				<Button
+					size="sm"
+					variant="ghost"
+					className="h-7 px-2 text-xs"
+					onClick={(e) => {
+						e.stopPropagation()
+						handleMarkRead()
+					}}
+					disabled={markRead.isPending}
+				>
+					Mark as read
+				</Button>
 			</div>
 		</div>
 	)
