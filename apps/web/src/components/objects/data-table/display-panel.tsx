@@ -55,6 +55,8 @@ export interface DisplayPanelProps {
 	onGroupByChange?: (value: string | undefined) => void
 	// Trigger appearance
 	iconOnly?: boolean
+	// Sections — surfaces that don't have a board view can opt out of the View pills.
+	showView?: boolean
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
@@ -146,6 +148,7 @@ export function DisplayPanel({
 	groupBy,
 	onGroupByChange,
 	iconOnly = false,
+	showView = true,
 }: DisplayPanelProps) {
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
 	const activeOwners = ownerFilter ? ownerFilter.split(',').filter(Boolean) : []
@@ -232,25 +235,31 @@ export function DisplayPanel({
 			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-0">
 				<div className="min-h-0 overflow-y-auto md:max-h-[480px] text-left">
 					{/* View */}
-					<div className="p-3 space-y-2">
-						<SectionHeader>View</SectionHeader>
-						<div className="flex items-center gap-1.5">
-							<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
-								List
-							</PillButton>
-							<PillButton
-								active={view === 'board'}
-								disabled={!boardSupported}
-								onClick={boardSupported ? () => onViewChange?.('board') : undefined}
-								title={
-									boardSupported ? undefined : 'Board view needs configured statuses for this type'
-								}
-							>
-								Board
-							</PillButton>
-						</div>
-					</div>
-					<Separator />
+					{showView && (
+						<>
+							<div className="p-3 space-y-2">
+								<SectionHeader>View</SectionHeader>
+								<div className="flex items-center gap-1.5">
+									<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
+										List
+									</PillButton>
+									<PillButton
+										active={view === 'board'}
+										disabled={!boardSupported}
+										onClick={boardSupported ? () => onViewChange?.('board') : undefined}
+										title={
+											boardSupported
+												? undefined
+												: 'Board view needs configured statuses for this type'
+										}
+									>
+										Board
+									</PillButton>
+								</div>
+							</div>
+							<Separator />
+						</>
+					)}
 
 					{/* Ordering */}
 					{showOrdering && (
