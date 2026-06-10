@@ -35,7 +35,7 @@ import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
-import { MarkdownContent } from '../shared/markdown-content'
+import { AgentOutput } from '../shared/agent-output'
 import { RelativeTime } from '../shared/relative-time'
 import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
@@ -183,7 +183,7 @@ export function ObjectDocumentView({
 
 			{/* Content */}
 			<div className="mb-8">
-				<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+				<AgentOutput content={object.content ?? ''} onChange={handleContentChange} editable />
 			</div>
 
 			{/* Linked objects */}

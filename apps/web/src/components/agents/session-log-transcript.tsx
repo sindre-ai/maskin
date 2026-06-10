@@ -1,4 +1,4 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { AgentOutput } from '@/components/shared/agent-output'
 import type { SessionLogResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { type SindreEvent, parseSindreLine } from '@/lib/sindre-stream'
@@ -204,7 +204,7 @@ function SystemEventLine({ subtype }: { subtype: string }) {
 }
 
 function AssistantTextBlock({ text }: { text: string }) {
-	return <MarkdownContent content={text} size="sm" />
+	return <AgentOutput content={text} size="sm" />
 }
 
 function UserMessageBlock({ text }: { text: string }) {
