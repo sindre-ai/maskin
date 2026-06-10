@@ -35,6 +35,11 @@ const CLI_BANNERS: ReadonlyArray<{
 		reasonCode: 'credit_balance_low',
 		humanMessage: 'Claude credit balance is too low',
 	},
+	{
+		match: 'Not logged in',
+		reasonCode: 'not_logged_in',
+		humanMessage: 'Claude credentials not connected — please import your Claude subscription',
+	},
 ]
 
 /**

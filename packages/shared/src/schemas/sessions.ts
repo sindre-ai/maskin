@@ -165,6 +165,7 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - server_rate_limit     "Server is temporarily limiting requests"
  * - request_rejected_429  "Request rejected (429)"
  * - credit_balance_low    "Credit balance is too low"
+ * - not_logged_in         "Not logged in" — Claude Code credentials not connected
  *
  * Anthropic HTTP error codes (matched from stdout tail):
  * - billing_error         402 — credit balance exhausted
@@ -181,6 +182,7 @@ export const failureReasonCodeSchema = z.enum([
 	'server_rate_limit',
 	'request_rejected_429',
 	'credit_balance_low',
+	'not_logged_in',
 	'billing_error',
 	'max_plan_rate_limit',
 	'rate_limit_error',

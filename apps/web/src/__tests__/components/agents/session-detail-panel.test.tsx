@@ -208,6 +208,20 @@ describe('FailureCard', () => {
 		expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
 	})
 
+	it('shows Connect Claude subscription button for not_logged_in', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'not_logged_in',
+			human_message: 'Claude credentials not connected — please import your Claude subscription',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: 'Not logged in',
+		})
+		expect(screen.getByText('Connect Claude subscription')).toBeInTheDocument()
+		expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
+	})
+
 	it('hides recovery row for non-credit reason codes', () => {
 		renderCard({
 			provider: 'anthropic',

@@ -62,6 +62,7 @@ const TOP_UP_URLS: Record<string, string> = {
 const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
 	openrouter: 'OpenRouter',
+	'claude-code': 'Claude Code',
 }
 
 // Reason codes that show the recovery row (credit depletion + temporary quota limits).
@@ -87,6 +88,9 @@ const TOPUP_REASON_CODES = new Set([
 	'opus_limit',
 ])
 
+// Codes where the agent couldn't authenticate — recovery is connecting credentials.
+const AUTH_REASON_CODES = new Set(['not_logged_in'])
+
 export function FailureCard({
 	failureReason,
 	workspaceId,
@@ -95,6 +99,7 @@ export function FailureCard({
 	const topUpUrl = TOP_UP_URLS[failureReason.provider]
 	const isCredit = CREDIT_REASON_CODES.has(failureReason.reason_code)
 	const isTopUp = TOPUP_REASON_CODES.has(failureReason.reason_code)
+	const isAuth = AUTH_REASON_CODES.has(failureReason.reason_code)
 	const isOpenRouter = failureReason.provider === 'openrouter'
 	const providerLabel =
 		PROVIDER_LABELS[failureReason.provider] ??
@@ -144,6 +149,15 @@ export function FailureCard({
 					<span className="inline-flex items-center text-xs px-2 py-1 rounded-md bg-muted text-muted-foreground">
 						Wait
 					</span>
+				</div>
+			)}
+			{isAuth && (
+				<div className="flex flex-wrap items-center gap-2">
+					<Button size="sm" asChild>
+						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
+							Connect Claude subscription
+						</Link>
+					</Button>
 				</div>
 			)}
 			{failureReason.verbatim_output && (

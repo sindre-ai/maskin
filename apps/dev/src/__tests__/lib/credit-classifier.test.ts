@@ -60,6 +60,18 @@ describe('classifyCreditExhaustion', () => {
 			})
 		})
 
+		it('classifies not logged in banner', () => {
+			const result = classifyCreditExhaustion(
+				'Not logged in · Please run /login\nSession failed with exit code 1',
+			)
+			expect(result).toMatchObject({
+				provider: 'anthropic',
+				reason_code: 'not_logged_in',
+				http_status: null,
+				verbatim_output: 'Not logged in',
+			})
+		})
+
 		it('banner match sets reset_at to null', () => {
 			const result = classifyCreditExhaustion("You've hit your session limit")
 			expect(result?.reset_at).toBeNull()
