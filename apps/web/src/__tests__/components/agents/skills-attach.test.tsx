@@ -142,6 +142,33 @@ describe('Skills — Workspace Skills section', () => {
 		expect(screen.getByText('Review code')).toBeInTheDocument()
 	})
 
+	it('filters skills by name as the user types in the search input', async () => {
+		const user = userEvent.setup()
+		mockUseWorkspaceSkills.mockReturnValue({
+			data: [
+				buildWorkspaceSkill({ id: 'a', name: 'deploy', description: 'Ship it' }),
+				buildWorkspaceSkill({ id: 'b', name: 'review-pr', description: 'Review code' }),
+			],
+			isLoading: false,
+		})
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" />
+			</TestWrapper>,
+		)
+
+		await user.click(screen.getByRole('button', { name: 'Attach workspace skill' }))
+
+		expect(screen.getByText('deploy')).toBeInTheDocument()
+		expect(screen.getByText('review-pr')).toBeInTheDocument()
+
+		await user.type(screen.getByPlaceholderText('Search workspace skills...'), 'depl')
+
+		expect(screen.getByText('deploy')).toBeInTheDocument()
+		expect(screen.queryByText('review-pr')).not.toBeInTheDocument()
+	})
+
 	it('calls attach mutation with workspaceSkillId when an unattached skill is selected', async () => {
 		const user = userEvent.setup()
 		mockUseWorkspaceSkills.mockReturnValue({

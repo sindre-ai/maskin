@@ -125,11 +125,26 @@ function WorkspaceSkillsSection({
 	const attachSkill = useAttachSkill(actorId)
 	const detachSkill = useDetachSkill(actorId)
 	const [open, setOpen] = useState(false)
+	const [query, setQuery] = useState('')
 
 	const isLoading = isLoadingWorkspace || isLoadingAttachments
 	const available = workspaceSkills ?? []
 	const attached = attachments ?? []
 	const attachedIds = new Set(attached.map((s) => s.id))
+
+	const needle = query.trim().toLowerCase()
+	const filtered = needle
+		? available.filter(
+				(s) =>
+					s.name.toLowerCase().includes(needle) ||
+					(s.description ?? '').toLowerCase().includes(needle),
+			)
+		: available
+
+	const handleOpenChange = (next: boolean) => {
+		setOpen(next)
+		if (!next) setQuery('')
+	}
 
 	return (
 		<div>
@@ -153,7 +168,7 @@ function WorkspaceSkillsSection({
 				</p>
 			) : (
 				<>
-					<ResponsivePopover open={open} onOpenChange={setOpen}>
+					<ResponsivePopover open={open} onOpenChange={handleOpenChange}>
 						<ResponsivePopoverTrigger asChild>
 							<Button
 								size="sm"
@@ -170,8 +185,10 @@ function WorkspaceSkillsSection({
 							align="start"
 							accessibleTitle="Attach workspace skill"
 						>
-							<Command>
+							<Command shouldFilter={false}>
 								<Command.Input
+									value={query}
+									onValueChange={setQuery}
 									placeholder="Search workspace skills..."
 									className="w-full border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none"
 								/>
@@ -179,7 +196,7 @@ function WorkspaceSkillsSection({
 									<Command.Empty className="py-4 text-center text-xs text-muted-foreground">
 										No workspace skills match.
 									</Command.Empty>
-									{available.map((skill) => {
+									{filtered.map((skill) => {
 										const isAttached = attachedIds.has(skill.id)
 										return (
 											<Command.Item
