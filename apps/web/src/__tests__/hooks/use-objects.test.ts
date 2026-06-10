@@ -11,6 +11,7 @@ vi.mock('@/lib/api', () => ({
 			update: vi.fn(),
 			delete: vi.fn(),
 			bulkUpdate: vi.fn(),
+			bulkDelete: vi.fn(),
 		},
 	},
 }))
@@ -21,6 +22,7 @@ vi.mock('sonner', () => ({
 }))
 
 import {
+	useBulkDeleteObjects,
 	useBulkUpdateObjects,
 	useCreateObject,
 	useDeleteObject,
@@ -322,5 +324,181 @@ describe('useDeleteObject', () => {
 		result.current.mutate('obj-1')
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.delete).toHaveBeenCalledWith('obj-1')
+	})
+})
+
+describe('useBulkUpdateObjects — per-id rollback on partial failure', () => {
+	function makeWrapper() {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: React.ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+		return { queryClient, Wrapper }
+	}
+
+	it('restores only failed rows in the infinite cache while keeping succeeded rows patched', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const seed = [
+			buildObject({ id: 'obj-1', status: 'todo', type: 'task' }),
+			buildObject({ id: 'obj-2', status: 'todo', type: 'task' }),
+		]
+		const key = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(key, { pages: [seed], pageParams: [0] })
+
+		vi.mocked(api.objects.bulkUpdate).mockResolvedValue({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: false, error: 'Conflict' },
+			],
+		})
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
+		const rows = cache?.pages[0] ?? []
+		// obj-1 succeeded — stays at 'done' (optimistic value, before invalidation reconciles)
+		expect(rows.find((r) => r.id === 'obj-1')?.status).toBe('done')
+		// obj-2 failed — rolled back to 'todo'
+		expect(rows.find((r) => r.id === 'obj-2')?.status).toBe('todo')
+	})
+
+	it('full-batch rollback on network error', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const seed = [
+			buildObject({ id: 'obj-1', status: 'todo' }),
+			buildObject({ id: 'obj-2', status: 'todo' }),
+		]
+		const key = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(key, { pages: [seed], pageParams: [0] })
+
+		vi.mocked(api.objects.bulkUpdate).mockRejectedValue(new Error('Network'))
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
+		const rows = cache?.pages[0] ?? []
+		expect(rows.every((r) => r.status === 'todo')).toBe(true)
+	})
+})
+
+describe('useBulkDeleteObjects', () => {
+	function makeWrapper() {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: React.ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+		return { queryClient, Wrapper }
+	}
+
+	it('optimistically removes rows from the infinite cache before the request resolves', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const seed = [
+			buildObject({ id: 'obj-1', status: 'todo' }),
+			buildObject({ id: 'obj-2', status: 'todo' }),
+			buildObject({ id: 'obj-3', status: 'todo' }),
+		]
+		const key = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(key, { pages: [seed], pageParams: [0] })
+
+		let resolve!: (value: { results: Array<{ id: string; ok: boolean }> }) => void
+		vi.mocked(api.objects.bulkDelete).mockReturnValue(
+			new Promise((res) => {
+				resolve = res
+			}),
+		)
+
+		const { result } = renderHook(() => useBulkDeleteObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'] })
+
+		await waitFor(() => {
+			const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
+			const rows = cache?.pages[0] ?? []
+			expect(rows.map((r) => r.id)).toEqual(['obj-3'])
+		})
+
+		resolve({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: true },
+			],
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+	})
+
+	it('restores rows that the server failed to delete', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const seed = [
+			buildObject({ id: 'obj-1', status: 'todo' }),
+			buildObject({ id: 'obj-2', status: 'todo' }),
+		]
+		const key = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(key, { pages: [seed], pageParams: [0] })
+
+		vi.mocked(api.objects.bulkDelete).mockResolvedValue({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: false, error: 'Locked' },
+			],
+		})
+
+		const { result } = renderHook(() => useBulkDeleteObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'] })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		// After onSuccess restores failed rows, obj-2 should be back in the cache.
+		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
+		const ids = (cache?.pages[0] ?? []).map((r) => r.id)
+		expect(ids).toContain('obj-2')
+		expect(ids).not.toContain('obj-1')
+	})
+
+	it('restores all rows on network error', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const seed = [
+			buildObject({ id: 'obj-1', status: 'todo' }),
+			buildObject({ id: 'obj-2', status: 'todo' }),
+		]
+		const key = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(key, { pages: [seed], pageParams: [0] })
+
+		vi.mocked(api.objects.bulkDelete).mockRejectedValue(new Error('Network'))
+
+		const { result } = renderHook(() => useBulkDeleteObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'] })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+
+		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
+		const rows = cache?.pages[0] ?? []
+		expect(rows.map((r) => r.id).sort()).toEqual(['obj-1', 'obj-2'])
+	})
+
+	it('calls api.objects.bulkDelete with workspace + ids', async () => {
+		vi.mocked(api.objects.bulkDelete).mockResolvedValue({
+			results: [{ id: 'obj-1', ok: true }],
+		})
+
+		const { queryClient, Wrapper } = makeWrapper()
+		const key = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(key, { pages: [[buildObject({ id: 'obj-1' })]], pageParams: [0] })
+
+		const { result } = renderHook(() => useBulkDeleteObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1'] })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.objects.bulkDelete).toHaveBeenCalledWith(workspaceId, { ids: ['obj-1'] })
 	})
 })

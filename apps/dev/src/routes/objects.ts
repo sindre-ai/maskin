@@ -15,6 +15,7 @@ import {
 	type ActorRef,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
+	bulkDeleteObjectsSchema,
 	bulkUpdateObjectsResponseSchema,
 	bulkUpdateObjectsSchema,
 	createObjectSchema,
@@ -854,6 +855,101 @@ app.openapi(updateObjectRoute, async (c) => {
 	})
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
+})
+
+// POST /bulk-delete - Delete many objects in one call with per-id partial failure
+const bulkDeleteObjectsRoute = createRoute({
+	method: 'post',
+	path: '/bulk-delete',
+	tags: ['Objects'],
+	summary: 'Bulk delete objects',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: bulkDeleteObjectsSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: bulkUpdateObjectsResponseSchema } },
+			description: 'Bulk delete completed (per-id results, including failures)',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+	},
+})
+
+app.openapi(bulkDeleteObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { ids } = c.req.valid('json')
+
+	const uniqueIds = Array.from(new Set(ids))
+
+	// Scope lookup to workspace — ids that don't belong here are silently ok: true
+	// (idempotent: already deleted or never existed is the same outcome for the caller).
+	const existingRows = await db
+		.select()
+		.from(objects)
+		.where(and(inArray(objects.id, uniqueIds), eq(objects.workspaceId, workspaceId)))
+	const existingById = new Map(existingRows.map((row) => [row.id, row]))
+
+	type ResultEntry = { id: string; ok: boolean; error?: string }
+	const results: ResultEntry[] = []
+
+	const toDelete = uniqueIds.filter((id) => existingById.has(id))
+
+	if (toDelete.length > 0) {
+		await db.transaction(async (tx) => {
+			for (const id of toDelete) {
+				const existing = existingById.get(id)
+				if (!existing) continue
+				try {
+					await tx
+						.delete(subscriptions)
+						.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
+					await tx
+						.delete(readState)
+						.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))
+					await tx.delete(objects).where(eq(objects.id, id))
+					await tx.insert(events).values({
+						workspaceId,
+						actorId,
+						action: 'deleted',
+						entityType: existing.type,
+						entityId: id,
+						data: existing,
+					})
+					results.push({ id, ok: true })
+				} catch (err) {
+					results.push({ id, ok: false, error: String(err) })
+				}
+			}
+		})
+	}
+
+	// Ids not found in this workspace return ok: true (already deleted or never existed).
+	for (const id of uniqueIds) {
+		if (!existingById.has(id)) results.push({ id, ok: true })
+	}
+
+	const okCount = results.filter((r) => r.ok).length
+	logger.info('bulk-delete objects', {
+		actorId,
+		requested: ids.length,
+		deduped: uniqueIds.length,
+		deleted: okCount,
+		failed: uniqueIds.length - okCount,
+	})
+
+	return c.json({ results }, 200)
 })
 
 // DELETE /{id} - Delete object

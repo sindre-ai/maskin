@@ -195,6 +195,12 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		bulkDelete: (workspaceId: string, body: BulkDeleteObjectsInput) =>
+			request<BulkUpdateObjectsResponse>('/objects/bulk-delete', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 	},
 
 	auth: {
@@ -658,6 +664,10 @@ export interface BulkUpdateObjectsInput {
 		owner?: string | null
 		metadata?: SafeMetadata
 	}
+}
+
+export interface BulkDeleteObjectsInput {
+	ids: string[]
 }
 
 export interface BulkUpdateObjectsResult {
