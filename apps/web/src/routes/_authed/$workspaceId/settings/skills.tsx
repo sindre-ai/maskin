@@ -559,7 +559,7 @@ export function sortSkills(
 	const dir = order === 'asc' ? 1 : -1
 	return [...skills].sort((a, b) => {
 		if (sort === 'name') {
-			return a.name.localeCompare(b.name) * dir
+			return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir
 		}
 		// createdAt / updatedAt are ISO strings — lexicographic compare matches chronological order.
 		const av = a[sort]

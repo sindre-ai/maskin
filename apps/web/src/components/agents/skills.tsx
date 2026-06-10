@@ -30,6 +30,7 @@ import {
 import { useDeleteSkill, useSaveSkill, useSkill, useSkills } from '@/hooks/use-skills'
 import { useWorkspaceSkills } from '@/hooks/use-workspace-skills'
 import type { AttachedWorkspaceSkill, SkillListItem, WorkspaceSkillListItem } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { parseSkillMd } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
@@ -288,7 +289,7 @@ function SkillsSectionHeader({
 }) {
 	return (
 		<h3
-			className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 ${className ?? ''}`}
+			className={cn('flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2', className)}
 		>
 			<Icon className="h-3.5 w-3.5" aria-hidden="true" />
 			<span>{label}</span>
