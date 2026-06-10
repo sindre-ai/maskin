@@ -586,7 +586,7 @@ function SessionRow({
 					</div>
 				) : (
 					displayError && (
-						<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
+						<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap break-words">
 							{displayError}
 						</pre>
 					)
