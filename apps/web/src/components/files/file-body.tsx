@@ -3,8 +3,9 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { compileAnnotations } from '@/lib/annotations'
+import type { AnnotationJson } from '@/lib/annotations'
 import type { FileDetail } from '@/lib/api'
-import { Clipboard, Pin } from 'lucide-react'
+import { Bot, Clipboard, Pin } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
 
@@ -121,7 +122,13 @@ function fileText(file: FileDetail): string {
 	return file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content)
 }
 
-export function FileBody({ file }: { file: FileDetail }) {
+export interface FileBodyProps {
+	file: FileDetail
+	onReviseWithAnnotations?: (json: AnnotationJson) => void
+	isRevising?: boolean
+}
+
+export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: FileBodyProps) {
 	const [mode, setMode] = useState<ViewMode>('rendered')
 	const [annotateMode, setAnnotateMode] = useState(false)
 	const [annotations, setAnnotations] = useState<Annotation[]>([])
@@ -129,6 +136,10 @@ export function FileBody({ file }: { file: FileDetail }) {
 	const handleCopyAnnotations = useCallback(() => {
 		navigator.clipboard.writeText(JSON.stringify(compileAnnotations(annotations), null, 2))
 	}, [annotations])
+
+	const handleReviseWithAnnotations = useCallback(() => {
+		onReviseWithAnnotations?.(compileAnnotations(annotations))
+	}, [annotations, onReviseWithAnnotations])
 
 	if (isMarkdown(file.mimeType)) {
 		const text = fileText(file)
@@ -148,10 +159,24 @@ export function FileBody({ file }: { file: FileDetail }) {
 			<div className="space-y-3">
 				<div className="flex items-center justify-end gap-2">
 					{annotations.length > 0 && (
-						<Button type="button" variant="ghost" size="sm" onClick={handleCopyAnnotations}>
-							<Clipboard size={14} />
-							Copy annotation JSON
-						</Button>
+						<>
+							{onReviseWithAnnotations && (
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={handleReviseWithAnnotations}
+									disabled={isRevising}
+								>
+									<Bot size={14} />
+									{isRevising ? 'Starting…' : 'Revise with annotations'}
+								</Button>
+							)}
+							<Button type="button" variant="ghost" size="sm" onClick={handleCopyAnnotations}>
+								<Clipboard size={14} />
+								Copy annotation JSON
+							</Button>
+						</>
 					)}
 					{mode === 'rendered' && (
 						<Button
