@@ -173,6 +173,17 @@ describe('DisplayPanel', () => {
 		expect(props.onColumnVisibilityChange).toHaveBeenCalledWith('status', false)
 	})
 
+	it('hides the View section when showView=false', async () => {
+		const user = userEvent.setup()
+		renderPanel({ showView: false })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		expect(screen.queryByText('View')).toBeNull()
+		expect(screen.queryByRole('button', { name: 'List' })).toBeNull()
+		expect(screen.queryByRole('button', { name: 'Board' })).toBeNull()
+		// Other sections still render.
+		expect(screen.getByText('Ordering')).toBeInTheDocument()
+	})
+
 	it('shows "+ Status" / "+ Owner" affordances when no filter is set', async () => {
 		const user = userEvent.setup()
 		renderPanel({
