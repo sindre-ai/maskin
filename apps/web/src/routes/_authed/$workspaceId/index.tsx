@@ -39,6 +39,8 @@ function ForYouDashboard() {
 
 	const totalUnread = items.reduce((sum, item) => sum + (item.unread_count ?? 0), 0)
 
+	// Fires one mutation per item — non-batched by design; typical inboxes are small and
+	// a batch endpoint doesn't exist yet.
 	function handleMarkAllRead() {
 		for (const item of items) {
 			const eventId = item.latest_event_id ?? 0
