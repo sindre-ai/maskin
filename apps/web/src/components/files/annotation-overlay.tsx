@@ -74,6 +74,7 @@ export function AnnotationOverlay({
 	// Listen for elementFromPoint responses from the sandboxed iframe
 	useEffect(() => {
 		function onMessage(e: MessageEvent) {
+			if (e.source !== iframeRef.current?.contentWindow) return
 			if (!e.data || typeof e.data !== 'object') return
 			if (e.data.type !== 'MASKIN_ELEMENT_RESULT') return
 			const { id, selector, bounds } = e.data as {
