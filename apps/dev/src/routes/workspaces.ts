@@ -138,9 +138,12 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
 	}
 
-	bootstrapWorkspaceObserver(c.get('db'), c.get('agentStorage'), workspace.id, actorId).catch(
-		(err) => logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
-	)
+	const agentStorage = c.get('agentStorage')
+	if (agentStorage) {
+		bootstrapWorkspaceObserver(c.get('db'), agentStorage, workspace.id, actorId).catch((err) =>
+			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
+		)
+	}
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
 })
