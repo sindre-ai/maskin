@@ -1,3 +1,4 @@
+import { PersistentReplyBar } from '@/components/foryou/persistent-reply-bar'
 import { UnreadThreadCard } from '@/components/foryou/unread-thread-card'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
@@ -6,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: ForYouDashboard,
@@ -19,6 +20,22 @@ function ForYouDashboard() {
 	const items = data?.items ?? []
 	const [activeId, setActiveId] = useState<string | null>(null)
 	const markRead = useMarkRead(workspaceId)
+
+	// mentions_you items ("Needs your input") sort before FYI items; stable within each tier
+	const sorted = useMemo(
+		() =>
+			[...items].sort((a, b) => {
+				if (a.mentions_you && !b.mentions_you) return -1
+				if (!a.mentions_you && b.mentions_you) return 1
+				return 0
+			}),
+		[items],
+	)
+
+	const activeItem = useMemo(
+		() => (activeId ? items.find((item) => item.entity_id === activeId) : null),
+		[activeId, items],
+	)
 
 	const totalUnread = items.reduce((sum, item) => sum + (item.unread_count ?? 0), 0)
 
@@ -55,37 +72,45 @@ function ForYouDashboard() {
 	}
 
 	return (
-		<div className="flex flex-col gap-4">
-			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-2">
-					<span className="text-sm font-medium text-foreground">For You</span>
-					{totalUnread > 0 && (
-						<span className="min-w-[18px] rounded-full bg-foreground px-1.5 py-0.5 text-center text-[10px] font-semibold text-background">
-							{totalUnread}
-						</span>
-					)}
+		<>
+			<div className="flex flex-col gap-4 pb-28">
+				<div className="flex items-center justify-between">
+					<div className="flex items-center gap-2">
+						<span className="text-sm font-medium text-foreground">For You</span>
+						{totalUnread > 0 && (
+							<span className="min-w-[18px] rounded-full bg-foreground px-1.5 py-0.5 text-center text-[10px] font-semibold text-background">
+								{totalUnread}
+							</span>
+						)}
+					</div>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-xs"
+						onClick={handleMarkAllRead}
+						disabled={markRead.isPending || totalUnread === 0}
+					>
+						Mark all read
+					</Button>
 				</div>
-				<Button
-					variant="ghost"
-					size="sm"
-					className="h-7 px-2 text-xs"
-					onClick={handleMarkAllRead}
-					disabled={markRead.isPending || totalUnread === 0}
-				>
-					Mark all read
-				</Button>
+				<div className="space-y-4">
+					{sorted.map((item) => (
+						<UnreadThreadCard
+							key={`${item.entity_type}-${item.entity_id}`}
+							workspaceId={workspaceId}
+							item={item}
+							isActive={activeId === item.entity_id}
+							onActivate={() => setActiveId(item.entity_id)}
+						/>
+					))}
+				</div>
 			</div>
-			<div className="space-y-4">
-				{items.map((item) => (
-					<UnreadThreadCard
-						key={`${item.entity_type}-${item.entity_id}`}
-						workspaceId={workspaceId}
-						item={item}
-						isActive={activeId === item.entity_id}
-						onActivate={() => setActiveId(item.entity_id)}
-					/>
-				))}
-			</div>
-		</div>
+			<PersistentReplyBar
+				workspaceId={workspaceId}
+				activeId={activeId}
+				activeTitle={activeItem?.object?.title ?? null}
+				onClear={() => setActiveId(null)}
+			/>
+		</>
 	)
 }

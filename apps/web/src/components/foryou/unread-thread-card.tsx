@@ -4,7 +4,7 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { UnreadBadge } from '@/components/shared/unread-badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useEntityEvents } from '@/hooks/use-events'
+import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { EventResponse, UnreadItem } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -33,6 +33,8 @@ interface CommentNode {
 	root: EventResponse
 	replies: EventResponse[]
 }
+
+const QUICK_REPLY_CHIPS = ['On it', 'Approved', 'Looks good', 'Need more context'] as const
 
 // Cards within this distance of the viewport start fetching their events, so
 // the next card or two below the fold is ready by the time the user scrolls.
@@ -189,6 +191,8 @@ export function UnreadThreadCard({
 		if (target <= 0) return
 		markRead.mutate({ entityType: item.entity_type, entityId: objectId, lastEventId: target })
 	}, [markRead, item.entity_type, objectId, item.latest_event_id, latestEventId])
+
+	const quickReply = useCreateComment(workspaceId, objectId)
 
 	const handleCardClick = useCallback(
 		(e: ReactMouseEvent) => {
@@ -407,6 +411,29 @@ export function UnreadThreadCard({
 							})}
 						</div>
 					)}
+				</div>
+
+				{/* Quick-reply chips — one-tap sends immediately with a toast */}
+				<div
+					className="flex gap-1.5 overflow-x-auto border-t border-border px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+				>
+					{QUICK_REPLY_CHIPS.map((chip) => (
+						<button
+							key={chip}
+							type="button"
+							className="shrink-0 whitespace-nowrap rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground hover:bg-accent hover:text-foreground active:bg-foreground active:text-background disabled:opacity-50"
+							onClick={(e) => {
+								e.stopPropagation()
+								quickReply.mutate(
+									{ entity_id: objectId, content: chip },
+									{ onSuccess: () => toast(`✓ Sent: "${chip}"`) },
+								)
+							}}
+							disabled={quickReply.isPending}
+						>
+							{chip}
+						</button>
+					))}
 				</div>
 
 				{/* Footer: Reply + Mark read */}
