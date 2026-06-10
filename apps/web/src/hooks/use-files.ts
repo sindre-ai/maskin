@@ -15,7 +15,7 @@ export function useFiles(workspaceId: string, params?: { q?: string; ids?: strin
 	return useQuery({
 		queryKey: [...queryKeys.files.all(workspaceId), 'list', params],
 		queryFn: () => api.files.list(workspaceId, params),
-		enabled: !!workspaceId,
+		enabled: !!workspaceId && !(params?.ids !== undefined && params.ids.length === 0),
 	})
 }
 

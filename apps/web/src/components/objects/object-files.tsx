@@ -36,10 +36,7 @@ export function ObjectFiles({
 		return [...ids]
 	}, [relationships])
 
-	const { data: files = [] } = useFiles(
-		workspaceId,
-		fileIds.length > 0 ? { ids: fileIds } : undefined,
-	)
+	const { data: files = [] } = useFiles(workspaceId, { ids: fileIds })
 
 	const createFile = useCreateFile(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, objectId)
