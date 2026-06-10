@@ -345,9 +345,7 @@ describe('sessionResultFailureReasonSchema', () => {
 	})
 
 	it('rejects missing required fields', () => {
-		expect(() =>
-			sessionResultFailureReasonSchema.parse({ provider: 'anthropic' }),
-		).toThrow()
+		expect(() => sessionResultFailureReasonSchema.parse({ provider: 'anthropic' })).toThrow()
 	})
 })
 

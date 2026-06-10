@@ -1,3 +1,4 @@
+import type { SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	bigint,
@@ -16,7 +17,6 @@ import {
 	uniqueIndex,
 	uuid,
 } from 'drizzle-orm/pg-core'
-import type { SessionResult } from '@maskin/shared'
 
 // ── Actors ──────────────────────────────────────────────────────────────────
 

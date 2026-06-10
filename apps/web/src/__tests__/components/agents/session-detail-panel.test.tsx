@@ -1,4 +1,8 @@
-import { FailureCard, SessionDetailPanel, parseFailureReason } from '@/components/agents/session-detail-panel'
+import {
+	FailureCard,
+	SessionDetailPanel,
+	parseFailureReason,
+} from '@/components/agents/session-detail-panel'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -70,7 +74,7 @@ describe('parseFailureReason', () => {
 		const result = parseFailureReason({
 			failure_reason: {
 				provider: 'anthropic',
-				reason_code: 'credit_exhausted',
+				reason_code: 'billing_error',
 				human_message: 'Credit limit reached',
 				http_status: 402,
 				reset_at: '2026-07-01T00:00:00Z',
@@ -79,7 +83,7 @@ describe('parseFailureReason', () => {
 		})
 		expect(result).toEqual({
 			provider: 'anthropic',
-			reason_code: 'credit_exhausted',
+			reason_code: 'billing_error',
 			human_message: 'Credit limit reached',
 			http_status: 402,
 			reset_at: '2026-07-01T00:00:00Z',
@@ -91,7 +95,7 @@ describe('parseFailureReason', () => {
 		const result = parseFailureReason({
 			failure_reason: {
 				provider: 'openrouter',
-				reason_code: 'credit_exhausted',
+				reason_code: 'billing_error',
 				human_message: 'Out of credits',
 				http_status: null,
 				reset_at: null,
@@ -120,7 +124,7 @@ describe('FailureCard', () => {
 	it('shows provider label and human_message as title', () => {
 		renderCard({
 			provider: 'anthropic',
-			reason_code: 'credit_exhausted',
+			reason_code: 'billing_error',
 			human_message: 'Credit limit reached',
 			http_status: 402,
 			reset_at: null,
@@ -132,21 +136,21 @@ describe('FailureCard', () => {
 	it('shows provider, reason_code, and http_status chips', () => {
 		renderCard({
 			provider: 'anthropic',
-			reason_code: 'credit_exhausted',
+			reason_code: 'billing_error',
 			human_message: 'Credit limit reached',
 			http_status: 402,
 			reset_at: null,
 			verbatim_output: null,
 		})
 		expect(screen.getByText('anthropic')).toBeInTheDocument()
-		expect(screen.getByText('credit_exhausted')).toBeInTheDocument()
+		expect(screen.getByText('billing_error')).toBeInTheDocument()
 		expect(screen.getByText('HTTP 402')).toBeInTheDocument()
 	})
 
 	it('omits http_status chip when null', () => {
 		renderCard({
 			provider: 'anthropic',
-			reason_code: 'credit_exhausted',
+			reason_code: 'billing_error',
 			human_message: 'Credit limit reached',
 			http_status: null,
 			reset_at: null,
@@ -158,7 +162,7 @@ describe('FailureCard', () => {
 	it('shows reset countdown chip when reset_at is set', () => {
 		renderCard({
 			provider: 'anthropic',
-			reason_code: 'credit_exhausted',
+			reason_code: 'billing_error',
 			human_message: 'Credit limit reached',
 			http_status: null,
 			reset_at: '2026-07-01T00:00:00Z',
@@ -222,10 +226,38 @@ describe('FailureCard', () => {
 		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
 	})
 
+	it('shows only Wait chip for server_rate_limit (no Top up or Switch button)', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'server_rate_limit',
+			human_message: 'Claude server is temporarily limiting requests',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: 'Server is temporarily limiting requests',
+		})
+		expect(screen.getByText('Wait')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
+		expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
+	})
+
+	it('shows only Wait chip for request_rejected_429 (no Top up or Switch button)', () => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: 'request_rejected_429',
+			human_message: 'Claude request rejected — rate limit',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: 'Request rejected (429)',
+		})
+		expect(screen.getByText('Wait')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
+		expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
+	})
+
 	it('hides recovery row for non-credit reason codes', () => {
 		renderCard({
 			provider: 'anthropic',
-			reason_code: 'rate_limited',
+			reason_code: 'rate_limit_error',
 			human_message: 'Too many requests',
 			http_status: 429,
 			reset_at: null,
@@ -238,7 +270,7 @@ describe('FailureCard', () => {
 	it('does not show verbatim section when verbatim_output is null', () => {
 		renderCard({
 			provider: 'anthropic',
-			reason_code: 'credit_exhausted',
+			reason_code: 'billing_error',
 			human_message: 'Credit limit reached',
 			http_status: null,
 			reset_at: null,
@@ -251,17 +283,21 @@ describe('FailureCard', () => {
 		const user = userEvent.setup()
 		renderCard({
 			provider: 'anthropic',
-			reason_code: 'credit_exhausted',
+			reason_code: 'billing_error',
 			human_message: 'Credit limit reached',
 			http_status: null,
 			reset_at: null,
 			verbatim_output: 'Billing limit exceeded. Please add credits.',
 		})
-		expect(screen.queryByText('Billing limit exceeded. Please add credits.')).not.toBeInTheDocument()
+		expect(
+			screen.queryByText('Billing limit exceeded. Please add credits.'),
+		).not.toBeInTheDocument()
 		await user.click(screen.getByText('Provider output'))
 		expect(screen.getByText('Billing limit exceeded. Please add credits.')).toBeInTheDocument()
 		await user.click(screen.getByText('Provider output'))
-		expect(screen.queryByText('Billing limit exceeded. Please add credits.')).not.toBeInTheDocument()
+		expect(
+			screen.queryByText('Billing limit exceeded. Please add credits.'),
+		).not.toBeInTheDocument()
 	})
 })
 
@@ -356,6 +392,30 @@ const CLASSIFIER_OUTPUTS: Array<{
 			verbatim_output: null,
 		},
 	},
+	{
+		code: 'server_rate_limit',
+		// triggered by: 'Server is temporarily limiting requests' CLI banner
+		failureReason: {
+			provider: 'anthropic',
+			reason_code: 'server_rate_limit',
+			human_message: 'Claude server is temporarily limiting requests',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: 'Server is temporarily limiting requests',
+		},
+	},
+	{
+		code: 'request_rejected_429',
+		// triggered by: 'Request rejected (429)' CLI banner
+		failureReason: {
+			provider: 'anthropic',
+			reason_code: 'request_rejected_429',
+			human_message: 'Claude request rejected — rate limit',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: 'Request rejected (429)',
+		},
+	},
 ]
 
 describe('classifier codes -> FailureCard recovery row', () => {
@@ -365,8 +425,9 @@ describe('classifier codes -> FailureCard recovery row', () => {
 			const sessionResult = { exit_code: 1, failure_reason: failureReason }
 			const parsed = parseFailureReason(sessionResult)
 			expect(parsed).not.toBeNull()
-			expect(parsed!.reason_code).toBe(failureReason.reason_code)
-			renderCard(parsed!)
+			if (!parsed) return
+			expect(parsed.reason_code).toBe(failureReason.reason_code)
+			renderCard(parsed)
 			expect(screen.getByText('Wait')).toBeInTheDocument()
 		},
 	)
@@ -380,7 +441,7 @@ describe('SessionDetailPanel failure display', () => {
 				exit_code: 1,
 				failure_reason: {
 					provider: 'anthropic',
-					reason_code: 'credit_exhausted',
+					reason_code: 'billing_error',
 					human_message: 'Credit limit reached',
 					http_status: 402,
 					reset_at: null,

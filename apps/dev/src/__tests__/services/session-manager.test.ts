@@ -1221,7 +1221,6 @@ describe('SessionManager', () => {
 
 		it('writes failure_reason to both the DB result payload and the event data payload', async () => {
 			const session = buildSession({ status: 'running' })
-
 			;(
 				manager as unknown as {
 					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
@@ -1238,11 +1237,7 @@ describe('SessionManager', () => {
 
 			await (
 				manager as unknown as {
-					handleCompletion(
-						sessionId: string,
-						containerId: string,
-						exitCode: number,
-					): Promise<void>
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
 				}
 			).handleCompletion(session.id, 'container-abc', 1)
 
@@ -1269,7 +1264,6 @@ describe('SessionManager', () => {
 
 		it('does not call classifier and omits failure_reason when exitCode is 0', async () => {
 			const session = buildSession({ status: 'running' })
-
 			;(
 				manager as unknown as {
 					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
@@ -1280,11 +1274,7 @@ describe('SessionManager', () => {
 
 			await (
 				manager as unknown as {
-					handleCompletion(
-						sessionId: string,
-						containerId: string,
-						exitCode: number,
-					): Promise<void>
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
 				}
 			).handleCompletion(session.id, 'container-abc', 0)
 
@@ -1298,7 +1288,6 @@ describe('SessionManager', () => {
 
 		it('does not call classifier when exitCode is null (OOM kill)', async () => {
 			const session = buildSession({ status: 'running' })
-
 			;(
 				manager as unknown as {
 					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>

@@ -75,6 +75,8 @@ const CREDIT_REASON_CODES = new Set([
 	'weekly_limit',
 	'opus_limit',
 	'max_plan_rate_limit',
+	'server_rate_limit',
+	'request_rejected_429',
 ])
 
 // Codes that require topping up credits (subset of CREDIT_REASON_CODES).
@@ -103,7 +105,7 @@ export function FailureCard({
 	const isOpenRouter = failureReason.provider === 'openrouter'
 	const providerLabel =
 		PROVIDER_LABELS[failureReason.provider] ??
-		(failureReason.provider.charAt(0).toUpperCase() + failureReason.provider.slice(1))
+		failureReason.provider.charAt(0).toUpperCase() + failureReason.provider.slice(1)
 
 	return (
 		<div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 space-y-2">
@@ -460,9 +462,9 @@ export function SessionDetailPanel({
 									<div className="rounded-md bg-error/10 border border-error/20 px-3 py-2">
 										<p className="text-sm text-error font-medium">
 											{errorMessage ??
-									(exitCode !== null
-										? `Process exited with code ${exitCode}`
-										: 'Container process was killed')}
+												(exitCode !== null
+													? `Process exited with code ${exitCode}`
+													: 'Container process was killed')}
 										</p>
 									</div>
 								)
