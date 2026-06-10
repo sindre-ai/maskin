@@ -50,7 +50,7 @@ export function DecisionChips({ event, objectId, workspaceId }: DecisionChipsPro
 			<div className="flex flex-wrap gap-1.5">
 				{chips.map((chip, idx) => (
 					<button
-						key={`${chip}-${idx}`}
+						key={idx}
 						type="button"
 						onClick={() => sendReply(chip)}
 						disabled={createComment.isPending}
@@ -87,7 +87,7 @@ export function DecisionChips({ event, objectId, workspaceId }: DecisionChipsPro
 					className={cn(
 						'inline-flex items-center justify-center rounded-md',
 						'border border-border bg-transparent px-2.5 py-1',
-						'text-xs text-foreground hover:bg-accent',
+						'text-xs text-foreground hover:bg-accent hover:text-accent-foreground',
 						'transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
 					)}
 				>
