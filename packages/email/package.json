@@ -1,0 +1,26 @@
+{
+	"name": "@maskin/email",
+	"version": "0.0.1",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc",
+		"type-check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@react-email/components": "^0.0.31",
+		"react": "^19.2.5",
+		"resend": "^4.0.0"
+	},
+	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"typescript": "^5.7.0"
+	}
+}
