@@ -33,6 +33,8 @@ export const actors = pgTable('actors', {
 	llmProvider: text('llm_provider'),
 	llmConfig: jsonb('llm_config'),
 	isSystem: boolean('is_system').notNull().default(false),
+	agentState: text('agent_state').notNull().default('idle'),
+	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
