@@ -160,7 +160,7 @@ function RestartSessionButton({
 	return (
 		<button
 			type="button"
-			className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+			className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] inline-flex items-center"
 			disabled={createSession.isPending}
 			onClick={() => {
 				trackEvent('session_restart_clicked', {
