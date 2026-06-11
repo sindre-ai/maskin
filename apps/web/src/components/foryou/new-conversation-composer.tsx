@@ -99,16 +99,7 @@ export function NewConversationComposer({
 				},
 			},
 		)
-	}, [
-		agentId,
-		betId,
-		message,
-		openBets,
-		createSession,
-		navigate,
-		onOpenChange,
-		workspaceId,
-	])
+	}, [agentId, betId, message, openBets, createSession, navigate, onOpenChange, workspaceId])
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
