@@ -325,37 +325,9 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or has no container`)
 		}
 
-		// Order matters. The status flip is the gate that rejects further
-		// session-attributed writes — flipping it FIRST ensures an HTTP write
-		// fired in the gap between this line and the container SIGTERM is
-		// already rejected by the time it reaches the route handler. The
-		// container kill is best-effort within 3s; the gate is the
-		// correctness guarantee.
-		await this.db
-			.update(sessions)
-			.set({ status: 'stopping', updatedAt: new Date() })
-			.where(eq(sessions.id, sessionId))
-
-		// Emit `session_stopping` immediately so SSE subscribers can flip the
-		// UI into the 5s grace state without waiting for the container to die.
-		// The terminal `session_stopped` event is emitted by handleCompletion
-		// when the container actually exits.
-		await this.db.insert(events).values({
-			workspaceId: session.workspaceId,
-			actorId: session.actorId,
-			action: 'session_stopping',
-			entityType: 'session',
-			entityId: sessionId,
-			data: { reason: 'user_stop' },
-		})
-
-		// Clear the active-session link on objects up-front so the running
-		// indicator collapses immediately. handleCompletion will run when the
-		// container exits and finalize status → `stopped`.
-		await this.clearActiveSession(sessionId)
-
 		this.containers.detachStdin(sessionId)
 		await this.containers.stop(session.containerId)
+		// handleCompletion will be called by the exit watcher
 	}
 
 	async pauseSession(sessionId: string): Promise<void> {
@@ -679,10 +651,6 @@ export class SessionManager extends EventEmitter {
 
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
-			// Propagated as `X-Maskin-Session-Id` on every outbound API/MCP
-			// write so the session-status gate can reject writes from a session
-			// that has already entered a terminal state.
-			MASKIN_SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
 			MASKIN_API_URL: 'http://host.docker.internal:3000',
@@ -851,7 +819,6 @@ export class SessionManager extends EventEmitter {
 		// Merge user-provided env vars, filtering out reserved keys
 		const RESERVED_ENV_KEYS = new Set([
 			'SESSION_ID',
-			'MASKIN_SESSION_ID',
 			'AGENT_RUNTIME',
 			'SYSTEM_PROMPT',
 			'ACTION_PROMPT',
@@ -1135,11 +1102,7 @@ export class SessionManager extends EventEmitter {
 		if (!session) return
 
 		// Skip if already in a terminal or transitional state (avoid double-processing)
-		if (
-			['completed', 'failed', 'timeout', 'paused', 'snapshotting', 'stopped'].includes(
-				session.status,
-			)
-		)
+		if (['completed', 'failed', 'timeout', 'paused', 'snapshotting'].includes(session.status))
 			return
 
 		try {
@@ -1158,11 +1121,7 @@ export class SessionManager extends EventEmitter {
 			logger.warn('Failed to push session files', { sessionId, error: String(err) })
 		}
 
-		// A user stop flips status to `stopping` before SIGTERM. The container
-		// exits non-zero from the kill, but the terminal state is `stopped`
-		// (clean cancellation), not `failed`.
-		const status =
-			session.status === 'stopping' ? 'stopped' : exitCode === 0 ? 'completed' : 'failed'
+		const status = exitCode === 0 ? 'completed' : 'failed'
 
 		// Extract token / cost usage from the tail of stdout. Codex and custom
 		// runtimes don't emit structured usage — extractor returns null and the

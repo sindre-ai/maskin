@@ -151,13 +151,6 @@ async function apiFetch(
 	if (options?.idempotencyKey) {
 		headers['Idempotency-Key'] = options.idempotencyKey
 	}
-	// Propagate the agent session id so the server can reject writes from
-	// a session that has already entered a terminal state. Set by
-	// session-manager when launching the container.
-	const sessionId = process.env.MASKIN_SESSION_ID
-	if (sessionId) {
-		headers['X-Maskin-Session-Id'] = sessionId
-	}
 
 	const response = await fetch(url, {
 		method,

@@ -191,46 +191,6 @@ export const triggers = pgTable('triggers', {
 
 // ── Sessions ───────────────────────────────────────────────────────────────
 
-/**
- * Allowed values for `sessions.status`. The column is plain `text` (no DB
- * enum) so writes are not constrained by Postgres — this constant is the
- * source of truth for application-level validation and write-gating.
- *
- * Lifecycle:
- *   pending → starting → running → (stopping → stopped | completed | failed | timeout | paused | snapshotting | superseded)
- *
- * Terminal values (any agent-attributed write is rejected): `stopping`,
- * `stopped`, `completed`, `failed`, `timeout`, `superseded`.
- */
-export const SESSION_STATUS = {
-	PENDING: 'pending',
-	STARTING: 'starting',
-	RUNNING: 'running',
-	STOPPING: 'stopping',
-	STOPPED: 'stopped',
-	COMPLETED: 'completed',
-	FAILED: 'failed',
-	TIMEOUT: 'timeout',
-	PAUSED: 'paused',
-	SNAPSHOTTING: 'snapshotting',
-	SUPERSEDED: 'superseded',
-} as const
-
-export type SessionStatus = (typeof SESSION_STATUS)[keyof typeof SESSION_STATUS]
-
-/**
- * Statuses that gate further session-attributed writes. A write whose
- * `X-Maskin-Session-Id` resolves to one of these is rejected with 409.
- */
-export const TERMINAL_SESSION_STATUSES: readonly SessionStatus[] = [
-	SESSION_STATUS.STOPPING,
-	SESSION_STATUS.STOPPED,
-	SESSION_STATUS.COMPLETED,
-	SESSION_STATUS.FAILED,
-	SESSION_STATUS.TIMEOUT,
-	SESSION_STATUS.SUPERSEDED,
-]
-
 export const sessions = pgTable(
 	'sessions',
 	{

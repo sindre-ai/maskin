@@ -278,7 +278,7 @@ export class ContainerManager {
 		}
 	}
 
-	async stop(containerId: string, timeoutSeconds = 3): Promise<void> {
+	async stop(containerId: string, timeoutSeconds = 10): Promise<void> {
 		const container = this.docker.getContainer(containerId)
 		try {
 			await container.stop({ t: timeoutSeconds })
