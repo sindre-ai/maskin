@@ -27,8 +27,8 @@ interface DataTableControlsProps {
 	statusFilter?: string
 	onStatusFilterChange?: (value: string | undefined) => void
 	statusesByType?: Record<string, string[]>
-	ownerFilter?: string
-	onOwnerFilterChange?: (value: string | undefined) => void
+	driverFilter?: string
+	onDriverFilterChange?: (value: string | undefined) => void
 	actors?: ActorListItem[]
 	typeFilter?: string
 	onTypeFilterChange?: (value: string | undefined) => void
@@ -54,8 +54,8 @@ export function DataTableControls({
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType = {},
-	ownerFilter,
-	onOwnerFilterChange,
+	driverFilter,
+	onDriverFilterChange,
 	actors,
 	typeFilter,
 	onTypeFilterChange,
@@ -78,8 +78,8 @@ export function DataTableControls({
 		})
 	}
 
-	const hasActiveFilters = !!statusFilter || !!ownerFilter || !!typeFilter
-	const activeFilterCount = (statusFilter ? 1 : 0) + (ownerFilter ? 1 : 0) + (typeFilter ? 1 : 0)
+	const hasActiveFilters = !!statusFilter || !!driverFilter || !!typeFilter
+	const activeFilterCount = (statusFilter ? 1 : 0) + (driverFilter ? 1 : 0) + (typeFilter ? 1 : 0)
 	const showTypeFilter = !!onTypeFilterChange && !!typeCounts && Object.keys(typeCounts).length > 0
 	const showSort = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
 	const showGroupBy = !!onGroupByChange && columns.length > 0
@@ -187,11 +187,11 @@ export function DataTableControls({
 						</>
 					)}
 
-					{/* Filter by Owner */}
-					{actors && actors.length > 0 && onOwnerFilterChange && (
+					{/* Filter by Driver */}
+					{actors && actors.length > 0 && onDriverFilterChange && (
 						<>
 							<div className="p-3">
-								<p className="text-xs font-medium text-muted-foreground mb-2">Filter by owner</p>
+								<p className="text-xs font-medium text-muted-foreground mb-2">Filter by driver</p>
 								<div className="space-y-1">
 									{actors.map((a) => (
 										<div
@@ -199,11 +199,11 @@ export function DataTableControls({
 											className="flex items-center gap-2 py-1 px-1 rounded hover:bg-muted/50 cursor-pointer text-sm"
 										>
 											<Checkbox
-												checked={ownerFilter === a.id}
+												checked={driverFilter === a.id}
 												onCheckedChange={(checked) => {
 													const next = checked ? a.id : undefined
-													track('owner_filter', next)
-													onOwnerFilterChange(next)
+													track('driver_filter', next)
+													onDriverFilterChange(next)
 												}}
 											/>
 											{a.name}

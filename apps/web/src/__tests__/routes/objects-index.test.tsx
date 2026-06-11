@@ -11,7 +11,7 @@ vi.mock('@tanstack/react-router', async () => {
 		useSearch: () => ({
 			type: undefined,
 			status: undefined,
-			owner: undefined,
+			driver: undefined,
 			sort: 'createdAt',
 			order: 'desc',
 			q: undefined,
@@ -153,7 +153,7 @@ describe('validateSearch', () => {
 		expect(result).toEqual({
 			type: undefined,
 			status: undefined,
-			owner: undefined,
+			driver: undefined,
 			sort: 'createdAt',
 			order: 'desc',
 			q: undefined,
@@ -165,7 +165,7 @@ describe('validateSearch', () => {
 		const result = RouteOptions.validateSearch({
 			type: 'bet',
 			status: 'active',
-			owner: 'actor-1',
+			driver: 'actor-1',
 			sort: 'title',
 			order: 'asc',
 			q: 'search term',
@@ -174,7 +174,7 @@ describe('validateSearch', () => {
 		expect(result).toEqual({
 			type: 'bet',
 			status: 'active',
-			owner: 'actor-1',
+			driver: 'actor-1',
 			sort: 'title',
 			order: 'asc',
 			q: 'search term',

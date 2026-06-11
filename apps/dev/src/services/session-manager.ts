@@ -382,6 +382,7 @@ export class SessionManager extends EventEmitter {
 					status: 'paused',
 					snapshotPath: snapshotKey,
 					containerId: null,
+					currentActivity: null,
 					updatedAt: new Date(),
 				})
 				.where(eq(sessions.id, sessionId))
@@ -431,6 +432,7 @@ export class SessionManager extends EventEmitter {
 				status: 'failed',
 				containerId: null,
 				completedAt: new Date(),
+				currentActivity: null,
 				updatedAt: new Date(),
 			})
 			.where(eq(sessions.id, sessionId))
@@ -952,7 +954,7 @@ export class SessionManager extends EventEmitter {
 
 	private computeTimeout(session: typeof sessions.$inferSelect): Date {
 		const sessionConfig = session.config as Record<string, unknown>
-		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 3600
+		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 7200
 		return new Date(Date.now() + timeoutSeconds * 1000)
 	}
 
@@ -1184,6 +1186,7 @@ export class SessionManager extends EventEmitter {
 					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					currentActivity: null,
 					...(usage
 						? {
 								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
@@ -1313,6 +1316,7 @@ export class SessionManager extends EventEmitter {
 					status: 'timeout',
 					result: { error: 'Session timed out' },
 					completedAt: now,
+					currentActivity: null,
 					updatedAt: now,
 				})
 				.where(eq(sessions.id, session.id))
@@ -1487,6 +1491,7 @@ export class SessionManager extends EventEmitter {
 				data: { error: 'Session stuck in starting state' },
 			})
 
+			await this.cleanupBrowserSidecar(session.id).catch(() => {})
 			await this.clearActiveSession(session.id)
 			await this.cleanupSession(session.id)
 

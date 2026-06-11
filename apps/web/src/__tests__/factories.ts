@@ -29,7 +29,7 @@ export function buildObjectResponse(overrides: Partial<ObjectResponse> = {}): Ob
 		content: null,
 		status: 'active',
 		metadata: null,
-		owner: null,
+		driver: null,
 		activeSessionId: null,
 		createdBy: 'actor-1',
 		createdAt: null,
@@ -158,6 +158,7 @@ export function buildSessionResponse(overrides: Partial<SessionResponse> = {}): 
 		createdBy: 'actor-1',
 		createdAt: '2026-01-01T00:00:00Z',
 		updatedAt: null,
+		currentActivity: null,
 		...overrides,
 	}
 }

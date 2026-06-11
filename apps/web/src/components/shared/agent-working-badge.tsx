@@ -38,18 +38,28 @@ export function AgentWorkingBadge({
 
 	if (variant === 'banner') {
 		return (
-			<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 mb-4 min-w-0">
-				{Icon}
-				{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
-				<span className="text-sm font-medium truncate">{label}</span>
-				{preview && (
-					<>
-						<span className="text-muted-foreground">·</span>
-						<span className="text-sm text-muted-foreground truncate min-w-0">{preview}</span>
-					</>
-				)}
-				{duration && (
-					<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
+			<div className="rounded-md border border-border bg-secondary/50 px-3 py-2 mb-4 min-w-0">
+				<div className="flex items-center gap-2.5">
+					{Icon}
+					{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
+					<span className="text-sm font-medium truncate">{label}</span>
+					{preview && (
+						<>
+							<span className="text-muted-foreground">·</span>
+							<span className="text-sm text-muted-foreground truncate min-w-0">{preview}</span>
+						</>
+					)}
+					{duration && (
+						<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
+					)}
+				</div>
+				{session?.currentActivity && (
+					<div className="flex items-center gap-1.5 mt-1 pl-6">
+						<span className="size-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+						<span className="text-xs text-muted-foreground truncate">
+							{session.currentActivity}
+						</span>
+					</div>
 				)}
 			</div>
 		)

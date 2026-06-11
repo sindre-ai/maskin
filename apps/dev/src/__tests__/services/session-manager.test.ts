@@ -642,6 +642,24 @@ describe('SessionManager', () => {
 			// Status should be reverted to running (via the catch block's db.update call)
 		})
 
+		it('clears currentActivity to null on successful pause', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+				currentActivity: 'Searching codebase',
+			})
+			mockResults.select = [session]
+			mockResults.insert = []
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
+
+			await manager.pauseSession(session.id)
+
+			const pauseUpdate = calls.updates.find(
+				(u) => (u as Record<string, unknown>).status === 'paused',
+			)
+			expect(pauseUpdate).toMatchObject({ currentActivity: null })
+		})
+
 		it('marks session failed when container is already gone (no snapshot attempt)', async () => {
 			const session = buildSession({
 				status: 'running',

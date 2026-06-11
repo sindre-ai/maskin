@@ -57,7 +57,7 @@ function buildObject(overrides: Partial<ObjectResponse> & { id: string }): Objec
 		content: null,
 		status: 'todo',
 		metadata: null,
-		owner: null,
+		driver: null,
 		activeSessionId: null,
 		createdBy: 'actor-1',
 		createdAt: null,
@@ -191,6 +191,7 @@ describe('useCreateSession — agent_session_started', () => {
 			createdBy: 'human-1',
 			createdAt: null,
 			updatedAt: null,
+			currentActivity: null,
 		})
 		const { Wrapper } = makeWrapper()
 		const { result } = renderHook(() => useCreateSession(workspaceId), { wrapper: Wrapper })

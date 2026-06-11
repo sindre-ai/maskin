@@ -19,7 +19,7 @@ vi.mock('@tanstack/react-router', async () => {
 		useSearch: () => ({
 			type: 'bet',
 			status: undefined,
-			owner: undefined,
+			driver: undefined,
 			sort: 'createdAt',
 			order: 'desc',
 			q: undefined,

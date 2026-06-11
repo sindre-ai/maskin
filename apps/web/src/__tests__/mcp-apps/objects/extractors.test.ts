@@ -16,7 +16,7 @@ const obj = (overrides: Partial<ObjectResponse> = {}): ObjectResponse => ({
 	content: null,
 	status: 'todo',
 	metadata: null,
-	owner: null,
+	driver: null,
 	activeSessionId: null,
 	createdBy: 'actor-1',
 	createdAt: '2026-04-22T00:00:00.000Z',

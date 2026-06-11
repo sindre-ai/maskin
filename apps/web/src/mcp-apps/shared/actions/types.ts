@@ -16,7 +16,7 @@ import type { ObjectResponse } from '../types'
  */
 export type MutationKind =
 	| 'object_status'
-	| 'object_owner'
+	| 'object_driver'
 	| 'object_relationship_add'
 	| 'object_delete'
 

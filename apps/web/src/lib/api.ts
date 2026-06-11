@@ -586,7 +586,7 @@ export interface ObjectResponse {
 	content: string | null
 	status: string
 	metadata: SafeMetadata | null
-	owner: string | null
+	driver: string | null
 	activeSessionId: string | null
 	createdBy: string
 	createdAt: string | null
@@ -645,7 +645,7 @@ export interface CreateObjectInput {
 	content?: string
 	status: string
 	metadata?: SafeMetadata
-	owner?: string
+	driver?: string
 }
 
 export interface UpdateObjectInput {
@@ -653,14 +653,14 @@ export interface UpdateObjectInput {
 	content?: string
 	status?: string
 	metadata?: SafeMetadata
-	owner?: string | null
+	driver?: string | null
 }
 
 export interface BulkUpdateObjectsInput {
 	ids: string[]
 	patch: {
 		status?: string
-		owner?: string | null
+		driver?: string | null
 		metadata?: SafeMetadata
 	}
 }
@@ -980,6 +980,7 @@ export interface SessionResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	currentActivity: string | null
 }
 
 export interface SessionInputAttachment {
