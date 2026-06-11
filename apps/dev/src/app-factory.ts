@@ -12,6 +12,7 @@ import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
+import { sessionWriteGate } from './middleware/session-write-gate'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
@@ -191,6 +192,17 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)
+	})
+
+	// Agent-write gate: rejects mutations from stopped/superseded sessions
+	// with 409, keyed on `X-Maskin-Session-Id` propagated from the agent
+	// container. No-op for human-driven writes (header absent) — short
+	// circuits before any DB lookup. Only mutation verbs are checked.
+	const gate = sessionWriteGate(db)
+	app.use('/api/*', async (c, next) => {
+		const m = c.req.method
+		if (m === 'POST' || m === 'PATCH' || m === 'DELETE' || m === 'PUT') return gate(c, next)
+		return next()
 	})
 
 	app.use('/api/*', idempotencyMiddleware)
