@@ -46,6 +46,7 @@ function buildActorListItem(overrides: Partial<ActorListItem> & { id: string }):
 		email: null,
 		description: null,
 		isSystem: false,
+		agentState: 'idle',
 		...overrides,
 	}
 }

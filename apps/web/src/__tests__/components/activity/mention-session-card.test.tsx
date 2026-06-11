@@ -58,6 +58,7 @@ function buildSession(overrides: Partial<SessionResponse>): SessionResponse {
 		createdBy: 'user-1',
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
+		currentActivity: null,
 		...overrides,
 	}
 }

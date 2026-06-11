@@ -153,3 +153,56 @@ export const sessionUsageResponseSchema = z.object({
 	totals: sessionUsageTotalsSchema,
 })
 export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
+
+/**
+ * Reason codes for classified session failures. All codes originate from
+ * credit-exhaustion or rate-limit signals detected in the session stdout tail.
+ *
+ * CLI banner codes (Claude Code exits with a user-visible banner):
+ * - session_limit         "You've hit your session limit"
+ * - weekly_limit          "You've hit your weekly limit"
+ * - opus_limit            "You've hit your Opus limit"
+ * - server_rate_limit     "Server is temporarily limiting requests"
+ * - request_rejected_429  "Request rejected (429)"
+ * - credit_balance_low    "Credit balance is too low"
+ * - not_logged_in         "Not logged in" — Claude Code credentials not connected
+ *
+ * Anthropic HTTP error codes (matched from stdout tail):
+ * - billing_error         402 — credit balance exhausted
+ * - max_plan_rate_limit   402 — Max plan temporary rate limit
+ * - rate_limit_error      429 — Anthropic rate limit
+ *
+ * OpenRouter HTTP error codes:
+ * - insufficient_credits  402 — OpenRouter credit balance exhausted
+ */
+export const failureReasonCodeSchema = z.enum([
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'server_rate_limit',
+	'request_rejected_429',
+	'credit_balance_low',
+	'not_logged_in',
+	'billing_error',
+	'max_plan_rate_limit',
+	'rate_limit_error',
+	'insufficient_credits',
+])
+export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
+
+export const sessionResultFailureReasonSchema = z.object({
+	provider: z.string(),
+	reason_code: failureReasonCodeSchema,
+	human_message: z.string(),
+	http_status: z.number().int().nullable(),
+	reset_at: z.string().nullable(),
+	verbatim_output: z.string().nullable(),
+})
+export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReasonSchema>
+
+export const sessionResultSchema = z.object({
+	exit_code: z.number().int().nullable().optional(),
+	error: z.string().optional(),
+	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
+})
+export type SessionResult = z.infer<typeof sessionResultSchema>

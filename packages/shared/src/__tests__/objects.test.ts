@@ -49,7 +49,7 @@ describe('createObjectSchema', () => {
 			content: 'Details',
 			status: 'active',
 			metadata: { priority: 'high' },
-			owner: uuid,
+			driver: uuid,
 		})
 		expect(result.id).toBe(uuid)
 		expect(result.title).toBe('My bet')
@@ -72,7 +72,7 @@ describe('createObjectSchema', () => {
 
 	it('rejects invalid uuid for owner', () => {
 		expect(() =>
-			createObjectSchema.parse({ type: 'task', status: 'todo', owner: 'not-uuid' }),
+			createObjectSchema.parse({ type: 'task', status: 'todo', driver: 'not-uuid' }),
 		).toThrow()
 	})
 })
@@ -89,13 +89,13 @@ describe('updateObjectSchema', () => {
 	})
 
 	it('accepts null owner to clear assignment', () => {
-		const result = updateObjectSchema.parse({ owner: null })
-		expect(result.owner).toBeNull()
+		const result = updateObjectSchema.parse({ driver: null })
+		expect(result.driver).toBeNull()
 	})
 
 	it('accepts uuid owner', () => {
-		const result = updateObjectSchema.parse({ owner: uuid })
-		expect(result.owner).toBe(uuid)
+		const result = updateObjectSchema.parse({ driver: uuid })
+		expect(result.driver).toBe(uuid)
 	})
 })
 
@@ -130,8 +130,8 @@ describe('objectQuerySchema', () => {
 	})
 
 	it('accepts optional owner filter', () => {
-		const result = objectQuerySchema.parse({ owner: uuid })
-		expect(result.owner).toBe(uuid)
+		const result = objectQuerySchema.parse({ driver: uuid })
+		expect(result.driver).toBe(uuid)
 	})
 })
 

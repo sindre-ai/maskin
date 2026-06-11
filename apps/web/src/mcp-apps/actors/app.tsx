@@ -214,7 +214,7 @@ function ActorDetailView({ actor }: { actor: ActorResponse }) {
 			{actor.system_prompt && (
 				<div className="border-t border-border pt-3 mt-3">
 					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-						System Prompt
+						Instructions
 					</h3>
 					<p className="text-sm text-muted-foreground whitespace-pre-wrap">{actor.system_prompt}</p>
 				</div>

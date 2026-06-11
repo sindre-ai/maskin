@@ -11,6 +11,7 @@ import { OUTBOUND_SALES_AGENTS, OUTBOUND_SALES_TRIGGERS } from './outbound-sales
 
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>
 export type { SeedAgent, SeedTrigger }
+export { DEVELOPMENT_AGENTS, DEVELOPMENT_TRIGGERS }
 
 export interface TemplateSeedNode {
 	$id: string

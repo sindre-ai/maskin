@@ -46,7 +46,7 @@ export const workspaceSettingsSchema = z.object({
 	statuses: z.record(z.array(z.string())).default({
 		insight: ['new', 'processing', 'clustered', 'discarded'],
 		bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
-		task: ['todo', 'in_progress', 'done', 'blocked'],
+		task: ['todo', 'in_progress', 'in_review', 'testing', 'done', 'blocked'],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({}),
 	hero_card: z.record(heroCardTypeAnnotationSchema).default({}),
@@ -107,6 +107,10 @@ export const createWorkspaceSchema = z.object({
 export const updateWorkspaceSchema = z.object({
 	name: z.string().min(1).optional(),
 	settings: workspaceSettingsSchema.partial().optional(),
+})
+
+export const updateWorkspaceAdminSchema = z.object({
+	onboarding_enabled: z.boolean(),
 })
 
 export const workspaceParamsSchema = z.object({
