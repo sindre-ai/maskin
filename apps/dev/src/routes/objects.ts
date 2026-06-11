@@ -78,7 +78,7 @@ const sortColumns: Record<string, Column | SQL> = {
 	title: objects.title,
 	status: objects.status,
 	type: objects.type,
-	owner: objects.owner,
+	driver: objects.driver,
 	createdBy: objects.createdBy,
 	boardOrder: sql`coalesce((${objects.metadata}->>'board_order')::numeric, 2147483647)`,
 }
@@ -112,7 +112,7 @@ function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
 function buildObjectListConditions(query: {
 	type?: string
 	status?: string
-	owner?: string
+	driver?: string
 	ids?: string
 	q?: string
 }) {
@@ -123,10 +123,10 @@ function buildObjectListConditions(query: {
 		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
 		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
 	}
-	if (query.owner) {
-		const owners = query.owner.split(',').filter((id) => UUID_RE.test(id))
-		if (owners.length === 1) conditions.push(eq(objects.owner, owners[0] as string))
-		else if (owners.length > 1) conditions.push(inArray(objects.owner, owners))
+	if (query.driver) {
+		const owners = query.driver.split(',').filter((id) => UUID_RE.test(id))
+		if (owners.length === 1) conditions.push(eq(objects.driver, owners[0] as string))
+		else if (owners.length > 1) conditions.push(inArray(objects.driver, owners))
 	}
 	if (query.ids) {
 		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
@@ -143,7 +143,7 @@ function buildObjectListConditions(query: {
 
 function resolveBoardGroupExpression(groupBy?: string): SQL {
 	if (!groupBy || groupBy === 'status') return sql`${objects.status}`
-	if (groupBy === 'owner') return sql`coalesce(${objects.owner}::text, '')`
+	if (groupBy === 'driver') return sql`coalesce(${objects.driver}::text, '')`
 	if (groupBy === 'createdBy') return sql`coalesce(${objects.createdBy}::text, '')`
 	if (groupBy === 'type') return sql`${objects.type}`
 	if (groupBy.startsWith('metadata.')) {
@@ -263,7 +263,7 @@ app.openapi(createObjectRoute, async (c) => {
 			content: body.content,
 			status: body.status,
 			metadata: body.metadata,
-			owner: body.owner,
+			driver: body.driver,
 			createdBy: actorId,
 		})
 		.onConflictDoNothing({ target: objects.id })
@@ -396,7 +396,7 @@ app.openapi(boardObjectsRoute, async (c) => {
 		...buildObjectListConditions({
 			type: query.type,
 			status: query.status,
-			owner: query.owner,
+			driver: query.driver,
 			ids: query.ids,
 			q: query.q,
 		}),
@@ -572,16 +572,16 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.orderBy(desc(events.id))
 		.limit(100)
 
-	// Resolve actor names referenced by owner-change clauses (formatter only
-	// needs them for `data.previous.owner` / `data.updated.owner`).
+	// Resolve actor names referenced by driver-change clauses (formatter only
+	// needs them for `data.previous.driver` / `data.updated.driver`).
 	const referencedActorIds = new Set<string>()
 	for (const event of objectEvents) {
 		const data = event.data as {
-			previous?: { owner?: unknown }
-			updated?: { owner?: unknown }
+			previous?: { driver?: unknown }
+			updated?: { driver?: unknown }
 		} | null
-		const prevOwner = data?.previous?.owner
-		const nextOwner = data?.updated?.owner
+		const prevOwner = data?.previous?.driver
+		const nextOwner = data?.updated?.driver
 		if (typeof prevOwner === 'string') referencedActorIds.add(prevOwner)
 		if (typeof nextOwner === 'string') referencedActorIds.add(nextOwner)
 	}
@@ -1149,7 +1149,7 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 
 		const updateData: Partial<typeof objects.$inferInsert> = { updatedAt: now }
 		if (patch.status !== undefined) updateData.status = patch.status
-		if (patch.owner !== undefined) updateData.owner = patch.owner
+		if (patch.driver !== undefined) updateData.driver = patch.driver
 		if (patch.metadata !== undefined) {
 			updateData.metadata = existing.metadata
 				? { ...(existing.metadata as Record<string, unknown>), ...patch.metadata }

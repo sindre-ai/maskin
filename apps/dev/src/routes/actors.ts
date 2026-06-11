@@ -895,7 +895,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.delete(readState).where(eq(readState.actorId, id))
 
 		// Reassign objects
-		await tx.update(objects).set({ owner: null }).where(eq(objects.owner, id))
+		await tx.update(objects).set({ driver: null }).where(eq(objects.driver, id))
 		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
 
 		// Reassign workspace artifacts authored by this agent

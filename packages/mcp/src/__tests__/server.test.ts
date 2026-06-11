@@ -2021,7 +2021,7 @@ describe('tool handlers', () => {
 									type: 'bet',
 									title: 'Test bet',
 									status: 'active',
-									owner: 'actor-1',
+									driver: 'actor-1',
 									createdAt: new Date().toISOString(),
 								},
 							}),
@@ -2039,13 +2039,14 @@ describe('tool handlers', () => {
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['bet-9'] })) as {
 				_meta: { ui?: { resourceUri?: string } }
-				structuredContent: { heroCard: { kind: string; object?: { owner?: unknown } } }
+				structuredContent: { heroCard: { kind: string; object?: { driver?: unknown } } }
 			}
 
 			expect(result.structuredContent.heroCard.kind).toBe('single')
-			expect(result.structuredContent.heroCard.object?.owner).toEqual({
+			expect(result.structuredContent.heroCard.object?.driver).toEqual({
 				id: 'actor-1',
 				name: 'Sebastian',
+				type: null,
 			})
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 		})
@@ -2063,7 +2064,7 @@ describe('tool handlers', () => {
 									type: 'task',
 									title: 'Test task',
 									status: 'in_progress',
-									owner: 'actor-2',
+									driver: 'actor-2',
 								},
 							}),
 					} as Response
@@ -2081,14 +2082,14 @@ describe('tool handlers', () => {
 			const result = (await handler({ ids: ['task-9'] })) as {
 				_meta: { ui?: { resourceUri?: string } }
 				structuredContent: {
-					heroCard: { kind: string; object?: { contextLine?: string; owner?: unknown } }
+					heroCard: { kind: string; object?: { contextLine?: string; driver?: unknown } }
 				}
 			}
 
 			expect(result.structuredContent.heroCard.kind).toBe('single')
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
-				'in_progress · owner Magnus',
+				'in_progress · driver Magnus',
 			)
 		})
 
@@ -2105,7 +2106,7 @@ describe('tool handlers', () => {
 									type: 'insight',
 									title: 'Pricing pain',
 									status: 'clustered',
-									owner: null,
+									driver: null,
 									metadata: { anchors: ['#3', '#6'], cluster_size: 4 },
 								},
 							}),
@@ -2142,7 +2143,7 @@ describe('tool handlers', () => {
 									type: 'customer',
 									title: 'Acme Inc.',
 									status: 'engaged',
-									owner: null,
+									driver: null,
 								},
 							}),
 					} as Response
@@ -2160,7 +2161,7 @@ describe('tool handlers', () => {
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
 		})
 
-		it('resolves hero-card owner names via a batched ?ids= lookup, not the full actor list', async () => {
+		it('resolves hero-card driver names via a batched ?ids= lookup, not the full actor list', async () => {
 			const calls: string[] = []
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -2170,14 +2171,14 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
-								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', driver: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', driver: 'actor-2' },
 								{
 									id: 'bet-3',
 									type: 'bet',
 									title: 'Bet Three',
 									status: 'active',
-									owner: 'actor-1',
+									driver: 'actor-1',
 								},
 							]),
 					} as Response
@@ -2200,7 +2201,7 @@ describe('tool handlers', () => {
 				structuredContent: {
 					heroCard: {
 						kind: string
-						objects?: Array<{ owner?: { id: string; name: string | null } }>
+						objects?: Array<{ driver?: { id: string; name: string | null; type: string | null } }>
 					}
 				}
 			}
@@ -2210,17 +2211,17 @@ describe('tool handlers', () => {
 			// Single batched request, not the unbounded full-workspace fetch.
 			expect(calls.filter((u) => u.includes('/api/actors'))).toHaveLength(1)
 			expect(actorCall).toContain('?ids=')
-			// Owner IDs are deduped — actor-1 appears twice in the result rows.
+			// Driver IDs are deduped — actor-1 appears twice in the result rows.
 			const idsParam = new URL(actorCall as string).searchParams.get('ids') ?? ''
 			const ids = idsParam.split(',').filter(Boolean)
 			expect(ids.sort()).toEqual(['actor-1', 'actor-2'])
 
 			expect(result.structuredContent.heroCard.kind).toBe('list')
-			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
-			expect(owners).toEqual([
-				{ id: 'actor-1', name: 'Alice' },
-				{ id: 'actor-2', name: 'Bob' },
-				{ id: 'actor-1', name: 'Alice' },
+			const drivers = result.structuredContent.heroCard.objects?.map((o) => o.driver)
+			expect(drivers).toEqual([
+				{ id: 'actor-1', name: 'Alice', type: null },
+				{ id: 'actor-2', name: 'Bob', type: null },
+				{ id: 'actor-1', name: 'Alice', type: null },
 			])
 		})
 
@@ -2232,8 +2233,8 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
-								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', driver: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', driver: 'actor-2' },
 							]),
 					} as Response
 				}
@@ -2249,13 +2250,15 @@ describe('tool handlers', () => {
 			const handler = getHandler('search_objects')
 			const result = (await handler({ q: 'bet' })) as {
 				structuredContent: {
-					heroCard: { objects?: Array<{ owner?: { id: string; name: string | null } }> }
+					heroCard: {
+						objects?: Array<{ driver?: { id: string; name: string | null; type: string | null } }>
+					}
 				}
 			}
-			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
-			expect(owners).toEqual([
-				{ id: 'actor-1', name: 'Alice' },
-				{ id: 'actor-2', name: null },
+			const drivers = result.structuredContent.heroCard.objects?.map((o) => o.driver)
+			expect(drivers).toEqual([
+				{ id: 'actor-1', name: 'Alice', type: null },
+				{ id: 'actor-2', name: null, type: null },
 			])
 		})
 
@@ -2543,7 +2546,7 @@ describe('tool handlers', () => {
 						objects?: Array<{
 							type: string
 							status: string | null
-							owner: { name: string | null } | null
+							driver: { name: string | null } | null
 						}>
 					}
 				}
@@ -2554,7 +2557,7 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.totalCount).toBe(2)
 			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('trigger')
 			expect(result.structuredContent.heroCard.objects?.[0]?.status).toBe('enabled')
-			expect(result.structuredContent.heroCard.objects?.[0]?.owner?.name).toBe('Sindre')
+			expect(result.structuredContent.heroCard.objects?.[0]?.driver?.name).toBe('Sindre')
 			expect(result.structuredContent.heroCard.objects?.[1]?.status).toBe('disabled')
 		})
 
@@ -2605,7 +2608,7 @@ describe('tool handlers', () => {
 									type: 'organization',
 									title: 'Acme Co',
 									status: 'qualifying',
-									owner: 'actor-1',
+									driver: 'actor-1',
 									updatedAt,
 								},
 							}),
@@ -2626,7 +2629,7 @@ describe('tool handlers', () => {
 				structuredContent: {
 					heroCard: {
 						kind: string
-						object?: { type: string; contextLine: string; owner?: unknown }
+						object?: { type: string; contextLine: string; driver?: unknown }
 					}
 				}
 			}
@@ -2653,7 +2656,7 @@ describe('tool handlers', () => {
 									type: 'person',
 									title: 'Jane Doe',
 									status: 'engaged',
-									owner: null,
+									driver: null,
 									updatedAt,
 								},
 							}),
