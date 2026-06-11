@@ -22,7 +22,14 @@ describe('workspaceSettingsSchema', () => {
 			'failed',
 			'paused',
 		])
-		expect(result.statuses.task).toEqual(['todo', 'in_progress', 'in_review', 'testing', 'done', 'blocked'])
+		expect(result.statuses.task).toEqual([
+			'todo',
+			'in_progress',
+			'in_review',
+			'testing',
+			'done',
+			'blocked',
+		])
 		expect(result.field_definitions).toEqual({})
 		expect(result.relationship_types).toEqual([
 			'informs',
