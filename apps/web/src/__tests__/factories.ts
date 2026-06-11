@@ -92,6 +92,7 @@ export function buildActorListItem(overrides: Partial<ActorListItem> = {}): Acto
 		email: 'test@example.com',
 		description: null,
 		isSystem: false,
+		agentState: 'idle',
 		...overrides,
 	}
 }

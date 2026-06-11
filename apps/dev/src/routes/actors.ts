@@ -21,6 +21,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	type AgentState,
 	PLATFORM_MCP_PRESET,
 	SINDRE_DEFAULT,
 	createActorSchema,
@@ -425,7 +426,7 @@ app.openapi(listActorsRoute, (async (c) => {
 		const rows = await baseQuery()
 			.where(crossWhere)
 			.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
-		const grouped = groupActorMemberships(rows)
+		const grouped = groupActorMemberships(rows as ActorMembershipRow[])
 		c.header('X-Total-Count', String(grouped.length))
 		return c.json(serializeArray(grouped) as z.infer<typeof actorListItemSchema>[])
 	}
@@ -464,7 +465,9 @@ app.openapi(listActorsRoute, (async (c) => {
 
 	c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
 	return c.json(
-		serializeArray(groupActorMemberships(rows)) as z.infer<typeof actorListItemSchema>[],
+		serializeArray(groupActorMemberships(rows as ActorMembershipRow[])) as z.infer<
+			typeof actorListItemSchema
+		>[],
 	)
 }) as RouteHandler<typeof listActorsRoute, Env>)
 
@@ -475,7 +478,7 @@ interface ActorMembershipRow {
 	email: string | null
 	description: string | null
 	isSystem: boolean
-	agentState: string
+	agentState: AgentState
 	workspaceId: string
 	workspaceName: string
 	role: string
@@ -488,7 +491,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 	email: string | null
 	description: string | null
 	isSystem: boolean
-	agentState: string
+	agentState: AgentState
 	workspaces: { id: string; name: string; role: string }[]
 }> {
 	const byActor = new Map<
@@ -500,7 +503,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 			email: string | null
 			description: string | null
 			isSystem: boolean
-			agentState: string
+			agentState: AgentState
 			workspaces: { id: string; name: string; role: string }[]
 		}
 	>()
@@ -1011,6 +1014,10 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
+	}
+
 	if (!(await isWorkspaceMember(db, id, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
@@ -1129,6 +1136,10 @@ app.openapi(runAgentRoute, (async (c) => {
 	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
 	if (!existing) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
 	}
 
 	if (!(await isWorkspaceMember(db, id, workspaceId))) {
