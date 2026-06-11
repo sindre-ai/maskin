@@ -81,6 +81,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const [editingTitle, setEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')
 	const titleInputRef = useRef<HTMLInputElement | null>(null)
+	const [pendingAutoMessage, setPendingAutoMessage] = useState<string | null>(null)
 
 	const dms = conversations.filter((c) => c.type === 'dm')
 	const rooms = conversations.filter((c) => c.type === 'room')
@@ -111,6 +112,23 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 			{ onSuccess: (c) => setActiveConversation(c) },
 		)
 	}, [createConversation])
+
+	const handleNewConversationAndSend = useCallback(
+		async (content: string) => {
+			const actor = getStoredActor()
+			if (!actor) {
+				toast.error('Not signed in — please reload and try again')
+				throw new Error('Not signed in')
+			}
+			const c = await createConversation.mutateAsync({
+				type: 'dm',
+				participant_actor_ids: [actor.id],
+			})
+			setActiveConversation(c)
+			setPendingAutoMessage(content)
+		},
+		[createConversation],
+	)
 
 	const handleNewChat = useCallback(() => {
 		chatRef.current?.newChat()
@@ -352,19 +370,32 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 							surface="sheet"
 							selection={selection}
 							onDispatchSelection={dispatch}
-							autoSendMessage={pendingMessage}
-							onAutoSendConsumed={clearPendingMessage}
+							autoSendMessage={pendingAutoMessage ?? pendingMessage}
+							onAutoSendConsumed={() => {
+								setPendingAutoMessage(null)
+								clearPendingMessage()
+							}}
 							onEventsChange={setEvents}
 						/>
 					) : (
-						<ConversationList
-							dms={dms}
-							rooms={rooms}
-							isEmpty={isEmpty}
-							onSelect={handleSelectConversation}
-							onNew={handleNewConversation}
-							isCreating={createConversation.isPending}
-						/>
+						<div className="flex h-full flex-col gap-2">
+							<ConversationList
+								dms={dms}
+								rooms={rooms}
+								isEmpty={isEmpty}
+								onSelect={handleSelectConversation}
+							/>
+							<div className="shrink-0">
+								<SindreChat
+									workspaceId={workspaceId}
+									sindreActorId={sindreActorId}
+									surface="pulse-bar"
+									selection={selection}
+									onDispatchSelection={dispatch}
+									onSubmitOverride={handleNewConversationAndSend}
+								/>
+							</div>
+						</div>
 					)}
 				</SidebarContent>
 			</Sidebar>
@@ -377,83 +408,61 @@ interface ConversationListProps {
 	rooms: ConversationResponse[]
 	isEmpty: boolean
 	onSelect: (c: ConversationResponse) => void
-	onNew: () => void
-	isCreating: boolean
 }
 
-function ConversationList({
-	dms,
-	rooms,
-	isEmpty,
-	onSelect,
-	onNew,
-	isCreating,
-}: ConversationListProps) {
+function ConversationList({ dms, rooms, isEmpty, onSelect }: ConversationListProps) {
 	return (
-		<div className="flex h-full flex-col gap-0">
-			<div className="min-h-0 flex-1 overflow-y-auto">
-				{isEmpty ? (
-					<div className="flex h-full items-center justify-center">
-						<EmptyState title="No conversations yet" description="Start your first conversation" />
-					</div>
-				) : (
-					<div className="pb-1">
-						{dms.length > 0 && (
-							<>
-								<SectionLabel>Recent</SectionLabel>
-								{dms.map((c) => (
-									<ConversationRow
-										key={c.id}
-										type="dm"
-										title={c.title}
-										preview={c.lastMessagePreview}
-										timestamp={c.lastActivityAt ?? c.createdAt}
-										unread={c.unreadCount > 0}
-										participants={c.participants.map((p) => ({
-											name: p.name,
-											type: p.type,
-											online: p.isOnline,
-										}))}
-										onClick={() => onSelect(c)}
-									/>
-								))}
-							</>
-						)}
-						{rooms.length > 0 && (
-							<>
-								<SectionLabel>Rooms</SectionLabel>
-								{rooms.map((c) => (
-									<ConversationRow
-										key={c.id}
-										type="room"
-										title={c.title}
-										preview={c.lastMessagePreview}
-										timestamp={c.lastActivityAt ?? c.createdAt}
-										unread={c.unreadCount > 0}
-										participants={c.participants.map((p) => ({
-											name: p.name,
-											type: p.type,
-											online: p.isOnline,
-										}))}
-										onClick={() => onSelect(c)}
-									/>
-								))}
-							</>
-						)}
-					</div>
-				)}
-			</div>
-			<div className="shrink-0 border-t pt-2">
-				<Button
-					variant="outline"
-					className="w-full justify-start gap-2 border-dashed text-muted-foreground hover:text-foreground"
-					onClick={onNew}
-					disabled={isCreating}
-				>
-					<Plus size={13} />
-					New conversation
-				</Button>
-			</div>
+		<div className="min-h-0 flex-1 overflow-y-auto">
+			{isEmpty ? (
+				<div className="flex h-full items-center justify-center">
+					<EmptyState title="No conversations yet" description="Send a message to start one" />
+				</div>
+			) : (
+				<div className="pb-1">
+					{dms.length > 0 && (
+						<>
+							<SectionLabel>Recent</SectionLabel>
+							{dms.map((c) => (
+								<ConversationRow
+									key={c.id}
+									type="dm"
+									title={c.title}
+									preview={c.lastMessagePreview}
+									timestamp={c.lastActivityAt ?? c.createdAt}
+									unread={c.unreadCount > 0}
+									participants={c.participants.map((p) => ({
+										name: p.name,
+										type: p.type,
+										online: p.isOnline,
+									}))}
+									onClick={() => onSelect(c)}
+								/>
+							))}
+						</>
+					)}
+					{rooms.length > 0 && (
+						<>
+							<SectionLabel>Rooms</SectionLabel>
+							{rooms.map((c) => (
+								<ConversationRow
+									key={c.id}
+									type="room"
+									title={c.title}
+									preview={c.lastMessagePreview}
+									timestamp={c.lastActivityAt ?? c.createdAt}
+									unread={c.unreadCount > 0}
+									participants={c.participants.map((p) => ({
+										name: p.name,
+										type: p.type,
+										online: p.isOnline,
+									}))}
+									onClick={() => onSelect(c)}
+								/>
+							))}
+						</>
+					)}
+				</div>
+			)}
 		</div>
 	)
 }
