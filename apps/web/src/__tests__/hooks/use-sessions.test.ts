@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -14,11 +14,11 @@ vi.mock('@/lib/api', () => ({
 
 import {
 	useActiveSessionsForActor,
-	useActorSessions,
+	useActorSessionsInfinite,
 	useCreateSession,
+	useMentionSessionsForObject,
 	useSession,
 	useSessionErrorLog,
-	useSessionLatestLog,
 	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
@@ -44,6 +44,7 @@ function buildSession(overrides: Partial<SessionResponse> & { id: string }): Ses
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
+		currentActivity: null,
 		...overrides,
 	}
 }
@@ -94,44 +95,6 @@ describe('useSession', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Not found')
-	})
-})
-
-describe('useSessionLatestLog', () => {
-	it('returns the last log entry', async () => {
-		const logs = [buildLog({ id: 1, content: 'first' }), buildLog({ id: 2, content: 'latest' })]
-		vi.mocked(api.sessions.logs).mockResolvedValue(logs)
-
-		const { result } = renderHook(() => useSessionLatestLog('session-1', workspaceId), {
-			wrapper: TestWrapper,
-		})
-
-		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data?.content).toBe('latest')
-		expect(api.sessions.logs).toHaveBeenCalledWith('session-1', workspaceId, {
-			limit: '5',
-			stream: 'stdout',
-		})
-	})
-
-	it('returns null when no logs', async () => {
-		vi.mocked(api.sessions.logs).mockResolvedValue([])
-
-		const { result } = renderHook(() => useSessionLatestLog('session-1', workspaceId), {
-			wrapper: TestWrapper,
-		})
-
-		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data).toBeNull()
-	})
-
-	it('is not enabled when sessionId is null', async () => {
-		const { result } = renderHook(() => useSessionLatestLog(null, workspaceId), {
-			wrapper: TestWrapper,
-		})
-
-		expect(result.current.isFetching).toBe(false)
-		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})
 })
 
@@ -229,6 +192,33 @@ describe('useActiveSessionsForActor', () => {
 	})
 })
 
+describe('useMentionSessionsForObject', () => {
+	it('fetches sessions filtered by mention_object_id', async () => {
+		const sessions = [buildSession({ id: 'session-mention-1' })]
+		vi.mocked(api.sessions.list).mockResolvedValue(sessions)
+
+		const { result } = renderHook(() => useMentionSessionsForObject(workspaceId, 'object-1'), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toEqual(sessions)
+		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			mention_object_id: 'object-1',
+			limit: '100',
+		})
+	})
+
+	it('is not enabled when objectId is null', async () => {
+		const { result } = renderHook(() => useMentionSessionsForObject(workspaceId, null), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.isFetching).toBe(false)
+		expect(api.sessions.list).not.toHaveBeenCalled()
+	})
+})
+
 describe('useSessionErrorLog', () => {
 	it('returns joined stderr content', async () => {
 		const logs = [
@@ -279,25 +269,71 @@ describe('useSessionErrorLog', () => {
 	})
 })
 
-describe('useActorSessions', () => {
-	it('fetches sessions for actor', async () => {
-		const mockSessions = [buildSession({ id: 'session-1', actorId: 'actor-1' })]
+describe('useActorSessionsInfinite', () => {
+	it('fetches the first page with offset 0 and PAGE_SIZE limit', async () => {
+		const mockSessions = Array.from({ length: 5 }, (_, i) =>
+			buildSession({ id: `session-${i}`, actorId: 'actor-1' }),
+		)
 		vi.mocked(api.sessions.list).mockResolvedValue(mockSessions)
 
-		const { result } = renderHook(() => useActorSessions('actor-1', workspaceId), {
+		const { result } = renderHook(() => useActorSessionsInfinite('actor-1', workspaceId), {
 			wrapper: TestWrapper,
 		})
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data).toEqual(mockSessions)
+		expect(result.current.data?.pages.flat()).toEqual(mockSessions)
 		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
 			actor_id: 'actor-1',
-			limit: '20',
+			limit: '5',
+			offset: '0',
+		})
+		expect(result.current.hasNextPage).toBe(true)
+	})
+
+	it('appends the next page when fetchNextPage is called', async () => {
+		const page1 = Array.from({ length: 5 }, (_, i) =>
+			buildSession({ id: `s1-${i}`, actorId: 'actor-1' }),
+		)
+		const page2 = Array.from({ length: 5 }, (_, i) =>
+			buildSession({ id: `s2-${i}`, actorId: 'actor-1' }),
+		)
+		vi.mocked(api.sessions.list).mockImplementation(async (_ws, params) =>
+			params?.offset === '0' ? page1 : page2,
+		)
+
+		const { result } = renderHook(() => useActorSessionsInfinite('actor-1', workspaceId), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data?.pages).toHaveLength(1)
+
+		await act(async () => {
+			await result.current.fetchNextPage()
+		})
+
+		await waitFor(() => expect(result.current.data?.pages.flat()).toHaveLength(10))
+		expect(api.sessions.list).toHaveBeenLastCalledWith(workspaceId, {
+			actor_id: 'actor-1',
+			limit: '5',
+			offset: '5',
 		})
 	})
 
+	it('reports no next page once a short page is returned', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'only', actorId: 'actor-1' }),
+		])
+
+		const { result } = renderHook(() => useActorSessionsInfinite('actor-1', workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.hasNextPage).toBe(false)
+	})
+
 	it('is not enabled when actorId is empty', async () => {
-		const { result } = renderHook(() => useActorSessions('', workspaceId), {
+		const { result } = renderHook(() => useActorSessionsInfinite('', workspaceId), {
 			wrapper: TestWrapper,
 		})
 
@@ -308,7 +344,7 @@ describe('useActorSessions', () => {
 	it('exposes error when API rejects', async () => {
 		vi.mocked(api.sessions.list).mockRejectedValue(new Error('Server error'))
 
-		const { result } = renderHook(() => useActorSessions('actor-1', workspaceId), {
+		const { result } = renderHook(() => useActorSessionsInfinite('actor-1', workspaceId), {
 			wrapper: TestWrapper,
 		})
 

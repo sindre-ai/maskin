@@ -24,7 +24,11 @@ vi.mock('@/lib/sindre-context', () => ({
 }))
 
 vi.mock('@/components/ui/sidebar', () => ({
-	SidebarTrigger: () => <button type="button">Toggle sidebar</button>,
+	SidebarTrigger: ({ className }: { className?: string }) => (
+		<button type="button" className={className}>
+			Toggle sidebar
+		</button>
+	),
 }))
 
 import { usePageHeader } from '@/lib/page-header-context'
@@ -71,5 +75,11 @@ describe('Header', () => {
 
 		render(<Header />)
 		expect(screen.getByRole('button', { name: 'Custom Action' })).toBeInTheDocument()
+	})
+
+	it('only shows the hamburger SidebarTrigger below md', () => {
+		render(<Header />)
+		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
+		expect(trigger.className).toMatch(/\bmd:hidden\b/)
 	})
 })

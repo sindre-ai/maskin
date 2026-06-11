@@ -1,27 +1,16 @@
+import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { CreateSessionInput } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+
+const ACTOR_SESSIONS_PAGE_SIZE = 5
 
 export function useSession(id: string | null, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.detail(id ?? ''),
 		queryFn: () => api.sessions.get(id as string, workspaceId),
 		enabled: !!id,
-	})
-}
-
-export function useSessionLatestLog(sessionId: string | null, workspaceId: string) {
-	return useQuery({
-		queryKey: queryKeys.sessions.logs(sessionId ?? ''),
-		queryFn: async () => {
-			const logs = await api.sessions.logs(sessionId as string, workspaceId, {
-				limit: '5',
-				stream: 'stdout',
-			})
-			return logs.length > 0 ? logs[logs.length - 1] : null
-		},
-		enabled: !!sessionId,
 	})
 }
 
@@ -37,12 +26,36 @@ export function useCreateSession(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateSessionInput) => api.sessions.create(workspaceId, data),
-		onSuccess: (_result, data) => {
+		onSuccess: (result, data) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.sessions.byActor(workspaceId, data.actor_id),
 			})
+			trackAgentSessionStarted({
+				entity_id: result.id,
+				entity_type: 'session',
+			})
 		},
+	})
+}
+
+export function useStopSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (sessionId: string) => api.sessions.stop(sessionId, workspaceId),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
+export function useMentionSessionsForObject(workspaceId: string, objectId: string | null) {
+	return useQuery({
+		queryKey: queryKeys.sessions.byMentionObject(workspaceId, objectId ?? ''),
+		queryFn: () =>
+			api.sessions.list(workspaceId, { mention_object_id: objectId as string, limit: '100' }),
+		enabled: !!workspaceId && !!objectId,
 	})
 }
 
@@ -72,18 +85,32 @@ export function useSessionErrorLog(
 	})
 }
 
-export function useActorSessions(actorId: string, workspaceId: string) {
-	return useQuery({
-		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),
-		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '20' }),
+export function useActorSessionsInfinite(actorId: string, workspaceId: string) {
+	return useInfiniteQuery({
+		queryKey: queryKeys.sessions.byActorAllInfinite(workspaceId, actorId),
+		queryFn: ({ pageParam }) =>
+			api.sessions.list(workspaceId, {
+				actor_id: actorId,
+				limit: String(ACTOR_SESSIONS_PAGE_SIZE),
+				offset: String(pageParam),
+			}),
+		getNextPageParam: (lastPage, allPages) =>
+			lastPage.length < ACTOR_SESSIONS_PAGE_SIZE ? undefined : allPages.flat().length,
+		initialPageParam: 0,
 		enabled: !!actorId && !!workspaceId,
 	})
 }
 
-export function useSessionLogs(sessionId: string | null, workspaceId: string, enabled = true) {
+export function useSessionLogs(
+	sessionId: string | null,
+	workspaceId: string,
+	enabled = true,
+	{ live = false }: { live?: boolean } = {},
+) {
 	return useQuery({
 		queryKey: [...queryKeys.sessions.logs(sessionId ?? ''), 'all'],
 		queryFn: () => api.sessions.logs(sessionId as string, workspaceId, { limit: '500' }),
 		enabled: !!sessionId && enabled,
+		refetchInterval: live ? 3000 : false,
 	})
 }

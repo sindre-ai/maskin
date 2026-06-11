@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, objects, relationships, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -12,8 +12,9 @@ import {
 	relationshipResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
-import { serialize, serializeArray } from '../lib/serialize'
+import { serialize } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
+import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -188,7 +189,7 @@ app.openapi(createGraphRoute, async (c) => {
 						content: node.content,
 						status: node.status,
 						metadata: node.metadata,
-						owner: node.owner,
+						driver: node.driver,
 						createdBy: actorId,
 					})
 					.returning()
@@ -254,12 +255,50 @@ app.openapi(createGraphRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create graph'), 500)
 	}
 
+	// Auto-subscribe the creator to every node so they're notified about future
+	// comments. Mirrors POST /api/objects; runs outside the transaction for the
+	// same reason — a subscription failure must not roll back graph creation.
+	for (const node of result.nodes) {
+		await autoSubscribe(db, {
+			workspaceId,
+			actorId,
+			entityType: 'object',
+			entityId: node.id,
+			source: 'author',
+		})
+	}
+
+	// Build a title lookup for every object referenced by an edge. Newly created
+	// nodes already have titles in-hand; for edges that point at pre-existing
+	// objects, fetch their titles in a single batch so the response can include
+	// sourceTitle/targetTitle on every edge.
+	const titleById = new Map<string, string | null>()
+	for (const node of result.nodes) {
+		titleById.set(node.id, node.title ?? null)
+	}
+	const externalIds = new Set<string>()
+	for (const edge of result.edges) {
+		if (!titleById.has(edge.sourceId)) externalIds.add(edge.sourceId)
+		if (!titleById.has(edge.targetId)) externalIds.add(edge.targetId)
+	}
+	if (externalIds.size > 0) {
+		const externalRows = await db
+			.select({ id: objects.id, title: objects.title })
+			.from(objects)
+			.where(inArray(objects.id, [...externalIds]))
+		for (const row of externalRows) titleById.set(row.id, row.title ?? null)
+	}
+
 	const response = {
 		nodes: result.nodes.map((n) => ({
 			...serialize(n),
 			$id: n.$id,
 		})),
-		edges: serializeArray(result.edges),
+		edges: result.edges.map((e) => ({
+			...serialize(e),
+			sourceTitle: titleById.get(e.sourceId) ?? null,
+			targetTitle: titleById.get(e.targetId) ?? null,
+		})),
 	}
 
 	return c.json(response as z.infer<typeof graphResponseSchema>, 201)

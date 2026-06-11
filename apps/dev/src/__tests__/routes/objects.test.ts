@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto'
 import {
 	buildCreateObjectBody,
+	buildEvent,
+	buildFile,
 	buildObject,
 	buildRelationship,
 	buildUpdateObjectBody,
@@ -112,14 +115,16 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
-		it('returns 400 for invalid sort field', async () => {
+		it('returns 200 (fallback sort) for invalid sort field with special chars', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
 			const res = await app.request(
 				jsonGet('/api/objects?sort=;DROP TABLE', { 'x-workspace-id': wsId }),
 			)
 
-			expect(res.status).toBe(400)
+			// Unknown/unsafe sort fields fall back to createdAt rather than returning 400,
+			// so objects are always shown even when a custom field name is unsortable.
+			expect(res.status).toBe(200)
 		})
 
 		it('returns 200 for metadata sort field', async () => {
@@ -134,22 +139,22 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
-		it('returns 400 for unknown sort field', async () => {
+		it('returns 200 (fallback sort) for unknown sort field', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
 			const res = await app.request(jsonGet('/api/objects?sort=foobar', { 'x-workspace-id': wsId }))
 
-			expect(res.status).toBe(400)
+			expect(res.status).toBe(200)
 		})
 
-		it('returns 400 for metadata sort field with dots', async () => {
+		it('returns 200 (fallback sort) for metadata sort field with dots', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
 			const res = await app.request(
 				jsonGet('/api/objects?sort=metadata.a.b', { 'x-workspace-id': wsId }),
 			)
 
-			expect(res.status).toBe(400)
+			expect(res.status).toBe(200)
 		})
 
 		it('returns 400 for invalid order value', async () => {
@@ -176,12 +181,61 @@ describe('Objects Routes', () => {
 			expect(body.id).toBe(obj.id)
 		})
 
+		it('includes is_subscribed / unread_count / subscriber_count fields', async () => {
+			const obj = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			// Fields are always present, even when storage is empty (defaults zeroed).
+			expect(body).toHaveProperty('is_subscribed')
+			expect(body).toHaveProperty('unread_count')
+			expect(body).toHaveProperty('subscriber_count')
+			expect(typeof body.unread_count).toBe('number')
+			expect(typeof body.subscriber_count).toBe('number')
+		})
+
 		it('returns 404 when object not found', async () => {
 			const { app } = createTestApp(objectsRoutes, '/api/objects')
 
 			const res = await app.request(jsonGet('/api/objects/00000000-0000-0000-0000-000000000099'))
 
 			expect(res.status).toBe(404)
+		})
+
+		it('returns null activeSessionCurrentActivity when object has no active session', async () => {
+			const obj = buildObject()
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.activeSessionCurrentActivity).toBeNull()
+		})
+
+		it('embeds activeSessionCurrentActivity when session is active', async () => {
+			const sessionId = randomUUID()
+			const obj = buildObject({ activeSessionId: sessionId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[obj], // object lookup
+				[obj], // isWorkspaceMember
+				[], // isSubscribed
+				[], // getUnreadCount
+				[], // getSubscriberCount
+				[{ currentActivity: 'Searching codebase' }], // session currentActivity query
+			]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.activeSessionCurrentActivity).toBe('Searching codebase')
 		})
 	})
 
@@ -282,17 +336,60 @@ describe('Objects Routes', () => {
 		})
 	})
 
+	describe('GET /api/objects/board', () => {
+		it('returns column totals and paged objects', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
+			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [
+				[ws],
+				[
+					{ value: 'todo', total: 3 },
+					{ value: 'in_progress', total: 1 },
+				],
+				[obj1, obj2],
+				[],
+				[],
+				[],
+			]
+
+			const res = await app.request(
+				jsonGet('/api/objects/board?type=task&limit=2', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const todo = body.columns.find((column: { value: string }) => column.value === 'todo')
+			expect(todo.total).toBe(3)
+			expect(todo.objects).toHaveLength(2)
+		})
+	})
+
 	describe('GET /api/objects/:id/graph', () => {
-		it('returns 200 with object, relationships, and connected objects', async () => {
-			const obj = buildObject({ workspaceId: wsId })
+		it('returns 200 with object, relationships, connected objects, and events', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
 			const connectedObj = buildObject({ workspaceId: wsId })
 			const rel = buildRelationship({
 				sourceId: obj.id,
 				targetId: connectedObj.id,
 			})
+			const comment = buildEvent({
+				workspaceId: wsId,
+				entityType: 'object',
+				entityId: obj.id,
+				action: 'commented',
+				data: { content: 'looks good' },
+			})
+			const lifecycleEvent = buildEvent({
+				workspaceId: wsId,
+				entityType: obj.type,
+				entityId: obj.id,
+				action: 'created',
+			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: the target object, second: relationships, third: connected objects
-			mockResults.selectQueue = [[obj], [rel], [connectedObj]]
+			// First select: target object, second: relationships, third: connected objects, fourth: events
+			mockResults.selectQueue = [[obj], [rel], [connectedObj], [comment, lifecycleEvent]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -303,6 +400,38 @@ describe('Objects Routes', () => {
 			expect(body.object.id).toBe(obj.id)
 			expect(body.relationships).toHaveLength(1)
 			expect(body.connected_objects).toHaveLength(1)
+			expect(body.events).toHaveLength(2)
+			expect(body.events[0].action).toBe('commented')
+			// Server-side formatted description matches what the UI renders
+			expect(body.events[1].description).toBe('proposed bet')
+		})
+
+		it('resolves actor names for driver-change events in description', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const alice = { id: '00000000-0000-0000-0000-0000000000a1', name: 'Alice' }
+			const bob = { id: '00000000-0000-0000-0000-0000000000b2', name: 'Bob' }
+			const driverChange = buildEvent({
+				workspaceId: wsId,
+				entityType: 'bet',
+				entityId: obj.id,
+				action: 'updated',
+				data: {
+					previous: { driver: alice.id },
+					updated: { driver: bob.id },
+				},
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1: object, 2: relationships (empty → skips connected_objects fetch), 3: events, 4: actors
+			mockResults.selectQueue = [[obj], [], [driverChange], [alice, bob]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.events).toHaveLength(1)
+			expect(body.events[0].description).toBe('changed driver from Alice to Bob')
 		})
 
 		it('returns 404 when object not found', async () => {
@@ -315,6 +444,75 @@ describe('Objects Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('inlines attached file metadata (from relationships) in the files field', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const file = buildFile({ workspaceId: wsId })
+			const rel = buildRelationship({
+				sourceType: 'bet',
+				sourceId: obj.id,
+				targetType: 'file',
+				targetId: file.id,
+				type: 'attached',
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Queue order matches handler call order: 1) object, 2) relationships
+			// (file-typed endpoint → skips connected_objects), 3) events, 4-6) the
+			// three subscription queries fired in parallel (isSubscribed,
+			// getUnreadCount, getSubscriberCount), 7) files.
+			mockResults.selectQueue = [[obj], [rel], [], [], [], [], [file]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(file.id)
+			expect(body.files[0].name).toBe(file.name)
+			expect(body.files[0].mimeType).toBe('text/markdown')
+			expect(body.files[0].url).toBe(`http://localhost:5173/${wsId}/files/${file.id}`)
+		})
+
+		it('inlines comment-attachment file metadata in the files field', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'bet' })
+			const file = buildFile({ workspaceId: wsId })
+			const comment = buildEvent({
+				workspaceId: wsId,
+				entityType: 'object',
+				entityId: obj.id,
+				action: 'commented',
+				data: { content: 'see file', attachmentFileIds: [file.id] },
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) object, 2) relationships (empty → skips connected_objects), 3) events,
+			// 4-6) subscription queries, 7) files.
+			mockResults.selectQueue = [[obj], [], [comment], [], [], [], [file]]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.files).toHaveLength(1)
+			expect(body.files[0].id).toBe(file.id)
+		})
+
+		it('returns empty files array when nothing is attached or referenced', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[obj], [], []]
+
+			const res = await app.request(
+				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.files).toEqual([])
 		})
 	})
 
@@ -381,11 +579,11 @@ describe('Objects Routes', () => {
 	})
 
 	describe('GET /api/objects/:id/graph - no relationships', () => {
-		it('returns empty arrays when no relationships exist', async () => {
+		it('returns empty arrays when no relationships or events exist', async () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// First select: the object, second: relationships (empty)
-			mockResults.selectQueue = [[obj], []]
+			// First select: the object, second: relationships (empty), third: events (empty)
+			mockResults.selectQueue = [[obj], [], []]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -396,6 +594,7 @@ describe('Objects Routes', () => {
 			expect(body.object.id).toBe(obj.id)
 			expect(body.relationships).toHaveLength(0)
 			expect(body.connected_objects).toHaveLength(0)
+			expect(body.events).toHaveLength(0)
 		})
 	})
 
@@ -429,6 +628,203 @@ describe('Objects Routes', () => {
 			mockResults.selectQueue = [[existing], []]
 
 			const res = await app.request(jsonDelete(`/api/objects/${existing.id}`))
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('POST /api/objects/migrate-type', () => {
+		it('returns 200 and migrates rows to the new type', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
+			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'done' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) workspace lookup, 2) rows of fromType
+			mockResults.selectQueue = [[ws], [obj1, obj2]]
+			// 2 update calls + 2 event inserts inside the transaction
+			mockResults.update = [{}]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toMatchObject({
+				mode: 'migrate',
+				fromType: 'task',
+				toType: 'bet',
+				count: 2,
+			})
+		})
+
+		it('returns 200 and 0 count when fromType has no rows', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.count).toBe(0)
+		})
+
+		it('returns 400 for invalid toType', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'nonexistent', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when mode=migrate omits toType', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 400 when fromType equals toType', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'task', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 200 and deletes rows in delete mode', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const obj1 = buildObject({ workspaceId: wsId, type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// 1) workspace lookup, 2) rows to delete (id list)
+			mockResults.selectQueue = [[ws], [{ id: obj1.id }]]
+			mockResults.delete = [{}]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', mode: 'delete' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toMatchObject({ mode: 'delete', fromType: 'task', count: 1 })
+		})
+
+		it('applies statusMap and falls back when target lacks the source status', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			// 'task' statuses → ['todo', 'in_progress', 'done', 'blocked']
+			// 'bet'  statuses → ['signal', 'proposed', 'active', ...] — no overlap
+			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
+			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'done' })
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws], [obj1, obj2]]
+			mockResults.update = [{}]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{
+						fromType: 'task',
+						toType: 'bet',
+						mode: 'migrate',
+						// 'todo' is mapped explicitly; 'done' has no entry → uses fallback
+						statusMap: { todo: 'active' },
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			// First update: 'todo' → 'active' via statusMap
+			expect(calls.updates[0]).toMatchObject({ type: 'bet', status: 'active' })
+			// Second update: 'done' isn't a valid bet status and isn't in statusMap → first bet status
+			expect(calls.updates[1]).toMatchObject({ type: 'bet', status: 'signal' })
+		})
+
+		it('returns 400 when target type has no statuses configured', async () => {
+			const ws = buildWorkspace({
+				id: wsId,
+				settings: {
+					enabled_modules: ['work'],
+					display_names: { bet: 'Bet', task: 'Task' },
+					statuses: {
+						task: ['todo', 'done'],
+						bet: [],
+					},
+				},
+			})
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 when workspace not found', async () => {
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
 			expect(res.status).toBe(404)
 		})
 	})

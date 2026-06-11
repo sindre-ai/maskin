@@ -20,8 +20,8 @@ vi.mock('@/components/activity/object-activity', () => ({
 	ObjectActivity: () => <div data-testid="object-activity" />,
 }))
 
-vi.mock('@/components/objects/object-action-banner', () => ({
-	ObjectActionBanner: () => null,
+vi.mock('@/components/shared/subscribe-toggle', () => ({
+	SubscribeToggle: () => <div data-testid="subscribe-toggle" />,
 }))
 
 vi.mock('@/components/objects/metadata-properties', () => ({
@@ -32,13 +32,17 @@ vi.mock('@/components/objects/linked-objects', () => ({
 	LinkedObjects: () => <div data-testid="linked-objects" />,
 }))
 
+vi.mock('@/components/objects/object-files', () => ({
+	ObjectFiles: () => <div data-testid="object-files" />,
+}))
+
 const baseProps = {
 	workspaceId: 'ws-1',
 	statuses: ['proposed', 'active', 'done'],
 	onUpdateTitle: vi.fn(),
 	onUpdateContent: vi.fn(),
 	onUpdateStatus: vi.fn(),
-	onUpdateOwner: vi.fn(),
+	onUpdateDriver: vi.fn(),
 	onDelete: vi.fn(),
 }
 
@@ -122,39 +126,39 @@ describe('ObjectDocumentView', () => {
 		]
 
 		it('does not render owner select when members are not provided', () => {
-			const object = buildObjectResponse({ owner: null })
+			const object = buildObjectResponse({ driver: null })
 			render(<ObjectDocumentView {...baseProps} object={object} />)
 			expect(screen.queryByText('Unassigned')).not.toBeInTheDocument()
 		})
 
 		it('shows "Unassigned" when owner is null', () => {
-			const object = buildObjectResponse({ owner: null })
+			const object = buildObjectResponse({ driver: null })
 			render(<ObjectDocumentView {...baseProps} object={object} members={members} />)
-			expect(screen.getByText('Unassigned')).toBeInTheDocument()
+			expect(screen.getByText('Driver: Unassigned')).toBeInTheDocument()
 		})
 
 		it('shows owner name when owner is a current member', () => {
-			const object = buildObjectResponse({ owner: 'actor-alice' })
+			const object = buildObjectResponse({ driver: 'actor-alice' })
 			render(<ObjectDocumentView {...baseProps} object={object} members={members} />)
 			expect(screen.getByText('Alice')).toBeInTheDocument()
 		})
 
 		it('shows "Unknown" fallback when owner is set but not in members', () => {
-			const object = buildObjectResponse({ owner: 'actor-removed-12345678-abcd' })
+			const object = buildObjectResponse({ driver: 'actor-removed-12345678-abcd' })
 			render(<ObjectDocumentView {...baseProps} object={object} members={members} />)
 			expect(screen.getByText(/Unknown \(actor-re\)/)).toBeInTheDocument()
 		})
 
-		it('calls onUpdateOwner with actor id when selecting a member', async () => {
+		it('calls onUpdateDriver with actor id when selecting a member', async () => {
 			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
-			const onUpdateOwner = vi.fn()
-			const object = buildObjectResponse({ owner: null })
+			const onUpdateDriver = vi.fn()
+			const object = buildObjectResponse({ driver: null })
 			render(
 				<ObjectDocumentView
 					{...baseProps}
 					object={object}
 					members={members}
-					onUpdateOwner={onUpdateOwner}
+					onUpdateDriver={onUpdateDriver}
 				/>,
 			)
 
@@ -162,19 +166,19 @@ describe('ObjectDocumentView', () => {
 			await user.click(triggers[triggers.length - 1])
 			await user.click(screen.getByRole('option', { name: /Alice/ }))
 
-			expect(onUpdateOwner).toHaveBeenCalledWith('actor-alice')
+			expect(onUpdateDriver).toHaveBeenCalledWith('actor-alice')
 		})
 
-		it('calls onUpdateOwner with null when selecting "Unassigned"', async () => {
+		it('calls onUpdateDriver with null when selecting "Unassigned"', async () => {
 			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
-			const onUpdateOwner = vi.fn()
-			const object = buildObjectResponse({ owner: 'actor-alice' })
+			const onUpdateDriver = vi.fn()
+			const object = buildObjectResponse({ driver: 'actor-alice' })
 			render(
 				<ObjectDocumentView
 					{...baseProps}
 					object={object}
 					members={members}
-					onUpdateOwner={onUpdateOwner}
+					onUpdateDriver={onUpdateDriver}
 				/>,
 			)
 
@@ -182,7 +186,7 @@ describe('ObjectDocumentView', () => {
 			await user.click(triggers[triggers.length - 1])
 			await user.click(screen.getByRole('option', { name: /Unassigned/ }))
 
-			expect(onUpdateOwner).toHaveBeenCalledWith(null)
+			expect(onUpdateDriver).toHaveBeenCalledWith(null)
 		})
 	})
 })

@@ -1,20 +1,34 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
 	WORKSPACE_TEMPLATES,
 	type WorkspaceTemplate,
 	type WorkspaceTemplateId,
+	buildWebAppHref,
+	resolveWebAppBaseUrl,
+	stripTrailingSlash,
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
+	registerAppTool as _registerAppTool,
 	registerAppResource,
-	registerAppTool,
 } from '@modelcontextprotocol/ext-apps/server'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { Cron } from 'croner'
+import {
+	MUTATION_TOOL_KINDS,
+	type TelemetrySink,
+	createDefaultSink,
+	recordMutation,
+	recordToolCall,
+	recordWidgetEvent,
+} from './telemetry.js'
 import { tools } from './tools.js'
 
 interface McpConfig {
@@ -25,6 +39,48 @@ interface McpConfig {
 	htmlBasePath?: string
 	/** Transport the server is exposed over. Tailors user-facing setup hints. */
 	transport?: 'stdio' | 'http'
+	/**
+	 * Public base URL of the Maskin web app, used by MCP card UIs to build deep
+	 * links back to the workspace (e.g. "https://maskin.example.com" or
+	 * "http://localhost:5173"). Threaded through `_meta.webAppBaseUrl` on every
+	 * tool response so each rendered card can produce stable object URLs.
+	 */
+	webAppBaseUrl?: string
+	/**
+	 * Telemetry sink for `tool_call` and `mutation` events emitted on every
+	 * tool response. Defaults to a fire-and-forget POST to /api/telemetry/mcp;
+	 * tests inject capturing sinks and deployments without telemetry can pass
+	 * a noop. The default never throws and never blocks tool calls.
+	 */
+	telemetrySink?: TelemetrySink
+}
+
+/**
+ * Build the `_meta` envelope returned to MCP cards. Always includes `toolName`
+ * so the card runtime can switch on it; optionally includes `webAppBaseUrl` +
+ * `workspaceId` so cards can render deep links into the web app (X1 in the
+ * MCP UI parity backlog).
+ */
+function meta(toolName: string, config: McpConfig, workspaceId?: string): Record<string, unknown> {
+	const m: Record<string, unknown> = { toolName }
+	if (config.webAppBaseUrl) m.webAppBaseUrl = stripTrailingSlash(config.webAppBaseUrl)
+	const ws = workspaceId ?? config.defaultWorkspaceId
+	if (ws) m.workspaceId = ws
+	return m
+}
+
+/**
+ * `meta()` plus a `ui` block. Use this when a response wants to override the
+ * widget resource on a per-response basis (e.g. swap to the Hero Card when the
+ * predicate fires) without changing the tool registration.
+ */
+function uiMeta(
+	toolName: string,
+	config: McpConfig,
+	workspaceId: string | undefined,
+	resourceUri: string,
+): Record<string, unknown> {
+	return { ...meta(toolName, config, workspaceId), ui: { resourceUri, csp: CSP } }
 }
 
 function authSetupHint(config: McpConfig): string {
@@ -50,6 +106,9 @@ const UI_RESOURCES = {
 	events: 'ui://maskin/events',
 	triggers: 'ui://maskin/triggers',
 	graph: 'ui://maskin/graph',
+	sessions: 'ui://maskin/sessions',
+	schema: 'ui://maskin/schema',
+	heroCard: 'ui://maskin/hero-card',
 } as const
 
 const CSP = {
@@ -57,13 +116,20 @@ const CSP = {
 	'style-src': ['https://fonts.googleapis.com'],
 } as const
 
-async function apiCall(
+type ApiCallOptions = {
+	skipAuth?: boolean
+	skipWorkspace?: boolean
+	workspaceId?: string
+	idempotencyKey?: string
+}
+
+async function apiFetch(
 	config: McpConfig,
 	method: string,
 	path: string,
 	body?: unknown,
-	options?: { skipAuth?: boolean; skipWorkspace?: boolean; workspaceId?: string },
-): Promise<unknown> {
+	options?: ApiCallOptions,
+): Promise<Response> {
 	if (!options?.skipAuth && !config.apiKey) {
 		throw new Error(`Not authenticated. ${authSetupHint(config)}`)
 	}
@@ -81,6 +147,9 @@ async function apiCall(
 	}
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
+	}
+	if (options?.idempotencyKey) {
+		headers['Idempotency-Key'] = options.idempotencyKey
 	}
 
 	const response = await fetch(url, {
@@ -118,7 +187,61 @@ async function apiCall(
 		throw new Error(`API error ${response.status}: ${message}`)
 	}
 
+	return response
+}
+
+async function apiCall(
+	config: McpConfig,
+	method: string,
+	path: string,
+	body?: unknown,
+	options?: ApiCallOptions,
+): Promise<unknown> {
+	const response = await apiFetch(config, method, path, body, options)
 	return response.json()
+}
+
+/**
+ * Like `apiCall`, but also surfaces the response so callers can inspect
+ * headers — e.g. paginated list tools reading `X-Total-Count` to populate
+ * the heroCard `+N more` footer.
+ */
+async function apiCallWithResponse(
+	config: McpConfig,
+	method: string,
+	path: string,
+	body?: unknown,
+	options?: ApiCallOptions,
+): Promise<{ data: unknown; response: Response }> {
+	const response = await apiFetch(config, method, path, body, options)
+	return { data: await response.json(), response }
+}
+
+/** Parse an `X-Total-Count`-style header, falling back to a default. */
+function parseTotalCountHeader(response: Response, fallback: number): number {
+	const raw = response.headers.get('x-total-count')
+	if (raw === null) return fallback
+	const parsed = Number(raw)
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+// Per-workspace mutex used to serialize read-modify-write tool calls (e.g.
+// schema edits) within a single MCP process. Two MCP tool invocations from
+// the same host targeting the same workspace will run sequentially, which
+// eliminates lost-update races inside this process. Cross-process races
+// still exist; callers that care must additionally verify after PATCH.
+const workspaceLocks = new Map<string, Promise<unknown>>()
+
+function withWorkspaceLock<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
+	const prev = workspaceLocks.get(workspaceId) ?? Promise.resolve()
+	const result = prev.catch(() => undefined).then(fn)
+	const lockEntry: Promise<unknown> = result
+		.catch(() => undefined)
+		.finally(() => {
+			if (workspaceLocks.get(workspaceId) === lockEntry) workspaceLocks.delete(workspaceId)
+		})
+	workspaceLocks.set(workspaceId, lockEntry)
+	return result
 }
 
 async function getWorkspace(
@@ -201,6 +324,59 @@ function buildEnableModuleSettings(
 	return updatedSettings
 }
 
+/**
+ * Merge default settings from all enabled modules into the given settings.
+ * Existing keys win — module defaults only fill in types not already specified.
+ * Used when applying a template so that module-provided types (e.g. CRM contact/company)
+ * pick up their statuses/display_names/field_definitions without inline duplication.
+ */
+export function mergeEnabledModuleDefaults(
+	settings: Record<string, unknown>,
+): Record<string, unknown> {
+	const enabledModules = Array.isArray(settings.enabled_modules)
+		? (settings.enabled_modules as string[])
+		: ['work']
+
+	const displayNames = { ...((settings.display_names ?? {}) as Record<string, string>) }
+	const statuses = { ...((settings.statuses ?? {}) as Record<string, string[]>) }
+	const fieldDefs = { ...((settings.field_definitions ?? {}) as Record<string, unknown[]>) }
+	const relTypes = new Set<string>(
+		Array.isArray(settings.relationship_types) ? (settings.relationship_types as string[]) : [],
+	)
+
+	for (const moduleId of enabledModules) {
+		const defaults = getModuleDefaultSettings(moduleId)
+		if (!defaults) continue
+
+		if (defaults.display_names) {
+			for (const [type, name] of Object.entries(defaults.display_names)) {
+				if (!(type in displayNames)) displayNames[type] = name
+			}
+		}
+		if (defaults.statuses) {
+			for (const [type, sts] of Object.entries(defaults.statuses)) {
+				if (!(type in statuses)) statuses[type] = sts
+			}
+		}
+		if (defaults.field_definitions) {
+			for (const [type, fields] of Object.entries(defaults.field_definitions)) {
+				if (!(type in fieldDefs)) fieldDefs[type] = fields
+			}
+		}
+		if (defaults.relationship_types) {
+			for (const rt of defaults.relationship_types) relTypes.add(rt)
+		}
+	}
+
+	return {
+		...settings,
+		display_names: displayNames,
+		statuses: statuses,
+		field_definitions: fieldDefs,
+		relationship_types: [...relTypes],
+	}
+}
+
 /** Compute the set of relationship types still referenced by remaining extensions. */
 function collectActiveRelTypes(
 	settings: Record<string, unknown>,
@@ -233,6 +409,816 @@ function collectActiveRelTypes(
 	return [...active]
 }
 
+/**
+ * Trim a string to a max length without slicing mid-codepoint, returning a
+ * preview suitable for `resources/list` descriptions. Returns the empty
+ * string when no input is provided.
+ */
+function makePreview(text: string | null | undefined, maxLen = 200): string {
+	if (!text) return ''
+	const trimmed = text.trim()
+	if (trimmed.length <= maxLen) return trimmed
+	// Slice on a UTF-16 boundary; trailing whitespace from a mid-word slice
+	// is removed so the ellipsis sits flush with the last character.
+	return `${trimmed.slice(0, maxLen).trimEnd()}…`
+}
+
+interface ObjectRow {
+	id: string
+	workspaceId: string
+	type: string
+	title: string | null
+	content: string | null
+	status: string
+	updatedAt?: string
+}
+
+interface ActorRow {
+	id: string
+	type: 'human' | 'agent'
+	name: string
+	email?: string | null
+	role?: string
+}
+
+interface TriggerRow {
+	id: string
+	workspaceId: string
+	name: string
+	type: string
+	enabled: boolean
+}
+
+interface SessionRow {
+	id: string
+	actorId: string
+	[key: string]: unknown
+}
+
+/**
+ * Fetch all actors in a workspace and return a map from actor id → display name.
+ * Failures are non-fatal — sessions still render, just without inline names.
+ */
+async function fetchActorNameMap(
+	config: McpConfig,
+	workspaceId: string,
+): Promise<Record<string, string>> {
+	try {
+		const actors = (await apiCall(config, 'GET', '/api/actors', undefined, {
+			workspaceId,
+		})) as ActorRow[]
+		const map: Record<string, string> = {}
+		for (const a of actors) {
+			if (a?.id && a?.name) map[a.id] = a.name
+		}
+		return map
+	} catch {
+		return {}
+	}
+}
+
+/** Inline `actorName` on a session payload using the supplied id→name map. */
+function attachActorName<T extends SessionRow>(session: T, names: Record<string, string>): T {
+	if (!session?.actorId) return session
+	const name = names[session.actorId]
+	if (!name) return session
+	return { ...session, actorName: name }
+}
+
+/**
+ * Enrich a single session with `actorName` via a one-shot `GET /api/actors/:id`.
+ * Cheaper than `fetchActorNameMap` for single-session tool calls.
+ * Failures are non-fatal — returns the session unchanged.
+ */
+async function enrichSessionActorName<T extends SessionRow>(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	session: T,
+): Promise<T> {
+	if (!workspaceId || !session?.actorId) return session
+	try {
+		const actor = (await apiCall(config, 'GET', `/api/actors/${session.actorId}`, undefined, {
+			workspaceId,
+		})) as ActorRow
+		if (actor?.name) return { ...session, actorName: actor.name }
+	} catch {}
+	return session
+}
+
+/**
+ * Register MCP resources so the host (Claude Desktop / Claude.ai paperclip
+ * picker, Cursor, etc.) can list and read Maskin objects. Resource URIs are
+ * the same deep-link URLs the chat card and web app use, so the picker, the
+ * card, and the workspace all agree on object identity.
+ *
+ * Without `webAppBaseUrl` we cannot form deep links — the registration is
+ * skipped and `resources/list` returns nothing rather than emitting URIs that
+ * don't resolve in the web app.
+ */
+function registerObjectResources(server: McpServer, config: McpConfig) {
+	const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : undefined
+	if (!baseUrl) return
+
+	// ─── Unified objects (insight / bet / task / meeting / ...) ───
+	const objectsTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/objects/{objectId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const objs = (await apiCall(config, 'GET', '/api/objects?limit=100', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as ObjectRow[]
+				return {
+					resources: objs.map((o) => ({
+						uri: buildWebAppHref(baseUrl, o.workspaceId, { kind: 'object', id: o.id }),
+						name: o.title?.trim() || `Untitled ${o.type}`,
+						description: `[${o.type} · ${o.status}] ${makePreview(o.content)}`.trim(),
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (objects) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-object',
+		objectsTemplate,
+		{
+			title: 'Maskin object',
+			description:
+				'Workspace objects (insight, bet, task, meeting, decision, document, …). Filter by type or status when listing — the picker can ask for "all bets" or "all open insights".',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const objectId = String(vars.objectId)
+			const obj = (await apiCall(config, 'GET', `/api/objects/${objectId}`, undefined, {
+				workspaceId,
+			})) as ObjectRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'object',
+				id: obj.id,
+			})
+			const payload = {
+				id: obj.id,
+				type: obj.type,
+				title: obj.title ?? null,
+				status: obj.status,
+				preview: makePreview(obj.content),
+				deepLink,
+				workspaceId: obj.workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	// ─── Actors (humans + agents) ──────────────────────────────────
+	const actorsTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/agents/{actorId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const actors = (await apiCall(config, 'GET', '/api/actors', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as ActorRow[]
+				return {
+					resources: actors.map((a) => ({
+						uri: buildWebAppHref(baseUrl, config.defaultWorkspaceId, {
+							kind: 'actor',
+							id: a.id,
+						}),
+						name: a.name || `${a.type}-${a.id.slice(0, 8)}`,
+						description: `[${a.type}]${a.email ? ` ${a.email}` : ''}`,
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (actors) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-actor',
+		actorsTemplate,
+		{
+			title: 'Maskin actor',
+			description: 'Workspace members and agents (humans + AI).',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const actorId = String(vars.actorId)
+			const actor = (await apiCall(config, 'GET', `/api/actors/${actorId}`, undefined, {
+				workspaceId,
+			})) as ActorRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'actor',
+				id: actor.id,
+			})
+			const payload = {
+				id: actor.id,
+				type: actor.type,
+				name: actor.name,
+				email: actor.email ?? null,
+				deepLink,
+				workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	// ─── Triggers ──────────────────────────────────────────────────
+	const triggersTemplate = new ResourceTemplate(`${baseUrl}/{workspaceId}/triggers/{triggerId}`, {
+		list: async () => {
+			if (!config.apiKey || !config.defaultWorkspaceId) return { resources: [] }
+			try {
+				const triggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+					workspaceId: config.defaultWorkspaceId,
+				})) as TriggerRow[]
+				return {
+					resources: triggers.map((t) => ({
+						uri: buildWebAppHref(baseUrl, t.workspaceId, { kind: 'trigger', id: t.id }),
+						name: t.name || `Trigger ${t.id.slice(0, 8)}`,
+						description: `[${t.type} · ${t.enabled ? 'enabled' : 'disabled'}]`,
+						mimeType: 'application/json',
+					})),
+				}
+			} catch (err) {
+				console.error('[MCP] resources/list (triggers) failed:', err)
+				return { resources: [] }
+			}
+		},
+	})
+
+	server.registerResource(
+		'maskin-trigger',
+		triggersTemplate,
+		{
+			title: 'Maskin trigger',
+			description: 'Cron / event-based automations that run agents.',
+		},
+		async (uri, vars) => {
+			const workspaceId = String(vars.workspaceId)
+			const triggerId = String(vars.triggerId)
+			const trigger = (await apiCall(config, 'GET', `/api/triggers/${triggerId}`, undefined, {
+				workspaceId,
+			})) as TriggerRow
+			const deepLink = buildWebAppHref(baseUrl, workspaceId, {
+				kind: 'trigger',
+				id: trigger.id,
+			})
+			const payload = {
+				id: trigger.id,
+				name: trigger.name,
+				type: trigger.type,
+				enabled: trigger.enabled,
+				deepLink,
+				workspaceId: trigger.workspaceId,
+			}
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: 'application/json',
+						text: JSON.stringify(payload, null, 2),
+					},
+				],
+			}
+		},
+	)
+}
+
+/** Extracts a workspace_id from tool args without coupling the wrapper to the schemas. */
+function extractWorkspaceId(args: unknown): string | undefined {
+	if (!args || typeof args !== 'object') return undefined
+	const ws = (args as { workspace_id?: unknown }).workspace_id
+	return typeof ws === 'string' ? ws : undefined
+}
+
+/**
+ * Inspects a mutation tool response to decide whether it actually mutated
+ * something. Tools like `update_objects` aggregate per-target outcomes, so we
+ * count one mutation event per call when at least one inner item explicitly
+ * reports success.
+ *
+ * Defaults to `false` for unrecognised shapes. Over-counting biases the bet's
+ * "20% of sessions include at least one mutation" metric upward, so unknown
+ * responses are treated as "not a confirmed mutation" rather than assuming
+ * success.
+ */
+function isSuccessfulMutationResponse(response: unknown): boolean {
+	if (!response || typeof response !== 'object') return false
+	if ((response as { isError?: unknown }).isError === true) return false
+	const content = (response as { content?: unknown }).content
+	if (!Array.isArray(content) || content.length === 0) return false
+	const first = content[0] as { type?: string; text?: string } | undefined
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return false
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(first.text)
+	} catch {
+		return false
+	}
+	if (Array.isArray(parsed)) {
+		// Per-target aggregation (update_objects-style). The call counts when
+		// at least one entry explicitly reports success === true.
+		return parsed.some((entry) => {
+			if (!entry || typeof entry !== 'object') return false
+			return (entry as { success?: unknown }).success === true
+		})
+	}
+	if (parsed && typeof parsed === 'object') {
+		const obj = parsed as { success?: unknown; error?: unknown; id?: unknown }
+		if (obj.success === true) return true
+		if (obj.success === false) return false
+		// No explicit success flag — accept as confirmed only if the payload has
+		// no `error` field and looks like a record (has an `id`). Anything else
+		// stays uncounted.
+		return obj.error == null && typeof obj.id === 'string'
+	}
+	return false
+}
+
+/** Best-effort object_type label for the mutation event. */
+function extractObjectType(toolName: string, args: unknown): string | undefined {
+	if (toolName === 'update_objects' || toolName === 'create_objects') return 'object'
+	if (toolName === 'delete_object') return 'object'
+	if (toolName === 'create_relationship' || toolName === 'delete_relationship')
+		return 'relationship'
+	if (toolName.startsWith('create_') || toolName.startsWith('update_')) {
+		const kind = toolName.split('_')[1]
+		if (kind) return kind
+	}
+	if (args && typeof args === 'object') {
+		const ot = (args as { object_type?: unknown; type?: unknown }).object_type
+		if (typeof ot === 'string') return ot
+	}
+	return undefined
+}
+
+// ─── Hero Card payload builders ────────────────────────────
+//
+// The widget reads `structuredContent.heroCard` and renders a single flat
+// HeroCardObject — no per-type branches on the client. Per-type context is
+// resolved here so new object types absorb with a sensible default.
+
+export interface HeroCardActor {
+	id: string
+	name: string | null
+	type: string | null
+}
+
+export interface HeroCardObject {
+	id: string
+	type: string
+	title: string | null
+	status: string | null
+	driver: HeroCardActor | null
+	contextLine: string
+	badges?: string[]
+}
+
+export type HeroCardKind = 'single' | 'list' | 'empty'
+
+export interface HeroCardPayload {
+	kind: HeroCardKind
+	tool: string
+	object?: HeroCardObject
+	objects?: HeroCardObject[]
+	totalCount?: number
+	page?: {
+		limit: number
+		offset: number
+		hasMore: boolean
+	}
+}
+
+const HERO_CARD_UI_PAGE_SIZE = 25
+
+interface RawObject {
+	id: string
+	type: string
+	title?: string | null
+	status?: string | null
+	driver?: string | null
+	createdAt?: string | null
+	updatedAt?: string | null
+	metadata?: Record<string, unknown> | null
+}
+
+/**
+ * Schema-driven Hero Card metadata for an object type. Keeps render eligibility
+ * + context line + meta + primary action as schema annotations so a new type
+ * gets the full Hero Card surface by adding one entry — no widget edits, no
+ * predicate edits.
+ *
+ * Mirrors `heroCardTypeAnnotationSchema` in `packages/shared/src/schemas/workspaces.ts`.
+ */
+export interface HeroCardTypeAnnotation {
+	/**
+	 * One-line context strategy. Known value: `'last touch + stage'` — renders
+	 * `last touch {age} · {status}`. Unknown strategies fall back to the
+	 * legacy per-type switch in `buildContextLine`.
+	 */
+	hero_card_context?: string
+	hero_card_metas?: Array<{ label: string; field?: string }>
+	primary_action?: { label: string; kind: string }
+}
+
+/**
+ * Built-in Hero Card annotations for object types in the launch set. `bet`,
+ * `task`, `insight`, `trigger` keep their legacy switch paths in
+ * `buildContextLine` so this map is purely additive — workspaces can still
+ * override per-type via `settings.hero_card`.
+ *
+ * The customer variant (T2 resolution: render both `organization` AND `person`
+ * with the customer context line) lives here, so any future explicit
+ * `customer` type drops in by adding one entry.
+ */
+export const HERO_CARD_TYPE_DEFAULTS: Record<string, HeroCardTypeAnnotation> = {
+	organization: {
+		hero_card_context: 'last touch + stage',
+		hero_card_metas: [
+			{ label: 'Stage', field: 'status' },
+			{ label: 'Owner', field: 'owner' },
+		],
+		primary_action: { label: 'Open in Maskin', kind: 'open_object' },
+	},
+	person: {
+		hero_card_context: 'last touch + stage',
+		hero_card_metas: [
+			{ label: 'Stage', field: 'status' },
+			{ label: 'Owner', field: 'owner' },
+		],
+		primary_action: { label: 'Open in Maskin', kind: 'open_object' },
+	},
+}
+
+/** Days between two ISO timestamps. Negative values clamp to 0. */
+function daysBetween(fromIso: string | null | undefined, nowMs: number): number | null {
+	if (!fromIso) return null
+	const fromMs = Date.parse(fromIso)
+	if (!Number.isFinite(fromMs)) return null
+	return Math.max(0, Math.floor((nowMs - fromMs) / 86_400_000))
+}
+
+function ageLabel(fromIso: string | null | undefined, nowMs = Date.now()): string | null {
+	const days = daysBetween(fromIso, nowMs)
+	if (days === null) return null
+	if (days === 0) return 'today'
+	if (days === 1) return '1d ago'
+	if (days < 30) return `${days}d ago`
+	const months = Math.floor(days / 30)
+	if (months < 12) return `${months}mo ago`
+	const years = Math.floor(days / 365)
+	return `${years}y ago`
+}
+
+/** Render one or more anchor tags as a single `anchor #3+#6` label. */
+function anchorLabel(meta: Record<string, unknown> | null | undefined): string | null {
+	if (!meta) return null
+	const raw = meta.anchors ?? meta.anchor
+	if (Array.isArray(raw)) {
+		const tags = raw.filter((v): v is string => typeof v === 'string' && v.length > 0)
+		if (tags.length === 0) return null
+		return `anchor ${tags.join('+')}`
+	}
+	if (typeof raw === 'string' && raw.length > 0) return `anchor ${raw}`
+	return null
+}
+
+/**
+ * Per-type one-line context. Schema annotations (`HeroCardTypeAnnotation.hero_card_context`)
+ * take precedence — a type with `'last touch + stage'` renders `last touch {age} · {status}`
+ * regardless of which concrete type it is. Falls through to the legacy per-type
+ * switch for `bet`/`task`/`insight` and to `type · status` for everything else,
+ * so absorbing a new object type does NOT require a widget change.
+ */
+export function buildContextLine(
+	obj: RawObject,
+	driver: HeroCardActor | null,
+	nowMs = Date.now(),
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
+): string {
+	const status = obj.status ?? 'unknown'
+	const annotation = annotations[obj.type]
+	if (annotation?.hero_card_context === 'last touch + stage') {
+		const lastTouch = obj.updatedAt ?? obj.createdAt
+		const age = ageLabel(lastTouch, nowMs)
+		return age ? `last touch ${age} · ${status}` : status
+	}
+	const age = ageLabel(obj.createdAt, nowMs)
+	const driverName = driver?.name
+	switch (obj.type) {
+		case 'bet': {
+			const duration = (obj.metadata?.duration_weeks ?? obj.metadata?.duration) as
+				| string
+				| number
+				| undefined
+			const durationLabel =
+				typeof duration === 'number'
+					? `${duration}-week bet`
+					: typeof duration === 'string' && duration.length > 0
+						? duration
+						: age
+							? `created ${age}`
+							: null
+			return durationLabel ? `${status} · ${durationLabel}` : status
+		}
+		case 'task':
+			return driverName ? `${status} · driver ${driverName}` : status
+		case 'insight': {
+			const cluster = obj.metadata?.cluster_size as number | undefined
+			const evidence = obj.metadata?.evidence_quality as string | undefined
+			const anchor = anchorLabel(obj.metadata)
+			const parts = [status]
+			if (anchor) parts.push(anchor)
+			if (typeof cluster === 'number') parts.push(`${cluster} sources`)
+			else if (evidence) parts.push(evidence)
+			return parts.join(' · ')
+		}
+		default:
+			return age ? `${obj.type} · ${status} · ${age}` : `${obj.type} · ${status}`
+	}
+}
+
+export function buildHeroCardObject(
+	obj: RawObject,
+	driver: HeroCardActor | null,
+	nowMs = Date.now(),
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
+): HeroCardObject {
+	return {
+		id: obj.id,
+		type: obj.type,
+		title: obj.title ?? null,
+		status: obj.status ?? null,
+		driver,
+		contextLine: buildContextLine(obj, driver, nowMs, annotations),
+	}
+}
+
+/**
+ * Per-response resource swap. Returns the Hero Card resource for single results
+ * whose type is either in the built-in launch set (`bet`, `task`, `insight`,
+ * `trigger`) or has a Hero Card annotation (customer variant: `organization`,
+ * `person`, and any future schema-annotated type). Everything else stays on the
+ * existing `objects` widget. New variants opt in by extending
+ * `HERO_CARD_SINGLE_TYPES` or by adding an annotation.
+ */
+const HERO_CARD_SINGLE_TYPES: ReadonlySet<string> = new Set(['bet', 'task', 'insight', 'trigger'])
+
+export function pickResourceUri(
+	payload: HeroCardPayload,
+	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
+): string {
+	if (payload.kind !== 'single' || !payload.object) return UI_RESOURCES.objects
+	const type = payload.object.type
+	if (HERO_CARD_SINGLE_TYPES.has(type) || annotations[type]) return UI_RESOURCES.heroCard
+	return UI_RESOURCES.objects
+}
+
+/**
+ * Collection tools always render through the Hero Card bundle: the same
+ * widget handles the 0 / 1 / N branches and keeps the iframe payload
+ * inside Anthropic's 500px envelope without a second template.
+ */
+function pickCollectionResourceUri(_payload: HeroCardPayload): string {
+	return UI_RESOURCES.heroCard
+}
+
+interface RawActor {
+	id: string
+	type?: string | null
+	name?: string | null
+	email?: string | null
+	role?: string | null
+	isSystem?: boolean | null
+}
+
+interface RawWorkspace {
+	id: string
+	name?: string | null
+	role?: string | null
+	createdAt?: string | null
+	updatedAt?: string | null
+}
+
+function buildActorContextLine(actor: RawActor): string {
+	const kind = actor.type || 'actor'
+	const parts: string[] = [kind]
+	if (actor.role) parts.push(actor.role)
+	else if (actor.email) parts.push(actor.email)
+	return parts.join(' · ')
+}
+
+function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
+	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
+	return {
+		id: actor.id,
+		type: 'actor',
+		title: actor.name ?? null,
+		status,
+		driver: null,
+		contextLine: buildActorContextLine(actor),
+	}
+}
+
+function buildWorkspaceContextLine(workspace: RawWorkspace): string {
+	const age = ageLabel(workspace.updatedAt ?? workspace.createdAt)
+	const parts = ['workspace']
+	if (age) parts.push(age)
+	return parts.join(' · ')
+}
+
+function buildWorkspaceHeroCardObject(workspace: RawWorkspace): HeroCardObject {
+	return {
+		id: workspace.id,
+		type: 'workspace',
+		title: workspace.name ?? null,
+		status: workspace.role ?? 'active',
+		driver: null,
+		contextLine: buildWorkspaceContextLine(workspace),
+	}
+}
+
+/**
+ * Build the heroCard payload for a list-style tool response. Collapses to
+ * `single` when the result has exactly one row so the predicate can fire on
+ * single-result `list_objects` / `search_objects` calls too.
+ */
+async function buildCollectionHeroCard(
+	config: McpConfig,
+	tool: string,
+	rows: RawObject[],
+	workspaceId: string | undefined,
+	totalCount = rows.length,
+	offset = 0,
+): Promise<HeroCardPayload> {
+	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
+	const driverIds = rows.map((o) => o.driver).filter((v): v is string => typeof v === 'string')
+	const actors = await resolveActors(config, driverIds, workspaceId)
+	const heroObjects = rows.map((o) =>
+		buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
+	)
+	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
+	const uiObjects = heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE)
+	return {
+		kind: 'list',
+		tool,
+		objects: uiObjects,
+		totalCount,
+		page: {
+			limit: uiObjects.length,
+			offset,
+			hasMore: offset + uiObjects.length < totalCount,
+		},
+	}
+}
+
+interface RawTrigger {
+	id: string
+	name: string
+	type: string
+	config: Record<string, unknown> | null
+	enabled: boolean
+	targetActorId?: string | null
+	target_actor_id?: string | null
+	createdAt?: string | null
+	updatedAt?: string | null
+}
+
+function formatRelativeFuture(targetMs: number, nowMs: number): string {
+	const diffMs = targetMs - nowMs
+	if (diffMs <= 0) return 'due now'
+	const minutes = Math.floor(diffMs / 60_000)
+	if (minutes < 60) return `in ${minutes}m`
+	const hours = Math.floor(minutes / 60)
+	if (hours < 24) return `in ${hours}h`
+	const days = Math.floor(hours / 24)
+	if (days < 30) return `in ${days}d`
+	const months = Math.floor(days / 30)
+	return `in ${months}mo`
+}
+
+/**
+ * Per-trigger-type context line: schedule + next-run for cron, scheduled time
+ * for reminder, event predicate for event triggers. Uses `croner` purely for
+ * next-run lookup — no shared scheduler state.
+ */
+function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): string {
+	const enabledLabel = trigger.enabled ? 'enabled' : 'disabled'
+	const config = trigger.config ?? {}
+	switch (trigger.type) {
+		case 'cron': {
+			const expression = typeof config.expression === 'string' ? config.expression : null
+			if (!expression) return `cron · ${enabledLabel}`
+			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts).
+			// Workspaces don't carry a timezone yet, so we surface UTC inline to keep the
+			// label honest against the runtime; drop the suffix once timezone is plumbed through.
+			let nextLabel: string | null = null
+			if (trigger.enabled) {
+				try {
+					const job = new Cron(expression, { timezone: 'UTC' })
+					const next = job.nextRun(new Date(nowMs))
+					if (next) nextLabel = `next ${formatRelativeFuture(next.getTime(), nowMs)}`
+				} catch {
+					// Invalid expression — skip next-run, keep the schedule line.
+				}
+			}
+			const schedule = `${expression} (UTC)`
+			return nextLabel
+				? `${enabledLabel} · ${schedule} · ${nextLabel}`
+				: `${enabledLabel} · ${schedule}`
+		}
+		case 'reminder': {
+			const scheduledAt = typeof config.scheduled_at === 'string' ? config.scheduled_at : null
+			if (!scheduledAt) return `reminder · ${enabledLabel}`
+			const targetMs = Date.parse(scheduledAt)
+			if (!Number.isFinite(targetMs)) return `reminder · ${enabledLabel}`
+			return `${enabledLabel} · at ${scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
+		}
+		case 'event': {
+			const action = typeof config.action === 'string' ? config.action : null
+			const entityType = typeof config.entity_type === 'string' ? config.entity_type : null
+			if (action && entityType) return `${enabledLabel} · on ${action} ${entityType}`
+			if (action) return `${enabledLabel} · on ${action}`
+			return `event · ${enabledLabel}`
+		}
+		default:
+			return `${trigger.type} · ${enabledLabel}`
+	}
+}
+
+function buildTriggerHeroCardObject(
+	trigger: RawTrigger,
+	driver: HeroCardActor | null,
+	nowMs = Date.now(),
+): HeroCardObject {
+	return {
+		id: trigger.id,
+		type: 'trigger',
+		title: trigger.name ?? null,
+		status: trigger.enabled ? 'enabled' : 'disabled',
+		driver,
+		contextLine: buildTriggerContextLine(trigger, nowMs),
+	}
+}
+
+/**
+ * Resolve actor names and types for a set of actor IDs in one shot. Used to
+ * fill driver info into HeroCardObject. Best-effort: missing actors come back
+ * as `{ id, name: null, type: null }` so the widget renders without driver instead of failing.
+ */
+// Hero-card responses typically resolve a single tool call's owner set (≤50
+// objects). Cap defensively at 200 to match the server-side `?ids=` limit and
+// avoid building an URL larger than the receiver accepts.
+const RESOLVE_ACTORS_MAX_IDS = 200
+
+async function resolveActors(
+	config: McpConfig,
+	actorIds: Iterable<string>,
+	workspaceId: string | undefined,
+): Promise<Map<string, HeroCardActor>> {
+	const uniq = [...new Set([...actorIds].filter((id): id is string => typeof id === 'string'))]
+	const out = new Map<string, HeroCardActor>()
+	if (uniq.length === 0) return out
+	const queryIds = uniq.slice(0, RESOLVE_ACTORS_MAX_IDS)
+	try {
+		const query = `?ids=${queryIds.map(encodeURIComponent).join(',')}`
+		const result = (await apiCall(config, 'GET', `/api/actors${query}`, undefined, {
+			workspaceId,
+		})) as Array<{ id: string; name: string | null; type?: string | null }>
+		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null, type: a.type ?? null })
+		console.log(
+			`[MCP] Resolved ${out.size}/${queryIds.length} hero-card actor names (requested ${uniq.length})`,
+		)
+	} catch (err) {
+		console.error('[MCP] Failed to resolve actors for hero-card:', err)
+	}
+	for (const id of uniq) {
+		if (!out.has(id)) out.set(id, { id, name: null, type: null })
+	}
+	return out
+}
+
 function loadHtml(config: McpConfig, filename: string): string {
 	const basePath = config.htmlBasePath ?? resolve(__dirname, '../../../apps/web/dist-mcp')
 	const fullPath = resolve(basePath, filename)
@@ -252,15 +1238,86 @@ export function createMcpServer(config: McpConfig) {
 		version: '0.1.0',
 	})
 
+	const telemetrySink: TelemetrySink = config.telemetrySink ?? createDefaultSink()
+	const telemetryTarget = {
+		apiBaseUrl: config.apiBaseUrl,
+		apiKey: config.apiKey,
+		workspaceId: config.defaultWorkspaceId,
+	}
+
+	// Telemetry-instrumented tool registration. Wraps the upstream
+	// `registerAppTool` so every tool response emits a `tool_call` telemetry
+	// event (rich-render % numerator/denominator) and successful mutations
+	// emit an additional `mutation` event. Failures inside the original
+	// handler are re-thrown unchanged so MCP error semantics are preserved.
+	//
+	// We deliberately type as `any` at the boundary because ext-apps' generic
+	// tool signature can't be re-introduced through a higher-order wrapper
+	// without losing the per-tool input schema inference; the wrapper is purely
+	// pass-through so giving up the wrapper's signature is safe.
+	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
+		const defHasRichRender = Boolean(definition?._meta?.ui)
+		const mutationKind = MUTATION_TOOL_KINDS[name]
+
+		const wrappedHandler = async (args: unknown, extra: unknown) => {
+			const start = Date.now()
+			let response: unknown
+			try {
+				response = await handler(args, extra)
+			} catch (err) {
+				recordToolCall(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					has_rich_render: defHasRichRender,
+					duration_ms: Date.now() - start,
+					workspace_id: extractWorkspaceId(args),
+				})
+				throw err
+			}
+
+			const responseMeta = (response as { _meta?: { ui?: unknown } } | undefined)?._meta
+			const responseHasRichRender =
+				defHasRichRender || Boolean(responseMeta && 'ui' in responseMeta)
+
+			recordToolCall(telemetrySink, telemetryTarget, {
+				tool_name: name,
+				has_rich_render: responseHasRichRender,
+				duration_ms: Date.now() - start,
+				workspace_id: extractWorkspaceId(args),
+			})
+
+			if (mutationKind && isSuccessfulMutationResponse(response)) {
+				recordMutation(telemetrySink, telemetryTarget, {
+					tool_name: name,
+					mutation_kind: mutationKind,
+					object_type: extractObjectType(name, args),
+					workspace_id: extractWorkspaceId(args),
+				})
+			}
+
+			return response
+		}
+
+		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
+		return _registerAppTool(s, name, definition, wrappedHandler as any)
+		// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+	}) as any as typeof _registerAppTool
+
 	// ─── Register UI resources ─────────────────────────────────
+	// Filename is derived from the URI's last path segment so kebab-case bundles
+	// (e.g. `hero-card.html`) can register under camelCase keys (`heroCard`).
 	for (const [name, uri] of Object.entries(UI_RESOURCES)) {
+		const filename = `${uri.split('/').pop()}.html`
 		registerAppResource(server, `${name}-ui`, uri, { mimeType: RESOURCE_MIME_TYPE }, async () => {
-			console.log(`[MCP] Resource read requested: ${uri} (${name}.html)`)
+			console.log(`[MCP] Resource read requested: ${uri} (${filename})`)
 			return {
-				contents: [{ uri, mimeType: RESOURCE_MIME_TYPE, text: loadHtml(config, `${name}.html`) }],
+				contents: [{ uri, mimeType: RESOURCE_MIME_TYPE, text: loadHtml(config, filename) }],
 			}
 		})
 	}
+
+	// ─── Register data resources for the picker ────────────────
+	registerObjectResources(server, config)
 
 	// ─── Objects ───────────────────────────────────────────────
 	registerAppTool(
@@ -272,13 +1329,89 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'POST', '/api/graph', body, {
-				workspaceId: workspace_id,
+			const { workspace_id, nodes, edges } = args
+			const wsOpts = { workspaceId: workspace_id }
+
+			// /api/graph doesn't understand file_ids — strip them from the body
+			// and replay each node's file_ids as `attached` relationships after
+			// the graph is created. Keeps the backend schema unchanged.
+			const fileIdsByDollarId = new Map<string, string[]>()
+			const nodesForApi = nodes.map((node) => {
+				const { file_ids, ...rest } = node
+				if (file_ids?.length) fileIdsByDollarId.set(node.$id, file_ids)
+				return rest
 			})
+
+			const graphResult = (await apiCall(
+				config,
+				'POST',
+				'/api/graph',
+				{ nodes: nodesForApi, edges },
+				wsOpts,
+			)) as {
+				nodes: Array<{ id: string; type: string; $id: string }>
+				edges: unknown[]
+			}
+
+			// Map each created node's $id → real UUID + type so we can fan out
+			// `attached` relationships pointing at the requested file_ids.
+			const fileAttachments: Array<{
+				type: 'file_attachment'
+				id: string
+				success: boolean
+				result?: unknown
+				error?: string
+			}> = []
+			if (fileIdsByDollarId.size > 0) {
+				const tasks: Array<Promise<void>> = []
+				for (const node of graphResult.nodes) {
+					const fileIds = fileIdsByDollarId.get(node.$id)
+					if (!fileIds?.length) continue
+					for (const fileId of fileIds) {
+						tasks.push(
+							(async () => {
+								try {
+									const result = await apiCall(
+										config,
+										'POST',
+										'/api/relationships',
+										{
+											source_type: node.type,
+											source_id: node.id,
+											target_type: 'file',
+											target_id: fileId,
+											type: 'attached',
+										},
+										wsOpts,
+									)
+									fileAttachments.push({
+										type: 'file_attachment',
+										id: `${node.id}->${fileId}`,
+										success: true,
+										result,
+									})
+								} catch (error) {
+									fileAttachments.push({
+										type: 'file_attachment',
+										id: `${node.id}->${fileId}`,
+										success: false,
+										error: String(error),
+									})
+								}
+							})(),
+						)
+					}
+				}
+				await Promise.all(tasks)
+			}
+
+			const responseBody = fileAttachments.length
+				? { ...graphResult, file_attachments: fileAttachments }
+				: graphResult
+
 			return {
-				_meta: { toolName: 'create_objects' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
 			}
 		},
 	)
@@ -305,9 +1438,47 @@ export function createMcpServer(config: McpConfig) {
 					}
 				}),
 			)
+
+			// Build the Hero Card payload. Single successful result → kind='single'
+			// (eligible to swap to the Hero Card widget); anything else stays
+			// 'list' / 'empty' and renders via the existing objects widget.
+			const successful = results.filter(
+				(r): r is { id: string; success: true; result: { object: RawObject } } =>
+					r.success === true && (r.result as { object?: unknown } | null)?.object != null,
+			)
+			const rawObjects = successful.map((r) => r.result.object)
+			const driverIds = rawObjects
+				.map((o) => o.driver)
+				.filter((v): v is string => typeof v === 'string')
+			const actors = await resolveActors(config, driverIds, workspace_id)
+			const heroObjects = rawObjects.map((o) =>
+				buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
+			)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'get_objects' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'get_objects', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'get_objects',
+								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
+								totalCount: heroObjects.length,
+								page: {
+									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									offset: 0,
+									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
+								},
+							}
+
 			return {
-				_meta: { toolName: 'get_objects' },
+				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
 				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+				structuredContent: {
+					heroCard,
+					results,
+					objects: successful.map((r) => r.result),
+				},
 			}
 		},
 	)
@@ -327,6 +1498,7 @@ export function createMcpServer(config: McpConfig) {
 				type: string
 				id?: string
 				success: boolean
+				skipped?: boolean
 				result?: unknown
 				error?: string
 			}> = []
@@ -334,16 +1506,179 @@ export function createMcpServer(config: McpConfig) {
 			// Update objects in parallel
 			if (args.updates?.length) {
 				const objectResults = await Promise.all(
-					args.updates.map(async ({ id, ...body }) => {
-						try {
-							const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
-							return { type: 'object' as const, id, success: true, result }
-						} catch (error) {
-							return { type: 'object' as const, id, success: false, error: String(error) }
+					args.updates.map(async ({ id, attach_file_ids, detach_file_ids, ...body }) => {
+						const out: Array<{
+							type: string
+							id: string
+							success: boolean
+							skipped?: boolean
+							result?: unknown
+							error?: string
+						}> = []
+
+						// Captured from the PATCH response (when present) so attach_file_ids
+						// can use the object's real type ('bet' | 'task' | 'insight') as
+						// source_type — matching what create_objects and the web UI write.
+						let objectType: string | undefined
+
+						const hasFieldUpdate = Object.values(body).some((v) => v !== undefined)
+						if (hasFieldUpdate) {
+							try {
+								const result = await apiCall(config, 'PATCH', `/api/objects/${id}`, body, wsOpts)
+								objectType = (result as { type?: unknown })?.type as string | undefined
+								out.push({ type: 'object', id, success: true, result })
+							} catch (error) {
+								out.push({ type: 'object', id, success: false, error: String(error) })
+							}
 						}
+
+						// Attach files in parallel — each becomes an `attached` relationship
+						// whose source_type is the object's real type ('bet' | 'task' |
+						// 'insight'), matching create_objects and the web UI. Retrieval
+						// goes by direction + targetType, but staying consistent keeps any
+						// future source_type queries clean.
+						//
+						// We GET the existing rel first so a repeat attach is an
+						// idempotent no-op (success + skipped) instead of failing the
+						// (source_id, target_id, type) unique constraint.
+						if (attach_file_ids?.length) {
+							// One extra GET only when no PATCH ran — otherwise the type
+							// already came back on the PATCH response.
+							let sourceType = objectType
+							if (sourceType === undefined) {
+								try {
+									const fetched = (await apiCall(
+										config,
+										'GET',
+										`/api/objects/${id}`,
+										undefined,
+										wsOpts,
+									)) as { type?: unknown }
+									sourceType = typeof fetched?.type === 'string' ? fetched.type : undefined
+								} catch {
+									// Handled per-file below.
+								}
+							}
+
+							const attachResults = await Promise.all(
+								attach_file_ids.map(async (fileId) => {
+									if (!sourceType) {
+										return {
+											type: 'file_attachment',
+											id: `${id}->${fileId}`,
+											success: false,
+											error: 'Could not resolve object type for attachment',
+										}
+									}
+									try {
+										const params = new URLSearchParams()
+										params.set('source_id', id)
+										params.set('target_id', fileId)
+										params.set('type', 'attached')
+										const existing = (await apiCall(
+											config,
+											'GET',
+											`/api/relationships?${params}`,
+											undefined,
+											wsOpts,
+										)) as Array<{ id: string; targetType: string }>
+										if (existing.some((r) => r.targetType === 'file')) {
+											return {
+												type: 'file_attachment',
+												id: `${id}->${fileId}`,
+												success: true,
+												skipped: true,
+											}
+										}
+										const result = await apiCall(
+											config,
+											'POST',
+											'/api/relationships',
+											{
+												source_type: sourceType,
+												source_id: id,
+												target_type: 'file',
+												target_id: fileId,
+												type: 'attached',
+											},
+											wsOpts,
+										)
+										return {
+											type: 'file_attachment',
+											id: `${id}->${fileId}`,
+											success: true,
+											result,
+										}
+									} catch (error) {
+										return {
+											type: 'file_attachment',
+											id: `${id}->${fileId}`,
+											success: false,
+											error: String(error),
+										}
+									}
+								}),
+							)
+							out.push(...attachResults)
+						}
+
+						// Detach files: list relationships rooted at this object with
+						// type='attached', match by target_id, then delete each.
+						// Cheaper than asking the user to track relationship UUIDs.
+						if (detach_file_ids?.length) {
+							const detachResults = await Promise.all(
+								detach_file_ids.map(async (fileId) => {
+									try {
+										const params = new URLSearchParams()
+										params.set('source_id', id)
+										params.set('target_id', fileId)
+										params.set('type', 'attached')
+										const rels = (await apiCall(
+											config,
+											'GET',
+											`/api/relationships?${params}`,
+											undefined,
+											wsOpts,
+										)) as Array<{ id: string; targetType: string }>
+										const match = rels.find((r) => r.targetType === 'file')
+										if (!match) {
+											return {
+												type: 'file_detachment',
+												id: `${id}->${fileId}`,
+												success: false,
+												error: 'No attached relationship found between this object and file',
+											}
+										}
+										const result = await apiCall(
+											config,
+											'DELETE',
+											`/api/relationships/${match.id}`,
+											undefined,
+											wsOpts,
+										)
+										return {
+											type: 'file_detachment',
+											id: `${id}->${fileId}`,
+											success: true,
+											result,
+										}
+									} catch (error) {
+										return {
+											type: 'file_detachment',
+											id: `${id}->${fileId}`,
+											success: false,
+											error: String(error),
+										}
+									}
+								}),
+							)
+							out.push(...detachResults)
+						}
+
+						return out
 					}),
 				)
-				results.push(...objectResults)
+				for (const entry of objectResults) results.push(...entry)
 			}
 
 			// Create relationships in parallel
@@ -384,7 +1719,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			return {
-				_meta: { toolName: 'update_objects' },
+				_meta: meta('update_objects', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
 			}
 		},
@@ -403,7 +1738,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'delete_object' },
+				_meta: meta('delete_object', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -421,14 +1756,34 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
+			if (args.driver) params.set('driver', args.driver)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as RawObject[]
+			const offset = typeof args.offset === 'number' ? args.offset : 0
+			const heroCard = await buildCollectionHeroCard(
+				config,
+				'list_objects',
+				result,
+				args.workspace_id,
+				result.length,
+				offset,
+			)
 			return {
-				_meta: { toolName: 'list_objects' },
+				_meta: uiMeta(
+					'list_objects',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: {
+					heroCard,
+					objects: result,
+					page: { limit: result.length, offset, returned: result.length },
+				},
 			}
 		},
 	)
@@ -448,12 +1803,31 @@ export function createMcpServer(config: McpConfig) {
 			if (args.status) params.set('status', args.status)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/objects/search?${params}`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as RawObject[]
+			const offset = typeof args.offset === 'number' ? args.offset : 0
+			const heroCard = await buildCollectionHeroCard(
+				config,
+				'search_objects',
+				result,
+				args.workspace_id,
+				result.length,
+				offset,
+			)
 			return {
-				_meta: { toolName: 'search_objects' },
+				_meta: uiMeta(
+					'search_objects',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: {
+					heroCard,
+					objects: result,
+					page: { limit: result.length, offset, returned: result.length },
+				},
 			}
 		},
 	)
@@ -469,6 +1843,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const params = new URLSearchParams()
+			if (args.object_id) params.set('object_id', args.object_id)
 			if (args.source_id) params.set('source_id', args.source_id)
 			if (args.target_id) params.set('target_id', args.target_id)
 			if (args.type) params.set('type', args.type)
@@ -476,7 +1851,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_relationships' },
+				_meta: meta('list_relationships', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -495,7 +1870,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'delete_relationship' },
+				_meta: meta(
+					'delete_relationship',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -533,7 +1912,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			return {
-				_meta: { toolName: 'create_actor' },
+				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -545,15 +1924,48 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_actors.description,
 			inputSchema: tools.list_actors.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
-		async () => {
-			const result = await apiCall(config, 'GET', '/api/actors', undefined, {
-				skipWorkspace: true,
-			})
+		async (args) => {
+			const limit = args.limit ?? 50
+			const offset = args.offset ?? 0
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+			const { data, response } = await apiCallWithResponse(
+				config,
+				'GET',
+				`/api/actors?${params}`,
+				undefined,
+				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
+			)
+			const rows = Array.isArray(data) ? (data as RawActor[]) : []
+			const heroObjects = rows.map(buildActorHeroCardObject)
+			const totalCount = parseTotalCountHeader(response, heroObjects.length)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_actors' }
+					: heroObjects.length === 1 && totalCount === 1
+						? { kind: 'single', tool: 'list_actors', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_actors',
+								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
+								totalCount,
+								page: {
+									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									offset,
+									hasMore:
+										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
+								},
+							}
 			return {
-				_meta: { toolName: 'list_actors' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: uiMeta(
+					'list_actors',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -564,15 +1976,22 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_actor.description,
 			inputSchema: tools.get_actor.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
+			const result = (await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
 				skipWorkspace: true,
-			})
+			})) as RawActor
+			const heroCard: HeroCardPayload = {
+				kind: 'single',
+				tool: 'get_actor',
+				object: buildActorHeroCardObject(result),
+			}
+			const workspaceId = (args as { workspace_id?: string }).workspace_id
 			return {
-				_meta: { toolName: 'get_actor' },
+				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -586,13 +2005,81 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
+			const { id, attach_skill_ids, detach_skill_ids, ...body } = args
+			const attachIds = attach_skill_ids ?? []
+			const detachIds = detach_skill_ids ?? []
+			const hasSkillOps = attachIds.length > 0 || detachIds.length > 0
+
+			const overlapping = attachIds.filter((sid) => detachIds.includes(sid))
+			if (overlapping.length > 0) {
+				throw new Error(
+					`Skill IDs appear in both attach_skill_ids and detach_skill_ids: ${overlapping.join(', ')}`,
+				)
+			}
+
+			// Run actor PATCH first so a failure here throws before any skill ops fire.
+			const actor = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
 				skipWorkspace: true,
 			})
+
+			if (!hasSkillOps) {
+				return {
+					_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(actor, null, 2) }],
+				}
+			}
+
+			// Skill ops run concurrently but with allSettled so a single failure doesn't
+			// discard the results of operations that already succeeded.
+			const skillSettled = await Promise.allSettled([
+				...attachIds.map((skillId) =>
+					apiCall(
+						config,
+						'POST',
+						`/api/actors/${id}/workspace-skills`,
+						{ workspaceSkillId: skillId },
+						{ skipWorkspace: true },
+					),
+				),
+				...detachIds.map((skillId) =>
+					apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
+						skipWorkspace: true,
+					}),
+				),
+			])
+
+			const toErrorEntry = (reason: unknown, skillId: string) => ({
+				skill_id: skillId,
+				error: reason instanceof Error ? reason.message : String(reason),
+			})
+			const toAttachEntry = (s: PromiseSettledResult<unknown>, skillId: string) =>
+				s.status === 'fulfilled' ? s.value : toErrorEntry(s.reason, skillId)
+			const toDetachEntry = (s: PromiseSettledResult<unknown>, skillId: string) =>
+				s.status === 'fulfilled'
+					? { skill_id: skillId, deleted: true }
+					: toErrorEntry(s.reason, skillId)
+
+			const attachCount = attachIds.length
+			const output: Record<string, unknown> = { actor }
+			if (attachIds.length) {
+				output.attached_skills = skillSettled
+					.slice(0, attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match attachIds
+					.map((s, i) => toAttachEntry(s, attachIds[i]!))
+			}
+			if (detachIds.length) {
+				output.detached_skills = skillSettled
+					.slice(attachCount)
+					// biome-ignore lint/style/noNonNullAssertion: slice bounds match detachIds
+					.map((s, i) => toDetachEntry(s, detachIds[i]!))
+			}
+			if (skillSettled.some((s) => s.status === 'rejected')) {
+				output.partial_failure = true
+			}
+
 			return {
-				_meta: { toolName: 'update_actor' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
 			}
 		},
 	)
@@ -610,7 +2097,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'regenerate_api_key' },
+				_meta: meta('regenerate_api_key', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -630,7 +2117,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'create_workspace' },
+				_meta: meta('create_workspace', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -650,7 +2137,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'update_workspace' },
+				_meta: meta('update_workspace', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -662,15 +2149,35 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_workspaces.description,
 			inputSchema: tools.list_workspaces.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async () => {
 			const result = await apiCall(config, 'GET', '/api/workspaces', undefined, {
 				skipWorkspace: true,
 			})
+			const rows = Array.isArray(result) ? (result as RawWorkspace[]) : []
+			const heroObjects = rows.map(buildWorkspaceHeroCardObject)
+			const webContextWorkspaceId = config.defaultWorkspaceId ?? rows[0]?.id
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_workspaces' }
+					: heroObjects.length === 1
+						? { kind: 'single', tool: 'list_workspaces', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_workspaces',
+								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
+								totalCount: heroObjects.length,
+								page: {
+									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									offset: 0,
+									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
+								},
+							}
 			return {
-				_meta: { toolName: 'list_workspaces' },
+				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -707,6 +2214,13 @@ export function createMcpServer(config: McpConfig) {
 			>
 			const displayNames = (settings.display_names ?? {}) as Record<string, string>
 			const relationshipTypes = (settings.relationship_types ?? []) as string[]
+			const heroCardOverrides = (settings.hero_card ?? {}) as Record<string, HeroCardTypeAnnotation>
+			// Workspace settings override built-in defaults so a workspace can rewire
+			// the customer variant (or annotate a new type) without a code change.
+			const heroCardAnnotations: Record<string, HeroCardTypeAnnotation> = {
+				...HERO_CARD_TYPE_DEFAULTS,
+				...heroCardOverrides,
+			}
 			const typeFilter = args.type
 
 			const schema: Record<string, unknown> = {
@@ -721,17 +2235,24 @@ export function createMcpServer(config: McpConfig) {
 			const typeSchemas: Record<string, unknown> = {}
 
 			for (const t of types) {
-				typeSchemas[t] = {
+				const typeSchema: Record<string, unknown> = {
 					display_name: displayNames[t] ?? t,
 					statuses: statuses[t] ?? [],
 					fields: fieldDefinitions[t] ?? [],
 				}
+				const hc = heroCardAnnotations[t]
+				if (hc) typeSchema.hero_card = hc
+				typeSchemas[t] = typeSchema
 			}
 
 			schema.types = typeSchemas
 
 			return {
-				_meta: { toolName: 'get_workspace_schema' },
+				_meta: meta(
+					'get_workspace_schema',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(schema, null, 2) }],
 			}
 		},
@@ -754,8 +2275,310 @@ export function createMcpServer(config: McpConfig) {
 				{ skipWorkspace: true },
 			)
 			return {
-				_meta: { toolName: 'add_workspace_member' },
+				_meta: meta(
+					'add_workspace_member',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Workspace Schema Editing (W1) ───────────────────────
+	// Mirrors the web schema editor at
+	// apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx —
+	// each tool does read-modify-write on settings.field_definitions because the
+	// workspace PATCH endpoint shallow-merges `settings`. Auth flows through the
+	// same Bearer token used by every other tool, so changes are attributed to
+	// the calling end-user (per F4 calling-user auth model).
+	//
+	// Concurrency: workspace PATCH only shallow-merges `settings`, so two
+	// interleaved RMWs on `field_definitions` would lose updates. We mitigate
+	// this with three layers:
+	//   1) Per-workspace in-process mutex (`withWorkspaceLock`) so back-to-back
+	//      MCP tool calls in this process never race.
+	//   2) Idempotency-Key on the PATCH so the host's retries don't double-apply.
+	//   3) Re-read after PATCH and compare; on drift, retry up to 3 times. This
+	//      catches cross-process races (a different MCP server or the web UI
+	//      patching the same workspace concurrently).
+	type FieldDef = {
+		name: string
+		type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
+		required?: boolean
+		values?: string[]
+	}
+
+	const MAX_RMW_ATTEMPTS = 3
+
+	function fieldsEqual(a: FieldDef[], b: FieldDef[]): boolean {
+		if (a.length !== b.length) return false
+		for (let i = 0; i < a.length; i++) {
+			const x = a[i] as FieldDef
+			const y = b[i] as FieldDef
+			if (x.name !== y.name) return false
+			if (x.type !== y.type) return false
+			if ((x.required ?? false) !== (y.required ?? false)) return false
+			const xv = x.values ?? []
+			const yv = y.values ?? []
+			if (xv.length !== yv.length) return false
+			for (let j = 0; j < xv.length; j++) if (xv[j] !== yv[j]) return false
+		}
+		return true
+	}
+
+	function fieldDefMapsEqual(
+		a: Record<string, FieldDef[]>,
+		b: Record<string, FieldDef[]>,
+	): boolean {
+		const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+		for (const k of keys) {
+			if (!fieldsEqual(a[k] ?? [], b[k] ?? [])) return false
+		}
+		return true
+	}
+
+	async function patchFieldDefinitions(
+		args: { workspace_id?: string; type: string },
+		transform: (current: FieldDef[]) => FieldDef[],
+	): Promise<{ wsId: string; updatedFields: FieldDef[] }> {
+		const wsId = args.workspace_id ?? config.defaultWorkspaceId
+		if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
+		return withWorkspaceLock(wsId, async () => {
+			let lastErr: Error | null = null
+			for (let attempt = 0; attempt < MAX_RMW_ATTEMPTS; attempt++) {
+				const workspace = await getWorkspace(config, wsId)
+				const baseline = {
+					...((workspace.settings.field_definitions ?? {}) as Record<string, FieldDef[]>),
+				}
+				const fieldDefs = { ...baseline }
+				const current = (fieldDefs[args.type] ?? []) as FieldDef[]
+				const updated = transform(current)
+				fieldDefs[args.type] = updated
+				await apiCall(
+					config,
+					'PATCH',
+					`/api/workspaces/${wsId}`,
+					{ settings: { field_definitions: fieldDefs } },
+					{ workspaceId: wsId, idempotencyKey: `mcp-schema-${wsId}-${randomUUID()}` },
+				)
+				const verify = await getWorkspace(config, wsId)
+				const verifyAll = (verify.settings.field_definitions ?? {}) as Record<string, FieldDef[]>
+				if (fieldDefMapsEqual(verifyAll, fieldDefs)) {
+					return { wsId, updatedFields: updated }
+				}
+				lastErr = new Error(
+					`Concurrent edit detected on workspace "${wsId}" (attempt ${attempt + 1}/${MAX_RMW_ATTEMPTS}). Another writer modified field_definitions between read and verify; retrying.`,
+				)
+			}
+			throw (
+				lastErr ??
+				new Error(
+					`Failed to apply schema change to workspace "${wsId}" type "${args.type}" after ${MAX_RMW_ATTEMPTS} attempts due to concurrent edits.`,
+				)
+			)
+		})
+	}
+
+	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {
+		if (field.type !== 'enum') {
+			throw new Error(`Field "${field.name}" is type "${field.type}", not "enum"`)
+		}
+		if (!Array.isArray(field.values)) {
+			throw new Error(
+				`Field "${field.name}" is type "enum" but has no values list. Repair via update_workspace_field with values: [...] before adding or removing values.`,
+			)
+		}
+	}
+
+	registerAppTool(
+		server,
+		'create_workspace_field',
+		{
+			description: tools.create_workspace_field.description,
+			inputSchema: tools.create_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			if (args.field_type === 'enum' && (!args.values || args.values.length === 0)) {
+				throw new Error('Enum fields require at least one value in `values`.')
+			}
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				if (current.some((f) => f.name === args.name)) {
+					throw new Error(
+						`Field "${args.name}" already exists on type "${args.type}". Use update_workspace_field to modify it.`,
+					)
+				}
+				const next: FieldDef = {
+					name: args.name,
+					type: args.field_type,
+					...(args.required ? { required: true } : {}),
+					...(args.field_type === 'enum' && args.values ? { values: args.values } : {}),
+				}
+				return [...current, next]
+			})
+			const created = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('create_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: created }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_workspace_field',
+		{
+			description: tools.update_workspace_field.description,
+			inputSchema: tools.update_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const existing = current[idx] as FieldDef
+				const nextName = args.new_name ?? existing.name
+				if (
+					nextName !== existing.name &&
+					current.some((f, i) => i !== idx && f.name === nextName)
+				) {
+					throw new Error(
+						`Field "${nextName}" already exists on type "${args.type}". Choose a different name.`,
+					)
+				}
+				const nextType = args.field_type ?? existing.type
+				const nextRequired = args.required ?? existing.required ?? false
+				let nextValues: string[] | undefined
+				if (nextType === 'enum') {
+					nextValues = args.values ?? existing.values ?? []
+					if (nextValues.length === 0) {
+						throw new Error('Enum fields require at least one value in `values`.')
+					}
+				}
+				const next: FieldDef = {
+					name: nextName,
+					type: nextType,
+					...(nextRequired ? { required: true } : {}),
+					...(nextType === 'enum' && nextValues ? { values: nextValues } : {}),
+				}
+				const copy = [...current]
+				copy[idx] = next
+				return copy
+			})
+			const renamed = args.new_name ?? args.name
+			const updated = updatedFields.find((f) => f.name === renamed)
+			return {
+				_meta: meta('update_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_workspace_field',
+		{
+			description: tools.delete_workspace_field.description,
+			inputSchema: tools.delete_workspace_field.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId } = await patchFieldDefinitions(args, (current) =>
+				current.filter((f) => f.name !== args.name),
+			)
+			return {
+				_meta: meta('delete_workspace_field', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{ workspace_id: wsId, type: args.type, deleted: args.name, success: true },
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_workspace_enum_value',
+		{
+			description: tools.add_workspace_enum_value.description,
+			inputSchema: tools.add_workspace_enum_value.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const field = current[idx] as FieldDef
+				ensureEnumField(field)
+				if (field.values.includes(args.value)) return current
+				const copy = [...current]
+				copy[idx] = { ...field, values: [...field.values, args.value] }
+				return copy
+			})
+			const updated = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('add_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'remove_workspace_enum_value',
+		{
+			description: tools.remove_workspace_enum_value.description,
+			inputSchema: tools.remove_workspace_enum_value.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
+		},
+		async (args) => {
+			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
+				const idx = current.findIndex((f) => f.name === args.name)
+				if (idx === -1) {
+					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
+				}
+				const field = current[idx] as FieldDef
+				ensureEnumField(field)
+				if (!field.values.includes(args.value)) return current
+				const copy = [...current]
+				copy[idx] = { ...field, values: field.values.filter((v) => v !== args.value) }
+				return copy
+			})
+			const updated = updatedFields.find((f) => f.name === args.name)
+			return {
+				_meta: meta('remove_workspace_enum_value', config, wsId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+					},
+				],
 			}
 		},
 	)
@@ -785,7 +2608,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: wsId,
 			})
 			return {
-				_meta: { toolName: 'list_workspace_skills' },
+				_meta: meta(
+					'list_workspace_skills',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -809,7 +2636,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: wsId },
 			)
 			return {
-				_meta: { toolName: 'get_workspace_skill' },
+				_meta: meta(
+					'get_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -833,7 +2664,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: wsId },
 			)
 			return {
-				_meta: { toolName: 'create_workspace_skill' },
+				_meta: meta(
+					'create_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -857,7 +2692,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: wsId },
 			)
 			return {
-				_meta: { toolName: 'update_workspace_skill' },
+				_meta: meta(
+					'update_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -881,7 +2720,133 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: wsId },
 			)
 			return {
-				_meta: { toolName: 'delete_workspace_skill' },
+				_meta: meta(
+					'delete_workspace_skill',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Files ───────────────────────────────────────────────
+	registerAppTool(
+		server,
+		'create_file',
+		{
+			description: tools.create_file.description,
+			inputSchema: tools.create_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/files',
+				{
+					name: args.name,
+					description: args.description,
+					mime_type: args.mime_type,
+					content: args.content,
+					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
+				},
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('create_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_files',
+		{
+			description: tools.list_files.description,
+			inputSchema: tools.list_files.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const params = new URLSearchParams()
+			if (args.q) params.set('q', args.q)
+			if (args.limit !== undefined) params.set('limit', String(args.limit))
+			if (args.offset !== undefined) params.set('offset', String(args.offset))
+			const qs = params.toString()
+			const result = await apiCall(config, 'GET', `/api/files${qs ? `?${qs}` : ''}`, undefined, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_file',
+		{
+			description: tools.get_file.description,
+			inputSchema: tools.get_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(config, 'GET', `/api/files/${args.id}`, undefined, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta('get_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_file',
+		{
+			description: tools.update_file.description,
+			inputSchema: tools.update_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const body: Record<string, unknown> = {}
+			if (args.name !== undefined) body.name = args.name
+			if (args.description !== undefined) body.description = args.description
+			if (args.mime_type !== undefined) body.mime_type = args.mime_type
+			if (args.content !== undefined) body.content = args.content
+			if (args.encoding !== undefined) body.encoding = args.encoding
+			const result = await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta('update_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_file',
+		{
+			description: tools.delete_file.description,
+			inputSchema: tools.delete_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(config, 'DELETE', `/api/files/${args.id}`, undefined, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta('delete_file', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -898,6 +2863,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const params = new URLSearchParams()
+			if (args.id) params.set('id', String(args.id))
 			if (args.entity_type) params.set('entity_type', args.entity_type)
 			if (args.action) params.set('action', args.action)
 			if (args.limit) params.set('limit', String(args.limit))
@@ -905,7 +2871,53 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'get_events' },
+				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Comments ─────────────────────────────────────────────
+	registerAppTool(
+		server,
+		'get_comments',
+		{
+			description: tools.get_comments.description,
+			inputSchema: tools.get_comments.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			params.set('entity_type', 'object')
+			params.set('entity_id', args.entity_id)
+			params.set('action', 'commented')
+			params.set('limit', String(args.limit))
+			params.set('offset', String(args.offset))
+			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_comment',
+		{
+			description: tools.create_comment.description,
+			inputSchema: tools.create_comment.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/events', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('create_comment', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -926,7 +2938,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'create_trigger' },
+				_meta: meta('create_trigger', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -938,15 +2950,57 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_triggers.description,
 			inputSchema: tools.list_triggers.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', '/api/triggers', undefined, {
-				workspaceId: args.workspace_id,
-			})
+			const limit = args.limit ?? 50
+			const offset = args.offset ?? 0
+			const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+			const { data, response } = await apiCallWithResponse(
+				config,
+				'GET',
+				`/api/triggers?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			const rows = Array.isArray(data) ? (data as RawTrigger[]) : []
+			const ownerIds = rows
+				.map((t) => t.targetActorId)
+				.filter((v): v is string => typeof v === 'string')
+			const actors = await resolveActors(config, ownerIds, args.workspace_id)
+			const heroObjects = rows.map((t) =>
+				buildTriggerHeroCardObject(
+					t,
+					t.targetActorId ? (actors.get(t.targetActorId) ?? null) : null,
+				),
+			)
+			const totalCount = parseTotalCountHeader(response, heroObjects.length)
+			const heroCard: HeroCardPayload =
+				heroObjects.length === 0
+					? { kind: 'empty', tool: 'list_triggers' }
+					: heroObjects.length === 1 && totalCount === 1
+						? { kind: 'single', tool: 'list_triggers', object: heroObjects[0] }
+						: {
+								kind: 'list',
+								tool: 'list_triggers',
+								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
+								totalCount,
+								page: {
+									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									offset,
+									hasMore:
+										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
+								},
+							}
 			return {
-				_meta: { toolName: 'list_triggers' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: uiMeta(
+					'list_triggers',
+					config,
+					args.workspace_id,
+					pickCollectionResourceUri(heroCard),
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+				structuredContent: { heroCard },
 			}
 		},
 	)
@@ -965,7 +3019,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'update_trigger' },
+				_meta: meta('update_trigger', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -984,13 +3038,17 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'delete_trigger' },
+				_meta: meta('delete_trigger', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
 
 	// ─── Notifications ────────────────────────────────────────
+	// Temporarily hidden from the MCP surface while we rethink the notification
+	// product flow. Tool definitions remain in `tools.ts` so re-enabling is a
+	// matter of uncommenting these `registerAppTool` calls.
+	/*
 	registerAppTool(
 		server,
 		'create_notification',
@@ -1027,7 +3085,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'create_notification' },
+				_meta: meta(
+					'create_notification',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1051,7 +3113,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_notifications' },
+				_meta: meta('list_notifications', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1070,7 +3132,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'get_notification' },
+				_meta: meta('get_notification', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1090,7 +3152,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: workspace_id,
 			})
 			return {
-				_meta: { toolName: 'update_notification' },
+				_meta: meta(
+					'update_notification',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1109,7 +3175,123 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'delete_notification' },
+				_meta: meta(
+					'delete_notification',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+	*/
+
+	// ─── Subscriptions ────────────────────────────────────────
+	registerAppTool(
+		server,
+		'subscribe',
+		{
+			description: tools.subscribe.description,
+			inputSchema: tools.subscribe.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/subscriptions', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('subscribe', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'unsubscribe',
+		{
+			description: tools.unsubscribe.description,
+			inputSchema: tools.unsubscribe.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'DELETE', '/api/subscriptions', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('unsubscribe', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_subscribers',
+		{
+			description: tools.list_subscribers.description,
+			inputSchema: tools.list_subscribers.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams({
+				entity_type: args.entity_type,
+				entity_id: args.entity_id,
+			})
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/subscriptions/subscribers?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('list_subscribers', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'mark_read',
+		{
+			description: tools.mark_read.description,
+			inputSchema: tools.mark_read.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/subscriptions/read', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('mark_read', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_unread',
+		{
+			description: tools.list_unread.description,
+			inputSchema: tools.list_unread.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			if (args.entity_type) params.set('entity_type', args.entity_type)
+			const qs = params.toString()
+			const path = qs ? `/api/subscriptions/unread?${qs}` : '/api/subscriptions/unread'
+			const result = await apiCall(config, 'GET', path, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1122,16 +3304,21 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_session.description,
 			inputSchema: tools.create_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'POST', '/api/sessions', body, {
+			const result = (await apiCall(config, 'POST', '/api/sessions', body, {
 				workspaceId: workspace_id,
-			})
+			})) as SessionRow
+			const enriched = await enrichSessionActorName(
+				config,
+				workspace_id ?? config.defaultWorkspaceId,
+				result,
+			)
 			return {
-				_meta: { toolName: 'create_session' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1142,7 +3329,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_sessions.description,
 			inputSchema: tools.list_sessions.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const params = new URLSearchParams()
@@ -1150,12 +3337,17 @@ export function createMcpServer(config: McpConfig) {
 			if (args.actor_id) params.set('actor_id', args.actor_id)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
-			const result = await apiCall(config, 'GET', `/api/sessions?${params}`, undefined, {
-				workspaceId: args.workspace_id,
-			})
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const [result, names] = await Promise.all([
+				apiCall(config, 'GET', `/api/sessions?${params}`, undefined, {
+					workspaceId: args.workspace_id,
+				}) as Promise<SessionRow[]>,
+				wsId ? fetchActorNameMap(config, wsId) : Promise.resolve({} as Record<string, string>),
+			])
+			const enriched = result.map((s) => attachActorName(s, names))
 			return {
-				_meta: { toolName: 'list_sessions' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: meta('list_sessions', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1166,11 +3358,19 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_session.description,
 			inputSchema: tools.get_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
-			const session = await apiCall(config, 'GET', `/api/sessions/${args.id}`, undefined, wsOpts)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const session = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.id}`,
+				undefined,
+				wsOpts,
+			)) as SessionRow
+			const enriched = await enrichSessionActorName(config, wsId, session)
 
 			if (args.include_logs) {
 				const params = new URLSearchParams()
@@ -1183,14 +3383,16 @@ export function createMcpServer(config: McpConfig) {
 					wsOpts,
 				)
 				return {
-					_meta: { toolName: 'get_session' },
-					content: [{ type: 'text' as const, text: JSON.stringify({ session, logs }, null, 2) }],
+					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
+					content: [
+						{ type: 'text' as const, text: JSON.stringify({ session: enriched, logs }, null, 2) },
+					],
 				}
 			}
 
 			return {
-				_meta: { toolName: 'get_session' },
-				content: [{ type: 'text' as const, text: JSON.stringify(session, null, 2) }],
+				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1201,15 +3403,20 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.stop_session.description,
 			inputSchema: tools.stop_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
+			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/stop`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as SessionRow
+			const enriched = await enrichSessionActorName(
+				config,
+				args.workspace_id ?? config.defaultWorkspaceId,
+				result,
+			)
 			return {
-				_meta: { toolName: 'stop_session' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: meta('stop_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1220,15 +3427,20 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.pause_session.description,
 			inputSchema: tools.pause_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
+			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/pause`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as SessionRow
+			const enriched = await enrichSessionActorName(
+				config,
+				args.workspace_id ?? config.defaultWorkspaceId,
+				result,
+			)
 			return {
-				_meta: { toolName: 'pause_session' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: meta('pause_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1239,15 +3451,20 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.resume_session.description,
 			inputSchema: tools.resume_session.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
+			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as SessionRow
+			const enriched = await enrichSessionActorName(
+				config,
+				args.workspace_id ?? config.defaultWorkspaceId,
+				result,
+			)
 			return {
-				_meta: { toolName: 'resume_session' },
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(enriched, null, 2) }],
 			}
 		},
 	)
@@ -1258,7 +3475,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.run_agent.description,
 			inputSchema: tools.run_agent.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id } = args
@@ -1308,7 +3525,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 
 			return {
-				_meta: { toolName: 'run_agent' },
+				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
 					{ type: 'text' as const, text: JSON.stringify({ session: current, logs }, null, 2) },
 				],
@@ -1330,7 +3547,7 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'list_integrations' },
+				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1349,7 +3566,7 @@ export function createMcpServer(config: McpConfig) {
 				skipWorkspace: true,
 			})
 			return {
-				_meta: { toolName: 'list_integration_providers' },
+				_meta: meta('list_integration_providers', config),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1374,7 +3591,11 @@ export function createMcpServer(config: McpConfig) {
 				install_url: string
 			}
 			return {
-				_meta: { toolName: 'connect_integration' },
+				_meta: meta(
+					'connect_integration',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [
 					{
 						type: 'text' as const,
@@ -1398,7 +3619,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'disconnect_integration' },
+				_meta: meta(
+					'disconnect_integration',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1428,7 +3653,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 			const result = { success: true, provider: args.provider, last4: last4(args.api_key) }
 			return {
-				_meta: { toolName: 'set_llm_api_key' },
+				_meta: meta('set_llm_api_key', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1454,7 +3679,7 @@ export function createMcpServer(config: McpConfig) {
 				openai: providerStatus(llmKeys.openai),
 			}
 			return {
-				_meta: { toolName: 'get_llm_api_keys' },
+				_meta: meta('get_llm_api_keys', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1478,7 +3703,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 			const result = { success: true, provider: args.provider }
 			return {
-				_meta: { toolName: 'delete_llm_api_key' },
+				_meta: meta('delete_llm_api_key', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1508,7 +3733,11 @@ export function createMcpServer(config: McpConfig) {
 				{ workspaceId: args.workspace_id },
 			)
 			return {
-				_meta: { toolName: 'import_claude_subscription' },
+				_meta: meta(
+					'import_claude_subscription',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1527,7 +3756,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'get_claude_subscription_status' },
+				_meta: meta(
+					'get_claude_subscription_status',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1546,7 +3779,11 @@ export function createMcpServer(config: McpConfig) {
 				workspaceId: args.workspace_id,
 			})
 			return {
-				_meta: { toolName: 'disconnect_claude_subscription' },
+				_meta: meta(
+					'disconnect_claude_subscription',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1653,7 +3890,7 @@ export function createMcpServer(config: McpConfig) {
 			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
 
 			return {
-				_meta: { toolName: 'list_extensions' },
+				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1688,7 +3925,11 @@ export function createMcpServer(config: McpConfig) {
 
 				if (enabledModules.includes(args.id)) {
 					return {
-						_meta: { toolName: 'create_extension' },
+						_meta: meta(
+							'create_extension',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
 						content: [
 							{
 								type: 'text' as const,
@@ -1709,7 +3950,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'create_extension' },
+					_meta: meta('create_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
@@ -1778,7 +4019,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 
 			return {
-				_meta: { toolName: 'create_extension' },
+				_meta: meta('create_extension', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -1824,7 +4065,11 @@ export function createMcpServer(config: McpConfig) {
 					)
 
 					return {
-						_meta: { toolName: 'update_extension' },
+						_meta: meta(
+							'update_extension',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
 						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 					}
 				}
@@ -1836,7 +4081,11 @@ export function createMcpServer(config: McpConfig) {
 					if (mod) {
 						if (enabledModules.includes(args.id)) {
 							return {
-								_meta: { toolName: 'update_extension' },
+								_meta: meta(
+									'update_extension',
+									config,
+									(args as { workspace_id?: string }).workspace_id,
+								),
 								content: [
 									{
 										type: 'text' as const,
@@ -1857,7 +4106,11 @@ export function createMcpServer(config: McpConfig) {
 						)
 
 						return {
-							_meta: { toolName: 'update_extension' },
+							_meta: meta(
+								'update_extension',
+								config,
+								(args as { workspace_id?: string }).workspace_id,
+							),
 							content: [
 								{
 									type: 'text' as const,
@@ -1875,7 +4128,11 @@ export function createMcpServer(config: McpConfig) {
 
 				if (!enabledModules.includes(args.id)) {
 					return {
-						_meta: { toolName: 'update_extension' },
+						_meta: meta(
+							'update_extension',
+							config,
+							(args as { workspace_id?: string }).workspace_id,
+						),
 						content: [
 							{
 								type: 'text' as const,
@@ -1898,7 +4155,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'update_extension' },
+					_meta: meta('update_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
@@ -1974,7 +4231,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'update_extension' },
+					_meta: meta('update_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
@@ -2044,7 +4301,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'delete_extension' },
+					_meta: meta('delete_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [
 						{
 							type: 'text' as const,
@@ -2098,7 +4355,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 
 				return {
-					_meta: { toolName: 'delete_extension' },
+					_meta: meta('delete_extension', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 				}
 			}
@@ -2109,6 +4366,76 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Widget telemetry ────────────────────────────────────
+	// Called by rendered MCP widgets to report click-through and render
+	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
+	// the 48h rolling render-error kill criterion. Intentionally NOT in
+	// MUTATION_TOOL_KINDS — it's an instrumentation channel, not a write.
+	registerAppTool(
+		server,
+		'record_widget_event',
+		{
+			description: tools.record_widget_event.description,
+			inputSchema: tools.record_widget_event.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			recordWidgetEvent(telemetrySink, telemetryTarget, {
+				widget_name: args.widget_name,
+				event: args.event,
+				tool_name: args.tool_name,
+				card_kind: args.card_kind,
+				object_type: args.object_type,
+				object_id: args.object_id,
+				workspace_id: args.workspace_id,
+			})
+			return {
+				_meta: meta('record_widget_event', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify({ recorded: true }) }],
+			}
+		},
+	)
+
+	// ─── Bet success metrics (read-only) ─────────────────────
+	// Sindre-callable surface for the MCP widget UX bet's success/kill metrics.
+	// Wraps GET /api/telemetry/mcp/summary and returns only the bet-first widget
+	// window — kept narrow so agents pull evidence without reading unrelated
+	// rich-render / mutation aggregates they have no context for.
+	registerAppTool(
+		server,
+		'get_bet_widget_metrics',
+		{
+			description: tools.get_bet_widget_metrics.description,
+			inputSchema: tools.get_bet_widget_metrics.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
+			const summary = (await apiCall(config, 'GET', '/api/telemetry/mcp/summary', undefined, {
+				workspaceId,
+			})) as {
+				workspace_id: string
+				window_start: string
+				window_end: string
+				widget_bet_first_window: unknown
+			}
+			const result = {
+				workspace_id: summary.workspace_id,
+				window_start: summary.window_start,
+				window_end: summary.window_end,
+				widget_bet_first_window: summary.widget_bet_first_window,
+			}
+			return {
+				_meta: meta('get_bet_widget_metrics', config, workspaceId),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Widget telemetry ────────────────────────────────────
+	// Called by rendered MCP widgets to report click-through and render
+	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
+	// the 48h rolling render-error kill criterion. Intentionally NOT in
 	// ─── Get Started (Onboarding) ────────────────────────────
 	registerAppTool(
 		server,
@@ -2120,7 +4447,7 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const textResponse = (text: string) => ({
-				_meta: { toolName: 'get_started' },
+				_meta: meta('get_started', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text }],
 			})
 
@@ -2199,15 +4526,18 @@ export function createMcpServer(config: McpConfig) {
 
 			// dev or growth template
 			const template: WorkspaceTemplate = WORKSPACE_TEMPLATES[chosen]
+			const mergedSettings = mergeEnabledModuleDefaults(
+				template.settings as Record<string, unknown>,
+			)
 
 			if (!args.confirm) {
 				const previewLines: string[] = []
-				const statuses = (template.settings.statuses ?? {}) as Record<string, string[]>
-				const fields = (template.settings.field_definitions ?? {}) as Record<
+				const statuses = (mergedSettings.statuses ?? {}) as Record<string, string[]>
+				const fields = (mergedSettings.field_definitions ?? {}) as Record<
 					string,
 					Array<{ name: string; type: string; values?: string[] }>
 				>
-				const displayNames = (template.settings.display_names ?? {}) as Record<string, string>
+				const displayNames = (mergedSettings.display_names ?? {}) as Record<string, string>
 				for (const [type, typeStatuses] of Object.entries(statuses)) {
 					const name = displayNames[type] ?? type
 					const line = `  • ${name} (${type}): ${typeStatuses.join(' → ')}`
@@ -2275,7 +4605,7 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 					config,
 					'PATCH',
 					`/api/workspaces/${workspace.id}`,
-					{ settings: template.settings },
+					{ settings: mergedSettings },
 					{ workspaceId: workspace.id },
 				)
 			} catch (err) {
@@ -2318,7 +4648,32 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			const actorIdMap: Record<string, string> = {}
 			let agentsCreated = 0
 			if (template.seedAgents && template.seedAgents.length > 0) {
+				// Pre-fetch existing workspace members so we can skip agents that
+				// were already seeded (e.g. by the automatic workspace bootstrap).
+				// Best-effort: if the fetch fails, dedup is skipped and agents may
+				// be re-created (non-fatal).
+				let existingActorsByName = new Map<string, string>()
+				try {
+					const existingMembers = (await apiCall(
+						config,
+						'GET',
+						`/api/workspaces/${workspace.id}/members`,
+						undefined,
+						{ workspaceId: workspace.id },
+					)) as Array<{ actorId: string; name: string }>
+					existingActorsByName = new Map(existingMembers.map((m) => [m.name, m.actorId]))
+				} catch {
+					// dedup unavailable — proceed without it
+				}
+
 				for (const agent of template.seedAgents) {
+					// If this agent already exists as a workspace member, record its id
+					// and skip all creation steps.
+					const existingId = existingActorsByName.get(agent.name)
+					if (existingId) {
+						actorIdMap[agent.$id] = existingId
+						continue
+					}
 					try {
 						const created = (await apiCall(
 							config,
@@ -2333,6 +4688,22 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 							{ workspaceId: workspace.id },
 						)) as { id: string }
 						actorIdMap[agent.$id] = created.id
+						// Add the agent to the workspace so it shows up in the UI's
+						// agents page (which inner-joins workspace_members) and can be
+						// invoked as a workspace member by triggers and humans.
+						// Non-fatal: if this fails, the agent still exists and triggers
+						// (which FK to actors only) can still fire it.
+						try {
+							await apiCall(
+								config,
+								'POST',
+								`/api/workspaces/${workspace.id}/members`,
+								{ actor_id: created.id, role: 'member' },
+								{ workspaceId: workspace.id },
+							)
+						} catch (err) {
+							seedSummary += ` Failed to add agent "${agent.name}" to workspace members: ${String(err)}.`
+						}
 						// Second pass: substitute {{self_id}} in the system prompt.
 						if (agent.systemPrompt.includes('{{self_id}}')) {
 							const substituted = agent.systemPrompt.replaceAll('{{self_id}}', created.id)
@@ -2344,6 +4715,27 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 								{ workspaceId: workspace.id },
 							)
 						}
+						// Create and attach seed skills for this agent.
+						for (const skill of agent.skills ?? []) {
+							try {
+								const createdSkill = (await apiCall(
+									config,
+									'POST',
+									`/api/workspaces/${workspace.id}/skills`,
+									{ name: skill.name, content: skill.content },
+									{ workspaceId: workspace.id },
+								)) as { id: string }
+								await apiCall(
+									config,
+									'POST',
+									`/api/actors/${created.id}/workspace-skills`,
+									{ workspaceSkillId: createdSkill.id },
+									{ workspaceId: workspace.id },
+								)
+							} catch (err) {
+								seedSummary += ` Failed to create/attach skill "${skill.name}" for agent "${agent.name}": ${String(err)}.`
+							}
+						}
 						agentsCreated++
 					} catch (err) {
 						seedSummary += ` Failed to create agent "${agent.name}": ${String(err)}.`
@@ -2354,7 +4746,19 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			// Create seed triggers, resolving targetActor$id to a real UUID.
 			let triggersCreated = 0
 			if (template.seedTriggers && template.seedTriggers.length > 0) {
+				// Pre-fetch existing triggers to skip any already seeded. Best-effort.
+				let existingTriggerNames = new Set<string>()
+				try {
+					const existingTriggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+						workspaceId: workspace.id,
+					})) as Array<{ name: string }>
+					existingTriggerNames = new Set(existingTriggers.map((t) => t.name))
+				} catch {
+					// dedup unavailable — proceed without it
+				}
+
 				for (const trigger of template.seedTriggers) {
+					if (existingTriggerNames.has(trigger.name)) continue
 					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
 					try {
 						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)
@@ -2383,7 +4787,7 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 				seedSummary += ` Created ${agentsCreated} agents and ${triggersCreated} triggers that drive the pipeline.`
 			}
 
-			const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173').replace(/\/$/, '')
+			const frontendUrl = stripTrailingSlash(process.env.FRONTEND_URL ?? 'http://localhost:5173')
 			// Magic-link auto-auth is only safe on localhost: the URL carries the raw
 			// API key in its fragment, so it must not end up in shared browser history,
 			// agent transcripts, or forwarded links. For any non-local frontend, emit a
@@ -2509,7 +4913,11 @@ INSTRUCTIONS FOR THE AGENT — do NOT print this block verbatim. Write a short, 
 							apiCall(config, method, `/api/m/${ext.id}${path}`, body, options),
 						)
 						return {
-							_meta: { toolName: `${ext.id}_${tool.name}` },
+							_meta: meta(
+								`${ext.id}_${tool.name}`,
+								config,
+								(args as { workspace_id?: string }).workspace_id,
+							),
 							content: result.content,
 						}
 					},
@@ -2530,6 +4938,7 @@ async function main() {
 		apiKey: process.env.API_KEY || '',
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 		transport: 'stdio',
+		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
 	}
 
 	const server = createMcpServer(config)

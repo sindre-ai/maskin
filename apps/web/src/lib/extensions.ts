@@ -1,3 +1,4 @@
+import crmWebExtension from '@maskin/ext-crm/web'
 import knowledgeWebExtension from '@maskin/ext-knowledge/web'
 import workWebExtension from '@maskin/ext-work/web'
 import { registerWebModule } from '@maskin/module-sdk'
@@ -7,3 +8,4 @@ import { registerWebModule } from '@maskin/module-sdk'
 // through the module registry for dynamic UI rendering.
 registerWebModule(workWebExtension)
 registerWebModule(knowledgeWebExtension)
+registerWebModule(crmWebExtension)

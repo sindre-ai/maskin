@@ -34,6 +34,18 @@ vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => <span>agent working</span>,
 }))
 
+// useIsMobile is overridden per-test via `mockIsMobile`. Default desktop so the
+// existing table-render assertions keep passing without changes.
+const mockIsMobile = vi.fn(() => false)
+vi.mock('@/hooks/use-mobile', () => ({
+	useIsMobile: () => mockIsMobile(),
+}))
+
+// DataTable fetches actors for the mobile card view's owner label.
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: [] }),
+}))
+
 vi.mock('@tanstack/react-virtual', () => ({
 	useVirtualizer: ({ count }: { count: number }) => ({
 		getVirtualItems: () =>
@@ -44,6 +56,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 				size: 48,
 			})),
 		getTotalSize: () => count * 48,
+		measureElement: vi.fn(),
 	}),
 }))
 
@@ -73,6 +86,7 @@ function renderDataTable(overrides: Partial<Parameters<typeof DataTable>[0]> = {
 describe('DataTable', () => {
 	beforeEach(() => {
 		mockNavigate.mockClear()
+		mockIsMobile.mockReturnValue(false)
 	})
 
 	it('shows empty state when data is empty', () => {
@@ -118,5 +132,32 @@ describe('DataTable', () => {
 		// The main table plus a loading spinner for pagination
 		const spinners = screen.getAllByTitle('Loading')
 		expect(spinners.length).toBeGreaterThanOrEqual(1)
+	})
+
+	describe('mobile (below md)', () => {
+		beforeEach(() => {
+			mockIsMobile.mockReturnValue(true)
+		})
+
+		it('renders objects as a card list instead of a table', () => {
+			const data = [buildObjectResponse({ title: 'Card Object' })]
+			renderDataTable({ data })
+			// The mobile path is a role="list", not a <table>.
+			expect(screen.getByRole('list', { name: 'Objects' })).toBeInTheDocument()
+			expect(screen.queryByRole('table')).not.toBeInTheDocument()
+			expect(screen.getByText('Card Object')).toBeInTheDocument()
+		})
+
+		it('navigates to object detail on card click', async () => {
+			const user = userEvent.setup()
+			const obj = buildObjectResponse({ id: 'obj-7', title: 'Tap me' })
+			renderDataTable({ data: [obj], workspaceId: 'ws-1' })
+
+			await user.click(screen.getByText('Tap me'))
+			expect(mockNavigate).toHaveBeenCalledWith({
+				to: '/$workspaceId/objects/$objectId',
+				params: { workspaceId: 'ws-1', objectId: 'obj-7' },
+			})
+		})
 	})
 })

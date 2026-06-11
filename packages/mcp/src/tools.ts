@@ -1,4 +1,11 @@
-import { notificationActionSchema, notificationOptionSchema, skillNameSchema } from '@maskin/shared'
+import {
+	COMMENT_MAX_ATTACHMENTS,
+	COMMENT_MAX_LENGTH,
+	createCommentSchema,
+	notificationActionSchema,
+	notificationOptionSchema,
+	skillNameSchema,
+} from '@maskin/shared'
 import { z } from 'zod'
 
 // Keep field list in sync with `notificationMetadataSchema` in
@@ -103,7 +110,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|discarded, bet: signal|proposed|active|completed|succeeded|failed|paused, task: todo|in_progress|done|blocked.',
+			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|discarded, bet: signal|proposed|active|completed|succeeded|failed|paused, task: todo|in_progress|done|blocked. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
@@ -119,6 +126,17 @@ export const tools = {
 							.optional()
 							.describe(
 								'Key-value metadata. Call get_workspace_schema to discover available fields and types.',
+							),
+						driver: z
+							.string()
+							.uuid()
+							.optional()
+							.describe('UUID of the driver actor responsible for this object'),
+						file_ids: z
+							.array(z.string().uuid())
+							.optional()
+							.describe(
+								'IDs of existing files to attach to this object (upload first with create_file). Each becomes an `attached` relationship between the object and the file.',
 							),
 					}),
 				)
@@ -145,7 +163,7 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID, each with all its relationships and connected objects. Returns the full context around each object including inbound/outbound relationships and details of connected objects.',
+			'Get one or more objects by ID, each with all its relationships, connected objects, recent activity, and attached files. Returns the full context around each object: inbound/outbound relationships (each carrying sourceTitle and targetTitle), details of connected objects, the most recent events on the object (lifecycle changes plus comments — comments are events with action="commented" and content in event.data.content, replies link via event.data.parentEventId; comment events carry data.attachmentFileIds for any files the commenter attached), and a top-level `files` array with full metadata (id, name, mimeType, sizeBytes, url) for every file referenced by this object — both files attached directly to the object and files attached in comments. Cross-reference comment attachmentFileIds with the `files` array to get viewer URLs without an extra round-trip. When referring to these objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
@@ -153,7 +171,7 @@ export const tools = {
 	},
 	update_objects: {
 		description:
-			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types.',
+			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. To attach or detach files on an object, pass `attach_file_ids` (upload first with create_file) and/or `detach_file_ids` on the update entry — attached files appear under the object in the UI and are returned by get_objects. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types. Updated objects are returned with their title; created relationships include sourceTitle and targetTitle. When referring to objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			updates: z
@@ -168,6 +186,19 @@ export const tools = {
 							.optional()
 							.describe(
 								'Key-value metadata. Call get_workspace_schema to discover available fields and types.',
+							),
+						attach_file_ids: z
+							.array(z.string().uuid())
+							.optional()
+							.describe(
+								'IDs of existing files to attach to this object (upload first with create_file). Each becomes an `attached` relationship; already-attached files are skipped.',
+							),
+						driver: z.string().uuid().nullable().optional().describe('Set or clear the driver'),
+						detach_file_ids: z
+							.array(z.string().uuid())
+							.optional()
+							.describe(
+								'IDs of files currently attached to this object to detach. Removes the `attached` relationship row but leaves the file itself untouched (delete with delete_file if you also want to remove the file).',
 							),
 					}),
 				)
@@ -196,11 +227,16 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or driver. Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
+			driver: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to objects with this driver actor UUID'),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
@@ -221,9 +257,17 @@ export const tools = {
 		}),
 	},
 	list_relationships: {
-		description: 'List relationships with optional filters',
+		description:
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Match relationships where this object is either the source or the target (direction-agnostic). Prefer this over source_id/target_id when you want every edge connected to an object.',
+				),
 			source_id: z.string().uuid().optional(),
 			target_id: z.string().uuid().optional(),
 			type: z.string().optional(),
@@ -255,6 +299,13 @@ export const tools = {
 				.describe(
 					'Role when adding to a workspace: owner (full control), member (read/write), viewer (read-only)',
 				),
+			description: z
+				.string()
+				.max(80)
+				.optional()
+				.describe(
+					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
+				),
 			system_prompt: z.string().optional(),
 			tools: z.record(z.unknown()).optional(),
 			llm_provider: z.string().optional(),
@@ -263,16 +314,29 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, system_prompt (for agents), tools configuration, memory (persistent key-value store), LLM provider, and LLM config.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
 			email: z.string().email().optional(),
+			description: z
+				.string()
+				.max(80)
+				.optional()
+				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
 			system_prompt: z.string().optional(),
 			tools: z.record(z.unknown()).optional(),
 			memory: z.record(z.unknown()).optional(),
 			llm_provider: z.string().optional(),
 			llm_config: z.record(z.unknown()).optional(),
+			attach_skill_ids: z
+				.array(z.string().uuid())
+				.optional()
+				.describe('Workspace skill IDs to attach to this actor.'),
+			detach_skill_ids: z
+				.array(z.string().uuid())
+				.optional()
+				.describe('Workspace skill IDs to detach from this actor.'),
 		}),
 	},
 	regenerate_api_key: {
@@ -283,11 +347,22 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			'List all actors (humans and agents) in the workspace, including their roles (owner, member, viewer).',
-		inputSchema: z.object({}),
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
+		inputSchema: z.object({
+			workspace_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Optional workspace ID to scope the listing to. If omitted, returns actors across all workspaces the caller belongs to (each with their workspace memberships).',
+				),
+			limit: z.number().int().min(1).max(100).default(50),
+			offset: z.number().int().min(0).default(0),
+		}),
 	},
 	get_actor: {
-		description: 'Get actor details by ID',
+		description:
+			'Get an actor by ID — returns the full record including `description` (short one-liner) and `system_prompt` / instructions (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 		}),
@@ -314,7 +389,7 @@ export const tools = {
 	},
 	get_workspace_schema: {
 		description:
-			'Get the workspace schema: available statuses per object type, custom metadata field definitions (name, type, required, enum values), display names, and relationship types. Call this before creating or updating objects to know which metadata fields exist, what types they expect, and which values are valid. Optionally filter by object type.',
+			'Get the workspace schema: available statuses per object type, custom metadata field definitions (name, type, required, enum values), display names, and relationship types. Call this before creating or updating objects to know which metadata fields exist, what types they expect, and which values are valid. Optionally filter by object type. Types with Hero Card defaults or workspace overrides also include a `hero_card` annotation block on the response (`hero_card_context`, `hero_card_metas`, `primary_action`) describing how matching objects render in the Hero Card MCP widget.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
@@ -335,6 +410,91 @@ export const tools = {
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe('Role: owner (full control), admin (manage members), member (read/write)'),
+		}),
+	},
+	// ─── Workspace Schema Editing (W1) ──────────────────────
+	// Mutate `settings.field_definitions[type]` so agents can author/extend
+	// the workspace schema from chat. Mirrors the web schema editor at
+	// apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx —
+	// each tool does a read-modify-write on the workspace because the PATCH
+	// endpoint shallow-merges `settings`.
+	create_workspace_field: {
+		description:
+			'Add a new metadata field to a workspace object type (e.g. insight, bet, task). Mirrors the web schema editor — once added, the field is available via get_workspace_schema and accepted by create_objects / update_objects metadata. Field names must be unique within a type.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z
+				.string()
+				.min(1)
+				.describe('Object type to attach the field to (e.g. "insight", "bet", "task").'),
+			name: z.string().min(1).describe('Field name. Must be unique within the type.'),
+			field_type: z
+				.enum(['text', 'number', 'date', 'enum', 'boolean'])
+				.describe(
+					'Field value type. Use "enum" for a fixed set of values (provide values[]); "text" for free text; "number"/"date"/"boolean" for typed scalars.',
+				),
+			required: z
+				.boolean()
+				.optional()
+				.describe('When true, the field is required on objects of this type.'),
+			values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe('Allowed values for an enum field. Required when field_type is "enum".'),
+		}),
+	},
+	update_workspace_field: {
+		description:
+			'Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or replace the full enum value list. Pass only the fields you want to change.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z.string().min(1).describe('Object type the field belongs to.'),
+			name: z.string().min(1).describe('Existing field name to update.'),
+			new_name: z
+				.string()
+				.min(1)
+				.optional()
+				.describe('Optional rename. Must remain unique within the type.'),
+			field_type: z
+				.enum(['text', 'number', 'date', 'enum', 'boolean'])
+				.optional()
+				.describe('Optional new field type.'),
+			required: z.boolean().optional().describe('Optional new required flag.'),
+			values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe(
+					'Optional full replacement list of enum values. Pass an empty array to clear. Use add/remove_workspace_enum_value to mutate one value without losing others.',
+				),
+		}),
+	},
+	delete_workspace_field: {
+		description:
+			'Remove a metadata field from a workspace object type. Existing objects keep any data they previously stored under this field; new objects can no longer set it. Idempotent — deleting a field that does not exist returns success.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z.string().min(1).describe('Object type the field belongs to.'),
+			name: z.string().min(1).describe('Field name to delete.'),
+		}),
+	},
+	add_workspace_enum_value: {
+		description:
+			'Append an allowed value to an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — adding an existing value is a no-op.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z.string().min(1).describe('Object type the field belongs to.'),
+			name: z.string().min(1).describe('Enum field name.'),
+			value: z.string().min(1).describe('Value to add.'),
+		}),
+	},
+	remove_workspace_enum_value: {
+		description:
+			'Remove an allowed value from an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — removing a missing value is a no-op. Existing objects that previously stored this value keep their stored value; only new writes are constrained.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			type: z.string().min(1).describe('Object type the field belongs to.'),
+			name: z.string().min(1).describe('Enum field name.'),
+			value: z.string().min(1).describe('Value to remove.'),
 		}),
 	},
 	// ─── Workspace Skills ─────────────────────────────────────
@@ -393,14 +553,116 @@ export const tools = {
 			name: skillNameSchema.describe('Name of the workspace skill to delete.'),
 		}),
 	},
-	get_events: {
+	// ─── Files ───────────────────────────────────────────────
+	create_file: {
 		description:
-			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed).',
+			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding. Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			name: z
+				.string()
+				.min(1)
+				.max(255)
+				.describe('Display name including extension, e.g. "launch-plan.md".'),
+			description: z
+				.string()
+				.max(1000)
+				.optional()
+				.describe('Optional one-line summary surfaced in the file list.'),
+			mime_type: z
+				.string()
+				.describe(
+					'IANA MIME type of the content, e.g. "text/markdown", "text/html", "application/pdf", "image/png".',
+				),
+			content: z
+				.string()
+				.describe(
+					'File content. For text/markdown/HTML/JSON, pass the raw string and leave `encoding` at the default. For binary files, set `encoding` to "base64" and pass base64-encoded bytes. Max 10 MB.',
+				),
+			encoding: z
+				.enum(['base64', 'utf8'])
+				.optional()
+				.describe(
+					'Encoding of `content`. Defaults to "utf8" — pass markdown/HTML/JSON as a normal string. Use "base64" for binary files (images, PDFs, archives).',
+				),
+		}),
+	},
+	list_files: {
+		description: 'List files in the workspace, newest first. Pass `q` to filter by name substring.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
+			limit: z.number().int().min(1).max(200).optional(),
+			offset: z.number().int().min(0).optional(),
+		}),
+	},
+	get_file: {
+		description:
+			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. Use this when you need to read, summarise, or hand the URL to a user.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID.'),
+		}),
+	},
+	update_file: {
+		description:
+			'Update a file. Pass any subset of name, description, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID.'),
+			name: z.string().min(1).max(255).optional(),
+			description: z.string().max(1000).nullable().optional(),
+			mime_type: z.string().optional(),
+			content: z
+				.string()
+				.optional()
+				.describe(
+					'New file content. For text, pass the raw string and leave `encoding` at the default. For binary files, set `encoding` to "base64" and pass base64-encoded bytes. Max 10 MB.',
+				),
+			encoding: z
+				.enum(['base64', 'utf8'])
+				.optional()
+				.describe('Encoding of `content`. Defaults to "utf8". Use "base64" for binary files.'),
+		}),
+	},
+	delete_file: {
+		description: 'Delete a file from the workspace. Bytes are removed from storage.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID.'),
+		}),
+	},
+	get_events: {
+		description:
+			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe('Numeric event_id. Returns at most one event when set.'),
 			entity_type: z.string().optional(),
 			action: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
+		}),
+	},
+	get_comments: {
+		description:
+			'Get comments posted on a specific object, newest first. Comments are events with action="commented" on entity_type="object". Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
+			limit: z.number().int().min(1).max(100).default(50),
+			offset: z.number().int().min(0).default(0),
+		}),
+	},
+	create_comment: {
+		description: `Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in \`bet.content\`, \`task.content\`, or object titles — those fields are the durable spec, not the conversation, and humans don't scan them for new information. If you're tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nWrite it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. If a thought is long, split it into multiple short comments or use parent_event_id to thread a reply. When referencing another object in human-facing text, use a markdown link \`[title](link)\` — never paste partial UUIDs.\n\nHard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. Set parent_event_id to thread a reply under an existing comment (use the id returned by get_comments). Include mentions as an array of actor UUIDs — for each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. To attach files, first upload them with create_file (or pick existing ones with list_files) and pass the returned file ids in attachment_file_ids (max ${COMMENT_MAX_ATTACHMENTS}). Attached files appear as clickable cards under the posted comment. To prompt the human for a structured decision, pass metadata: { chips: ["Option A", "Option B", "Skip"] } — up to 5 string options, each up to 20 characters. The UI renders them as quick-reply buttons the human can tap, with a free-text fallback. Their reply is threaded under this comment.`,
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			...createCommentSchema.shape,
 		}),
 	},
 	create_trigger: {
@@ -441,9 +703,11 @@ export const tools = {
 		}),
 	},
 	list_triggers: {
-		description: 'List all triggers in the workspace',
+		description: 'List all triggers in the workspace. Results are paginated (default 50, max 100).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			limit: z.number().int().min(1).max(100).default(50),
+			offset: z.number().int().min(0).default(0),
 		}),
 	},
 	// ─── Sessions ────────────────────────────────────────────
@@ -565,7 +829,7 @@ export const tools = {
 	// ─── Notifications ───────────────────────────────────────
 	create_notification: {
 		description:
-			'Create a notification for a human in the workspace. Use when the agent needs human input (decision, information), wants to share a strategic recommendation, report good news, or raise an alert. Pass session_id when the agent expects to be resumed with the human\'s reply — this enables the free-text "Reply to agent" input in the UI. To render clickable buttons, pass metadata.actions as a NATIVE JSON array (not a stringified one). For a structured picker (radio/checkbox/text), set metadata.input_type and metadata.options as a NATIVE JSON array.',
+			'Create a notification for a human in the workspace. Use when you need human input to make a decision that you cannot make yourself. Use this tool sparingly — before creating a new notification, always call list_notifications to check whether a similar pending notification already exists that can be updated via update_notification instead. Pass session_id when the agent expects to be resumed with the human\'s reply — this enables the free-text "Reply to agent" input in the UI. To render clickable buttons, pass metadata.actions as a NATIVE JSON array (not a stringified one). For a structured picker (radio/checkbox/text), set metadata.input_type and metadata.options as a NATIVE JSON array.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
@@ -642,6 +906,52 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
+		}),
+	},
+	// ─── Subscriptions ────────────────────────────────────────
+	subscribe: {
+		description:
+			'Subscribe the current actor to an entity (e.g. an object) so they receive unread counts when others comment. Use entity_type="object" and entity_id=<object_id>. Subscription is idempotent — a no-op if the actor is already subscribed.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			entity_type: z.enum(['object']),
+			entity_id: z.string().uuid(),
+		}),
+	},
+	unsubscribe: {
+		description:
+			"Unsubscribe the current actor from an entity. Idempotent — a no-op if the actor wasn't subscribed.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			entity_type: z.enum(['object']),
+			entity_id: z.string().uuid(),
+		}),
+	},
+	list_subscribers: {
+		description:
+			'List the actors subscribed to an entity (object). Useful for showing watchers on an object.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			entity_type: z.enum(['object']),
+			entity_id: z.string().uuid(),
+		}),
+	},
+	mark_read: {
+		description:
+			'Mark an entity as read up to a given event id. last_event_id should be the highest event id the actor has seen for this entity — the server will never move the high-water-mark backward.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			entity_type: z.enum(['object']),
+			entity_id: z.string().uuid(),
+			last_event_id: z.number().int().positive(),
+		}),
+	},
+	list_unread: {
+		description:
+			'List entities the current actor is subscribed to with unread activity (comments newer than the actor\'s last_read_event_id). Returns object summaries inline when entity_type="object".',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			entity_type: z.enum(['object']).optional(),
 		}),
 	},
 	// ─── Integrations ─────────────────────────────────────────
@@ -836,6 +1146,32 @@ export const tools = {
 			id: z
 				.string()
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
+		}),
+	},
+
+	get_bet_widget_metrics: {
+		description:
+			"Pull the MCP widget UX bet's live success and kill metrics for the workspace: rolling click-through rate over the first 200 bet renders, the first-50 kill window, and the 48h rolling render-error rate. Renders sent by agents are excluded so this number matches the success/kill criteria on the bet. Read-only; does not produce any telemetry rows. Use this when you need evidence on whether the widget UX bet is meeting its CTR target or has tripped a kill criterion, without writing a bespoke SQL query.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+
+	record_widget_event: {
+		description:
+			'INTERNAL — called by rendered MCP widgets (Hero Card) to report click-through, render success, and render failure events. Powers the bet success metric (click-through rate on Open in Maskin) and the 48h rolling render-error kill criterion. Do not call from an agent directly.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			widget_name: z.string().describe('Widget bundle name, e.g. "hero-card".'),
+			event: z
+				.enum(['click_through', 'render_success', 'render_error'])
+				.describe('What happened on the widget.'),
+			tool_name: z.string().describe('The MCP tool whose response produced this widget render.'),
+			card_kind: z
+				.enum(['single', 'list', 'empty'])
+				.describe('Result shape — single object, multi-row list, or empty state.'),
+			object_type: z.string().optional().describe('Object type when card_kind=single.'),
+			object_id: z.string().optional().describe('Object id when card_kind=single.'),
 		}),
 	},
 } as const

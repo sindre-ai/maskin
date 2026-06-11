@@ -1,12 +1,11 @@
 import { useActor } from '@/hooks/use-actors'
-import type { ActorResponse, EventResponse } from '@/lib/api'
+import type { ActorListItem, ActorResponse, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatEventDescription, isErrorEvent } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
-import { Activity, CircleDot, Link2, Pencil, Play, RefreshCw, Trash2, Unlink } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { RelativeTime } from '../shared/relative-time'
 import { Badge } from '../ui/badge'
-import { formatEventDescription, isErrorEvent } from './format-event'
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 const SESSION_ACTIONS = new Set([
@@ -26,20 +25,6 @@ function isSessionEvent(event: EventResponse): boolean {
 	return SESSION_ACTIONS.has(event.action)
 }
 
-function getEventIcon(event: EventResponse) {
-	const action = event.action
-	const entityType = event.entityType
-
-	if (action === 'created' && entityType === 'relationship') return Link2
-	if (action === 'deleted' && entityType === 'relationship') return Unlink
-	if (action === 'created') return CircleDot
-	if (action === 'updated') return Pencil
-	if (action === 'status_changed') return RefreshCw
-	if (action === 'deleted') return Trash2
-	if (action === 'session_created') return Play
-	return Activity
-}
-
 function getEntityTitle(event: EventResponse): string | null {
 	const data = event.data
 	if (!data) return null
@@ -55,6 +40,11 @@ interface ActivityItemViewProps {
 	actor?: ActorResponse
 	compact?: boolean
 	workspaceId?: string
+	/** When set and matches event.entityId, the entity title is hidden (used on the object detail page to avoid repeating the page's own title). */
+	contextEntityId?: string
+	actorsById?: Map<string, ActorListItem>
+	/** Replaces the default formatted description (used by the timeline to render compact "set the status to X" rows under phase dividers). */
+	descriptionOverride?: string
 }
 
 export function ActivityItemView({
@@ -62,16 +52,23 @@ export function ActivityItemView({
 	actor,
 	compact = false,
 	workspaceId,
+	contextEntityId,
+	actorsById,
+	descriptionOverride,
 }: ActivityItemViewProps) {
 	const isAgent = actor?.type === 'agent'
 	const title = getEntityTitle(event)
-	const description = formatEventDescription(event)
+	const description = descriptionOverride ?? formatEventDescription(event, { actorsById })
 	const hasError = isErrorEvent(event)
-
-	const Icon = getEventIcon(event)
 
 	const isSession = isSessionEvent(event)
 	const isClickable = isSession && workspaceId && event.actorId
+
+	const hideTitle =
+		contextEntityId !== undefined &&
+		contextEntityId === event.entityId &&
+		isObjectEntity(event.entityType)
+	const showTitle = !hideTitle && title
 
 	const content = (
 		<div
@@ -85,33 +82,37 @@ export function ActivityItemView({
 		>
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<div className="flex-1 min-w-0">
-				<div className="flex items-baseline gap-1.5 text-sm">
-					<Icon size={14} className="text-muted-foreground shrink-0 relative top-[2px]" />
-					<span className={cn('font-medium', isAgent ? 'text-primary' : 'text-foreground')}>
-						{actor?.name ?? 'Unknown'}
-					</span>
-					<span className="text-muted-foreground">{description}</span>
-					{title &&
+				<div className="flex items-baseline gap-1.5 text-sm flex-wrap">
+					{isAgent ? (
+						<span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-1.5 py-0.5 text-xs font-medium shrink-0">
+							{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
+							<span>{actor?.name ?? 'Agent'}</span>
+						</span>
+					) : (
+						<span className="font-medium text-foreground">{actor?.name ?? 'Unknown'}</span>
+					)}
+					<span className="text-muted-foreground break-words min-w-0">{description}</span>
+					{showTitle &&
 						(workspaceId && isObjectEntity(event.entityType) ? (
 							<Link
 								to="/$workspaceId/objects/$objectId"
 								params={{ workspaceId, objectId: event.entityId }}
-								className="text-foreground hover:underline truncate text-sm"
+								className="text-foreground hover:underline truncate text-sm min-w-0 max-w-full"
 								onClick={(e) => e.stopPropagation()}
 							>
 								{title}
 							</Link>
 						) : (
-							<span className="text-muted-foreground truncate text-sm">{title}</span>
+							<span className="text-muted-foreground truncate text-sm min-w-0 max-w-full">
+								{title}
+							</span>
 						))}
-					<span className="flex items-center gap-1.5 ml-auto shrink-0">
-						{hasError && (
-							<Badge variant="destructive" className="text-[10px] px-1 py-0">
-								error
-							</Badge>
-						)}
-						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
-					</span>
+					<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
+					{hasError && (
+						<Badge variant="destructive" className="text-[10px] px-1 py-0">
+							error
+						</Badge>
+					)}
 				</div>
 			</div>
 		</div>
@@ -135,9 +136,15 @@ export function ActivityItemView({
 export function ActivityItem({
 	event,
 	compact = false,
+	contextEntityId,
+	actorsById,
+	descriptionOverride,
 }: {
 	event: EventResponse
 	compact?: boolean
+	contextEntityId?: string
+	actorsById?: Map<string, ActorListItem>
+	descriptionOverride?: string
 }) {
 	const { data: actor } = useActor(event.actorId)
 
@@ -147,6 +154,9 @@ export function ActivityItem({
 			actor={actor}
 			compact={compact}
 			workspaceId={event.workspaceId}
+			contextEntityId={contextEntityId}
+			actorsById={actorsById}
+			descriptionOverride={descriptionOverride}
 		/>
 	)
 }

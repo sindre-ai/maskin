@@ -13,20 +13,27 @@ import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from '.
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
+import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
 import claudeOauthRoutes from './routes/claude-oauth'
 import eventsRoutes from './routes/events'
+import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import mcpRoutes from './routes/mcp'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
+import publicBetStrategistRoutes from './routes/public-bet-strategist'
+import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
+import subscriptionsRoutes from './routes/subscriptions'
+import telemetryRoutes from './routes/telemetry'
 import triggersRoutes from './routes/triggers'
+import userDisplaySettingsRoutes from './routes/user-display-settings'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
@@ -111,7 +118,32 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if ('status' in err && typeof err.status === 'number') {
 			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
 		}
-		logger.error('Unhandled error', { error: String(err), stack: err.stack })
+		const cause = (err as { cause?: unknown }).cause as
+			| {
+					message?: string
+					code?: string
+					detail?: string
+					hint?: string
+					position?: string
+					where?: string
+					schema_name?: string
+					table_name?: string
+					column_name?: string
+			  }
+			| undefined
+		logger.error('Unhandled error', {
+			error: String(err),
+			cause: cause?.message ?? (cause ? String(cause) : undefined),
+			pgCode: cause?.code,
+			pgDetail: cause?.detail,
+			pgHint: cause?.hint,
+			pgPosition: cause?.position,
+			pgWhere: cause?.where,
+			pgSchema: cause?.schema_name,
+			pgTable: cause?.table_name,
+			pgColumn: cause?.column_name,
+			stack: err.stack,
+		})
 		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 	})
 
@@ -143,6 +175,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/auth/login: pre-auth credential exchange
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
+	//   - POST /api/public/landing-events: landing-page funnel event ingest
+	//     (per-IP rate-limited inside the handler).
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -151,6 +185,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
+		if (path === '/api/public/landing-events' && method === 'POST') return next()
+		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
+		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)
@@ -159,6 +196,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', idempotencyMiddleware)
 
 	app.route('/api/objects', objectsRoutes)
+	app.route('/api/public/landing-events', publicLandingEventsRoutes)
+	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
+	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
@@ -172,9 +212,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
+	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)
+	app.route('/api/files', filesRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
+	app.route('/api/telemetry', telemetryRoutes)
+	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

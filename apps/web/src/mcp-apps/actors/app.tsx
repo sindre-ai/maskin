@@ -1,12 +1,13 @@
-import { AgentCard } from '@/components/agents/agent-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
+import { RelativeTime } from '@/components/shared/relative-time'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCallTool, useToolResult } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
 import type { ActorResponse, ActorWithKey, SessionResponse } from '../shared/types'
+import { WebAppLink, useWebAppHref } from '../shared/web-app-link'
 
 function ActorsApp() {
 	const toolResult = useToolResult()
@@ -87,7 +88,7 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 			{agents.length > 0 && (
 				<div className="space-y-2">
 					{agents.map((agent) => (
-						<AgentCard
+						<ActorAgentRow
 							key={agent.id}
 							agent={agent}
 							status={deriveAgentStatus(agent.id, sessionsByAgent)}
@@ -99,19 +100,7 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 			{humans.length > 0 && (
 				<div className="space-y-1">
 					{humans.map((actor) => (
-						<div
-							key={actor.id}
-							className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors"
-						>
-							<ActorAvatar name={actor.name} type={actor.type} size="sm" />
-							<div className="flex-1 min-w-0">
-								<span className="text-sm text-foreground">{actor.name}</span>
-								{actor.email && (
-									<span className="text-xs text-muted-foreground ml-2">{actor.email}</span>
-								)}
-							</div>
-							<span className="text-xs text-muted-foreground capitalize">{actor.type}</span>
-						</div>
+						<ActorHumanRow key={actor.id} actor={actor} />
 					))}
 				</div>
 			)}
@@ -119,33 +108,121 @@ function ActorListView({ actors }: { actors: ActorResponse[] }) {
 	)
 }
 
+function ActorAgentRow({
+	agent,
+	status,
+	latestSession,
+}: {
+	agent: ActorResponse
+	status: ReturnType<typeof deriveAgentStatus>
+	latestSession?: SessionResponse
+}) {
+	const href = useWebAppHref({ kind: 'actor', id: agent.id })
+	const description = agent.description?.trim()
+	const content = (
+		<>
+			<div className="flex items-center justify-between gap-2 mb-1">
+				<div className="flex items-center gap-2 min-w-0">
+					<ActorAvatar name={agent.name} type="agent" size="md" />
+					<span className="text-sm font-medium text-foreground truncate min-w-0">{agent.name}</span>
+					<span
+						className={`h-1.5 w-1.5 rounded-full ${
+							status === 'failed'
+								? 'bg-error'
+								: status === 'working'
+									? 'bg-status-in_progress-text'
+									: 'bg-text-muted'
+						}`}
+					/>
+				</div>
+				<span className="text-xs font-medium text-muted-foreground">{status}</span>
+			</div>
+			{description && (
+				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{description}</p>
+			)}
+			<p className="text-xs text-muted-foreground truncate ml-9">
+				{latestSession?.actionPrompt ?? 'No activity yet'}
+				{latestSession?.completedAt && (
+					<>
+						{' · '}
+						<RelativeTime date={latestSession.completedAt} className="text-muted-foreground" />
+					</>
+				)}
+			</p>
+		</>
+	)
+	if (!href) {
+		return <div className="rounded-lg border border-border bg-card p-4 shadow-md">{content}</div>
+	}
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="block rounded-lg border border-border bg-card p-4 shadow-md transition-colors hover:border-border-hover no-underline"
+		>
+			{content}
+		</a>
+	)
+}
+
+function ActorHumanRow({ actor }: { actor: ActorResponse }) {
+	const href = useWebAppHref({ kind: 'actor', id: actor.id })
+	const content = (
+		<>
+			<ActorAvatar name={actor.name} type={actor.type} size="sm" />
+			<div className="flex-1 min-w-0">
+				<span className="text-sm text-foreground">{actor.name}</span>
+				{actor.email && <span className="text-xs text-muted-foreground ml-2">{actor.email}</span>}
+			</div>
+			<span className="text-xs text-muted-foreground capitalize">{actor.type}</span>
+		</>
+	)
+	if (!href) {
+		return <div className="flex items-center gap-3 px-3 py-2 rounded-lg">{content}</div>
+	}
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
+		>
+			{content}
+		</a>
+	)
+}
+
 function ActorDetailView({ actor }: { actor: ActorResponse }) {
 	return (
 		<div className="p-4 max-w-2xl">
-			<div className="flex items-center gap-3 mb-4">
-				<ActorAvatar name={actor.name} type={actor.type} />
-				<div>
-					<h1 className="text-lg font-semibold text-foreground">{actor.name}</h1>
-					<span className="text-xs text-muted-foreground capitalize">{actor.type}</span>
+			<div className="flex items-start justify-between gap-3 mb-4">
+				<div className="flex items-center gap-3">
+					<ActorAvatar name={actor.name} type={actor.type} />
+					<div>
+						<h1 className="text-lg font-semibold text-foreground">{actor.name}</h1>
+						<span className="text-xs text-muted-foreground capitalize">{actor.type}</span>
+					</div>
 				</div>
+				<WebAppLink target={{ kind: 'actor', id: actor.id }} />
 			</div>
 			{actor.email && (
 				<div className="text-sm text-muted-foreground mb-2">
 					<span className="text-muted-foreground">Email:</span> {actor.email}
 				</div>
 			)}
-			{actor.systemPrompt && (
+			{actor.system_prompt && (
 				<div className="border-t border-border pt-3 mt-3">
 					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-						System Prompt
+						Instructions
 					</h3>
-					<p className="text-sm text-muted-foreground whitespace-pre-wrap">{actor.systemPrompt}</p>
+					<p className="text-sm text-muted-foreground whitespace-pre-wrap">{actor.system_prompt}</p>
 				</div>
 			)}
-			{actor.llmProvider && (
+			{actor.llm_provider && (
 				<div className="text-sm text-muted-foreground mt-2">
-					<span className="text-muted-foreground">LLM:</span> {actor.llmProvider}
-					{actor.llmConfig?.model ? ` / ${String(actor.llmConfig.model)}` : null}
+					<span className="text-muted-foreground">LLM:</span> {actor.llm_provider}
+					{actor.llm_config?.model ? ` / ${String(actor.llm_config.model)}` : null}
 				</div>
 			)}
 		</div>

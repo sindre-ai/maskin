@@ -3,11 +3,10 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -32,8 +31,7 @@ function ObjectsPage() {
 	const fieldDefs =
 		(settings?.field_definitions as Record<string, FieldDefinition[]> | undefined) ?? {}
 
-	const enabledModules = useEnabledModules()
-	const objectTypes = getEnabledObjectTypeTabs(enabledModules).map((t) => t.value)
+	const objectTypes = useAvailableObjectTypes().map((t) => t.value)
 	const [activeType, setActiveType] = useState(objectTypes[0])
 
 	useEffect(() => {
@@ -85,26 +83,33 @@ function ObjectsPage() {
 			{/* Properties section */}
 			<h2 className="text-sm font-medium text-foreground mb-4">Properties</h2>
 
-			<div className="flex items-center justify-between mb-4">
-				<div className="inline-flex rounded-md border border-border">
-					{objectTypes.map((type) => (
-						<button
-							key={type}
-							type="button"
-							className={cn(
-								'px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-md last:rounded-r-md',
-								activeType === type
-									? 'bg-primary text-primary-foreground'
-									: 'bg-background text-muted-foreground hover:bg-muted',
-							)}
-							onClick={() => setActiveType(type)}
-						>
-							{type}
-						</button>
-					))}
+			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
+				<div className="-mx-1 overflow-x-auto px-1">
+					<div className="inline-flex rounded-md border border-border">
+						{objectTypes.map((type) => (
+							<button
+								key={type}
+								type="button"
+								className={cn(
+									'whitespace-nowrap px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-md last:rounded-r-md',
+									activeType === type
+										? 'bg-primary text-primary-foreground'
+										: 'bg-background text-muted-foreground hover:bg-muted',
+								)}
+								onClick={() => setActiveType(type)}
+							>
+								{type}
+							</button>
+						))}
+					</div>
 				</div>
 				{!showAdd && (
-					<Button variant="outline" size="sm" onClick={() => setShowAdd(true)}>
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => setShowAdd(true)}
+						className="self-start shrink-0 sm:self-auto"
+					>
 						<Plus size={14} className="mr-1" />
 						Add property
 					</Button>

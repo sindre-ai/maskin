@@ -4,6 +4,7 @@ export const ApiErrorCode = {
 	UNAUTHORIZED: 'UNAUTHORIZED',
 	FORBIDDEN: 'FORBIDDEN',
 	CONFLICT: 'CONFLICT',
+	RATE_LIMITED: 'RATE_LIMITED',
 	BAD_REQUEST: 'BAD_REQUEST',
 	INTERNAL_ERROR: 'INTERNAL_ERROR',
 } as const
@@ -54,6 +55,8 @@ export function mapStatusToCode(status: number): ApiErrorCode {
 			return ApiErrorCode.NOT_FOUND
 		case 409:
 			return ApiErrorCode.CONFLICT
+		case 429:
+			return ApiErrorCode.RATE_LIMITED
 		default:
 			return ApiErrorCode.INTERNAL_ERROR
 	}

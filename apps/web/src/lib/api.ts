@@ -1,4 +1,12 @@
-import type { SafeMetadata } from '@maskin/shared'
+import type {
+	ActorListItem,
+	ActorResponse,
+	DisplaySettingsBody,
+	SafeMetadata,
+	TriggerResponse,
+} from '@maskin/shared'
+
+export type { ActorListItem, ActorResponse, DisplaySettingsBody, TriggerResponse }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -81,12 +89,87 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	return res.json()
 }
 
+/**
+ * XHR-based file upload that reports byte-level progress via onProgress.
+ * fetch() does not expose upload progress; we use this only for file uploads
+ * where the user benefits from a real progress bar. Supports cancellation via
+ * AbortSignal (mirrors fetch's contract).
+ */
+function uploadFileWithProgress(
+	workspaceId: string,
+	body: CreateFileInput,
+	opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
+): Promise<FileDetail> {
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest()
+		const url = `${API_BASE}/files`
+		xhr.open('POST', url, true)
+		const apiKey = getApiKey()
+		if (apiKey) xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`)
+		xhr.setRequestHeader('X-Workspace-Id', workspaceId)
+		xhr.setRequestHeader('Content-Type', 'application/json')
+
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable && opts?.onProgress) {
+				opts.onProgress(e.loaded / e.total)
+			}
+		}
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				try {
+					resolve(JSON.parse(xhr.responseText))
+				} catch (err) {
+					reject(new ApiError(xhr.status, `Invalid JSON response: ${String(err)}`))
+				}
+				return
+			}
+			let message = xhr.statusText
+			let fieldErrors: Record<string, string[]> | undefined
+			try {
+				const data = JSON.parse(xhr.responseText)
+				if (typeof data.error === 'object' && data.error?.message) {
+					message = data.error.message
+					if (Array.isArray(data.error.details)) {
+						fieldErrors = {}
+						for (const d of data.error.details) {
+							const field = d.field || '_root'
+							if (!fieldErrors[field]) fieldErrors[field] = []
+							fieldErrors[field].push(d.message)
+						}
+					}
+				} else if (typeof data.error === 'string') {
+					message = data.error
+				}
+			} catch {
+				// keep statusText
+			}
+			reject(new ApiError(xhr.status, message, fieldErrors))
+		}
+		xhr.onerror = () => reject(new ApiError(0, 'Network error'))
+		xhr.onabort = () => reject(new ApiError(0, 'Upload aborted'))
+
+		if (opts?.signal) {
+			if (opts.signal.aborted) {
+				xhr.abort()
+				return
+			}
+			opts.signal.addEventListener('abort', () => xhr.abort(), { once: true })
+		}
+
+		xhr.send(JSON.stringify(body))
+	})
+}
+
 // Objects
 export const api = {
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
+		},
+		board: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<BoardObjectResponse>(`/objects/board${qs}`, { workspaceId })
 		},
 		get: (id: string) => request<ObjectResponse>(`/objects/${id}`),
 		graph: (id: string, workspaceId: string) =>
@@ -100,6 +183,18 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects/search${qs}`, { workspaceId })
 		},
+		migrateType: (workspaceId: string, body: MigrateObjectTypeInput) =>
+			request<MigrateObjectTypeResponse>('/objects/migrate-type', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		bulkUpdate: (workspaceId: string, body: BulkUpdateObjectsInput) =>
+			request<BulkUpdateObjectsResponse>('/objects/bulk-update', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 	},
 
 	auth: {
@@ -107,13 +202,32 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 	},
 
+	landingEvents: {
+		emit: (events: Array<{ name: string; anonId: string; props?: Record<string, unknown> }>) =>
+			request<void>('/public/landing-events', { method: 'POST', body: { events } }),
+	},
+
+	// Public landing-page handoffs. The /drafts endpoint is unauthenticated and
+	// called from sindre.ai; only /claim is reachable from the web app.
+	publicBetStrategist: {
+		claim: (workspaceId: string, guestSessionId: string) =>
+			request<{ claimed: Array<{ id: string; title: string | null; content: string | null }> }>(
+				'/public/bet-strategist/claim',
+				{ method: 'POST', body: { workspace_id: workspaceId, guestSessionId } },
+			),
+	},
+
 	actors: {
 		list: (workspaceId?: string) => request<ActorListItem[]>('/actors', { workspaceId }),
 		get: (id: string) => request<ActorResponse>(`/actors/${id}`),
 		create: (data: CreateActorInput) =>
 			request<ActorWithKey>('/actors', { method: 'POST', body: data }),
-		update: (id: string, data: UpdateActorInput) =>
-			request<ActorResponse>(`/actors/${id}`, { method: 'PATCH', body: data }),
+		update: (id: string, data: UpdateActorInput, workspaceId?: string) =>
+			request<ActorResponse>(`/actors/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
 		regenerateApiKey: (id: string) =>
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
 		reset: (id: string, workspaceId: string) =>
@@ -177,9 +291,10 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string) =>
+		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
 			request<{ install_url: string }>(`/integrations/${provider}/connect`, {
 				method: 'POST',
+				body,
 				workspaceId,
 			}),
 		disconnect: (id: string, workspaceId: string) =>
@@ -187,6 +302,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		slackConversations: (id: string, workspaceId: string, types?: string[]) => {
+			const qs = types && types.length > 0 ? `?types=${types.join(',')}` : ''
+			return request<SlackConversation[]>(`/integrations/${id}/slack/conversations${qs}`, {
+				workspaceId,
+			})
+		},
+		slackUsers: (id: string, workspaceId: string) =>
+			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
 	},
 
 	notifications: {
@@ -246,6 +369,13 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		usage: (
+			workspaceId: string,
+			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },
+		) => {
+			const qs = new URLSearchParams(params).toString()
+			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
+		},
 	},
 
 	events: {
@@ -253,8 +383,13 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
 		},
-		create: (workspaceId: string, data: CreateCommentInput) =>
-			request<EventResponse>('/events', { method: 'POST', body: data, workspaceId }),
+		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
+			request<EventResponse>('/events', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+			}),
 	},
 
 	imports: {
@@ -310,6 +445,50 @@ export const api = {
 			}),
 	},
 
+	subscriptions: {
+		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
+			request<{ subscribed: true }>('/subscriptions', {
+				method: 'POST',
+				body: { entity_type: entityType, entity_id: entityId },
+				workspaceId,
+			}),
+		unsubscribe: (workspaceId: string, entityType: string, entityId: string) =>
+			request<{ unsubscribed: true }>('/subscriptions', {
+				method: 'DELETE',
+				body: { entity_type: entityType, entity_id: entityId },
+				workspaceId,
+			}),
+		subscribers: (workspaceId: string, entityType: string, entityId: string) => {
+			const qs = new URLSearchParams({ entity_type: entityType, entity_id: entityId }).toString()
+			return request<SubscribersResponse>(`/subscriptions/subscribers?${qs}`, { workspaceId })
+		},
+		markRead: (workspaceId: string, entityType: string, entityId: string, lastEventId: number) =>
+			request<{ updated: true }>('/subscriptions/read', {
+				method: 'POST',
+				body: { entity_type: entityType, entity_id: entityId, last_event_id: lastEventId },
+				workspaceId,
+			}),
+		unread: (workspaceId: string, entityType?: string) => {
+			const qs = entityType ? `?${new URLSearchParams({ entity_type: entityType }).toString()}` : ''
+			return request<UnreadResponse>(`/subscriptions/unread${qs}`, { workspaceId })
+		},
+	},
+
+	userDisplaySettings: {
+		list: (workspaceId: string) =>
+			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),
+		get: (workspaceId: string, objectType: string) =>
+			request<UserDisplaySettingsResponse>(
+				`/user-display-settings/${encodeURIComponent(objectType)}`,
+				{ workspaceId },
+			),
+		upsert: (workspaceId: string, objectType: string, settings: DisplaySettingsBody) =>
+			request<UserDisplaySettingsResponse>(
+				`/user-display-settings/${encodeURIComponent(objectType)}`,
+				{ method: 'PUT', body: { settings }, workspaceId },
+			),
+	},
+
 	workspaceSkills: {
 		list: (workspaceId: string) =>
 			request<WorkspaceSkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
@@ -344,6 +523,37 @@ export const api = {
 				method: 'DELETE',
 			}),
 	},
+
+	files: {
+		list: (
+			workspaceId: string,
+			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+		) => {
+			if (!params) return request<FileListItem[]>('/files', { workspaceId })
+			const { ids, ...rest } = params
+			const searchParams = new URLSearchParams(
+				Object.entries(rest).reduce<Record<string, string>>((acc, [k, v]) => {
+					if (v !== undefined && v !== '') acc[k] = String(v)
+					return acc
+				}, {}),
+			)
+			if (ids?.length) searchParams.set('ids', ids.join(','))
+			const qs = searchParams.size > 0 ? `?${searchParams}` : ''
+			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
+		},
+		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateFileInput) =>
+			request<FileDetail>('/files', { method: 'POST', body: data, workspaceId }),
+		createWithProgress: (
+			workspaceId: string,
+			data: CreateFileInput,
+			opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
+		) => uploadFileWithProgress(workspaceId, data, opts),
+		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
+			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
+		delete: (workspaceId: string, id: string) =>
+			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
+	},
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -376,11 +586,56 @@ export interface ObjectResponse {
 	content: string | null
 	status: string
 	metadata: SafeMetadata | null
-	owner: string | null
+	driver: string | null
 	activeSessionId: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	// Populated by detail / graph routes only — list routes omit to avoid N+1.
+	is_subscribed?: boolean
+	unread_count?: number
+	subscriber_count?: number
+}
+
+export interface BoardObjectColumn {
+	id: string
+	label: string
+	value: string
+	total: number
+	objects: ObjectResponse[]
+}
+
+export interface BoardObjectResponse {
+	columns: BoardObjectColumn[]
+}
+
+export interface SubscribersResponse {
+	actors: Array<{ id: string; type: string; name: string }>
+}
+
+export interface UnreadItem {
+	entity_type: string
+	entity_id: string
+	unread_count: number
+	mentions_you: boolean
+	latest_event_id: number | null
+	latest_activity_at: string | null
+	object?: ObjectResponse
+}
+
+export interface UnreadResponse {
+	items: UnreadItem[]
+}
+
+export interface UserDisplaySettingsResponse {
+	object_type: string
+	name: string
+	settings: DisplaySettingsBody
+	updated_at: string
+}
+
+export interface UserDisplaySettingsListResponse {
+	items: UserDisplaySettingsResponse[]
 }
 
 export interface CreateObjectInput {
@@ -390,7 +645,7 @@ export interface CreateObjectInput {
 	content?: string
 	status: string
 	metadata?: SafeMetadata
-	owner?: string
+	driver?: string
 }
 
 export interface UpdateObjectInput {
@@ -398,29 +653,48 @@ export interface UpdateObjectInput {
 	content?: string
 	status?: string
 	metadata?: SafeMetadata
-	owner?: string | null
+	driver?: string | null
 }
 
-export interface ActorListItem {
+export interface BulkUpdateObjectsInput {
+	ids: string[]
+	patch: {
+		status?: string
+		driver?: string | null
+		metadata?: SafeMetadata
+	}
+}
+
+export interface BulkUpdateObjectsResult {
 	id: string
-	type: string
-	name: string
-	email: string | null
+	ok: boolean
+	error?: string
 }
 
-export interface ActorResponse extends ActorListItem {
-	systemPrompt: string | null
-	tools: Record<string, unknown> | null
-	memory: Record<string, unknown> | null
-	llmProvider: string | null
-	llmConfig: Record<string, unknown> | null
-	isSystem: boolean
-	createdAt: string | null
-	updatedAt: string | null
+export interface BulkUpdateObjectsResponse {
+	results: BulkUpdateObjectsResult[]
+}
+
+export interface MigrateObjectTypeInput {
+	fromType: string
+	mode: 'migrate' | 'delete'
+	toType?: string
+	statusMap?: Record<string, string>
+}
+
+export interface MigrateObjectTypeResponse {
+	mode: 'migrate' | 'delete'
+	fromType: string
+	toType?: string
+	count: number
 }
 
 export interface ActorWithKey extends ActorResponse {
 	api_key: string
+	// Set when the actor is created with `auto_create_workspace` (default for
+	// humans on signup). Used by the signup → guest-draft handoff to pick the
+	// workspace to claim into.
+	workspace_id?: string
 }
 
 export interface LoginInput {
@@ -434,6 +708,7 @@ export interface CreateActorInput {
 	name: string
 	email?: string
 	password?: string
+	description?: string
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	llm_provider?: string
@@ -443,6 +718,7 @@ export interface CreateActorInput {
 export interface UpdateActorInput {
 	name?: string
 	email?: string
+	description?: string
 	system_prompt?: string
 	tools?: Record<string, unknown>
 	memory?: Record<string, unknown>
@@ -480,8 +756,10 @@ export interface RelationshipResponse {
 	id: string
 	sourceType: string
 	sourceId: string
+	sourceTitle?: string | null
 	targetType: string
 	targetId: string
+	targetTitle?: string | null
 	type: string
 	createdBy: string
 	createdAt: string | null
@@ -491,6 +769,7 @@ export interface ObjectGraphResponse {
 	object: ObjectResponse
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
+	events: EventResponse[]
 }
 
 export interface CreateRelationshipInput {
@@ -499,20 +778,6 @@ export interface CreateRelationshipInput {
 	target_type: string
 	target_id: string
 	type: string
-}
-
-export interface TriggerResponse {
-	id: string
-	workspaceId: string
-	name: string
-	type: string
-	config: Record<string, unknown> | null
-	actionPrompt: string
-	targetActorId: string
-	enabled: boolean
-	createdBy: string
-	createdAt: string | null
-	updatedAt: string | null
 }
 
 export interface CreateTriggerInput {
@@ -553,7 +818,24 @@ export interface ProviderEventDefinition {
 export interface ProviderInfo {
 	name: string
 	displayName: string
+	authType: 'oauth2' | 'oauth2_custom' | 'api_key'
 	events: ProviderEventDefinition[]
+}
+
+export interface SlackConversation {
+	id: string
+	name: string
+	is_private: boolean
+	is_im: boolean
+	is_mpim: boolean
+	is_channel: boolean
+}
+
+export interface SlackUser {
+	id: string
+	name: string
+	real_name: string
+	is_bot: boolean
 }
 
 export interface NotificationResponse {
@@ -627,6 +909,41 @@ export interface UpdateWorkspaceSkillInput {
 	content: string
 }
 
+export interface FileListItem {
+	id: string
+	workspaceId: string
+	name: string
+	description: string | null
+	mimeType: string
+	sizeBytes: number
+	storageKey: string
+	createdBy: string
+	createdAt: string
+	updatedAt: string
+}
+
+export interface FileDetail extends FileListItem {
+	content: string
+	encoding: 'base64' | 'utf8'
+	url: string
+}
+
+export interface CreateFileInput {
+	name: string
+	description?: string | null
+	mime_type: string
+	content: string
+	encoding?: 'base64' | 'utf8'
+}
+
+export interface UpdateFileInput {
+	name?: string
+	description?: string | null
+	mime_type?: string
+	content?: string
+	encoding?: 'base64' | 'utf8'
+}
+
 export interface SessionConfigInput {
 	/** Start the container with stdin attached so subsequent user turns can be delivered via the input route. */
 	interactive?: boolean
@@ -663,6 +980,7 @@ export interface SessionResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	currentActivity: string | null
 }
 
 export interface SessionInputAttachment {
@@ -683,6 +1001,26 @@ export interface SessionLogResponse {
 	createdAt: string | null
 }
 
+export interface SessionUsageBucketResponse {
+	bucket: string
+	session_count: number
+	total_cost_usd: number
+	input_tokens: number
+	output_tokens: number
+	cache_tokens: number
+}
+
+export interface SessionUsageResponse {
+	buckets: SessionUsageBucketResponse[]
+	totals: {
+		session_count: number
+		total_cost_usd: number
+		input_tokens: number
+		output_tokens: number
+		cache_tokens: number
+	}
+}
+
 export interface EventResponse {
 	id: number
 	workspaceId: string
@@ -692,6 +1030,8 @@ export interface EventResponse {
 	entityId: string
 	data: Record<string, unknown> | null
 	createdAt: string | null
+	/** Pre-formatted human-readable sentence (populated by /api/objects/:id/graph; absent on other event endpoints). */
+	description?: string
 }
 
 export interface CreateCommentInput {
@@ -699,6 +1039,7 @@ export interface CreateCommentInput {
 	content: string
 	mentions?: string[]
 	parent_event_id?: number
+	attachment_file_ids?: string[]
 }
 
 // Imports

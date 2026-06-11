@@ -19,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useIntegrations } from '@/hooks/use-integrations'
 import type { IntegrationResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import { FileJson, Globe, Pencil, Plus, Terminal, Trash2, Zap } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
@@ -41,12 +42,6 @@ interface McpServersProps {
 }
 
 const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
-	github: {
-		type: 'stdio',
-		command: 'npx',
-		args: ['-y', '@modelcontextprotocol/server-github'],
-		env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
-	},
 	linear: {
 		type: 'http',
 		url: 'https://mcp.linear.app/mcp',
@@ -57,6 +52,16 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		command: 'npx',
 		args: ['-y', '@modelcontextprotocol/server-slack'],
 		env: { SLACK_BOT_TOKEN: '${SLACK_TOKEN}' },
+	},
+	gmail: {
+		type: 'http',
+		url: 'https://gmailmcp.googleapis.com/mcp/v1',
+		headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
+	},
+	posthog: {
+		type: 'http',
+		url: 'https://mcp.posthog.com/mcp',
+		headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
 	},
 }
 
@@ -128,10 +133,8 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 	)
 
 	const handleQuickAdd = useCallback(
-		(provider: string) => {
-			const preset = INTEGRATION_MCP_PRESETS[provider]
-			if (!preset) return
-			const updated = { ...servers, [provider]: preset }
+		(name: string, preset: McpServer) => {
+			const updated = { ...servers, [name]: preset }
 			onUpdate({ mcpServers: updated })
 		},
 		[servers, onUpdate],
@@ -147,11 +150,39 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 		onUpdate({ mcpServers: updated })
 	}, [servers, onUpdate])
 
-	// Integrations that have MCP presets and are active but not yet added
-	const availableQuickAdds = (integrations ?? []).filter(
+	// Active GitHub installations not yet added to this agent's MCP servers
+	const unaddedGithubInstallations = (integrations ?? []).filter(
 		(i: IntegrationResponse) =>
-			i.status === 'active' && INTEGRATION_MCP_PRESETS[i.provider] && !servers[i.provider],
+			i.provider === 'github' &&
+			i.status === 'active' &&
+			typeof i.config.owner_login === 'string' &&
+			!servers[`github-${(i.config.owner_login as string).toLowerCase()}`],
 	)
+	const showAddGithub = unaddedGithubInstallations.length > 0
+
+	const handleAddGithub = useCallback(() => {
+		const updated = { ...servers }
+		for (const i of unaddedGithubInstallations) {
+			const ownerLogin = i.config.owner_login as string
+			updated[`github-${ownerLogin.toLowerCase()}`] = {
+				type: 'stdio',
+				command: 'npx',
+				args: ['-y', '@modelcontextprotocol/server-github'],
+				env: { GITHUB_TOKEN: `\${GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}}` },
+			}
+		}
+		onUpdate({ mcpServers: updated })
+	}, [servers, unaddedGithubInstallations, onUpdate])
+
+	// Quick-add items for static-preset providers (GitHub handled separately above)
+	const availableQuickAdds: Array<{ id: string; name: string; label: string; preset: McpServer }> =
+		[]
+	for (const i of integrations ?? []) {
+		if (i.status !== 'active' || i.provider === 'github') continue
+		const preset = INTEGRATION_MCP_PRESETS[i.provider]
+		if (!preset || servers[i.provider]) continue
+		availableQuickAdds.push({ id: i.id, name: i.provider, label: i.provider, preset })
+	}
 
 	const hasMaskin = !!servers.maskin
 	const hasBrowser = !!servers.playwright
@@ -215,17 +246,23 @@ export function McpServers({ tools, onUpdate }: McpServersProps) {
 						<FileJson className="h-3.5 w-3.5 mr-1" />
 						Import .mcp.json
 					</Button>
-					{availableQuickAdds.map((integration: IntegrationResponse) => (
+					{availableQuickAdds.map(({ id, name, label, preset }) => (
 						<Button
-							key={integration.id}
+							key={id}
 							size="sm"
 							variant="outline"
-							onClick={() => handleQuickAdd(integration.provider)}
+							onClick={() => handleQuickAdd(name, preset)}
 						>
 							<Zap className="h-3.5 w-3.5 mr-1" />
-							Add {integration.provider}
+							Add {label}
 						</Button>
 					))}
+					{showAddGithub && (
+						<Button size="sm" variant="outline" onClick={handleAddGithub}>
+							<Zap className="h-3.5 w-3.5 mr-1" />
+							Add github
+						</Button>
+					)}
 				</div>
 			)}
 

@@ -19,7 +19,12 @@ export function useProviders() {
 
 export function useConnectIntegration(workspaceId: string) {
 	return useMutation({
-		mutationFn: (provider: string) => api.integrations.connect(workspaceId, provider),
+		mutationFn: (input: { provider: string; apiKey?: string }) =>
+			api.integrations.connect(
+				workspaceId,
+				input.provider,
+				input.apiKey ? { api_key: input.apiKey } : undefined,
+			),
 		onSuccess: (data) => {
 			// Redirect to the provider's install/OAuth page
 			window.location.href = data.install_url
@@ -35,5 +40,31 @@ export function useDisconnectIntegration(workspaceId: string) {
 			toast.success('Integration disconnected')
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
+	})
+}
+
+const FIVE_MINUTES = 5 * 60 * 1000
+
+export function useSlackConversations(
+	integrationId: string | undefined,
+	workspaceId: string,
+	types?: string[],
+) {
+	const resolvedTypes = types ?? ['public_channel', 'private_channel', 'im', 'mpim']
+	return useQuery({
+		queryKey: queryKeys.integrations.slackConversations(integrationId ?? '', resolvedTypes),
+		queryFn: () =>
+			api.integrations.slackConversations(integrationId as string, workspaceId, resolvedTypes),
+		enabled: Boolean(integrationId),
+		staleTime: FIVE_MINUTES,
+	})
+}
+
+export function useSlackUsers(integrationId: string | undefined, workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.slackUsers(integrationId ?? ''),
+		queryFn: () => api.integrations.slackUsers(integrationId as string, workspaceId),
+		enabled: Boolean(integrationId),
+		staleTime: FIVE_MINUTES,
 	})
 }

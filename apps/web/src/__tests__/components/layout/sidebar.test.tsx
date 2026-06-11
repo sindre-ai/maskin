@@ -6,6 +6,10 @@ vi.mock('@/hooks/use-enabled-modules', () => ({
 	useEnabledModules: vi.fn(() => ['work']),
 }))
 
+vi.mock('@/hooks/use-subscriptions', () => ({
+	useUnread: vi.fn(() => ({ data: { items: [] } })),
+}))
+
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: vi.fn((ids: string[]) =>
 		ids.includes('work') ? [{ label: 'Bets', value: 'bet' }] : [],
@@ -65,11 +69,12 @@ vi.mock('@/components/layout/nav-user', () => ({
 }))
 
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useUnread } from '@/hooks/use-subscriptions'
 
 describe('AppSidebar', () => {
 	it('renders core navigation items', () => {
 		render(<AppSidebar />)
-		expect(screen.getByText('Pulse')).toBeInTheDocument()
+		expect(screen.getByText('For You')).toBeInTheDocument()
 		expect(screen.getByText('Activity')).toBeInTheDocument()
 		expect(screen.getByText('Agents')).toBeInTheDocument()
 		expect(screen.getByText('Triggers')).toBeInTheDocument()
@@ -97,5 +102,45 @@ describe('AppSidebar', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
 		expect(screen.queryByText('Sindre')).not.toBeInTheDocument()
+	})
+
+	it('shows an unread count next to For You when there are unread threads', () => {
+		vi.mocked(useUnread).mockReturnValue({
+			data: {
+				items: [
+					{
+						entity_type: 'object',
+						entity_id: 'a',
+						unread_count: 1,
+						latest_event_id: 1,
+						latest_activity_at: null,
+					},
+					{
+						entity_type: 'object',
+						entity_id: 'b',
+						unread_count: 2,
+						latest_event_id: 2,
+						latest_activity_at: null,
+					},
+					{
+						entity_type: 'object',
+						entity_id: 'c',
+						unread_count: 1,
+						latest_event_id: 3,
+						latest_activity_at: null,
+					},
+				],
+			},
+		} as unknown as ReturnType<typeof useUnread>)
+		render(<AppSidebar />)
+		expect(screen.getByLabelText('3 unread')).toBeInTheDocument()
+	})
+
+	it('hides the unread badge when there are no unread threads', () => {
+		vi.mocked(useUnread).mockReturnValue({
+			data: { items: [] },
+		} as unknown as ReturnType<typeof useUnread>)
+		render(<AppSidebar />)
+		expect(screen.queryByLabelText(/unread$/)).not.toBeInTheDocument()
 	})
 })

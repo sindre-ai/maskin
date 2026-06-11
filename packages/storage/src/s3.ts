@@ -1,4 +1,4 @@
-import type { Readable } from 'node:stream'
+import { Readable } from 'node:stream'
 import {
 	CreateBucketCommand,
 	DeleteObjectCommand,
@@ -9,6 +9,7 @@ import {
 	PutObjectCommand,
 	S3Client,
 } from '@aws-sdk/client-s3'
+import { Upload } from '@aws-sdk/lib-storage'
 import type { StorageProvider } from './interface'
 
 export interface S3StorageConfig {
@@ -45,6 +46,16 @@ export class S3StorageProvider implements StorageProvider {
 	}
 
 	async put(key: string, data: Buffer | Uint8Array | Readable): Promise<void> {
+		if (data instanceof Readable) {
+			// Streams of unknown length must use multipart upload — PutObjectCommand
+			// would otherwise emit an undefined `x-amz-decoded-content-length` header.
+			const upload = new Upload({
+				client: this.client,
+				params: { Bucket: this.bucket, Key: key, Body: data },
+			})
+			await upload.done()
+			return
+		}
 		await this.client.send(
 			new PutObjectCommand({
 				Bucket: this.bucket,

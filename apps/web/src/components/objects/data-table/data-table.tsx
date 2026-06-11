@@ -1,5 +1,46 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Spinner } from '@/components/ui/spinner'
+
+const DATE_GROUP_RE = /^\d{4}-\d{2}-\d{2}$/
+const MONTHS = [
+	'January',
+	'February',
+	'March',
+	'April',
+	'May',
+	'June',
+	'July',
+	'August',
+	'September',
+	'October',
+	'November',
+	'December',
+]
+
+function formatGroupDate(dateKey: string): string {
+	if (!DATE_GROUP_RE.test(dateKey)) return dateKey
+	const [y, m, d] = dateKey.split('-').map(Number) as [number, number, number]
+	const suffix =
+		d % 10 === 1 && d !== 11
+			? 'st'
+			: d % 10 === 2 && d !== 12
+				? 'nd'
+				: d % 10 === 3 && d !== 13
+					? 'rd'
+					: 'th'
+	return `${d}${suffix} ${MONTHS[m - 1]} ${y}`
+}
+
+function resolveGroupLabel(
+	groupingColumn: string | undefined,
+	rawValue: string,
+	actors: ActorListItem[] | undefined,
+): string {
+	if (groupingColumn === 'owner' || groupingColumn === 'createdBy') {
+		return actors?.find((a) => a.id === rawValue)?.name ?? rawValue
+	}
+	return formatGroupDate(rawValue)
+}
 import {
 	Table,
 	TableBody,
@@ -8,7 +49,9 @@ import {
 	TableHeader,
 	TableRow,
 } from '@/components/ui/table'
-import type { ObjectResponse } from '@/lib/api'
+import { useActors } from '@/hooks/use-actors'
+import { useIsMobile } from '@/hooks/use-mobile'
+import type { ActorListItem, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -27,11 +70,13 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { ObjectsTableMeta } from './columns'
+import { ObjectCard } from './object-card'
 
 interface DataTableProps {
 	data: ObjectResponse[]
 	columns: ColumnDef<ObjectResponse>[]
 	workspaceId: string
+	actors?: ActorListItem[]
 	rowSelection: RowSelectionState
 	onRowSelectionChange: OnChangeFn<RowSelectionState>
 	columnVisibility: VisibilityState
@@ -49,6 +94,7 @@ export function DataTable({
 	data,
 	columns,
 	workspaceId,
+	actors: actorsProp,
 	rowSelection,
 	onRowSelectionChange,
 	columnVisibility,
@@ -62,6 +108,10 @@ export function DataTable({
 	isLoading,
 }: DataTableProps) {
 	const navigate = useNavigate()
+	const isMobile = useIsMobile()
+	const { data: actorsFetched } = useActors(workspaceId, { enabled: isMobile })
+	// On mobile, fetch actors locally for the ObjectCard. On desktop, use actors passed from parent.
+	const actors = isMobile ? actorsFetched : actorsProp
 	const parentRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 
@@ -89,8 +139,8 @@ export function DataTable({
 	const virtualizer = useVirtualizer({
 		count: rows.length,
 		getScrollElement: () => parentRef.current,
-		estimateSize: () => 48,
-		overscan: 20,
+		estimateSize: () => (isMobile ? 96 : 48),
+		overscan: isMobile ? 10 : 20,
 	})
 
 	// Infinite scroll sentinel — skip when fetching or errored to avoid retry loops
@@ -135,6 +185,84 @@ export function DataTable({
 	const paddingTop = virtualItems[0]?.start ?? 0
 	const paddingBottom = virtualItems.length > 0 ? totalSize - (virtualItems.at(-1)?.end ?? 0) : 0
 
+	if (isMobile) {
+		return (
+			<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
+				{virtualItems.length === 0 ? (
+					<div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
+						No results.
+					</div>
+				) : (
+					<ul
+						aria-label="Objects"
+						className="m-0 list-none p-0"
+						style={{ height: totalSize, position: 'relative' }}
+					>
+						{virtualItems.map((virtualItem) => {
+							const row = rows[virtualItem.index]
+							if (!row) return null
+
+							const isGrouped = row.getIsGrouped()
+
+							if (isGrouped) {
+								const groupingColumn = grouping?.[0]
+								const rawValue = String(row.groupingValue)
+								const displayValue = resolveGroupLabel(groupingColumn, rawValue, actors)
+								return (
+									<li
+										key={row.id}
+										data-index={virtualItem.index}
+										ref={virtualizer.measureElement}
+										className="absolute left-0 right-0"
+										style={{ transform: `translateY(${virtualItem.start}px)` }}
+									>
+										<button
+											type="button"
+											onClick={() => row.toggleExpanded()}
+											className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 text-left hover:bg-muted/50"
+										>
+											<ChevronRight
+												size={14}
+												className={cn('transition-transform', row.getIsExpanded() && 'rotate-90')}
+											/>
+											<span className="font-medium text-sm">{displayValue}</span>
+											<span className="text-muted-foreground text-xs">({row.subRows.length})</span>
+										</button>
+									</li>
+								)
+							}
+
+							return (
+								<li
+									key={row.id}
+									data-index={virtualItem.index}
+									ref={virtualizer.measureElement}
+									className="absolute left-0 right-0"
+									style={{ transform: `translateY(${virtualItem.start}px)` }}
+								>
+									<ObjectCard
+										object={row.original}
+										workspaceId={workspaceId}
+										actors={actors}
+										isSelected={row.getIsSelected()}
+										onSelect={(selected) => row.toggleSelected(selected)}
+										onClick={() => handleRowClick(row.original.id)}
+									/>
+								</li>
+							)
+						})}
+					</ul>
+				)}
+				<div ref={sentinelRef} className="h-1" />
+				{isFetchingNextPage && (
+					<div className="flex items-center justify-center py-4">
+						<Spinner />
+					</div>
+				)}
+			</div>
+		)
+	}
+
 	return (
 		<div ref={parentRef} className="flex-1 min-h-0 overflow-auto rounded-md border">
 			<Table>
@@ -175,6 +303,12 @@ export function DataTable({
 								const isGrouped = row.getIsGrouped()
 
 								if (isGrouped) {
+									const groupingColumn = grouping?.[0]
+									const rawValue = String(row.groupingValue)
+									const displayValue =
+										groupingColumn === 'owner' || groupingColumn === 'createdBy'
+											? (actors?.find((a) => a.id === rawValue)?.name ?? rawValue)
+											: rawValue
 									return (
 										<TableRow
 											key={row.id}
@@ -192,7 +326,7 @@ export function DataTable({
 															row.getIsExpanded() && 'rotate-90',
 														)}
 													/>
-													<span className="font-medium text-sm">{String(row.groupingValue)}</span>
+													<span className="font-medium text-sm">{displayValue}</span>
 													<span className="text-muted-foreground text-xs">
 														({row.subRows.length})
 													</span>

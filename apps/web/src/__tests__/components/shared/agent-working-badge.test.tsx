@@ -6,7 +6,7 @@ import { TestWrapper } from '../../setup'
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useSession: vi.fn(() => ({ data: buildSessionResponse({ actorId: 'actor-1' }) })),
-	useSessionLatestLog: vi.fn(() => ({ data: null })),
+	useSessionLogs: vi.fn(() => ({ data: [] })),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -19,7 +19,11 @@ vi.mock('@/hooks/use-duration', () => ({
 
 import { useActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
-import { useSession, useSessionLatestLog } from '@/hooks/use-sessions'
+import { useSession, useSessionLogs } from '@/hooks/use-sessions'
+
+function logRow(stream: 'stdout' | 'stderr' | 'system', content: string) {
+	return { id: 1, sessionId: 's', stream, content, createdAt: null }
+}
 
 describe('AgentWorkingBadge', () => {
 	it('renders with compact variant showing agent name', () => {
@@ -45,22 +49,65 @@ describe('AgentWorkingBadge', () => {
 		expect(screen.getByText(/Agent working/)).toBeInTheDocument()
 	})
 
-	it('shows latest log content', () => {
+	it('shows a parsed activity preview from the latest log', () => {
 		vi.mocked(useActor).mockReturnValue({
 			data: buildActorResponse({ name: 'Scout Agent', type: 'agent' }),
 		} as ReturnType<typeof useActor>)
-		vi.mocked(useSessionLatestLog).mockReturnValue({
-			data: { content: 'Analyzing codebase' },
-		} as ReturnType<typeof useSessionLatestLog>)
+		const assistant = JSON.stringify({
+			type: 'assistant',
+			message: { id: 'm1', content: [{ type: 'text', text: 'Analyzing codebase' }] },
+		})
+		vi.mocked(useSessionLogs).mockReturnValue({
+			data: [logRow('stdout', assistant)],
+		} as unknown as ReturnType<typeof useSessionLogs>)
 		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/Analyzing codebase/)).toBeInTheDocument()
 	})
 
+	it('flips to "Agent" + idle preview once the agent finishes a turn', () => {
+		vi.mocked(useActor).mockReturnValue({
+			data: buildActorResponse({ name: 'Scout Agent', type: 'agent' }),
+		} as ReturnType<typeof useActor>)
+		const result = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			result: 'done',
+		})
+		vi.mocked(useSessionLogs).mockReturnValue({
+			data: [logRow('stdout', result)],
+		} as unknown as ReturnType<typeof useSessionLogs>)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
+		expect(screen.getByText(/Awaiting input/)).toBeInTheDocument()
+	})
+
 	it('shows duration from useDuration', () => {
-		vi.mocked(useSessionLatestLog).mockReturnValue({
-			data: null,
-		} as unknown as ReturnType<typeof useSessionLatestLog>)
+		vi.mocked(useSessionLogs).mockReturnValue({
+			data: [],
+		} as unknown as ReturnType<typeof useSessionLogs>)
 		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/3m 15s/)).toBeInTheDocument()
+	})
+
+	it('shows current_activity row in banner variant when set', () => {
+		vi.mocked(useSession).mockReturnValue({
+			data: buildSessionResponse({ actorId: 'actor-1', currentActivity: 'Searching codebase' }),
+		} as ReturnType<typeof useSession>)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText('Searching codebase')).toBeInTheDocument()
+	})
+
+	it('omits the activity row in banner variant when current_activity is null', () => {
+		vi.mocked(useSession).mockReturnValue({
+			data: buildSessionResponse({ actorId: 'actor-1', currentActivity: null }),
+		} as ReturnType<typeof useSession>)
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.queryByRole('status')).not.toBeInTheDocument()
+		// The activity dot span has no accessible role, so verify no extra text content
+		expect(screen.queryByText(/Searching/)).not.toBeInTheDocument()
 	})
 })

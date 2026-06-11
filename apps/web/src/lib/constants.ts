@@ -15,6 +15,12 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	failed: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
 	paused: { bg: 'bg-status-paused-bg', text: 'text-status-paused-text' },
 	discarded: { bg: 'bg-status-discarded-bg', text: 'text-status-discarded-text' },
+	pending: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
+	starting: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
+	running: { bg: 'bg-status-active-bg', text: 'text-status-active-text' },
+	snapshotting: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
+	waiting_for_input: { bg: 'bg-status-blocked-bg', text: 'text-status-blocked-text' },
+	timeout: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
 }
 
 export const typeIcons: Record<string, string> = {

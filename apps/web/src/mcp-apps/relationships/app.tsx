@@ -2,6 +2,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { RelationshipResponse } from '../shared/types'
+import { useWebAppHref } from '../shared/web-app-link'
 
 function RelationshipsApp() {
 	const toolResult = useToolResult()
@@ -37,23 +38,44 @@ function RelationshipListView({ relationships }: { relationships: RelationshipRe
 	return (
 		<div className="p-4 space-y-1">
 			{relationships.map((rel) => (
-				<div
-					key={rel.id}
-					className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors text-sm"
-				>
-					<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
-						{rel.sourceId.slice(0, 8)}
-					</span>
-					<span className="text-accent-foreground font-medium text-xs">
-						{rel.type.replace(/_/g, ' ')}
-					</span>
-					<span className="text-muted-foreground">→</span>
-					<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
-						{rel.targetId.slice(0, 8)}
-					</span>
-				</div>
+				<RelationshipListRow key={rel.id} rel={rel} />
 			))}
 		</div>
+	)
+}
+
+function RelationshipListRow({ rel }: { rel: RelationshipResponse }) {
+	const href = useWebAppHref({
+		kind: 'relationship',
+		sourceId: rel.sourceId,
+		targetId: rel.targetId,
+	})
+	const content = (
+		<>
+			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
+				{rel.sourceId.slice(0, 8)}
+			</span>
+			<span className="text-accent-foreground font-medium text-xs">
+				{rel.type.replace(/_/g, ' ')}
+			</span>
+			<span className="text-muted-foreground">→</span>
+			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
+				{rel.targetId.slice(0, 8)}
+			</span>
+		</>
+	)
+	if (!href) {
+		return <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm">{content}</div>
+	}
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent hover:text-accent-foreground transition-colors text-sm no-underline"
+		>
+			{content}
+		</a>
 	)
 }
 

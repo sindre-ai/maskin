@@ -1,15 +1,47 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, relationships, workspaces } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	files,
+	objects,
+	readState,
+	relationships,
+	sessions,
+	subscriptions,
+	workspaces,
+} from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
+	type ActorRef,
+	boardObjectQuerySchema,
+	boardObjectResponseSchema,
+	bulkUpdateObjectsResponseSchema,
+	bulkUpdateObjectsSchema,
 	createObjectSchema,
+	formatEventDescription,
+	migrateObjectTypeResponseSchema,
+	migrateObjectTypeSchema,
 	objectQuerySchema,
 	searchObjectsSchema,
 	updateObjectSchema,
 } from '@maskin/shared'
-import { type Column, type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import {
+	type Column,
+	type SQL,
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	ilike,
+	inArray,
+	or,
+	sql,
+} from 'drizzle-orm'
 import { createApiError, createInvalidTypeError } from '../lib/errors'
+import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { logger } from '../lib/logger'
 import {
 	errorSchema,
 	idParamSchema,
@@ -20,6 +52,12 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	autoSubscribe,
+	getSubscriberCount,
+	getUnreadCount,
+	isSubscribed,
+} from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -31,6 +69,8 @@ type Env = {
 
 const app = new OpenAPIHono<Env>()
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 // Keep in sync with KNOWN_SORT_COLUMNS in packages/shared/src/schemas/objects.ts
 const sortColumns: Record<string, Column | SQL> = {
 	createdAt: objects.createdAt,
@@ -38,26 +78,93 @@ const sortColumns: Record<string, Column | SQL> = {
 	title: objects.title,
 	status: objects.status,
 	type: objects.type,
-	owner: objects.owner,
+	driver: objects.driver,
 	createdBy: objects.createdBy,
+	boardOrder: sql`coalesce((${objects.metadata}->>'board_order')::numeric, 2147483647)`,
 }
 
-/** Resolve sort expression — built-in column or metadata->>'field_name'. Returns null for unknown fields. */
+/** Resolve sort expression — built-in column or metadata->>'field_name'. Returns null for unknown/unsafe fields. */
 function resolveSortColumn(sortField: string): Column | SQL | null {
 	if (sortColumns[sortField]) return sortColumns[sortField]
 	if (sortField.startsWith('metadata.')) {
 		const fieldName = sortField.slice(9)
+		// Safety check: only allow alphanumeric + underscore field names to prevent SQL injection via sql.raw
 		if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) return null
 		return sql`${objects.metadata}->>'${sql.raw(fieldName)}'`
 	}
 	return null
 }
 
-/** Resolve sort + order into a Drizzle orderBy expression, or null for unknown fields. */
-function resolveOrderBy(query: { sort: string; order: string }): SQL | null {
-	const sortExpr = resolveSortColumn(query.sort)
-	if (!sortExpr) return null
-	return query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
+/**
+ * Resolve sort + order into Drizzle orderBy expressions.
+ * Falls back to createdAt desc for unknown/unsafe sort fields so objects never disappear.
+ *
+ * Always appends `objects.id` as a tiebreaker so OFFSET/LIMIT pagination stays
+ * stable when the primary sort column has ties — without it, rows sharing a
+ * `createdAt` (or any non-unique sort key) can re-appear across pages.
+ */
+function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
+	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
+	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
+	return [primary, asc(objects.id)]
+}
+
+function buildObjectListConditions(query: {
+	type?: string
+	status?: string
+	driver?: string
+	ids?: string
+	q?: string
+}) {
+	const conditions: SQL[] = []
+	if (query.type) conditions.push(eq(objects.type, query.type))
+	if (query.status) {
+		const statuses = query.status.split(',').filter(Boolean)
+		if (statuses.length === 1) conditions.push(eq(objects.status, statuses[0] as string))
+		else if (statuses.length > 1) conditions.push(inArray(objects.status, statuses))
+	}
+	if (query.driver) {
+		const owners = query.driver.split(',').filter((id) => UUID_RE.test(id))
+		if (owners.length === 1) conditions.push(eq(objects.driver, owners[0] as string))
+		else if (owners.length > 1) conditions.push(inArray(objects.driver, owners))
+	}
+	if (query.ids) {
+		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
+		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
+	}
+	if (query.q) {
+		const escaped = query.q.replace(/[%_\\]/g, '\\$&')
+		const pattern = `%${escaped}%`
+		const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
+		if (textMatch) conditions.push(textMatch)
+	}
+	return conditions
+}
+
+function resolveBoardGroupExpression(groupBy?: string): SQL {
+	if (!groupBy || groupBy === 'status') return sql`${objects.status}`
+	if (groupBy === 'driver') return sql`coalesce(${objects.driver}::text, '')`
+	if (groupBy === 'createdBy') return sql`coalesce(${objects.createdBy}::text, '')`
+	if (groupBy === 'type') return sql`${objects.type}`
+	if (groupBy.startsWith('metadata.')) {
+		const fieldName = groupBy.slice('metadata.'.length)
+		if (/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) {
+			return sql`coalesce(${objects.metadata}->>'${sql.raw(fieldName)}', '')`
+		}
+	}
+	return sql`${objects.status}`
+}
+
+function columnLabel(groupBy: string | undefined, value: string) {
+	if (!value) return 'No value'
+	if (!groupBy || groupBy === 'status') return value
+	return value
+}
+
+function toCount(value: unknown) {
+	if (typeof value === 'number') return value
+	if (typeof value === 'string') return Number.parseInt(value, 10) || 0
+	return 0
 }
 
 // POST / - Create object
@@ -156,7 +263,7 @@ app.openapi(createObjectRoute, async (c) => {
 			content: body.content,
 			status: body.status,
 			metadata: body.metadata,
-			owner: body.owner,
+			driver: body.driver,
 			createdBy: actorId,
 		})
 		.onConflictDoNothing({ target: objects.id })
@@ -177,6 +284,15 @@ app.openapi(createObjectRoute, async (c) => {
 		entityType: body.type,
 		entityId: created.id,
 		data: created,
+	})
+
+	// Auto-subscribe the creator so they're notified about future comments.
+	await autoSubscribe(db, {
+		workspaceId,
+		actorId,
+		entityType: 'object',
+		entityId: created.id,
+		source: 'author',
 	})
 
 	return c.json(serialize(created) as z.infer<typeof objectResponseSchema>, 201)
@@ -209,19 +325,9 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const conditions = [eq(objects.workspaceId, workspaceId)]
-	if (query.type) conditions.push(eq(objects.type, query.type))
-	if (query.status) conditions.push(eq(objects.status, query.status))
-	if (query.owner) conditions.push(eq(objects.owner, query.owner))
-	if (query.ids) {
-		const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-		const idList = query.ids.split(',').filter((id) => UUID_RE.test(id))
-		if (idList.length > 0) conditions.push(inArray(objects.id, idList))
-	}
+	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
 
 	const orderBy = resolveOrderBy(query)
-	if (!orderBy)
-		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
 
 	const results = await db
 		.select()
@@ -229,9 +335,127 @@ app.openapi(listObjectsRoute, async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(orderBy)
+		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+})
+
+// GET /board - List board columns with per-column pagination
+const boardObjectsRoute = createRoute({
+	method: 'get',
+	path: '/board',
+	tags: ['Objects'],
+	summary: 'List board columns',
+	request: {
+		headers: workspaceIdHeader,
+		query: boardObjectQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: boardObjectResponseSchema } },
+			description: 'Board columns with paged objects and totals',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Workspace not found',
+		},
+	},
+})
+
+app.openapi(boardObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const rawQuery = c.req.query()
+	const query = c.req.valid('query') ?? {
+		...rawQuery,
+		sort: rawQuery.sort ?? 'createdAt',
+		order: rawQuery.order === 'asc' ? 'asc' : 'desc',
+		limit: rawQuery.limit ? Number.parseInt(rawQuery.limit, 10) : 20,
+		offset: rawQuery.offset ? Number.parseInt(rawQuery.offset, 10) : 0,
+	}
+	const groupBy = query.groupBy
+	const groupExpr = resolveBoardGroupExpression(groupBy)
+	const orderBy = resolveOrderBy(query)
+
+	const [workspace] = await db
+		.select()
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const baseConditions = [
+		eq(objects.workspaceId, workspaceId),
+		...buildObjectListConditions({
+			type: query.type,
+			status: query.status,
+			driver: query.driver,
+			ids: query.ids,
+			q: query.q,
+		}),
+	]
+
+	const countRows = await db
+		.select({ value: groupExpr, total: count() })
+		.from(objects)
+		.where(and(...baseConditions))
+		.groupBy(groupExpr)
+
+	const totals = new Map<string, number>()
+	for (const row of countRows as Array<{ value: unknown; total: unknown }>) {
+		totals.set(String(row.value ?? ''), toCount(row.total))
+	}
+
+	let columnValues: string[]
+	if (!groupBy || groupBy === 'status') {
+		const settings = workspace.settings as WorkspaceSettings
+		const configured = settings?.statuses?.[query.type] ?? []
+		const requested = query.status ? new Set(query.status.split(',').filter(Boolean)) : null
+		columnValues = configured.filter((status) => !requested || requested.has(status))
+		for (const value of totals.keys()) {
+			if (!columnValues.includes(value)) columnValues.push(value)
+		}
+	} else {
+		columnValues = [...totals.keys()].sort((a, b) =>
+			columnLabel(groupBy, a).localeCompare(columnLabel(groupBy, b), undefined, {
+				numeric: true,
+				sensitivity: 'base',
+			}),
+		)
+	}
+
+	if (query.column !== undefined) {
+		columnValues = columnValues.filter((value) => value === query.column)
+	}
+
+	const columns = []
+	for (const value of columnValues) {
+		const columnConditions = [...baseConditions, eq(groupExpr, value)]
+		const rows = await db
+			.select()
+			.from(objects)
+			.where(and(...columnConditions))
+			.limit(query.limit)
+			.offset(query.offset)
+			.orderBy(...orderBy)
+
+		columns.push({
+			id: `${groupBy ?? 'status'}:${value || 'none'}`,
+			label: columnLabel(groupBy, value),
+			value,
+			total: totals.get(value) ?? 0,
+			objects: serializeArray(rows),
+		})
+	}
+
+	return c.json({ columns } as z.infer<typeof boardObjectResponseSchema>, 200)
 })
 
 // GET /search - Search objects by text
@@ -261,17 +485,9 @@ app.openapi(searchObjectsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const escaped = query.q.replace(/[%_\\]/g, '\\$&')
-	const pattern = `%${escaped}%`
-	const textMatch = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
-	const conditions = [eq(objects.workspaceId, workspaceId)]
-	if (textMatch) conditions.push(textMatch)
-	if (query.type) conditions.push(eq(objects.type, query.type))
-	if (query.status) conditions.push(eq(objects.status, query.status))
+	const conditions = [eq(objects.workspaceId, workspaceId), ...buildObjectListConditions(query)]
 
 	const orderBy = resolveOrderBy(query)
-	if (!orderBy)
-		return c.json(createApiError('BAD_REQUEST', `Unknown sort field: '${query.sort}'`), 400)
 
 	const results = await db
 		.select()
@@ -279,7 +495,7 @@ app.openapi(searchObjectsRoute, async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(orderBy)
+		.orderBy(...orderBy)
 
 	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
 })
@@ -308,6 +524,7 @@ const getObjectGraphRoute = createRoute({
 
 app.openapi(getObjectGraphRoute, async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
@@ -327,11 +544,13 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		.from(relationships)
 		.where(or(eq(relationships.sourceId, id), eq(relationships.targetId, id)))
 
-	// Collect connected object IDs
+	// Collect connected object IDs — skip endpoints typed as 'file', since
+	// those live in the `files` table (resolved into the `files` array below)
+	// and would never match against `objects.id`.
 	const connectedIds = new Set<string>()
 	for (const rel of rels) {
-		if (rel.sourceId !== id) connectedIds.add(rel.sourceId)
-		if (rel.targetId !== id) connectedIds.add(rel.targetId)
+		if (rel.sourceId !== id && rel.sourceType !== 'file') connectedIds.add(rel.sourceId)
+		if (rel.targetId !== id && rel.targetType !== 'file') connectedIds.add(rel.targetId)
 	}
 
 	// Batch-fetch connected objects
@@ -343,11 +562,137 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			.where(inArray(objects.id, [...connectedIds]))
 	}
 
+	// Fetch recent activity + comments for this object. Events use the object's
+	// type (task/bet/insight) as entityType for lifecycle events and 'object' for
+	// comments — filter on entityId alone (scoped by workspace) to capture both.
+	const objectEvents = await db
+		.select()
+		.from(events)
+		.where(and(eq(events.workspaceId, workspaceId), eq(events.entityId, id)))
+		.orderBy(desc(events.id))
+		.limit(100)
+
+	// Resolve actor names referenced by driver-change clauses (formatter only
+	// needs them for `data.previous.driver` / `data.updated.driver`).
+	const referencedActorIds = new Set<string>()
+	for (const event of objectEvents) {
+		const data = event.data as {
+			previous?: { driver?: unknown }
+			updated?: { driver?: unknown }
+		} | null
+		const prevOwner = data?.previous?.driver
+		const nextOwner = data?.updated?.driver
+		if (typeof prevOwner === 'string') referencedActorIds.add(prevOwner)
+		if (typeof nextOwner === 'string') referencedActorIds.add(nextOwner)
+	}
+
+	const actorsById = new Map<string, ActorRef>()
+	if (referencedActorIds.size > 0) {
+		const rows = await db
+			.select({ id: actors.id, name: actors.name })
+			.from(actors)
+			.where(inArray(actors.id, [...referencedActorIds]))
+		for (const row of rows) actorsById.set(row.id, row)
+	}
+
+	const serializedEvents = objectEvents.map((event) => ({
+		...serialize(event),
+		description: formatEventDescription(event, { actorsById }),
+	}))
+
+	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
+		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
+		object.activeSessionId
+			? db
+					.select({ currentActivity: sessions.currentActivity })
+					.from(sessions)
+					.where(eq(sessions.id, object.activeSessionId))
+					.limit(1)
+					.then((rows) => rows[0] ?? null)
+			: Promise.resolve(null),
+	])
+
+	// Build a title lookup keyed by object id so each relationship can carry the
+	// titles of its endpoints. Agents reading this payload should reference
+	// connected objects by title in human-facing output, not by UUID.
+	const titleById = new Map<string, string | null>()
+	titleById.set(object.id, object.title ?? null)
+	for (const co of connectedObjects) titleById.set(co.id, co.title ?? null)
+
+	// Collect every file id this object touches: (1) files attached via
+	// `attached` relationships (sourceType/targetType === 'file'), (2) files
+	// referenced by `data.attachmentFileIds` on comment events. Resolving them
+	// here saves agents an N+1 fan-out of /api/files/:id calls.
+	const fileIds = new Set<string>()
+	for (const r of rels) {
+		if (r.sourceType === 'file') fileIds.add(r.sourceId)
+		if (r.targetType === 'file') fileIds.add(r.targetId)
+	}
+	for (const event of objectEvents) {
+		if (event.action !== 'commented') continue
+		const data = event.data as { attachmentFileIds?: unknown } | null
+		const ids = data?.attachmentFileIds
+		if (!Array.isArray(ids)) continue
+		// `event.data` is JSONB and only validated by the writer that produced
+		// it. Skip anything that isn't a UUID so a stray string can't crash the
+		// inArray query below with `invalid input syntax for type uuid`.
+		for (const id of ids) {
+			if (typeof id === 'string' && UUID_RE.test(id)) fileIds.add(id)
+		}
+	}
+
+	let filesSummary: Array<{
+		id: string
+		name: string
+		mimeType: string
+		sizeBytes: number
+		url: string
+	}> = []
+	if (fileIds.size > 0) {
+		// Skip file resolution rather than 500 the whole graph when FRONTEND_URL
+		// is missing in prod — the rest of the payload is still useful.
+		let frontendUrl: string | null = null
+		try {
+			frontendUrl = frontendBaseUrl()
+		} catch (err) {
+			logger.error('Cannot mint file URLs for object graph', { error: String(err) })
+		}
+		if (frontendUrl) {
+			const rows = await db
+				.select({
+					id: files.id,
+					name: files.name,
+					mimeType: files.mimeType,
+					sizeBytes: files.sizeBytes,
+				})
+				.from(files)
+				.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, [...fileIds])))
+			filesSummary = rows.map((row) => ({
+				...row,
+				url: fileViewerUrl(frontendUrl as string, workspaceId, row.id),
+			}))
+		}
+	}
+
 	return c.json(
 		{
-			object: serialize(object),
-			relationships: serializeArray(rels),
+			object: {
+				...serialize(object),
+				activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
+				is_subscribed: subscribed,
+				unread_count: unreadCount,
+				subscriber_count: subscriberCount,
+			},
+			relationships: rels.map((r) => ({
+				...serialize(r),
+				sourceTitle: titleById.get(r.sourceId) ?? null,
+				targetTitle: titleById.get(r.targetId) ?? null,
+			})),
 			connected_objects: serializeArray(connectedObjects),
+			events: serializedEvents,
+			files: filesSummary,
 		} as z.infer<typeof objectGraphResponseSchema>,
 		200,
 	)
@@ -385,7 +730,39 @@ app.openapi(getObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	return c.json(serialize(object) as z.infer<typeof objectResponseSchema>, 200)
+	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, {
+			workspaceId: object.workspaceId,
+			actorId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		getSubscriberCount(db, {
+			workspaceId: object.workspaceId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		object.activeSessionId
+			? db
+					.select({ currentActivity: sessions.currentActivity })
+					.from(sessions)
+					.where(eq(sessions.id, object.activeSessionId))
+					.limit(1)
+					.then((rows) => rows[0] ?? null)
+			: Promise.resolve(null),
+	])
+
+	return c.json(
+		{
+			...serialize(object),
+			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
+			is_subscribed: subscribed,
+			unread_count: unreadCount,
+			subscriber_count: subscriberCount,
+		} as z.infer<typeof objectResponseSchema>,
+		200,
+	)
 })
 
 // PATCH /{id} - Update object
@@ -519,6 +896,322 @@ const deleteObjectRoute = createRoute({
 	},
 })
 
+// POST /migrate-type - Bulk migrate or delete every object of a given type
+const migrateObjectTypeRoute = createRoute({
+	method: 'post',
+	path: '/migrate-type',
+	tags: ['Objects'],
+	summary: 'Migrate or delete all objects of a given type in a workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: migrateObjectTypeSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: migrateObjectTypeResponseSchema } },
+			description: 'Migration completed',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Workspace not found',
+		},
+	},
+})
+
+app.openapi(migrateObjectTypeRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const body = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [workspace] = await db
+		.select()
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const settings = workspace.settings as WorkspaceSettings
+
+	if (body.mode === 'migrate') {
+		// At this point Zod refine guarantees toType is defined; assert for TS narrowing.
+		const toType = body.toType as string
+		const enabledModules = getEnabledModuleIds(settings as Record<string, unknown>)
+		const validTypes = getAllValidTypes(enabledModules, settings)
+		if (!validTypes.includes(toType)) {
+			return c.json(createInvalidTypeError(toType, 'toType', validTypes), 400)
+		}
+
+		const targetStatuses = settings?.statuses?.[toType] ?? []
+		const fallbackStatus = targetStatuses[0]
+		if (!fallbackStatus) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Target type '${toType}' has no statuses configured`,
+					undefined,
+					'Configure at least one status for the target type before migrating.',
+				),
+				400,
+			)
+		}
+
+		// Pull every object of fromType so we can compute per-row status mapping.
+		const rows = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
+
+		if (rows.length === 0) {
+			return c.json({ mode: 'migrate' as const, fromType: body.fromType, toType, count: 0 }, 200)
+		}
+
+		// Group rows by their resolved target status so we can emit one UPDATE per
+		// group instead of one per row — keeps the transaction short on large
+		// workspaces. Map preserves insertion order, so groups appear in the order
+		// statuses are first encountered while iterating rows.
+		const statusMap = body.statusMap ?? {}
+		const idsByStatus = new Map<string, string[]>()
+		const eventValues: (typeof events.$inferInsert)[] = []
+		for (const row of rows) {
+			const mappedStatus = statusMap[row.status] ?? row.status
+			const newStatus = targetStatuses.includes(mappedStatus) ? mappedStatus : fallbackStatus
+			const bucket = idsByStatus.get(newStatus)
+			if (bucket) bucket.push(row.id)
+			else idsByStatus.set(newStatus, [row.id])
+			eventValues.push({
+				workspaceId,
+				actorId,
+				action: 'type_migrated',
+				entityType: toType,
+				entityId: row.id,
+				data: { fromType: body.fromType, toType, fromStatus: row.status, toStatus: newStatus },
+			})
+		}
+
+		const now = new Date()
+		await db.transaction(async (tx) => {
+			for (const [newStatus, ids] of idsByStatus) {
+				await tx
+					.update(objects)
+					.set({ type: toType, status: newStatus, updatedAt: now })
+					.where(inArray(objects.id, ids))
+			}
+			await tx.insert(events).values(eventValues)
+		})
+
+		return c.json(
+			{ mode: 'migrate' as const, fromType: body.fromType, toType, count: rows.length },
+			200,
+		)
+	}
+
+	// mode === 'delete'
+	const toDelete = await db
+		.select({ id: objects.id })
+		.from(objects)
+		.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
+
+	if (toDelete.length === 0) {
+		return c.json({ mode: 'delete' as const, fromType: body.fromType, count: 0 }, 200)
+	}
+
+	const deletedIds = toDelete.map(({ id }) => id)
+
+	await db.transaction(async (tx) => {
+		// Clean up polymorphic subscription + read_state rows before the
+		// objects vanish — there is no FK because (entity_type, entity_id)
+		// is polymorphic, so cascade can't do this for us.
+		await tx
+			.delete(subscriptions)
+			.where(
+				and(eq(subscriptions.entityType, 'object'), inArray(subscriptions.entityId, deletedIds)),
+			)
+		await tx
+			.delete(readState)
+			.where(and(eq(readState.entityType, 'object'), inArray(readState.entityId, deletedIds)))
+
+		await tx
+			.delete(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, body.fromType)))
+
+		await tx.insert(events).values(
+			toDelete.map(({ id: objectId }) => ({
+				workspaceId,
+				actorId,
+				action: 'deleted' as const,
+				entityType: body.fromType,
+				entityId: objectId,
+				data: { reason: 'extension_removed' },
+			})),
+		)
+	})
+
+	return c.json({ mode: 'delete' as const, fromType: body.fromType, count: toDelete.length }, 200)
+})
+
+// POST /bulk-update - Update many objects in one call with per-id partial failure
+const bulkUpdateObjectsRoute = createRoute({
+	method: 'post',
+	path: '/bulk-update',
+	tags: ['Objects'],
+	summary: 'Bulk update objects',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: bulkUpdateObjectsSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: bulkUpdateObjectsResponseSchema } },
+			description: 'Bulk update completed (per-id results, including failures)',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+	},
+})
+
+app.openapi(bulkUpdateObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { ids, patch } = c.req.valid('json')
+
+	// Dedup so duplicates in the request don't double-write or double-report.
+	const uniqueIds = Array.from(new Set(ids))
+
+	// Scope the fetch to the header workspace — ids that don't belong here
+	// collapse into "Object not found" without revealing whether they exist
+	// elsewhere. authMiddleware has already verified the caller is a member
+	// of this workspace, so no inline membership check is needed.
+	const existingRows = await db
+		.select()
+		.from(objects)
+		.where(and(inArray(objects.id, uniqueIds), eq(objects.workspaceId, workspaceId)))
+	const existingById = new Map(existingRows.map((row) => [row.id, row]))
+
+	let workspaceSettings: WorkspaceSettings | undefined
+	if (patch.status !== undefined && existingRows.length > 0) {
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+		workspaceSettings = ws?.settings as WorkspaceSettings | undefined
+	}
+
+	type ResultEntry = { id: string; ok: boolean; error?: string }
+	type Plan = {
+		id: string
+		previous: (typeof existingRows)[number]
+		updateData: Partial<typeof objects.$inferInsert>
+		action: 'updated' | 'status_changed'
+		resultEntry: ResultEntry
+	}
+	const plans: Plan[] = []
+	const results: ResultEntry[] = []
+	const now = new Date()
+
+	for (const id of uniqueIds) {
+		const existing = existingById.get(id)
+		if (!existing) {
+			results.push({ id, ok: false, error: 'Object not found' })
+			continue
+		}
+
+		if (patch.status !== undefined) {
+			const validStatuses = workspaceSettings?.statuses?.[existing.type]
+			if (validStatuses && !validStatuses.includes(patch.status)) {
+				results.push({
+					id,
+					ok: false,
+					error: `Invalid status '${patch.status}' for type '${existing.type}'`,
+				})
+				continue
+			}
+		}
+
+		const updateData: Partial<typeof objects.$inferInsert> = { updatedAt: now }
+		if (patch.status !== undefined) updateData.status = patch.status
+		if (patch.driver !== undefined) updateData.driver = patch.driver
+		if (patch.metadata !== undefined) {
+			updateData.metadata = existing.metadata
+				? { ...(existing.metadata as Record<string, unknown>), ...patch.metadata }
+				: patch.metadata
+		}
+
+		const resultEntry: ResultEntry = { id, ok: true }
+		plans.push({
+			id,
+			previous: existing,
+			updateData,
+			action:
+				patch.status !== undefined && patch.status !== existing.status
+					? 'status_changed'
+					: 'updated',
+			resultEntry,
+		})
+		results.push(resultEntry)
+	}
+
+	if (plans.length > 0) {
+		await db.transaction(async (tx) => {
+			for (const plan of plans) {
+				// Re-scope the UPDATE to the planned workspace so a row that moved
+				// workspaces between the SELECT and here doesn't get touched.
+				const [updated] = await tx
+					.update(objects)
+					.set(plan.updateData)
+					.where(and(eq(objects.id, plan.id), eq(objects.workspaceId, plan.previous.workspaceId)))
+					.returning()
+				// The row was deleted (or moved out of the workspace) between the
+				// initial SELECT and this UPDATE — flip the result to a failure and
+				// skip the event so we don't log a no-op.
+				if (!updated) {
+					plan.resultEntry.ok = false
+					plan.resultEntry.error = 'Object not found'
+					continue
+				}
+				await tx.insert(events).values({
+					workspaceId: plan.previous.workspaceId,
+					actorId,
+					action: plan.action,
+					entityType: plan.previous.type,
+					entityId: plan.id,
+					data: { previous: plan.previous, updated },
+				})
+			}
+		})
+	}
+
+	const okCount = results.filter((r) => r.ok).length
+	logger.info('bulk-update objects', {
+		actorId,
+		requested: ids.length,
+		deduped: uniqueIds.length,
+		updated: okCount,
+		failed: uniqueIds.length - okCount,
+	})
+
+	return c.json({ results }, 200)
+})
+
 app.openapi(deleteObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
@@ -530,15 +1223,26 @@ app.openapi(deleteObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	await db.delete(objects).where(eq(objects.id, id))
+	await db.transaction(async (tx) => {
+		// Polymorphic subscription + read_state rows aren't FK'd to objects, so
+		// drop them explicitly to avoid orphans pointing at a freed entity_id.
+		await tx
+			.delete(subscriptions)
+			.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
+		await tx
+			.delete(readState)
+			.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))
 
-	await db.insert(events).values({
-		workspaceId: existing.workspaceId,
-		actorId,
-		action: 'deleted',
-		entityType: existing.type,
-		entityId: id,
-		data: existing,
+		await tx.delete(objects).where(eq(objects.id, id))
+
+		await tx.insert(events).values({
+			workspaceId: existing.workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: existing.type,
+			entityId: id,
+			data: existing,
+		})
 	})
 
 	return c.json({ deleted: true as const }, 200)

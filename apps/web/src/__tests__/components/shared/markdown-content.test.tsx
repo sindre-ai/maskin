@@ -54,4 +54,34 @@ describe('MarkdownContent', () => {
 		await user.click(screen.getByText('read only'))
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 	})
+
+	it('suppresses disallowed elements but keeps their text', () => {
+		const { container } = render(
+			<MarkdownContent
+				content={'# Heading text\n\nbody'}
+				disallowedElements={['h1', 'h2', 'h3', 'h4', 'h5', 'h6']}
+			/>,
+		)
+		expect(container.querySelector('h1')).toBeNull()
+		expect(screen.getByText('Heading text')).toBeInTheDocument()
+		expect(screen.getByText('body')).toBeInTheDocument()
+	})
+
+	it('renders @mentions as chips inside formatted markdown', () => {
+		const actors = [
+			{
+				id: 'a1',
+				name: 'Magnus',
+				type: 'human',
+				email: null,
+				description: null,
+				isSystem: false,
+			},
+		]
+		render(<MarkdownContent content="Hello @Magnus this is **important**" mentionActors={actors} />)
+		const chip = screen.getByText('@Magnus')
+		expect(chip.tagName).toBe('SPAN')
+		const strong = screen.getByText('important')
+		expect(strong.tagName).toBe('STRONG')
+	})
 })

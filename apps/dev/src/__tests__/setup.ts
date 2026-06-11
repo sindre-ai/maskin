@@ -41,6 +41,14 @@ type Env = {
  * ]
  * ```
  *
+ * **Per-call errors** — make a specific Nth call throw while others succeed
+ * (e.g. to test failure isolation across parallel inserts). `undefined` slots
+ * fall through to the normal queue/static result:
+ * ```ts
+ * mockResults.insertErrorQueue = [undefined, new Error('boom')]
+ * // 1st db.insert() → resolves normally; 2nd db.insert() → throws 'boom'
+ * ```
+ *
  * **Transactions** — `db.transaction(fn)` passes the same mock `db` into the
  * callback so the same `mockResults` apply inside the transaction.
  *
@@ -50,6 +58,11 @@ export function createTestContext() {
 	const mockResults: Record<string, unknown[]> = {}
 	const queues: Record<string, unknown[][]> = {}
 	const errors: Record<string, Error | undefined> = {}
+	const errorQueues: Record<string, (Error | undefined)[]> = {}
+	// Captures the most recent argument passed to chain methods like .values() and .set(),
+	// keyed by the top-level operation ('insert' → values, 'update' → set). Lets tests
+	// assert what the route actually wrote, not just what the mock returned.
+	const calls: { inserts: unknown[]; updates: unknown[] } = { inserts: [], updates: [] }
 
 	const db = new Proxy({} as Database, {
 		get: (_target, prop) => {
@@ -62,7 +75,17 @@ export function createTestContext() {
 			) {
 				// Map selectDistinct to the same bucket as select
 				const key = prop === 'selectDistinct' ? 'select' : (prop as string)
+				const captureKey = prop === 'insert' ? 'inserts' : prop === 'update' ? 'updates' : undefined
 				return () => {
+					// Per-call error queue takes precedence over the static error so tests can
+					// simulate "Nth call throws, others succeed" (e.g. one parallel insert fails).
+					// An `undefined` slot in the queue falls through to the normal result path.
+					const errorQueueKey = `${key}ErrorQueue`
+					const errorQueue = errorQueues[errorQueueKey]
+					if (errorQueue && errorQueue.length > 0) {
+						const err = errorQueue.shift()
+						if (err) return createChain(undefined, err, captureKey, calls)
+					}
 					const errorKey = `${key}Error`
 					if (errors[errorKey]) {
 						return createChain(undefined, errors[errorKey])
@@ -70,9 +93,9 @@ export function createTestContext() {
 					const queueKey = `${key}Queue`
 					const queue = queues[queueKey]
 					if (queue && queue.length > 0) {
-						return createChain(queue.shift())
+						return createChain(queue.shift(), undefined, captureKey, calls)
 					}
-					return createChain(mockResults[key])
+					return createChain(mockResults[key], undefined, captureKey, calls)
 				}
 			}
 			if (prop === 'transaction') {
@@ -87,6 +110,12 @@ export function createTestContext() {
 	const results = new Proxy(mockResults, {
 		set: (target, prop, value) => {
 			const key = String(prop)
+			// Order matters: 'insertErrorQueue' ends with both 'Queue' and 'ErrorQueue',
+			// so check the more specific suffix first.
+			if (key.endsWith('ErrorQueue')) {
+				errorQueues[key] = value as (Error | undefined)[]
+				return true
+			}
 			if (key.endsWith('Queue')) {
 				queues[key] = value as unknown[][]
 				return true
@@ -100,6 +129,9 @@ export function createTestContext() {
 		},
 		get: (target, prop) => {
 			const key = String(prop)
+			if (key.endsWith('ErrorQueue')) {
+				return errorQueues[key]
+			}
 			if (key.endsWith('Queue')) {
 				return queues[key]
 			}
@@ -110,10 +142,15 @@ export function createTestContext() {
 		},
 	})
 
-	return { db, mockResults: results }
+	return { db, mockResults: results, calls }
 }
 
-function createChain(returnValue?: unknown, error?: Error): Record<string, unknown> {
+function createChain(
+	returnValue?: unknown,
+	error?: Error,
+	captureKey?: 'inserts' | 'updates',
+	calls?: { inserts: unknown[]; updates: unknown[] },
+): Record<string, unknown> {
 	const chain: Record<string, unknown> = {}
 	const methods = [
 		'select',
@@ -123,6 +160,7 @@ function createChain(returnValue?: unknown, error?: Error): Record<string, unkno
 		'offset',
 		'orderBy',
 		'groupBy',
+		'having',
 		'insert',
 		'values',
 		'returning',
@@ -130,12 +168,17 @@ function createChain(returnValue?: unknown, error?: Error): Record<string, unkno
 		'set',
 		'delete',
 		'innerJoin',
+		'leftJoin',
 		'onConflictDoUpdate',
 		'onConflictDoNothing',
 		'for',
 	]
 	for (const m of methods) {
-		chain[m] = () => chain
+		chain[m] = (arg?: unknown) => {
+			if (calls && captureKey === 'inserts' && m === 'values') calls.inserts.push(arg)
+			if (calls && captureKey === 'updates' && m === 'set') calls.updates.push(arg)
+			return chain
+		}
 	}
 	// biome-ignore lint/suspicious/noThenProperty: mock needs .then for Drizzle's await
 	chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
@@ -175,10 +218,10 @@ export function createTestApp(
 	actorType = 'human',
 ) {
 	const app = new CreateOpenAPIHono<Env>()
-	const { db, mockResults } = createTestContext()
+	const { db, mockResults, calls } = createTestContext()
 	withTestEnv(app, db, actorId, actorType)
 	app.route(basePath, routeModule)
-	return { app, db, mockResults }
+	return { app, db, mockResults, calls }
 }
 
 export function createMockSessionManager(overrides?: Record<string, unknown>) {
@@ -236,7 +279,7 @@ export function createSessionTestApp(
 	actorType = 'human',
 ) {
 	const app = new CreateOpenAPIHono<Env>()
-	const { db, mockResults } = createTestContext()
+	const { db, mockResults, calls } = createTestContext()
 	const sessionManager = createMockSessionManager()
 
 	app.use('*', async (c, next) => {
@@ -249,7 +292,7 @@ export function createSessionTestApp(
 	})
 
 	app.route(basePath, routeModule)
-	return { app, db, mockResults, sessionManager }
+	return { app, db, mockResults, sessionManager, calls }
 }
 
 /**
@@ -267,7 +310,7 @@ export function createImportTestApp(
 	actorType = 'human',
 ) {
 	const app = new CreateOpenAPIHono<Env>()
-	const { db, mockResults } = createTestContext()
+	const { db, mockResults, calls } = createTestContext()
 	const storageProvider = createMockStorageProvider()
 
 	app.use('*', async (c, next) => {
@@ -280,7 +323,7 @@ export function createImportTestApp(
 	})
 
 	app.route(basePath, routeModule)
-	return { app, db, mockResults, storageProvider }
+	return { app, db, mockResults, storageProvider, calls }
 }
 
 export function createSkillsTestApp(
