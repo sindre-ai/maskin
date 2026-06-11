@@ -1,0 +1,64 @@
+_metadata:
+  major_version: 1
+  minor_version: 1
+
+display_information:
+  name: Machine
+  description: The colleague your AI agents post as in Slack.
+  long_description: >-
+    Machine is Maskin's bot identity in Slack. Every agent reply, DM, and
+    mention lands here — branded as Machine, with the calling agent's name
+    and workspace in a per-message subscript (e.g. `Synthesizer · in mesh-firm`)
+    via Slack's `chat:write.customize` scope. Operators see one consistent
+    teammate instead of posts attributed to individual founders.
+  background_color: "#0F1117"
+
+features:
+  bot_user:
+    display_name: Machine
+    always_online: true
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+
+oauth_config:
+  scopes:
+    bot:
+      - channels:read
+      - channels:history
+      - channels:join
+      - groups:read
+      - groups:history
+      - im:read
+      - im:history
+      - im:write
+      - mpim:read
+      - mpim:history
+      - chat:write
+      - chat:write.customize
+      - users:read
+      - app_mentions:read
+      - reactions:read
+      - reactions:write
+
+settings:
+  event_subscriptions:
+    request_url: https://REPLACE_WITH_ENV_URL/api/webhooks/slack
+    bot_events:
+      - app_mention
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+      - reaction_added
+      - reaction_removed
+      - channel_created
+      - channel_deleted
+      - channel_rename
+      - member_joined_channel
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
