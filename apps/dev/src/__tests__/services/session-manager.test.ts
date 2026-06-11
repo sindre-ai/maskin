@@ -1279,6 +1279,34 @@ describe('SessionManager', () => {
 			)
 			expect(actorUpdate?.agentState).toBe('failed')
 		})
+
+		it('does not touch agentState when the agent has another active session', async () => {
+			const session = buildSession({ status: 'running' })
+			const otherSession = buildSession({ actorId: session.actorId, status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[otherSession], // hasOtherActiveSessions: agent still has live work
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate).toBeUndefined()
+		})
 	})
 
 	describe('handleCompletion() — credit-exhaustion classification', () => {
