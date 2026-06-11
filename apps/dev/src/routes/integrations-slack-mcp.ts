@@ -30,7 +30,7 @@ const app = new Hono<Env>()
 async function resolveSlackBotToken(
 	db: Database,
 	workspaceId: string,
-): Promise<{ botToken: string } | null> {
+): Promise<{ botToken: string; slackTeamId: string | undefined } | null> {
 	const [integration] = await db
 		.select()
 		.from(integrations)
@@ -67,7 +67,10 @@ async function resolveSlackBotToken(
 		return null
 	}
 
-	return { botToken: accessToken as string }
+	return {
+		botToken: accessToken as string,
+		slackTeamId: integration.externalId ?? undefined,
+	}
 }
 
 app.post('/', async (c) => {
@@ -122,6 +125,7 @@ app.post('/', async (c) => {
 		machineIconUrl,
 		workspaceId,
 		actorId,
+		slackTeamId: resolved.slackTeamId,
 	})
 
 	const transport = new StreamableHTTPServerTransport({
