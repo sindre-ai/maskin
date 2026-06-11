@@ -6,6 +6,7 @@ import { trackEvent } from '@/lib/analytics'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
+import { Link } from '@tanstack/react-router'
 import {
 	CheckCircle2,
 	ChevronDown,

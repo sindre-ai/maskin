@@ -256,7 +256,13 @@ export function AgentDocumentView({
 			{/* Run/Pause + New Conversation */}
 			<div className="flex items-center gap-2 mb-6">
 				{isActive ? (
-					<Button variant="outline" size="sm" className="min-h-[44px]" onClick={onPause} disabled={isPausePending}>
+					<Button
+						variant="outline"
+						size="sm"
+						className="min-h-[44px]"
+						onClick={onPause}
+						disabled={isPausePending}
+					>
 						<PauseCircle size={14} />
 						{isPausePending ? 'Pausing…' : 'Pause'}
 					</Button>
