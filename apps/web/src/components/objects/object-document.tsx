@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
 	Dialog,
 	DialogContent,
@@ -175,6 +176,11 @@ export function ObjectDocumentView({
 				)}
 				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
+
+			{/* Viewport checklist — shown to reviewers when a task is in_review */}
+			{object.type === 'task' && object.status === 'in_review' && (
+				<ViewportChecklist />
+			)}
 
 			{/* Properties */}
 			<div className="mb-6 w-full">
@@ -423,6 +429,36 @@ export function DeleteConfirmDialog({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
+	)
+}
+
+const VIEWPORT_ITEMS = [
+	{ id: 'desktop', label: 'Desktop (≥1024px)' },
+	{ id: 'tablet', label: 'Tablet (768–1024px)' },
+	{ id: 'mobile', label: 'Mobile (<768px)' },
+]
+
+function ViewportChecklist() {
+	const [checked, setChecked] = useState<Record<string, boolean>>({})
+
+	const toggle = (id: string) =>
+		setChecked((prev) => ({ ...prev, [id]: !prev[id] }))
+
+	return (
+		<div className="mb-6 rounded-md border border-border bg-bg-surface p-4">
+			<p className="text-sm font-medium text-foreground mb-3">Verify at all breakpoints before approving</p>
+			<div className="flex flex-col gap-2">
+				{VIEWPORT_ITEMS.map(({ id, label }) => (
+					<label key={id} className="flex items-center gap-2 cursor-pointer select-none">
+						<Checkbox
+							checked={!!checked[id]}
+							onCheckedChange={() => toggle(id)}
+						/>
+						<span className="text-sm text-foreground">{label}</span>
+					</label>
+				))}
+			</div>
+		</div>
 	)
 }
 
