@@ -119,59 +119,6 @@ describe('ObjectDocumentView', () => {
 		expect(screen.queryByText('agent working')).not.toBeInTheDocument()
 	})
 
-	describe('ViewportChecklist', () => {
-		it('renders for task in in_review status', () => {
-			const object = buildObjectResponse({ type: 'task', status: 'in_review' })
-			render(
-				<ObjectDocumentView
-					{...baseProps}
-					statuses={[...baseProps.statuses, 'in_review']}
-					object={object}
-				/>,
-			)
-			expect(
-				screen.getByText('Verify at all breakpoints before approving'),
-			).toBeInTheDocument()
-			expect(screen.getByText('Desktop (≥1024px)')).toBeInTheDocument()
-			expect(screen.getByText('Tablet (768–1024px)')).toBeInTheDocument()
-			expect(screen.getByText('Mobile (<768px)')).toBeInTheDocument()
-		})
-
-		it('does not render for task with a different status', () => {
-			const object = buildObjectResponse({ type: 'task', status: 'active' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(
-				screen.queryByText('Verify at all breakpoints before approving'),
-			).not.toBeInTheDocument()
-		})
-
-		it('does not render for a non-task object with in_review status', () => {
-			const object = buildObjectResponse({ type: 'bet', status: 'in_review' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(
-				screen.queryByText('Verify at all breakpoints before approving'),
-			).not.toBeInTheDocument()
-		})
-
-		it('toggles checkboxes independently', async () => {
-			const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
-			const object = buildObjectResponse({ type: 'task', status: 'in_review' })
-			render(
-				<ObjectDocumentView
-					{...baseProps}
-					statuses={[...baseProps.statuses, 'in_review']}
-					object={object}
-				/>,
-			)
-			const checkboxes = screen.getAllByRole('checkbox')
-			expect(checkboxes[0]).toHaveAttribute('aria-checked', 'false')
-
-			await user.click(checkboxes[0])
-			expect(checkboxes[0]).toHaveAttribute('aria-checked', 'true')
-			expect(checkboxes[1]).toHaveAttribute('aria-checked', 'false')
-		})
-	})
-
 	describe('OwnerSelect', () => {
 		const members = [
 			{ actorId: 'actor-alice', role: 'owner', joinedAt: null, name: 'Alice', type: 'human' },

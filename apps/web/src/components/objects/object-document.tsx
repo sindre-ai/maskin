@@ -1,6 +1,4 @@
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
 import {
 	Dialog,
 	DialogContent,
@@ -177,10 +175,6 @@ export function ObjectDocumentView({
 				)}
 				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
-
-			{object.type === 'task' && object.status === 'in_review' && (
-				<ViewportChecklist />
-			)}
 
 			{/* Properties */}
 			<div className="mb-6 w-full">
@@ -429,36 +423,6 @@ export function DeleteConfirmDialog({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
-	)
-}
-
-const VIEWPORT_ITEMS = [
-	{ id: 'desktop', label: 'Desktop (≥1024px)' },
-	{ id: 'tablet', label: 'Tablet (768–1024px)' },
-	{ id: 'mobile', label: 'Mobile (<768px)' },
-]
-
-function ViewportChecklist() {
-	const [checked, setChecked] = useState<Record<string, boolean>>({})
-
-	return (
-		<div className="mb-6 rounded-md border border-border bg-bg-surface p-4">
-			<p className="text-sm font-medium text-foreground mb-3">Verify at all breakpoints before approving</p>
-			<div className="flex flex-col gap-2">
-				{VIEWPORT_ITEMS.map(({ id, label }) => (
-					<div key={id} className="flex items-center gap-2">
-						<Checkbox
-							id={id}
-							checked={!!checked[id]}
-							onCheckedChange={(val) => setChecked((prev) => ({ ...prev, [id]: val === true }))}
-						/>
-						<Label htmlFor={id} className="text-sm font-normal cursor-pointer select-none">
-							{label}
-						</Label>
-					</div>
-				))}
-			</div>
-		</div>
 	)
 }
 
