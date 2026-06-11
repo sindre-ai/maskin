@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
@@ -28,14 +28,15 @@ vi.mock('@/components/foryou/persistent-reply-bar', () => ({
 	PersistentReplyBar: () => null,
 }))
 
-vi.mock('@/components/foryou/new-conversation-composer', () => ({
-	NewConversationComposer: () => null,
-}))
-
 vi.mock('@/components/foryou/unread-thread-card', () => ({
 	UnreadThreadCard: ({ item }: { item: UnreadItem }) => (
 		<div data-testid="unread-thread-card">{item.entity_id}</div>
 	),
+}))
+
+vi.mock('@/components/foryou/new-conversation-composer', () => ({
+	NewConversationComposer: ({ open }: { open: boolean }) =>
+		open ? <div data-testid="new-conversation-composer" /> : null,
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
@@ -147,5 +148,30 @@ describe('ForYouDashboard', () => {
 			entityId: 'obj-2',
 			lastEventId: 22,
 		})
+	})
+
+	it('opens the new-conversation composer when ⌘N is pressed', () => {
+		mockUseUnread.mockReturnValue({ data: { items: [] }, isLoading: false })
+		render(<ForYouDashboard />)
+		expect(screen.queryByTestId('new-conversation-composer')).not.toBeInTheDocument()
+		act(() => {
+			fireEvent.keyDown(window, { key: 'n', metaKey: true })
+		})
+		expect(screen.getByTestId('new-conversation-composer')).toBeInTheDocument()
+	})
+
+	it('ignores ⌘N when keydown originates inside an input', () => {
+		mockUseUnread.mockReturnValue({ data: { items: [] }, isLoading: false })
+		render(<ForYouDashboard />)
+		const input = document.createElement('input')
+		document.body.appendChild(input)
+		try {
+			act(() => {
+				fireEvent.keyDown(input, { key: 'n', metaKey: true })
+			})
+			expect(screen.queryByTestId('new-conversation-composer')).not.toBeInTheDocument()
+		} finally {
+			input.remove()
+		}
 	})
 })
