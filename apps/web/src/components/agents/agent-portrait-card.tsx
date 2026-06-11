@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import { useAgentPause, useAgentRun } from '@/hooks/use-actors'
 import type { ActorResponse, AgentState } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -60,7 +61,7 @@ function MomentumRing({
 	size: Size
 	children: ReactNode
 }) {
-	const padding = size === 'sm' ? 'p-0.5' : size === 'md' ? 'p-[3px]' : 'p-1'
+	const padding = size === 'sm' ? 'p-0.5' : size === 'md' ? 'p-0.5' : 'p-1'
 	return (
 		<div
 			className={cn(
@@ -131,15 +132,18 @@ export function AgentPortraitCard({ agent, size = 'md', onRun, onPause }: AgentP
 			</div>
 
 			{(showPlay || showPause) && (
-				<button
+				<Button
 					type="button"
+					variant="ghost"
+					size="icon"
 					disabled={isActing}
 					onClick={showPause ? handlePause : handleRun}
 					className={cn(
-						'flex-shrink-0 flex items-center justify-center rounded-full transition-colors',
-						'disabled:opacity-50 disabled:pointer-events-none',
+						'flex-shrink-0 rounded-full p-0',
 						size === 'sm' ? 'h-6 w-6' : size === 'md' ? 'h-7 w-7' : 'h-8 w-8',
-						showPause ? 'text-warning hover:bg-warning/10' : 'text-success hover:bg-success/10',
+						showPause
+							? 'text-warning hover:bg-warning/10 hover:text-warning'
+							: 'text-success hover:bg-success/10 hover:text-success',
 					)}
 					aria-label={showPause ? 'Pause agent' : 'Run agent'}
 				>
@@ -148,7 +152,7 @@ export function AgentPortraitCard({ agent, size = 'md', onRun, onPause }: AgentP
 					) : (
 						<Play className={cn(size === 'sm' ? 'h-3 w-3' : 'h-4 w-4')} />
 					)}
-				</button>
+				</Button>
 			)}
 		</div>
 	)
