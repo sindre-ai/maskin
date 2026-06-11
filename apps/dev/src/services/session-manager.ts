@@ -10,7 +10,9 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	conversations,
 	integrations,
+	messages,
 	objects,
 	sessionLogs,
 	sessions,
@@ -46,6 +48,7 @@ export interface CreateSessionParams {
 	 */
 	config?: Record<string, unknown>
 	triggerId?: string
+	conversationId?: string
 	createdBy: string
 	autoStart?: boolean
 }
@@ -107,6 +110,8 @@ export class SessionManager extends EventEmitter {
 	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
+	/** Accumulates assistant text per interactive session turn for conversation persistence. */
+	private pendingTurnText: Map<string, string> = new Map()
 
 	constructor(
 		private db: Database,
@@ -151,6 +156,7 @@ export class SessionManager extends EventEmitter {
 				workspaceId,
 				actorId: params.actorId,
 				triggerId: params.triggerId,
+				conversationId: params.conversationId ?? null,
 				status: 'pending',
 				actionPrompt: params.actionPrompt,
 				config,
@@ -952,6 +958,58 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	/**
+	 * Parses a stdout log line from an interactive session. Accumulates text
+	 * from `assistant` envelopes and flushes a `messages` row when a `result`
+	 * envelope (end-of-turn) is detected — but only if the session has a linked
+	 * conversation.
+	 */
+	private async accumulateTurnText(sessionId: string, logLine: string): Promise<void> {
+		let envelope: Record<string, unknown>
+		try {
+			const parsed = JSON.parse(logLine.trim())
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+			envelope = parsed as Record<string, unknown>
+		} catch {
+			return
+		}
+
+		const type = envelope.type
+		if (type === 'assistant') {
+			const message = envelope.message
+			if (!message || typeof message !== 'object' || Array.isArray(message)) return
+			const content = (message as Record<string, unknown>).content
+			if (!Array.isArray(content)) return
+			for (const block of content) {
+				if (!block || typeof block !== 'object' || Array.isArray(block)) continue
+				const b = block as Record<string, unknown>
+				if (b.type === 'text' && typeof b.text === 'string') {
+					const current = this.pendingTurnText.get(sessionId) ?? ''
+					this.pendingTurnText.set(sessionId, current + b.text)
+				}
+			}
+		} else if (type === 'result') {
+			const text = this.pendingTurnText.get(sessionId)
+			this.pendingTurnText.delete(sessionId)
+			if (!text) return
+
+			const [session] = await this.db
+				.select({ conversationId: sessions.conversationId, actorId: sessions.actorId })
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			if (!session?.conversationId) return
+
+			await this.db
+				.insert(messages)
+				.values({ conversationId: session.conversationId, actorId: session.actorId, content: text })
+			await this.db
+				.update(conversations)
+				.set({ lastMessagePreview: text.slice(0, 200), lastActivityAt: new Date() })
+				.where(eq(conversations.id, session.conversationId))
+		}
+	}
+
 	private computeTimeout(session: typeof sessions.$inferSelect): Date {
 		const sessionConfig = session.config as Record<string, unknown>
 		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 7200
@@ -1000,6 +1058,12 @@ export class SessionManager extends EventEmitter {
 										? next.slice(next.length - SessionManager.STDOUT_TAIL_BYTES)
 										: next
 							}
+							this.accumulateTurnText(sessionId, chunk.data).catch((err) =>
+								logger.error('Failed to persist conversation turn', {
+									sessionId,
+									error: String(err),
+								}),
+							)
 						}
 					}
 					// Stream ended naturally — container exited and Docker closed the
@@ -1695,6 +1759,7 @@ export class SessionManager extends EventEmitter {
 
 	/** Clear activeSessionId on any object linked to this session. */
 	private async clearActiveSession(sessionId: string): Promise<void> {
+		this.pendingTurnText.delete(sessionId)
 		await this.db
 			.update(objects)
 			.set({ activeSessionId: null, updatedAt: new Date() })

@@ -988,6 +988,7 @@ export interface CreateSessionInput {
 	actor_id: string
 	action_prompt: string
 	config?: SessionConfigInput
+	conversation_id?: string
 	auto_start?: boolean
 }
 
@@ -996,6 +997,7 @@ export interface SessionResponse {
 	workspaceId: string
 	actorId: string
 	triggerId: string | null
+	conversationId: string | null
 	status: string
 	containerId: string | null
 	actionPrompt: string

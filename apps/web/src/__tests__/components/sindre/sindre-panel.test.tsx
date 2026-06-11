@@ -1,6 +1,7 @@
 import { SindrePanel } from '@/components/sindre/sindre-panel'
 import type { UseSindreOneShotResult } from '@/hooks/use-sindre-one-shot'
 import type { UseSindreSessionResult } from '@/hooks/use-sindre-session'
+import type { ConversationResponse } from '@/lib/api'
 import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
@@ -30,6 +31,30 @@ let mockOneShotResult: UseSindreOneShotResult = {
 	send: mockOneShotSend,
 	clear: mockOneShotClear,
 }
+
+const mockConversation: ConversationResponse = {
+	id: 'conv-1',
+	type: 'dm',
+	title: 'Test Conversation',
+	workspaceId: 'ws-1',
+	lastMessagePreview: null,
+	lastActivityAt: null,
+	createdAt: new Date().toISOString(),
+	updatedAt: null,
+	unreadCount: 0,
+	participants: [],
+}
+
+let mockConversationList: ConversationResponse[] = []
+const mockMarkRead = { mutate: vi.fn() }
+const mockCreateConversation = { mutate: vi.fn(), isPending: false }
+
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversations: () => ({ data: mockConversationList, isLoading: false }),
+	useCreateConversation: () => mockCreateConversation,
+	useMarkConversationRead: () => mockMarkRead,
+	useConversationMessages: () => ({ data: null }),
+}))
 
 vi.mock('@/hooks/use-sindre-session', () => ({
 	useSindreSession: () => mockHookResult,
@@ -69,6 +94,8 @@ beforeEach(() => {
 	mockSend.mockClear()
 	mockOneShotSend.mockClear()
 	mockOneShotClear.mockClear()
+	mockMarkRead.mutate.mockClear()
+	mockConversationList = []
 	mockHookResult = {
 		sessionId: null,
 		status: 'ready',
@@ -147,7 +174,7 @@ describe('SindrePanel', () => {
 		expect(stated ?? panel).not.toBeNull()
 	})
 
-	it('mounts SindreChat inside the panel when opened', async () => {
+	it('shows the conversation list when opened', async () => {
 		render(
 			<Harness>
 				<Opener />
@@ -159,13 +186,37 @@ describe('SindrePanel', () => {
 			screen.getByText('open-panel').click()
 		})
 
-		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
+		expect(await screen.findByText('Conversations')).toBeInTheDocument()
+		// Both the header icon button and footer text button are present
+		expect(screen.getAllByRole('button', { name: 'New conversation' })).toHaveLength(2)
 	})
 
-	it('auto-sends a pendingMessage forwarded via openWithContext and clears it', async () => {
+	it('shows SindreChat when a conversation is selected', async () => {
+		mockConversationList = [mockConversation]
+		const user = userEvent.setup()
 		render(
 			<Harness>
-				<Opener attachments={[]} />
+				<Opener />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-panel').click()
+		})
+
+		await screen.findByText('Conversations')
+		await user.click(screen.getByText('Test Conversation'))
+
+		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
+		expect(mockMarkRead.mutate).toHaveBeenCalledWith('conv-1')
+	})
+
+	it('auto-sends a pendingMessage when entering a conversation', async () => {
+		mockConversationList = [mockConversation]
+		const user = userEvent.setup()
+		render(
+			<Harness>
 				<OpenerWithMessage message="hey sindre" attachments={[]} />
 				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
@@ -175,13 +226,18 @@ describe('SindrePanel', () => {
 			screen.getByText('open-with-message').click()
 		})
 
+		await screen.findByText('Conversations')
+		await user.click(screen.getByText('Test Conversation'))
 		await screen.findByPlaceholderText('Message Sindre')
+
 		await waitFor(() =>
 			expect(mockSend).toHaveBeenCalledWith('hey sindre', undefined, 'hey sindre', undefined),
 		)
 	})
 
-	it('seeds selection from pendingAttachments and clears them on open', async () => {
+	it('seeds selection from pendingAttachments and renders chips in SindreChat', async () => {
+		mockConversationList = [mockConversation]
+		const user = userEvent.setup()
 		render(
 			<Harness>
 				<Opener
@@ -198,12 +254,17 @@ describe('SindrePanel', () => {
 			screen.getByText('open-with-context').click()
 		})
 
+		await screen.findByText('Conversations')
+		await user.click(screen.getByText('Test Conversation'))
+
 		expect(await screen.findByPlaceholderText('Message Code Reviewer')).toBeInTheDocument()
 		expect(screen.getByText('Code Reviewer')).toBeInTheDocument()
 		expect(screen.getByText('Bet Alpha')).toBeInTheDocument()
 	})
 
-	it('seeds selection from a notification attachment and renders a chip (verification #9)', async () => {
+	it('seeds selection from a notification attachment and renders a chip', async () => {
+		mockConversationList = [mockConversation]
+		const user = userEvent.setup()
 		render(
 			<Harness>
 				<Opener
@@ -216,6 +277,9 @@ describe('SindrePanel', () => {
 		act(() => {
 			screen.getByText('open-with-context').click()
 		})
+
+		await screen.findByText('Conversations')
+		await user.click(screen.getByText('Test Conversation'))
 
 		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
 		expect(screen.getByText('Build failed on main')).toBeInTheDocument()
@@ -242,7 +306,6 @@ describe('SindrePanel', () => {
 
 		expect(screen.getByTestId('pin-state')).toHaveTextContent('pinned')
 		expect(localStorage.getItem('maskin-sindre-pinned')).toBe('true')
-		// After toggling, the button's label flips to the unpin affordance.
 		expect(screen.getByRole('button', { name: 'Unpin sidebar' })).toBeInTheDocument()
 	})
 
@@ -261,8 +324,7 @@ describe('SindrePanel', () => {
 			screen.getByText('open-panel').click()
 		})
 
-		// Panel is open (open state flipped) and unpinned by default.
-		await screen.findByPlaceholderText('Message Sindre')
+		await screen.findByText('Conversations')
 
 		act(() => {
 			screen.getByTestId('outside').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
@@ -289,7 +351,7 @@ describe('SindrePanel', () => {
 			screen.getByText('open-panel').click()
 		})
 
-		await screen.findByPlaceholderText('Message Sindre')
+		await screen.findByText('Conversations')
 		await user.click(screen.getByRole('button', { name: 'Pin sidebar' }))
 
 		act(() => {
@@ -313,7 +375,8 @@ describe('SindrePanel', () => {
 			screen.getByText('open-panel').click()
 		})
 
-		const closeBtn = await screen.findByRole('button', { name: 'Close Sindre' })
+		await screen.findByText('Conversations')
+		const closeBtn = screen.getByRole('button', { name: 'Close' })
 		await user.click(closeBtn)
 
 		await waitFor(() => {

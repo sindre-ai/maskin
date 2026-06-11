@@ -202,6 +202,7 @@ export const sessions = pgTable(
 			.references(() => actors.id)
 			.notNull(),
 		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'set null' }),
+		conversationId: uuid('conversation_id'),
 		status: text('status').notNull(),
 		containerId: text('container_id'),
 		actionPrompt: text('action_prompt').notNull(),

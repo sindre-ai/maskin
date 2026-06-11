@@ -44,6 +44,7 @@ function buildSession(overrides: Partial<SessionResponse>): SessionResponse {
 		workspaceId: 'ws-1',
 		actorId: 'agent-1',
 		triggerId: null,
+		conversationId: null,
 		status: 'running',
 		containerId: null,
 		actionPrompt: 'Reply to comment',

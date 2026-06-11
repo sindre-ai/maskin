@@ -8,9 +8,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import { useConversationMessages } from '@/hooks/use-conversations'
 import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
 import { useSindreSession } from '@/hooks/use-sindre-session'
-import type { SessionInputAttachment } from '@/lib/api'
+import type { MessageResponse, SessionInputAttachment } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	EMPTY_SINDRE_SELECTION,
@@ -32,6 +33,7 @@ import {
 	useCallback,
 	useEffect,
 	useImperativeHandle,
+	useMemo,
 	useRef,
 	useState,
 } from 'react'
@@ -50,6 +52,7 @@ export type SindreChatSurface = 'sheet' | 'pulse-bar'
 export interface SindreChatProps {
 	workspaceId: string
 	sindreActorId: string | null
+	conversationId?: string | null
 	surface: SindreChatSurface
 	/**
 	 * Composer-level selection. When `selection.agent` is set, the next send is
@@ -108,6 +111,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	{
 		workspaceId,
 		sindreActorId,
+		conversationId,
 		surface,
 		selection,
 		onDispatchSelection,
@@ -125,13 +129,26 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	const selectedNotifications = activeSelection.notifications
 	const selectedFiles = activeSelection.files
 
-	const sindre = useSindreSession({ workspaceId, sindreActorId })
+	const sindre = useSindreSession({ workspaceId, sindreActorId, conversationId })
 	const oneShot = useSindreOneShot()
+
+	// Pre-load historical messages from the conversations API so the transcript
+	// shows past turns when the user resumes a conversation. Convert each message
+	// to a SindreEvent so the existing SindreTranscript can render them.
+	const { data: historyData } = useConversationMessages(workspaceId, conversationId ?? null)
+	const historicalEvents = useHistoricalEvents(historyData?.data ?? [], sindreActorId)
 
 	// Merge events from both sources while preserving arrival order, so a turn
 	// answered by the selected agent renders immediately after the user's last
-	// Sindre turn (and vice versa).
-	const events = useMergedTranscript(workspaceId, sindre.events, oneShot.events)
+	// Sindre turn (and vice versa). Historical events from the conversations API
+	// are prepended so the user sees past turns on resume.
+	const liveEvents = useMergedTranscript(workspaceId, sindre.events, oneShot.events)
+	const events =
+		historicalEvents.length > 0 && liveEvents.length === 0
+			? historicalEvents
+			: liveEvents.length > 0
+				? [...historicalEvents, ...liveEvents]
+				: liveEvents
 
 	useEffect(() => {
 		onEventsChange?.(events)
@@ -420,6 +437,27 @@ function useMergedTranscript(
 	}, [oneShotEvents, sindreEvents])
 
 	return merged
+}
+
+/**
+ * Converts persisted conversation messages (from the conversations API) into
+ * typed SindreEvent objects so SindreTranscript can render them alongside live
+ * session events. Messages authored by the Sindre actor become `text` events;
+ * all others become `user` events.
+ */
+function useHistoricalEvents(msgs: MessageResponse[], sindreActorId: string | null): SindreEvent[] {
+	// useMemo so the array reference only changes when data changes, not on every render.
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	return useMemo(() => {
+		if (msgs.length === 0) return []
+		// Messages are newest-first from the API; reverse for chronological display.
+		return [...msgs].reverse().map((m): SindreEvent => {
+			if (sindreActorId && m.actorId === sindreActorId) {
+				return { kind: 'text', text: m.content }
+			}
+			return { kind: 'user', text: m.content }
+		})
+	}, [msgs, sindreActorId])
 }
 
 function buildDisplayAttachments(selection: SindreSelection): UserAttachmentView[] | undefined {

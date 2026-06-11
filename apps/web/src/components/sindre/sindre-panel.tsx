@@ -1,3 +1,5 @@
+import { ConversationRow } from '@/components/chat/conversation-row'
+import { EmptyState } from '@/components/shared/empty-state'
 import { SindreChat, type SindreChatHandle } from '@/components/sindre/sindre-chat'
 import { SindreSidebarProvider } from '@/components/sindre/sindre-sidebar-provider'
 import { Button } from '@/components/ui/button'
@@ -9,7 +11,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sidebar, SidebarContent, SidebarHeader } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+	useConversations,
+	useCreateConversation,
+	useMarkConversationRead,
+} from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
+import type { ConversationResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { type SindreAttachment, useSindre } from '@/lib/sindre-context'
 import {
@@ -25,7 +33,7 @@ import {
 	sindreSelectionReducer,
 } from '@/lib/sindre-selection'
 import type { SindreEvent } from '@/lib/sindre-stream'
-import { Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
+import { ChevronLeft, Copy, Download, MoreHorizontal, Pin, PinOff, Plus, X } from 'lucide-react'
 import { type PointerEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -37,12 +45,11 @@ interface SindrePanelProps {
 }
 
 /**
- * Right-side Sindre surface. Wraps `<SindreChat surface="sheet" />` in a
- * shadcn `<Sidebar>` inside a local provider that never reserves horizontal
- * space in the main page layout (so the panel floats as an overlay by
- * default). When the user clicks the pin button, the route layout applies a
- * matching right margin to the main content so the panel pushes content
- * aside like a traditional sidebar.
+ * Right-side panel that is now conversation-first. When no conversation is
+ * active it shows the conversation list (Recent DMs + Rooms). Selecting a row
+ * opens SindreChat scoped to that conversation, which pre-loads historical
+ * messages and links new sessions to the same conversation so every turn is
+ * persisted.
  */
 export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const {
@@ -62,6 +69,41 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const chatRef = useRef<SindreChatHandle | null>(null)
 	const [events, setEvents] = useState<SindreEvent[]>([])
 	const isMobile = useIsMobile()
+
+	const [activeConversation, setActiveConversation] = useState<ConversationResponse | null>(null)
+
+	const { data: conversations = [], isLoading } = useConversations(workspaceId)
+	const createConversation = useCreateConversation(workspaceId)
+	const markRead = useMarkConversationRead(workspaceId)
+
+	const dms = conversations.filter((c) => c.type === 'dm')
+	const rooms = conversations.filter((c) => c.type === 'room')
+	const isEmpty = !isLoading && conversations.length === 0
+
+	// Reset to list view when the panel closes.
+	useEffect(() => {
+		if (!open) setActiveConversation(null)
+	}, [open])
+
+	const handleSelectConversation = useCallback(
+		(c: ConversationResponse) => {
+			markRead.mutate(c.id)
+			setActiveConversation(c)
+		},
+		[markRead],
+	)
+
+	const handleNewConversation = useCallback(() => {
+		const actor = getStoredActor()
+		if (!actor) {
+			toast.error('Not signed in — please reload and try again')
+			return
+		}
+		createConversation.mutate(
+			{ type: 'dm', participant_actor_ids: [actor.id] },
+			{ onSuccess: (c) => setActiveConversation(c) },
+		)
+	}, [createConversation])
 
 	const handleNewChat = useCallback(() => {
 		chatRef.current?.newChat()
@@ -103,12 +145,6 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		clearPendingAttachments()
 	}, [pendingAttachments, clearPendingAttachments])
 
-	// In overlay mode (unpinned), close on outside click — matches the prior
-	// Sheet behaviour. When pinned, Sindre is docked and should survive clicks
-	// in the reflowed main content. The picker popovers and tooltips render in
-	// portals rooted at document.body; treat anything inside [data-radix-popper-content-wrapper]
-	// or other Radix portal containers as "inside" so opening a picker doesn't
-	// close the panel.
 	useEffect(() => {
 		if (!open || pinned) return
 		function handleMouseDown(event: MouseEvent) {
@@ -130,9 +166,6 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 			onOpenChange={setOpen}
 			style={
 				{
-					// On narrow viewports the configured width can exceed the
-					// screen — clamp to 100vw so the panel never hangs off the
-					// right edge.
 					'--sidebar-width': `min(${panelWidth}px, 100vw)`,
 				} as React.CSSProperties
 			}
@@ -141,10 +174,6 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 				ref={panelRef}
 				side="right"
 				collapsible="offcanvas"
-				// `!flex` overrides the primitive's `hidden md:flex` so the
-				// inner fixed panel renders on mobile too. The outer
-				// `hidden md:block` wrapper is already forced visible by the
-				// SindreSidebarProvider via `[&_[data-side=right]]:!block`.
 				className="pointer-events-auto !flex"
 			>
 				<ResizeHandle
@@ -153,86 +182,244 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 					visible={open && !isMobile}
 				/>
 				<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
-					<div className="flex items-center gap-1">
-						<h2 className="font-semibold text-base">Sindre</h2>
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
+					{activeConversation ? (
+						// Active conversation header: back | title | export menu | close
+						<>
+							<div className="flex items-center gap-1">
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7"
+											onClick={() => setActiveConversation(null)}
+											aria-label="Back to conversations"
+										>
+											<ChevronLeft size={15} />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>Back to conversations</TooltipContent>
+								</Tooltip>
+								<span className="truncate text-sm font-semibold">
+									{activeConversation.title ?? 'Conversation'}
+								</span>
+							</div>
+							<div className="flex items-center gap-1">
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7"
+											aria-label="Conversation menu"
+											disabled={events.length === 0}
+										>
+											<MoreHorizontal size={15} />
+										</Button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="start" className="w-56">
+										<DropdownMenuItem onSelect={() => void handleCopy()}>
+											<Copy size={14} />
+											Copy as markdown
+										</DropdownMenuItem>
+										<DropdownMenuItem onSelect={() => handleDownload()}>
+											<Download size={14} />
+											Download as markdown
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7"
+											onClick={handleNewChat}
+											aria-label="New conversation"
+										>
+											<Plus size={15} />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>New conversation</TooltipContent>
+								</Tooltip>
+								{!isMobile && <PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />}
 								<Button
 									type="button"
 									variant="ghost"
 									size="icon"
 									className="h-7 w-7"
-									aria-label="Conversation menu"
-									disabled={events.length === 0}
+									onClick={() => setOpen(false)}
+									aria-label="Close"
 								>
-									<MoreHorizontal size={15} />
+									<X size={15} />
 								</Button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="start" className="w-56">
-								<DropdownMenuItem onSelect={() => void handleCopy()}>
-									<Copy size={14} />
-									Copy as markdown
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={() => handleDownload()}>
-									<Download size={14} />
-									Download as markdown
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-					<div className="flex items-center gap-1">
-						<Tooltip>
-							<TooltipTrigger asChild>
+							</div>
+						</>
+					) : (
+						// List view header: Conversations title | new | pin | close
+						<>
+							<h2 className="font-semibold text-base">Conversations</h2>
+							<div className="flex items-center gap-1">
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7"
+											onClick={handleNewConversation}
+											disabled={createConversation.isPending}
+											aria-label="New conversation"
+										>
+											<Plus size={15} />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>New conversation</TooltipContent>
+								</Tooltip>
+								{!isMobile && <PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />}
 								<Button
 									type="button"
 									variant="ghost"
 									size="icon"
 									className="h-7 w-7"
-									onClick={handleNewChat}
-									aria-label="New conversation"
+									onClick={() => setOpen(false)}
+									aria-label="Close"
 								>
-									<Plus size={15} />
+									<X size={15} />
 								</Button>
-							</TooltipTrigger>
-							<TooltipContent>New conversation</TooltipContent>
-						</Tooltip>
-						{!isMobile && <PinToggle pinned={pinned} onToggle={() => setPinned(!pinned)} />}
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="h-7 w-7"
-							onClick={() => setOpen(false)}
-							aria-label="Close Sindre"
-						>
-							<X size={15} />
-						</Button>
-					</div>
+							</div>
+						</>
+					)}
 				</SidebarHeader>
 				<SidebarContent className="min-h-0 flex-1 p-3">
-					<SindreChat
-						ref={chatRef}
-						workspaceId={workspaceId}
-						sindreActorId={sindreActorId}
-						surface="sheet"
-						selection={selection}
-						onDispatchSelection={dispatch}
-						autoSendMessage={pendingMessage}
-						onAutoSendConsumed={clearPendingMessage}
-						onEventsChange={setEvents}
-					/>
+					{activeConversation ? (
+						<SindreChat
+							ref={chatRef}
+							workspaceId={workspaceId}
+							sindreActorId={sindreActorId}
+							conversationId={activeConversation.id}
+							surface="sheet"
+							selection={selection}
+							onDispatchSelection={dispatch}
+							autoSendMessage={pendingMessage}
+							onAutoSendConsumed={clearPendingMessage}
+							onEventsChange={setEvents}
+						/>
+					) : (
+						<ConversationList
+							dms={dms}
+							rooms={rooms}
+							isEmpty={isEmpty}
+							onSelect={handleSelectConversation}
+							onNew={handleNewConversation}
+							isCreating={createConversation.isPending}
+						/>
+					)}
 				</SidebarContent>
 			</Sidebar>
 		</SindreSidebarProvider>
 	)
 }
 
+interface ConversationListProps {
+	dms: ConversationResponse[]
+	rooms: ConversationResponse[]
+	isEmpty: boolean
+	onSelect: (c: ConversationResponse) => void
+	onNew: () => void
+	isCreating: boolean
+}
+
+function ConversationList({
+	dms,
+	rooms,
+	isEmpty,
+	onSelect,
+	onNew,
+	isCreating,
+}: ConversationListProps) {
+	return (
+		<div className="flex h-full flex-col gap-0">
+			<div className="min-h-0 flex-1 overflow-y-auto">
+				{isEmpty ? (
+					<div className="flex h-full items-center justify-center">
+						<EmptyState title="No conversations yet" description="Start your first conversation" />
+					</div>
+				) : (
+					<div className="pb-1">
+						{dms.length > 0 && (
+							<>
+								<SectionLabel>Recent</SectionLabel>
+								{dms.map((c) => (
+									<ConversationRow
+										key={c.id}
+										type="dm"
+										title={c.title}
+										preview={c.lastMessagePreview}
+										timestamp={c.lastActivityAt ?? c.createdAt}
+										unread={c.unreadCount > 0}
+										participants={c.participants.map((p) => ({
+											name: p.name,
+											type: p.type,
+											online: p.isOnline,
+										}))}
+										onClick={() => onSelect(c)}
+									/>
+								))}
+							</>
+						)}
+						{rooms.length > 0 && (
+							<>
+								<SectionLabel>Rooms</SectionLabel>
+								{rooms.map((c) => (
+									<ConversationRow
+										key={c.id}
+										type="room"
+										title={c.title}
+										preview={c.lastMessagePreview}
+										timestamp={c.lastActivityAt ?? c.createdAt}
+										unread={c.unreadCount > 0}
+										participants={c.participants.map((p) => ({
+											name: p.name,
+											type: p.type,
+											online: p.isOnline,
+										}))}
+										onClick={() => onSelect(c)}
+									/>
+								))}
+							</>
+						)}
+					</div>
+				)}
+			</div>
+			<div className="shrink-0 border-t pt-2">
+				<Button
+					variant="outline"
+					className="w-full justify-start gap-2 border-dashed text-muted-foreground hover:text-foreground"
+					onClick={onNew}
+					disabled={isCreating}
+				>
+					<Plus size={13} />
+					New conversation
+				</Button>
+			</div>
+		</div>
+	)
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+	return (
+		<p className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+			{children}
+		</p>
+	)
+}
+
 /**
- * Thin vertical hit-target on the left edge of the Sindre panel. Captures
- * pointer events and reports the live drag width back via `onWidthChange` —
- * the panel container re-renders immediately so the drag feels responsive.
- * Clamping to [min, max] happens inside the Sindre context setter so the
- * user can't drag the panel off-screen or down to zero.
+ * Thin vertical hit-target on the left edge of the Sindre panel.
  */
 function ResizeHandle({
 	width,
@@ -260,7 +447,6 @@ function ResizeHandle({
 		(event: PointerEvent<HTMLButtonElement>) => {
 			const drag = dragStartRef.current
 			if (!drag) return
-			// Sidebar lives on the right edge, so dragging left should grow it.
 			const delta = drag.startX - event.clientX
 			onWidthChange(drag.startWidth + delta)
 		},

@@ -46,6 +46,7 @@ export type SindreSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' |
 export interface UseSindreSessionOptions {
 	workspaceId: string
 	sindreActorId: string | null
+	conversationId?: string | null
 	enabled?: boolean
 }
 
@@ -74,6 +75,7 @@ export interface UseSindreSessionResult {
 export function useSindreSession({
 	workspaceId,
 	sindreActorId,
+	conversationId,
 	enabled = true,
 }: UseSindreSessionOptions): UseSindreSessionResult {
 	const [sessionId, setSessionId] = useState<string | null>(null)
@@ -211,6 +213,7 @@ export function useSindreSession({
 						actor_id: sindreActorId,
 						action_prompt: BOOTSTRAP_ACTION_PROMPT,
 						config: { interactive: true },
+						...(conversationId ? { conversation_id: conversationId } : {}),
 						auto_start: true,
 					})
 					// If reset() fired between create() resolving and now, the
@@ -259,7 +262,7 @@ export function useSindreSession({
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
 			await api.sessions.input(currentSessionId, body, workspaceId)
 		},
-		[sessionId, workspaceId, sindreActorId],
+		[sessionId, workspaceId, sindreActorId, conversationId],
 	)
 
 	const reset = useCallback(() => {

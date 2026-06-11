@@ -49,6 +49,7 @@ function buildSession(id: string): SessionResponse {
 		workspaceId,
 		actorId: sindreActorId,
 		triggerId: null,
+		conversationId: null,
 		status: 'running',
 		containerId: null,
 		actionPrompt: 'Sindre interactive chat',

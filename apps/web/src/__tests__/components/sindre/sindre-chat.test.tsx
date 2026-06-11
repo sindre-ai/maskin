@@ -33,6 +33,10 @@ let mockOneShotResult: UseSindreOneShotResult = {
 	clear: mockOneShotClear,
 }
 
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationMessages: () => ({ data: null }),
+}))
+
 vi.mock('@/hooks/use-sindre-session', () => ({
 	useSindreSession: () => mockHookResult,
 }))

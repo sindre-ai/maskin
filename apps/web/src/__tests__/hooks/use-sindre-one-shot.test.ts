@@ -42,6 +42,7 @@ function buildSession(id: string): SessionResponse {
 		workspaceId: 'ws-1',
 		actorId: 'actor-reviewer',
 		triggerId: null,
+		conversationId: null,
 		status: 'running',
 		containerId: null,
 		actionPrompt: 'review this',
