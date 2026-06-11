@@ -222,7 +222,12 @@ function CommentRow({
 						className="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-primary"
 					/>
 				)}
-				<div className="relative shrink-0">
+				<div
+					className={cn(
+						'relative shrink-0 transition-opacity',
+						isUndoing && 'opacity-40',
+					)}
+				>
 					{avatarEl}
 					{isUnread && (
 						<span
@@ -448,10 +453,9 @@ function MobileActionButton({
 }
 
 // Soft-delete countdown pill that lives in the action slot while the undo
-// window is open. Reuses the existing pill shape from the calm-thread style;
-// the only new visual is the conic-gradient ring that fills as the window
-// elapses. Click anywhere on the pill (whole hit target ≥44px on mobile) to
-// cancel the delete and restore the row.
+// window is open. Conic-gradient ring fills as the window elapses, then the
+// row commits. Matches the prototype's scenario 3 layout: ring + Ns
+// countdown + "Deleting" label + Undo button, sitting at the top of the row.
 function UndoPill({ durationMs, onUndo }: { durationMs: number; onUndo: () => void }) {
 	const [elapsed, setElapsed] = useState(0)
 	const startedAtRef = useRef<number>(Date.now())
@@ -474,29 +478,37 @@ function UndoPill({ durationMs, onUndo }: { durationMs: number; onUndo: () => vo
 	const remainingSec = Math.max(0, Math.ceil((durationMs - elapsed) / 1000))
 
 	return (
-		<button
-			type="button"
-			onClick={onUndo}
-			aria-label={`Undo delete (${remainingSec}s left)`}
-			title="Undo delete"
+		<div
+			role="status"
+			aria-live="polite"
 			className={cn(
-				'self-end shrink-0 inline-flex items-center gap-1.5 rounded-full border border-border',
-				'px-2.5 py-1 min-h-[28px] text-xs font-medium text-foreground',
-				'bg-secondary/40 hover:bg-secondary transition-colors',
+				'self-start shrink-0 inline-flex items-center gap-2 rounded-md border border-border',
+				'bg-background py-1 pl-2.5 pr-1 text-xs text-muted-foreground',
 			)}
 		>
 			<span
 				aria-hidden
-				className="relative inline-block size-3 rounded-full"
+				className="relative inline-block size-3.5 rounded-full"
 				style={{
-					background: `conic-gradient(currentColor ${progressDeg}deg, transparent 0)`,
+					background: `conic-gradient(currentColor ${progressDeg}deg, var(--color-secondary, transparent) 0)`,
 				}}
 			>
-				<span className="absolute inset-[2px] rounded-full bg-secondary/40" />
+				<span className="absolute inset-[3px] rounded-full bg-background" />
 			</span>
-			<span>Undo</span>
-			<span className="text-muted-foreground tabular-nums">{remainingSec}s</span>
-		</button>
+			<span className="text-foreground font-medium tabular-nums">{remainingSec}s</span>
+			<span aria-hidden>· Deleting</span>
+			<button
+				type="button"
+				onClick={onUndo}
+				aria-label={`Undo delete (${remainingSec}s left)`}
+				className={cn(
+					'rounded-sm border border-border bg-background px-2 h-[22px]',
+					'text-xs font-medium text-foreground hover:bg-secondary transition-colors',
+				)}
+			>
+				Undo
+			</button>
+		</div>
 	)
 }
 
