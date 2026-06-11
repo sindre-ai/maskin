@@ -204,7 +204,7 @@ export function AgentDocumentView({
 	)
 
 	return (
-		<div className="max-w-3xl mx-auto">
+		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Name */}
 			<div className="flex items-start gap-2 mb-2">
 				<textarea
@@ -586,7 +586,7 @@ function SessionRow({
 					</div>
 				) : (
 					displayError && (
-						<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
+						<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap break-words">
 							{displayError}
 						</pre>
 					)
