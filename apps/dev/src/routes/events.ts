@@ -11,7 +11,7 @@ import {
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, resendCommentSchema } from '@maskin/shared'
-import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, lt, ne, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -553,14 +553,18 @@ app.openapi(resendCommentRoute, (async (c) => {
 
 	// Find every mention session that this comment originally spawned. We key
 	// on `config.mention.comment_event_id` — the events route writes that
-	// field when the comment @mentions an agent. The cast to text avoids
-	// errors on rows where the JSON value isn't a number.
+	// field when the comment @mentions an agent, and `restartSession` carries
+	// it through to each successor via `{...priorConfig, supersedes}`. Exclude
+	// already-superseded priors so repeat resends only restart the active
+	// successor; without this filter, every prior in the chain would spawn its
+	// own replacement on each click (exponential fan-out).
 	const linkedSessions = await db
 		.select()
 		.from(sessions)
 		.where(
 			and(
 				eq(sessions.workspaceId, workspaceId),
+				ne(sessions.status, 'superseded'),
 				sql`${sessions.config}->'mention'->>'comment_event_id' = ${String(eventId)}`,
 			),
 		)
