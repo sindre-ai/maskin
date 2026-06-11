@@ -96,7 +96,7 @@ export const bulkUpdateObjectsResponseSchema = z.object({
 	results: z.array(bulkUpdateObjectsResultSchema),
 })
 
-/** Returned (with HTTP 422) when a filter-scoped bulk op would touch more rows
+/** Returned (with HTTP 400) when a filter-scoped bulk op would touch more rows
  * than `MAX_BULK_AFFECTED_ROWS`. No writes happen — the client uses `count` to
  * tell the user how many rows the predicate matched and `max` to surface the
  * cap. The route emits this nested under the standard `{ error: { ... } }`
