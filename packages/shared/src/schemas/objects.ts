@@ -28,14 +28,27 @@ export const updateObjectSchema = z.object({
 
 /** Filter predicate for bulk ops scoped to "all matching this filter". Mirrors
  * the subset of `objectQuerySchema` that selects rows, without the pagination
- * or sort fields — those have no meaning for a bulk mutation. */
-export const objectsFilterSchema = z.object({
-	q: z.string().min(1).optional(),
-	type: objectTypeSchema.optional(),
-	status: z.string().optional(),
-	owner: z.string().optional(),
-	ids: z.string().optional(),
-})
+ * or sort fields — those have no meaning for a bulk mutation. At least one
+ * field must be non-empty so an accidental `{}` can't match every row. */
+export const objectsFilterSchema = z
+	.object({
+		q: z.string().min(1).optional(),
+		type: objectTypeSchema.optional(),
+		status: z.string().optional(),
+		owner: z.string().optional(),
+		ids: z.string().optional(),
+	})
+	.refine(
+		(f) =>
+			f.q !== undefined ||
+			f.type !== undefined ||
+			f.status !== undefined ||
+			f.owner !== undefined ||
+			f.ids !== undefined,
+		{
+			message: 'filter must include at least one of q, type, status, owner, ids',
+		},
+	)
 export type ObjectsFilter = z.infer<typeof objectsFilterSchema>
 
 /** Hard server-side ceiling on how many rows a single filter-scoped bulk op

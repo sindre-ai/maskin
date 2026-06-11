@@ -4,6 +4,7 @@ import {
 	objectParamsSchema,
 	objectQuerySchema,
 	objectTypeSchema,
+	objectsFilterSchema,
 	searchObjectsSchema,
 	updateObjectSchema,
 } from '../schemas/objects'
@@ -172,5 +173,42 @@ describe('objectParamsSchema', () => {
 
 	it('rejects missing id', () => {
 		expect(() => objectParamsSchema.parse({})).toThrow()
+	})
+})
+
+describe('objectsFilterSchema', () => {
+	it('rejects empty filter', () => {
+		expect(() => objectsFilterSchema.parse({})).toThrow()
+	})
+
+	it('accepts filter with q', () => {
+		const result = objectsFilterSchema.parse({ q: 'cleanup' })
+		expect(result.q).toBe('cleanup')
+	})
+
+	it('accepts filter with type', () => {
+		const result = objectsFilterSchema.parse({ type: 'task' })
+		expect(result.type).toBe('task')
+	})
+
+	it('accepts filter with status', () => {
+		const result = objectsFilterSchema.parse({ status: 'done' })
+		expect(result.status).toBe('done')
+	})
+
+	it('accepts filter with owner', () => {
+		const result = objectsFilterSchema.parse({ owner: uuid })
+		expect(result.owner).toBe(uuid)
+	})
+
+	it('accepts filter with ids', () => {
+		const result = objectsFilterSchema.parse({ ids: uuid })
+		expect(result.ids).toBe(uuid)
+	})
+
+	it('accepts filter combining multiple fields', () => {
+		const result = objectsFilterSchema.parse({ type: 'task', status: 'todo' })
+		expect(result.type).toBe('task')
+		expect(result.status).toBe('todo')
 	})
 })
