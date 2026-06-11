@@ -426,7 +426,7 @@ app.openapi(listActorsRoute, (async (c) => {
 		const rows = await baseQuery()
 			.where(crossWhere)
 			.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
-		const grouped = groupActorMemberships(rows as ActorMembershipRow[])
+		const grouped = groupActorMemberships(rows)
 		c.header('X-Total-Count', String(grouped.length))
 		return c.json(serializeArray(grouped) as z.infer<typeof actorListItemSchema>[])
 	}
@@ -465,9 +465,7 @@ app.openapi(listActorsRoute, (async (c) => {
 
 	c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
 	return c.json(
-		serializeArray(groupActorMemberships(rows as ActorMembershipRow[])) as z.infer<
-			typeof actorListItemSchema
-		>[],
+		serializeArray(groupActorMemberships(rows)) as z.infer<typeof actorListItemSchema>[],
 	)
 }) as RouteHandler<typeof listActorsRoute, Env>)
 

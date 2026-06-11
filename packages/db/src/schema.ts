@@ -1,4 +1,4 @@
-import type { SessionResult } from '@maskin/shared'
+import type { AgentState, SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	bigint,
@@ -34,7 +34,7 @@ export const actors = pgTable('actors', {
 	llmProvider: text('llm_provider'),
 	llmConfig: jsonb('llm_config'),
 	isSystem: boolean('is_system').notNull().default(false),
-	agentState: text('agent_state').notNull().default('idle'),
+	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
