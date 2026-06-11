@@ -1,4 +1,4 @@
-import type { AgentState, SessionResult } from '@maskin/shared'
+import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	bigint,
@@ -519,6 +519,10 @@ export const files = pgTable(
 		mimeType: text('mime_type').notNull(),
 		sizeBytes: integer('size_bytes').notNull(),
 		storageKey: text('storage_key').notNull(),
+		// Pinned review annotations (humans pin comments on rendered HTML files).
+		// Stored on the row so they round-trip with the file for every reader —
+		// UI and MCP get_file — without an extra S3 fetch.
+		annotations: jsonb('annotations').notNull().default([]).$type<FileAnnotation[]>(),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
