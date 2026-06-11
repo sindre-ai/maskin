@@ -277,6 +277,30 @@ describe('Conversations Routes', () => {
 			expect(res.status).toBe(409)
 		})
 
+		it('returns 409 when unique constraint fires on concurrent insert', async () => {
+			const convId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
+			mockResults.selectQueue = [[conv], []]
+			mockResults.insertErrorQueue = [
+				Object.assign(new Error('duplicate key value violates unique constraint'), {
+					code: '23505',
+				}),
+			]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/participants`,
+					{ actor_id: actorId },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(409)
+		})
+
 		it('returns 400 for invalid actor_id', async () => {
 			const { app } = createTestApp(conversationsRoutes, '/api/conversations')
 
