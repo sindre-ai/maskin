@@ -345,6 +345,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					email: actors.email,
 					description: actors.description,
 					isSystem: actors.isSystem,
+					agentState: actors.agentState,
 					role: workspaceMembers.role,
 				})
 				.from(workspaceMembers)
@@ -364,6 +365,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					email: actors.email,
 					description: actors.description,
 					isSystem: actors.isSystem,
+					agentState: actors.agentState,
 					role: workspaceMembers.role,
 				})
 				.from(workspaceMembers)
@@ -406,6 +408,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				email: actors.email,
 				description: actors.description,
 				isSystem: actors.isSystem,
+				agentState: actors.agentState,
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
 				role: workspaceMembers.role,
@@ -472,6 +475,7 @@ interface ActorMembershipRow {
 	email: string | null
 	description: string | null
 	isSystem: boolean
+	agentState: string
 	workspaceId: string
 	workspaceName: string
 	role: string
@@ -484,6 +488,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 	email: string | null
 	description: string | null
 	isSystem: boolean
+	agentState: string
 	workspaces: { id: string; name: string; role: string }[]
 }> {
 	const byActor = new Map<
@@ -495,6 +500,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 			email: string | null
 			description: string | null
 			isSystem: boolean
+			agentState: string
 			workspaces: { id: string; name: string; role: string }[]
 		}
 	>()
@@ -511,6 +517,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 				email: r.email,
 				description: r.description,
 				isSystem: r.isSystem,
+				agentState: r.agentState,
 				workspaces: [membership],
 			})
 		}
