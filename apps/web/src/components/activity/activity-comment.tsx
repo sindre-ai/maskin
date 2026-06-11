@@ -222,12 +222,7 @@ function CommentRow({
 						className="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-primary"
 					/>
 				)}
-				<div
-					className={cn(
-						'relative shrink-0 transition-opacity',
-						isUndoing && 'opacity-40',
-					)}
-				>
+				<div className={cn('relative shrink-0 transition-opacity', isUndoing && 'opacity-40')}>
 					{avatarEl}
 					{isUnread && (
 						<span
@@ -478,8 +473,7 @@ function UndoPill({ durationMs, onUndo }: { durationMs: number; onUndo: () => vo
 	const remainingSec = Math.max(0, Math.ceil((durationMs - elapsed) / 1000))
 
 	return (
-		<div
-			role="status"
+		<output
 			aria-live="polite"
 			className={cn(
 				'self-start shrink-0 inline-flex items-center gap-2 rounded-md border border-border',
@@ -508,7 +502,7 @@ function UndoPill({ durationMs, onUndo }: { durationMs: number; onUndo: () => vo
 			>
 				Undo
 			</button>
-		</div>
+		</output>
 	)
 }
 
