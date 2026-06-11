@@ -1279,4 +1279,129 @@ describe('Events Routes', () => {
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 		})
 	})
+
+	describe('PATCH /api/events/:id (edit comment in place)', () => {
+		it('updates content + stamps editedAt, inserts a comment_edited audit event, never spawns a session', async () => {
+			const objectId = randomUUID()
+			const eventId = 4242
+			const original = buildEvent({
+				id: eventId,
+				workspaceId: wsId,
+				actorId: 'test-actor-id',
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'first try' },
+			})
+			const updated = buildEvent({
+				id: eventId,
+				workspaceId: wsId,
+				actorId: 'test-actor-id',
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'second try', editedAt: '2026-06-11T12:00:00Z' },
+			})
+			const { app, mockResults, sessionManager, calls } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			mockResults.selectQueue = [[original]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/events/${eventId}`,
+					{ content: 'second try' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.data.content).toBe('second try')
+
+			// One update on the original event row (content + editedAt).
+			expect(calls.updates).toHaveLength(1)
+			const setArg = calls.updates[0] as { data: { content: string; editedAt: string } }
+			expect(setArg.data.content).toBe('second try')
+			expect(typeof setArg.data.editedAt).toBe('string')
+
+			// One audit-event insert: action 'comment_edited', no content body.
+			expect(calls.inserts).toHaveLength(1)
+			const insertArg = calls.inserts[0] as {
+				action: string
+				entityId: string
+				data: { originalEventId: number; editedAt: string; content?: string }
+			}
+			expect(insertArg.action).toBe('comment_edited')
+			expect(insertArg.entityId).toBe(objectId)
+			expect(insertArg.data.originalEventId).toBe(eventId)
+			expect(insertArg.data.content).toBeUndefined()
+
+			// The guarantee the bet exists to enforce: edit never re-fires the agent.
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 when the event does not exist', async () => {
+			const { app, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/events/999999',
+					{ content: 'edited' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 403 when the requesting actor is not the comment author', async () => {
+			const objectId = randomUUID()
+			const eventId = 5151
+			const original = buildEvent({
+				id: eventId,
+				workspaceId: wsId,
+				actorId: randomUUID(), // a different actor authored the comment
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'theirs, not mine' },
+			})
+			const { app, mockResults, sessionManager, calls } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			mockResults.selectQueue = [[original]]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/events/${eventId}`,
+					{ content: 'hijacked' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(403)
+			expect(calls.updates).toHaveLength(0)
+			expect(calls.inserts).toHaveLength(0)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 400 when content is empty', async () => {
+			const { app, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
+
+			const res = await app.request(
+				jsonRequest('PATCH', '/api/events/123', { content: '' }, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
 })

@@ -390,6 +390,12 @@ export const api = {
 				workspaceId,
 				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
 			}),
+		edit: (workspaceId: string, eventId: number, data: EditCommentInput) =>
+			request<EventResponse>(`/events/${eventId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
 	},
 
 	imports: {
@@ -1040,6 +1046,10 @@ export interface CreateCommentInput {
 	mentions?: string[]
 	parent_event_id?: number
 	attachment_file_ids?: string[]
+}
+
+export interface EditCommentInput {
+	content: string
 }
 
 // Imports

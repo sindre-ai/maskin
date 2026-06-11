@@ -30,3 +30,17 @@ export const createCommentSchema = z.object({
 	attachment_file_ids: z.array(z.string().uuid()).max(COMMENT_MAX_ATTACHMENTS).optional(),
 	metadata: safeMetadataSchema.optional(),
 })
+
+// Passive edit of an existing comment. Only `content` changes on the original
+// event row; mentions, attachments, and threading stay frozen so an edit can
+// never re-fire an agent (the dominant failure mode the bet is guarding
+// against). The "Save & restart agent" path is a separate route (T3's resend).
+export const editCommentSchema = z.object({
+	content: z
+		.string()
+		.min(1, 'Comment cannot be empty')
+		.max(
+			COMMENT_MAX_LENGTH,
+			`Comment must be ${COMMENT_MAX_LENGTH} characters or fewer. Split long messages into multiple comments or replies.`,
+		),
+})

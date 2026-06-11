@@ -10,6 +10,7 @@ vi.mock('@/hooks/use-actors', () => ({
 
 vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
+	useEditComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({

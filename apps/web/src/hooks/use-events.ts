@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { trackCommentPosted } from '../lib/analytics'
-import { type CreateCommentInput, type EventResponse, type ObjectResponse, api } from '../lib/api'
+import {
+	type CreateCommentInput,
+	type EditCommentInput,
+	type EventResponse,
+	type ObjectResponse,
+	api,
+} from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useEvents(workspaceId: string, filters?: Record<string, string>) {
@@ -50,6 +56,19 @@ export function useCreateComment(workspaceId: string, entityId: string) {
 		onSuccess: (_result, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
 			trackCommentPostedFor(queryClient, entityId, variables, null)
+		},
+	})
+}
+
+// Passive edit — calls the new comment_edited route on the backend. Does NOT
+// re-fire the agent; that path is `useResendComment` (T3, Save & restart agent).
+export function useEditComment(workspaceId: string, entityId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ eventId, data }: { eventId: number; data: EditCommentInput }) =>
+			api.events.edit(workspaceId, eventId, data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
 		},
 	})
 }
