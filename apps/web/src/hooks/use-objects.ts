@@ -90,6 +90,9 @@ interface BulkUpdateContext {
 // buildObjectsWhere on the server so the optimistic patch only touches loaded
 // rows that *would* match the filter — rows the user never scrolled to stay
 // untouched in cache until the server's eventual `onSettled` invalidate.
+// Known divergence: the `q` predicate here concatenates title+content before
+// matching, while the server ORs them independently. Optimistic UI may briefly
+// mispredict — server is source of truth.
 function matchesObjectsFilter(obj: ObjectResponse, filter: ObjectsFilterInput): boolean {
 	if (filter.type && obj.type !== filter.type) return false
 	if (filter.status) {

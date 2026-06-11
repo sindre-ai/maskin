@@ -185,7 +185,7 @@ export function BulkActionBar({
 				<span
 					className={cn(
 						'inline-flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-xs font-medium',
-						isFilterScope ? 'bg-indigo-500 text-white' : 'bg-accent text-accent-foreground',
+						isFilterScope ? 'bg-primary text-primary-foreground' : 'bg-accent text-accent-foreground',
 					)}
 					aria-label={`${selectedCount} ${scopeLabel}`}
 				>
