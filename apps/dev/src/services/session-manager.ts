@@ -1207,6 +1207,24 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Sync agentState on the actor so the agents overview reflects terminal status.
+		// completed → idle (agent finished cleanly), failed → failed (needs attention).
+		try {
+			await this.db
+				.update(actors)
+				.set({
+					agentState: status === 'completed' ? 'idle' : 'failed',
+					agentStateUpdatedAt: new Date(),
+					updatedAt: new Date(),
+				})
+				.where(eq(actors.id, session.actorId))
+		} catch (err) {
+			logger.warn('Failed to sync agentState after session completion', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		try {
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
@@ -1321,6 +1339,17 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, session.id))
 
+			await this.db
+				.update(actors)
+				.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
+				.where(eq(actors.id, session.actorId))
+				.catch((err) =>
+					logger.warn('Failed to sync agentState after session timeout', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
@@ -1401,9 +1430,22 @@ export class SessionManager extends EventEmitter {
 			}
 
 			logger.info(`Auto-pausing idle session: ${session.id}`)
-			this.pauseSession(session.id).catch((err) =>
-				logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
-			)
+			this.pauseSession(session.id)
+				.then(() =>
+					this.db
+						.update(actors)
+						.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
+						.where(eq(actors.id, session.actorId))
+						.catch((err) =>
+							logger.warn('Failed to sync agentState after auto-pause', {
+								sessionId: session.id,
+								error: String(err),
+							}),
+						),
+				)
+				.catch((err) =>
+					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+				)
 		}
 
 		// 3. Archive old paused sessions (7 days)

@@ -1023,6 +1023,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		)
 		.orderBy(desc(sessions.createdAt))
 
+	const sessionErrors: string[] = []
 	for (const s of liveSessions) {
 		try {
 			if (s.status === 'running') {
@@ -1031,9 +1032,11 @@ app.openapi(pauseAgentRoute, (async (c) => {
 				await sessionManager.stopSession(s.id)
 			}
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return c.json(createApiError('BAD_REQUEST', message), 400)
+			sessionErrors.push(err instanceof Error ? err.message : String(err))
 		}
+	}
+	if (sessionErrors.length > 0) {
+		return c.json(createApiError('BAD_REQUEST', sessionErrors.join('; ')), 400)
 	}
 
 	const [updated] = await db

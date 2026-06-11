@@ -1222,6 +1222,65 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('handleCompletion() — agentState sync', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it('sets agentState to idle when session completes (exitCode 0)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('idle')
+		})
+
+		it('sets agentState to failed when session fails (exitCode non-zero)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('failed')
+		})
+	})
+
 	describe('handleCompletion() — credit-exhaustion classification', () => {
 		const knownReason = {
 			provider: 'anthropic',

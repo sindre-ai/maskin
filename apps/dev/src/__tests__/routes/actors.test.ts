@@ -944,6 +944,36 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('snapshot failed')
 		})
+
+		it('attempts all sessions before returning an error when multiple sessions fail', async () => {
+			const agent = buildActor({ type: 'agent', agentState: 'running' })
+			const session1 = buildSession({ actorId: agent.id, workspaceId: wsId, status: 'running' })
+			const session2 = buildSession({ actorId: agent.id, workspaceId: wsId, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[session1, session2],
+			]
+			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>)
+				.mockRejectedValueOnce(new Error('first failed'))
+				.mockRejectedValueOnce(new Error('second failed'))
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/pause`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			// Both sessions were attempted
+			expect(sessionManager.pauseSession).toHaveBeenCalledTimes(2)
+			// Both error messages appear in the response
+			expect(body.error.message).toContain('first failed')
+			expect(body.error.message).toContain('second failed')
+		})
 	})
 
 	describe('POST /api/actors/:id/run', () => {
