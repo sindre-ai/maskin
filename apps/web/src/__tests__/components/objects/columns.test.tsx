@@ -118,6 +118,7 @@ describe('getStaticColumns', () => {
 					email: null,
 					description: null,
 					isSystem: false,
+					agentState: 'idle' as const,
 				},
 				{
 					id: 'actor-2',
@@ -126,6 +127,7 @@ describe('getStaticColumns', () => {
 					email: null,
 					description: null,
 					isSystem: false,
+					agentState: 'idle' as const,
 				},
 			],
 		})
