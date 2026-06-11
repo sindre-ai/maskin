@@ -1,6 +1,6 @@
 import { trackAgentSessionStarted } from '@/lib/analytics'
-import { api } from '@/lib/api'
-import type { CreateSessionInput } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
+import type { CreateSessionInput, SessionResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -42,9 +42,24 @@ export function useCreateSession(workspaceId: string) {
 export function useStopSession(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: (sessionId: string) => api.sessions.stop(sessionId, workspaceId),
-		onSuccess: (result) => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
+		mutationFn: async (sessionId: string): Promise<SessionResponse | null> => {
+			try {
+				return await api.sessions.stop(sessionId, workspaceId)
+			} catch (err) {
+				// 404 means the session row is gone (deleted, wrong workspace,
+				// or a stale local cache). The right user-facing outcome is the
+				// same as a successful stop: refresh the caches and let the
+				// card collapse to the terminal state. Surfacing the raw
+				// "Session not found" toast was the customer-reported
+				// regression this hook now guards against.
+				if (err instanceof ApiError && err.status === 404) return null
+				throw err
+			}
+		},
+		onSuccess: (result, sessionId) => {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.detail(result?.id ?? sessionId),
+			})
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 		},
 	})

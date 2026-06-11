@@ -1,16 +1,23 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/api', () => ({
-	api: {
-		sessions: {
-			get: vi.fn(),
-			list: vi.fn(),
-			logs: vi.fn(),
-			create: vi.fn(),
+// Preserve the real ApiError so `instanceof` checks inside the hook fire
+// against the same constructor the tests throw with.
+vi.mock('@/lib/api', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
+	return {
+		...actual,
+		api: {
+			sessions: {
+				get: vi.fn(),
+				list: vi.fn(),
+				logs: vi.fn(),
+				create: vi.fn(),
+				stop: vi.fn(),
+			},
 		},
-	},
-}))
+	}
+})
 
 import {
 	useActiveSessionsForActor,
@@ -19,10 +26,11 @@ import {
 	useMentionSessionsForObject,
 	useSession,
 	useSessionErrorLog,
+	useStopSession,
 	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -266,6 +274,41 @@ describe('useSessionErrorLog', () => {
 
 		expect(result.current.isFetching).toBe(false)
 		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+})
+
+describe('useStopSession', () => {
+	it('returns the stopped session on success', async () => {
+		const stopped = buildSession({ id: 'session-1', status: 'stopped' })
+		vi.mocked(api.sessions.stop).mockResolvedValue(stopped)
+
+		const { result } = renderHook(() => useStopSession(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate('session-1')
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data?.status).toBe('stopped')
+		expect(api.sessions.stop).toHaveBeenCalledWith('session-1', workspaceId)
+	})
+
+	it('treats a 404 as a clean no-op so the user never sees "Session not found"', async () => {
+		vi.mocked(api.sessions.stop).mockRejectedValue(new ApiError(404, 'Session not found'))
+
+		const { result } = renderHook(() => useStopSession(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate('session-gone')
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.isError).toBe(false)
+		expect(result.current.data).toBeNull()
+	})
+
+	it('still surfaces non-404 errors so genuine failures are not hidden', async () => {
+		vi.mocked(api.sessions.stop).mockRejectedValue(new ApiError(500, 'Container manager down'))
+
+		const { result } = renderHook(() => useStopSession(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate('session-1')
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect((result.current.error as ApiError).status).toBe(500)
 	})
 })
 

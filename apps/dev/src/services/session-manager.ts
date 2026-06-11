@@ -321,8 +321,8 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || !session.containerId) {
-			throw new Error(`Session ${sessionId} not found or has no container`)
+		if (!session) {
+			throw new Error(`Session ${sessionId} not found`)
 		}
 
 		// Idempotent — already stopping/terminal: skip without throwing so the
@@ -335,6 +335,35 @@ export class SessionManager extends EventEmitter {
 			session.status === 'timeout' ||
 			session.status === 'superseded'
 		) {
+			return
+		}
+
+		// No container yet (pre-start race) or the container was removed
+		// externally. Nothing to SIGTERM — flip the row straight to `stopped`
+		// and emit the event so the stop button no-ops cleanly instead of
+		// surfacing "not found or has no container" to the user.
+		if (!session.containerId) {
+			await this.db
+				.update(sessions)
+				.set({ status: 'stopped', completedAt: new Date(), updatedAt: new Date() })
+				.where(eq(sessions.id, sessionId))
+
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_stopped',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+
+			await this.clearActiveSession(sessionId)
+
+			logger.info('Session stopped before container started', {
+				sessionId,
+				workspaceId: session.workspaceId,
+				priorStatus: session.status,
+			})
 			return
 		}
 

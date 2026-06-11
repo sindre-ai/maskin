@@ -250,6 +250,72 @@ describe('Sessions Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('not running')
 		})
+
+		// Regression for the customer-reported "session not found" toast — the
+		// stop button must never surface a raw error to the user for the three
+		// states it can plausibly be pressed in.
+		describe('regression: stop button never surfaces a raw error', () => {
+			it('running session → 200 with stopped state', async () => {
+				const before = buildSession({ workspaceId: wsId, status: 'running' })
+				const after = buildSession({
+					...before,
+					status: 'stopped',
+				})
+				const { app, mockResults, sessionManager } = createSessionTestApp(
+					sessionsRoutes,
+					'/api/sessions',
+				)
+				mockResults.selectQueue = [[before], [after]]
+				;(sessionManager.stopSession as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+
+				const res = await app.request(
+					jsonRequest('POST', `/api/sessions/${before.id}/stop`, undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.status).toBe('stopped')
+			})
+
+			it('just-completed session → 200 (idempotent no-op)', async () => {
+				const session = buildSession({ workspaceId: wsId, status: 'completed' })
+				const { app, mockResults, sessionManager } = createSessionTestApp(
+					sessionsRoutes,
+					'/api/sessions',
+				)
+				mockResults.selectQueue = [[session], [session]]
+				// stopSession's own idempotent branch returns silently; the
+				// route still re-fetches and returns the current state.
+				;(sessionManager.stopSession as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+
+				const res = await app.request(
+					jsonRequest('POST', `/api/sessions/${session.id}/stop`, undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.status).toBe('completed')
+			})
+
+			it('unknown id → 404 (frontend swallows this as a no-op)', async () => {
+				const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/sessions/00000000-0000-0000-0000-000000000099/stop',
+						undefined,
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(404)
+			})
+		})
 	})
 
 	describe('POST /api/sessions/:id/pause', () => {

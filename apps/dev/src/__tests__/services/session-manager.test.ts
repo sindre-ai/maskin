@@ -677,15 +677,28 @@ describe('SessionManager', () => {
 			mockResults.select = []
 
 			await expect(manager.stopSession('nonexistent')).rejects.toThrow(
-				'not found or has no container',
+				'Session nonexistent not found',
 			)
 		})
 
-		it('throws when session has no container', async () => {
-			const session = buildSession({ containerId: null })
+		it('flips to `stopped` without throwing when the session has no container yet', async () => {
+			// Pre-start race: row exists, container hasn't been spawned. There
+			// is nothing to SIGTERM, so we mark the row stopped cleanly rather
+			// than surfacing "not found or has no container" to the user.
+			const session = buildSession({ status: 'running', containerId: null })
 			mockResults.select = [session]
 
-			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
+			await manager.stopSession(session.id)
+
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'stopped' }))
+			expect(calls.inserts).toContainEqual(
+				expect.objectContaining({
+					action: 'session_stopped',
+					entityType: 'session',
+					entityId: session.id,
+				}),
+			)
 		})
 	})
 
