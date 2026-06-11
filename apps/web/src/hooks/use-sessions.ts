@@ -50,6 +50,31 @@ export function useStopSession(workspaceId: string) {
 	})
 }
 
+export function useRestartSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (priorSessionId: string) => api.sessions.restart(priorSessionId, workspaceId),
+		onSuccess: (newSession) => {
+			// The prior session row flipped to `superseded` server-side and a new
+			// session row was inserted. Invalidate broadly so the timeline picks
+			// up both — the per-object mention list is what renders the cards.
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(newSession.id) })
+			const mentionObjectId =
+				(newSession.config as Record<string, unknown> | null)?.mention &&
+				typeof (newSession.config as { mention?: { object_id?: unknown } }).mention?.object_id ===
+					'string'
+					? (newSession.config as { mention: { object_id: string } }).mention.object_id
+					: null
+			if (mentionObjectId) {
+				queryClient.invalidateQueries({
+					queryKey: queryKeys.sessions.byMentionObject(workspaceId, mentionObjectId),
+				})
+			}
+		},
+	})
+}
+
 export function useMentionSessionsForObject(workspaceId: string, objectId: string | null) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byMentionObject(workspaceId, objectId ?? ''),

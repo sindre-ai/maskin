@@ -252,6 +252,67 @@ describe('Sessions Routes', () => {
 		})
 	})
 
+	describe('POST /api/sessions/:id/restart', () => {
+		it('returns 201 and the new session when restart succeeds', async () => {
+			const prior = buildSession({ workspaceId: wsId, status: 'stopped' })
+			const newSession = buildSession({ workspaceId: wsId, status: 'pending' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[prior]]
+			;(sessionManager.restartSession as ReturnType<typeof vi.fn>).mockResolvedValue(newSession)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${prior.id}/restart`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.id).toBe(newSession.id)
+			expect(sessionManager.restartSession).toHaveBeenCalledWith(prior.id, expect.any(String))
+		})
+
+		it('returns 404 when the prior session is not found', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/sessions/00000000-0000-0000-0000-000000000099/restart',
+					undefined,
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 409 when the prior session is not in a restartable state', async () => {
+			const prior = buildSession({ workspaceId: wsId, status: 'running' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				sessionsRoutes,
+				'/api/sessions',
+			)
+			mockResults.selectQueue = [[prior]]
+			;(sessionManager.restartSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error("Session cannot be restarted from status 'running'"),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/sessions/${prior.id}/restart`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.message).toContain('cannot be restarted')
+		})
+	})
+
 	describe('POST /api/sessions/:id/pause', () => {
 		it('returns 200 when session paused', async () => {
 			const session = buildSession({ workspaceId: wsId, status: 'paused' })

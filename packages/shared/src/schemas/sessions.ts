@@ -227,5 +227,9 @@ export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
+	// Populated when this session was superseded by a restart (T5): id of the
+	// new session that picked up the work. The status flips to 'superseded'
+	// in the same write.
+	superseded_by: z.string().uuid().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

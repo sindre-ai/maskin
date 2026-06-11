@@ -5,7 +5,7 @@ import {
 } from '@/components/agents/session-log-transcript'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActor } from '@/hooks/use-actors'
-import { useSessionLogs, useStopSession } from '@/hooks/use-sessions'
+import { useRestartSession, useSessionLogs, useStopSession } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
@@ -49,7 +49,11 @@ export function MentionSessionCard({ session, workspaceId }: MentionSessionCardP
 	return (
 		<>
 			{isTerminal ? (
-				<TerminalCard session={session} onOpen={() => setPanelOpen(true)} />
+				<TerminalCard
+					session={session}
+					workspaceId={workspaceId}
+					onOpen={() => setPanelOpen(true)}
+				/>
 			) : (
 				<ActiveCard session={session} workspaceId={workspaceId} onOpen={() => setPanelOpen(true)} />
 			)}
@@ -326,15 +330,18 @@ function ActivityRow({
 
 function TerminalCard({
 	session,
+	workspaceId,
 	onOpen,
 }: {
 	session: SessionResponse
+	workspaceId: string
 	onOpen: () => void
 }) {
 	const { data: actor } = useActor(session.actorId)
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const status = getTerminalStatus(session.status)
-	const canRestart = session.status === 'stopped' || session.status === 'failed'
+	const canRestart =
+		session.status === 'stopped' || session.status === 'failed' || session.status === 'timeout'
 
 	return (
 		<div className="flex items-center gap-2 w-full rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors">
@@ -352,28 +359,35 @@ function TerminalCard({
 				)}
 				<ChevronRight size={14} className={cn('shrink-0 text-muted-foreground')} />
 			</button>
-			{canRestart && <RestartChipSlot />}
+			{canRestart && <RestartChip sessionId={session.id} workspaceId={workspaceId} />}
 		</div>
 	)
 }
 
-/**
- * Renders the disabled Restart affordance on stopped/failed pills. T5 wires
- * the actual mutation; we ship the slot now so the stopped pill has the
- * right shape from day one and the bet's first cheapest test (this task)
- * doesn't need a follow-up UI commit.
- */
-function RestartChipSlot() {
+function RestartChip({
+	sessionId,
+	workspaceId,
+}: {
+	sessionId: string
+	workspaceId: string
+}) {
+	const restart = useRestartSession(workspaceId)
+
 	return (
 		<button
 			type="button"
-			disabled
-			title="Restart (coming soon)"
+			disabled={restart.isPending}
+			onClick={(e) => {
+				e.stopPropagation()
+				if (restart.isPending) return
+				restart.mutate(sessionId)
+			}}
+			title="Restart session against the latest message state"
 			aria-label="Restart session"
-			className="shrink-0 inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground bg-transparent opacity-60 cursor-not-allowed"
+			className="shrink-0 inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
 		>
-			<RotateCcw size={11} />
-			<span>Restart</span>
+			<RotateCcw size={11} className={cn(restart.isPending && 'animate-spin')} />
+			<span>{restart.isPending ? 'Restarting…' : 'Restart'}</span>
 		</button>
 	)
 }

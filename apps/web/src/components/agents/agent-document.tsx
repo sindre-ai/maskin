@@ -480,16 +480,20 @@ function ActiveSessionCard({
 function SessionStatusIcon({ status }: { status: string }) {
 	switch (status) {
 		case 'completed':
+		case 'superseded':
 			return <CheckCircle2 size={14} className="text-success shrink-0" />
 		case 'failed':
 		case 'timeout':
 			return <XCircle size={14} className="text-error shrink-0" />
 		case 'running':
 		case 'starting':
+		case 'stopping':
 			return <Spinner className="shrink-0" />
 		case 'paused':
 		case 'snapshotting':
 			return <Clock size={14} className="text-warning shrink-0" />
+		case 'stopped':
+			return <MinusCircle size={14} className="text-muted-foreground shrink-0" />
 		default:
 			return <MinusCircle size={14} className="text-muted-foreground shrink-0" />
 	}
