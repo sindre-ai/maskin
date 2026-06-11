@@ -14,6 +14,7 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { ChevronLeft, MessageSquarePlus, Plus, Send, X } from 'lucide-react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { ConversationRow } from './conversation-row'
 
 interface ConversationDrawerProps {
@@ -39,10 +40,13 @@ export function ConversationDrawer({ open, onOpenChange }: ConversationDrawerPro
 
 	function handleCreateConversation() {
 		const actor = getStoredActor()
+		if (!actor) {
+			toast.error('Not signed in — please reload and try again')
+			return
+		}
 		// The API always adds the caller; we pass the actor's own ID to satisfy min(1)
-		const participantIds = actor ? [actor.id] : ['00000000-0000-0000-0000-000000000000']
 		createConversation.mutate(
-			{ type: 'dm', participant_actor_ids: participantIds },
+			{ type: 'dm', participant_actor_ids: [actor.id] },
 			{
 				onSuccess: (created) => setActive(created),
 			},
