@@ -11,7 +11,8 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 	RESOURCE_MIME_TYPE: 'text/html',
 }))
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
+	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
@@ -268,6 +269,30 @@ describe('update_actor schema', () => {
 			system_prompt: 'Be helpful',
 		})
 		expect(result.name).toBe('Updated')
+	})
+
+	it('accepts attach_skill_ids as an array of UUIDs', () => {
+		const result = schema.parse({ id: uuid, attach_skill_ids: [uuid2] })
+		expect(result.attach_skill_ids).toEqual([uuid2])
+	})
+
+	it('accepts detach_skill_ids as an array of UUIDs', () => {
+		const result = schema.parse({ id: uuid, detach_skill_ids: [uuid2] })
+		expect(result.detach_skill_ids).toEqual([uuid2])
+	})
+
+	it('rejects non-UUID entries in attach_skill_ids', () => {
+		expect(() => schema.parse({ id: uuid, attach_skill_ids: ['not-a-uuid'] })).toThrow()
+	})
+
+	it('rejects non-UUID entries in detach_skill_ids', () => {
+		expect(() => schema.parse({ id: uuid, detach_skill_ids: ['not-a-uuid'] })).toThrow()
+	})
+
+	it('defaults attach_skill_ids and detach_skill_ids to undefined when omitted', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.attach_skill_ids).toBeUndefined()
+		expect(result.detach_skill_ids).toBeUndefined()
 	})
 })
 

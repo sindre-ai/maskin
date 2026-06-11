@@ -1,4 +1,4 @@
-﻿import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -16,8 +16,10 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
@@ -380,6 +382,7 @@ export class SessionManager extends EventEmitter {
 					status: 'paused',
 					snapshotPath: snapshotKey,
 					containerId: null,
+					currentActivity: null,
 					updatedAt: new Date(),
 				})
 				.where(eq(sessions.id, sessionId))
@@ -429,6 +432,7 @@ export class SessionManager extends EventEmitter {
 				status: 'failed',
 				containerId: null,
 				completedAt: new Date(),
+				currentActivity: null,
 				updatedAt: new Date(),
 			})
 			.where(eq(sessions.id, sessionId))
@@ -776,10 +780,11 @@ export class SessionManager extends EventEmitter {
 		// (e.g. PostHog → Synthesizer) belong here; tools an agent opts into
 		// per-config still go through the agent/session MCP paths.
 		//
-		// GitHub installations also get a per-owner env var plus a synthesized
-		// MCP server entry so a workspace can expose multiple installations at once.
+		// GitHub installations only get a per-owner env var here; the MCP server
+		// entry is not auto-injected — agents opt in per their tools.mcpServers
+		// config (github-{owner} key). The env var is available for envsubst
+		// substitution when the container resolves the agent's configured entry.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
-		const githubMcpServers: Record<string, unknown> = {}
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
@@ -789,16 +794,7 @@ export class SessionManager extends EventEmitter {
 					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
 					if (!ownerLogin) continue
 
-					const sanitizedOwner = ownerLogin.toUpperCase().replace(/[^A-Z0-9]/g, '_')
-					const envVarName = `GITHUB_TOKEN_${sanitizedOwner}`
-					envVars[envVarName] = accessToken
-
-					const mcpName = `github-${ownerLogin.toLowerCase()}`
-					githubMcpServers[mcpName] = {
-						command: resolved.config.mcp?.command ?? 'npx',
-						args: resolved.config.mcp?.args ?? ['-y', '@modelcontextprotocol/server-github'],
-						env: { GITHUB_TOKEN: `\${${envVarName}}` },
-					}
+					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
 				} else {
 					const envVarName =
 						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
@@ -863,7 +859,7 @@ export class SessionManager extends EventEmitter {
 		// merged with any auto-injected workspace MCPs and GitHub installation MCPs.
 		// Keys are namespaced so the sources can't collide.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
-		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers, ...githubMcpServers }
+		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp
@@ -958,7 +954,7 @@ export class SessionManager extends EventEmitter {
 
 	private computeTimeout(session: typeof sessions.$inferSelect): Date {
 		const sessionConfig = session.config as Record<string, unknown>
-		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 3600
+		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 7200
 		return new Date(Date.now() + timeoutSeconds * 1000)
 	}
 
@@ -1062,7 +1058,7 @@ export class SessionManager extends EventEmitter {
 				const status = await this.containers.inspect(containerId)
 				consecutiveFailures = 0
 				if (!status.running) {
-					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
+					await this.handleCompletion(sessionId, containerId, status.exitCode)
 					return
 				}
 			} catch (err) {
@@ -1095,7 +1091,7 @@ export class SessionManager extends EventEmitter {
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
-		exitCode: number,
+		exitCode: number | null,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1162,6 +1158,18 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const failureReason =
+			exitCode !== null && exitCode !== 0
+				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
+				: null
+		if (failureReason) {
+			logger.info('Session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -1172,9 +1180,13 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status,
-					result: { exit_code: exitCode },
+					result: {
+						exit_code: exitCode,
+						...(failureReason ? { failure_reason: failureReason } : {}),
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					currentActivity: null,
 					...(usage
 						? {
 								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
@@ -1202,7 +1214,7 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
 			})
 		} catch (err) {
 			logger.error('Failed to insert completion event in handleCompletion', {
@@ -1304,6 +1316,7 @@ export class SessionManager extends EventEmitter {
 					status: 'timeout',
 					result: { error: 'Session timed out' },
 					completedAt: now,
+					currentActivity: null,
 					updatedAt: now,
 				})
 				.where(eq(sessions.id, session.id))
@@ -1478,6 +1491,7 @@ export class SessionManager extends EventEmitter {
 				data: { error: 'Session stuck in starting state' },
 			})
 
+			await this.cleanupBrowserSidecar(session.id).catch(() => {})
 			await this.clearActiveSession(session.id)
 			await this.cleanupSession(session.id)
 

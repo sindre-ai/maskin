@@ -84,7 +84,7 @@ describe('useAuth', () => {
 	})
 
 	describe('signup', () => {
-		it('calls API, stores credentials, and navigates to /', async () => {
+		it('calls API and stores credentials', async () => {
 			vi.mocked(api.actors.create).mockResolvedValue(mockActorResult)
 
 			const { result } = renderHook(() => useAuth(), { wrapper: TestWrapper })
@@ -101,7 +101,7 @@ describe('useAuth', () => {
 				type: 'human',
 				email: 'test@example.com',
 			})
-			expect(mockNavigate).toHaveBeenCalledWith({ to: '/' })
+			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 
 		it('does not store credentials or navigate on API failure', async () => {

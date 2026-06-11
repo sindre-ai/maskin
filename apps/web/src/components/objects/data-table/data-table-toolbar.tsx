@@ -29,8 +29,8 @@ interface DataTableToolbarProps {
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
 	statusesByType: Record<string, string[]>
-	ownerFilter?: string
-	onOwnerFilterChange: (value: string | undefined) => void
+	driverFilter?: string
+	onDriverFilterChange: (value: string | undefined) => void
 	actors?: ActorListItem[]
 	onResetFilters?: () => void
 	sort: string
@@ -59,8 +59,8 @@ export function DataTableToolbar({
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType,
-	ownerFilter,
-	onOwnerFilterChange,
+	driverFilter,
+	onDriverFilterChange,
 	actors,
 	onResetFilters,
 	sort,
@@ -139,8 +139,8 @@ export function DataTableToolbar({
 				statusFilter={statusFilter}
 				onStatusFilterChange={onStatusFilterChange}
 				statusesByType={statusesByType}
-				ownerFilter={ownerFilter}
-				onOwnerFilterChange={onOwnerFilterChange}
+				driverFilter={driverFilter}
+				onDriverFilterChange={onDriverFilterChange}
 				actors={actors}
 				onResetFilters={onResetFilters}
 				sort={sort}

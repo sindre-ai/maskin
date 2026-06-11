@@ -17,10 +17,10 @@ const POLICY_TABLE: Record<MutationKind, MutationPolicy> = {
 		variant: 'default',
 		optimistic: true,
 	},
-	object_owner: {
-		kind: 'object_owner',
+	object_driver: {
+		kind: 'object_driver',
 		confirm: false,
-		label: 'Assign owner',
+		label: 'Assign driver',
 		variant: 'default',
 		optimistic: true,
 	},

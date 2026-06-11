@@ -8,7 +8,8 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 }))
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
+	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
 }))
 
 vi.mock('node:fs', () => ({
@@ -924,6 +925,79 @@ describe('tool handlers', () => {
 
 			expect(text).toContain("can't reach your workspace")
 			expect(text).toContain('create_actor')
+		})
+
+		it('creates and attaches seed skills to the Workspace Observer on confirm', async () => {
+			const workspace = { id: 'ws-1', name: 'My Workspace', settings: {} }
+			const observerActorId = 'actor-workspace-observer'
+			const onboardingSkillId = 'skill-onboarding-1'
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockImplementation(async (url: unknown, options?: unknown): Promise<Response> => {
+					const u = url as string
+					const opts = options as RequestInit | undefined
+					const method = opts?.method ?? 'GET'
+					const body = opts?.body ? JSON.parse(opts.body as string) : {}
+
+					if (method === 'GET') {
+						return { ok: true, json: () => Promise.resolve([workspace]) } as Response
+					}
+					// PATCH workspace settings (URL ends with the workspace id, no trailing path)
+					if (method === 'PATCH' && /\/api\/workspaces\/[^/]+$/.test(u)) {
+						return { ok: true, json: () => Promise.resolve({ id: 'ws-1' }) } as Response
+					}
+					if (method === 'POST' && u.endsWith('/api/graph')) {
+						return {
+							ok: true,
+							json: () => Promise.resolve({ objects: [], relationships: [] }),
+						} as Response
+					}
+					// POST /api/actors — return predictable id for Workspace Observer
+					if (method === 'POST' && u.endsWith('/api/actors')) {
+						const id =
+							body.name === 'Workspace Observer' ? observerActorId : `actor-${body.name ?? 'x'}`
+						return { ok: true, json: () => Promise.resolve({ id }) } as Response
+					}
+					// POST /api/workspaces/:id/skills — skill creation
+					if (method === 'POST' && /\/api\/workspaces\/[^/]+\/skills$/.test(u)) {
+						return {
+							ok: true,
+							json: () => Promise.resolve({ id: onboardingSkillId }),
+						} as Response
+					}
+					// Everything else (members, PATCH actors, workspace-skills, triggers)
+					return { ok: true, json: () => Promise.resolve({ id: 'generic-id' }) } as Response
+				})
+
+			const handler = getHandler('get_started')
+			const result = (await handler({ template: 'development', confirm: true })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(result.content[0].text).toContain('Development')
+			expect(result.content[0].text).toContain('template applied')
+
+			// Skill creation: POST /api/workspaces/ws-1/skills with correct payload
+			const skillCreateCall = fetchSpy.mock.calls.find(
+				([u, opts]) =>
+					(u as string).includes('/api/workspaces/ws-1/skills') &&
+					(opts as RequestInit)?.method === 'POST',
+			)
+			if (!skillCreateCall) throw new Error('skill create call not found')
+			const skillBody = JSON.parse((skillCreateCall[1] as RequestInit).body as string)
+			expect(skillBody.name).toBe('workspace-observer-onboarding')
+			expect(skillBody.content).toContain('workspace-observer-onboarding')
+
+			// Skill attachment: POST /api/actors/:observerActorId/workspace-skills
+			const skillAttachCall = fetchSpy.mock.calls.find(
+				([u, opts]) =>
+					(u as string).endsWith(`/api/actors/${observerActorId}/workspace-skills`) &&
+					(opts as RequestInit)?.method === 'POST',
+			)
+			if (!skillAttachCall) throw new Error('skill attach call not found')
+			const attachBody = JSON.parse((skillAttachCall[1] as RequestInit).body as string)
+			expect(attachBody.workspaceSkillId).toBe(onboardingSkillId)
 		})
 	})
 
@@ -1947,7 +2021,7 @@ describe('tool handlers', () => {
 									type: 'bet',
 									title: 'Test bet',
 									status: 'active',
-									owner: 'actor-1',
+									driver: 'actor-1',
 									createdAt: new Date().toISOString(),
 								},
 							}),
@@ -1965,13 +2039,14 @@ describe('tool handlers', () => {
 			const handler = getHandler('get_objects')
 			const result = (await handler({ ids: ['bet-9'] })) as {
 				_meta: { ui?: { resourceUri?: string } }
-				structuredContent: { heroCard: { kind: string; object?: { owner?: unknown } } }
+				structuredContent: { heroCard: { kind: string; object?: { driver?: unknown } } }
 			}
 
 			expect(result.structuredContent.heroCard.kind).toBe('single')
-			expect(result.structuredContent.heroCard.object?.owner).toEqual({
+			expect(result.structuredContent.heroCard.object?.driver).toEqual({
 				id: 'actor-1',
 				name: 'Sebastian',
+				type: null,
 			})
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 		})
@@ -1989,7 +2064,7 @@ describe('tool handlers', () => {
 									type: 'task',
 									title: 'Test task',
 									status: 'in_progress',
-									owner: 'actor-2',
+									driver: 'actor-2',
 								},
 							}),
 					} as Response
@@ -2007,14 +2082,14 @@ describe('tool handlers', () => {
 			const result = (await handler({ ids: ['task-9'] })) as {
 				_meta: { ui?: { resourceUri?: string } }
 				structuredContent: {
-					heroCard: { kind: string; object?: { contextLine?: string; owner?: unknown } }
+					heroCard: { kind: string; object?: { contextLine?: string; driver?: unknown } }
 				}
 			}
 
 			expect(result.structuredContent.heroCard.kind).toBe('single')
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
 			expect(result.structuredContent.heroCard.object?.contextLine).toBe(
-				'in_progress · owner Magnus',
+				'in_progress · driver Magnus',
 			)
 		})
 
@@ -2031,7 +2106,7 @@ describe('tool handlers', () => {
 									type: 'insight',
 									title: 'Pricing pain',
 									status: 'clustered',
-									owner: null,
+									driver: null,
 									metadata: { anchors: ['#3', '#6'], cluster_size: 4 },
 								},
 							}),
@@ -2068,7 +2143,7 @@ describe('tool handlers', () => {
 									type: 'customer',
 									title: 'Acme Inc.',
 									status: 'engaged',
-									owner: null,
+									driver: null,
 								},
 							}),
 					} as Response
@@ -2086,7 +2161,7 @@ describe('tool handlers', () => {
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/objects')
 		})
 
-		it('resolves hero-card owner names via a batched ?ids= lookup, not the full actor list', async () => {
+		it('resolves hero-card driver names via a batched ?ids= lookup, not the full actor list', async () => {
 			const calls: string[] = []
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -2096,14 +2171,14 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
-								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', driver: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', driver: 'actor-2' },
 								{
 									id: 'bet-3',
 									type: 'bet',
 									title: 'Bet Three',
 									status: 'active',
-									owner: 'actor-1',
+									driver: 'actor-1',
 								},
 							]),
 					} as Response
@@ -2126,7 +2201,7 @@ describe('tool handlers', () => {
 				structuredContent: {
 					heroCard: {
 						kind: string
-						objects?: Array<{ owner?: { id: string; name: string | null } }>
+						objects?: Array<{ driver?: { id: string; name: string | null; type: string | null } }>
 					}
 				}
 			}
@@ -2136,17 +2211,17 @@ describe('tool handlers', () => {
 			// Single batched request, not the unbounded full-workspace fetch.
 			expect(calls.filter((u) => u.includes('/api/actors'))).toHaveLength(1)
 			expect(actorCall).toContain('?ids=')
-			// Owner IDs are deduped — actor-1 appears twice in the result rows.
+			// Driver IDs are deduped — actor-1 appears twice in the result rows.
 			const idsParam = new URL(actorCall as string).searchParams.get('ids') ?? ''
 			const ids = idsParam.split(',').filter(Boolean)
 			expect(ids.sort()).toEqual(['actor-1', 'actor-2'])
 
 			expect(result.structuredContent.heroCard.kind).toBe('list')
-			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
-			expect(owners).toEqual([
-				{ id: 'actor-1', name: 'Alice' },
-				{ id: 'actor-2', name: 'Bob' },
-				{ id: 'actor-1', name: 'Alice' },
+			const drivers = result.structuredContent.heroCard.objects?.map((o) => o.driver)
+			expect(drivers).toEqual([
+				{ id: 'actor-1', name: 'Alice', type: null },
+				{ id: 'actor-2', name: 'Bob', type: null },
+				{ id: 'actor-1', name: 'Alice', type: null },
 			])
 		})
 
@@ -2158,8 +2233,8 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', owner: 'actor-1' },
-								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', owner: 'actor-2' },
+								{ id: 'bet-1', type: 'bet', title: 'Bet One', status: 'active', driver: 'actor-1' },
+								{ id: 'bet-2', type: 'bet', title: 'Bet Two', status: 'active', driver: 'actor-2' },
 							]),
 					} as Response
 				}
@@ -2175,13 +2250,15 @@ describe('tool handlers', () => {
 			const handler = getHandler('search_objects')
 			const result = (await handler({ q: 'bet' })) as {
 				structuredContent: {
-					heroCard: { objects?: Array<{ owner?: { id: string; name: string | null } }> }
+					heroCard: {
+						objects?: Array<{ driver?: { id: string; name: string | null; type: string | null } }>
+					}
 				}
 			}
-			const owners = result.structuredContent.heroCard.objects?.map((o) => o.owner)
-			expect(owners).toEqual([
-				{ id: 'actor-1', name: 'Alice' },
-				{ id: 'actor-2', name: null },
+			const drivers = result.structuredContent.heroCard.objects?.map((o) => o.driver)
+			expect(drivers).toEqual([
+				{ id: 'actor-1', name: 'Alice', type: null },
+				{ id: 'actor-2', name: null, type: null },
 			])
 		})
 
@@ -2469,7 +2546,7 @@ describe('tool handlers', () => {
 						objects?: Array<{
 							type: string
 							status: string | null
-							owner: { name: string | null } | null
+							driver: { name: string | null } | null
 						}>
 					}
 				}
@@ -2480,7 +2557,7 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.totalCount).toBe(2)
 			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('trigger')
 			expect(result.structuredContent.heroCard.objects?.[0]?.status).toBe('enabled')
-			expect(result.structuredContent.heroCard.objects?.[0]?.owner?.name).toBe('Sindre')
+			expect(result.structuredContent.heroCard.objects?.[0]?.driver?.name).toBe('Sindre')
 			expect(result.structuredContent.heroCard.objects?.[1]?.status).toBe('disabled')
 		})
 
@@ -2531,7 +2608,7 @@ describe('tool handlers', () => {
 									type: 'organization',
 									title: 'Acme Co',
 									status: 'qualifying',
-									owner: 'actor-1',
+									driver: 'actor-1',
 									updatedAt,
 								},
 							}),
@@ -2552,7 +2629,7 @@ describe('tool handlers', () => {
 				structuredContent: {
 					heroCard: {
 						kind: string
-						object?: { type: string; contextLine: string; owner?: unknown }
+						object?: { type: string; contextLine: string; driver?: unknown }
 					}
 				}
 			}
@@ -2579,7 +2656,7 @@ describe('tool handlers', () => {
 									type: 'person',
 									title: 'Jane Doe',
 									status: 'engaged',
-									owner: null,
+									driver: null,
 									updatedAt,
 								},
 							}),
@@ -2743,6 +2820,167 @@ describe('tool handlers', () => {
 				event: 'click_through',
 				widget_name: 'hero-card',
 			})
+		})
+	})
+
+	describe('update_actor handler', () => {
+		const actorId = '550e8400-e29b-41d4-a716-446655440000'
+		const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+		const skillId2 = '660e8400-e29b-41d4-a716-446655440002'
+		const mockActor = { id: actorId, name: 'Test Actor' }
+		const mockSkill = { id: skillId1, name: 'My Skill' }
+
+		it('returns actor directly when no skill ops are requested', async () => {
+			mockFetchSuccess(mockActor)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({ id: actorId, name: 'Updated' })) as {
+				content: Array<{ text: string }>
+			}
+
+			expect(fetch).toHaveBeenCalledTimes(1)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toEqual(mockActor)
+		})
+
+		it('attaches skills and wraps response under actor key', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockSkill),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledTimes(2)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.attached_skills).toHaveLength(1)
+			expect(parsed.attached_skills[0]).toEqual(mockSkill)
+			expect(parsed.detached_skills).toBeUndefined()
+			expect(parsed.partial_failure).toBeUndefined()
+		})
+
+		it('detaches skills and includes detached_skills in response', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ deleted: true }),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				detach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.detached_skills).toHaveLength(1)
+			expect(parsed.detached_skills[0]).toEqual({ skill_id: skillId1, deleted: true })
+			expect(parsed.attached_skills).toBeUndefined()
+		})
+
+		it('handles attach and detach simultaneously', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockSkill),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ deleted: true }),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+				detach_skill_ids: [skillId2],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.actor).toEqual(mockActor)
+			expect(parsed.attached_skills).toHaveLength(1)
+			expect(parsed.detached_skills).toHaveLength(1)
+			expect(parsed.detached_skills[0]).toEqual({ skill_id: skillId2, deleted: true })
+			expect(parsed.partial_failure).toBeUndefined()
+		})
+
+		it('sets partial_failure and records error string when a skill op fails', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 404,
+					text: () => Promise.resolve('Not found'),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills[0].skill_id).toBe(skillId1)
+			expect(typeof parsed.attached_skills[0].error).toBe('string')
+			expect(parsed.attached_skills[0].error).not.toBe('')
+		})
+
+		it('surfaces a non-Error rejection as a string rather than undefined', async () => {
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockActor),
+				} as Response)
+				.mockRejectedValueOnce('plain string rejection')
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills[0].error).toBe('plain string rejection')
+		})
+
+		it('throws when the same skill ID appears in both attach and detach arrays', async () => {
+			const handler = getHandler('update_actor')
+			await expect(
+				handler({ id: actorId, attach_skill_ids: [skillId1], detach_skill_ids: [skillId1] }),
+			).rejects.toThrow(/attach_skill_ids and detach_skill_ids/)
 		})
 	})
 })

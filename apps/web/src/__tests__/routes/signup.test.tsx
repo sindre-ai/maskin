@@ -1,11 +1,18 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const mockSignup = vi.fn()
 
 vi.mock('@/hooks/use-auth', () => ({
 	useAuth: () => ({ signup: mockSignup }),
+}))
+
+vi.mock('@/lib/api', () => ({
+	api: {
+		landingEvents: { emit: vi.fn() },
+		publicBetStrategist: { claim: vi.fn() },
+	},
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -16,13 +23,27 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
+import { api } from '@/lib/api'
 import { Route } from '@/routes/signup'
 
 const SignupPage = (Route as unknown as { component: React.FC }).component
 
+async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
+	await user.type(screen.getByPlaceholderText('Your name'), 'Test User')
+	await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
+	await user.type(screen.getByPlaceholderText('At least 8 characters'), 'password123')
+	await user.type(screen.getByPlaceholderText('Repeat your password'), 'password123')
+	await user.click(screen.getByRole('button', { name: 'Create account' }))
+}
+
 describe('SignupPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		localStorage.clear()
+	})
+
+	afterEach(() => {
+		localStorage.clear()
 	})
 
 	it('renders signup form with all fields', () => {
@@ -136,5 +157,48 @@ describe('SignupPage', () => {
 		expect(screen.getByText('Name is required')).toBeInTheDocument()
 		await user.type(screen.getByPlaceholderText('Your name'), 'a')
 		expect(screen.queryByText('Name is required')).not.toBeInTheDocument()
+	})
+
+	it('leaves pending prompt in localStorage after signup for workspace to handle', async () => {
+		localStorage.setItem('maskin_pending_prompt', 'Help me pick the right growth experiment')
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(mockSignup).toHaveBeenCalled())
+		expect(localStorage.getItem('maskin_pending_prompt')).toBe(
+			'Help me pick the right growth experiment',
+		)
+	})
+
+	it('emits signup_complete with anonId when maskin_anon_id is in localStorage', async () => {
+		localStorage.setItem('maskin_anon_id', 'anon-landing-abc123')
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.landingEvents.emit).mockResolvedValue(undefined)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => {
+			expect(api.landingEvents.emit).toHaveBeenCalledWith([
+				{ name: 'signup_complete', anonId: 'anon-landing-abc123', props: { fromGuest: true } },
+			])
+		})
+		// maskin_anon_id is kept for the workspace component to use for claiming guest drafts
+		expect(localStorage.getItem('maskin_anon_id')).toBe('anon-landing-abc123')
+	})
+
+	it('does not emit signup_complete when maskin_anon_id is absent', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(mockSignup).toHaveBeenCalled())
+		expect(api.landingEvents.emit).not.toHaveBeenCalled()
 	})
 })

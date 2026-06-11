@@ -6,7 +6,7 @@ interface SessionLike {
 	createdAt: string | null
 }
 
-const ACTIVE_STATUSES = new Set(['running', 'starting', 'pending'])
+export const ACTIVE_STATUSES = new Set(['running', 'starting', 'pending'])
 
 export function groupSessionsByAgent<T extends SessionLike>(sessions: T[]): Map<string, T[]> {
 	const map = new Map<string, T[]>()

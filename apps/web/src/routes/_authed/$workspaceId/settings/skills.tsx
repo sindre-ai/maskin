@@ -1,3 +1,7 @@
+import {
+	DisplayPanel,
+	type DisplayPanelColumn,
+} from '@/components/objects/data-table/display-panel'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -40,13 +44,34 @@ import { ApiError, type WorkspaceSkillListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { parseSkillMd, skillNameSchema } from '@maskin/shared'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { AlertTriangle, FileUp, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+type SkillSort = 'name' | 'createdAt' | 'updatedAt'
+type SkillOrder = 'asc' | 'desc'
+
+const SKILL_SORT_COLUMNS: DisplayPanelColumn[] = [
+	{ id: 'name', label: 'Name', canHide: false },
+	{ id: 'createdAt', label: 'Created', canHide: false },
+	{ id: 'updatedAt', label: 'Updated', canHide: false },
+]
+
+const SKILL_SORT_IDS = new Set<SkillSort>(['name', 'createdAt', 'updatedAt'])
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/skills')({
 	component: SkillsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	validateSearch: (search: Record<string, unknown>) => ({
+		sort:
+			typeof search.sort === 'string' && SKILL_SORT_IDS.has(search.sort as SkillSort)
+				? (search.sort as SkillSort)
+				: ('name' as SkillSort),
+		order:
+			typeof search.order === 'string' && (search.order === 'asc' || search.order === 'desc')
+				? (search.order as SkillOrder)
+				: ('asc' as SkillOrder),
+	}),
 })
 
 const SKILL_TEMPLATE = `---
@@ -69,6 +94,8 @@ type UploadSummary = { imported: number; failed: { name: string; reason: string 
 
 function SkillsPage() {
 	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
+	const { sort, order } = useSearch({ from: '/_authed/$workspaceId/settings/skills' })
 	const { data: skills, isLoading } = useWorkspaceSkills(workspaceId)
 	const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' })
 	const createMutation = useCreateWorkspaceSkill(workspaceId)
@@ -77,8 +104,22 @@ function SkillsPage() {
 	const [summary, setSummary] = useState<UploadSummary | null>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
 
-	const list = skills ?? []
-	const existingNames = list.map((s) => s.name)
+	const rawList = skills ?? []
+	const existingNames = rawList.map((s) => s.name)
+
+	const list = useMemo(() => sortSkills(rawList, sort, order), [rawList, sort, order])
+
+	const updateSort = useCallback(
+		(updates: { sort?: SkillSort; order?: SkillOrder }) => {
+			navigate({
+				to: '/$workspaceId/settings/skills',
+				params: { workspaceId },
+				search: { sort, order, ...updates },
+				replace: true,
+			})
+		},
+		[navigate, workspaceId, sort, order],
+	)
 
 	const handleFiles = useCallback(
 		async (files: FileList | File[]) => {
@@ -159,9 +200,17 @@ function SkillsPage() {
 
 	const headerActions = (
 		<div className="flex items-center gap-2 shrink-0">
+			<DisplayPanel
+				columns={SKILL_SORT_COLUMNS}
+				sort={sort}
+				onSortChange={(value) => updateSort({ sort: value as SkillSort })}
+				order={order}
+				onOrderChange={(value) => updateSort({ order: value })}
+				showView={false}
+			/>
 			<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
 				<FileUp size={14} className="mr-1" />
-				Browse files
+				Import from file
 			</Button>
 			<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
 				<Plus size={14} className="mr-1" />
@@ -203,7 +252,7 @@ function SkillsPage() {
 							<div className="flex items-center gap-2">
 								<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
 									<FileUp size={14} className="mr-1" />
-									Browse files
+									Import from file
 								</Button>
 								<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
 									<Plus size={14} className="mr-1" />
@@ -279,7 +328,11 @@ function SkillRow({
 	onDelete: () => void
 }) {
 	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
+		// biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete
+		<div
+			onClick={onEdit}
+			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 cursor-pointer transition-colors hover:border-border-hover hover:bg-bg-hover"
+		>
 			<div className="flex-1 min-w-0">
 				<div className="flex items-center gap-2">
 					{!skill.isValid && (
@@ -309,11 +362,12 @@ function SkillRow({
 						size="icon"
 						className="text-muted-foreground"
 						aria-label={`Actions for ${skill.name}`}
+						onClick={(e) => e.stopPropagation()}
 					>
 						<MoreHorizontal size={16} />
 					</Button>
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end">
+				<DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
 					<DropdownMenuItem onClick={onEdit}>
 						<Pencil size={14} className="mr-2" />
 						Edit
@@ -496,6 +550,24 @@ function DeleteSkillDialog({
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+export function sortSkills(
+	skills: WorkspaceSkillListItem[],
+	sort: SkillSort,
+	order: SkillOrder,
+): WorkspaceSkillListItem[] {
+	const dir = order === 'asc' ? 1 : -1
+	return [...skills].sort((a, b) => {
+		if (sort === 'name') {
+			return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir
+		}
+		// createdAt / updatedAt are ISO strings — lexicographic compare matches chronological order.
+		const av = a[sort]
+		const bv = b[sort]
+		if (av === bv) return 0
+		return (av < bv ? -1 : 1) * dir
+	})
+}
 
 export function toSkillUpload(
 	text: string,

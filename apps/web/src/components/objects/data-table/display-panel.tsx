@@ -41,8 +41,8 @@ export interface DisplayPanelProps {
 	statusFilter?: string
 	onStatusFilterChange?: (value: string | undefined) => void
 	statusesByType?: Record<string, string[]>
-	ownerFilter?: string
-	onOwnerFilterChange?: (value: string | undefined) => void
+	driverFilter?: string
+	onDriverFilterChange?: (value: string | undefined) => void
 	actors?: ActorListItem[]
 	onResetFilters?: () => void
 	// Ordering
@@ -55,6 +55,8 @@ export interface DisplayPanelProps {
 	onGroupByChange?: (value: string | undefined) => void
 	// Trigger appearance
 	iconOnly?: boolean
+	// Sections — surfaces that don't have a board view can opt out of the View pills.
+	showView?: boolean
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
@@ -135,8 +137,8 @@ export function DisplayPanel({
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType = {},
-	ownerFilter,
-	onOwnerFilterChange,
+	driverFilter,
+	onDriverFilterChange,
 	actors,
 	onResetFilters,
 	sort,
@@ -146,15 +148,16 @@ export function DisplayPanel({
 	groupBy,
 	onGroupByChange,
 	iconOnly = false,
+	showView = true,
 }: DisplayPanelProps) {
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
-	const activeOwners = ownerFilter ? ownerFilter.split(',').filter(Boolean) : []
-	const activeFilterCount = (activeStatuses.length > 0 ? 1 : 0) + (activeOwners.length > 0 ? 1 : 0)
+	const activeDrivers = driverFilter ? driverFilter.split(',').filter(Boolean) : []
+	const activeFilterCount = (activeStatuses.length > 0 ? 1 : 0) + (activeDrivers.length > 0 ? 1 : 0)
 	const hasActiveFilters = activeFilterCount > 0
 
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
 	const showGrouping = !!onGroupByChange && columns.length > 0
-	const showFilters = !!onStatusFilterChange || !!onOwnerFilterChange
+	const showFilters = !!onStatusFilterChange || !!onDriverFilterChange
 	const hideableColumns = columns.filter((col) => col.canHide)
 	const showProperties = !!onColumnVisibilityChange && hideableColumns.length > 0
 	const orderingColumns =
@@ -168,8 +171,8 @@ export function DisplayPanel({
 	const typeEntries = Object.entries(statusesByType).filter(([, statuses]) => statuses.length > 0)
 	const hasStatuses = typeEntries.length > 0
 
-	const ownerOptions = actors ?? []
-	const hasOwners = ownerOptions.length > 0
+	const driverOptions = actors ?? []
+	const hasOwners = driverOptions.length > 0
 
 	function toggleStatus(status: string) {
 		const next = activeStatuses.includes(status)
@@ -178,11 +181,11 @@ export function DisplayPanel({
 		onStatusFilterChange?.(next.length > 0 ? next.join(',') : undefined)
 	}
 
-	function toggleOwner(ownerId: string) {
-		const next = activeOwners.includes(ownerId)
-			? activeOwners.filter((id) => id !== ownerId)
-			: [...activeOwners, ownerId]
-		onOwnerFilterChange?.(next.length > 0 ? next.join(',') : undefined)
+	function toggleDriver(driverId: string) {
+		const next = activeDrivers.includes(driverId)
+			? activeDrivers.filter((id) => id !== driverId)
+			: [...activeDrivers, driverId]
+		onDriverFilterChange?.(next.length > 0 ? next.join(',') : undefined)
 	}
 
 	const statusTriggerLabel =
@@ -192,12 +195,12 @@ export function DisplayPanel({
 				? activeStatuses[0]?.replace(/_/g, ' ')
 				: `${activeStatuses.length} statuses`
 
-	const ownerTriggerLabel =
-		activeOwners.length === 0
-			? '+ Owner'
-			: activeOwners.length === 1
-				? (ownerOptions.find((a) => a.id === activeOwners[0])?.name ?? '1 owner')
-				: `${activeOwners.length} owners`
+	const driverTriggerLabel =
+		activeDrivers.length === 0
+			? '+ Driver'
+			: activeDrivers.length === 1
+				? (driverOptions.find((a) => a.id === activeDrivers[0])?.name ?? '1 driver')
+				: `${activeDrivers.length} drivers`
 
 	return (
 		<ResponsivePopover>
@@ -232,25 +235,31 @@ export function DisplayPanel({
 			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-0">
 				<div className="min-h-0 overflow-y-auto md:max-h-[480px] text-left">
 					{/* View */}
-					<div className="p-3 space-y-2">
-						<SectionHeader>View</SectionHeader>
-						<div className="flex items-center gap-1.5">
-							<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
-								List
-							</PillButton>
-							<PillButton
-								active={view === 'board'}
-								disabled={!boardSupported}
-								onClick={boardSupported ? () => onViewChange?.('board') : undefined}
-								title={
-									boardSupported ? undefined : 'Board view needs configured statuses for this type'
-								}
-							>
-								Board
-							</PillButton>
-						</div>
-					</div>
-					<Separator />
+					{showView && (
+						<>
+							<div className="p-3 space-y-2">
+								<SectionHeader>View</SectionHeader>
+								<div className="flex items-center gap-1.5">
+									<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
+										List
+									</PillButton>
+									<PillButton
+										active={view === 'board'}
+										disabled={!boardSupported}
+										onClick={boardSupported ? () => onViewChange?.('board') : undefined}
+										title={
+											boardSupported
+												? undefined
+												: 'Board view needs configured statuses for this type'
+										}
+									>
+										Board
+									</PillButton>
+								</div>
+							</div>
+							<Separator />
+						</>
+					)}
 
 					{/* Ordering */}
 					{showOrdering && (
@@ -354,7 +363,7 @@ export function DisplayPanel({
 													onResetFilters()
 												} else {
 													onStatusFilterChange?.(undefined)
-													onOwnerFilterChange?.(undefined)
+													onDriverFilterChange?.(undefined)
 												}
 											}}
 										>
@@ -417,43 +426,43 @@ export function DisplayPanel({
 									</div>
 								)}
 
-								{/* Owner — flat multi-select */}
-								{onOwnerFilterChange && (
+								{/* Filter by Driver */}
+								{onDriverFilterChange && (
 									<div className="flex items-center gap-2">
-										<span className="w-16 shrink-0 text-xs text-text-secondary">Owner</span>
+										<span className="w-16 shrink-0 text-xs text-text-secondary">Driver</span>
 										<DropdownMenu>
 											<DropdownMenuTrigger asChild disabled={!hasOwners}>
 												<Button
-													variant={activeOwners.length > 0 ? 'outline' : 'ghost'}
+													variant={activeDrivers.length > 0 ? 'outline' : 'ghost'}
 													size="sm"
 													className={cn(
 														'h-7 gap-1.5 px-2 text-xs',
-														activeOwners.length === 0 &&
+														activeDrivers.length === 0 &&
 															'text-text-secondary hover:text-foreground',
 													)}
 												>
-													<span className="truncate">{ownerTriggerLabel}</span>
+													<span className="truncate">{driverTriggerLabel}</span>
 													{hasOwners && <ChevronDown size={12} className="shrink-0 opacity-60" />}
 												</Button>
 											</DropdownMenuTrigger>
 											<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-												{ownerOptions.map((actor) => (
+												{driverOptions.map((actor) => (
 													<DropdownMenuCheckboxItem
 														key={actor.id}
-														checked={activeOwners.includes(actor.id)}
-														onCheckedChange={() => toggleOwner(actor.id)}
+														checked={activeDrivers.includes(actor.id)}
+														onCheckedChange={() => toggleDriver(actor.id)}
 													>
 														{actor.name}
 													</DropdownMenuCheckboxItem>
 												))}
 											</DropdownMenuContent>
 										</DropdownMenu>
-										{activeOwners.length > 0 && (
+										{activeDrivers.length > 0 && (
 											<button
 												type="button"
-												aria-label="Clear Owner filter"
-												title="Clear Owner filter"
-												onClick={() => onOwnerFilterChange?.(undefined)}
+												aria-label="Clear Driver filter"
+												title="Clear Driver filter"
+												onClick={() => onDriverFilterChange?.(undefined)}
 												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
 											>
 												Clear
