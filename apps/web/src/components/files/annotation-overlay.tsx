@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/cn'
 import { Check, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -216,7 +217,7 @@ export function AnnotationOverlay({
 							type="button"
 							aria-label={`Annotation ${a.pinNumber}`}
 							className={cn(
-								'absolute z-20 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-accent text-accent-foreground text-xs font-bold flex items-center justify-center shadow-md cursor-pointer transition-shadow',
+								'absolute z-20 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shadow-md cursor-pointer transition-shadow',
 								openPinId === a.id && 'ring-2 ring-ring ring-offset-1',
 							)}
 							style={{ left: `${a.position.x * 100}%`, top: `${a.position.y * 100}%` }}
@@ -237,8 +238,7 @@ export function AnnotationOverlay({
 						{a.selector && (
 							<p className="text-xs text-muted-foreground font-mono truncate">{a.selector}</p>
 						)}
-						<textarea
-							className="w-full rounded-md border border-input bg-background p-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+						<Textarea
 							rows={3}
 							placeholder="Add a comment…"
 							value={draft}
