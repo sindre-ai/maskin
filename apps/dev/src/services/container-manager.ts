@@ -278,7 +278,11 @@ export class ContainerManager {
 		}
 	}
 
-	async stop(containerId: string, timeoutSeconds = 10): Promise<void> {
+	// 3s SIGTERM grace, then SIGKILL — paired with the session-write-gate
+	// middleware so a stopped session can't keep landing comment-writes
+	// underneath the UI. See `stopSession` and the architecture decision on
+	// the message-lifecycle bet for the 5s = 3s grace + immediate gate budget.
+	async stop(containerId: string, timeoutSeconds = 3): Promise<void> {
 		const container = this.docker.getContainer(containerId)
 		try {
 			await container.stop({ t: timeoutSeconds })

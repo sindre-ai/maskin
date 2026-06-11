@@ -1279,4 +1279,142 @@ describe('Events Routes', () => {
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 		})
 	})
+
+	describe('POST /api/events/:id/resend', () => {
+		it('returns 404 when the comment does not exist', async () => {
+			const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/events/123/resend', {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 when the requester is not the comment author', async () => {
+			const otherActor = randomUUID()
+			const comment = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				actorId: otherActor,
+				data: { content: 'hi', mentions: [] },
+			})
+			const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.select = [comment]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/events/${comment.id}/resend`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('restarts each linked mention session and emits a comment_resent audit event', async () => {
+			const objectId = randomUUID()
+			const priorSession = {
+				id: randomUUID(),
+				workspaceId: wsId,
+				actorId: randomUUID(),
+				status: 'stopped',
+				interactive: false,
+				config: { mention: { object_id: objectId, notification_id: randomUUID() } },
+				result: null,
+			}
+			const comment = buildEvent({
+				id: 4242,
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				actorId: 'test-actor-id',
+				data: { content: 'original', mentions: [priorSession.actorId] },
+			})
+			const updatedComment = {
+				...comment,
+				data: { ...(comment.data as object), content: 'edited' },
+			}
+			const { app, mockResults, sessionManager, calls } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			;(sessionManager.restartSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				kind: 'superseded',
+				sessionId: 'new-session-id',
+				supersededSessionId: priorSession.id,
+			})
+
+			// Selects: load original comment, then linked sessions, then post-update reload.
+			mockResults.selectQueue = [[comment], [priorSession], [updatedComment]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/events/${comment.id}/resend`,
+					{ content: 'edited' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.restarts).toHaveLength(1)
+			expect(body.restarts[0]).toMatchObject({ kind: 'superseded' })
+
+			expect(sessionManager.restartSession).toHaveBeenCalledWith(
+				priorSession.id,
+				expect.objectContaining({
+					objectId,
+					createdBy: 'test-actor-id',
+					turnContent: 'edited',
+				}),
+			)
+
+			// Edit landed on the original event row.
+			const editUpdate = calls.updates.find(
+				(u): u is { data: { content: string; editedAt?: string } } => {
+					if (!u || typeof u !== 'object') return false
+					const d = (u as { data?: unknown }).data
+					return !!d && typeof d === 'object' && 'content' in (d as object)
+				},
+			)
+			expect(editUpdate?.data.content).toBe('edited')
+			expect(editUpdate?.data.editedAt).toBeDefined()
+
+			// Audit event emitted on the same object.
+			expect(calls.inserts).toContainEqual(
+				expect.objectContaining({
+					action: 'comment_resent',
+					entityId: objectId,
+				}),
+			)
+		})
+
+		it('skips agent-spawn when no linked sessions exist but still emits the audit event', async () => {
+			const objectId = randomUUID()
+			const comment = buildEvent({
+				id: 4243,
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				actorId: 'test-actor-id',
+				data: { content: 'lonely', mentions: [] },
+			})
+			const { app, mockResults, sessionManager, calls } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			mockResults.selectQueue = [[comment], [], [comment]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/events/${comment.id}/resend`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(sessionManager.restartSession).not.toHaveBeenCalled()
+			expect(calls.inserts).toContainEqual(expect.objectContaining({ action: 'comment_resent' }))
+		})
+	})
 })

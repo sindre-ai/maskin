@@ -235,6 +235,41 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
 		})
 
+		it('injects MASKIN_SESSION_ID into the container env so writes are gateable', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.MASKIN_SESSION_ID).toBe(session.id)
+			expect(createArgs.env.SESSION_ID).toBe(session.id)
+		})
+
 		it('sets ACTION_PROMPT and omits INTERACTIVE for non-interactive sessions', async () => {
 			const session = buildSession({
 				status: 'pending',
@@ -557,7 +592,7 @@ describe('SessionManager', () => {
 	})
 
 	describe('stopSession()', () => {
-		it('stops the container', async () => {
+		it('stops the container with the 3s SIGTERM grace', async () => {
 			const session = buildSession({
 				status: 'running',
 				containerId: 'container-abc',
@@ -566,7 +601,39 @@ describe('SessionManager', () => {
 
 			await manager.stopSession(session.id)
 
-			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-abc')
+			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-abc', 3)
+		})
+
+		it('flips status to `stopping` before SIGTERM so the write-gate is live', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+			})
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			// First update is the status flip; later updates clear activeSessionId.
+			expect(calls.updates.length).toBeGreaterThanOrEqual(1)
+			expect(calls.updates[0]).toEqual(expect.objectContaining({ status: 'stopping' }))
+		})
+
+		it('inserts a `session_stopped` event after SIGTERM', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+			})
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			expect(calls.inserts).toContainEqual(
+				expect.objectContaining({
+					action: 'session_stopped',
+					entityType: 'session',
+					entityId: session.id,
+				}),
+			)
 		})
 
 		it('detaches stdin before stopping the container', async () => {
@@ -582,6 +649,30 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.detachStdin).toHaveBeenCalledWith(session.id)
 		})
 
+		it('is idempotent — returns silently if already stopping', async () => {
+			const session = buildSession({
+				status: 'stopping',
+				containerId: 'container-abc',
+			})
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+		})
+
+		it.each(['completed', 'failed', 'timeout', 'stopped', 'superseded'])(
+			'is idempotent — returns silently if already %s',
+			async (status) => {
+				const session = buildSession({ status, containerId: 'container-abc' })
+				mockResults.select = [session]
+
+				await manager.stopSession(session.id)
+
+				expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			},
+		)
+
 		it('throws when session not found', async () => {
 			mockResults.select = []
 
@@ -595,6 +686,114 @@ describe('SessionManager', () => {
 			mockResults.select = [session]
 
 			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
+		})
+	})
+
+	describe('restartSession()', () => {
+		const objectId = randomUUID()
+
+		it('resumes a running interactive session by writing the new turn to stdin', async () => {
+			const prior = buildSession({
+				status: 'running',
+				interactive: true,
+				config: { mention: { object_id: objectId } },
+			})
+			// One select: load prior. writeInput inserts a log row internally.
+			mockResults.select = [prior]
+			mockResults.insert = [{ id: 1, sessionId: prior.id, stream: 'stdout', content: 'x' }]
+
+			const result = await manager.restartSession(prior.id, {
+				actionPrompt: 'rerun',
+				objectId,
+				createdBy: prior.actorId,
+				turnContent: 'edited message',
+			})
+
+			expect(result).toEqual({ kind: 'resumed', sessionId: prior.id })
+			expect(mockContainerManager.write).toHaveBeenCalledWith(
+				prior.id,
+				expect.objectContaining({ type: 'user' }),
+			)
+			// `restartSession` itself only updates the prior session for the
+			// supersede path; on resume the only update is the writeInput log
+			// insert (no `status` flip). Sanity-check no terminal flip happened.
+			const flippedToSuperseded = calls.updates.some(
+				(u) => (u as { status?: string }).status === 'superseded',
+			)
+			expect(flippedToSuperseded).toBe(false)
+		})
+
+		it('supersedes a terminal session: spawns new, flips prior, moves activeSessionId', async () => {
+			const prior = buildSession({
+				status: 'stopped',
+				interactive: false,
+				config: { mention: { object_id: objectId } },
+				result: { exit_code: 137 },
+			})
+			const newSession = buildSession({ status: 'pending', actorId: prior.actorId })
+			// Selects: load prior (restartSession) + load new (createSession's
+			// insert returning), then any internal selects for capacity etc.
+			// createSession's autoStart triggers startSession which reads the
+			// session again. The mock's default `[]` on exhaustion keeps the
+			// remaining startSession path no-oping past its "not pending/queued"
+			// guard.
+			mockResults.selectQueue = [[prior]]
+			mockResults.insert = [newSession]
+
+			const result = await manager.restartSession(prior.id, {
+				actionPrompt: 'rerun',
+				objectId,
+				createdBy: prior.actorId,
+				turnContent: 'edited message',
+			})
+
+			expect(result.kind).toBe('superseded')
+			expect((result as { sessionId: string }).sessionId).toBe(newSession.id)
+			// Prior flipped to superseded + result.superseded_by populated.
+			const supersedeUpdate = calls.updates.find(
+				(u) => (u as { status?: string }).status === 'superseded',
+			) as { status: string; result: { superseded_by: string } } | undefined
+			expect(supersedeUpdate).toBeDefined()
+			expect(supersedeUpdate?.result.superseded_by).toBe(newSession.id)
+			// objects.activeSessionId moved to the new session.
+			const objectUpdate = calls.updates.find(
+				(u) => (u as { activeSessionId?: string }).activeSessionId === newSession.id,
+			)
+			expect(objectUpdate).toBeDefined()
+		})
+
+		it('supersedes a non-interactive running session — stdin is not available so reuse is unsafe', async () => {
+			const prior = buildSession({
+				status: 'running',
+				interactive: false,
+				config: { mention: { object_id: objectId } },
+			})
+			const newSession = buildSession({ status: 'pending', actorId: prior.actorId })
+			mockResults.selectQueue = [[prior]]
+			mockResults.insert = [newSession]
+
+			const result = await manager.restartSession(prior.id, {
+				actionPrompt: 'rerun',
+				objectId,
+				createdBy: prior.actorId,
+				turnContent: 'edited message',
+			})
+
+			expect(result.kind).toBe('superseded')
+			expect(mockContainerManager.write).not.toHaveBeenCalled()
+		})
+
+		it('throws when the prior session is unknown', async () => {
+			mockResults.select = []
+
+			await expect(
+				manager.restartSession(randomUUID(), {
+					actionPrompt: 'rerun',
+					objectId,
+					createdBy: randomUUID(),
+					turnContent: 'edited',
+				}),
+			).rejects.toThrow('not found')
 		})
 	})
 

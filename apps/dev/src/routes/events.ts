@@ -1,9 +1,17 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, notifications, objects, subscriptions } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	files,
+	notifications,
+	objects,
+	sessions,
+	subscriptions,
+} from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
-import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
+import { createCommentSchema, eventQuerySchema, resendCommentSchema } from '@maskin/shared'
+import { and, asc, desc, eq, gt, gte, inArray, lt, ne, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -432,6 +440,215 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	return c.json(serializeArray([comment])[0] as z.infer<typeof eventResponseSchema>, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
+
+// POST /api/events/:id/resend — Edit-and-restart the agent reply triggered by a
+// prior comment. Per architecture decision 2 (events.ts:160-228 is the only
+// agent-spawn site for `commented`), this is the second explicit spawn site,
+// scoped to "restart against the corrected message state". Edits via T2's
+// `comment_edited` route do NOT spawn; this one does.
+const resendCommentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/resend',
+	tags: ['events'],
+	summary: 'Edit (optional) and restart the agent reply for a prior comment',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.coerce.number().int().positive() }),
+		body: {
+			content: { 'application/json': { schema: resendCommentSchema } },
+		},
+	},
+	responses: {
+		200: {
+			description: 'Agent reply restarted',
+			content: {
+				'application/json': {
+					schema: z.object({
+						event: eventResponseSchema,
+						restarts: z.array(
+							z.object({
+								kind: z.enum(['resumed', 'superseded']),
+								sessionId: z.string().uuid(),
+								supersededSessionId: z.string().uuid().optional(),
+							}),
+						),
+					}),
+				},
+			},
+		},
+		400: {
+			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not the comment author',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Comment not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(resendCommentRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: eventId } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	// Load the original comment, scoped to workspace so a cross-workspace
+	// guessed id can't probe existence.
+	const [original] = await db
+		.select()
+		.from(events)
+		.where(
+			and(
+				eq(events.id, eventId),
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+				eq(events.entityType, 'object'),
+			),
+		)
+		.limit(1)
+
+	if (!original) {
+		return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+	}
+
+	// Only the comment's author can restart their own message — same rule as
+	// edit/delete (T2/T4). Foreign restarts would let any workspace member
+	// re-spawn another user's agent run.
+	if (original.actorId !== actorId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the comment author can resend it'),
+			403 as never,
+		)
+	}
+
+	const originalData = (original.data as Record<string, unknown> | null) ?? {}
+	const updatedContent =
+		typeof body.content === 'string' && body.content.length > 0
+			? body.content
+			: ((originalData.content as string | undefined) ?? '')
+
+	if (!updatedContent) {
+		return c.json(createApiError('BAD_REQUEST', 'Comment has no content to resend'), 400)
+	}
+
+	// Edit-in-place: when the client passes new content, update the source
+	// event's data so the agent's next read sees the corrected message. This
+	// is the single combined "Save & restart agent" call from T2's button.
+	const editedAt = new Date().toISOString()
+	if (typeof body.content === 'string' && body.content !== originalData.content) {
+		await db
+			.update(events)
+			.set({
+				data: { ...originalData, content: body.content, editedAt },
+			})
+			.where(eq(events.id, eventId))
+	}
+
+	// Find every mention session that this comment originally spawned. We key
+	// on `config.mention.comment_event_id` — the events route writes that
+	// field when the comment @mentions an agent, and `restartSession` carries
+	// it through to each successor via `{...priorConfig, supersedes}`. Exclude
+	// already-superseded priors so repeat resends only restart the active
+	// successor; without this filter, every prior in the chain would spawn its
+	// own replacement on each click (exponential fan-out).
+	const linkedSessions = await db
+		.select()
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.workspaceId, workspaceId),
+				ne(sessions.status, 'superseded'),
+				sql`${sessions.config}->'mention'->>'comment_event_id' = ${String(eventId)}`,
+			),
+		)
+
+	const restarts: Array<{
+		kind: 'resumed' | 'superseded'
+		sessionId: string
+		supersededSessionId?: string
+	}> = []
+
+	for (const prior of linkedSessions) {
+		const mention = (prior.config as Record<string, unknown> | null)?.mention as
+			| { object_id?: string; notification_id?: string }
+			| undefined
+		const objectId = mention?.object_id
+		if (!objectId) {
+			logger.warn('Skipping restart — prior session has no mention.object_id', {
+				priorSessionId: prior.id,
+				eventId,
+			})
+			continue
+		}
+
+		const actionPrompt = buildMentionPrompt({
+			objectId,
+			commenterActorId: actorId,
+			content: updatedContent,
+			notificationId: mention?.notification_id ?? '',
+		})
+
+		try {
+			const result = await sessionManager.restartSession(prior.id, {
+				actionPrompt,
+				objectId,
+				createdBy: actorId,
+				turnContent: updatedContent,
+			})
+			restarts.push(result)
+		} catch (err) {
+			logger.error('Failed to restart prior session on resend', {
+				priorSessionId: prior.id,
+				eventId,
+				error: String(err),
+			})
+		}
+	}
+
+	// Audit event so the timeline can render the "user resent" affordance and
+	// downstream agents can read the restart history. Never spawns on its own.
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: 'comment_resent',
+		entityType: 'object',
+		entityId: original.entityId,
+		data: {
+			originalEventId: eventId,
+			restarts,
+			editedAt: typeof body.content === 'string' ? editedAt : undefined,
+		},
+	})
+
+	logger.info('Comment resent — agent reply restarted', {
+		eventId,
+		workspaceId,
+		restartCount: restarts.length,
+		linkedSessionCount: linkedSessions.length,
+	})
+
+	const updated = await db
+		.select()
+		.from(events)
+		.where(eq(events.id, eventId))
+		.limit(1)
+		.then((rows) => rows[0])
+
+	return c.json(
+		{
+			event: serializeArray([updated ?? original])[0] as z.infer<typeof eventResponseSchema>,
+			restarts,
+		},
+		200,
+	)
+}) as RouteHandler<typeof resendCommentRoute, Env>)
 
 type ResolvedParent = { parentEventId: number | undefined; opActorId: string | null }
 

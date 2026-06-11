@@ -16,12 +16,26 @@ import {
 	ChevronRight,
 	Clock,
 	Loader2,
+	RotateCcw,
 	Square,
 	XCircle,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'paused'])
+// `superseded` is terminal too (T3/T5) — included here so the status-enum
+// expansion doesn't leave it stranded in the active branch.
+const TERMINAL_STATUSES = new Set([
+	'completed',
+	'failed',
+	'timeout',
+	'paused',
+	'stopped',
+	'superseded',
+])
+
+// 5-second propagation grace from confirm → final `stopped` state. Matches
+// the backend's 3s SIGTERM grace + slack for the write-gate to close.
+const STOP_GRACE_MS = 5000
 
 interface MentionSessionCardProps {
 	session: SessionResponse
@@ -69,6 +83,10 @@ function ActiveCard({
 	onOpen: () => void
 }) {
 	const [collapsed, setCollapsed] = useState(true)
+	// 'idle' = working, 'confirm' = "Stop?" inside the pill, 'stopping' = 5s grace
+	// label after confirm. Server-side `stopping` status also forces this view.
+	const [stopUi, setStopUi] = useState<'idle' | 'confirm' | 'stopping'>('idle')
+	const confirmBtnRef = useRef<HTMLButtonElement>(null)
 	const { data: actor } = useActor(session.actorId)
 	const { data: logs } = useSessionLogs(session.id, workspaceId, true, { live: true })
 	const stopMutation = useStopSession(workspaceId)
@@ -77,41 +95,115 @@ function ActiveCard({
 	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
 	const activities = useMemo(() => extractSemanticActivities(logs ?? []), [logs])
 
-	const label = idle
+	// Sync the local UI with the server-reported `stopping` so a stop initiated
+	// elsewhere (a second tab, the SessionDetailPanel) still renders the grace.
+	useEffect(() => {
+		if (session.status === 'stopping' && stopUi !== 'stopping') setStopUi('stopping')
+	}, [session.status, stopUi])
+
+	// Esc cancels the inline confirm — no escape from the in-progress stop.
+	useEffect(() => {
+		if (stopUi !== 'confirm') return
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') setStopUi('idle')
+		}
+		window.addEventListener('keydown', onKey)
+		// Move keyboard focus to the confirm button so Enter/Space resolves
+		// the decision without round-tripping through the mouse.
+		confirmBtnRef.current?.focus()
+		return () => window.removeEventListener('keydown', onKey)
+	}, [stopUi])
+
+	// Auto-drop the local `Stopping…` after the 5s grace if the server hasn't
+	// re-fetched a terminal status yet. The next SSE invalidation will replace
+	// this card with TerminalCard; this timer keeps us honest if SSE lags.
+	useEffect(() => {
+		if (stopUi !== 'stopping') return
+		const t = setTimeout(() => setStopUi('idle'), STOP_GRACE_MS)
+		return () => clearTimeout(t)
+	}, [stopUi])
+
+	const isStopping = stopUi === 'stopping' || session.status === 'stopping'
+	const isConfirming = stopUi === 'confirm'
+
+	const workingLabel = idle
 		? `${actor?.name ?? 'Agent'} is waiting`
 		: `${actor?.name ?? 'Agent'} is working`
+	const headerLabel = isStopping ? 'Stopping…' : workingLabel
+
+	const onConfirmStop = () => {
+		setStopUi('stopping')
+		stopMutation.mutate(session.id)
+	}
 
 	return (
 		<div className="rounded-md border border-border bg-secondary/30 animate-in fade-in slide-in-from-bottom-1 duration-200">
 			{/* Header — pulsing indicator renders from mount without waiting for logs */}
 			<div className="flex items-center gap-2 px-3 py-2">
-				<span className={cn('shrink-0', idle ? 'text-muted-foreground' : 'text-primary')}>
-					{idle ? <Clock size={14} /> : <PulsingDots />}
+				<span
+					className={cn(
+						'shrink-0',
+						isStopping ? 'text-muted-foreground' : idle ? 'text-muted-foreground' : 'text-primary',
+					)}
+				>
+					{isStopping ? (
+						<Loader2 size={14} className="animate-spin" />
+					) : idle ? (
+						<Clock size={14} />
+					) : (
+						<PulsingDots />
+					)}
 				</span>
 				{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
-				<span className="text-sm font-medium shrink-0">{label}</span>
-				{preview && (
+				<span className="text-sm font-medium shrink-0">{headerLabel}</span>
+				{!isStopping && preview && (
 					<span className="text-sm text-muted-foreground truncate min-w-0 flex-1">{preview}</span>
 				)}
 				<div className="ml-auto shrink-0 flex items-center gap-0.5">
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation()
-							stopMutation.mutate(session.id)
-						}}
-						disabled={stopMutation.isPending}
-						className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
-						aria-label="Stop session"
-						title="Stop session"
-					>
-						{stopMutation.isPending ? (
-							<Loader2 size={12} className="animate-spin" />
-						) : (
-							<Square size={12} />
-						)}
-					</button>
-					{activities.length > 0 && (
+					{isConfirming ? (
+						<>
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation()
+									onConfirmStop()
+								}}
+								className="rounded px-2 py-0.5 text-xs font-medium text-error hover:bg-secondary transition-colors"
+								aria-label="Confirm stop session"
+								ref={confirmBtnRef}
+							>
+								Stop?
+							</button>
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation()
+									setStopUi('idle')
+								}}
+								className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+								aria-label="Cancel stop"
+							>
+								Cancel
+							</button>
+						</>
+					) : (
+						!isStopping && (
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation()
+									setStopUi('confirm')
+								}}
+								disabled={stopMutation.isPending}
+								className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+								aria-label="Stop session"
+								title="Stop session"
+							>
+								<Square size={12} />
+							</button>
+						)
+					)}
+					{activities.length > 0 && !isConfirming && !isStopping && (
 						<button
 							type="button"
 							onClick={(e) => {
@@ -139,7 +231,7 @@ function ActiveCard({
 			</div>
 
 			{/* Semantic activity checklist — visible when expanded */}
-			{!collapsed && activities.length > 0 && (
+			{!collapsed && !isConfirming && !isStopping && activities.length > 0 && (
 				<div className="border-t border-border px-3 py-2 flex flex-col gap-1">
 					{activities.map((activity, idx) => (
 						<ActivityRow
@@ -242,24 +334,54 @@ function TerminalCard({
 	const { data: actor } = useActor(session.actorId)
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const status = getTerminalStatus(session.status)
+	const canRestart = session.status === 'stopped' || session.status === 'failed'
+	const isSuperseded = session.status === 'superseded'
 
+	return (
+		<div
+			className={cn(
+				'flex items-center gap-2 w-full rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors',
+				isSuperseded && 'opacity-70',
+			)}
+		>
+			<button
+				type="button"
+				onClick={onOpen}
+				className="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer"
+			>
+				<status.Icon size={14} className={cn('shrink-0', status.iconClass)} />
+				{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
+				<span className="text-sm font-medium shrink-0">{status.label}</span>
+				<span className="text-sm text-muted-foreground shrink-0 truncate min-w-0 flex-1">
+					{isSuperseded ? '· Superseded by newer reply' : '· view session logs'}
+				</span>
+				{duration && (
+					<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
+				)}
+				<ChevronRight size={14} className={cn('shrink-0 text-muted-foreground')} />
+			</button>
+			{canRestart && <RestartChipSlot />}
+		</div>
+	)
+}
+
+/**
+ * Renders the disabled Restart affordance on stopped/failed pills. T5 wires
+ * the actual mutation; we ship the slot now so the stopped pill has the
+ * right shape from day one and the bet's first cheapest test (this task)
+ * doesn't need a follow-up UI commit.
+ */
+function RestartChipSlot() {
 	return (
 		<button
 			type="button"
-			onClick={onOpen}
-			className="flex items-center gap-2 w-full text-left rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors cursor-pointer"
+			disabled
+			title="Restart (coming soon)"
+			aria-label="Restart session"
+			className="shrink-0 inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground bg-transparent opacity-60 cursor-not-allowed"
 		>
-			<status.Icon size={14} className={cn('shrink-0', status.iconClass)} />
-			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
-			<span className="text-sm font-medium shrink-0">{status.label}</span>
-			<span className="text-sm text-muted-foreground shrink-0">· view session logs</span>
-			{duration && (
-				<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
-			)}
-			<ChevronRight
-				size={14}
-				className={cn('shrink-0 text-muted-foreground', duration ? '' : 'ml-auto')}
-			/>
+			<RotateCcw size={11} />
+			<span>Restart</span>
 		</button>
 	)
 }
@@ -273,5 +395,9 @@ function getTerminalStatus(status: SessionResponse['status']): {
 	if (status === 'timeout') return { Icon: Clock, label: 'Timed out', iconClass: 'text-error' }
 	if (status === 'paused')
 		return { Icon: Clock, label: 'Paused', iconClass: 'text-muted-foreground' }
+	if (status === 'stopped')
+		return { Icon: Square, label: 'Stopped', iconClass: 'text-muted-foreground' }
+	if (status === 'superseded')
+		return { Icon: CheckCircle2, label: 'Superseded', iconClass: 'text-muted-foreground' }
 	return { Icon: CheckCircle2, label: 'Finished', iconClass: 'text-success' }
 }

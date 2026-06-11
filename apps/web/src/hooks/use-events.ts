@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { trackCommentPosted } from '../lib/analytics'
-import { type CreateCommentInput, type EventResponse, type ObjectResponse, api } from '../lib/api'
+import {
+	type CreateCommentInput,
+	type EventResponse,
+	type ObjectResponse,
+	type ResendCommentInput,
+	api,
+} from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useEvents(workspaceId: string, filters?: Record<string, string>) {
@@ -50,6 +56,26 @@ export function useCreateComment(workspaceId: string, entityId: string) {
 		onSuccess: (_result, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
 			trackCommentPostedFor(queryClient, entityId, variables, null)
+		},
+	})
+}
+
+/**
+ * Wire-up for T2's `Save & restart agent` button: edits the comment (optional)
+ * and restarts the agent reply in one call. Backend takes the prior mention
+ * session and either delivers a new turn to the live session or supersedes it
+ * with a fresh run — both result in the timeline refreshing the mention card.
+ */
+export function useResendComment(workspaceId: string, entityId: string, eventId: number) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: ResendCommentInput) => api.events.resend(workspaceId, eventId, data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.byMentionObject(workspaceId, entityId),
+			})
 		},
 	})
 }

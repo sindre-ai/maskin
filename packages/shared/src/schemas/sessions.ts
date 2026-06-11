@@ -11,8 +11,31 @@ export const sessionStatusSchema = z.enum([
 	'completed',
 	'failed',
 	'timeout',
+	// Transitional state during user-initiated stop: SIGTERM has been sent
+	// and the write-gate middleware is now rejecting agent-attributed writes
+	// from this session with 409. Terminal once handleCompletion runs.
+	'stopping',
+	// Terminal state for a session that was stopped by the user (distinct from
+	// 'failed', which still means non-zero exit code from a non-stop cause).
+	'stopped',
+	// Terminal state for a session whose reply was replaced by a newer run on
+	// the same thread (T3/T5 — wired here so the write-gate's terminal-status
+	// list and the type stay aligned across the bet).
+	'superseded',
 ])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
+
+/** Session statuses for which agent-attributed writes are rejected by the
+ * write-gate middleware. Used by the gate (which fails closed) and by
+ * `stopSession` / `handleCompletion` to keep the boundary in one place. */
+export const SESSION_WRITE_GATED_STATUSES = [
+	'stopping',
+	'stopped',
+	'failed',
+	'completed',
+	'timeout',
+	'superseded',
+] as const satisfies readonly SessionStatus[]
 
 export const sessionRuntimeSchema = z.enum(['claude-code', 'codex', 'custom'])
 export type SessionRuntime = z.infer<typeof sessionRuntimeSchema>
@@ -204,5 +227,9 @@ export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
+	// Set on the prior session when a resend creates a new run against the
+	// edited message state. Points to the new session id so UI surfaces can
+	// follow the chain without scanning every event.
+	superseded_by: z.string().uuid().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

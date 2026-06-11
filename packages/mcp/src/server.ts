@@ -151,6 +151,14 @@ async function apiFetch(
 	if (options?.idempotencyKey) {
 		headers['Idempotency-Key'] = options.idempotencyKey
 	}
+	// Forward the session id when running inside an agent container — the API
+	// uses this to fail closed on writes from a stopped/superseded session.
+	// `MASKIN_SESSION_ID` is set by SessionManager.launchContainer; absent for
+	// human-CLI use of the MCP, which is correct (writes go ungated).
+	const sessionId = process.env.MASKIN_SESSION_ID
+	if (sessionId) {
+		headers['X-Maskin-Session-Id'] = sessionId
+	}
 
 	const response = await fetch(url, {
 		method,
