@@ -181,6 +181,12 @@ describe('objectsFilterSchema', () => {
 		expect(() => objectsFilterSchema.parse({})).toThrow()
 	})
 
+	it('rejects filter with only empty strings', () => {
+		expect(() => objectsFilterSchema.parse({ status: '' })).toThrow()
+		expect(() => objectsFilterSchema.parse({ owner: '' })).toThrow()
+		expect(() => objectsFilterSchema.parse({ ids: '' })).toThrow()
+	})
+
 	it('accepts filter with q', () => {
 		const result = objectsFilterSchema.parse({ q: 'cleanup' })
 		expect(result.q).toBe('cleanup')

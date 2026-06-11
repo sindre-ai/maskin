@@ -42,9 +42,9 @@ export const objectsFilterSchema = z
 		(f) =>
 			f.q !== undefined ||
 			f.type !== undefined ||
-			f.status !== undefined ||
-			f.owner !== undefined ||
-			f.ids !== undefined,
+			Boolean(f.status) ||
+			Boolean(f.owner) ||
+			Boolean(f.ids),
 		{
 			message: 'filter must include at least one of q, type, status, owner, ids',
 		},
