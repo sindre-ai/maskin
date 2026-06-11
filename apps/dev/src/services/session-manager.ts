@@ -20,7 +20,7 @@ import {
 } from '@maskin/db/schema'
 import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
+import { and, count as countFn, desc, eq, inArray, lt, ne, or } from 'drizzle-orm'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -1152,6 +1152,39 @@ export class SessionManager extends EventEmitter {
 		setTimeout(poll, 2000)
 	}
 
+	/** Session statuses that count as "the agent is still doing work". */
+	private static readonly ACTIVE_SESSION_STATUSES = [
+		'pending',
+		'starting',
+		'queued',
+		'running',
+		'snapshotting',
+	] as const
+
+	/**
+	 * True if the actor has an active session other than `excludeSessionId`.
+	 * Used to avoid clobbering agent-level `agentState` when one of several
+	 * concurrent sessions transitions — the agent should only flip to a
+	 * terminal/paused state once its last active session does.
+	 */
+	private async hasOtherActiveSessions(
+		actorId: string,
+		excludeSessionId: string,
+	): Promise<boolean> {
+		const [other] = await this.db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.actorId, actorId),
+					ne(sessions.id, excludeSessionId),
+					inArray(sessions.status, SessionManager.ACTIVE_SESSION_STATUSES),
+				),
+			)
+			.limit(1)
+		return Boolean(other)
+	}
+
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
@@ -1271,6 +1304,28 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Sync agentState on the actor so the agents overview reflects terminal status.
+		// completed → idle (agent finished cleanly), failed → failed (needs attention).
+		// Skip if the agent still has other active sessions, so one finishing
+		// session doesn't prematurely flip an agent that's still working.
+		try {
+			if (!(await this.hasOtherActiveSessions(session.actorId, sessionId))) {
+				await this.db
+					.update(actors)
+					.set({
+						agentState: status === 'completed' ? 'idle' : 'failed',
+						agentStateUpdatedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(actors.id, session.actorId))
+			}
+		} catch (err) {
+			logger.warn('Failed to sync agentState after session completion', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		try {
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
@@ -1385,6 +1440,20 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, session.id))
 
+			// Only sync the agent to idle if this was its last active session.
+			if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
+				await this.db
+					.update(actors)
+					.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
+					.where(eq(actors.id, session.actorId))
+					.catch((err) =>
+						logger.warn('Failed to sync agentState after session timeout', {
+							sessionId: session.id,
+							error: String(err),
+						}),
+					)
+			}
+
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
@@ -1465,9 +1534,24 @@ export class SessionManager extends EventEmitter {
 			}
 
 			logger.info(`Auto-pausing idle session: ${session.id}`)
-			this.pauseSession(session.id).catch((err) =>
-				logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
-			)
+			this.pauseSession(session.id)
+				.then(async () => {
+					// Only reflect paused at the agent level if no other session is active.
+					if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
+					await this.db
+						.update(actors)
+						.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
+						.where(eq(actors.id, session.actorId))
+						.catch((err) =>
+							logger.warn('Failed to sync agentState after auto-pause', {
+								sessionId: session.id,
+								error: String(err),
+							}),
+						)
+				})
+				.catch((err) =>
+					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+				)
 		}
 
 		// 3. Archive old paused sessions (7 days)

@@ -314,7 +314,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
@@ -347,7 +347,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `systemPrompt`, which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -362,7 +362,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			'Get an actor by ID — returns the full record including `description` (short one-liner) and `systemPrompt` (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their system prompt and tailor your reply.',
+			'Get an actor by ID — returns the full record including `description` (short one-liner) and `system_prompt` / instructions (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 		}),
@@ -598,7 +598,7 @@ export const tools = {
 	},
 	get_file: {
 		description:
-			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. Use this when you need to read, summarise, or hand the URL to a user.',
+			'Get a single file with its content and a viewer URL. The response includes an `encoding` field: "utf8" for text MIME types (markdown, HTML, JSON, code) means `content` is the raw string; "base64" for binary types means `content` is base64-encoded bytes. The response also includes an `annotations` array — pinned review comments humans left on the rendered file, each with a CSS `selector` and normalized `bounds` identifying the element, plus the human\'s `comment`. Read these to see exactly what a reviewer flagged and where. Use this when you need to read, summarise, act on review feedback, or hand the URL to a user.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),

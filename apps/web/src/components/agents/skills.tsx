@@ -306,10 +306,10 @@ function AttachedSkillRow({
 	onRemove: () => void
 }) {
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
 			<Library className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground">{skill.name}</p>
+				<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
 				{skill.description && (
 					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
 				)}
@@ -317,7 +317,7 @@ function AttachedSkillRow({
 			<Button
 				size="sm"
 				variant="ghost"
-				className="text-muted-foreground"
+				className="text-muted-foreground shrink-0"
 				onClick={onRemove}
 				aria-label={`Remove ${skill.name}`}
 			>
@@ -339,16 +339,16 @@ function SkillCard({
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
 			<BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground">{skill.name}</p>
+				<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
 				{skill.description && (
 					<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
 				)}
 			</div>
 			{confirmDelete ? (
-				<div className="flex items-center gap-1">
+				<div className="flex items-center gap-1 shrink-0">
 					<Button size="sm" variant="destructive" onClick={onDelete}>
 						Delete
 					</Button>
@@ -357,7 +357,7 @@ function SkillCard({
 					</Button>
 				</div>
 			) : (
-				<div className="flex items-center gap-1">
+				<div className="flex items-center gap-1 shrink-0">
 					<Button
 						size="icon"
 						variant="ghost"

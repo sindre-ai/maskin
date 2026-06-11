@@ -15,6 +15,7 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	failed: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
 	paused: { bg: 'bg-status-paused-bg', text: 'text-status-paused-text' },
 	discarded: { bg: 'bg-status-discarded-bg', text: 'text-status-discarded-text' },
+	in_review: { bg: 'bg-status-in_review-bg', text: 'text-status-in_review-text' },
 	pending: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	starting: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	running: { bg: 'bg-status-active-bg', text: 'text-status-active-text' },

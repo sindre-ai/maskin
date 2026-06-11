@@ -232,6 +232,14 @@ export const api = {
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
 		reset: (id: string, workspaceId: string) =>
 			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<ActorResponse>(`/actors/${id}/pause`, { method: 'POST', workspaceId }),
+		run: (id: string, workspaceId: string, body?: RunAgentInput) =>
+			request<ActorResponse>(`/actors/${id}/run`, {
+				method: 'POST',
+				body: body ?? {},
+				workspaceId,
+			}),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
 	},
@@ -760,6 +768,10 @@ export interface UpdateActorInput {
 	llm_config?: Record<string, unknown>
 }
 
+export interface RunAgentInput {
+	action_prompt?: string
+}
+
 export interface WorkspaceResponse {
 	id: string
 	name: string
@@ -956,10 +968,20 @@ export interface FileListItem {
 	updatedAt: string
 }
 
+export interface FileAnnotation {
+	id: string
+	pinNumber?: number
+	selector: string
+	bounds: { x: number; y: number; w: number; h: number }
+	comment: string
+	position?: { x: number; y: number }
+}
+
 export interface FileDetail extends FileListItem {
 	content: string
 	encoding: 'base64' | 'utf8'
 	url: string
+	annotations: FileAnnotation[]
 }
 
 export interface CreateFileInput {
@@ -976,6 +998,7 @@ export interface UpdateFileInput {
 	mime_type?: string
 	content?: string
 	encoding?: 'base64' | 'utf8'
+	annotations?: FileAnnotation[]
 }
 
 export interface SessionConfigInput {
