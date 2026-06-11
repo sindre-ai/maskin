@@ -1,26 +1,27 @@
-import { ChatTranscript } from '@/components/chat/chat-transcript'
-import { SelectionChips } from '@/components/chat/selection-chips'
+import { SelectionChips } from '@/components/sindre/selection-chips'
+import { SindreTranscript } from '@/components/sindre/sindre-transcript'
 import {
 	type SlashKindId,
 	SlashPicker,
 	type SlashPickerResult,
-} from '@/components/chat/slash-picker'
+} from '@/components/sindre/slash-picker'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useChatOneShot } from '@/hooks/use-chat-one-shot'
-import { useChatSession } from '@/hooks/use-chat-session'
-import type { SessionInputAttachment } from '@/lib/api'
-import {
-	type ChatSelection,
-	type ChatSelectionAction,
-	type ChatSelectionNotification,
-	type ChatSelectionObject,
-	EMPTY_CHAT_SELECTION,
-	buildOneShotActionPrompt,
-} from '@/lib/chat-selection'
-import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
+import { useConversationMessages } from '@/hooks/use-conversations'
+import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
+import { useSindreSession } from '@/hooks/use-sindre-session'
+import type { MessageResponse, SessionInputAttachment } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import {
+	EMPTY_SINDRE_SELECTION,
+	type SindreSelection,
+	type SindreSelectionAction,
+	type SindreSelectionNotification,
+	type SindreSelectionObject,
+	buildOneShotActionPrompt,
+} from '@/lib/sindre-selection'
+import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
 import { Bot, Box, Paperclip, Send } from 'lucide-react'
 
 const FILE_MAX_BYTES = 1024 * 1024 // 1 MB per upload — plenty for markdown
@@ -32,46 +33,48 @@ import {
 	useCallback,
 	useEffect,
 	useImperativeHandle,
+	useMemo,
 	useRef,
 	useState,
 } from 'react'
 
 /**
- * Imperative API for parents that render a `<Chat>` but also need to
+ * Imperative API for parents that render a `<SindreChat>` but also need to
  * reach in to start a fresh conversation (e.g. the panel's `+` button).
  */
-export interface ChatHandle {
-	/** Stops the current chat container, clears local transcript + selection. */
+export interface SindreChatHandle {
+	/** Stops the current Sindre container, clears local transcript + selection. */
 	newChat: () => void
 }
 
-export type ChatSurface = 'sheet' | 'pulse-bar'
+export type SindreChatSurface = 'sheet' | 'pulse-bar'
 
-export interface ChatProps {
+export interface SindreChatProps {
 	workspaceId: string
-	agentActorId: string | null
-	surface: ChatSurface
+	sindreActorId: string | null
+	conversationId?: string | null
+	surface: SindreChatSurface
 	/**
 	 * Composer-level selection. When `selection.agent` is set, the next send is
 	 * routed to that agent as a one-shot session instead of the persistent
-	 * chat session. Defaults to an empty selection so existing callers keep
-	 * talking to the agent.
+	 * Sindre session. Defaults to an empty selection so existing callers keep
+	 * talking to Sindre.
 	 */
-	selection?: ChatSelection
+	selection?: SindreSelection
 	/**
 	 * Dispatches a reducer action against the caller's selection state.
 	 * Supplied alongside `selection` when the caller wants the chips' remove
-	 * X buttons to update state (see `chatSelectionReducer`). When omitted
+	 * X buttons to update state (see `sindreSelectionReducer`). When omitted
 	 * the chips still render but their remove buttons are inert.
 	 */
-	onDispatchSelection?: (action: ChatSelectionAction) => void
+	onDispatchSelection?: (action: SindreSelectionAction) => void
 	/**
 	 * When provided, replaces the internal send path so the caller can
 	 * intercept submit — e.g. the Pulse input bar opens the sheet and
 	 * forwards the message + selection there instead of sending directly.
 	 * Receives the composer content and the active selection snapshot.
 	 */
-	onSubmitOverride?: (content: string, selection: ChatSelection) => void | Promise<void>
+	onSubmitOverride?: (content: string, selection: SindreSelection) => void | Promise<void>
 	/**
 	 * When this transitions from `null` to a non-empty string, the composer
 	 * auto-submits that content via the normal send path exactly once. Used
@@ -87,27 +90,28 @@ export interface ChatProps {
 	 * the panel's "export conversation" menu without lifting the underlying
 	 * session hooks out of this component.
 	 */
-	onEventsChange?: (events: ChatEvent[]) => void
+	onEventsChange?: (events: SindreEvent[]) => void
 	className?: string
 }
 
 /**
- * Shared chat surface. Composes `<Transcript />`, `<Composer />`,
+ * Shared chat surface for Sindre. Composes `<Transcript />`, `<Composer />`,
  * and the `<SelectionChips />` row, hiding the transcript in `pulse-bar` mode
  * so the same component can render as an input-only bar at the top of the
  * Pulse page and as a full-height sheet on the right-side overlay.
  *
  * Send routing (task 31):
- * - `selection.agent` set → POST a one-shot session via `useChatOneShot`,
+ * - `selection.agent` set → POST a one-shot session via `useSindreOneShot`,
  *   passing the message + attached object context as the action_prompt, and
  *   streams that session's logs inline as a single turn.
- * - otherwise → forwards to the persistent session via
- *   `useChatSession`, attaching objects (if any) as first-class attachments.
+ * - otherwise → forwards to the persistent Sindre session via
+ *   `useSindreSession`, attaching objects (if any) as first-class attachments.
  */
-export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
+export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function SindreChat(
 	{
 		workspaceId,
-		agentActorId,
+		sindreActorId,
+		conversationId,
 		surface,
 		selection,
 		onDispatchSelection,
@@ -119,19 +123,34 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	},
 	ref,
 ) {
-	const activeSelection = selection ?? EMPTY_CHAT_SELECTION
+	const activeSelection = selection ?? EMPTY_SINDRE_SELECTION
 	const selectedAgent = activeSelection.agent
 	const selectedObjects = activeSelection.objects
 	const selectedNotifications = activeSelection.notifications
 	const selectedFiles = activeSelection.files
 
-	const session = useChatSession({ workspaceId, agentActorId })
-	const oneShot = useChatOneShot()
+	const sindre = useSindreSession({ workspaceId, sindreActorId, conversationId })
+	const oneShot = useSindreOneShot()
+
+	// Pre-load historical messages from the conversations API so the transcript
+	// shows past turns when the user resumes a conversation. Convert each message
+	// to a SindreEvent so the existing SindreTranscript can render them.
+	const { data: historyData } = useConversationMessages(workspaceId, conversationId ?? null)
+	const historicalEvents = useHistoricalEvents(historyData?.data ?? [], sindreActorId)
 
 	// Merge events from both sources while preserving arrival order, so a turn
 	// answered by the selected agent renders immediately after the user's last
-	// session turn (and vice versa).
-	const events = useMergedTranscript(workspaceId, session.events, oneShot.events)
+	// Sindre turn (and vice versa). Historical events from the conversations API
+	// are prepended so the user sees past turns on resume.
+	const liveEvents = useMergedTranscript(workspaceId, sindre.events, oneShot.events)
+	// Wrap in useMemo so the array reference only changes when inputs change.
+	// Without this, the spread always produces a new reference, which makes the
+	// onEventsChange useEffect fire every render → infinite setState loop.
+	const events = useMemo(() => {
+		if (historicalEvents.length > 0 && liveEvents.length === 0) return historicalEvents
+		if (liveEvents.length > 0) return [...historicalEvents, ...liveEvents]
+		return liveEvents
+	}, [historicalEvents, liveEvents])
 
 	useEffect(() => {
 		onEventsChange?.(events)
@@ -141,35 +160,33 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 		ref,
 		() => ({
 			newChat: () => {
-				// Front-end-only reset: the previous container keeps
+				// Front-end-only reset: the previous Sindre container keeps
 				// running so any in-flight work the user kicked off there
 				// completes in the background. The watchdog will pause it
 				// once it goes idle.
-				session.reset()
+				sindre.reset()
 				oneShot.clear()
 				onDispatchSelection?.({ type: 'clear_all' })
 			},
 		}),
-		[session, oneShot, onDispatchSelection],
+		[sindre, oneShot, onDispatchSelection],
 	)
 
 	const showTranscript = surface === 'sheet'
-	// Lazy bootstrap: the composer is usable whenever the agent actor is
+	// Lazy bootstrap: the composer is usable whenever the Sindre actor is
 	// present — the first send() call creates the container. Only disable
-	// while the session is actively booting (post-create, pre-
-	// running), in an error state, or finished.
-	// 'closed' is intentionally excluded: when the container exits the session
-	// is marked closed, but the user should still be able to send a new message
-	// — session.send() will bootstrap a fresh session in that case so the
-	// conversation continues seamlessly.
-	const sessionBlocked = session.status === 'starting' || session.status === 'error'
+	// while the Sindre session is actively booting (post-create, pre-
+	// running) or finished. An error (e.g. the container failed to start in
+	// time) keeps the composer enabled so the user can retry — the hook drops
+	// the dead session, so the next send re-bootstraps a fresh one.
+	const sindreBlocked = sindre.status === 'starting' || sindre.status === 'closed'
 	const oneShotBusy = oneShot.status === 'starting'
-	const disabled = selectedAgent ? oneShotBusy : sessionBlocked || !agentActorId
-	// Show the "Connecting to agent…" empty-state only while we're actively
+	const disabled = selectedAgent ? oneShotBusy : sindreBlocked || !sindreActorId
+	// Show the "Connecting to Sindre…" empty-state only while we're actively
 	// booting a session. `idle` is now the default-empty state and shouldn't
 	// trigger the connecting copy.
-	const starting = !selectedAgent && session.status === 'starting'
-	const error = selectedAgent ? oneShot.error : session.error
+	const starting = !selectedAgent && sindre.status === 'starting'
+	const error = selectedAgent ? oneShot.error : sindre.error
 
 	const [pendingTurn, setPendingTurn] = useState(false)
 	const pendingBaselineRef = useRef(0)
@@ -190,7 +207,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	// Release the spinner if the underlying session/one-shot hook flips to a
 	// terminal state without ever emitting a turn-progress event (e.g. stream
 	// died mid-turn, container crashed on boot).
-	const activeStatus = selectedAgent ? oneShot.status : session.status
+	const activeStatus = selectedAgent ? oneShot.status : sindre.status
 	useEffect(() => {
 		if (!pendingTurn) return
 		if (activeStatus === 'error' || activeStatus === 'closed') {
@@ -232,7 +249,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 					// forwards only `content` to the container's stdin (attachments
 					// are accepted by the schema for future first-class handling but
 					// discarded at runtime). Inline the attached objects, notifications,
-					// and uploaded files into the user turn so the agent actually sees
+					// and uploaded files into the user turn so Sindre actually sees
 					// what the user picked.
 					const enriched = hasContext
 						? buildOneShotActionPrompt(
@@ -242,7 +259,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 								selectedFiles,
 							)
 						: content
-					await session.send(enriched, attachments, content, displayAttachments)
+					await sindre.send(enriched, attachments, content, displayAttachments)
 				}
 				// Confirmed sent — clear the composer's chips so the same agent /
 				// objects / notifications don't ride along on the next turn. The
@@ -259,7 +276,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 			oneShot,
 			onSubmitOverride,
 			onDispatchSelection,
-			session,
+			sindre,
 			selectedAgent,
 			selectedObjects,
 			selectedNotifications,
@@ -284,7 +301,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 		setAutoSendError(null)
 		void handleSend(autoSendMessage).catch((err) => {
 			// Session/one-shot hook errors surface via hook.error. Synchronous
-			// throws before the hook sees the send (e.g. missing agentActorId,
+			// throws before the hook sees the send (e.g. missing sindreActorId,
 			// api.sessions.create reject) don't — capture them here so the user
 			// sees feedback instead of a silent no-op.
 			setAutoSendError(err instanceof Error ? err.message : 'Failed to send')
@@ -329,9 +346,10 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 			data-surface={surface}
 		>
 			{showTranscript && (
-				<ChatTranscript
+				<SindreTranscript
 					events={events}
 					starting={starting}
+					pending={pendingTurn}
 					error={error}
 					className="min-h-0 flex-1"
 				/>
@@ -356,7 +374,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	)
 })
 
-function isTurnProgressEvent(event: ChatEvent): boolean {
+function isTurnProgressEvent(event: SindreEvent): boolean {
 	return (
 		event.kind === 'text' ||
 		event.kind === 'tool_use' ||
@@ -366,66 +384,87 @@ function isTurnProgressEvent(event: ChatEvent): boolean {
 }
 
 /**
- * Merges the persistent session transcript with any one-shot turns in arrival
+ * Merges the persistent Sindre transcript with any one-shot turns in arrival
  * order. Both hooks expose append-only event arrays, so we track how many of
  * each we've already merged and push the tail of whichever produced new
  * events since the last render.
  */
 function useMergedTranscript(
 	workspaceId: string,
-	sessionEvents: ChatEvent[],
-	oneShotEvents: ChatEvent[],
-): ChatEvent[] {
-	const [merged, setMerged] = useState<ChatEvent[]>([])
-	const sessionSeenRef = useRef(0)
+	sindreEvents: SindreEvent[],
+	oneShotEvents: SindreEvent[],
+): SindreEvent[] {
+	const [merged, setMerged] = useState<SindreEvent[]>([])
+	const sindreSeenRef = useRef(0)
 	const oneShotSeenRef = useRef(0)
 	const workspaceRef = useRef(workspaceId)
 
 	useEffect(() => {
 		if (workspaceRef.current === workspaceId) return
 		workspaceRef.current = workspaceId
-		sessionSeenRef.current = 0
+		sindreSeenRef.current = 0
 		oneShotSeenRef.current = 0
 		setMerged([])
 	}, [workspaceId])
 
 	// Handle upstream resets — e.g. the panel's "+" button which calls
-	// session.reset() + oneShot.clear() to start a fresh conversation, or a
+	// sindre.reset() + oneShot.clear() to start a fresh conversation, or a
 	// workspace switch. When either source shrinks below what we've already
 	// merged, rebuild `merged` from the current state of both sources. In the
 	// common case both reset together so `merged` ends up empty; in the rare
 	// single-side reset we lose strict interleaving of the remaining source,
 	// which is acceptable.
 	useEffect(() => {
-		if (sessionEvents.length < sessionSeenRef.current) {
-			sessionSeenRef.current = sessionEvents.length
+		if (sindreEvents.length < sindreSeenRef.current) {
+			sindreSeenRef.current = sindreEvents.length
 			oneShotSeenRef.current = oneShotEvents.length
-			setMerged([...sessionEvents, ...oneShotEvents])
+			setMerged([...sindreEvents, ...oneShotEvents])
 			return
 		}
-		if (sessionEvents.length === sessionSeenRef.current) return
-		const fresh = sessionEvents.slice(sessionSeenRef.current)
-		sessionSeenRef.current = sessionEvents.length
+		if (sindreEvents.length === sindreSeenRef.current) return
+		const fresh = sindreEvents.slice(sindreSeenRef.current)
+		sindreSeenRef.current = sindreEvents.length
 		setMerged((prev) => prev.concat(fresh))
-	}, [sessionEvents, oneShotEvents])
+	}, [sindreEvents, oneShotEvents])
 
 	useEffect(() => {
 		if (oneShotEvents.length < oneShotSeenRef.current) {
 			oneShotSeenRef.current = oneShotEvents.length
-			sessionSeenRef.current = sessionEvents.length
-			setMerged([...sessionEvents, ...oneShotEvents])
+			sindreSeenRef.current = sindreEvents.length
+			setMerged([...sindreEvents, ...oneShotEvents])
 			return
 		}
 		if (oneShotEvents.length === oneShotSeenRef.current) return
 		const fresh = oneShotEvents.slice(oneShotSeenRef.current)
 		oneShotSeenRef.current = oneShotEvents.length
 		setMerged((prev) => prev.concat(fresh))
-	}, [oneShotEvents, sessionEvents])
+	}, [oneShotEvents, sindreEvents])
 
 	return merged
 }
 
-function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[] | undefined {
+/**
+ * Converts persisted conversation messages (from the conversations API) into
+ * typed SindreEvent objects so SindreTranscript can render them alongside live
+ * session events. Messages authored by the Sindre actor become `text` events;
+ * all others become `user` events.
+ */
+function useHistoricalEvents(msgs: MessageResponse[], sindreActorId: string | null): SindreEvent[] {
+	// useMemo so the array reference only changes when data changes, not on every render.
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	return useMemo(() => {
+		if (msgs.length === 0) return []
+		// Messages are newest-first from the API; reverse for chronological display.
+		return [...msgs].reverse().map((m): SindreEvent => {
+			if (sindreActorId && m.actorId === sindreActorId) {
+				return { kind: 'text', text: m.content }
+			}
+			return { kind: 'user', text: m.content }
+		})
+	}, [msgs, sindreActorId])
+}
+
+function buildDisplayAttachments(selection: SindreSelection): UserAttachmentView[] | undefined {
 	const out: UserAttachmentView[] = []
 	if (selection.agent) {
 		out.push({ kind: 'agent', id: selection.agent.id, name: selection.agent.name ?? null })
@@ -443,8 +482,8 @@ function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[]
 }
 
 function selectionToAttachments(
-	objects: ChatSelectionObject[],
-	notifications: ChatSelectionNotification[],
+	objects: SindreSelectionObject[],
+	notifications: SindreSelectionNotification[],
 ): SessionInputAttachment[] | undefined {
 	if (objects.length === 0 && notifications.length === 0) return undefined
 	const attachments: SessionInputAttachment[] = [
@@ -454,34 +493,35 @@ function selectionToAttachments(
 	return attachments
 }
 
-function computePlaceholder(surface: ChatSurface, agentName: string | null | undefined): string {
+function computePlaceholder(
+	surface: SindreChatSurface,
+	agentName: string | null | undefined,
+): string {
 	if (agentName && agentName.trim().length > 0) {
 		return `Message ${agentName.trim()}`
 	}
-	return surface === 'pulse-bar' ? 'Ask anything…' : 'Message agents'
+	return surface === 'pulse-bar' ? 'Ask Sindre anything…' : 'Message Sindre'
 }
 
-export interface ComposerProps {
+interface ComposerProps {
 	workspaceId: string
 	onSend: (content: string) => Promise<void>
 	disabled: boolean
 	pending: boolean
-	surface: ChatSurface
+	surface: SindreChatSurface
 	placeholder: string
-	selection: ChatSelection
-	onDispatchSelection?: (action: ChatSelectionAction) => void
+	selection: SindreSelection
+	onDispatchSelection?: (action: SindreSelectionAction) => void
 	onRemoveAgent: () => void
 	onRemoveObject: (id: string) => void
 	onRemoveNotification: (id: string) => void
 	onRemoveFile: (name: string) => void
 	externalError?: string | null
 	onDismissExternalError?: () => void
-	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
-	textareaLabel?: string
 }
 
 /**
- * Chat composer. Enter sends, Shift+Enter inserts a newline, IME
+ * Chat composer for Sindre. Enter sends, Shift+Enter inserts a newline, IME
  * composition swallows Enter. The textarea auto-resizes up to `max-h-40` and
  * scrolls beyond that. The send button shows a Spinner (and stays disabled)
  * while a turn is pending — i.e. after a send, until the first assistant
@@ -497,7 +537,7 @@ export interface ComposerProps {
  * a pick is committed we delete only the `/` that triggered the picker (if
  * still present) so the rest of the user's in-progress message is preserved.
  */
-export function Composer({
+function Composer({
 	workspaceId,
 	onSend,
 	disabled,
@@ -512,7 +552,6 @@ export function Composer({
 	onRemoveFile,
 	externalError,
 	onDismissExternalError,
-	textareaLabel,
 }: ComposerProps) {
 	const [value, setValue] = useState('')
 	const [sending, setSending] = useState(false)
@@ -636,7 +675,7 @@ export function Composer({
 						file: { name: file.name, content, sizeBytes: file.size },
 					})
 				} catch (err) {
-					console.error(`[chat] failed to read ${file.name}`, err)
+					console.error(`[sindre] failed to read ${file.name}`, err)
 					failures.push(`Failed to read ${file.name}`)
 				}
 			}
@@ -689,7 +728,6 @@ export function Composer({
 					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
 					disabled={disabled}
 					rows={1}
-					aria-label={textareaLabel}
 				/>
 				{sendError || externalError ? (
 					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">

@@ -35,24 +35,24 @@ vi.mock('@/lib/auth', () => ({
 	getApiKey: () => 'test-api-key',
 }))
 
-import { useChatSession } from '@/hooks/use-chat-session'
+import { useSindreSession } from '@/hooks/use-sindre-session'
 import type { SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
-const agentActorId = 'actor-agent'
+const sindreActorId = 'actor-sindre'
 
 function buildSession(id: string): SessionResponse {
 	return {
 		id,
 		workspaceId,
-		actorId: agentActorId,
+		actorId: sindreActorId,
 		triggerId: null,
 		conversationId: null,
 		status: 'running',
 		containerId: null,
-		actionPrompt: 'Workspace Coach interactive chat',
+		actionPrompt: 'Sindre interactive chat',
 		config: { interactive: true },
 		result: null,
 		snapshotPath: null,
@@ -79,9 +79,9 @@ afterEach(() => {
 	localStorage.clear()
 })
 
-describe('useChatSession — bootstrap', () => {
+describe('useSindreSession — bootstrap', () => {
 	it('does not create a session on mount — lazy bootstrap waits for send()', () => {
-		renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+		renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
 		expect(api.sessions.create).not.toHaveBeenCalled()
@@ -92,7 +92,7 @@ describe('useChatSession — bootstrap', () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-new'))
 		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
-		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
 
@@ -102,8 +102,8 @@ describe('useChatSession — bootstrap', () => {
 
 		expect(api.sessions.create).toHaveBeenCalledTimes(1)
 		expect(api.sessions.create).toHaveBeenCalledWith(workspaceId, {
-			actor_id: agentActorId,
-			action_prompt: 'Workspace Coach interactive chat',
+			actor_id: sindreActorId,
+			action_prompt: 'Sindre interactive chat',
 			config: { interactive: true },
 			auto_start: true,
 		})
@@ -111,8 +111,62 @@ describe('useChatSession — bootstrap', () => {
 		expect(result.current.sessionId).toBe('sess-new')
 	})
 
-	it('throws from send() when agentActorId is null', async () => {
-		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId: null }), {
+	it('keeps the user echo and drops the dead session when the container never reaches running', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-stuck'))
+		// Container transitions to a terminal status before running — waitForRunning
+		// throws, exercising the bootstrap-failure path.
+		vi.mocked(api.sessions.get).mockResolvedValue({
+			...buildSession('sess-stuck'),
+			status: 'failed',
+		})
+
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await expect(result.current.send('keep me')).rejects.toThrow(/before it could start/i)
+		})
+
+		expect(result.current.status).toBe('error')
+		// The user's message stays in the transcript so it's visible + copyable.
+		expect(result.current.events).toEqual([{ kind: 'user', text: 'keep me' }])
+		// The half-started session is dropped so the next send re-bootstraps fresh.
+		expect(result.current.sessionId).toBeNull()
+	})
+
+	it('echoes the user turn immediately, before the bootstrap resolves', async () => {
+		let resolveCreate: ((s: SessionResponse) => void) | null = null
+		vi.mocked(api.sessions.create).mockImplementation(
+			() =>
+				new Promise<SessionResponse>((resolve) => {
+					resolveCreate = resolve
+				}),
+		)
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		let sendPromise: Promise<void> = Promise.resolve()
+		act(() => {
+			sendPromise = result.current.send('early echo')
+		})
+
+		// The echo is present even though create() has not resolved yet.
+		await waitFor(() =>
+			expect(result.current.events).toEqual([{ kind: 'user', text: 'early echo' }]),
+		)
+
+		await act(async () => {
+			resolveCreate?.(buildSession('sess-late'))
+			await sendPromise
+		})
+	})
+
+	it('throws from send() when sindreActorId is null', async () => {
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId: null }), {
 			wrapper: TestWrapper,
 		})
 		await expect(result.current.send('hi')).rejects.toThrow(/not available/i)
@@ -122,7 +176,7 @@ describe('useChatSession — bootstrap', () => {
 	it('captures errors from session creation as the hook error', async () => {
 		vi.mocked(api.sessions.create).mockRejectedValue(new Error('boom'))
 
-		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
 
@@ -138,7 +192,7 @@ describe('useChatSession — bootstrap', () => {
 async function renderAndBootstrap() {
 	vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
 	vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
-	const hook = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+	const hook = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 		wrapper: TestWrapper,
 	})
 	// Trigger lazy bootstrap via send().
@@ -149,7 +203,7 @@ async function renderAndBootstrap() {
 	return hook
 }
 
-describe('useChatSession — SSE log stream', () => {
+describe('useSindreSession — SSE log stream', () => {
 	it('subscribes to the session log stream with auth + workspace headers', async () => {
 		await renderAndBootstrap()
 		expect(mockFetchEventSource).toHaveBeenCalledWith(
@@ -164,7 +218,7 @@ describe('useChatSession — SSE log stream', () => {
 		)
 	})
 
-	it('parses stdout lines through chat-stream and exposes them as events', async () => {
+	it('parses stdout lines through sindre-stream and exposes them as events', async () => {
 		const { result } = await renderAndBootstrap()
 		await act(async () => {
 			await lastFesInit?.onopen()
@@ -266,7 +320,7 @@ describe('useChatSession — SSE log stream', () => {
 	})
 })
 
-describe('useChatSession — send', () => {
+describe('useSindreSession — send', () => {
 	beforeEach(() => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
 	})
@@ -275,7 +329,7 @@ describe('useChatSession — send', () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
 		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
-		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
 
@@ -294,7 +348,7 @@ describe('useChatSession — send', () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
 		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
-		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
 
@@ -310,22 +364,22 @@ describe('useChatSession — send', () => {
 		)
 	})
 
-	it('throws when called without an agent actor', async () => {
-		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId: null }), {
+	it('throws when called without a Sindre actor', async () => {
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId: null }), {
 			wrapper: TestWrapper,
 		})
 		await expect(result.current.send('hi')).rejects.toThrow(/not available/i)
 	})
 })
 
-describe('useChatSession — reset & workspace switching', () => {
+describe('useSindreSession — reset & workspace switching', () => {
 	it('reset clears the session; the next send() creates a fresh one', async () => {
 		vi.mocked(api.sessions.create)
 			.mockResolvedValueOnce(buildSession('sess-old'))
 			.mockResolvedValueOnce(buildSession('sess-fresh'))
 		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
-		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+		const { result } = renderHook(() => useSindreSession({ workspaceId, sindreActorId }), {
 			wrapper: TestWrapper,
 		})
 		await act(async () => {
@@ -351,7 +405,7 @@ describe('useChatSession — reset & workspace switching', () => {
 		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
 
 		const { result, rerender } = renderHook(
-			({ wsId }) => useChatSession({ workspaceId: wsId, agentActorId }),
+			({ wsId }) => useSindreSession({ workspaceId: wsId, sindreActorId }),
 			{ wrapper: TestWrapper, initialProps: { wsId: 'ws-1' } },
 		)
 		await act(async () => {
@@ -367,46 +421,5 @@ describe('useChatSession — reset & workspace switching', () => {
 		})
 		expect(result.current.sessionId).toBe('sess-ws2')
 		expect(api.sessions.create).toHaveBeenCalledTimes(2)
-	})
-
-	it('bootstraps a fresh session on the next send when the previous session closed, preserving the transcript', async () => {
-		vi.mocked(api.sessions.create)
-			.mockResolvedValueOnce(buildSession('sess-old'))
-			.mockResolvedValueOnce(buildSession('sess-new'))
-		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
-
-		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
-			wrapper: TestWrapper,
-		})
-
-		await act(async () => {
-			await result.current.send('first')
-		})
-		expect(result.current.sessionId).toBe('sess-old')
-
-		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
-		await act(async () => {
-			await lastFesInit?.onopen()
-		})
-		// Server signals the session ended (idle timeout / container exit).
-		act(() => lastFesInit?.onmessage({ event: 'done', data: 'completed' }))
-		expect(result.current.status).toBe('closed')
-
-		// The composer is enabled while closed and the user keeps typing — the
-		// next send() must spin up a fresh session rather than POSTing to the
-		// dead one.
-		await act(async () => {
-			await result.current.send('second')
-		})
-
-		expect(api.sessions.create).toHaveBeenCalledTimes(2)
-		expect(result.current.sessionId).toBe('sess-new')
-		expect(api.sessions.input).toHaveBeenLastCalledWith(
-			'sess-new',
-			{ content: 'second' },
-			workspaceId,
-		)
-		// Transcript carries across the re-bootstrap.
-		expect(result.current.events.map((e: { kind: string }) => e.kind)).toEqual(['user', 'user'])
 	})
 })

@@ -151,6 +151,7 @@ export function buildSessionResponse(overrides: Partial<SessionResponse> = {}): 
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
 		triggerId: null,
+		conversationId: null,
 		status: 'running',
 		containerId: null,
 		actionPrompt: 'Do something',

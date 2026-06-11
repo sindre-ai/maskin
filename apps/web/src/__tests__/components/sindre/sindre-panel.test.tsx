@@ -1,7 +1,8 @@
-import { ChatPanel } from '@/components/chat/chat-panel'
-import type { UseChatOneShotResult } from '@/hooks/use-chat-one-shot'
-import type { UseChatSessionResult } from '@/hooks/use-chat-session'
-import { ChatProvider, useChat } from '@/lib/chat-context'
+import { SindrePanel } from '@/components/sindre/sindre-panel'
+import type { UseSindreOneShotResult } from '@/hooks/use-sindre-one-shot'
+import type { UseSindreSessionResult } from '@/hooks/use-sindre-session'
+import type { ConversationResponse } from '@/lib/api'
+import { SindreProvider, useSindre } from '@/lib/sindre-context'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -13,7 +14,7 @@ const mockSend = vi.fn(async () => {})
 const mockOneShotSend = vi.fn(async () => {})
 const mockOneShotClear = vi.fn()
 
-let mockHookResult: UseChatSessionResult = {
+let mockHookResult: UseSindreSessionResult = {
 	sessionId: null,
 	status: 'ready',
 	events: [],
@@ -22,7 +23,7 @@ let mockHookResult: UseChatSessionResult = {
 	reset: vi.fn(),
 }
 
-let mockOneShotResult: UseChatOneShotResult = {
+let mockOneShotResult: UseSindreOneShotResult = {
 	sessionId: null,
 	status: 'idle',
 	events: [],
@@ -31,12 +32,38 @@ let mockOneShotResult: UseChatOneShotResult = {
 	clear: mockOneShotClear,
 }
 
-vi.mock('@/hooks/use-chat-session', () => ({
-	useChatSession: () => mockHookResult,
+const mockConversation: ConversationResponse = {
+	id: 'conv-1',
+	type: 'dm',
+	title: 'Test Conversation',
+	workspaceId: 'ws-1',
+	lastMessagePreview: null,
+	lastActivityAt: null,
+	createdAt: new Date().toISOString(),
+	participantCount: 0,
+	unreadCount: 0,
+	participants: [],
+}
+
+let mockConversationList: ConversationResponse[] = []
+const mockMarkRead = { mutate: vi.fn() }
+const mockCreateConversation = { mutate: vi.fn(), isPending: false }
+const mockUpdateTitle = { mutate: vi.fn() }
+
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversations: () => ({ data: mockConversationList, isLoading: false }),
+	useCreateConversation: () => mockCreateConversation,
+	useMarkConversationRead: () => mockMarkRead,
+	useUpdateConversationTitle: () => mockUpdateTitle,
+	useConversationMessages: () => ({ data: null }),
 }))
 
-vi.mock('@/hooks/use-chat-one-shot', () => ({
-	useChatOneShot: () => mockOneShotResult,
+vi.mock('@/hooks/use-sindre-session', () => ({
+	useSindreSession: () => mockHookResult,
+}))
+
+vi.mock('@/hooks/use-sindre-one-shot', () => ({
+	useSindreOneShot: () => mockOneShotResult,
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -69,6 +96,8 @@ beforeEach(() => {
 	mockSend.mockClear()
 	mockOneShotSend.mockClear()
 	mockOneShotClear.mockClear()
+	mockMarkRead.mutate.mockClear()
+	mockConversationList = []
 	mockHookResult = {
 		sessionId: null,
 		status: 'ready',
@@ -92,15 +121,15 @@ function Harness({ children }: { children: ReactNode }) {
 	const client = createTestQueryClient()
 	return (
 		<QueryClientProvider client={client}>
-			<ChatProvider workspaceId="ws-1">{children}</ChatProvider>
+			<SindreProvider workspaceId="ws-1">{children}</SindreProvider>
 		</QueryClientProvider>
 	)
 }
 
-type OpenerAttachments = Parameters<ReturnType<typeof useChat>['openWithContext']>[0]
+type OpenerAttachments = Parameters<ReturnType<typeof useSindre>['openWithContext']>[0]
 
 function Opener({ attachments }: { attachments?: OpenerAttachments }) {
-	const { setOpen, openWithContext } = useChat()
+	const { setOpen, openWithContext } = useSindre()
 	return (
 		<>
 			<button type="button" onClick={() => setOpen(true)}>
@@ -120,7 +149,7 @@ function OpenerWithMessage({
 	attachments?: OpenerAttachments
 	message: string
 }) {
-	const { openWithContext } = useChat()
+	const { openWithContext } = useSindre()
 	return (
 		<button type="button" onClick={() => openWithContext(attachments ?? [], message)}>
 			open-with-message
@@ -129,15 +158,15 @@ function OpenerWithMessage({
 }
 
 function PinState() {
-	const { pinned } = useChat()
+	const { pinned } = useSindre()
 	return <span data-testid="pin-state">{pinned ? 'pinned' : 'unpinned'}</span>
 }
 
-describe('ChatPanel', () => {
+describe('SindrePanel', () => {
 	it('starts collapsed so it acts like an overlay sheet by default', () => {
 		render(
 			<Harness>
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 		const panel = document.querySelector('[data-slot="sidebar-container"], [data-state]')
@@ -147,11 +176,11 @@ describe('ChatPanel', () => {
 		expect(stated ?? panel).not.toBeNull()
 	})
 
-	it('mounts Chat inside the panel when opened', async () => {
+	it('shows the conversation list when opened', async () => {
 		render(
 			<Harness>
 				<Opener />
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -159,15 +188,39 @@ describe('ChatPanel', () => {
 			screen.getByText('open-panel').click()
 		})
 
-		expect(await screen.findByPlaceholderText('Message agents')).toBeInTheDocument()
+		expect(await screen.findByText('Conversations')).toBeInTheDocument()
+		// Header icon button is present (footer button replaced by inline composer)
+		expect(screen.getAllByRole('button', { name: 'New conversation' })).toHaveLength(1)
 	})
 
-	it('auto-sends a pendingMessage forwarded via openWithContext and clears it', async () => {
+	it('shows SindreChat when a conversation is selected', async () => {
+		mockConversationList = [mockConversation]
+		const user = userEvent.setup()
 		render(
 			<Harness>
-				<Opener attachments={[]} />
+				<Opener />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
+			</Harness>,
+		)
+
+		act(() => {
+			screen.getByText('open-panel').click()
+		})
+
+		await screen.findByText('Conversations')
+		await user.click(screen.getByText('Test Conversation'))
+
+		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
+		expect(mockMarkRead.mutate).toHaveBeenCalledWith('conv-1')
+	})
+
+	it('auto-sends a pendingMessage when entering a conversation', async () => {
+		mockConversationList = [mockConversation]
+		const user = userEvent.setup()
+		render(
+			<Harness>
 				<OpenerWithMessage message="hey sindre" attachments={[]} />
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -175,13 +228,18 @@ describe('ChatPanel', () => {
 			screen.getByText('open-with-message').click()
 		})
 
-		await screen.findByPlaceholderText('Message agents')
+		await screen.findByText('Conversations')
+		await user.click(screen.getByText('Test Conversation'))
+		await screen.findByPlaceholderText('Message Sindre')
+
 		await waitFor(() =>
 			expect(mockSend).toHaveBeenCalledWith('hey sindre', undefined, 'hey sindre', undefined),
 		)
 	})
 
-	it('seeds selection from pendingAttachments and clears them on open', async () => {
+	it('seeds selection from pendingAttachments and renders chips in SindreChat', async () => {
+		mockConversationList = [mockConversation]
+		const user = userEvent.setup()
 		render(
 			<Harness>
 				<Opener
@@ -190,26 +248,31 @@ describe('ChatPanel', () => {
 						{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
 					]}
 				/>
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
 		act(() => {
 			screen.getByText('open-with-context').click()
 		})
+
+		await screen.findByText('Conversations')
+		await user.click(screen.getByText('Test Conversation'))
 
 		expect(await screen.findByPlaceholderText('Message Code Reviewer')).toBeInTheDocument()
 		expect(screen.getByText('Code Reviewer')).toBeInTheDocument()
 		expect(screen.getByText('Bet Alpha')).toBeInTheDocument()
 	})
 
-	it('seeds selection from a notification attachment and renders a chip (verification #9)', async () => {
+	it('seeds selection from a notification attachment and renders a chip', async () => {
+		mockConversationList = [mockConversation]
+		const user = userEvent.setup()
 		render(
 			<Harness>
 				<Opener
 					attachments={[{ kind: 'notification', id: 'notif-1', title: 'Build failed on main' }]}
 				/>
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -217,7 +280,10 @@ describe('ChatPanel', () => {
 			screen.getByText('open-with-context').click()
 		})
 
-		expect(await screen.findByPlaceholderText('Message agents')).toBeInTheDocument()
+		await screen.findByText('Conversations')
+		await user.click(screen.getByText('Test Conversation'))
+
+		expect(await screen.findByPlaceholderText('Message Sindre')).toBeInTheDocument()
 		expect(screen.getByText('Build failed on main')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Remove Build failed on main/ })).toBeInTheDocument()
 	})
@@ -228,7 +294,7 @@ describe('ChatPanel', () => {
 			<Harness>
 				<Opener />
 				<PinState />
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -241,8 +307,7 @@ describe('ChatPanel', () => {
 		await user.click(pinBtn)
 
 		expect(screen.getByTestId('pin-state')).toHaveTextContent('pinned')
-		expect(localStorage.getItem('maskin-chat-pinned')).toBe('true')
-		// After toggling, the button's label flips to the unpin affordance.
+		expect(localStorage.getItem('maskin-sindre-pinned')).toBe('true')
 		expect(screen.getByRole('button', { name: 'Unpin sidebar' })).toBeInTheDocument()
 	})
 
@@ -253,7 +318,7 @@ describe('ChatPanel', () => {
 				<button type="button" data-testid="outside">
 					outside
 				</button>
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -261,8 +326,7 @@ describe('ChatPanel', () => {
 			screen.getByText('open-panel').click()
 		})
 
-		// Panel is open (open state flipped) and unpinned by default.
-		await screen.findByPlaceholderText('Message agents')
+		await screen.findByText('Conversations')
 
 		act(() => {
 			screen.getByTestId('outside').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
@@ -281,7 +345,7 @@ describe('ChatPanel', () => {
 				<button type="button" data-testid="outside">
 					outside
 				</button>
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -289,7 +353,7 @@ describe('ChatPanel', () => {
 			screen.getByText('open-panel').click()
 		})
 
-		await screen.findByPlaceholderText('Message agents')
+		await screen.findByText('Conversations')
 		await user.click(screen.getByRole('button', { name: 'Pin sidebar' }))
 
 		act(() => {
@@ -305,7 +369,7 @@ describe('ChatPanel', () => {
 		render(
 			<Harness>
 				<Opener />
-				<ChatPanel workspaceId="ws-1" agentActorId="actor-agent" />
+				<SindrePanel workspaceId="ws-1" sindreActorId="actor-sindre" />
 			</Harness>,
 		)
 
@@ -313,7 +377,8 @@ describe('ChatPanel', () => {
 			screen.getByText('open-panel').click()
 		})
 
-		const closeBtn = await screen.findByRole('button', { name: 'Close chat' })
+		await screen.findByText('Conversations')
+		const closeBtn = screen.getByRole('button', { name: 'Close' })
 		await user.click(closeBtn)
 
 		await waitFor(() => {

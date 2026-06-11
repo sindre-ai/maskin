@@ -1,6 +1,13 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, sessionLogs, sessions } from '@maskin/db/schema'
+import {
+	events,
+	conversationParticipants,
+	conversations,
+	messages,
+	sessionLogs,
+	sessions,
+} from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	sessionInputSchema,
@@ -83,16 +90,36 @@ const createSessionRoute = createRoute({
 })
 
 app.openapi(createSessionRoute, (async (c) => {
+	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const isInteractive = body.config?.interactive === true
+
+	// For interactive sessions, resolve or create the linked conversation so
+	// user/assistant turns can be persisted to conversations.messages.
+	let conversationId = body.conversation_id ?? null
+	if (isInteractive && !conversationId) {
+		const [conv] = await db
+			.insert(conversations)
+			.values({ workspaceId, type: 'dm', title: 'New conversation' })
+			.returning()
+		if (conv) {
+			conversationId = conv.id
+			await db.insert(conversationParticipants).values([
+				{ conversationId: conv.id, actorId },
+				{ conversationId: conv.id, actorId: body.actor_id },
+			])
+		}
+	}
 
 	const session = await sessionManager.createSession(workspaceId, {
 		actorId: body.actor_id,
 		actionPrompt: body.action_prompt,
 		config: body.config,
 		triggerId: body.trigger_id,
+		conversationId: conversationId ?? undefined,
 		createdBy: actorId,
 		autoStart: body.auto_start,
 		sourceSessionId: body.source_session_id,
@@ -548,6 +575,7 @@ const inputSessionRoute = createRoute({
 app.openapi(inputSessionRoute, (async (c) => {
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -573,6 +601,25 @@ app.openapi(inputSessionRoute, (async (c) => {
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
 		return c.json(createApiError('BAD_REQUEST', message), 400)
+	}
+
+	// Persist user message to conversations.messages (fire-and-forget).
+	const { conversationId } = session
+	if (conversationId) {
+		db.insert(messages)
+			.values({ conversationId, actorId, content: body.content })
+			.then(() =>
+				db
+					.update(conversations)
+					.set({
+						lastMessagePreview: body.content.slice(0, 200),
+						lastActivityAt: new Date(),
+					})
+					.where(eq(conversations.id, conversationId)),
+			)
+			.catch((err) =>
+				logger.error('Failed to write user message to conversation', { error: String(err) }),
+			)
 	}
 
 	return c.json({ ok: true as const })

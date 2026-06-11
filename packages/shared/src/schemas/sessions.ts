@@ -88,6 +88,7 @@ export const createSessionSchema = z.object({
 	action_prompt: z.string().min(1),
 	config: sessionConfigSchema.partial().default({}),
 	trigger_id: z.string().uuid().optional(),
+	conversation_id: z.string().uuid().optional(),
 	auto_start: z.boolean().default(true),
 	source_session_id: z.string().uuid().optional(),
 })

@@ -31,7 +31,7 @@ vi.mock('@/lib/auth', () => ({
 	getApiKey: () => 'test-api-key',
 }))
 
-import { useChatOneShot } from '@/hooks/use-chat-one-shot'
+import { useSindreOneShot } from '@/hooks/use-sindre-one-shot'
 import type { SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
@@ -68,11 +68,11 @@ afterEach(() => {
 	lastFesInit = null
 })
 
-describe('useChatOneShot — send', () => {
+describe('useSindreOneShot — send', () => {
 	it('creates a one-shot session with message + attached-object context in action_prompt', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-one-shot'))
 
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		expect(result.current.status).toBe('idle')
 
@@ -99,7 +99,7 @@ describe('useChatOneShot — send', () => {
 	it('includes attached notifications in the action_prompt context block', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-notif'))
 
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		await act(async () => {
 			await result.current.send({
@@ -120,7 +120,7 @@ describe('useChatOneShot — send', () => {
 	it('skips the context block when there are no attached objects', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-bare'))
 
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		await act(async () => {
 			await result.current.send({
@@ -140,7 +140,7 @@ describe('useChatOneShot — send', () => {
 	it('subscribes to the session log stream with auth + workspace headers', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-x'))
 
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		await act(async () => {
 			await result.current.send({
@@ -163,10 +163,10 @@ describe('useChatOneShot — send', () => {
 		)
 	})
 
-	it('parses stdout lines through chat-stream and exposes them as events', async () => {
+	it('parses stdout lines through sindre-stream and exposes them as events', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-y'))
 
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		await act(async () => {
 			await result.current.send({
@@ -194,7 +194,7 @@ describe('useChatOneShot — send', () => {
 	it('sets status to closed when the SSE stream signals done', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-done'))
 
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		await act(async () => {
 			await result.current.send({
@@ -213,7 +213,7 @@ describe('useChatOneShot — send', () => {
 	it('captures errors from session creation as the hook error', async () => {
 		vi.mocked(api.sessions.create).mockRejectedValue(new Error('boom'))
 
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		let caught: unknown = null
 		await act(async () => {
@@ -235,7 +235,7 @@ describe('useChatOneShot — send', () => {
 	})
 
 	it('refuses to send without a selected agent id', async () => {
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		await expect(
 			act(async () => {
@@ -252,7 +252,7 @@ describe('useChatOneShot — send', () => {
 	it('clear() resets events, status, and sessionId', async () => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-z'))
 
-		const { result } = renderHook(() => useChatOneShot(), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useSindreOneShot(), { wrapper: TestWrapper })
 
 		await act(async () => {
 			await result.current.send({

@@ -23,10 +23,6 @@ vi.mock('@/lib/chat-context', () => ({
 	useChat: () => ({ setOpen: setChatOpen }),
 }))
 
-vi.mock('@/components/chat/conversation-drawer', () => ({
-	ConversationDrawer: () => null,
-}))
-
 vi.mock('@/components/ui/sidebar', () => ({
 	SidebarTrigger: ({ className }: { className?: string }) => (
 		<button type="button" className={className}>
