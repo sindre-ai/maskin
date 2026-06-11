@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
@@ -26,6 +26,10 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 
 vi.mock('@/components/foryou/persistent-reply-bar', () => ({
 	PersistentReplyBar: () => null,
+}))
+
+vi.mock('@/components/foryou/new-conversation-composer', () => ({
+	NewConversationComposer: () => null,
 }))
 
 vi.mock('@/components/foryou/unread-thread-card', () => ({
@@ -91,5 +95,57 @@ describe('ForYouDashboard', () => {
 		expect(screen.getAllByTestId('unread-thread-card')).toHaveLength(2)
 		expect(screen.getByText('obj-1')).toBeInTheDocument()
 		expect(screen.getByText('obj-2')).toBeInTheDocument()
+	})
+
+	it('sorts mentions_you items above non-mention items', () => {
+		mockUseUnread.mockReturnValue({
+			data: {
+				items: [
+					buildUnreadItem({ entity_id: 'fyi-1', mentions_you: false }),
+					buildUnreadItem({ entity_id: 'mention-1', mentions_you: true }),
+					buildUnreadItem({ entity_id: 'fyi-2', mentions_you: false }),
+					buildUnreadItem({ entity_id: 'mention-2', mentions_you: true }),
+				],
+			},
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		const rendered = screen.getAllByTestId('unread-thread-card').map((el) => el.textContent)
+		expect(rendered).toEqual(['mention-1', 'mention-2', 'fyi-1', 'fyi-2'])
+	})
+
+	it('fires markRead.mutate once per item with correct args when "Mark all read" is clicked', () => {
+		mockUseUnread.mockReturnValue({
+			data: {
+				items: [
+					buildUnreadItem({
+						entity_type: 'object',
+						entity_id: 'obj-1',
+						unread_count: 2,
+						latest_event_id: 11,
+					}),
+					buildUnreadItem({
+						entity_type: 'object',
+						entity_id: 'obj-2',
+						unread_count: 1,
+						latest_event_id: 22,
+					}),
+				],
+			},
+			isLoading: false,
+		})
+		render(<ForYouDashboard />)
+		fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }))
+		expect(mockMarkReadMutate).toHaveBeenCalledTimes(2)
+		expect(mockMarkReadMutate).toHaveBeenNthCalledWith(1, {
+			entityType: 'object',
+			entityId: 'obj-1',
+			lastEventId: 11,
+		})
+		expect(mockMarkReadMutate).toHaveBeenNthCalledWith(2, {
+			entityType: 'object',
+			entityId: 'obj-2',
+			lastEventId: 22,
+		})
 	})
 })
