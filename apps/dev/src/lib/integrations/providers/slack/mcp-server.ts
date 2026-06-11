@@ -81,6 +81,22 @@ async function slackPostMessage(
 		throw err
 	}
 
+	if (!res.ok) {
+		// Slack's edge can return 5xx/4xx with an HTML body (e.g. a CDN error page);
+		// calling res.json() there throws `SyntaxError: Unexpected token <` and masks
+		// the real status, so the agent and ops can't tell 429 from 503. Surface the
+		// HTTP status with a short body snippet for context.
+		let bodySnippet = ''
+		try {
+			bodySnippet = (await res.text()).slice(0, 200)
+		} catch {
+			// ignore — the status alone is the useful signal
+		}
+		throw new Error(
+			`Slack chat.postMessage HTTP ${res.status}${bodySnippet ? `: ${bodySnippet}` : ''}`,
+		)
+	}
+
 	const json = (await res.json()) as SlackPostMessageResponse
 	if (!json.ok) {
 		throw new Error(`Slack chat.postMessage failed: ${json.error ?? 'unknown error'}`)
