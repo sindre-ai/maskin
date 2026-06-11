@@ -542,7 +542,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, key: e.target.value } : p)))
 						}
 						placeholder={keyPlaceholder}
-						className="h-7 text-xs font-mono flex-1"
+						className="h-7 text-xs font-mono flex-1 min-w-0"
 					/>
 					<Input
 						value={pair.value}
@@ -550,7 +550,7 @@ function KeyValueEditor({
 							onChange(pairs.map((p) => (p.id === pair.id ? { ...p, value: e.target.value } : p)))
 						}
 						placeholder={valuePlaceholder}
-						className="h-7 text-xs font-mono flex-1"
+						className="h-7 text-xs font-mono flex-1 min-w-0"
 					/>
 					<Button
 						size="icon"
