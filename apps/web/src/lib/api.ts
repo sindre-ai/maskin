@@ -396,6 +396,11 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		delete: (workspaceId: string, eventId: number) =>
+			request<EventResponse>(`/events/${eventId}/delete`, {
+				method: 'POST',
+				workspaceId,
+			}),
 	},
 
 	imports: {

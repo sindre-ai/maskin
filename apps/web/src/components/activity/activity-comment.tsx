@@ -2,7 +2,7 @@ import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useActor, useActors } from '@/hooks/use-actors'
-import { useEditComment } from '@/hooks/use-events'
+import { useDeleteComment, useEditComment } from '@/hooks/use-events'
 import { useFiles } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
@@ -35,6 +35,12 @@ const MAX_EDIT_HEIGHT_PX = 134
 // without conflicting with a normal tap.
 const LONG_PRESS_MS = 450
 
+// Client-side undo window after the user taps Delete. Magnus's range was 5–10s
+// (architecture decision 5); 7s sits in the middle — long enough to recover
+// from a misclick on mobile, short enough that the timeline doesn't carry a
+// dangling Undo pill that feels modal.
+const UNDO_WINDOW_MS = 7000
+
 interface ActivityCommentProps {
 	event: EventResponse
 	replies?: EventResponse[]
@@ -44,6 +50,10 @@ interface ActivityCommentProps {
 	dividerBeforeReplyId?: number
 	divider?: React.ReactNode
 	isUnread?: boolean
+	// Mention/thread-reply session ids whose source comment has been
+	// soft-deleted. Renders the linked agent card with a `stale` marker but
+	// does not stop the session — Linear/Cursor pattern.
+	staleSessionIds?: Set<string>
 }
 
 interface CommentRowProps {
@@ -76,6 +86,15 @@ function CommentRow({
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
 	const editComment = useEditComment(workspaceId, objectId)
+	const deleteComment = useDeleteComment(workspaceId, objectId)
+
+	// Undo countdown for soft-delete. Holds the start timestamp while the
+	// window is open; null when the row is in its normal state. The progress
+	// (0 → 1) drives the conic-gradient ring around the Undo pill via an RAF
+	// loop in `UndoPill` — kept local to the pill so the row body doesn't
+	// re-render at 20fps for a label change it doesn't have.
+	const [undoStartedAt, setUndoStartedAt] = useState<number | null>(null)
+	const isUndoing = undoStartedAt !== null
 
 	const currentActorId = getStoredActor()?.id
 	const isOwn = !!currentActorId && currentActorId === event.actorId
@@ -96,6 +115,32 @@ function CommentRow({
 		setIsEditing(true)
 	}
 	const cancelEdit = () => setIsEditing(false)
+
+	const beginDelete = useCallback(() => {
+		setActionSheetOpen(false)
+		setIsEditing(false)
+		setUndoStartedAt(Date.now())
+	}, [])
+	const cancelDelete = useCallback(() => setUndoStartedAt(null), [])
+
+	// Client-side undo window. We only call the API when the window elapses, so
+	// Undo just clears the local timer — no compensating round-trip. After the
+	// mutation succeeds the SSE invalidation refreshes the timeline and the
+	// hide-on-read join in `object-activity.tsx` drops the row.
+	useEffect(() => {
+		if (undoStartedAt === null) return
+		const timer = window.setTimeout(() => {
+			deleteComment.mutate(event.id, {
+				onError: () => {
+					// Surface failure by restoring the row — the user can retry
+					// from the action group. The mutation hook also logs the
+					// error via TanStack Query's default handler.
+					setUndoStartedAt(null)
+				},
+			})
+		}, UNDO_WINDOW_MS)
+		return () => clearTimeout(timer)
+	}, [undoStartedAt, deleteComment, event.id])
 
 	const isAgent = actor?.type === 'agent'
 
@@ -215,43 +260,50 @@ function CommentRow({
 						/>
 					) : (
 						<>
-							<MarkdownContent
-								content={content}
-								disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
-								mentionActors={actors}
-								onMentionClick={handleMentionClick}
-								size="sm"
-								className={COMMENT_PROSE_OVERRIDES}
-							/>
-							{attachmentFileIds.length > 0 && (
-								<ul className="mt-1.5 space-y-1">
-									{attachmentFileIds.map((fileId) => {
-										const file = workspaceFiles?.find((f) => f.id === fileId)
-										if (!file) return null
-										return (
-											<li key={fileId}>
-												<AttachedFileCard workspaceId={workspaceId} file={file} />
-											</li>
-										)
-									})}
-								</ul>
-							)}
+							<div
+								className={cn(
+									isUndoing &&
+										'line-through text-muted-foreground/70 [&_*]:!text-muted-foreground/70 transition-opacity',
+								)}
+								aria-live={isUndoing ? 'polite' : undefined}
+							>
+								<MarkdownContent
+									content={content}
+									disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
+									mentionActors={actors}
+									onMentionClick={handleMentionClick}
+									size="sm"
+									className={COMMENT_PROSE_OVERRIDES}
+								/>
+								{attachmentFileIds.length > 0 && (
+									<ul className="mt-1.5 space-y-1">
+										{attachmentFileIds.map((fileId) => {
+											const file = workspaceFiles?.find((f) => f.id === fileId)
+											if (!file) return null
+											return (
+												<li key={fileId}>
+													<AttachedFileCard workspaceId={workspaceId} file={file} />
+												</li>
+											)
+										})}
+									</ul>
+								)}
+							</div>
 						</>
 					)}
 				</div>
-				{!isEditing && (
+				{!isEditing && !isUndoing && (
 					<CommentActions
 						isOwn={isOwn}
 						onEdit={beginEdit}
 						onReply={onReply}
-						onDelete={() => {
-							/* T4 — soft-delete wiring lands separately */
-						}}
+						onDelete={beginDelete}
 						onEditAndRestart={() => {
 							/* T3 — wired via useResendComment when its branch lands */
 						}}
 					/>
 				)}
+				{isUndoing && <UndoPill durationMs={UNDO_WINDOW_MS} onUndo={cancelDelete} />}
 			</div>
 			{isOwn && isMobile && (
 				<Sheet open={actionSheetOpen} onOpenChange={setActionSheetOpen}>
@@ -270,10 +322,7 @@ function CommentRow({
 								label="Delete"
 								icon={<Trash2 size={16} />}
 								destructive
-								onClick={() => {
-									/* T4 — soft-delete with 15s undo */
-									setActionSheetOpen(false)
-								}}
+								onClick={beginDelete}
 							/>
 						</div>
 					</SheetContent>
@@ -398,6 +447,59 @@ function MobileActionButton({
 	)
 }
 
+// Soft-delete countdown pill that lives in the action slot while the undo
+// window is open. Reuses the existing pill shape from the calm-thread style;
+// the only new visual is the conic-gradient ring that fills as the window
+// elapses. Click anywhere on the pill (whole hit target ≥44px on mobile) to
+// cancel the delete and restore the row.
+function UndoPill({ durationMs, onUndo }: { durationMs: number; onUndo: () => void }) {
+	const [elapsed, setElapsed] = useState(0)
+	const startedAtRef = useRef<number>(Date.now())
+
+	useEffect(() => {
+		startedAtRef.current = Date.now()
+		let raf = 0
+		const tick = () => {
+			const next = Math.min(Date.now() - startedAtRef.current, durationMs)
+			setElapsed(next)
+			if (next < durationMs) {
+				raf = window.requestAnimationFrame(tick)
+			}
+		}
+		raf = window.requestAnimationFrame(tick)
+		return () => window.cancelAnimationFrame(raf)
+	}, [durationMs])
+
+	const progressDeg = Math.min(1, elapsed / durationMs) * 360
+	const remainingSec = Math.max(0, Math.ceil((durationMs - elapsed) / 1000))
+
+	return (
+		<button
+			type="button"
+			onClick={onUndo}
+			aria-label={`Undo delete (${remainingSec}s left)`}
+			title="Undo delete"
+			className={cn(
+				'self-end shrink-0 inline-flex items-center gap-1.5 rounded-full border border-border',
+				'px-2.5 py-1 min-h-[28px] text-xs font-medium text-foreground',
+				'bg-secondary/40 hover:bg-secondary transition-colors',
+			)}
+		>
+			<span
+				aria-hidden
+				className="relative inline-block size-3 rounded-full"
+				style={{
+					background: `conic-gradient(currentColor ${progressDeg}deg, transparent 0)`,
+				}}
+			>
+				<span className="absolute inset-[2px] rounded-full bg-secondary/40" />
+			</span>
+			<span>Undo</span>
+			<span className="text-muted-foreground tabular-nums">{remainingSec}s</span>
+		</button>
+	)
+}
+
 interface EditComposerProps {
 	initialContent: string
 	isSaving: boolean
@@ -502,6 +604,7 @@ export function ActivityComment({
 	dividerBeforeReplyId,
 	divider,
 	isUnread,
+	staleSessionIds,
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
@@ -533,7 +636,12 @@ export function ActivityComment({
 			{mentionSessions.length > 0 && (
 				<div className="ml-7 mt-1 space-y-1">
 					{mentionSessions.map((session) => (
-						<MentionSessionCard key={session.id} session={session} workspaceId={workspaceId} />
+						<MentionSessionCard
+							key={session.id}
+							session={session}
+							workspaceId={workspaceId}
+							isStale={staleSessionIds?.has(session.id) ?? false}
+						/>
 					))}
 				</div>
 			)}

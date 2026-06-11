@@ -1404,4 +1404,156 @@ describe('Events Routes', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
+
+	describe('POST /api/events/:id/delete (soft-delete comment)', () => {
+		it('inserts a comment_deleted audit event, never mutates the original row, never spawns a session', async () => {
+			const objectId = randomUUID()
+			const eventId = 5252
+			const original = buildEvent({
+				id: eventId,
+				workspaceId: wsId,
+				actorId: 'test-actor-id',
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'goodbye' },
+			})
+			const audit = buildEvent({
+				id: eventId + 1,
+				workspaceId: wsId,
+				actorId: 'test-actor-id',
+				action: 'comment_deleted',
+				entityType: 'object',
+				entityId: objectId,
+				data: { originalEventId: eventId, deletedAt: '2026-06-11T12:00:00Z' },
+			})
+			const { app, mockResults, sessionManager, calls } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			// First select: original lookup. Second select: existing-audit
+			// idempotency check (returns nothing → fresh insert).
+			mockResults.selectQueue = [[original], []]
+			mockResults.insert = [audit]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/events/${eventId}/delete`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.action).toBe('comment_deleted')
+			expect(body.data.originalEventId).toBe(eventId)
+
+			// Exactly one insert: the sibling comment_deleted audit event with
+			// no content body (PG NOTIFY stays well under 8KB even on long
+			// comments — there is no content to begin with).
+			expect(calls.inserts).toHaveLength(1)
+			const insertArg = calls.inserts[0] as {
+				action: string
+				entityId: string
+				data: { originalEventId: number; deletedAt: string; content?: string }
+			}
+			expect(insertArg.action).toBe('comment_deleted')
+			expect(insertArg.entityId).toBe(objectId)
+			expect(insertArg.data.originalEventId).toBe(eventId)
+			expect(typeof insertArg.data.deletedAt).toBe('string')
+			expect(insertArg.data.content).toBeUndefined()
+
+			// The original row is never mutated — soft-delete only. The
+			// timeline hide-on-read join is the frontend's job.
+			expect(calls.updates).toHaveLength(0)
+
+			// Soft-delete does not re-fire any agent (Linear/Cursor pattern).
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 when the comment does not exist', async () => {
+			const { app, sessionManager, calls } = createSessionTestApp(eventsRoutes, '/api/events')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/events/999999/delete', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('returns 403 when the requesting actor is not the comment author', async () => {
+			const objectId = randomUUID()
+			const eventId = 5454
+			const original = buildEvent({
+				id: eventId,
+				workspaceId: wsId,
+				actorId: randomUUID(), // a different actor authored the comment
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'theirs, not mine' },
+			})
+			const { app, mockResults, sessionManager, calls } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			mockResults.selectQueue = [[original]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/events/${eventId}/delete`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect(calls.inserts).toHaveLength(0)
+			expect(calls.updates).toHaveLength(0)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('is idempotent — returns the existing audit event without inserting a second one', async () => {
+			const objectId = randomUUID()
+			const eventId = 5656
+			const original = buildEvent({
+				id: eventId,
+				workspaceId: wsId,
+				actorId: 'test-actor-id',
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'goodbye' },
+			})
+			const existingAudit = buildEvent({
+				id: eventId + 1,
+				workspaceId: wsId,
+				actorId: 'test-actor-id',
+				action: 'comment_deleted',
+				entityType: 'object',
+				entityId: objectId,
+				data: { originalEventId: eventId, deletedAt: '2026-06-11T12:00:00Z' },
+			})
+			const { app, mockResults, sessionManager, calls } = createSessionTestApp(
+				eventsRoutes,
+				'/api/events',
+			)
+			mockResults.selectQueue = [[original], [existingAudit]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/events/${eventId}/delete`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.action).toBe('comment_deleted')
+
+			// No second insert — the existing audit event was returned.
+			expect(calls.inserts).toHaveLength(0)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
 })

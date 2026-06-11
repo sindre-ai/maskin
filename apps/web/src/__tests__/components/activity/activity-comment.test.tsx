@@ -23,9 +23,11 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 const editCommentMutate = vi.fn()
+const deleteCommentMutate = vi.fn()
 vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 	useEditComment: () => ({ mutate: editCommentMutate, isPending: false }),
+	useDeleteComment: () => ({ mutate: deleteCommentMutate, isPending: false }),
 }))
 
 vi.mock('@/hooks/use-mobile', () => ({
@@ -376,6 +378,88 @@ describe('ActivityComment', () => {
 			expect(editCommentMutate).toHaveBeenCalledTimes(1)
 			const [args] = editCommentMutate.mock.calls[0]
 			expect(args).toEqual({ eventId: 7777, data: { content: 'Corrected text' } })
+		})
+	})
+
+	describe('soft-delete', () => {
+		beforeEach(() => {
+			deleteCommentMutate.mockReset()
+		})
+
+		it('clicking Delete opens the undo countdown pill in place of the action group', async () => {
+			const user = userEvent.setup()
+			const event = buildEventResponse({
+				actorId: 'actor-1',
+				action: 'commented',
+				data: { content: 'Removing this' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Delete' }))
+
+			expect(screen.getByRole('button', { name: /Undo delete/ })).toBeInTheDocument()
+			// While the undo window is open the Delete button itself is gone
+			// (it lives in the action group, which is swapped for the pill).
+			expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+			// The mutation does NOT fire yet — it only fires when the window
+			// elapses; clicking Undo cancels it locally.
+			expect(deleteCommentMutate).not.toHaveBeenCalled()
+		})
+
+		it('tapping Undo inside the pill cancels the timer and restores the row', async () => {
+			const user = userEvent.setup()
+			const event = buildEventResponse({
+				actorId: 'actor-1',
+				action: 'commented',
+				data: { content: 'On second thought, keep it' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Delete' }))
+			await user.click(screen.getByRole('button', { name: /Undo delete/ }))
+
+			expect(screen.queryByRole('button', { name: /Undo delete/ })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+			// Tapping Undo restores synchronously — the mutation never fires
+			// because the window-elapse timer was cleared.
+			expect(deleteCommentMutate).not.toHaveBeenCalled()
+		})
+
+		it('after the undo window elapses, the mutation fires with the event id', async () => {
+			// Real-timer integration test. The undo window is 7s; we wait
+			// slightly longer than that for the timer to fire. The mutation
+			// hook is mocked so the test exercises only the local timer path.
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0)
+			vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+			try {
+				const user = userEvent.setup()
+				const event = buildEventResponse({
+					id: 9090,
+					actorId: 'actor-1',
+					action: 'commented',
+					data: { content: 'Goodbye comment' },
+				})
+				render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+				await user.click(screen.getByRole('button', { name: 'Delete' }))
+				await new Promise((resolve) => setTimeout(resolve, 7100))
+
+				expect(deleteCommentMutate).toHaveBeenCalledTimes(1)
+				const [eventIdArg] = deleteCommentMutate.mock.calls[0]
+				expect(eventIdArg).toBe(9090)
+			} finally {
+				vi.restoreAllMocks()
+			}
+		}, 10000)
+
+		it('Delete is hidden on someone else’s message', () => {
+			const event = buildEventResponse({
+				actorId: 'actor-2',
+				action: 'commented',
+				data: { content: 'Not mine' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+			expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
 		})
 	})
 })

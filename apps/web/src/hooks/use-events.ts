@@ -73,6 +73,21 @@ export function useEditComment(workspaceId: string, entityId: string) {
 	})
 }
 
+// Soft-delete — fires once the client-side undo window elapses. The backend
+// writes a `comment_deleted` audit event referencing the original; the original
+// row is never mutated. Downstream agent activity that referenced the deleted
+// message renders as `stale` at read time. No agent re-fire, no auto-stop of
+// active sessions (Linear/Cursor pattern).
+export function useDeleteComment(workspaceId: string, entityId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (eventId: number) => api.events.delete(workspaceId, eventId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
+		},
+	})
+}
+
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 const OBJECT_ACTIONS = new Set(['created', 'updated', 'status_changed'])
 

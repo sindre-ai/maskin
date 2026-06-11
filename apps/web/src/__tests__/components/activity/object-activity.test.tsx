@@ -11,6 +11,7 @@ vi.mock('@/hooks/use-actors', () => ({
 vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 	useEditComment: () => ({ mutate: vi.fn(), isPending: false }),
+	useDeleteComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({
@@ -122,6 +123,32 @@ describe('ObjectActivity', () => {
 		// Past (signal) phase content is collapsed and shows event count summary
 		expect(screen.queryByText('Comment in signal phase')).not.toBeInTheDocument()
 		expect(screen.getByText('· 1 event')).toBeInTheDocument()
+	})
+
+	it('hides comments that have a comment_deleted sibling event on the same entity', () => {
+		const events = [
+			buildEventResponse({
+				id: 10,
+				action: 'commented',
+				data: { content: 'Still here' },
+			}),
+			buildEventResponse({
+				id: 11,
+				action: 'commented',
+				data: { content: 'Was deleted' },
+			}),
+			buildEventResponse({
+				id: 12,
+				action: 'comment_deleted',
+				data: { originalEventId: 11, deletedAt: '2026-06-11T12:00:00Z' },
+			}),
+		]
+		render(<ObjectActivity workspaceId="ws-1" object={object} events={events} />)
+
+		expect(screen.getByText('Still here')).toBeInTheDocument()
+		// The soft-deleted comment is hidden by the read-time join, and the
+		// `comment_deleted` audit row never renders as a timeline item.
+		expect(screen.queryByText('Was deleted')).not.toBeInTheDocument()
 	})
 
 	it('expands a past phase when its divider is clicked', async () => {

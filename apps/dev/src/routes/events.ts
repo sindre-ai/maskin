@@ -474,6 +474,129 @@ const editCommentRoute = createRoute({
 	},
 })
 
+// POST /api/events/:id/delete - Soft-delete a comment. Writes a
+// `comment_deleted` sibling event referencing the original; the original row
+// is NEVER mutated, so the audit trail stays honest. The UI hides on read by
+// joining against `comment_deleted` events on the same entity. Downstream
+// agent activity that referenced the deleted message is rendered `stale` at
+// read time only — no fan-out write and no auto-stop of in-flight sessions
+// (Linear/Cursor pattern). The 5–10s client-side undo window means the API
+// is only called once the user actually commits to the deletion.
+const deleteCommentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/delete',
+	tags: ['events'],
+	summary: 'Soft-delete your own comment (audit event only; original row untouched)',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.coerce.number().int().positive() }),
+	},
+	responses: {
+		200: {
+			description: 'Comment soft-deleted; returns the audit event',
+			content: { 'application/json': { schema: eventResponseSchema } },
+		},
+		403: {
+			description: 'Not the comment author',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Comment not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(deleteCommentRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: eventId } = c.req.valid('param')
+
+	// Look up the original comment in the requesting workspace. Workspace scope
+	// is enforced via the WHERE clause (and authMiddleware already verified the
+	// actor's membership), so a comment in a workspace the actor doesn't belong
+	// to looks indistinguishable from a missing row — 404, never 403.
+	const [original] = await db
+		.select({
+			id: events.id,
+			actorId: events.actorId,
+			entityType: events.entityType,
+			entityId: events.entityId,
+		})
+		.from(events)
+		.where(
+			and(
+				eq(events.id, eventId),
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+			),
+		)
+		.limit(1)
+
+	if (!original) {
+		return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+	}
+
+	// Owner-only. Deleting someone else's comment is an admin/moderation path
+	// and explicitly out of scope for this bet.
+	if (original.actorId !== actorId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'You can only delete your own comments'),
+			403 as never,
+		)
+	}
+
+	// Idempotency: if a `comment_deleted` sibling already exists for this
+	// original, return it instead of writing a second one. The undo window lives
+	// on the client, but a double-fire (double-tap after grace, retry after
+	// network blip) should not produce duplicate audit rows.
+	const [existing] = await db
+		.select()
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'comment_deleted'),
+				sql`${events.data}->>'originalEventId' = ${String(eventId)}`,
+			),
+		)
+		.limit(1)
+
+	if (existing) {
+		return c.json(serializeArray([existing])[0] as z.infer<typeof eventResponseSchema>, 200)
+	}
+
+	const deletedAt = new Date().toISOString()
+	const insertedRows = await db
+		.insert(events)
+		.values({
+			workspaceId,
+			actorId,
+			action: 'comment_deleted',
+			entityType: original.entityType,
+			entityId: original.entityId,
+			data: {
+				originalEventId: eventId,
+				deletedAt,
+			},
+		})
+		.returning()
+
+	const audit = insertedRows[0]
+	if (!audit) {
+		throw new Error('Failed to insert comment_deleted audit event')
+	}
+
+	logger.info('Soft-deleted comment (sibling audit event)', {
+		eventId,
+		objectId: original.entityId,
+		actorId,
+	})
+
+	return c.json(serializeArray([audit])[0] as z.infer<typeof eventResponseSchema>, 200)
+}) as RouteHandler<typeof deleteCommentRoute, Env>)
+
 app.openapi(editCommentRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')

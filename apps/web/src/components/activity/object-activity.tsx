@@ -111,6 +111,40 @@ export function ObjectActivity({
 		return map
 	}, [mentionSessions])
 
+	// Soft-deleted comment ids derived from `comment_deleted` audit events on
+	// this entity. The original `commented` row is never mutated server-side, so
+	// the hide-on-read join lives here: we filter the comments out of the
+	// timeline and mark every downstream agent session that referenced one of
+	// them as stale. No fan-out write, no event-row mutation, no auto-stop —
+	// the running agent stays running unless the user explicitly stops it
+	// (Linear/Cursor pattern, per the architecture).
+	const deletedCommentIds = useMemo(() => {
+		const set = new Set<number>()
+		for (const event of events ?? []) {
+			if (event.action !== 'comment_deleted') continue
+			const originalEventId = (event.data as { originalEventId?: number } | null)?.originalEventId
+			if (typeof originalEventId === 'number') set.add(originalEventId)
+		}
+		return set
+	}, [events])
+
+	const staleSessionIds = useMemo(() => {
+		if (deletedCommentIds.size === 0) return new Set<string>()
+		const set = new Set<string>()
+		for (const session of mentionSessions ?? []) {
+			const config = session.config as {
+				mention?: SessionMentionContext
+				thread_reply?: SessionThreadReplyContext
+			} | null
+			const commentEventId =
+				config?.mention?.comment_event_id ?? config?.thread_reply?.comment_event_id
+			if (commentEventId !== undefined && deletedCommentIds.has(commentEventId)) {
+				set.add(session.id)
+			}
+		}
+		return set
+	}, [mentionSessions, deletedCommentIds])
+
 	// Events arrive from the API sorted desc (newest first); reverse for chronological grouping.
 	// Then bucket replies under their parent comment so threads stay intact within phases.
 	const { phases, repliesByParent, totalTopLevel } = useMemo(() => {
@@ -127,6 +161,11 @@ export function ObjectActivity({
 		const replies = new Map<number, EventResponse[]>()
 		const topLevel: EventResponse[] = []
 		for (const event of chronological) {
+			// Drop soft-deleted comments and the `comment_deleted` audit events
+			// themselves — the audit row only exists to drive this hide-on-read
+			// join, never to render in the timeline.
+			if (event.action === 'comment_deleted') continue
+			if (event.action === 'commented' && deletedCommentIds.has(event.id)) continue
 			if (event.action === 'commented') {
 				const parentId = event.data?.parentEventId as number | undefined
 				if (parentId) {
@@ -146,7 +185,7 @@ export function ObjectActivity({
 			repliesByParent: replies,
 			totalTopLevel: topLevel.length,
 		}
-	}, [events, object])
+	}, [events, object, deletedCommentIds])
 
 	// Only the current (last) phase is expanded by default; users can toggle any other.
 	const [phaseOverrides, setPhaseOverrides] = useState<Record<number, boolean>>({})
@@ -210,6 +249,7 @@ export function ObjectActivity({
 													objectId={object.id}
 													mentionSessions={sessionsByComment.get(event.id) ?? []}
 													isUnread={unreadEventIds.has(event.id)}
+													staleSessionIds={staleSessionIds}
 												/>
 											) : (
 												<ActivityItem
