@@ -11,14 +11,20 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useActors, useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
+import {
+	useActors,
+	useAgentPause,
+	useAgentRun,
+	useDeleteActor,
+	useResetActor,
+	useUpdateActor,
+} from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
 	useActiveSessionsForActor,
 	useActorSessionsInfinite,
 	useCreateSession,
-	useSession,
 	useSessionErrorLog,
 	useSessionLogs,
 } from '@/hooks/use-sessions'
@@ -35,17 +41,17 @@ import {
 	Clock,
 	MinusCircle,
 	PauseCircle,
+	Play,
 	RotateCcw,
 	Trash2,
 	XCircle,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
 import { AgentUsageChart } from './agent-usage-chart'
-import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
@@ -67,6 +73,10 @@ interface AgentDocumentViewProps {
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
 	onUpdateTools: (tools: Record<string, unknown>) => void
 	onUpdateMemory: (memory: Record<string, unknown>) => void
+	onRun: () => void
+	onPause: () => void
+	isRunPending?: boolean
+	isPausePending?: boolean
 	showSaved?: boolean
 }
 
@@ -103,6 +113,10 @@ export function AgentDocumentView({
 	onUpdateLlmConfig,
 	onUpdateTools,
 	onUpdateMemory,
+	onRun,
+	onPause,
+	isRunPending = false,
+	isPausePending = false,
 	showSaved = false,
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
@@ -160,8 +174,7 @@ export function AgentDocumentView({
 	}, [memoryDraft, onUpdateMemory])
 
 	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
-	const [viewSessionId, setViewSessionId] = useState<string | null>(null)
-	const { data: fetchedSession } = useSession(viewSessionId, workspaceId)
+	const createSession = useCreateSession(workspaceId)
 
 	const { data: actors } = useActors(workspaceId)
 	const actorsById = useMemo(() => {
@@ -169,29 +182,6 @@ export function AgentDocumentView({
 		for (const actor of actors ?? []) map.set(actor.id, actor)
 		return map
 	}, [actors])
-
-	// When a session is fetched by ID (from instruction log), select it
-	useEffect(() => {
-		if (fetchedSession && viewSessionId) {
-			setSelectedSession(fetchedSession)
-			setViewSessionId(null)
-		}
-	}, [fetchedSession, viewSessionId])
-
-	const handleViewSession = useCallback(
-		(sessionId: string) => {
-			// Check if we already have the session in our local data
-			const existing =
-				recentSessions?.find((s) => s.id === sessionId) ??
-				activeSessions?.find((s) => s.id === sessionId)
-			if (existing) {
-				setSelectedSession(existing)
-			} else {
-				setViewSessionId(sessionId)
-			}
-		},
-		[recentSessions, activeSessions],
-	)
 
 	// Filter out active sessions from recent sessions to avoid duplicates
 	const activeIds = useMemo(
@@ -217,6 +207,7 @@ export function AgentDocumentView({
 					onBlur={handleNameBlur}
 					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					placeholder="Agent name"
+					aria-label="Agent name"
 					rows={1}
 					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 					ref={(el) => {
@@ -241,6 +232,7 @@ export function AgentDocumentView({
 				onBlur={handleDescriptionBlur}
 				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 				placeholder="Short description shown on the Agents page"
+				aria-label="Short description"
 				maxLength={80}
 				className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
 			/>
@@ -250,6 +242,7 @@ export function AgentDocumentView({
 				<TypeBadge type="agent" />
 				<span className="flex items-center gap-1.5 text-xs">
 					<span
+						aria-hidden="true"
 						className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-success animate-pulse' : 'bg-text-muted'}`}
 					/>
 					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
@@ -260,8 +253,32 @@ export function AgentDocumentView({
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
 
-			{/* Instruction Log */}
-			<InstructionLog agent={agent} workspaceId={workspaceId} onViewSession={handleViewSession} />
+			{/* Run/Pause + New Conversation */}
+			<div className="flex items-center gap-2 mb-6">
+				{isActive ? (
+					<Button variant="outline" size="sm" className="min-h-[44px]" onClick={onPause} disabled={isPausePending}>
+						<PauseCircle size={14} />
+						{isPausePending ? 'Pausing…' : 'Pause'}
+					</Button>
+				) : (
+					<Button size="sm" className="min-h-[44px]" onClick={onRun} disabled={isRunPending}>
+						<Play size={14} />
+						{isRunPending ? 'Starting…' : 'Run'}
+					</Button>
+				)}
+				<Button
+					variant="outline"
+					size="sm"
+					className="min-h-[44px]"
+					onClick={() => createSession.mutate({ actor_id: agent.id, action_prompt: '' })}
+					disabled={createSession.isPending}
+				>
+					{createSession.isPending ? 'Starting…' : 'New Conversation'}
+				</Button>
+			</div>
+
+			{/* Usage chart */}
+			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
 
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (
@@ -317,9 +334,6 @@ export function AgentDocumentView({
 					if (!open) setSelectedSession(null)
 				}}
 			/>
-
-			{/* Usage chart */}
-			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
@@ -462,7 +476,7 @@ function ActiveSessionCard({
 	return (
 		<button
 			type="button"
-			className="flex w-full items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
+			className="flex w-full items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-h-[44px] min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
 			onClick={() => onSelect?.(session)}
 		>
 			{idle ? <PauseCircle size={14} className="shrink-0 text-muted-foreground" /> : <Spinner />}
@@ -536,9 +550,9 @@ function SessionRow({
 
 	return (
 		<div>
-			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements keyboard-accessible inner buttons and sr-only open button */}
 			<div
-				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
+				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 min-h-[44px] min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
 				onClick={() => onSelect?.(session)}
 			>
 				<SessionStatusIcon status={session.status} />
@@ -549,7 +563,7 @@ function SessionRow({
 					<>
 						<button
 							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
 							onClick={(e) => {
 								e.stopPropagation()
 								setShowError((v) => !v)
@@ -559,7 +573,7 @@ function SessionRow({
 						</button>
 						<button
 							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
+							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
 							onClick={(e) => {
 								e.stopPropagation()
 								createSession.mutate({
@@ -600,6 +614,8 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const updateActor = useUpdateActor(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
 	const resetActor = useResetActor(workspaceId)
+	const run = useAgentRun(workspaceId)
+	const pause = useAgentPause(workspaceId)
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
@@ -675,6 +691,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				size="icon"
 				className="h-7 w-7 text-muted-foreground hover:text-error"
 				onClick={() => setConfirmDelete(true)}
+				aria-label="Delete agent"
 			>
 				<Trash2 size={15} />
 			</Button>
@@ -757,6 +774,10 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onUpdateLlmConfig={handleUpdateLlmConfig}
 				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
+				onRun={() => run.mutate({ id: agent.id })}
+				onPause={() => pause.mutate(agent.id)}
+				isRunPending={run.isPending}
+				isPausePending={pause.isPending}
 			/>
 		</>
 	)

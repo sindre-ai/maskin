@@ -67,7 +67,7 @@ function AgentsPage() {
 		return (
 			<div>
 				<PageHeader title="Agents" />
-				<div className="grid gap-4 md:grid-cols-2">
+				<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 					<CardSkeleton />
 					<CardSkeleton />
 				</div>
@@ -92,7 +92,7 @@ function AgentsPage() {
 								key={tab.value}
 								type="button"
 								className={cn(
-									'rounded px-3 py-1 text-sm',
+									'rounded px-3 py-1 text-sm min-h-[44px] inline-flex items-center justify-center',
 									statusFilter === tab.value
 										? 'bg-muted text-foreground font-medium'
 										: 'text-muted-foreground hover:text-foreground',
@@ -104,7 +104,7 @@ function AgentsPage() {
 						))}
 					</div>
 
-					<div className="grid gap-4 md:grid-cols-2">
+					<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 						{filtered.map((agent) => (
 							<AgentCard
 								key={agent.id}

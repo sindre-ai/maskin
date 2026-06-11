@@ -55,10 +55,11 @@ export function AgentCard({
 
 function StatusIndicator({ status }: { status: AgentStatus }) {
 	if (status === 'working') {
-		return <Spinner className="size-3 text-status-in_progress-text" />
+		return <Spinner className="size-3 text-status-in_progress-text" aria-hidden="true" />
 	}
 	return (
 		<span
+			aria-hidden="true"
 			className={cn('h-1.5 w-1.5 rounded-full', status === 'failed' ? 'bg-error' : 'bg-text-muted')}
 		/>
 	)
