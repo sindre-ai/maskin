@@ -1012,12 +1012,14 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	if (existing.type !== 'agent') {
-		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
-	}
-
+	// Verify workspace membership before leaking anything about the actor (e.g.
+	// its type), so a member of one workspace can't probe actors in another.
 	if (!(await isWorkspaceMember(db, id, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
 	}
 
 	// Pause any currently-running session for this agent. Only `running`
@@ -1136,12 +1138,14 @@ app.openapi(runAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	if (existing.type !== 'agent') {
-		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
-	}
-
+	// Verify workspace membership before leaking anything about the actor (e.g.
+	// its type), so a member of one workspace can't probe actors in another.
 	if (!(await isWorkspaceMember(db, id, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
 	}
 
 	// If there's already a live session, the agent is effectively running —
