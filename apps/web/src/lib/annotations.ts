@@ -1,5 +1,5 @@
 import type { Annotation } from '@/components/files/annotation-overlay'
-import type { FileDetail } from '@/lib/api'
+import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { decodeBase64Utf8 } from '@/lib/file-utils'
 
 export interface AnnotationJson {
@@ -9,6 +9,22 @@ export interface AnnotationJson {
 		selector?: string
 		comment: string
 	}>
+}
+
+// Restore persisted annotations into the overlay's full shape. Rows written by
+// non-UI clients (or before pin metadata existed) may omit `pinNumber`/`position`;
+// backfill the pin number by order and the drop point from the element's bounds
+// center so every pin still renders.
+export function hydrateAnnotations(stored: FileAnnotation[] | null | undefined): Annotation[] {
+	if (!stored) return []
+	return stored.map((a, i) => ({
+		id: a.id,
+		pinNumber: a.pinNumber ?? i + 1,
+		selector: a.selector ?? '',
+		bounds: a.bounds,
+		comment: a.comment,
+		position: a.position ?? { x: a.bounds.x + a.bounds.w / 2, y: a.bounds.y + a.bounds.h / 2 },
+	}))
 }
 
 export function compileAnnotations(annotations: Annotation[]): AnnotationJson {

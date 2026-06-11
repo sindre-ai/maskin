@@ -385,6 +385,7 @@ export function buildFile(overrides?: Record<string, unknown>) {
 		mimeType: 'text/markdown',
 		sizeBytes: 16,
 		storageKey: `workspaces/${workspaceId}/files/${id}`,
+		annotations: [],
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),

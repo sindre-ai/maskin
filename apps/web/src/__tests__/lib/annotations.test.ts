@@ -1,7 +1,13 @@
 // @vitest-environment node
 import type { Annotation } from '@/components/files/annotation-overlay'
-import { type AnnotationJson, buildRevisePrompt, compileAnnotations, sanitizeAnnotations } from '@/lib/annotations'
-import type { FileDetail } from '@/lib/api'
+import {
+	type AnnotationJson,
+	buildRevisePrompt,
+	compileAnnotations,
+	hydrateAnnotations,
+	sanitizeAnnotations,
+} from '@/lib/annotations'
+import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { describe, expect, it } from 'vitest'
 
 const makeAnnotation = (overrides: Partial<Annotation> = {}): Annotation => ({
@@ -14,7 +20,9 @@ const makeAnnotation = (overrides: Partial<Annotation> = {}): Annotation => ({
 	...overrides,
 })
 
-function makeAnnotationJson(overrides: Partial<AnnotationJson['annotations'][number]> = {}): AnnotationJson {
+function makeAnnotationJson(
+	overrides: Partial<AnnotationJson['annotations'][number]> = {},
+): AnnotationJson {
 	return {
 		annotations: [
 			{
@@ -43,9 +51,47 @@ function makeFile(overrides: Partial<FileDetail> = {}): FileDetail {
 		content: '<h1>Hello</h1>',
 		encoding: 'utf8',
 		url: 'http://localhost:5173/ws-1/files/file-1',
+		annotations: [],
 		...overrides,
 	}
 }
+
+describe('hydrateAnnotations', () => {
+	it('returns an empty array for null/undefined', () => {
+		expect(hydrateAnnotations(null)).toEqual([])
+		expect(hydrateAnnotations(undefined)).toEqual([])
+	})
+
+	it('passes through fully-specified annotations', () => {
+		const stored: FileAnnotation[] = [
+			{
+				id: 'a1',
+				pinNumber: 3,
+				selector: 'div.card',
+				bounds: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+				comment: 'hi',
+				position: { x: 0.5, y: 0.6 },
+			},
+		]
+		expect(hydrateAnnotations(stored)[0]).toEqual(stored[0])
+	})
+
+	it('backfills pinNumber by order when missing', () => {
+		const stored: FileAnnotation[] = [
+			{ id: 'a', selector: '', bounds: { x: 0, y: 0, w: 0.2, h: 0.2 }, comment: 'one' },
+			{ id: 'b', selector: '', bounds: { x: 0, y: 0, w: 0.2, h: 0.2 }, comment: 'two' },
+		]
+		const result = hydrateAnnotations(stored)
+		expect(result.map((a) => a.pinNumber)).toEqual([1, 2])
+	})
+
+	it('derives position from the bounds center when missing', () => {
+		const stored: FileAnnotation[] = [
+			{ id: 'a', selector: '', bounds: { x: 0.2, y: 0.4, w: 0.4, h: 0.2 }, comment: 'c' },
+		]
+		expect(hydrateAnnotations(stored)[0].position).toEqual({ x: 0.4, y: 0.5 })
+	})
+})
 
 describe('compileAnnotations', () => {
 	it('maps annotation fields to the approved schema', () => {
