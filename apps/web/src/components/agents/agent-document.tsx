@@ -204,7 +204,7 @@ export function AgentDocumentView({
 	)
 
 	return (
-		<div className="max-w-3xl mx-auto">
+		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Name */}
 			<div className="flex items-start gap-2 mb-2">
 				<textarea
