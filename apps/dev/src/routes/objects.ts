@@ -906,33 +906,31 @@ app.openapi(bulkDeleteObjectsRoute, async (c) => {
 
 	const toDelete = uniqueIds.filter((id) => existingById.has(id))
 
-	if (toDelete.length > 0) {
-		await db.transaction(async (tx) => {
-			for (const id of toDelete) {
-				const existing = existingById.get(id)
-				if (!existing) continue
-				try {
-					await tx
-						.delete(subscriptions)
-						.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
-					await tx
-						.delete(readState)
-						.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))
-					await tx.delete(objects).where(eq(objects.id, id))
-					await tx.insert(events).values({
-						workspaceId,
-						actorId,
-						action: 'deleted',
-						entityType: existing.type,
-						entityId: id,
-						data: existing,
-					})
-					results.push({ id, ok: true })
-				} catch (err) {
-					results.push({ id, ok: false, error: String(err) })
-				}
-			}
-		})
+	for (const id of toDelete) {
+		const existing = existingById.get(id)
+		if (!existing) continue
+		try {
+			await db.transaction(async (tx) => {
+				await tx
+					.delete(subscriptions)
+					.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
+				await tx
+					.delete(readState)
+					.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))
+				await tx.delete(objects).where(eq(objects.id, id))
+				await tx.insert(events).values({
+					workspaceId,
+					actorId,
+					action: 'deleted',
+					entityType: existing.type,
+					entityId: id,
+					data: existing,
+				})
+			})
+			results.push({ id, ok: true })
+		} catch (err) {
+			results.push({ id, ok: false, error: String(err) })
+		}
 	}
 
 	// Ids not found in this workspace return ok: true (already deleted or never existed).
