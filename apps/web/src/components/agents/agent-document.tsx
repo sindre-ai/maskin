@@ -256,12 +256,12 @@ export function AgentDocumentView({
 			{/* Run/Pause + New Conversation */}
 			<div className="flex items-center gap-2 mb-6">
 				{isActive ? (
-					<Button variant="outline" size="sm" onClick={onPause} disabled={isPausePending}>
+					<Button variant="outline" size="sm" className="min-h-[44px]" onClick={onPause} disabled={isPausePending}>
 						<PauseCircle size={14} />
 						{isPausePending ? 'Pausing…' : 'Pause'}
 					</Button>
 				) : (
-					<Button size="sm" onClick={onRun} disabled={isRunPending}>
+					<Button size="sm" className="min-h-[44px]" onClick={onRun} disabled={isRunPending}>
 						<Play size={14} />
 						{isRunPending ? 'Starting…' : 'Run'}
 					</Button>
@@ -269,6 +269,7 @@ export function AgentDocumentView({
 				<Button
 					variant="outline"
 					size="sm"
+					className="min-h-[44px]"
 					onClick={() => createSession.mutate({ actor_id: agent.id, action_prompt: '' })}
 					disabled={createSession.isPending}
 				>
