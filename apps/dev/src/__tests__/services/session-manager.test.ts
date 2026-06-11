@@ -235,6 +235,41 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
 		})
 
+		it('injects MASKIN_SESSION_ID into the container env so writes are gateable', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.MASKIN_SESSION_ID).toBe(session.id)
+			expect(createArgs.env.SESSION_ID).toBe(session.id)
+		})
+
 		it('sets ACTION_PROMPT and omits INTERACTIVE for non-interactive sessions', async () => {
 			const session = buildSession({
 				status: 'pending',
@@ -557,7 +592,7 @@ describe('SessionManager', () => {
 	})
 
 	describe('stopSession()', () => {
-		it('stops the container', async () => {
+		it('stops the container with the 3s SIGTERM grace', async () => {
 			const session = buildSession({
 				status: 'running',
 				containerId: 'container-abc',
@@ -566,7 +601,39 @@ describe('SessionManager', () => {
 
 			await manager.stopSession(session.id)
 
-			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-abc')
+			expect(mockContainerManager.stop).toHaveBeenCalledWith('container-abc', 3)
+		})
+
+		it('flips status to `stopping` before SIGTERM so the write-gate is live', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+			})
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			// First update is the status flip; later updates clear activeSessionId.
+			expect(calls.updates.length).toBeGreaterThanOrEqual(1)
+			expect(calls.updates[0]).toEqual(expect.objectContaining({ status: 'stopping' }))
+		})
+
+		it('inserts a `session_stopped` event after SIGTERM', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+			})
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			expect(calls.inserts).toContainEqual(
+				expect.objectContaining({
+					action: 'session_stopped',
+					entityType: 'session',
+					entityId: session.id,
+				}),
+			)
 		})
 
 		it('detaches stdin before stopping the container', async () => {
@@ -582,19 +649,56 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.detachStdin).toHaveBeenCalledWith(session.id)
 		})
 
+		it('is idempotent — returns silently if already stopping', async () => {
+			const session = buildSession({
+				status: 'stopping',
+				containerId: 'container-abc',
+			})
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+		})
+
+		it.each(['completed', 'failed', 'timeout', 'stopped', 'superseded'])(
+			'is idempotent — returns silently if already %s',
+			async (status) => {
+				const session = buildSession({ status, containerId: 'container-abc' })
+				mockResults.select = [session]
+
+				await manager.stopSession(session.id)
+
+				expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			},
+		)
+
 		it('throws when session not found', async () => {
 			mockResults.select = []
 
 			await expect(manager.stopSession('nonexistent')).rejects.toThrow(
-				'not found or has no container',
+				'Session nonexistent not found',
 			)
 		})
 
-		it('throws when session has no container', async () => {
-			const session = buildSession({ containerId: null })
+		it('flips to `stopped` without throwing when the session has no container yet', async () => {
+			// Pre-start race: row exists, container hasn't been spawned. There
+			// is nothing to SIGTERM, so we mark the row stopped cleanly rather
+			// than surfacing "not found or has no container" to the user.
+			const session = buildSession({ status: 'running', containerId: null })
 			mockResults.select = [session]
 
-			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
+			await manager.stopSession(session.id)
+
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			expect(calls.updates).toContainEqual(expect.objectContaining({ status: 'stopped' }))
+			expect(calls.inserts).toContainEqual(
+				expect.objectContaining({
+					action: 'session_stopped',
+					entityType: 'session',
+					entityId: session.id,
+				}),
+			)
 		})
 	})
 

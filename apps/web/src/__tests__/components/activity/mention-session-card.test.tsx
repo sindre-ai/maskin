@@ -10,6 +10,8 @@ vi.mock('@/hooks/use-actors', () => ({
 	}),
 }))
 
+const stopMutate = vi.fn()
+
 vi.mock('@/hooks/use-sessions', async () => {
 	const actual =
 		await vi.importActual<typeof import('@/hooks/use-sessions')>('@/hooks/use-sessions')
@@ -26,6 +28,10 @@ vi.mock('@/hooks/use-sessions', async () => {
 		}),
 		useSessionLogs: () => ({
 			data: [],
+		}),
+		useStopSession: () => ({
+			mutate: stopMutate,
+			isPending: false,
 		}),
 	}
 })
@@ -108,5 +114,83 @@ describe('MentionSessionCard', () => {
 		await user.click(screen.getByRole('button', { name: /Finished/i }))
 		// Sheet uses a dialog role when open.
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
+	})
+
+	describe('stop interaction', () => {
+		beforeEach(() => {
+			stopMutate.mockReset()
+		})
+
+		it('shows an inline `Stop?` confirm instead of firing the mutation on the first tap', async () => {
+			const user = userEvent.setup()
+			const session = buildSession({ status: 'running' })
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			await user.click(screen.getByRole('button', { name: /Stop session/i }))
+
+			expect(stopMutate).not.toHaveBeenCalled()
+			expect(screen.getByRole('button', { name: /Confirm stop session/i })).toBeInTheDocument()
+		})
+
+		it('confirms the stop on the second tap and flips the pill to `Stopping…`', async () => {
+			const user = userEvent.setup()
+			const session = buildSession({ status: 'running' })
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			await user.click(screen.getByRole('button', { name: /Stop session/i }))
+			await user.click(screen.getByRole('button', { name: /Confirm stop session/i }))
+
+			expect(stopMutate).toHaveBeenCalledWith('session-1')
+			expect(screen.getByText(/Stopping…/)).toBeInTheDocument()
+		})
+
+		it('Esc cancels the inline confirm without firing the mutation', async () => {
+			const user = userEvent.setup()
+			const session = buildSession({ status: 'running' })
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			await user.click(screen.getByRole('button', { name: /Stop session/i }))
+			await user.keyboard('{Escape}')
+
+			expect(stopMutate).not.toHaveBeenCalled()
+			expect(screen.getByRole('button', { name: /Stop session/i })).toBeInTheDocument()
+		})
+
+		it('renders `Stopping…` when the server already reports the session as stopping', () => {
+			const session = buildSession({ status: 'stopping' })
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			expect(screen.getByText(/Stopping…/)).toBeInTheDocument()
+		})
+
+		it('renders the stopped terminal pill with a Restart chip slot', () => {
+			const session = buildSession({
+				status: 'stopped',
+				startedAt: new Date(Date.now() - 3000).toISOString(),
+				completedAt: new Date().toISOString(),
+			})
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			expect(screen.getByText('Stopped')).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Restart session/i })).toBeInTheDocument()
+		})
+
+		it('renders the failed terminal pill with a Restart chip slot too', () => {
+			const session = buildSession({
+				status: 'failed',
+				startedAt: new Date(Date.now() - 3000).toISOString(),
+				completedAt: new Date().toISOString(),
+			})
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			expect(screen.getByText('Failed')).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Restart session/i })).toBeInTheDocument()
+		})
 	})
 })

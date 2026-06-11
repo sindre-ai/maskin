@@ -321,13 +321,83 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		if (!session || !session.containerId) {
-			throw new Error(`Session ${sessionId} not found or has no container`)
+		if (!session) {
+			throw new Error(`Session ${sessionId} not found`)
 		}
 
+		// Idempotent — already stopping/terminal: skip without throwing so the
+		// stop button is safe to double-tap.
+		if (
+			session.status === 'stopping' ||
+			session.status === 'stopped' ||
+			session.status === 'completed' ||
+			session.status === 'failed' ||
+			session.status === 'timeout' ||
+			session.status === 'superseded'
+		) {
+			return
+		}
+
+		// No container yet (pre-start race) or the container was removed
+		// externally. Nothing to SIGTERM — flip the row straight to `stopped`
+		// and emit the event so the stop button no-ops cleanly instead of
+		// surfacing "not found or has no container" to the user.
+		if (!session.containerId) {
+			await this.db
+				.update(sessions)
+				.set({ status: 'stopped', completedAt: new Date(), updatedAt: new Date() })
+				.where(eq(sessions.id, sessionId))
+
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_stopped',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+
+			await this.clearActiveSession(sessionId)
+
+			logger.info('Session stopped before container started', {
+				sessionId,
+				workspaceId: session.workspaceId,
+				priorStatus: session.status,
+			})
+			return
+		}
+
+		// Ordered to match the bet's architecture decision: flip status →
+		// `stopping` first, so the write-gate middleware starts rejecting
+		// agent writes with 409 *before* SIGTERM lands. SIGTERM races
+		// in-flight HTTP writes — the gate is what makes stop actually safe.
+		await this.db
+			.update(sessions)
+			.set({ status: 'stopping', updatedAt: new Date() })
+			.where(eq(sessions.id, sessionId))
+
+		logger.info('Session stopping — gate active', {
+			sessionId,
+			workspaceId: session.workspaceId,
+		})
+
 		this.containers.detachStdin(sessionId)
-		await this.containers.stop(session.containerId)
-		// handleCompletion will be called by the exit watcher
+		await this.containers.stop(session.containerId, 3)
+
+		await this.db.insert(events).values({
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'session_stopped',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
+
+		await this.clearActiveSession(sessionId)
+
+		// handleCompletion will fire from the exit watcher and finalize the
+		// status as `stopped` (instead of `failed`) based on the current
+		// `stopping` state — see the branch in handleCompletion.
 	}
 
 	async pauseSession(sessionId: string): Promise<void> {
@@ -651,6 +721,11 @@ export class SessionManager extends EventEmitter {
 
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
+			// Propagated as `X-Maskin-Session-Id` on every agent-attributed write
+			// so the session-write-gate middleware can reject 409 when the
+			// session has been stopped — closes the SIGTERM-race that the
+			// container-kill alone cannot.
+			MASKIN_SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
 			MASKIN_API_URL: 'http://host.docker.internal:3000',
@@ -1101,8 +1176,21 @@ export class SessionManager extends EventEmitter {
 
 		if (!session) return
 
-		// Skip if already in a terminal or transitional state (avoid double-processing)
-		if (['completed', 'failed', 'timeout', 'paused', 'snapshotting'].includes(session.status))
+		// Skip if already in a terminal or transitional state (avoid double-processing).
+		// `stopping` is *not* in this list — exit-watcher firing on a stopping
+		// session is the expected path: we finalize the status as `stopped`
+		// below and skip the duplicate session_stopped event.
+		if (
+			[
+				'completed',
+				'failed',
+				'timeout',
+				'stopped',
+				'superseded',
+				'paused',
+				'snapshotting',
+			].includes(session.status)
+		)
 			return
 
 		try {
@@ -1121,7 +1209,16 @@ export class SessionManager extends EventEmitter {
 			logger.warn('Failed to push session files', { sessionId, error: String(err) })
 		}
 
-		const status = exitCode === 0 ? 'completed' : 'failed'
+		// A `stopping` session was just SIGTERMed by stopSession — it almost
+		// always exits non-zero, but the cause was the user, not a failure.
+		// Promote it to `stopped` so the UI can render the right terminal
+		// pill and Restart chip (vs. a Failed badge).
+		const wasUserStop = session.status === 'stopping'
+		const status: 'completed' | 'failed' | 'stopped' = wasUserStop
+			? 'stopped'
+			: exitCode === 0
+				? 'completed'
+				: 'failed'
 
 		// Extract token / cost usage from the tail of stdout. Codex and custom
 		// runtimes don't emit structured usage — extractor returns null and the
@@ -1207,21 +1304,27 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
-		try {
-			await this.db.insert(events).values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: `session_${status}`,
-				entityType: 'session',
-				entityId: sessionId,
-				data: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
-			})
-		} catch (err) {
-			logger.error('Failed to insert completion event in handleCompletion', {
-				sessionId,
-				status,
-				error: String(err),
-			})
+		// stopSession already emitted `session_stopped` — don't emit it twice.
+		if (!wasUserStop) {
+			try {
+				await this.db.insert(events).values({
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					action: `session_${status}`,
+					entityType: 'session',
+					entityId: sessionId,
+					data: {
+						exit_code: exitCode,
+						...(failureReason ? { failure_reason: failureReason } : {}),
+					},
+				})
+			} catch (err) {
+				logger.error('Failed to insert completion event in handleCompletion', {
+					sessionId,
+					status,
+					error: String(err),
+				})
+			}
 		}
 
 		try {
