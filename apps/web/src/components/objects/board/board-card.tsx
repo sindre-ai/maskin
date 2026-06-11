@@ -25,7 +25,7 @@ export function BoardCard({
 	columns = [],
 	columnVisibility,
 }: BoardCardProps) {
-	const owner = object.owner ? actors?.find((a) => a.id === object.owner) : null
+	const owner = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const availableProperties =
 		columns.length > 0
 			? columns

@@ -782,6 +782,7 @@ function extractObjectType(toolName: string, args: unknown): string | undefined 
 export interface HeroCardActor {
 	id: string
 	name: string | null
+	type: string | null
 }
 
 export interface HeroCardObject {
@@ -789,7 +790,7 @@ export interface HeroCardObject {
 	type: string
 	title: string | null
 	status: string | null
-	owner: HeroCardActor | null
+	driver: HeroCardActor | null
 	contextLine: string
 	badges?: string[]
 }
@@ -816,7 +817,7 @@ interface RawObject {
 	type: string
 	title?: string | null
 	status?: string | null
-	owner?: string | null
+	driver?: string | null
 	createdAt?: string | null
 	updatedAt?: string | null
 	metadata?: Record<string, unknown> | null
@@ -912,7 +913,7 @@ function anchorLabel(meta: Record<string, unknown> | null | undefined): string |
  */
 export function buildContextLine(
 	obj: RawObject,
-	owner: HeroCardActor | null,
+	driver: HeroCardActor | null,
 	nowMs = Date.now(),
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): string {
@@ -924,7 +925,7 @@ export function buildContextLine(
 		return age ? `last touch ${age} · ${status}` : status
 	}
 	const age = ageLabel(obj.createdAt, nowMs)
-	const ownerName = owner?.name
+	const driverName = driver?.name
 	switch (obj.type) {
 		case 'bet': {
 			const duration = (obj.metadata?.duration_weeks ?? obj.metadata?.duration) as
@@ -942,7 +943,7 @@ export function buildContextLine(
 			return durationLabel ? `${status} · ${durationLabel}` : status
 		}
 		case 'task':
-			return ownerName ? `${status} · owner ${ownerName}` : status
+			return driverName ? `${status} · driver ${driverName}` : status
 		case 'insight': {
 			const cluster = obj.metadata?.cluster_size as number | undefined
 			const evidence = obj.metadata?.evidence_quality as string | undefined
@@ -960,7 +961,7 @@ export function buildContextLine(
 
 export function buildHeroCardObject(
 	obj: RawObject,
-	owner: HeroCardActor | null,
+	driver: HeroCardActor | null,
 	nowMs = Date.now(),
 	annotations: Record<string, HeroCardTypeAnnotation> = HERO_CARD_TYPE_DEFAULTS,
 ): HeroCardObject {
@@ -969,8 +970,8 @@ export function buildHeroCardObject(
 		type: obj.type,
 		title: obj.title ?? null,
 		status: obj.status ?? null,
-		owner,
-		contextLine: buildContextLine(obj, owner, nowMs, annotations),
+		driver,
+		contextLine: buildContextLine(obj, driver, nowMs, annotations),
 	}
 }
 
@@ -1035,7 +1036,7 @@ function buildActorHeroCardObject(actor: RawActor): HeroCardObject {
 		type: 'actor',
 		title: actor.name ?? null,
 		status,
-		owner: null,
+		driver: null,
 		contextLine: buildActorContextLine(actor),
 	}
 }
@@ -1053,7 +1054,7 @@ function buildWorkspaceHeroCardObject(workspace: RawWorkspace): HeroCardObject {
 		type: 'workspace',
 		title: workspace.name ?? null,
 		status: workspace.role ?? 'active',
-		owner: null,
+		driver: null,
 		contextLine: buildWorkspaceContextLine(workspace),
 	}
 }
@@ -1072,10 +1073,10 @@ async function buildCollectionHeroCard(
 	offset = 0,
 ): Promise<HeroCardPayload> {
 	if (!Array.isArray(rows) || rows.length === 0) return { kind: 'empty', tool }
-	const ownerIds = rows.map((o) => o.owner).filter((v): v is string => typeof v === 'string')
-	const actors = await resolveActors(config, ownerIds, workspaceId)
+	const driverIds = rows.map((o) => o.driver).filter((v): v is string => typeof v === 'string')
+	const actors = await resolveActors(config, driverIds, workspaceId)
 	const heroObjects = rows.map((o) =>
-		buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+		buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 	)
 	if (heroObjects.length === 1) return { kind: 'single', tool, object: heroObjects[0] }
 	const uiObjects = heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE)
@@ -1168,7 +1169,7 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 
 function buildTriggerHeroCardObject(
 	trigger: RawTrigger,
-	owner: HeroCardActor | null,
+	driver: HeroCardActor | null,
 	nowMs = Date.now(),
 ): HeroCardObject {
 	return {
@@ -1176,15 +1177,15 @@ function buildTriggerHeroCardObject(
 		type: 'trigger',
 		title: trigger.name ?? null,
 		status: trigger.enabled ? 'enabled' : 'disabled',
-		owner,
+		driver,
 		contextLine: buildTriggerContextLine(trigger, nowMs),
 	}
 }
 
 /**
- * Resolve actor names for a set of actor IDs in one shot. Used to fill owner
- * names into HeroCardObject. Best-effort: missing actors come back as
- * `{ id, name: null }` so the widget renders without owner instead of failing.
+ * Resolve actor names and types for a set of actor IDs in one shot. Used to
+ * fill driver info into HeroCardObject. Best-effort: missing actors come back
+ * as `{ id, name: null, type: null }` so the widget renders without driver instead of failing.
  */
 // Hero-card responses typically resolve a single tool call's owner set (≤50
 // objects). Cap defensively at 200 to match the server-side `?ids=` limit and
@@ -1204,8 +1205,8 @@ async function resolveActors(
 		const query = `?ids=${queryIds.map(encodeURIComponent).join(',')}`
 		const result = (await apiCall(config, 'GET', `/api/actors${query}`, undefined, {
 			workspaceId,
-		})) as Array<{ id: string; name: string | null }>
-		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null })
+		})) as Array<{ id: string; name: string | null; type?: string | null }>
+		for (const a of result) out.set(a.id, { id: a.id, name: a.name ?? null, type: a.type ?? null })
 		console.log(
 			`[MCP] Resolved ${out.size}/${queryIds.length} hero-card actor names (requested ${uniq.length})`,
 		)
@@ -1213,7 +1214,7 @@ async function resolveActors(
 		console.error('[MCP] Failed to resolve actors for hero-card:', err)
 	}
 	for (const id of uniq) {
-		if (!out.has(id)) out.set(id, { id, name: null })
+		if (!out.has(id)) out.set(id, { id, name: null, type: null })
 	}
 	return out
 }
@@ -1446,12 +1447,12 @@ export function createMcpServer(config: McpConfig) {
 					r.success === true && (r.result as { object?: unknown } | null)?.object != null,
 			)
 			const rawObjects = successful.map((r) => r.result.object)
-			const ownerIds = rawObjects
-				.map((o) => o.owner)
+			const driverIds = rawObjects
+				.map((o) => o.driver)
 				.filter((v): v is string => typeof v === 'string')
-			const actors = await resolveActors(config, ownerIds, workspace_id)
+			const actors = await resolveActors(config, driverIds, workspace_id)
 			const heroObjects = rawObjects.map((o) =>
-				buildHeroCardObject(o, o.owner ? (actors.get(o.owner) ?? null) : null),
+				buildHeroCardObject(o, o.driver ? (actors.get(o.driver) ?? null) : null),
 			)
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
@@ -1755,6 +1756,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
+			if (args.driver) params.set('driver', args.driver)
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const result = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
@@ -4646,7 +4648,32 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			const actorIdMap: Record<string, string> = {}
 			let agentsCreated = 0
 			if (template.seedAgents && template.seedAgents.length > 0) {
+				// Pre-fetch existing workspace members so we can skip agents that
+				// were already seeded (e.g. by the automatic workspace bootstrap).
+				// Best-effort: if the fetch fails, dedup is skipped and agents may
+				// be re-created (non-fatal).
+				let existingActorsByName = new Map<string, string>()
+				try {
+					const existingMembers = (await apiCall(
+						config,
+						'GET',
+						`/api/workspaces/${workspace.id}/members`,
+						undefined,
+						{ workspaceId: workspace.id },
+					)) as Array<{ actorId: string; name: string }>
+					existingActorsByName = new Map(existingMembers.map((m) => [m.name, m.actorId]))
+				} catch {
+					// dedup unavailable — proceed without it
+				}
+
 				for (const agent of template.seedAgents) {
+					// If this agent already exists as a workspace member, record its id
+					// and skip all creation steps.
+					const existingId = existingActorsByName.get(agent.name)
+					if (existingId) {
+						actorIdMap[agent.$id] = existingId
+						continue
+					}
 					try {
 						const created = (await apiCall(
 							config,
@@ -4688,6 +4715,27 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 								{ workspaceId: workspace.id },
 							)
 						}
+						// Create and attach seed skills for this agent.
+						for (const skill of agent.skills ?? []) {
+							try {
+								const createdSkill = (await apiCall(
+									config,
+									'POST',
+									`/api/workspaces/${workspace.id}/skills`,
+									{ name: skill.name, content: skill.content },
+									{ workspaceId: workspace.id },
+								)) as { id: string }
+								await apiCall(
+									config,
+									'POST',
+									`/api/actors/${created.id}/workspace-skills`,
+									{ workspaceSkillId: createdSkill.id },
+									{ workspaceId: workspace.id },
+								)
+							} catch (err) {
+								seedSummary += ` Failed to create/attach skill "${skill.name}" for agent "${agent.name}": ${String(err)}.`
+							}
+						}
 						agentsCreated++
 					} catch (err) {
 						seedSummary += ` Failed to create agent "${agent.name}": ${String(err)}.`
@@ -4698,7 +4746,19 @@ Then call get_started again with confirm: true, and (if the user told you anythi
 			// Create seed triggers, resolving targetActor$id to a real UUID.
 			let triggersCreated = 0
 			if (template.seedTriggers && template.seedTriggers.length > 0) {
+				// Pre-fetch existing triggers to skip any already seeded. Best-effort.
+				let existingTriggerNames = new Set<string>()
+				try {
+					const existingTriggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+						workspaceId: workspace.id,
+					})) as Array<{ name: string }>
+					existingTriggerNames = new Set(existingTriggers.map((t) => t.name))
+				} catch {
+					// dedup unavailable — proceed without it
+				}
+
 				for (const trigger of template.seedTriggers) {
+					if (existingTriggerNames.has(trigger.name)) continue
 					const targetActorId = actorIdMap[trigger.targetActor$id] ?? trigger.targetActor$id
 					try {
 						const substitutedPrompt = trigger.actionPrompt.replaceAll('{{self_id}}', targetActorId)

@@ -127,6 +127,11 @@ export const tools = {
 							.describe(
 								'Key-value metadata. Call get_workspace_schema to discover available fields and types.',
 							),
+						driver: z
+							.string()
+							.uuid()
+							.optional()
+							.describe('UUID of the driver actor responsible for this object'),
 						file_ids: z
 							.array(z.string().uuid())
 							.optional()
@@ -188,6 +193,7 @@ export const tools = {
 							.describe(
 								'IDs of existing files to attach to this object (upload first with create_file). Each becomes an `attached` relationship; already-attached files are skipped.',
 							),
+						driver: z.string().uuid().nullable().optional().describe('Set or clear the driver'),
 						detach_file_ids: z
 							.array(z.string().uuid())
 							.optional()
@@ -221,11 +227,16 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or owner. Returns paginated results ordered by creation date.',
+			'List insights, bets, and/or tasks in the workspace. Filter by type, status, or driver. Returns paginated results ordered by creation date.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
 			status: z.string().optional(),
+			driver: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to objects with this driver actor UUID'),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
@@ -303,7 +314,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
@@ -336,7 +347,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `systemPrompt`, which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. Results are paginated (default 50, max 100).",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -351,7 +362,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			'Get an actor by ID — returns the full record including `description` (short one-liner) and `systemPrompt` (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their system prompt and tailor your reply.',
+			'Get an actor by ID — returns the full record including `description` (short one-liner) and `system_prompt` / instructions (longer context on who the actor is and how to work with them). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 		}),
@@ -648,7 +659,7 @@ export const tools = {
 		}),
 	},
 	create_comment: {
-		description: `Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in \`bet.content\`, \`task.content\`, or object titles — those fields are the durable spec, not the conversation, and humans don't scan them for new information. If you're tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nWrite it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. If a thought is long, split it into multiple short comments or use parent_event_id to thread a reply. When referencing another object in human-facing text, use a markdown link \`[title](link)\` — never paste partial UUIDs.\n\nHard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. Set parent_event_id to thread a reply under an existing comment (use the id returned by get_comments). Include mentions as an array of actor UUIDs — for each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. To attach files, first upload them with create_file (or pick existing ones with list_files) and pass the returned file ids in attachment_file_ids (max ${COMMENT_MAX_ATTACHMENTS}). Attached files appear as clickable cards under the posted comment.`,
+		description: `Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in \`bet.content\`, \`task.content\`, or object titles — those fields are the durable spec, not the conversation, and humans don't scan them for new information. If you're tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nWrite it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. If a thought is long, split it into multiple short comments or use parent_event_id to thread a reply. When referencing another object in human-facing text, use a markdown link \`[title](link)\` — never paste partial UUIDs.\n\nHard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. Set parent_event_id to thread a reply under an existing comment (use the id returned by get_comments). Include mentions as an array of actor UUIDs — for each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. To attach files, first upload them with create_file (or pick existing ones with list_files) and pass the returned file ids in attachment_file_ids (max ${COMMENT_MAX_ATTACHMENTS}). Attached files appear as clickable cards under the posted comment. To prompt the human for a structured decision, pass metadata: { chips: ["Option A", "Option B", "Skip"] } — up to 5 string options, each up to 20 characters. The UI renders them as quick-reply buttons the human can tap, with a free-text fallback. Their reply is threaded under this comment.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,

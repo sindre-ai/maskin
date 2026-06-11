@@ -91,7 +91,10 @@ export function deriveColumns(
 }
 
 function getGroupLabel(groupBy: string, value: string, actors?: ActorListItem[]) {
-	if ((groupBy === 'owner' || groupBy === 'createdBy') && value !== 'No value') {
+	if (
+		(groupBy === 'owner' || groupBy === 'driver' || groupBy === 'createdBy') &&
+		value !== 'No value'
+	) {
 		return actors?.find((actor) => actor.id === value)?.name ?? value
 	}
 	return value

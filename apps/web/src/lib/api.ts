@@ -232,6 +232,14 @@ export const api = {
 			request<{ api_key: string }>(`/actors/${id}/api-keys`, { method: 'POST' }),
 		reset: (id: string, workspaceId: string) =>
 			request<ActorResponse>(`/actors/${id}/reset`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<ActorResponse>(`/actors/${id}/pause`, { method: 'POST', workspaceId }),
+		run: (id: string, workspaceId: string, body?: RunAgentInput) =>
+			request<ActorResponse>(`/actors/${id}/run`, {
+				method: 'POST',
+				body: body ?? {},
+				workspaceId,
+			}),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
 	},
@@ -525,15 +533,20 @@ export const api = {
 	},
 
 	files: {
-		list: (workspaceId: string, params?: { q?: string; limit?: number; offset?: number }) => {
-			const qs = params
-				? `?${new URLSearchParams(
-						Object.entries(params).reduce<Record<string, string>>((acc, [k, v]) => {
-							if (v !== undefined && v !== '') acc[k] = String(v)
-							return acc
-						}, {}),
-					)}`
-				: ''
+		list: (
+			workspaceId: string,
+			params?: { q?: string; ids?: string[]; limit?: number; offset?: number },
+		) => {
+			if (!params) return request<FileListItem[]>('/files', { workspaceId })
+			const { ids, ...rest } = params
+			const searchParams = new URLSearchParams(
+				Object.entries(rest).reduce<Record<string, string>>((acc, [k, v]) => {
+					if (v !== undefined && v !== '') acc[k] = String(v)
+					return acc
+				}, {}),
+			)
+			if (ids?.length) searchParams.set('ids', ids.join(','))
+			const qs = searchParams.size > 0 ? `?${searchParams}` : ''
 			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
 		},
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
@@ -581,7 +594,7 @@ export interface ObjectResponse {
 	content: string | null
 	status: string
 	metadata: SafeMetadata | null
-	owner: string | null
+	driver: string | null
 	activeSessionId: string | null
 	createdBy: string
 	createdAt: string | null
@@ -640,7 +653,7 @@ export interface CreateObjectInput {
 	content?: string
 	status: string
 	metadata?: SafeMetadata
-	owner?: string
+	driver?: string
 }
 
 export interface UpdateObjectInput {
@@ -648,14 +661,14 @@ export interface UpdateObjectInput {
 	content?: string
 	status?: string
 	metadata?: SafeMetadata
-	owner?: string | null
+	driver?: string | null
 }
 
 export interface BulkUpdateObjectsInput {
 	ids: string[]
 	patch: {
 		status?: string
-		owner?: string | null
+		driver?: string | null
 		metadata?: SafeMetadata
 	}
 }
@@ -719,6 +732,10 @@ export interface UpdateActorInput {
 	memory?: Record<string, unknown>
 	llm_provider?: string
 	llm_config?: Record<string, unknown>
+}
+
+export interface RunAgentInput {
+	action_prompt?: string
 }
 
 export interface WorkspaceResponse {
@@ -975,6 +992,7 @@ export interface SessionResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	currentActivity: string | null
 }
 
 export interface SessionInputAttachment {

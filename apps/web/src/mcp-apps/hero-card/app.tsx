@@ -8,12 +8,13 @@ import {
 	type WebAppTarget,
 	useWebAppHref,
 } from '@/mcp-apps/shared/web-app-link'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, User } from 'lucide-react'
 import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef } from 'react'
 
 interface HeroCardActor {
 	id: string
 	name: string | null
+	type: string | null
 }
 
 interface HeroCardObject {
@@ -21,7 +22,7 @@ interface HeroCardObject {
 	type: string
 	title: string | null
 	status: string | null
-	owner: HeroCardActor | null
+	driver: HeroCardActor | null
 	contextLine: string
 	badges?: string[]
 }
@@ -149,11 +150,17 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 				{object.contextLine}
 			</p>
 			<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
-				{object.owner?.name && (
-					<span className="text-[11.5px] text-muted-foreground tabular-nums">
-						Owner: {object.owner.name}
-					</span>
-				)}
+				{object.driver?.name &&
+					(object.driver.type !== 'agent' ? (
+						<span className="text-[11.5px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
+							<User className="size-3 shrink-0" />
+							Driver: {object.driver.name}
+						</span>
+					) : (
+						<span className="text-[11.5px] text-muted-foreground tabular-nums">
+							Driver: {object.driver.name}
+						</span>
+					))}
 				{href ? (
 					<span className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-hover transition-colors min-h-[28px]">
 						Open in Maskin

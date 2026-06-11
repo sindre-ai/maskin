@@ -20,8 +20,8 @@ function renderControls(overrides: Partial<React.ComponentProps<typeof DataTable
 		statusFilter: undefined,
 		onStatusFilterChange: vi.fn(),
 		statusesByType: {},
-		ownerFilter: undefined,
-		onOwnerFilterChange: vi.fn(),
+		driverFilter: undefined,
+		onDriverFilterChange: vi.fn(),
 		actors: [],
 		sort: 'createdAt',
 		onSortChange: vi.fn(),
@@ -51,13 +51,13 @@ describe('DataTableControls', () => {
 		expect(screen.getByText('1')).toBeInTheDocument()
 	})
 
-	it('shows badge with count 1 when ownerFilter is set', () => {
-		renderControls({ ownerFilter: 'actor-1' })
+	it('shows badge with count 1 when driverFilter is set', () => {
+		renderControls({ driverFilter: 'actor-1' })
 		expect(screen.getByText('1')).toBeInTheDocument()
 	})
 
 	it('shows badge with count 2 when both filters are set', () => {
-		renderControls({ statusFilter: 'active', ownerFilter: 'actor-1' })
+		renderControls({ statusFilter: 'active', driverFilter: 'actor-1' })
 		expect(screen.getByText('2')).toBeInTheDocument()
 	})
 
@@ -74,7 +74,7 @@ describe('DataTableControls', () => {
 		expect(props.onStatusFilterChange).toHaveBeenCalledWith('active')
 	})
 
-	it('calls onOwnerFilterChange when owner checkbox is clicked', async () => {
+	it('calls onDriverFilterChange when owner checkbox is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderControls({
 			actors: [
@@ -85,6 +85,7 @@ describe('DataTableControls', () => {
 					email: null,
 					description: null,
 					isSystem: false,
+					agentState: 'idle' as const,
 				},
 			],
 		})
@@ -93,7 +94,7 @@ describe('DataTableControls', () => {
 		// Only owner checkboxes rendered (no status/column checkboxes): ["Alice"]
 		const checkboxes = screen.getAllByRole('checkbox')
 		await user.click(checkboxes[0])
-		expect(props.onOwnerFilterChange).toHaveBeenCalledWith('actor-1')
+		expect(props.onDriverFilterChange).toHaveBeenCalledWith('actor-1')
 	})
 
 	it('calls onSortChange when a sort button is clicked', async () => {

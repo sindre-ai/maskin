@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { type CreateActorInput, type UpdateActorInput, api } from '../lib/api'
+import { type CreateActorInput, type RunAgentInput, type UpdateActorInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useActors(workspaceId?: string, options?: { enabled?: boolean }) {
@@ -75,6 +75,45 @@ export function useResetActor(workspaceId: string) {
 		},
 		onError: () => {
 			toast.error('Failed to reset agent')
+		},
+	})
+}
+
+function invalidateAgentControls(
+	queryClient: ReturnType<typeof useQueryClient>,
+	workspaceId: string,
+	actorId: string,
+) {
+	queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(actorId) })
+	queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.byActor(workspaceId, actorId) })
+	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId) })
+}
+
+export function useAgentPause(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (id: string) => api.actors.pause(id, workspaceId),
+		onSuccess: (_result, id) => {
+			invalidateAgentControls(queryClient, workspaceId, id)
+		},
+		onError: () => {
+			toast.error('Failed to pause agent')
+		},
+	})
+}
+
+export function useAgentRun(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, body }: { id: string; body?: RunAgentInput }) =>
+			api.actors.run(id, workspaceId, body),
+		onSuccess: (_result, { id }) => {
+			invalidateAgentControls(queryClient, workspaceId, id)
+		},
+		onError: () => {
+			toast.error('Failed to run agent')
 		},
 	})
 }

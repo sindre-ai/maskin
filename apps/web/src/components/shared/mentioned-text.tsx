@@ -7,6 +7,8 @@ interface MentionedTextProps {
 	actors: ActorListItem[]
 	/** Class applied to each highlighted @mention span. */
 	mentionClassName?: string
+	/** When provided, @mentions are rendered as clickable buttons. */
+	onMentionClick?: (actor: ActorListItem) => void
 }
 
 const DEFAULT_MENTION_CLASS =
@@ -21,6 +23,7 @@ export function MentionedText({
 	content,
 	actors,
 	mentionClassName = DEFAULT_MENTION_CLASS,
+	onMentionClick,
 }: MentionedTextProps) {
 	const sortedNames = useMemo(
 		() =>
@@ -31,8 +34,21 @@ export function MentionedText({
 		[actors],
 	)
 
-	const parts = useMemo<Array<{ type: 'text' | 'mention'; text: string; key: string }>>(() => {
-		const out: Array<{ type: 'text' | 'mention'; text: string; key: string }> = []
+	const actorsByName = useMemo(() => {
+		const map = new Map<string, ActorListItem>()
+		for (const a of actors) if (a.name) map.set(a.name, a)
+		return map
+	}, [actors])
+
+	const parts = useMemo<
+		Array<{ type: 'text' | 'mention'; text: string; actor?: ActorListItem; key: string }>
+	>(() => {
+		const out: Array<{
+			type: 'text' | 'mention'
+			text: string
+			actor?: ActorListItem
+			key: string
+		}> = []
 		let i = 0
 		while (i < content.length) {
 			if (content[i] === '@') {
@@ -42,7 +58,12 @@ export function MentionedText({
 					return after === undefined || !/\w/.test(after)
 				})
 				if (match) {
-					out.push({ type: 'mention', text: `@${match}`, key: `m-${i}` })
+					out.push({
+						type: 'mention',
+						text: `@${match}`,
+						actor: actorsByName.get(match),
+						key: `m-${i}`,
+					})
 					i += match.length + 1
 					continue
 				}
@@ -53,12 +74,28 @@ export function MentionedText({
 			i = end
 		}
 		return out
-	}, [content, sortedNames])
+	}, [content, sortedNames, actorsByName])
 
 	return (
 		<>
 			{parts.map((p): ReactNode => {
 				if (p.type === 'mention') {
+					if (onMentionClick && p.actor) {
+						const actor = p.actor
+						return (
+							<button
+								key={p.key}
+								type="button"
+								onClick={() => onMentionClick(actor)}
+								className={cn(
+									mentionClassName,
+									'cursor-pointer hover:opacity-80 transition-opacity',
+								)}
+							>
+								{p.text}
+							</button>
+						)
+					}
 					return (
 						<span key={p.key} className={cn(mentionClassName)}>
 							{p.text}
