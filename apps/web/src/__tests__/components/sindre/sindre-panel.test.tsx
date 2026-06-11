@@ -189,8 +189,8 @@ describe('SindrePanel', () => {
 		})
 
 		expect(await screen.findByText('Conversations')).toBeInTheDocument()
-		// Both the header icon button and footer text button are present
-		expect(screen.getAllByRole('button', { name: 'New conversation' })).toHaveLength(2)
+		// Header icon button is present (footer button replaced by inline composer)
+		expect(screen.getAllByRole('button', { name: 'New conversation' })).toHaveLength(1)
 	})
 
 	it('shows SindreChat when a conversation is selected', async () => {
