@@ -328,8 +328,8 @@ export function AgentDocumentView({
 					Configuration
 				</CollapsibleTrigger>
 				<CollapsibleContent>
-					{/* System Prompt */}
-					<Section title="System Prompt">
+					{/* Instructions */}
+					<Section title="Instructions">
 						<Textarea
 							value={systemPromptDraft}
 							onChange={(e) => {
