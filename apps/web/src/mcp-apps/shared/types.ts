@@ -11,4 +11,5 @@ export type {
 	TriggerResponse,
 	EventResponse,
 	SessionResponse,
+	NotificationResponse,
 } from '@/lib/api'

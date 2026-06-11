@@ -5,24 +5,31 @@ import {
 	events,
 	actors,
 	agentFiles,
+	files,
+	imports,
 	integrations,
 	notifications,
 	objects,
+	readState,
 	relationships,
 	sessionLogs,
 	sessions,
+	subscriptions,
 	triggers,
 	workspaceMembers,
+	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	PLATFORM_MCP_PRESET,
 	SINDRE_DEFAULT,
 	createActorSchema,
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { and, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, count, countDistinct, desc, eq, inArray, or } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -33,7 +40,9 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
+import { bootstrapWorkspaceObserver } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -41,6 +50,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		sessionManager: SessionManager
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -116,6 +126,17 @@ app.openapi(createActorRoute, async (c) => {
 	// Hash password if provided
 	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
+	// Agents get the Maskin MCP by default — caller-provided servers win on conflict.
+	const tools =
+		body.type === 'agent'
+			? {
+					mcpServers: {
+						maskin: PLATFORM_MCP_PRESET,
+						...(body.tools?.mcpServers ?? {}),
+					},
+				}
+			: body.tools
+
 	const [actor] = await db
 		.insert(actors)
 		.values({
@@ -125,8 +146,9 @@ app.openapi(createActorRoute, async (c) => {
 			email: body.email,
 			apiKey: key,
 			passwordHash,
+			description: body.description,
 			systemPrompt: body.system_prompt,
-			tools: body.tools,
+			tools,
 			llmProvider: body.llm_provider,
 			llmConfig: body.llm_config,
 		})
@@ -165,6 +187,9 @@ app.openapi(createActorRoute, async (c) => {
 			})
 
 			// Seed Sindre — the built-in meta-agent shipped with every workspace.
+			// apiKey is required: without it, Sindre's container boots with an empty
+			// Bearer token and MCP writes either 401 or — worse — fall back to a key
+			// that resolves to a different actor, misattributing every comment.
 			const [sindre] = await tx
 				.insert(actors)
 				.values({
@@ -175,6 +200,7 @@ app.openapi(createActorRoute, async (c) => {
 					llmProvider: SINDRE_DEFAULT.llmProvider,
 					llmConfig: SINDRE_DEFAULT.llmConfig,
 					tools: SINDRE_DEFAULT.tools,
+					apiKey: generateApiKey().key,
 					createdBy: actor.id,
 				})
 				.returning()
@@ -190,19 +216,69 @@ app.openapi(createActorRoute, async (c) => {
 			return workspace
 		})
 
-		if (created) workspaceId = created.id
+		if (created) {
+			workspaceId = created.id
+			const agentStorage = c.get('agentStorage')
+			if (agentStorage) {
+				bootstrapWorkspaceObserver(db, agentStorage, created.id, actor.id).catch((err) =>
+					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
+				)
+			}
+		}
 	}
 
-	// Return actor WITHOUT api_key, but WITH it in the expected response field
-	const { apiKey: _, ...actorWithoutKey } = actor
+	// Return actor WITHOUT api_key, but WITH it in the expected response field.
+	// Field names must be snake_case to match actorResponseSchema so MCP read→update
+	// round trips don't get keys stripped.
+	const { apiKey: _, systemPrompt, llmProvider, llmConfig, ...actorWithoutKey } = actor
 	return c.json(
 		{
 			...serialize(actorWithoutKey),
+			system_prompt: systemPrompt,
+			llm_provider: llmProvider,
+			llm_config: llmConfig,
 			api_key: key,
 			...(workspaceId && { workspace_id: workspaceId }),
 		} as z.infer<typeof actorWithKeySchema>,
 		201,
 	)
+})
+
+// Pagination is opt-in: when `limit`/`offset` are absent, the endpoint returns
+// every actor (preserving the historical frontend behaviour). When `limit`
+// is present, the result is capped at min(limit, 100) and `X-Total-Count`
+// surfaces the real total so MCP/widget callers can render an accurate
+// `+N more` footer without changing the array body shape.
+// Cap the `ids=` filter at 200 entries per request. Sized for the hero-card
+// owner-resolution caller (one ID per object in a tool response) plus headroom.
+const MAX_IDS_FILTER = 200
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function parseIdsParam(
+	raw: string | undefined,
+): { ok: true; ids: string[] | null } | { ok: false } {
+	if (raw === undefined || raw === '') return { ok: true, ids: null }
+	const seen = new Set<string>()
+	for (const part of raw.split(',')) {
+		const trimmed = part.trim()
+		if (!trimmed) continue
+		if (!UUID_RE.test(trimmed)) return { ok: false }
+		seen.add(trimmed.toLowerCase())
+		if (seen.size > MAX_IDS_FILTER) return { ok: false }
+	}
+	return { ok: true, ids: [...seen] }
+}
+
+const listActorsQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).optional(),
+	offset: z.coerce.number().int().min(0).optional(),
+	ids: z
+		.string()
+		.optional()
+		.openapi({
+			description: `Comma-separated list of actor UUIDs to filter by. Max ${MAX_IDS_FILTER} entries.`,
+			example: '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002',
+		}),
 })
 
 // GET / - List actors
@@ -215,34 +291,95 @@ const listActorsRoute = createRoute({
 		headers: z.object({
 			'x-workspace-id': z.string().uuid().optional(),
 		}),
+		query: listActorsQuerySchema,
 	},
 	responses: {
 		200: {
 			content: { 'application/json': { schema: z.array(actorListItemSchema) } },
 			description: 'List of actors',
+			headers: z.object({
+				'x-total-count': z
+					.string()
+					.describe('Total actor count for the scope, ignoring limit/offset'),
+			}),
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
 		},
 	},
 })
 
-app.openapi(listActorsRoute, async (c) => {
+app.openapi(listActorsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { limit, offset, ids: idsParam } = c.req.valid('query')
+
+	const parsed = parseIdsParam(idsParam)
+	if (!parsed.ok) {
+		return c.json(
+			createApiError('BAD_REQUEST', `ids must be comma-separated UUIDs (max ${MAX_IDS_FILTER})`),
+			400,
+		)
+	}
+	const idsFilter = parsed.ids
+
+	if (idsFilter !== null && idsFilter.length === 0) {
+		c.header('X-Total-Count', '0')
+		return c.json([] as z.infer<typeof actorListItemSchema>[])
+	}
 
 	if (workspaceId) {
-		// List actors in workspace
-		const members = await db
-			.select({
-				id: actors.id,
-				type: actors.type,
-				name: actors.name,
-				email: actors.email,
-				agentState: actors.agentState,
-				role: workspaceMembers.role,
-			})
-			.from(workspaceMembers)
-			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-			.where(eq(workspaceMembers.workspaceId, workspaceId))
+		// Workspace-scoped listing
+		const idsCondition = idsFilter ? [inArray(actors.id, idsFilter)] : []
+		const wsWhere = idsCondition.length
+			? and(eq(workspaceMembers.workspaceId, workspaceId), ...idsCondition)
+			: eq(workspaceMembers.workspaceId, workspaceId)
 
+		if (limit === undefined) {
+			const members = await db
+				.select({
+					id: actors.id,
+					type: actors.type,
+					name: actors.name,
+					email: actors.email,
+					description: actors.description,
+					isSystem: actors.isSystem,
+					role: workspaceMembers.role,
+				})
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(wsWhere)
+
+			c.header('X-Total-Count', String(members.length))
+			return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+		}
+
+		const [members, totalRow] = await Promise.all([
+			db
+				.select({
+					id: actors.id,
+					type: actors.type,
+					name: actors.name,
+					email: actors.email,
+					description: actors.description,
+					isSystem: actors.isSystem,
+					role: workspaceMembers.role,
+				})
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(wsWhere)
+				.orderBy(asc(actors.name), asc(actors.id))
+				.limit(limit)
+				.offset(offset ?? 0),
+			db
+				.select({ value: count() })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(wsWhere),
+		])
+
+		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
 		return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
 	}
 
@@ -256,23 +393,130 @@ app.openapi(listActorsRoute, async (c) => {
 
 	const workspaceIds = myWorkspaces.map((w) => w.workspaceId)
 	if (workspaceIds.length === 0) {
+		c.header('X-Total-Count', '0')
 		return c.json([] as z.infer<typeof actorListItemSchema>[])
 	}
 
-	const members = await db
-		.selectDistinct({
-			id: actors.id,
-			type: actors.type,
-			name: actors.name,
-			email: actors.email,
-			agentState: actors.agentState,
-		})
-		.from(workspaceMembers)
-		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-		.where(inArray(workspaceMembers.workspaceId, workspaceIds))
+	const baseQuery = () =>
+		db
+			.select({
+				id: actors.id,
+				type: actors.type,
+				name: actors.name,
+				email: actors.email,
+				description: actors.description,
+				isSystem: actors.isSystem,
+				workspaceId: workspaces.id,
+				workspaceName: workspaces.name,
+				role: workspaceMembers.role,
+			})
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
 
-	return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
-})
+	const crossWhere = idsFilter
+		? and(inArray(workspaceMembers.workspaceId, workspaceIds), inArray(actors.id, idsFilter))
+		: inArray(workspaceMembers.workspaceId, workspaceIds)
+
+	if (limit === undefined) {
+		const rows = await baseQuery()
+			.where(crossWhere)
+			.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
+		const grouped = groupActorMemberships(rows)
+		c.header('X-Total-Count', String(grouped.length))
+		return c.json(serializeArray(grouped) as z.infer<typeof actorListItemSchema>[])
+	}
+
+	// Two phases: (1) count + pick paginated set of distinct actor IDs ordered
+	// by name, then (2) fetch all membership rows for that set and group in
+	// JS. This keeps a hard cap on rows transferred even when an actor sits in
+	// many workspaces, and keeps `X-Total-Count` exact regardless of fan-out.
+	const [totalRow, pageActorRows] = await Promise.all([
+		db
+			.select({ value: countDistinct(actors.id) })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.where(crossWhere),
+		db
+			.selectDistinct({ id: actors.id, name: actors.name })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.where(crossWhere)
+			.orderBy(asc(actors.name), asc(actors.id))
+			.limit(limit)
+			.offset(offset ?? 0),
+	])
+
+	const pageActorIds = pageActorRows.map((r) => r.id)
+	if (pageActorIds.length === 0) {
+		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
+		return c.json([] as z.infer<typeof actorListItemSchema>[])
+	}
+
+	const rows = await baseQuery()
+		.where(
+			and(inArray(workspaceMembers.workspaceId, workspaceIds), inArray(actors.id, pageActorIds)),
+		)
+		.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
+
+	c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
+	return c.json(
+		serializeArray(groupActorMemberships(rows)) as z.infer<typeof actorListItemSchema>[],
+	)
+}) as RouteHandler<typeof listActorsRoute, Env>)
+
+interface ActorMembershipRow {
+	id: string
+	type: string
+	name: string
+	email: string | null
+	description: string | null
+	isSystem: boolean
+	workspaceId: string
+	workspaceName: string
+	role: string
+}
+
+function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
+	id: string
+	type: string
+	name: string
+	email: string | null
+	description: string | null
+	isSystem: boolean
+	workspaces: { id: string; name: string; role: string }[]
+}> {
+	const byActor = new Map<
+		string,
+		{
+			id: string
+			type: string
+			name: string
+			email: string | null
+			description: string | null
+			isSystem: boolean
+			workspaces: { id: string; name: string; role: string }[]
+		}
+	>()
+	for (const r of rows) {
+		const membership = { id: r.workspaceId, name: r.workspaceName, role: r.role }
+		const existing = byActor.get(r.id)
+		if (existing) {
+			existing.workspaces.push(membership)
+		} else {
+			byActor.set(r.id, {
+				id: r.id,
+				type: r.type,
+				name: r.name,
+				email: r.email,
+				description: r.description,
+				isSystem: r.isSystem,
+				workspaces: [membership],
+			})
+		}
+	}
+	return [...byActor.values()]
+}
 
 // GET /:id - Get actor by ID
 const getActorRoute = createRoute({
@@ -305,11 +549,12 @@ app.openapi(getActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
-			systemPrompt: actors.systemPrompt,
+			description: actors.description,
+			system_prompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
-			llmProvider: actors.llmProvider,
-			llmConfig: actors.llmConfig,
+			llm_provider: actors.llmProvider,
+			llm_config: actors.llmConfig,
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
@@ -335,6 +580,9 @@ const updateActorRoute = createRoute({
 	summary: 'Update actor',
 	request: {
 		params: idParamSchema,
+		headers: z.object({
+			'x-workspace-id': z.string().uuid().optional(),
+		}),
 		body: {
 			content: {
 				'application/json': {
@@ -357,14 +605,49 @@ const updateActorRoute = createRoute({
 
 app.openapi(updateActorRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
+
+	const [existing] = await db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, id))
+		.limit(1)
+
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type === 'human' && id !== actorId) {
+		if (!workspaceId) {
+			return c.json(createApiError('FORBIDDEN', 'Workspace context is required'), 403)
+		}
+
+		const [callerMembership] = await db
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.limit(1)
+
+		if (!callerMembership || !['owner', 'admin'].includes(callerMembership.role)) {
+			return c.json(createApiError('FORBIDDEN', 'Only workspace admins can update humans'), 403)
+		}
+
+		if (!(await isWorkspaceMember(db, id, workspaceId))) {
+			return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+		}
+	}
 
 	const [updated] = await db
 		.update(actors)
 		.set({
 			...(body.name && { name: body.name }),
 			...(body.email && { email: body.email }),
+			...(body.description !== undefined && { description: body.description }),
 			...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
 			...(body.tools !== undefined && { tools: body.tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
@@ -378,11 +661,12 @@ app.openapi(updateActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
-			systemPrompt: actors.systemPrompt,
+			description: actors.description,
+			system_prompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
-			llmProvider: actors.llmProvider,
-			llmConfig: actors.llmConfig,
+			llm_provider: actors.llmProvider,
+			llm_config: actors.llmConfig,
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
@@ -490,6 +774,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		.update(actors)
 		.set({
 			name: SINDRE_DEFAULT.name,
+			description: null,
 			systemPrompt: SINDRE_DEFAULT.systemPrompt,
 			llmProvider: SINDRE_DEFAULT.llmProvider,
 			llmConfig: SINDRE_DEFAULT.llmConfig,
@@ -503,11 +788,12 @@ app.openapi(resetActorRoute, (async (c) => {
 			type: actors.type,
 			name: actors.name,
 			email: actors.email,
-			systemPrompt: actors.systemPrompt,
+			description: actors.description,
+			system_prompt: actors.systemPrompt,
 			tools: actors.tools,
 			memory: actors.memory,
-			llmProvider: actors.llmProvider,
-			llmConfig: actors.llmConfig,
+			llm_provider: actors.llmProvider,
+			llm_config: actors.llmConfig,
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
@@ -596,6 +882,9 @@ app.openapi(deleteActorRoute, (async (c) => {
 			await tx.delete(sessionLogs).where(inArray(sessionLogs.sessionId, sessionIds))
 		}
 		await tx.delete(sessions).where(eq(sessions.actorId, id))
+		// Sessions this agent kicked off for other actors still exist; reassign
+		// the creator so the sessions.created_by FK doesn't block the delete.
+		await tx.update(sessions).set({ createdBy: actorId }).where(eq(sessions.createdBy, id))
 
 		// Delete triggers targeting or created by this actor
 		await tx.delete(triggers).where(or(eq(triggers.targetActorId, id), eq(triggers.createdBy, id)))
@@ -614,9 +903,21 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Delete relationships
 		await tx.delete(relationships).where(eq(relationships.createdBy, id))
 
+		// Delete per-actor feed bookkeeping
+		await tx.delete(subscriptions).where(eq(subscriptions.actorId, id))
+		await tx.delete(readState).where(eq(readState.actorId, id))
+
 		// Reassign objects
-		await tx.update(objects).set({ owner: null }).where(eq(objects.owner, id))
+		await tx.update(objects).set({ driver: null }).where(eq(objects.driver, id))
 		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
+
+		// Reassign workspace artifacts authored by this agent
+		await tx.update(files).set({ createdBy: actorId }).where(eq(files.createdBy, id))
+		await tx.update(imports).set({ createdBy: actorId }).where(eq(imports.createdBy, id))
+		await tx
+			.update(workspaceSkills)
+			.set({ createdBy: null })
+			.where(eq(workspaceSkills.createdBy, id))
 
 		// Clean up workspace references
 		await tx.delete(workspaceMembers).where(eq(workspaceMembers.actorId, id))
@@ -646,11 +947,12 @@ const actorReturningCols = {
 	type: actors.type,
 	name: actors.name,
 	email: actors.email,
-	systemPrompt: actors.systemPrompt,
+	description: actors.description,
+	system_prompt: actors.systemPrompt,
 	tools: actors.tools,
 	memory: actors.memory,
-	llmProvider: actors.llmProvider,
-	llmConfig: actors.llmConfig,
+	llm_provider: actors.llmProvider,
+	llm_config: actors.llmConfig,
 	isSystem: actors.isSystem,
 	agentState: actors.agentState,
 	agentStateUpdatedAt: actors.agentStateUpdatedAt,

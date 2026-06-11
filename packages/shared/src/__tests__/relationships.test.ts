@@ -78,6 +78,15 @@ describe('relationshipQuerySchema', () => {
 		expect(result.limit).toBe(10)
 		expect(result.offset).toBe(5)
 	})
+
+	it('accepts object_id for direction-agnostic lookup', () => {
+		const result = relationshipQuerySchema.parse({ object_id: uuid })
+		expect(result.object_id).toBe(uuid)
+	})
+
+	it('rejects non-uuid object_id', () => {
+		expect(() => relationshipQuerySchema.parse({ object_id: 'not-uuid' })).toThrow()
+	})
 })
 
 describe('relationshipParamsSchema', () => {

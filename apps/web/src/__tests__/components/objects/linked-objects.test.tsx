@@ -55,7 +55,8 @@ describe('LinkedObjectsView', () => {
 		expect(screen.getByText('Untitled')).toBeInTheDocument()
 	})
 
-	it('shows filter buttons when 2+ types present', () => {
+	it('shows a Controls popover with type filter when 2+ types present', async () => {
+		const user = userEvent.setup()
 		const obj2 = buildObjectResponse({ id: 'obj-2', type: 'insight', title: 'Insight' })
 		const obj3 = buildObjectResponse({ id: 'obj-3', type: 'task', title: 'Task' })
 		const rel1 = buildRelationshipResponse({ sourceId: 'obj-1', targetId: 'obj-2' })
@@ -70,24 +71,26 @@ describe('LinkedObjectsView', () => {
 			/>,
 		)
 
-		expect(screen.getByText('All 2')).toBeInTheDocument()
-		expect(screen.getByText('insights 1')).toBeInTheDocument()
-		expect(screen.getByText('tasks 1')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: /controls/i }))
+		expect(screen.getByText('Filter by type')).toBeInTheDocument()
+		// Type names also appear in the table's Type column, so query all
+		expect(screen.getAllByText('insight').length).toBeGreaterThan(0)
+		expect(screen.getAllByText('task').length).toBeGreaterThan(0)
 	})
 
-	it('does not show filter buttons with single type', () => {
+	it('does not show Controls popover with single type', () => {
 		const obj2 = buildObjectResponse({ id: 'obj-2', type: 'insight', title: 'A' })
 		const rel = buildRelationshipResponse({ sourceId: 'obj-1', targetId: 'obj-2' })
 
 		render(<LinkedObjectsView {...baseProps} asSource={[rel]} asTarget={[]} allObjects={[obj2]} />)
 
-		expect(screen.queryByText('All 1')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /controls/i })).not.toBeInTheDocument()
 	})
 
-	it('shows "+ link" button', () => {
+	it('shows "Add link" button', () => {
 		render(<LinkedObjectsView {...baseProps} asSource={[]} asTarget={[]} allObjects={[]} />)
 
-		expect(screen.getByText('+ link')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Add link' })).toBeInTheDocument()
 	})
 
 	it('resolves linked objects from connectedObjects when missing from allObjects', () => {

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type CreateCommentInput, type EventResponse, api } from '../lib/api'
+import { trackCommentPosted } from '../lib/analytics'
+import { type CreateCommentInput, type EventResponse, type ObjectResponse, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useEvents(workspaceId: string, filters?: Record<string, string>) {
@@ -9,11 +10,36 @@ export function useEvents(workspaceId: string, filters?: Record<string, string>)
 	})
 }
 
-export function useEntityEvents(workspaceId: string, entityId: string) {
+export function useEntityEvents(
+	workspaceId: string,
+	entityId: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
 	return useQuery({
 		queryKey: queryKeys.events.byEntity(entityId),
 		queryFn: () => api.events.history(workspaceId, { entity_id: entityId, limit: '50' }),
-		enabled: !!entityId,
+		enabled: enabled && !!entityId,
+	})
+}
+
+// Shared across both comment-posting paths: the simple hook below, and the
+// attachment-aware queue in `pending-comments-context.tsx`. Keeping the
+// taxonomy contract in one place stops the two paths from drifting.
+export function trackCommentPostedFor(
+	queryClient: ReturnType<typeof useQueryClient>,
+	entityId: string,
+	data: CreateCommentInput,
+	flowId: string | null,
+): void {
+	const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail(entityId))
+	const type = cached?.type
+	if (type !== 'bet' && type !== 'task' && type !== 'insight' && type !== 'knowledge') return
+	trackCommentPosted({
+		entity_id: entityId,
+		entity_type: type,
+		is_reply: data.parent_event_id !== undefined,
+		attachment_count: data.attachment_file_ids?.length ?? 0,
+		flow_id: flowId,
 	})
 }
 
@@ -21,8 +47,9 @@ export function useCreateComment(workspaceId: string, entityId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (data: CreateCommentInput) => api.events.create(workspaceId, data),
-		onSuccess: () => {
+		onSuccess: (_result, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
+			trackCommentPostedFor(queryClient, entityId, variables, null)
 		},
 	})
 }

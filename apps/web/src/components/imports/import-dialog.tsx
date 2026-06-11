@@ -1,12 +1,12 @@
 import { Button } from '@/components/ui/button'
 import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from '@/components/ui/dialog'
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import {
 	Select,
 	SelectContent,
@@ -116,16 +116,16 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 	const importRecord = importData ?? createImport.data
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-				<DialogHeader>
-					<DialogTitle>Import Objects</DialogTitle>
-					<DialogDescription>
+		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+			<ResponsiveDialogContent className="overflow-y-auto md:max-w-2xl md:max-h-[80vh]">
+				<ResponsiveDialogHeader>
+					<ResponsiveDialogTitle>Import Objects</ResponsiveDialogTitle>
+					<ResponsiveDialogDescription>
 						{step === 'upload' &&
 							'Upload a CSV or JSON file to import objects into your workspace.'}
 						{step === 'mapping' && 'Review and adjust how columns map to object fields.'}
-					</DialogDescription>
-				</DialogHeader>
+					</ResponsiveDialogDescription>
+				</ResponsiveDialogHeader>
 
 				{step === 'upload' && (
 					<UploadStep onFileUpload={handleFileUpload} isLoading={createImport.isPending} />
@@ -142,8 +142,8 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 						isUpdating={updateMapping.isPending}
 					/>
 				)}
-			</DialogContent>
-		</Dialog>
+			</ResponsiveDialogContent>
+		</ResponsiveDialog>
 	)
 }
 
@@ -425,6 +425,25 @@ function MappingStep({
 		setLocalRelationships((prev) => prev.filter((_, i) => i !== index))
 	}, [])
 
+	// Flush any pending mapping change before confirming. The mapping is debounced by 500 ms
+	// so a user who clicks Confirm immediately after picking the type would otherwise import
+	// against the previously-saved mapping.
+	const [isConfirming, setIsConfirming] = useState(false)
+	const handleConfirmClick = useCallback(async () => {
+		setIsConfirming(true)
+		try {
+			const updated = buildMapping()
+			const serialized = JSON.stringify(updated)
+			if (serialized !== lastSentMapping.current) {
+				lastSentMapping.current = serialized
+				await onMappingUpdate(updated)
+			}
+			onConfirm()
+		} finally {
+			setIsConfirming(false)
+		}
+	}, [buildMapping, onMappingUpdate, onConfirm])
+
 	if (!mapping || !preview) return null
 
 	return (
@@ -552,8 +571,11 @@ function MappingStep({
 				{relSectionOpen && localRelationships.length > 0 && (
 					<div className="border-t px-3 py-2 space-y-2">
 						{localRelationships.map((rel, idx) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: relationships have no stable ID
-							<div key={idx} className="flex items-center gap-2 text-sm">
+							<div
+								// biome-ignore lint/suspicious/noArrayIndexKey: relationships have no stable ID
+								key={idx}
+								className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-sm"
+							>
 								<Select
 									value={rel.sourceType}
 									onValueChange={(v) => handleUpdateRelationship(idx, 'sourceType', v)}
@@ -611,7 +633,7 @@ function MappingStep({
 								<Button
 									variant="ghost"
 									size="sm"
-									className="h-7 w-7 p-0 shrink-0"
+									className="h-7 w-7 p-0 shrink-0 self-end sm:self-center"
 									onClick={() => handleRemoveRelationship(idx)}
 								>
 									<X size={14} />
@@ -638,13 +660,21 @@ function MappingStep({
 				<Loader2 size={12} className="animate-spin" /> Saving mapping...
 			</p>
 
-			<DialogFooter>
-				<Button onClick={onConfirm}>
-					Import {preview.totalRows} rows
-					{typeMappings.length > 1 ? ` \u00d7 ${typeMappings.length} types` : ''}
-					{localRelationships.length > 0 ? ' + relationships' : ''}
+			<ResponsiveDialogFooter>
+				<Button onClick={handleConfirmClick} disabled={isUpdating || isConfirming}>
+					{isConfirming ? (
+						<>
+							<Loader2 size={14} className="animate-spin" /> Importing&hellip;
+						</>
+					) : (
+						<>
+							Import {preview.totalRows} rows
+							{typeMappings.length > 1 ? ` \u00d7 ${typeMappings.length} types` : ''}
+							{localRelationships.length > 0 ? ' + relationships' : ''}
+						</>
+					)}
 				</Button>
-			</DialogFooter>
+			</ResponsiveDialogFooter>
 		</div>
 	)
 }
@@ -675,7 +705,7 @@ function TypeMappingSection({
 	onRemove: (index: number) => void
 }) {
 	return (
-		<div className="border rounded-lg overflow-hidden">
+		<div className="border rounded-lg overflow-x-auto">
 			{/* Type header */}
 			<div className="flex items-center gap-2 px-3 py-2 bg-muted/50">
 				<Select
@@ -708,7 +738,7 @@ function TypeMappingSection({
 			</div>
 
 			{/* Column mapping table */}
-			<table className="w-full text-sm">
+			<table className="w-full text-sm min-w-[400px]">
 				<thead>
 					<tr className="bg-muted/30">
 						<th className="text-left px-3 py-2 font-medium">Source Column</th>

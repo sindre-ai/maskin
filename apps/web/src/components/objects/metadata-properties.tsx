@@ -106,7 +106,7 @@ export function MetadataPropertiesView({
 	}
 
 	return (
-		<div className="space-y-1 w-fit">
+		<div className="space-y-1 w-full">
 			{metaEntries.map(([key, value]) => {
 				const fieldDef = fieldDefs.find((f) => f.name === key)
 				return (
@@ -199,7 +199,7 @@ function PropertyRow({
 
 	return (
 		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-accent/50 hover:text-accent-foreground group">
-			<span className="w-28 shrink-0 text-xs text-muted-foreground truncate" title={name}>
+			<span className="w-20 sm:w-28 shrink-0 text-xs text-muted-foreground truncate" title={name}>
 				{name}
 			</span>
 			<div className="flex-1 min-w-0">
@@ -217,7 +217,7 @@ function PropertyRow({
 				) : (
 					<button
 						type="button"
-						className="text-xs text-muted-foreground hover:text-foreground text-left truncate max-w-full"
+						className="block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 						onClick={() => setEditing(true)}
 					>
 						{formatDisplay(value, type)}
@@ -227,9 +227,11 @@ function PropertyRow({
 			<Button
 				variant="ghost"
 				size="icon"
-				className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+				/* Always tappable on touch; fades behind hover on sm+. */
+				className="text-muted-foreground hover:text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0"
 				onClick={onRemove}
 				title="Remove property"
+				aria-label={`Remove ${name}`}
 			>
 				<X className="h-3 w-3" />
 			</Button>
@@ -310,7 +312,7 @@ function PropertyEditor({
 						setDraft(e.target.value)
 						onSave(e.target.value)
 					}}
-					className={`${inputClass} w-32`}
+					className={`${inputClass} w-full sm:w-32`}
 					autoFocus
 					onBlur={onCancel}
 				/>
@@ -348,7 +350,7 @@ function PropertyEditor({
 					onChange={(e) => setDraft(e.target.value)}
 					onBlur={handleSave}
 					onKeyDown={handleKeyDown}
-					className={`${inputClass} w-24`}
+					className={`${inputClass} w-full sm:w-24`}
 					autoFocus
 				/>
 			)
@@ -401,7 +403,7 @@ function AddPropertyMenu({
 	}
 
 	return (
-		<div className="rounded border border-border bg-card p-2 text-xs space-y-1 w-fit">
+		<div className="rounded border border-border bg-card p-2 text-xs space-y-1 w-full sm:w-fit">
 			{unsetFields.length > 0 && (
 				<>
 					<p className="text-muted-foreground px-1 text-[10px] uppercase tracking-wider">

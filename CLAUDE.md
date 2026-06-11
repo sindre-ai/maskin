@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 If the user asks how to start this repo, start it, set it up, or similar — follow this flow exactly. The goal is to get them from clone → running workspace → MCP-connected → `get_started` in as few steps as possible, inside a SINGLE Claude Code session. Do NOT guess commands or URLs; read the dev server's own banner output.
 
-1. **Install deps + start the stack.** Run `pnpm install`, then start the dev stack in the background with `pnpm dev:win` on Windows or `pnpm dev` on macOS/Linux. Use a background shell so the logs keep streaming. The dev script auto-generates `INTEGRATION_ENCRYPTION_KEY` in `.env` if missing — do NOT write or overwrite it yourself.
+1. **Install deps + start the stack.** Run `pnpm install`, then start the dev stack in the background with `pnpm dev:win` on Windows or `pnpm dev` on macOS/Linux. Use a background shell so the logs keep streaming. The dev script auto-seeds missing `INTEGRATION_ENCRYPTION_KEY` and `DATABASE_URL` in `.env` — do NOT write or overwrite those yourself.
 2. **Wait for the startup banner.** Poll the shell output (BashOutput / similar) until you see the `🚀 Maskin is running` banner printed by `apps/dev`. It appears after `PG NOTIFY bridge started` and the S3/container init lines. Don't tell the user anything is ready before you see this banner.
 3. **Extract the ready-made MCP command from the banner.** The banner prints a copy-pasteable `claude mcp add maskin -e API_BASE_URL=... -e API_KEY=ank_... -e WORKSPACE_ID=... -- pnpm --filter @maskin/mcp start` line with real credentials (the dev bootstrap auto-provisions a `dev@local` actor + `My Workspace` on a fresh DB, or looks up an existing actor if the DB already has one). Parse that exact line from the log output — do NOT reconstruct it by hand.
 4. **Run that exact `claude mcp add` command** for the user so the MCP server gets wired into Claude Code.
@@ -27,12 +27,13 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/input-validation.md` — input validation requirements at system boundaries (HTTP params, env vars, DB triggers)
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
+- `packages/db/MIGRATIONS.md` — migration conventions for hot tables (CONCURRENTLY indexes, chunked backfills); read before editing a `.sql` file produced by `pnpm db:generate`
 
 ## Architecture
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
 - Backend (`apps/dev`): Hono.js + OpenAPIHono + Drizzle ORM + PostgreSQL, runs on port 3000
 - Frontend (`apps/web`): Vite + React 19 + TanStack Router + TanStack Query + Tailwind CSS 4, runs on port 5173, proxies `/api` to backend
-- Auth: API keys (plain text, `ank_` prefix). Bearer token in Authorization header
+- Auth: API keys (plain text, `ank_` prefix). Bearer token in Authorization header. `authMiddleware` in `packages/auth` also enforces workspace membership when `X-Workspace-Id` is present — header-based routes don't need their own `isWorkspaceMember()` check; only by-ID routes (where the workspace is derived from the resource) do.
 - Real-time: PG NOTIFY → SSE bridge (packages/realtime) — events table has a DB trigger that fires NOTIFY on insert
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
@@ -43,6 +44,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ## Prerequisites
 - Node.js ≥ 20
 - pnpm 9.15.0
+- Docker + Docker Compose (must be installed and running — `pnpm dev` / `pnpm dev:win` start PostgreSQL + SeaweedFS via `docker-compose`, the app cannot run without it)
 
 ## Commands
 - `pnpm install` — install all dependencies

@@ -154,6 +154,25 @@ describe('updateActorSchema', () => {
 		const result = updateActorSchema.parse({ memory: { key: 'value' } })
 		expect(result.memory).toEqual({ key: 'value' })
 	})
+
+	// Regression: an agent doing read-modify-write via MCP feeds the response
+	// fields straight back into update_actor. If response keys diverge from
+	// request keys (e.g. camelCase systemPrompt vs snake_case system_prompt),
+	// Zod silently strips the mismatched keys and the API only bumps updated_at
+	// without persisting the new content.
+	it('accepts every writable field from the actor response shape', () => {
+		const writableFromResponse = {
+			name: 'Updated',
+			email: 'a@b.co',
+			description: 'one-liner',
+			system_prompt: 'new prompt',
+			tools: { mcpServers: {} },
+			memory: { key: 'value' },
+			llm_provider: 'anthropic',
+			llm_config: { model: 'claude-opus-4-7' },
+		}
+		expect(updateActorSchema.parse(writableFromResponse)).toEqual(writableFromResponse)
+	})
 })
 
 describe('actorParamsSchema', () => {
@@ -172,11 +191,12 @@ describe('actorResponseSchema', () => {
 		type: 'agent',
 		name: 'Sindre',
 		email: null,
-		systemPrompt: 'You are a helper',
+		description: null,
+		system_prompt: 'You are a helper',
 		tools: null,
 		memory: null,
-		llmProvider: 'anthropic',
-		llmConfig: null,
+		llm_provider: 'anthropic',
+		llm_config: null,
 		isSystem: true,
 		createdAt: '2026-04-17T10:34:29.083Z',
 		updatedAt: '2026-04-17T10:34:29.083Z',

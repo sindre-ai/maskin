@@ -3,6 +3,7 @@ import {
 	config,
 	parseTokenResponse,
 	resolveExternalId,
+	slackExtractDeliveryId,
 	slackWebhookPreHandler,
 } from '../../../../lib/integrations/providers/slack/config'
 import { slackEventNormalizer } from '../../../../lib/integrations/providers/slack/webhooks'
@@ -159,6 +160,62 @@ describe('slackWebhookPreHandler', () => {
 		const payload = { type: 'url_verification' }
 		const response = slackWebhookPreHandler(payload, {})
 		expect(response).toBeNull()
+	})
+
+	it('returns null on retry headers — dedup happens via slackExtractDeliveryId, not a blanket drop', () => {
+		const payload = {
+			type: 'event_callback',
+			team_id: 'T123',
+			event_id: 'Ev08RETRY',
+			event: { type: 'message' },
+		}
+		const response = slackWebhookPreHandler(payload, {
+			'x-slack-retry-num': '1',
+			'x-slack-retry-reason': 'http_timeout',
+		})
+		expect(response).toBeNull()
+	})
+})
+
+describe('slackExtractDeliveryId', () => {
+	it('returns event_id from event_callback envelope', () => {
+		const payload = {
+			type: 'event_callback',
+			team_id: 'T123',
+			event_id: 'Ev08ABC123',
+			event: { type: 'message' },
+		}
+		expect(slackExtractDeliveryId(payload, {})).toBe('Ev08ABC123')
+	})
+
+	it('returns the same id across retries so the dedup table can short-circuit them', () => {
+		const payload = {
+			type: 'event_callback',
+			team_id: 'T123',
+			event_id: 'Ev08SAME',
+			event: { type: 'message' },
+		}
+		const first = slackExtractDeliveryId(payload, {})
+		const retry = slackExtractDeliveryId(payload, {
+			'x-slack-retry-num': '2',
+			'x-slack-retry-reason': 'http_timeout',
+		})
+		expect(first).toBe('Ev08SAME')
+		expect(retry).toBe('Ev08SAME')
+	})
+
+	it('returns null for non-event_callback payloads', () => {
+		expect(slackExtractDeliveryId({ type: 'url_verification', challenge: 'abc' }, {})).toBeNull()
+	})
+
+	it('returns null when event_id is missing', () => {
+		const payload = { type: 'event_callback', team_id: 'T123', event: { type: 'message' } }
+		expect(slackExtractDeliveryId(payload, {})).toBeNull()
+	})
+
+	it('returns null for malformed payloads', () => {
+		expect(slackExtractDeliveryId({}, {})).toBeNull()
+		expect(slackExtractDeliveryId(null, {})).toBeNull()
 	})
 })
 

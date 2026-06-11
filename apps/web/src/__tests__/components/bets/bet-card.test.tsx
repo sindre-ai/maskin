@@ -47,4 +47,18 @@ describe('BetCard', () => {
 		rerender(<BetCard bet={bet} workspaceId="ws-1" insightCount={0} taskCount={5} />)
 		expect(screen.getByText('5 tasks')).toBeInTheDocument()
 	})
+
+	// Regression: at 375px a long title used to push the status badge off-screen.
+	// `min-w-0 flex-1 truncate` on the title is what keeps the badge in-frame.
+	it('title truncates and stays in its own flex track', () => {
+		const bet = buildObjectResponse({
+			type: 'bet',
+			title: 'A very long bet title that would overflow',
+		})
+		render(<BetCard bet={bet} workspaceId="ws-1" insightCount={0} taskCount={0} />)
+		const title = screen.getByText('A very long bet title that would overflow')
+		expect(title.className).toMatch(/min-w-0/)
+		expect(title.className).toMatch(/flex-1/)
+		expect(title.className).toMatch(/truncate/)
+	})
 })

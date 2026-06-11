@@ -24,7 +24,7 @@ export interface OAuth2Config {
 export interface ApiKeyConfig {
 	headerName: string
 	headerPrefix?: string
-	envKeyName: string
+	envKeyName?: string
 }
 
 export type AuthConfig =
@@ -62,11 +62,41 @@ export interface WebhookConfig {
 
 // ── MCP config ─────────────────────────────────────────────────────────────
 
-export interface McpConfig {
+export interface StdioMcpServer {
+	type: 'stdio'
 	command: string
 	args: string[]
-	/** Env var the MCP server reads for its auth token */
+	env?: Record<string, string>
+}
+
+export interface HttpMcpServer {
+	type: 'http'
+	url: string
+	headers?: Record<string, string>
+}
+
+export type McpServerSpec = StdioMcpServer | HttpMcpServer
+
+export interface McpConfig {
+	/** Env var the MCP server reads for its auth token. */
 	envKey: string
+	/**
+	 * Legacy stdio metadata kept for symmetry with first-party MCP presets in
+	 * the frontend. Not read at runtime — session-manager only consumes envKey
+	 * and (when autoInject is set) `server`.
+	 */
+	command?: string
+	args?: string[]
+	/**
+	 * When true, session-manager merges `server` into MCP_SERVERS_JSON for any
+	 * workspace with an active integration of this provider — no per-agent
+	 * MCP config required. Use for providers that act as workspace-level data
+	 * pipes (e.g. PostHog feeding the Synthesizer) rather than tools a human
+	 * opts into per agent.
+	 */
+	autoInject?: boolean
+	/** MCP server spec injected when autoInject=true. */
+	server?: McpServerSpec
 }
 
 // ── Events ─────────────────────────────────────────────────────────────────
@@ -140,7 +170,10 @@ export interface ResolvedProvider {
 	/** Override token response parsing for providers with non-standard format */
 	parseTokenResponse?: (raw: unknown) => Partial<StoredCredentials>
 	/** Custom webhook signature verification. Required when webhook type is 'custom'. */
-	customWebhookVerifier?: (body: string, headers: Record<string, string>) => boolean
+	customWebhookVerifier?: (
+		body: string,
+		headers: Record<string, string>,
+	) => boolean | Promise<boolean>
 	/**
 	 * Resolve a stable external ID after OAuth2 token exchange.
 	 * Must return the same ID that extractInstallationId() will find in webhook payloads.
@@ -155,4 +188,65 @@ export interface ResolvedProvider {
 		payload: unknown,
 		headers: Record<string, string>,
 	) => { body: unknown; status?: number } | null
+	/**
+	 * Return a stable per-delivery ID extracted from a verified webhook payload
+	 * (and/or headers). Used to deduplicate provider retries: the route claims a
+	 * row in `webhook_deliveries` keyed on (provider, external_id) before
+	 * processing, so a retry with the same ID short-circuits with 200 OK.
+	 * Return null to opt out of dedup for this delivery.
+	 */
+	extractDeliveryId?: (payload: unknown, headers: Record<string, string>) => string | null
+	/**
+	 * Run provider-specific work immediately after OAuth credentials are stored and the
+	 * integration is activated (e.g. Gmail's users.watch call). Failures should be logged
+	 * by the provider; the route catches and surfaces them as a redirect with an error param.
+	 */
+	postInstall?: (ctx: PostInstallContext) => Promise<void>
+	/**
+	 * Expand a single normalized webhook event into multiple events.
+	 * Used when a provider's webhook is a notification pointer (e.g. Gmail Pub/Sub push
+	 * → users.history.list returns N changes). Called once after normalization with the
+	 * matching active integration; returns the events to insert. If absent, the route
+	 * inserts the single normalized event as-is.
+	 */
+	webhookFanOut?: (ctx: WebhookFanOutContext) => Promise<NormalizedEvent[]>
+	/**
+	 * Process fan-out and event insert in the background after the delivery is
+	 * claimed, so the webhook can ack within tight provider budgets (Slack: 3s)
+	 * even when the fan-out does heavy work (file downloads). The delivery claim
+	 * still runs synchronously so a provider retry that arrives before background
+	 * work finishes is deduplicated as a duplicate, not double-processed.
+	 */
+	asyncProcessing?: boolean
+	/**
+	 * Run provider-specific cleanup before the integration is marked as revoked
+	 * (e.g. Gmail's users.stop call so Google stops sending pushes immediately
+	 * instead of waiting up to 7 days for the watch to expire). Implementations
+	 * should be best-effort: errors must be caught internally so disconnect can
+	 * always succeed.
+	 */
+	preDisconnect?: (ctx: PreDisconnectContext) => Promise<void>
+}
+
+export interface PostInstallContext {
+	/** Drizzle Database instance — typed loosely to avoid circular deps with @maskin/db */
+	db: unknown
+	integrationId: string
+	workspaceId: string
+	credentials: StoredCredentials
+}
+
+export interface WebhookFanOutContext {
+	db: unknown
+	/** StorageProvider — typed loosely to avoid pulling @maskin/storage into this package */
+	storage: unknown
+	integrationId: string
+	workspaceId: string
+	normalized: NormalizedEvent
+}
+
+export interface PreDisconnectContext {
+	db: unknown
+	integrationId: string
+	workspaceId: string
 }

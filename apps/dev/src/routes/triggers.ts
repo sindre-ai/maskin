@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, triggers } from '@maskin/db/schema'
 import { createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
-import { eq } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import {
 	errorSchema,
@@ -105,6 +105,16 @@ app.openapi(createTriggerRoute, async (c) => {
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
 
+// Pagination is opt-in: when `limit`/`offset` are absent, the endpoint returns
+// every trigger (preserving the historical frontend behaviour). When `limit`
+// is present, the result is capped at min(limit, 100) and `X-Total-Count`
+// surfaces the real total so MCP/widget callers can render an accurate
+// `+N more` footer without changing the array body shape.
+const listTriggersQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).optional(),
+	offset: z.coerce.number().int().min(0).optional(),
+})
+
 // GET /api/triggers
 const listTriggersRoute = createRoute({
 	method: 'get',
@@ -113,11 +123,17 @@ const listTriggersRoute = createRoute({
 	summary: 'List triggers in workspace',
 	request: {
 		headers: workspaceIdHeader,
+		query: listTriggersQuerySchema,
 	},
 	responses: {
 		200: {
 			description: 'List of triggers',
 			content: { 'application/json': { schema: z.array(triggerResponseSchema) } },
+			headers: z.object({
+				'x-total-count': z
+					.string()
+					.describe('Total trigger count for this workspace, ignoring limit/offset'),
+			}),
 		},
 		400: {
 			description: 'Missing workspace ID',
@@ -129,9 +145,25 @@ const listTriggersRoute = createRoute({
 app.openapi(listTriggersRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { limit, offset } = c.req.valid('query')
 
-	const results = await db.select().from(triggers).where(eq(triggers.workspaceId, workspaceId))
+	if (limit === undefined) {
+		const results = await db.select().from(triggers).where(eq(triggers.workspaceId, workspaceId))
+		c.header('X-Total-Count', String(results.length))
+		return c.json(serializeArray(results) as z.infer<typeof triggerResponseSchema>[])
+	}
 
+	const [results, totalRow] = await Promise.all([
+		db
+			.select()
+			.from(triggers)
+			.where(eq(triggers.workspaceId, workspaceId))
+			.limit(limit)
+			.offset(offset ?? 0),
+		db.select({ value: count() }).from(triggers).where(eq(triggers.workspaceId, workspaceId)),
+	])
+
+	c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
 	return c.json(serializeArray(results) as z.infer<typeof triggerResponseSchema>[])
 }) as RouteHandler<typeof listTriggersRoute, Env>)
 

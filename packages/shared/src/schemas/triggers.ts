@@ -18,6 +18,8 @@ export const conditionOperatorSchema = z.enum([
 	'is_set',
 	'is_not_set',
 	'contains',
+	'in',
+	'not_in',
 ])
 
 export const triggerConditionSchema = z.object({
@@ -82,3 +84,23 @@ export const updateTriggerSchema = z.object({
 export const triggerParamsSchema = z.object({
 	id: z.string().uuid(),
 })
+
+// HTTP shape returned by `GET /api/triggers`. Lives here so the MCP server and
+// web client both consume the same canonical fields — a rename like
+// `targetActorId → target_actor_id` would otherwise null out trigger owners in
+// the heroCard payload without a compile error.
+export const triggerResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	name: z.string(),
+	type: z.string(),
+	config: z.record(z.string(), z.unknown()).nullable(),
+	actionPrompt: z.string(),
+	targetActorId: z.string().uuid(),
+	enabled: z.boolean(),
+	createdBy: z.string().uuid(),
+	createdAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+})
+
+export type TriggerResponse = z.infer<typeof triggerResponseSchema>

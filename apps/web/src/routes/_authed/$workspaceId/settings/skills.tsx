@@ -1,3 +1,7 @@
+import {
+	DisplayPanel,
+	type DisplayPanelColumn,
+} from '@/components/objects/data-table/display-panel'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -20,6 +24,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { Textarea } from '@/components/ui/textarea'
 import {
 	useCreateWorkspaceSkill,
@@ -32,13 +44,34 @@ import { ApiError, type WorkspaceSkillListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { parseSkillMd, skillNameSchema } from '@maskin/shared'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { AlertTriangle, FileUp, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+type SkillSort = 'name' | 'createdAt' | 'updatedAt'
+type SkillOrder = 'asc' | 'desc'
+
+const SKILL_SORT_COLUMNS: DisplayPanelColumn[] = [
+	{ id: 'name', label: 'Name', canHide: false },
+	{ id: 'createdAt', label: 'Created', canHide: false },
+	{ id: 'updatedAt', label: 'Updated', canHide: false },
+]
+
+const SKILL_SORT_IDS = new Set<SkillSort>(['name', 'createdAt', 'updatedAt'])
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/skills')({
 	component: SkillsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	validateSearch: (search: Record<string, unknown>) => ({
+		sort:
+			typeof search.sort === 'string' && SKILL_SORT_IDS.has(search.sort as SkillSort)
+				? (search.sort as SkillSort)
+				: ('name' as SkillSort),
+		order:
+			typeof search.order === 'string' && (search.order === 'asc' || search.order === 'desc')
+				? (search.order as SkillOrder)
+				: ('asc' as SkillOrder),
+	}),
 })
 
 const SKILL_TEMPLATE = `---
@@ -61,6 +94,8 @@ type UploadSummary = { imported: number; failed: { name: string; reason: string 
 
 function SkillsPage() {
 	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
+	const { sort, order } = useSearch({ from: '/_authed/$workspaceId/settings/skills' })
 	const { data: skills, isLoading } = useWorkspaceSkills(workspaceId)
 	const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' })
 	const createMutation = useCreateWorkspaceSkill(workspaceId)
@@ -69,8 +104,22 @@ function SkillsPage() {
 	const [summary, setSummary] = useState<UploadSummary | null>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
 
-	const list = skills ?? []
-	const existingNames = list.map((s) => s.name)
+	const rawList = skills ?? []
+	const existingNames = rawList.map((s) => s.name)
+
+	const list = useMemo(() => sortSkills(rawList, sort, order), [rawList, sort, order])
+
+	const updateSort = useCallback(
+		(updates: { sort?: SkillSort; order?: SkillOrder }) => {
+			navigate({
+				to: '/$workspaceId/settings/skills',
+				params: { workspaceId },
+				search: { sort, order, ...updates },
+				replace: true,
+			})
+		},
+		[navigate, workspaceId, sort, order],
+	)
 
 	const handleFiles = useCallback(
 		async (files: FileList | File[]) => {
@@ -150,10 +199,18 @@ function SkillsPage() {
 	}
 
 	const headerActions = (
-		<div className="flex items-center gap-2">
+		<div className="flex items-center gap-2 shrink-0">
+			<DisplayPanel
+				columns={SKILL_SORT_COLUMNS}
+				sort={sort}
+				onSortChange={(value) => updateSort({ sort: value as SkillSort })}
+				order={order}
+				onOrderChange={(value) => updateSort({ order: value })}
+				showView={false}
+			/>
 			<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
 				<FileUp size={14} className="mr-1" />
-				Browse files
+				Import from file
 			</Button>
 			<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
 				<Plus size={14} className="mr-1" />
@@ -164,8 +221,8 @@ function SkillsPage() {
 
 	return (
 		<div>
-			<div className="flex items-center justify-between mb-4">
-				<p className="text-sm text-muted-foreground">
+			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
+				<p className="text-sm text-muted-foreground min-w-0">
 					Shared skills available to agents in this workspace.
 				</p>
 				{headerActions}
@@ -195,7 +252,7 @@ function SkillsPage() {
 							<div className="flex items-center gap-2">
 								<Button variant="outline" size="sm" onClick={openFilePicker} disabled={isUploading}>
 									<FileUp size={14} className="mr-1" />
-									Browse files
+									Import from file
 								</Button>
 								<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
 									<Plus size={14} className="mr-1" />
@@ -271,7 +328,11 @@ function SkillRow({
 	onDelete: () => void
 }) {
 	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
+		// biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete
+		<div
+			onClick={onEdit}
+			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 cursor-pointer transition-colors hover:border-border-hover hover:bg-bg-hover"
+		>
 			<div className="flex-1 min-w-0">
 				<div className="flex items-center gap-2">
 					{!skill.isValid && (
@@ -301,11 +362,12 @@ function SkillRow({
 						size="icon"
 						className="text-muted-foreground"
 						aria-label={`Actions for ${skill.name}`}
+						onClick={(e) => e.stopPropagation()}
 					>
 						<MoreHorizontal size={16} />
 					</Button>
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end">
+				<DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
 					<DropdownMenuItem onClick={onEdit}>
 						<Pencil size={14} className="mr-2" />
 						Edit
@@ -385,17 +447,17 @@ function SkillDialog({
 	}
 
 	return (
-		<Dialog open onOpenChange={(v) => !v && onClose()}>
-			<DialogContent className="sm:max-w-2xl">
-				<DialogHeader>
-					<DialogTitle>{isEdit ? 'Edit skill' : 'Create skill'}</DialogTitle>
-					<DialogDescription>
+		<ResponsiveDialog open onOpenChange={(v) => !v && onClose()}>
+			<ResponsiveDialogContent className="sm:max-w-2xl">
+				<ResponsiveDialogHeader>
+					<ResponsiveDialogTitle>{isEdit ? 'Edit skill' : 'Create skill'}</ResponsiveDialogTitle>
+					<ResponsiveDialogDescription>
 						Skills are shared across this workspace. Agents only receive the skills attached to
 						them.
-					</DialogDescription>
-				</DialogHeader>
+					</ResponsiveDialogDescription>
+				</ResponsiveDialogHeader>
 
-				<div className="space-y-3">
+				<div className="space-y-3 flex-1 min-h-0 overflow-y-auto">
 					<div>
 						<Label htmlFor="skill-name">Name</Label>
 						<Input
@@ -426,16 +488,16 @@ function SkillDialog({
 					<FormError error={error ?? undefined} />
 				</div>
 
-				<DialogFooter>
+				<ResponsiveDialogFooter>
 					<Button variant="ghost" onClick={onClose} disabled={pending}>
 						Cancel
 					</Button>
 					<Button onClick={handleSave} disabled={!canSave}>
 						{pending ? 'Saving...' : 'Save'}
 					</Button>
-				</DialogFooter>
-			</DialogContent>
-		</Dialog>
+				</ResponsiveDialogFooter>
+			</ResponsiveDialogContent>
+		</ResponsiveDialog>
 	)
 }
 
@@ -488,6 +550,24 @@ function DeleteSkillDialog({
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+export function sortSkills(
+	skills: WorkspaceSkillListItem[],
+	sort: SkillSort,
+	order: SkillOrder,
+): WorkspaceSkillListItem[] {
+	const dir = order === 'asc' ? 1 : -1
+	return [...skills].sort((a, b) => {
+		if (sort === 'name') {
+			return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir
+		}
+		// createdAt / updatedAt are ISO strings — lexicographic compare matches chronological order.
+		const av = a[sort]
+		const bv = b[sort]
+		if (av === bv) return 0
+		return (av < bv ? -1 : 1) * dir
+	})
+}
 
 export function toSkillUpload(
 	text: string,

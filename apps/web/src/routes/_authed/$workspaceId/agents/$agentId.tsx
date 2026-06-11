@@ -34,7 +34,7 @@ function AgentDetailPage() {
 		return (
 			<div className="max-w-3xl mx-auto space-y-4">
 				<Skeleton className="h-8 w-64" />
-				<Skeleton className="h-4 w-96" />
+				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
 			</div>
 		)
@@ -96,7 +96,7 @@ function AgentDetailLoaded({ agentId }: { agentId: string }) {
 		return (
 			<div className="max-w-3xl mx-auto space-y-4">
 				<Skeleton className="h-8 w-64" />
-				<Skeleton className="h-4 w-96" />
+				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
 			</div>
 		)

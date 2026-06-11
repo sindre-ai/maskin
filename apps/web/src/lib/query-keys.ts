@@ -3,8 +3,13 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['objects', workspaceId] as const,
 		list: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'list', filters] as const,
+		listPrefix: (workspaceId: string) => ['objects', workspaceId, 'list'] as const,
 		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'listInfinite', filters] as const,
+		listInfinitePrefix: (workspaceId: string) => ['objects', workspaceId, 'listInfinite'] as const,
+		board: (workspaceId: string, filters?: Record<string, unknown>) =>
+			['objects', workspaceId, 'board', filters] as const,
+		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
 		graph: (id: string) => ['objects', 'graph', id] as const,
 	},
@@ -30,6 +35,10 @@ export const queryKeys = {
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
+		slackConversations: (integrationId: string, types: string[]) =>
+			['integrations', integrationId, 'slack', 'conversations', [...types].sort()] as const,
+		slackUsers: (integrationId: string) =>
+			['integrations', integrationId, 'slack', 'users'] as const,
 	},
 	notifications: {
 		all: (workspaceId: string) => ['notifications', workspaceId] as const,
@@ -54,8 +63,15 @@ export const queryKeys = {
 		logs: (sessionId: string) => ['sessions', sessionId, 'logs'] as const,
 		byActor: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
-		byActorAll: (workspaceId: string, actorId: string) =>
-			['sessions', workspaceId, 'actor', actorId, 'all'] as const,
+		byActorAllInfinite: (workspaceId: string, actorId: string) =>
+			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
+		byMentionObject: (workspaceId: string, objectId: string) =>
+			['sessions', workspaceId, 'mention-object', objectId] as const,
+		usage: (
+			workspaceId: string,
+			actorId: string,
+			range: { from: string; to: string; bucket: string },
+		) => ['sessions', workspaceId, 'actor', actorId, 'usage', range] as const,
 	},
 	events: {
 		history: (workspaceId: string, filters?: Record<string, unknown>) =>
@@ -66,7 +82,22 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['imports', workspaceId] as const,
 		detail: (id: string) => ['imports', 'detail', id] as const,
 	},
+	files: {
+		all: (workspaceId: string) => ['files', workspaceId] as const,
+		detail: (workspaceId: string, id: string) => ['files', workspaceId, 'detail', id] as const,
+	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
+	},
+	subscriptions: {
+		subscribers: (entityType: string, entityId: string) =>
+			['subscriptions', 'subscribers', entityType, entityId] as const,
+		unread: (workspaceId: string, entityType?: string) =>
+			['subscriptions', 'unread', workspaceId, entityType ?? 'all'] as const,
+	},
+	userDisplaySettings: {
+		list: (workspaceId: string) => ['user-display-settings', workspaceId, 'list'] as const,
+		detail: (workspaceId: string, objectType: string) =>
+			['user-display-settings', workspaceId, 'detail', objectType] as const,
 	},
 } as const

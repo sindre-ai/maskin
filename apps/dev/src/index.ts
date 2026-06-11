@@ -9,8 +9,11 @@ import { type DevBootstrapResult, maybeBootstrapDev } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
+import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
+import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
+import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -69,6 +72,18 @@ const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
 triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
 })
+
+const gmailWatchRenewer = new GmailWatchRenewer(db)
+gmailWatchRenewer.start()
+logger.info('Gmail watch renewer started')
+
+const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
+webhookDeliveriesCleaner.start()
+logger.info('Webhook deliveries cleaner started')
+
+const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
+webhookDeliveriesReconciler.start()
+logger.info('Webhook deliveries reconciler started')
 
 logger.info(`Starting server on port ${port}`)
 
