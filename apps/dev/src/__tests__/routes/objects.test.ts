@@ -795,4 +795,78 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(404)
 		})
 	})
+
+	describe('POST /api/objects/bulk-delete', () => {
+		it('returns 200 with ok:true for all deleted ids', async () => {
+			const obj1 = buildObject({ workspaceId: wsId })
+			const obj2 = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj1, obj2]
+			mockResults.delete = [{}]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/bulk-delete', { ids: [obj1.id, obj2.id] }, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.results).toHaveLength(2)
+			expect(body.results.every((r: { ok: boolean }) => r.ok)).toBe(true)
+		})
+
+		it('returns ok:true for ids not found in workspace (idempotent)', async () => {
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/bulk-delete',
+					{ ids: ['00000000-0000-0000-0000-000000000099'] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.results).toHaveLength(1)
+			expect(body.results[0].ok).toBe(true)
+		})
+
+		it('returns 400 for empty ids array', async () => {
+			const { app } = createTestApp(objectsRoutes, '/api/objects')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/bulk-delete', { ids: [] }, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('returns per-id results on partial failure', async () => {
+			const obj1 = buildObject({ workspaceId: wsId })
+			const obj2 = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj1, obj2]
+			mockResults.delete = [{}]
+			// First event insert (obj1) succeeds; second (obj2) fails
+			mockResults.insertErrorQueue = [undefined, new Error('constraint violation')]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/objects/bulk-delete', { ids: [obj1.id, obj2.id] }, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.results.find((r: { id: string }) => r.id === obj1.id)?.ok).toBe(true)
+			expect(body.results.find((r: { id: string }) => r.id === obj2.id)?.ok).toBe(false)
+		})
+	})
 })

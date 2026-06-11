@@ -277,7 +277,7 @@ export function BulkActionBar({
 						</DialogDescription>
 					</DialogHeader>
 					<DialogFooter>
-						<Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>
+						<Button type="button" variant="outline" autoFocus onClick={() => setConfirmOpen(false)}>
 							Cancel
 						</Button>
 						<Button

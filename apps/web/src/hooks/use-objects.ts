@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import type { z } from 'zod'
 import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
 import type {
+	BulkDeleteObjectsInput,
 	BulkUpdateObjectsInput,
 	BulkUpdateObjectsResponse,
 	MigrateObjectTypeInput,
@@ -177,6 +178,45 @@ export function useBulkUpdateObjects(workspaceId: string) {
 		onError: (_err, _vars, ctx) => {
 			if (ctx) rollbackBulkPatch(queryClient, ctx)
 		},
+		onSuccess: (data, _vars, ctx) => {
+			if (!ctx) return
+			// Restore rows the server rejected to their pre-mutation snapshot values
+			// before invalidation overwrites the cache with server truth.
+			const failedIds = new Set(data.results.filter((r) => !r.ok).map((r) => r.id))
+			if (failedIds.size === 0) return
+
+			for (const [key, snapshot] of ctx.listSnapshots) {
+				if (!snapshot) continue
+				const current = queryClient.getQueryData<ObjectListCache>(key)
+				if (!current) continue
+				queryClient.setQueryData<ObjectListCache>(
+					key,
+					current.map((obj) => {
+						if (!failedIds.has(obj.id)) return obj
+						return snapshot.find((s) => s.id === obj.id) ?? obj
+					}),
+				)
+			}
+			for (const [key, snapshot] of ctx.listInfiniteSnapshots) {
+				if (!snapshot) continue
+				const current = queryClient.getQueryData<ObjectListInfiniteCache>(key)
+				if (!current) continue
+				queryClient.setQueryData<ObjectListInfiniteCache>(key, {
+					...current,
+					pages: current.pages.map((page, pi) =>
+						page.map((obj) => {
+							if (!failedIds.has(obj.id)) return obj
+							return snapshot.pages[pi]?.find((s) => s.id === obj.id) ?? obj
+						}),
+					),
+				})
+			}
+			for (const [key, snap] of ctx.detailSnapshots) {
+				if (snap && failedIds.has(snap.id)) {
+					queryClient.setQueryData(key, snap)
+				}
+			}
+		},
 		onSettled: (data, _err, { ids }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
@@ -187,6 +227,88 @@ export function useBulkUpdateObjects(workspaceId: string) {
 			for (const id of idsToInvalidate) {
 				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			}
+		},
+	})
+}
+
+interface BulkDeleteContext {
+	listSnapshots: Array<[readonly unknown[], ObjectListCache | undefined]>
+	listInfiniteSnapshots: Array<[readonly unknown[], ObjectListInfiniteCache | undefined]>
+}
+
+export function useBulkDeleteObjects(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<BulkUpdateObjectsResponse, Error, BulkDeleteObjectsInput, BulkDeleteContext>({
+		mutationFn: (body) => api.objects.bulkDelete(workspaceId, body),
+		onMutate: async ({ ids }) => {
+			await queryClient.cancelQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			const idSet = new Set(ids)
+
+			const listSnapshots = queryClient.getQueriesData<ObjectListCache>({
+				queryKey: queryKeys.objects.listPrefix(workspaceId),
+			})
+			for (const [key, cache] of listSnapshots) {
+				if (!cache) continue
+				queryClient.setQueryData<ObjectListCache>(
+					key,
+					cache.filter((o) => !idSet.has(o.id)),
+				)
+			}
+
+			const listInfiniteSnapshots = queryClient.getQueriesData<ObjectListInfiniteCache>({
+				queryKey: queryKeys.objects.listInfinitePrefix(workspaceId),
+			})
+			for (const [key, cache] of listInfiniteSnapshots) {
+				if (!cache) continue
+				queryClient.setQueryData<ObjectListInfiniteCache>(key, {
+					...cache,
+					pages: cache.pages.map((page) => page.filter((o) => !idSet.has(o.id))),
+				})
+			}
+
+			for (const id of ids) {
+				queryClient.removeQueries({ queryKey: queryKeys.objects.detail(id) })
+			}
+
+			return { listSnapshots, listInfiniteSnapshots }
+		},
+		onError: (_err, _vars, ctx) => {
+			if (!ctx) return
+			for (const [key, cache] of ctx.listSnapshots) {
+				queryClient.setQueryData(key, cache)
+			}
+			for (const [key, cache] of ctx.listInfiniteSnapshots) {
+				queryClient.setQueryData(key, cache)
+			}
+		},
+		onSuccess: (data, _vars, ctx) => {
+			if (!ctx) return
+			// Rows the server failed to delete should reappear in the list cache.
+			const failedIds = new Set(data.results.filter((r) => !r.ok).map((r) => r.id))
+			if (failedIds.size === 0) return
+
+			for (const [key, snapshot] of ctx.listSnapshots) {
+				if (!snapshot) continue
+				const current = queryClient.getQueryData<ObjectListCache>(key)
+				const failed = snapshot.filter((o) => failedIds.has(o.id))
+				if (failed.length === 0) continue
+				queryClient.setQueryData<ObjectListCache>(key, [...(current ?? []), ...failed])
+			}
+			for (const [key, snapshot] of ctx.listInfiniteSnapshots) {
+				if (!snapshot) continue
+				const current = queryClient.getQueryData<ObjectListInfiniteCache>(key)
+				const failed = snapshot.pages.flat().filter((o) => failedIds.has(o.id))
+				if (failed.length === 0 || !current) continue
+				// Append failed rows back to the first page.
+				queryClient.setQueryData<ObjectListInfiniteCache>(key, {
+					...current,
+					pages: current.pages.map((page, i) => (i === 0 ? [...page, ...failed] : page)),
+				})
+			}
+		},
+		onSettled: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
 		},
 	})
 }

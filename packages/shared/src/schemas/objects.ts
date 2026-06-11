@@ -52,6 +52,11 @@ export const bulkUpdateObjectsResponseSchema = z.object({
 	results: z.array(bulkUpdateObjectsResultSchema),
 })
 
+/** Bulk-delete many objects by id. Already-deleted ids return ok: true (idempotent). */
+export const bulkDeleteObjectsSchema = z.object({
+	ids: z.array(z.string().uuid()).min(1).max(200),
+})
+
 /** Bulk-migrate or delete every object of a given type within a workspace.
  * Used when an extension is removed/disabled, to avoid orphaning rows whose
  * `type` no longer maps to anything in workspace.settings. */
