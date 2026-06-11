@@ -85,6 +85,7 @@ describe('DataTableControls', () => {
 					email: null,
 					description: null,
 					isSystem: false,
+					agentState: 'idle' as const,
 				},
 			],
 		})
