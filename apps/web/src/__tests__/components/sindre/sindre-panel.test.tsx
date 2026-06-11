@@ -40,7 +40,7 @@ const mockConversation: ConversationResponse = {
 	lastMessagePreview: null,
 	lastActivityAt: null,
 	createdAt: new Date().toISOString(),
-	updatedAt: null,
+	participantCount: 0,
 	unreadCount: 0,
 	participants: [],
 }

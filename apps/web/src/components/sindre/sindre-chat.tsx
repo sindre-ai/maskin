@@ -143,12 +143,14 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	// Sindre turn (and vice versa). Historical events from the conversations API
 	// are prepended so the user sees past turns on resume.
 	const liveEvents = useMergedTranscript(workspaceId, sindre.events, oneShot.events)
-	const events =
-		historicalEvents.length > 0 && liveEvents.length === 0
-			? historicalEvents
-			: liveEvents.length > 0
-				? [...historicalEvents, ...liveEvents]
-				: liveEvents
+	// Wrap in useMemo so the array reference only changes when inputs change.
+	// Without this, the spread always produces a new reference, which makes the
+	// onEventsChange useEffect fire every render → infinite setState loop.
+	const events = useMemo(() => {
+		if (historicalEvents.length > 0 && liveEvents.length === 0) return historicalEvents
+		if (liveEvents.length > 0) return [...historicalEvents, ...liveEvents]
+		return liveEvents
+	}, [historicalEvents, liveEvents])
 
 	useEffect(() => {
 		onEventsChange?.(events)
