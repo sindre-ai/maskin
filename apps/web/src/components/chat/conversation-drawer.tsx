@@ -44,9 +44,10 @@ export function ConversationDrawer({ open, onOpenChange }: ConversationDrawerPro
 			toast.error('Not signed in — please reload and try again')
 			return
 		}
-		// The API always adds the caller; we pass the actor's own ID to satisfy min(1)
+		// Creates a room (not a DM) — DMs are started from specific actor profiles.
+		// The API always includes the caller; pass their own ID to satisfy min(1).
 		createConversation.mutate(
-			{ type: 'dm', participant_actor_ids: [actor.id] },
+			{ type: 'room', participant_actor_ids: [actor.id] },
 			{
 				onSuccess: (created) => setActive(created),
 			},

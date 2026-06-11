@@ -200,6 +200,23 @@ app.openapi(createConversationRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
+	const uniqueParticipantIds = [...new Set(body.participant_actor_ids)]
+	const members = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				inArray(workspaceMembers.actorId, uniqueParticipantIds),
+			),
+		)
+	if (members.length !== uniqueParticipantIds.length) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'One or more actors are not workspace members'),
+			400,
+		)
+	}
+
 	const [conversation] = await db
 		.insert(conversations)
 		.values({
@@ -473,6 +490,10 @@ const markReadRoute = createRoute({
 			content: { 'application/json': { schema: z.object({ ok: z.boolean() }) } },
 			description: 'Marked as read',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a participant in this conversation',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Conversation not found',
@@ -489,6 +510,21 @@ app.openapi(markReadRoute, (async (c) => {
 	const conversation = await loadConversationWithAuth(db, id, workspaceId)
 	if (!conversation) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [participant] = await db
+		.select()
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, id),
+				eq(conversationParticipants.actorId, actorId),
+			),
+		)
+		.limit(1)
+
+	if (!participant) {
+		return c.json(createApiError('FORBIDDEN', 'Not a participant in this conversation'), 403)
 	}
 
 	await db
@@ -565,6 +601,21 @@ app.openapi(addParticipantRoute, (async (c) => {
 
 	if (!callerParticipant) {
 		return c.json(createApiError('FORBIDDEN', 'Not authorized to add participants'), 403)
+	}
+
+	const [newMember] = await db
+		.select()
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(workspaceMembers.actorId, body.actor_id),
+			),
+		)
+		.limit(1)
+
+	if (!newMember) {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not a workspace member'), 400)
 	}
 
 	const [existing] = await db

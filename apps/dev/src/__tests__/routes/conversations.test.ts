@@ -81,7 +81,9 @@ describe('Conversations Routes', () => {
 	describe('POST /api/conversations', () => {
 		it('creates a conversation and returns 201', async () => {
 			const conv = buildConversation({ type: 'room', title: 'Team room' })
+			const participantId = randomUUID()
 			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations', actorId)
+			mockResults.selectQueue = [[{ actorId: participantId, workspaceId: wsId }]]
 			mockResults.insert = [conv]
 
 			const res = await app.request(
@@ -91,7 +93,7 @@ describe('Conversations Routes', () => {
 					{
 						title: 'Team room',
 						type: 'room',
-						participant_actor_ids: [randomUUID()],
+						participant_actor_ids: [participantId],
 					},
 					{ 'x-workspace-id': wsId },
 				),
@@ -101,6 +103,22 @@ describe('Conversations Routes', () => {
 			const body = await res.json()
 			expect(body.type).toBe('room')
 			expect(body.title).toBe('Team room')
+		})
+
+		it('returns 400 when participant_actor_ids contains non-workspace-member actors', async () => {
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations', actorId)
+			mockResults.selectQueue = [[]] // workspace member check returns no rows
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ type: 'room', participant_actor_ids: [randomUUID()] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
 		})
 
 		it('returns 400 for invalid type', async () => {
@@ -269,7 +287,12 @@ describe('Conversations Routes', () => {
 			const callerParticipant = buildParticipant({ conversationId: convId, actorId })
 			const participant = buildParticipant({ conversationId: convId, actorId: newActorId })
 			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.selectQueue = [[conv], [callerParticipant], []]
+			mockResults.selectQueue = [
+				[conv],
+				[callerParticipant],
+				[{ actorId: newActorId, workspaceId: wsId }], // workspace member check
+				[], // duplicate participant check
+			]
 			mockResults.insert = [participant]
 
 			const res = await app.request(
@@ -284,6 +307,29 @@ describe('Conversations Routes', () => {
 			expect(res.status).toBe(201)
 			const body = await res.json()
 			expect(body.actorId).toBe(newActorId)
+		})
+
+		it('returns 400 when actor is not a workspace member', async () => {
+			const convId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const callerParticipant = buildParticipant({ conversationId: convId, actorId })
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
+			mockResults.selectQueue = [
+				[conv],
+				[callerParticipant],
+				[], // workspace member check returns no rows
+			]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${convId}/participants`,
+					{ actor_id: randomUUID() },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
 		})
 
 		it('returns 403 when caller is not a participant', async () => {
@@ -330,7 +376,12 @@ describe('Conversations Routes', () => {
 				actorId: existingActorId,
 			})
 			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.selectQueue = [[conv], [callerParticipant], [existingParticipant]]
+			mockResults.selectQueue = [
+				[conv],
+				[callerParticipant],
+				[{ actorId: existingActorId, workspaceId: wsId }], // workspace member check
+				[existingParticipant], // duplicate participant check
+			]
 
 			const res = await app.request(
 				jsonRequest(
@@ -347,9 +398,15 @@ describe('Conversations Routes', () => {
 		it('returns 409 when unique constraint fires on concurrent insert', async () => {
 			const convId = randomUUID()
 			const conv = buildConversation({ id: convId })
-			const actorId = randomUUID()
+			const newActorId = randomUUID()
+			const callerParticipant = buildParticipant({ conversationId: convId, actorId })
 			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
-			mockResults.selectQueue = [[conv], []]
+			mockResults.selectQueue = [
+				[conv],
+				[callerParticipant],
+				[{ actorId: newActorId, workspaceId: wsId }], // workspace member check
+				[], // duplicate check — actor not yet a participant
+			]
 			mockResults.insertErrorQueue = [
 				Object.assign(new Error('duplicate key value violates unique constraint'), {
 					code: '23505',
@@ -360,7 +417,7 @@ describe('Conversations Routes', () => {
 				jsonRequest(
 					'POST',
 					`/api/conversations/${convId}/participants`,
-					{ actor_id: actorId },
+					{ actor_id: newActorId },
 					{ 'x-workspace-id': wsId },
 				),
 			)
@@ -381,6 +438,53 @@ describe('Conversations Routes', () => {
 			)
 
 			expect(res.status).toBe(400)
+		})
+	})
+
+	describe('POST /api/conversations/:id/read', () => {
+		it('returns 200 and resets unread count for participant', async () => {
+			const convId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const participant = buildParticipant({ conversationId: convId, actorId, unreadCount: 3 })
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations', actorId)
+			mockResults.selectQueue = [[conv], [participant]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/conversations/${convId}/read`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.ok).toBe(true)
+		})
+
+		it('returns 403 when caller is not a participant', async () => {
+			const convId = randomUUID()
+			const conv = buildConversation({ id: convId })
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations', actorId)
+			mockResults.selectQueue = [[conv], []]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/conversations/${convId}/read`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when conversation not found', async () => {
+			const { app, mockResults } = createTestApp(conversationsRoutes, '/api/conversations')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${randomUUID()}/read`,
+					{},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
 		})
 	})
 })
