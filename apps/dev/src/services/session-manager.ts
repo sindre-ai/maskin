@@ -1,4 +1,4 @@
-﻿import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,7 +18,8 @@ import {
 } from '@maskin/db/schema'
 import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
+import { and, count as countFn, desc, eq, inArray, lt, ne, or } from 'drizzle-orm'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
@@ -381,6 +382,7 @@ export class SessionManager extends EventEmitter {
 					status: 'paused',
 					snapshotPath: snapshotKey,
 					containerId: null,
+					currentActivity: null,
 					updatedAt: new Date(),
 				})
 				.where(eq(sessions.id, sessionId))
@@ -430,6 +432,7 @@ export class SessionManager extends EventEmitter {
 				status: 'failed',
 				containerId: null,
 				completedAt: new Date(),
+				currentActivity: null,
 				updatedAt: new Date(),
 			})
 			.where(eq(sessions.id, sessionId))
@@ -951,7 +954,7 @@ export class SessionManager extends EventEmitter {
 
 	private computeTimeout(session: typeof sessions.$inferSelect): Date {
 		const sessionConfig = session.config as Record<string, unknown>
-		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 3600
+		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 7200
 		return new Date(Date.now() + timeoutSeconds * 1000)
 	}
 
@@ -1055,7 +1058,7 @@ export class SessionManager extends EventEmitter {
 				const status = await this.containers.inspect(containerId)
 				consecutiveFailures = 0
 				if (!status.running) {
-					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
+					await this.handleCompletion(sessionId, containerId, status.exitCode)
 					return
 				}
 			} catch (err) {
@@ -1085,10 +1088,43 @@ export class SessionManager extends EventEmitter {
 		setTimeout(poll, 2000)
 	}
 
+	/** Session statuses that count as "the agent is still doing work". */
+	private static readonly ACTIVE_SESSION_STATUSES = [
+		'pending',
+		'starting',
+		'queued',
+		'running',
+		'snapshotting',
+	] as const
+
+	/**
+	 * True if the actor has an active session other than `excludeSessionId`.
+	 * Used to avoid clobbering agent-level `agentState` when one of several
+	 * concurrent sessions transitions — the agent should only flip to a
+	 * terminal/paused state once its last active session does.
+	 */
+	private async hasOtherActiveSessions(
+		actorId: string,
+		excludeSessionId: string,
+	): Promise<boolean> {
+		const [other] = await this.db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.actorId, actorId),
+					ne(sessions.id, excludeSessionId),
+					inArray(sessions.status, SessionManager.ACTIVE_SESSION_STATUSES),
+				),
+			)
+			.limit(1)
+		return Boolean(other)
+	}
+
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
-		exitCode: number,
+		exitCode: number | null,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1155,6 +1191,18 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const failureReason =
+			exitCode !== null && exitCode !== 0
+				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
+				: null
+		if (failureReason) {
+			logger.info('Session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -1165,9 +1213,13 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status,
-					result: { exit_code: exitCode },
+					result: {
+						exit_code: exitCode,
+						...(failureReason ? { failure_reason: failureReason } : {}),
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					currentActivity: null,
 					...(usage
 						? {
 								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
@@ -1188,6 +1240,28 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Sync agentState on the actor so the agents overview reflects terminal status.
+		// completed → idle (agent finished cleanly), failed → failed (needs attention).
+		// Skip if the agent still has other active sessions, so one finishing
+		// session doesn't prematurely flip an agent that's still working.
+		try {
+			if (!(await this.hasOtherActiveSessions(session.actorId, sessionId))) {
+				await this.db
+					.update(actors)
+					.set({
+						agentState: status === 'completed' ? 'idle' : 'failed',
+						agentStateUpdatedAt: new Date(),
+						updatedAt: new Date(),
+					})
+					.where(eq(actors.id, session.actorId))
+			}
+		} catch (err) {
+			logger.warn('Failed to sync agentState after session completion', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		try {
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
@@ -1195,7 +1269,7 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
 			})
 		} catch (err) {
 			logger.error('Failed to insert completion event in handleCompletion', {
@@ -1297,9 +1371,24 @@ export class SessionManager extends EventEmitter {
 					status: 'timeout',
 					result: { error: 'Session timed out' },
 					completedAt: now,
+					currentActivity: null,
 					updatedAt: now,
 				})
 				.where(eq(sessions.id, session.id))
+
+			// Only sync the agent to idle if this was its last active session.
+			if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
+				await this.db
+					.update(actors)
+					.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
+					.where(eq(actors.id, session.actorId))
+					.catch((err) =>
+						logger.warn('Failed to sync agentState after session timeout', {
+							sessionId: session.id,
+							error: String(err),
+						}),
+					)
+			}
 
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
@@ -1381,9 +1470,24 @@ export class SessionManager extends EventEmitter {
 			}
 
 			logger.info(`Auto-pausing idle session: ${session.id}`)
-			this.pauseSession(session.id).catch((err) =>
-				logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
-			)
+			this.pauseSession(session.id)
+				.then(async () => {
+					// Only reflect paused at the agent level if no other session is active.
+					if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
+					await this.db
+						.update(actors)
+						.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
+						.where(eq(actors.id, session.actorId))
+						.catch((err) =>
+							logger.warn('Failed to sync agentState after auto-pause', {
+								sessionId: session.id,
+								error: String(err),
+							}),
+						)
+				})
+				.catch((err) =>
+					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+				)
 		}
 
 		// 3. Archive old paused sessions (7 days)
@@ -1471,6 +1575,7 @@ export class SessionManager extends EventEmitter {
 				data: { error: 'Session stuck in starting state' },
 			})
 
+			await this.cleanupBrowserSidecar(session.id).catch(() => {})
 			await this.clearActiveSession(session.id)
 			await this.cleanupSession(session.id)
 

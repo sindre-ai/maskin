@@ -112,7 +112,7 @@ describe('useObjectMutation', () => {
 			() =>
 				useObjectMutation<string | null>({
 					objectId: 'obj-4',
-					field: 'owner',
+					field: 'driver',
 					onSuccess,
 				}),
 			{ wrapper: makeWrapper(callTool) },

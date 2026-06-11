@@ -82,9 +82,9 @@ function formatObjectUpdate(event: EventLike, ctx?: FormatContext): string | nul
 		)
 	}
 
-	if (changed(previous.owner, updated.owner)) {
+	if (changed(previous.driver, updated.driver)) {
 		clauses.push(
-			`changed owner from ${ownerLabel(previous.owner, ctx)} to ${ownerLabel(updated.owner, ctx)}`,
+			`changed driver from ${driverLabel(previous.driver, ctx)} to ${driverLabel(updated.driver, ctx)}`,
 		)
 	}
 
@@ -128,7 +128,7 @@ function prettyStatus(value: unknown): string {
 		.join(' ')
 }
 
-function ownerLabel(value: unknown, ctx?: FormatContext): string {
+function driverLabel(value: unknown, ctx?: FormatContext): string {
 	if (value == null || value === '') return 'no one'
 	if (typeof value !== 'string') return 'unknown'
 	const actor = ctx?.actorsById?.get(value)

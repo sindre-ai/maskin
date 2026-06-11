@@ -76,6 +76,7 @@ describe('MarkdownContent', () => {
 				email: null,
 				description: null,
 				isSystem: false,
+				agentState: 'idle' as const,
 			},
 		]
 		render(<MarkdownContent content="Hello @Magnus this is **important**" mentionActors={actors} />)

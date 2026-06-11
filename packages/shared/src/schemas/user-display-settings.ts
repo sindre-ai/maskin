@@ -24,7 +24,7 @@ export const displaySettingsBodySchema = z
 		filters: z
 			.object({
 				status: filterStringSchema.optional(),
-				owner: filterStringSchema.optional(),
+				driver: filterStringSchema.optional(),
 			})
 			.strict()
 			.optional(),

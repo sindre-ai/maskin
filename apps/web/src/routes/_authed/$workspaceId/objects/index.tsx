@@ -45,7 +45,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 	validateSearch: (search: Record<string, unknown>) => ({
 		type: typeof search.type === 'string' ? search.type : undefined,
 		status: typeof search.status === 'string' ? search.status : undefined,
-		owner: typeof search.owner === 'string' ? search.owner : undefined,
+		driver: typeof search.driver === 'string' ? search.driver : undefined,
 		sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
 		order:
 			typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
@@ -68,7 +68,7 @@ function ObjectsPage() {
 	const {
 		type: typeFilter,
 		status: statusFilter,
-		owner: ownerFilter,
+		driver: driverFilter,
 		sort,
 		order,
 		q,
@@ -134,12 +134,12 @@ function ObjectsPage() {
 		const f: Record<string, string> = {}
 		if (typeFilter) f.type = typeFilter
 		if (statusFilter) f.status = statusFilter
-		if (ownerFilter) f.owner = ownerFilter
+		if (driverFilter) f.driver = driverFilter
 		if (idsFilter) f.ids = idsFilter
 		f.sort = sort
 		f.order = order
 		return f
-	}, [typeFilter, statusFilter, ownerFilter, idsFilter, sort, order])
+	}, [typeFilter, statusFilter, driverFilter, idsFilter, sort, order])
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -270,7 +270,7 @@ function ObjectsPage() {
 		const staticNames: Record<string, string> = {
 			status: 'Status',
 			type: 'Type',
-			owner: 'Owner',
+			driver: 'Driver',
 			createdBy: 'Created by',
 			createdAt: 'Created',
 			updatedAt: 'Updated',
@@ -336,13 +336,13 @@ function ObjectsPage() {
 			(!searchParams.order || searchParams.order === 'desc') &&
 			!searchParams.groupBy &&
 			!searchParams.status &&
-			!searchParams.owner,
+			!searchParams.driver,
 		[
 			searchParams.sort,
 			searchParams.order,
 			searchParams.groupBy,
 			searchParams.status,
-			searchParams.owner,
+			searchParams.driver,
 		],
 	)
 
@@ -370,7 +370,7 @@ function ObjectsPage() {
 		if (s.order) updates.order = s.order
 		if (s.groupBy) updates.groupBy = s.groupBy
 		if (s.filters?.status) updates.status = s.filters.status
-		if (s.filters?.owner) updates.owner = s.filters.owner
+		if (s.filters?.driver) updates.driver = s.filters.driver
 		if (Object.keys(updates).length > 0) updateSearch(updates)
 		// Persisted blob wins: the saved map REPLACES the route's initial
 		// columnVisibility defaults (e.g. `{ createdBy: false }`). The user's
@@ -396,16 +396,16 @@ function ObjectsPage() {
 			groupBy: groupBy ?? null,
 			columnVisibility,
 		}
-		const filters: { status?: string; owner?: string } = {}
+		const filters: { status?: string; driver?: string } = {}
 		if (statusFilter) filters.status = statusFilter
-		if (ownerFilter) filters.owner = ownerFilter
-		if (filters.status || filters.owner) settings.filters = filters
+		if (driverFilter) filters.driver = driverFilter
+		if (filters.status || filters.driver) settings.filters = filters
 
 		const handle = setTimeout(() => {
 			updateMutateRef.current({ objectType: typeFilter, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [typeFilter, view, sort, order, groupBy, statusFilter, ownerFilter, columnVisibility])
+	}, [typeFilter, view, sort, order, groupBy, statusFilter, driverFilter, columnVisibility])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
@@ -462,7 +462,7 @@ function ObjectsPage() {
 			if (selectedIds.length === 0) return
 			const ids = [...selectedIds]
 			bulkUpdate.mutate(
-				{ ids, patch: { owner: ownerId } },
+				{ ids, patch: { driver: ownerId } },
 				{
 					onSuccess: (data) => reportBulkResult(data, ids.length, 'updated'),
 					onError: () => toast.error('Failed to update objects'),
@@ -655,7 +655,7 @@ function ObjectsPage() {
 							sort: 'createdAt',
 							order: 'desc',
 							status: undefined,
-							owner: undefined,
+							driver: undefined,
 							q: undefined,
 							groupBy: undefined,
 							ids: undefined,
@@ -668,10 +668,10 @@ function ObjectsPage() {
 				statusFilter={statusFilter}
 				onStatusFilterChange={(value) => updateSearch({ status: value })}
 				statusesByType={statusesByType}
-				ownerFilter={ownerFilter}
-				onOwnerFilterChange={(value) => updateSearch({ owner: value })}
+				driverFilter={driverFilter}
+				onDriverFilterChange={(value) => updateSearch({ driver: value })}
 				actors={actors}
-				onResetFilters={() => updateSearch({ status: undefined, owner: undefined })}
+				onResetFilters={() => updateSearch({ status: undefined, driver: undefined })}
 				sort={sort}
 				onSortChange={(value) =>
 					updateSearch({
