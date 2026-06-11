@@ -83,15 +83,14 @@ export function NewConversationComposer({
 		createSession.mutate(
 			{ actor_id: agentId, action_prompt: actionPrompt },
 			{
-				onSuccess: (session) => {
+				onSuccess: () => {
 					toast('Conversation started')
 					onOpenChange(false)
 					navigate({
 						to: '/$workspaceId/agents/$agentId',
 						params: { workspaceId, agentId },
-						search: { sessionId: session.id } as never,
-					}).catch(() => {
-						// Route may not accept search param — silently ignore navigation failure.
+					}).catch((err) => {
+						toast.error(err instanceof Error ? err.message : 'Failed to open agent page')
 					})
 				},
 				onError: (err) => {
