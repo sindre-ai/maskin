@@ -2,7 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, actors, files, notifications, objects, subscriptions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
+import { createCommentSchema, editCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError } from '../lib/errors'
@@ -432,6 +432,261 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	return c.json(serializeArray([comment])[0] as z.infer<typeof eventResponseSchema>, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
+
+// PATCH /api/events/:id - Edit a comment's content in place. Passive context
+// update: never spawns a session. The dominant production bug this is guarding
+// against is edit-in-place that silently re-fires the agent (OpenClaw #28834);
+// agent-spawn stays exclusively in the comment-create handler above. The
+// "Save & restart agent" UX path goes through T3's resend route instead.
+const editCommentRoute = createRoute({
+	method: 'patch',
+	path: '/{id}',
+	tags: ['events'],
+	summary: 'Edit your own comment in place (passive — does not re-fire the agent)',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.coerce.number().int().positive() }),
+		body: {
+			content: {
+				'application/json': {
+					schema: editCommentSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Comment updated',
+			content: { 'application/json': { schema: eventResponseSchema } },
+		},
+		400: {
+			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not the comment author',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Comment not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+// POST /api/events/:id/delete - Soft-delete a comment. Writes a
+// `comment_deleted` sibling event referencing the original; the original row
+// is NEVER mutated, so the audit trail stays honest. The UI hides on read by
+// joining against `comment_deleted` events on the same entity. Downstream
+// agent activity that referenced the deleted message is rendered `stale` at
+// read time only — no fan-out write and no auto-stop of in-flight sessions
+// (Linear/Cursor pattern). The 5–10s client-side undo window means the API
+// is only called once the user actually commits to the deletion.
+const deleteCommentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/delete',
+	tags: ['events'],
+	summary: 'Soft-delete your own comment (audit event only; original row untouched)',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.coerce.number().int().positive() }),
+	},
+	responses: {
+		200: {
+			description: 'Comment soft-deleted; returns the audit event',
+			content: { 'application/json': { schema: eventResponseSchema } },
+		},
+		403: {
+			description: 'Not the comment author',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Comment not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(deleteCommentRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: eventId } = c.req.valid('param')
+
+	// Look up the original comment in the requesting workspace. Workspace scope
+	// is enforced via the WHERE clause (and authMiddleware already verified the
+	// actor's membership), so a comment in a workspace the actor doesn't belong
+	// to looks indistinguishable from a missing row — 404, never 403.
+	const [original] = await db
+		.select({
+			id: events.id,
+			actorId: events.actorId,
+			entityType: events.entityType,
+			entityId: events.entityId,
+		})
+		.from(events)
+		.where(
+			and(
+				eq(events.id, eventId),
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+			),
+		)
+		.limit(1)
+
+	if (!original) {
+		return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+	}
+
+	// Owner-only. Deleting someone else's comment is an admin/moderation path
+	// and explicitly out of scope for this bet.
+	if (original.actorId !== actorId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'You can only delete your own comments'),
+			403 as never,
+		)
+	}
+
+	// Idempotency: if a `comment_deleted` sibling already exists for this
+	// original, return it instead of writing a second one. The undo window lives
+	// on the client, but a double-fire (double-tap after grace, retry after
+	// network blip) should not produce duplicate audit rows.
+	const [existing] = await db
+		.select()
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'comment_deleted'),
+				sql`${events.data}->>'originalEventId' = ${String(eventId)}`,
+			),
+		)
+		.limit(1)
+
+	if (existing) {
+		return c.json(serializeArray([existing])[0] as z.infer<typeof eventResponseSchema>, 200)
+	}
+
+	const deletedAt = new Date().toISOString()
+	const insertedRows = await db
+		.insert(events)
+		.values({
+			workspaceId,
+			actorId,
+			action: 'comment_deleted',
+			entityType: original.entityType,
+			entityId: original.entityId,
+			data: {
+				originalEventId: eventId,
+				deletedAt,
+			},
+		})
+		.returning()
+
+	const audit = insertedRows[0]
+	if (!audit) {
+		throw new Error('Failed to insert comment_deleted audit event')
+	}
+
+	logger.info('Soft-deleted comment (sibling audit event)', {
+		eventId,
+		objectId: original.entityId,
+		actorId,
+	})
+
+	return c.json(serializeArray([audit])[0] as z.infer<typeof eventResponseSchema>, 200)
+}) as RouteHandler<typeof deleteCommentRoute, Env>)
+
+app.openapi(editCommentRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: eventId } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	// Look up the original comment event in the requesting workspace. The
+	// workspace scope is enforced via the WHERE clause (and authMiddleware
+	// already verified the actor belongs to the workspace), so a comment in a
+	// workspace the actor doesn't belong to looks indistinguishable from a
+	// missing row — 404, never 403.
+	const [original] = await db
+		.select({
+			id: events.id,
+			actorId: events.actorId,
+			action: events.action,
+			entityType: events.entityType,
+			entityId: events.entityId,
+			data: events.data,
+		})
+		.from(events)
+		.where(
+			and(
+				eq(events.id, eventId),
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+			),
+		)
+		.limit(1)
+
+	if (!original) {
+		return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+	}
+
+	// Owner-only: a user can only edit their OWN message. Editing someone
+	// else's comment is the admin path and explicitly out of scope for this
+	// bet.
+	if (original.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'You can only edit your own comments'), 403 as never)
+	}
+
+	const previousData = (original.data as Record<string, unknown> | null) ?? {}
+	const editedAt = new Date().toISOString()
+	const nextData = { ...previousData, content: body.content, editedAt }
+
+	const updated = await db.transaction(async (tx) => {
+		// Update content + stamp editedAt on the original event row. The
+		// renderer reads `event.data.content` natively, so once the SSE
+		// invalidation fires, the bubble re-renders with the new text — no
+		// per-comment version stack to walk.
+		const updatedRows = await tx
+			.update(events)
+			.set({ data: nextData })
+			.where(eq(events.id, eventId))
+			.returning()
+
+		const next = updatedRows[0]
+		if (!next) {
+			throw new Error('Failed to update comment')
+		}
+
+		// Slim audit event: drives SSE invalidation and gives the timeline a
+		// hook for a future "edit history" view. No content body — the new
+		// content already lives on the original event row, and keeping this
+		// payload small keeps PG NOTIFY under its 8KB limit even on long
+		// comments.
+		await tx.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'comment_edited',
+			entityType: original.entityType,
+			entityId: original.entityId,
+			data: {
+				originalEventId: eventId,
+				editedAt,
+			},
+		})
+
+		return next
+	})
+
+	logger.info('Edited comment in place (passive)', {
+		eventId,
+		objectId: original.entityId,
+		actorId,
+	})
+
+	return c.json(serializeArray([updated])[0] as z.infer<typeof eventResponseSchema>, 200)
+}) as RouteHandler<typeof editCommentRoute, Env>)
 
 type ResolvedParent = { parentEventId: number | undefined; opActorId: string | null }
 

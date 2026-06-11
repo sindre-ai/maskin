@@ -26,6 +26,8 @@ vi.mock('@tanstack/react-router', async () => {
 vi.mock('@/hooks/use-events', () => ({
 	useEntityEvents: (...args: unknown[]) => mockUseEntityEvents(...args),
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
+	useEditComment: () => ({ mutate: vi.fn(), isPending: false }),
+	useDeleteComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({

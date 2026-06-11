@@ -22,8 +22,16 @@ vi.mock('@/hooks/use-actors', () => ({
 	}),
 }))
 
+const editCommentMutate = vi.fn()
+const deleteCommentMutate = vi.fn()
 vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
+	useEditComment: () => ({ mutate: editCommentMutate, isPending: false }),
+	useDeleteComment: () => ({ mutate: deleteCommentMutate, isPending: false }),
+}))
+
+vi.mock('@/hooks/use-mobile', () => ({
+	useIsMobile: () => false,
 }))
 
 vi.mock('@/hooks/use-files', () => ({
@@ -135,18 +143,24 @@ describe('ActivityComment', () => {
 		// The contract is: visible by default; fades behind hover only on devices
 		// that actually have hover (the `can-hover` variant maps to
 		// `@media (hover: hover)`). Encoded here so a future refactor can't
-		// silently re-hide it on touch again.
+		// silently re-hide it on touch again. T2 moved the opacity gate from the
+		// Reply button itself onto the action-group wrapper that holds Edit /
+		// Edit & restart agent / Reply / Delete — so this assertion checks the
+		// parent slot instead.
 		const event = buildEventResponse({
 			action: 'commented',
 			data: { content: 'Test' },
 		})
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 		const reply = screen.getByRole('button', { name: 'Reply' })
-		expect(reply.className).toMatch(/(^|\s)opacity-100($|\s)/)
-		expect(reply.className).toMatch(/can-hover:opacity-0/)
-		expect(reply.className).toMatch(/can-hover:group-hover:opacity-100/)
+		const slot = reply.parentElement
+		expect(slot).not.toBeNull()
+		const slotClass = slot?.className ?? ''
+		expect(slotClass).toMatch(/(^|\s)opacity-100($|\s)/)
+		expect(slotClass).toMatch(/can-hover:opacity-0/)
+		expect(slotClass).toMatch(/can-hover:group-hover:opacity-100/)
 		// Guard against re-introducing a viewport-only gate that breaks touch tablets.
-		expect(reply.className).not.toMatch(/\bsm:opacity-0\b/)
+		expect(slotClass).not.toMatch(/\bsm:opacity-0\b/)
 	})
 
 	it('shows the Reply action button only on the last reply when replies exist', () => {
@@ -266,5 +280,186 @@ describe('ActivityComment', () => {
 		expect(
 			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
 		).toBeGreaterThanOrEqual(1)
+	})
+
+	describe('edit-in-place', () => {
+		beforeEach(() => {
+			editCommentMutate.mockReset()
+		})
+
+		it('shows Edit and Delete in the action group on own messages', () => {
+			const event = buildEventResponse({
+				actorId: 'actor-1', // matches getStoredActor mock
+				action: 'commented',
+				data: { content: 'My own comment' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+			expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Edit & restart agent' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+		})
+
+		it('hides Edit and Delete on someone else’s message', () => {
+			const event = buildEventResponse({
+				actorId: 'actor-2', // not the stored actor
+				action: 'commented',
+				data: { content: 'Their comment' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+			expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+		})
+
+		it('renders (edited) marker on previously edited comments', () => {
+			const event = buildEventResponse({
+				actorId: 'actor-1',
+				action: 'commented',
+				data: { content: 'Now corrected', editedAt: '2026-06-11T12:00:00Z' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+			expect(screen.getByText('(edited)')).toBeInTheDocument()
+		})
+
+		it('clicking Edit opens the inline composer prefilled with the existing content', async () => {
+			const user = userEvent.setup()
+			const event = buildEventResponse({
+				actorId: 'actor-1',
+				action: 'commented',
+				data: { content: 'Original text' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Edit' }))
+
+			const textarea = screen.getByRole('textbox', { name: 'Edit comment' })
+			expect(textarea).toHaveValue('Original text')
+			expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+			// Save & restart agent is stubbed in this task (T3 wires it).
+			expect(screen.getByRole('button', { name: /Save & restart agent/ })).toBeDisabled()
+		})
+
+		it('Escape cancels edit mode without firing the mutation', async () => {
+			const user = userEvent.setup()
+			const event = buildEventResponse({
+				actorId: 'actor-1',
+				action: 'commented',
+				data: { content: 'Original text' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Edit' }))
+			const textarea = screen.getByRole('textbox', { name: 'Edit comment' })
+			await user.clear(textarea)
+			await user.type(textarea, 'half-typed')
+			await user.keyboard('{Escape}')
+
+			expect(screen.queryByRole('textbox', { name: 'Edit comment' })).not.toBeInTheDocument()
+			expect(editCommentMutate).not.toHaveBeenCalled()
+		})
+
+		it('Save calls the edit mutation with the trimmed new content and event id', async () => {
+			const user = userEvent.setup()
+			const event = buildEventResponse({
+				id: 7777,
+				actorId: 'actor-1',
+				action: 'commented',
+				data: { content: 'Original text' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Edit' }))
+			const textarea = screen.getByRole('textbox', { name: 'Edit comment' })
+			await user.clear(textarea)
+			await user.type(textarea, '   Corrected text   ')
+
+			await user.click(screen.getByRole('button', { name: 'Save' }))
+
+			expect(editCommentMutate).toHaveBeenCalledTimes(1)
+			const [args] = editCommentMutate.mock.calls[0]
+			expect(args).toEqual({ eventId: 7777, data: { content: 'Corrected text' } })
+		})
+	})
+
+	describe('soft-delete', () => {
+		beforeEach(() => {
+			deleteCommentMutate.mockReset()
+		})
+
+		it('clicking Delete opens the undo countdown pill in place of the action group', async () => {
+			const user = userEvent.setup()
+			const event = buildEventResponse({
+				actorId: 'actor-1',
+				action: 'commented',
+				data: { content: 'Removing this' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Delete' }))
+
+			expect(screen.getByRole('button', { name: /Undo delete/ })).toBeInTheDocument()
+			// While the undo window is open the Delete button itself is gone
+			// (it lives in the action group, which is swapped for the pill).
+			expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+			// The mutation does NOT fire yet — it only fires when the window
+			// elapses; clicking Undo cancels it locally.
+			expect(deleteCommentMutate).not.toHaveBeenCalled()
+		})
+
+		it('tapping Undo inside the pill cancels the timer and restores the row', async () => {
+			const user = userEvent.setup()
+			const event = buildEventResponse({
+				actorId: 'actor-1',
+				action: 'commented',
+				data: { content: 'On second thought, keep it' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Delete' }))
+			await user.click(screen.getByRole('button', { name: /Undo delete/ }))
+
+			expect(screen.queryByRole('button', { name: /Undo delete/ })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+			// Tapping Undo restores synchronously — the mutation never fires
+			// because the window-elapse timer was cleared.
+			expect(deleteCommentMutate).not.toHaveBeenCalled()
+		})
+
+		it('after the undo window elapses, the mutation fires with the event id', async () => {
+			// Real-timer integration test. The undo window is 7s; we wait
+			// slightly longer than that for the timer to fire. The mutation
+			// hook is mocked so the test exercises only the local timer path.
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0)
+			vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+			try {
+				const user = userEvent.setup()
+				const event = buildEventResponse({
+					id: 9090,
+					actorId: 'actor-1',
+					action: 'commented',
+					data: { content: 'Goodbye comment' },
+				})
+				render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+				await user.click(screen.getByRole('button', { name: 'Delete' }))
+				await new Promise((resolve) => setTimeout(resolve, 7100))
+
+				expect(deleteCommentMutate).toHaveBeenCalledTimes(1)
+				const [eventIdArg] = deleteCommentMutate.mock.calls[0]
+				expect(eventIdArg).toBe(9090)
+			} finally {
+				vi.restoreAllMocks()
+			}
+		}, 10000)
+
+		it('Delete is hidden on someone else’s message', () => {
+			const event = buildEventResponse({
+				actorId: 'actor-2',
+				action: 'commented',
+				data: { content: 'Not mine' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+			expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+		})
 	})
 })

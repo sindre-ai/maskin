@@ -6,11 +6,13 @@ vi.mock('@/lib/api', () => ({
 		events: {
 			history: vi.fn(),
 			create: vi.fn(),
+			edit: vi.fn(),
+			delete: vi.fn(),
 		},
 	},
 }))
 
-import { useCreateComment, useEntityEvents, useEvents } from '@/hooks/use-events'
+import { useCreateComment, useDeleteComment, useEntityEvents, useEvents } from '@/hooks/use-events'
 import type { EventResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
@@ -135,6 +137,33 @@ describe('useCreateComment', () => {
 		})
 
 		result.current.mutate({ entity_id: 'obj-1', content: 'Bad' })
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(result.current.error?.message).toBe('Forbidden')
+	})
+})
+
+describe('useDeleteComment', () => {
+	it('calls api.events.delete with workspace + event id', async () => {
+		const audit = buildEvent({ id: 4, action: 'comment_deleted', entityId: 'obj-1' })
+		vi.mocked(api.events.delete).mockResolvedValue(audit)
+
+		const { result } = renderHook(() => useDeleteComment(workspaceId, 'obj-1'), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate(123)
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.events.delete).toHaveBeenCalledWith(workspaceId, 123)
+	})
+
+	it('exposes error when delete fails', async () => {
+		vi.mocked(api.events.delete).mockRejectedValue(new Error('Forbidden'))
+
+		const { result } = renderHook(() => useDeleteComment(workspaceId, 'obj-1'), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate(123)
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Forbidden')
 	})

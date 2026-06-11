@@ -26,18 +26,27 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'paused'])
 interface MentionSessionCardProps {
 	session: SessionResponse
 	workspaceId: string
+	// True when the source comment (mention or thread-reply) has been
+	// soft-deleted. Renders a `stale` marker on the card; does NOT stop the
+	// session (Linear/Cursor pattern — the user explicitly stops if they want).
+	isStale?: boolean
 }
 
-export function MentionSessionCard({ session, workspaceId }: MentionSessionCardProps) {
+export function MentionSessionCard({ session, workspaceId, isStale }: MentionSessionCardProps) {
 	const [panelOpen, setPanelOpen] = useState(false)
 	const isTerminal = TERMINAL_STATUSES.has(session.status)
 
 	return (
 		<>
 			{isTerminal ? (
-				<TerminalCard session={session} onOpen={() => setPanelOpen(true)} />
+				<TerminalCard session={session} onOpen={() => setPanelOpen(true)} isStale={isStale} />
 			) : (
-				<ActiveCard session={session} workspaceId={workspaceId} onOpen={() => setPanelOpen(true)} />
+				<ActiveCard
+					session={session}
+					workspaceId={workspaceId}
+					onOpen={() => setPanelOpen(true)}
+					isStale={isStale}
+				/>
 			)}
 			<SessionDetailPanel
 				session={session}
@@ -63,10 +72,12 @@ function ActiveCard({
 	session,
 	workspaceId,
 	onOpen,
+	isStale,
 }: {
 	session: SessionResponse
 	workspaceId: string
 	onOpen: () => void
+	isStale?: boolean
 }) {
 	const [collapsed, setCollapsed] = useState(true)
 	const { data: actor } = useActor(session.actorId)
@@ -82,7 +93,12 @@ function ActiveCard({
 		: `${actor?.name ?? 'Agent'} is working`
 
 	return (
-		<div className="rounded-md border border-border bg-secondary/30 animate-in fade-in slide-in-from-bottom-1 duration-200">
+		<div
+			className={cn(
+				'rounded-md border border-border bg-secondary/30 animate-in fade-in slide-in-from-bottom-1 duration-200',
+				isStale && 'opacity-70',
+			)}
+		>
 			{/* Header — pulsing indicator renders from mount without waiting for logs */}
 			<div className="flex items-center gap-2 px-3 py-2">
 				<span className={cn('shrink-0', idle ? 'text-muted-foreground' : 'text-primary')}>
@@ -90,6 +106,14 @@ function ActiveCard({
 				</span>
 				{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 				<span className="text-sm font-medium shrink-0">{label}</span>
+				{isStale && (
+					<span
+						className="text-xs px-1.5 py-0.5 rounded-full border border-border text-muted-foreground shrink-0"
+						title="The original message was deleted"
+					>
+						stale
+					</span>
+				)}
 				{preview && (
 					<span className="text-sm text-muted-foreground truncate min-w-0 flex-1">{preview}</span>
 				)}
@@ -235,9 +259,11 @@ function ActivityRow({
 function TerminalCard({
 	session,
 	onOpen,
+	isStale,
 }: {
 	session: SessionResponse
 	onOpen: () => void
+	isStale?: boolean
 }) {
 	const { data: actor } = useActor(session.actorId)
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
@@ -247,11 +273,22 @@ function TerminalCard({
 		<button
 			type="button"
 			onClick={onOpen}
-			className="flex items-center gap-2 w-full text-left rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors cursor-pointer"
+			className={cn(
+				'flex items-center gap-2 w-full text-left rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors cursor-pointer',
+				isStale && 'opacity-70',
+			)}
 		>
 			<status.Icon size={14} className={cn('shrink-0', status.iconClass)} />
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 			<span className="text-sm font-medium shrink-0">{status.label}</span>
+			{isStale && (
+				<span
+					className="text-xs px-1.5 py-0.5 rounded-full border border-border text-muted-foreground shrink-0"
+					title="The original message was deleted"
+				>
+					stale
+				</span>
+			)}
 			<span className="text-sm text-muted-foreground shrink-0">· view session logs</span>
 			{duration && (
 				<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
