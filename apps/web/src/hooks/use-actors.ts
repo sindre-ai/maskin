@@ -88,7 +88,9 @@ function invalidateAgentControls(
 	queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.byActor(workspaceId, actorId) })
-	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId) })
+	queryClient.invalidateQueries({
+		queryKey: queryKeys.sessions.byActorAllInfinite(workspaceId, actorId),
+	})
 }
 
 export function useAgentPause(workspaceId: string) {

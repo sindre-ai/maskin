@@ -13,6 +13,8 @@ vi.mock('@/hooks/use-actors', () => ({
 	useDeleteActor: () => ({ mutate: deleteMutate, isPending: false }),
 	useResetActor: () => ({ mutate: resetMutate, isPending: false }),
 	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
+	useAgentRun: () => ({ mutate: vi.fn(), isPending: false }),
+	useAgentPause: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-events', () => ({
@@ -102,6 +104,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 		onUpdateLlmConfig: vi.fn(),
 		onUpdateTools: vi.fn(),
 		onUpdateMemory: vi.fn(),
+		onRun: vi.fn(),
+		onPause: vi.fn(),
 		...overrides,
 	}
 }
