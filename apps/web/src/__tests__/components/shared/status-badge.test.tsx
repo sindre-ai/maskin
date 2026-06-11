@@ -52,4 +52,9 @@ describe('StatusBadge', () => {
 		render(<StatusBadge status="active" />)
 		expect(screen.queryByRole('button')).not.toBeInTheDocument()
 	})
+
+	it('renders in_review as "in review"', () => {
+		render(<StatusBadge status="in_review" />)
+		expect(screen.getByText('in review')).toBeInTheDocument()
+	})
 })
