@@ -75,7 +75,11 @@ function MomentumRing({
 	)
 }
 
-function AgentAvatar({ agent, state, size }: { agent: ActorResponse; state: AgentState; size: Size }) {
+function AgentAvatar({
+	agent,
+	state,
+	size,
+}: { agent: ActorResponse; state: AgentState; size: Size }) {
 	return (
 		<div className="rounded-full w-full h-full bg-background p-px">
 			<span
@@ -107,8 +111,8 @@ export function AgentPortraitCard({ agent, size = 'md', onRun, onPause }: AgentP
 		pauseMutation.mutate(agent.id, { onSuccess: onPause })
 	}
 
-	const showPlay = (onRun !== undefined) && (state === 'idle' || state === 'paused')
-	const showPause = (onPause !== undefined) && state === 'running'
+	const showPlay = onRun !== undefined && (state === 'idle' || state === 'paused')
+	const showPause = onPause !== undefined && state === 'running'
 	const isActing = runMutation.isPending || pauseMutation.isPending
 
 	return (
@@ -135,9 +139,7 @@ export function AgentPortraitCard({ agent, size = 'md', onRun, onPause }: AgentP
 						'flex-shrink-0 flex items-center justify-center rounded-full transition-colors',
 						'disabled:opacity-50 disabled:pointer-events-none',
 						size === 'sm' ? 'h-6 w-6' : size === 'md' ? 'h-7 w-7' : 'h-8 w-8',
-						showPause
-							? 'text-warning hover:bg-warning/10'
-							: 'text-success hover:bg-success/10',
+						showPause ? 'text-warning hover:bg-warning/10' : 'text-success hover:bg-success/10',
 					)}
 					aria-label={showPause ? 'Pause agent' : 'Run agent'}
 				>
