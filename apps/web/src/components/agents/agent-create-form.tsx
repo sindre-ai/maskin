@@ -81,7 +81,7 @@ export function AgentCreateForm({
 	}
 
 	return (
-		<div className="max-w-3xl mx-auto">
+		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Name */}
 			<textarea
 				value={name}
