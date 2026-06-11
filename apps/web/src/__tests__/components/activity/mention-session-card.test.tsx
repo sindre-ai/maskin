@@ -192,5 +192,22 @@ describe('MentionSessionCard', () => {
 			expect(screen.getByText('Failed')).toBeInTheDocument()
 			expect(screen.getByRole('button', { name: /Restart session/i })).toBeInTheDocument()
 		})
+
+		// T3: prior reply marked superseded shows the banner instead of the
+		// normal "view session logs" hint, and drops the Restart chip slot —
+		// superseded means a newer run already took over.
+		it('renders the superseded banner on the terminal pill and hides the Restart chip', () => {
+			const session = buildSession({
+				status: 'superseded',
+				startedAt: new Date(Date.now() - 3000).toISOString(),
+				completedAt: new Date().toISOString(),
+			})
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			expect(screen.getByText(/Superseded by newer reply/i)).toBeInTheDocument()
+			expect(screen.queryByText(/view session logs/i)).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Restart session/i })).not.toBeInTheDocument()
+		})
 	})
 })

@@ -227,5 +227,9 @@ export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
+	// Set on the prior session when a resend creates a new run against the
+	// edited message state. Points to the new session id so UI surfaces can
+	// follow the chain without scanning every event.
+	superseded_by: z.string().uuid().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

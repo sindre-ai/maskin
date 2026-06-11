@@ -390,6 +390,12 @@ export const api = {
 				workspaceId,
 				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
 			}),
+		resend: (workspaceId: string, eventId: number, data: ResendCommentInput) =>
+			request<ResendCommentResponse>(`/events/${eventId}/resend`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
 	},
 
 	imports: {
@@ -1040,6 +1046,20 @@ export interface CreateCommentInput {
 	mentions?: string[]
 	parent_event_id?: number
 	attachment_file_ids?: string[]
+}
+
+export interface ResendCommentInput {
+	/** Optional new content — when present the original event's data.content is updated before the agent re-runs. */
+	content?: string
+}
+
+export interface ResendCommentResponse {
+	event: EventResponse
+	restarts: Array<{
+		kind: 'resumed' | 'superseded'
+		sessionId: string
+		supersededSessionId?: string
+	}>
 }
 
 // Imports

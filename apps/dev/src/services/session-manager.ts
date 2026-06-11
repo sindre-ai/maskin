@@ -314,6 +314,97 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	/**
+	 * Restart contract (architecture decision 3):
+	 *  - prior is `running` + interactive → deliver the new turn via
+	 *    `containerManager.write` (same `activeSessionId`, agent context
+	 *    preserved). Returns `{ kind: 'resumed', sessionId: <prior> }`.
+	 *  - prior is terminal (or running-but-not-interactive, which can't take
+	 *    another turn) → spawn a fresh session with `config.supersedes`, flip
+	 *    the prior session to `superseded`, write `result.superseded_by`, and
+	 *    move `objects.activeSessionId` to the new session. Returns
+	 *    `{ kind: 'superseded', sessionId: <new>, supersededSessionId: <prior> }`.
+	 *
+	 * `objectId` is supplied by the caller because the original mention session
+	 * is attached to a specific object via `config.mention.object_id`. The
+	 * write-gate is bypassed implicitly: writes initiated from this method run
+	 * inside the SessionManager process, not through the HTTP gate.
+	 */
+	async restartSession(
+		priorSessionId: string,
+		params: { actionPrompt: string; objectId: string; createdBy: string; turnContent: string },
+	): Promise<
+		| { kind: 'resumed'; sessionId: string }
+		| { kind: 'superseded'; sessionId: string; supersededSessionId: string }
+	> {
+		const [prior] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, priorSessionId))
+			.limit(1)
+
+		if (!prior) {
+			throw new Error(`Session ${priorSessionId} not found`)
+		}
+
+		// Resume path: live interactive session takes the new turn directly.
+		// `running` + `interactive` is the only safe shape — non-interactive
+		// runs have no stdin attached, and any non-`running` status means the
+		// container is no longer accepting input.
+		if (prior.status === 'running' && prior.interactive) {
+			await this.writeInput(priorSessionId, {
+				type: 'user',
+				message: { role: 'user', content: params.turnContent },
+			})
+			logger.info('Restart resumed prior interactive session', {
+				priorSessionId,
+				workspaceId: prior.workspaceId,
+			})
+			return { kind: 'resumed', sessionId: priorSessionId }
+		}
+
+		// Supersede path: spawn a new session pointing at the same object,
+		// then flip the prior to `superseded` with `result.superseded_by`.
+		// Order matters — create the new session first so any FK reference
+		// from the result update has something to point at.
+		const priorConfig = (prior.config as Record<string, unknown> | null) ?? {}
+		const newSession = await this.createSession(prior.workspaceId, {
+			actorId: prior.actorId,
+			actionPrompt: params.actionPrompt,
+			config: {
+				...priorConfig,
+				supersedes: priorSessionId,
+			},
+			createdBy: params.createdBy,
+		})
+
+		const priorResult = (prior.result as Record<string, unknown> | null) ?? {}
+		await this.db
+			.update(sessions)
+			.set({
+				status: 'superseded',
+				result: { ...priorResult, superseded_by: newSession.id },
+				updatedAt: new Date(),
+			})
+			.where(eq(sessions.id, priorSessionId))
+
+		// Move activeSessionId on the originating object so live UI surfaces
+		// (AgentWorkingBadge, MentionSessionCard) follow the new run without
+		// surfacing the terminated prior session.
+		await this.db
+			.update(objects)
+			.set({ activeSessionId: newSession.id, updatedAt: new Date() })
+			.where(eq(objects.id, params.objectId))
+
+		logger.info('Restart superseded prior session', {
+			priorSessionId,
+			newSessionId: newSession.id,
+			workspaceId: prior.workspaceId,
+		})
+
+		return { kind: 'superseded', sessionId: newSession.id, supersededSessionId: priorSessionId }
+	}
+
 	async stopSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()

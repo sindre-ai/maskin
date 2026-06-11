@@ -335,9 +335,15 @@ function TerminalCard({
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const status = getTerminalStatus(session.status)
 	const canRestart = session.status === 'stopped' || session.status === 'failed'
+	const isSuperseded = session.status === 'superseded'
 
 	return (
-		<div className="flex items-center gap-2 w-full rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors">
+		<div
+			className={cn(
+				'flex items-center gap-2 w-full rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors',
+				isSuperseded && 'opacity-70',
+			)}
+		>
 			<button
 				type="button"
 				onClick={onOpen}
@@ -346,7 +352,9 @@ function TerminalCard({
 				<status.Icon size={14} className={cn('shrink-0', status.iconClass)} />
 				{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}
 				<span className="text-sm font-medium shrink-0">{status.label}</span>
-				<span className="text-sm text-muted-foreground shrink-0">· view session logs</span>
+				<span className="text-sm text-muted-foreground shrink-0 truncate min-w-0 flex-1">
+					{isSuperseded ? '· Superseded by newer reply' : '· view session logs'}
+				</span>
 				{duration && (
 					<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
 				)}
