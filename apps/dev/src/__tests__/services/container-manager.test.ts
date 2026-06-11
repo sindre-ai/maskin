@@ -177,9 +177,14 @@ describe('ContainerManager', () => {
 	})
 
 	describe('stop()', () => {
-		it('stops the container', async () => {
+		it('stops the container with a 3s grace by default', async () => {
 			await manager.stop('container-123')
-			expect(mockContainer.stop).toHaveBeenCalledWith({ t: 10 })
+			expect(mockContainer.stop).toHaveBeenCalledWith({ t: 3 })
+		})
+
+		it('honours an explicit timeoutSeconds argument', async () => {
+			await manager.stop('container-123', 15)
+			expect(mockContainer.stop).toHaveBeenCalledWith({ t: 15 })
 		})
 
 		it('handles "not running" error gracefully', async () => {

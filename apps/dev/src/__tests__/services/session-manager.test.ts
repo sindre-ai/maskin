@@ -274,6 +274,40 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.attachStdin).not.toHaveBeenCalled()
 		})
 
+		it('injects MASKIN_SESSION_ID for status-gated writes', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.MASKIN_SESSION_ID).toBe(session.id)
+		})
+
 		it('refuses to launch when the agent has no apiKey', async () => {
 			const session = buildSession({
 				status: 'pending',
@@ -595,6 +629,36 @@ describe('SessionManager', () => {
 			mockResults.select = [session]
 
 			await expect(manager.stopSession(session.id)).rejects.toThrow('not found or has no container')
+		})
+
+		it('flips status to stopping before killing the container', async () => {
+			const session = buildSession({ status: 'running', containerId: 'container-abc' })
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			const statusUpdate = calls.updates.find(
+				(u): u is { status: string } =>
+					typeof u === 'object' &&
+					u !== null &&
+					(u as Record<string, unknown>).status === 'stopping',
+			)
+			expect(statusUpdate?.status).toBe('stopping')
+		})
+
+		it('emits a session_stopping event with user_stop reason', async () => {
+			const session = buildSession({ status: 'running', containerId: 'container-abc' })
+			mockResults.select = [session]
+
+			await manager.stopSession(session.id)
+
+			const stoppingEvent = calls.inserts.find(
+				(i): i is { action: string; data: { reason: string } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { action?: string }).action === 'session_stopping',
+			)
+			expect(stoppingEvent?.data.reason).toBe('user_stop')
 		})
 	})
 

@@ -12,6 +12,7 @@ import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
 import { idempotencyMiddleware } from './middleware/idempotency'
+import { sessionStatusGate } from './middleware/session-status-gate'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
@@ -194,6 +195,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	})
 
 	app.use('/api/*', idempotencyMiddleware)
+
+	// Reject session-attributed writes after the session has entered a
+	// terminal state. Fires on the same surface as auth + idempotency so
+	// the gate is uniform across routes.
+	app.use('/api/*', sessionStatusGate)
+	app.use('/mcp', sessionStatusGate)
+	app.use('/mcp/*', sessionStatusGate)
 
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
