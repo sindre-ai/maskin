@@ -46,6 +46,20 @@ export function useSendMessage(workspaceId: string, conversationId: string) {
 	})
 }
 
+export function useUpdateConversationTitle(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, title }: { id: string; title: string | null }) =>
+			api.conversations.updateTitle(workspaceId, id, title),
+		onSuccess: (updated) => {
+			queryClient.setQueryData<ConversationResponse[]>(
+				queryKeys.conversations.all(workspaceId),
+				(prev) => prev?.map((c) => (c.id === updated.id ? updated : c)) ?? prev,
+			)
+		},
+	})
+}
+
 export function useMarkConversationRead(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({

@@ -648,6 +648,12 @@ export const api = {
 			}),
 		markRead: (workspaceId: string, id: string) =>
 			request<{ ok: boolean }>(`/conversations/${id}/read`, { method: 'POST', workspaceId }),
+		updateTitle: (workspaceId: string, id: string, title: string | null) =>
+			request<ConversationResponse>(`/conversations/${id}`, {
+				method: 'PATCH',
+				body: { title },
+				workspaceId,
+			}),
 	},
 }
 
