@@ -1,5 +1,13 @@
 import { Button } from '@/components/ui/button'
 import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog'
+import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -10,6 +18,7 @@ import { useActor } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useDeleteObject, useObjectGraph, useUpdateObject } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
+import { trackEvent } from '@/lib/analytics'
 import type {
 	ActorResponse,
 	EventResponse,
@@ -19,19 +28,23 @@ import type {
 } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, Trash2 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { Check, User } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ActionBanner } from '../activity/action-banner'
 import { ObjectActivity } from '../activity/object-activity'
 import { PageHeader } from '../layout/page-header'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentWorkingBadge } from '../shared/agent-working-badge'
 import { MarkdownContent } from '../shared/markdown-content'
 import { RelativeTime } from '../shared/relative-time'
+import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
+import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
+import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
-import { ObjectActionBanner } from './object-action-banner'
+import { ObjectFiles } from './object-files'
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -48,7 +61,7 @@ interface ObjectDocumentViewProps {
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
 	onUpdateStatus: (status: string) => void
-	onUpdateOwner: (owner: string | null) => void
+	onUpdateDriver: (driver: string | null) => void
 	onDelete: () => void
 	isDeleting?: boolean
 	showSaved?: boolean
@@ -66,7 +79,7 @@ export function ObjectDocumentView({
 	onUpdateTitle,
 	onUpdateContent,
 	onUpdateStatus,
-	onUpdateOwner,
+	onUpdateDriver,
 	onDelete,
 	isDeleting = false,
 	showSaved = false,
@@ -94,10 +107,7 @@ export function ObjectDocumentView({
 	)
 
 	return (
-		<div className="max-w-3xl mx-auto">
-			{/* Action banner for pending decisions */}
-			<ObjectActionBanner objectId={object.id} workspaceId={workspaceId} />
-
+		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Title */}
 			<div className="flex items-start gap-2 mb-2">
 				<textarea
@@ -138,6 +148,7 @@ export function ObjectDocumentView({
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type={object.type} />
+				{object.metadata?.source === 'behavioral' && <SourceBadge source="behavioral" />}
 				{statuses.length > 0 ? (
 					<StatusSelect current={object.status} options={statuses} onChange={handleStatusChange} />
 				) : (
@@ -146,10 +157,16 @@ export function ObjectDocumentView({
 				{members && (
 					<OwnerSelect
 						members={members}
-						currentOwnerId={object.owner ?? null}
-						onChange={onUpdateOwner}
+						currentOwnerId={object.driver ?? null}
+						onChange={onUpdateDriver}
 					/>
 				)}
+				<SubscribeToggle
+					workspaceId={workspaceId}
+					entityType="object"
+					entityId={object.id}
+					isSubscribed={object.is_subscribed}
+				/>
 				{creator && (
 					<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
 						<ActorAvatar name={creator.name} type={creator.type} size="sm" />
@@ -160,7 +177,7 @@ export function ObjectDocumentView({
 			</div>
 
 			{/* Properties */}
-			<div className="mb-6 w-fit">
+			<div className="mb-6 w-full">
 				<MetadataProperties object={object} />
 			</div>
 
@@ -182,10 +199,20 @@ export function ObjectDocumentView({
 				</div>
 			)}
 
+			{/* Files */}
+			<div className="border-t border-border pt-6 mb-8">
+				<ObjectFiles
+					workspaceId={workspaceId}
+					objectId={object.id}
+					objectType={object.type}
+					relationships={relationships}
+				/>
+			</div>
+
 			{/* Activity */}
 			<ObjectActivity
 				workspaceId={workspaceId}
-				objectId={object.id}
+				object={object}
 				events={events}
 				activeSessionId={object.activeSessionId}
 			/>
@@ -237,12 +264,19 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 		[object.id, updateObject],
 	)
 
-	const handleUpdateOwner = useCallback(
-		(owner: string | null) => {
-			updateObject.mutate({ id: object.id, data: { owner } })
+	const handleUpdateDriver = useCallback(
+		(driver: string | null) => {
+			updateObject.mutate({ id: object.id, data: { driver } })
 		},
 		[object.id, updateObject],
 	)
+
+	const [confirmDelete, setConfirmDelete] = useState(false)
+	// Set when the user clicks Delete inside the dialog, so the dismissal that
+	// follows (mutation success → navigation, or any close) isn't counted as a
+	// cancel. Reset every time the dialog reopens and on mutation error, so a
+	// cancel after a failed delete still emits the event.
+	const confirmedDeleteRef = useRef(false)
 
 	const handleDelete = useCallback(() => {
 		deleteObject.mutate(object.id, {
@@ -253,7 +287,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					search: (prev) => ({
 						type: prev.type,
 						status: prev.status,
-						owner: prev.owner,
+						driver: prev.driver,
 						sort: prev.sort ?? 'createdAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,
@@ -262,44 +296,78 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					}),
 				})
 			},
+			onError: () => {
+				confirmedDeleteRef.current = false
+			},
 		})
 	}, [object.id, deleteObject, navigate, workspaceId])
 
-	const [confirmDelete, setConfirmDelete] = useState(false)
+	const openDeleteConfirm = useCallback(() => {
+		confirmedDeleteRef.current = false
+		trackEvent('delete_confirmation_shown', {
+			object_type: object.type,
+			object_id: object.id,
+		})
+		setConfirmDelete(true)
+	}, [object.type, object.id])
 
-	const deleteActions = useMemo(
-		() =>
-			confirmDelete ? (
-				<div className="flex items-center gap-2">
-					<span className="text-xs text-error">Delete this {object.type}?</span>
-					<Button
-						variant="destructive"
-						size="sm"
-						onClick={handleDelete}
-						disabled={deleteObject.isPending}
-					>
-						{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
-					</Button>
-					<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
-						Cancel
-					</Button>
-				</div>
-			) : (
-				<Button
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 text-muted-foreground hover:text-error"
-					onClick={() => setConfirmDelete(true)}
-				>
-					<Trash2 size={15} />
-				</Button>
-			),
-		[confirmDelete, handleDelete, deleteObject.isPending, object.type],
+	const handleDeleteOpenChange = useCallback(
+		(open: boolean) => {
+			if (!open && !confirmedDeleteRef.current) {
+				trackEvent('delete_confirmation_cancelled', {
+					object_type: object.type,
+					object_id: object.id,
+				})
+			}
+			setConfirmDelete(open)
+		},
+		[object.type, object.id],
+	)
+
+	const handleConfirmDelete = useCallback(() => {
+		confirmedDeleteRef.current = true
+		handleDelete()
+	}, [handleDelete])
+
+	const [menuOpen, setMenuOpen] = useState(false)
+
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (!((e.metaKey || e.ctrlKey) && e.key === '.')) return
+			const target = e.target as HTMLElement | null
+			if (target) {
+				const tag = target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+			}
+			e.preventDefault()
+			setMenuOpen(true)
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [])
+
+	const menuActions = (
+		<AuxiliaryActionMenu
+			object={object}
+			onDeleteRequest={openDeleteConfirm}
+			workspaceId={workspaceId}
+			open={menuOpen}
+			onOpenChange={setMenuOpen}
+		/>
 	)
 
 	return (
 		<>
-			<PageHeader actions={deleteActions} />
+			<PageHeader actions={menuActions} />
+			<DeleteConfirmDialog
+				open={confirmDelete}
+				onOpenChange={handleDeleteOpenChange}
+				objectType={object.type}
+				objectTitle={object.title}
+				onConfirm={handleConfirmDelete}
+				isPending={deleteObject.isPending}
+			/>
+			<ActionBanner events={events} workspaceId={workspaceId} />
 			<ObjectDocumentView
 				object={object}
 				workspaceId={workspaceId}
@@ -312,11 +380,49 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				onUpdateTitle={handleUpdateTitle}
 				onUpdateContent={handleUpdateContent}
 				onUpdateStatus={handleUpdateStatus}
-				onUpdateOwner={handleUpdateOwner}
+				onUpdateDriver={handleUpdateDriver}
 				onDelete={handleDelete}
 				isDeleting={deleteObject.isPending}
 			/>
 		</>
+	)
+}
+
+export function DeleteConfirmDialog({
+	open,
+	onOpenChange,
+	objectType,
+	objectTitle,
+	onConfirm,
+	isPending,
+}: {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	objectType: string
+	objectTitle: string | null
+	onConfirm: () => void
+	isPending: boolean
+}) {
+	const description = objectTitle
+		? `This will permanently delete the ${objectType} '${objectTitle}'. This can't be undone.`
+		: `This will permanently delete this ${objectType}. This can't be undone.`
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent className="max-w-sm">
+				<DialogHeader>
+					<DialogTitle>Delete this {objectType}?</DialogTitle>
+					<DialogDescription>{description}</DialogDescription>
+				</DialogHeader>
+				<DialogFooter className="gap-2 sm:gap-0">
+					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
+						Cancel
+					</Button>
+					<Button variant="destructive" onClick={onConfirm} disabled={isPending}>
+						{isPending ? 'Deleting...' : 'Delete'}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	)
 }
 
@@ -368,6 +474,8 @@ function OwnerSelect({
 				<SelectValue>
 					{current ? (
 						<span className="inline-flex items-center gap-1.5">
+							{current.type !== 'agent' && <User className="size-3 text-amber-600 shrink-0" />}
+							<span className="text-muted-foreground text-[11px]">Driver:</span>
 							<ActorAvatar name={current.name} type={current.type} size="sm" />
 							{current.name}
 						</span>
@@ -376,7 +484,7 @@ function OwnerSelect({
 							Unknown ({currentOwnerId.slice(0, 8)})
 						</span>
 					) : (
-						<span className="text-muted-foreground">Unassigned</span>
+						<span className="text-muted-foreground">Driver: Unassigned</span>
 					)}
 				</SelectValue>
 			</SelectTrigger>

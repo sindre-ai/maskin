@@ -1,3 +1,4 @@
+import crmExtension from '@maskin/ext-crm/server'
 import knowledgeExtension from '@maskin/ext-knowledge/server'
 import notetakerExtension from '@maskin/ext-notetaker/server'
 import workExtension from '@maskin/ext-work/server'
@@ -9,3 +10,4 @@ import { registerModule } from '@maskin/module-sdk'
 registerModule(workExtension)
 registerModule(knowledgeExtension)
 registerModule(notetakerExtension)
+registerModule(crmExtension)

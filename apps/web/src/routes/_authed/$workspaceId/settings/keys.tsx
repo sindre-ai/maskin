@@ -2,6 +2,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { api } from '@/lib/api'
 import { getCredentialsCommand, parseClaudeCredentials } from '@/lib/claude-oauth'
@@ -26,6 +27,10 @@ function KeysPage() {
 
 			<div className="border-t border-border pt-6">
 				<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
+			</div>
+
+			<div className="border-t border-border pt-6">
+				<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
 			</div>
 		</div>
 	)
@@ -87,7 +92,15 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<div>
-			<Label className="mb-1 text-muted-foreground">Claude Subscription</Label>
+			<div>
+				<Label className="mb-1 text-bold">Default LLM ($5 Free Usage)</Label>
+				<p className="text-xs text-muted-foreground mb-6">
+					Uses Deepseek V4 Flash via OpenRouter as the default model when no API keys are
+					configured. <b>Provides up to $5 USD equivalent of free usage per day, per workspace.</b>
+					Automatically activates for users without Claude subscriptions, API keys or custom llm.
+				</p>
+			</div>
+			<Label className="mb-1 text-bold">Claude Subscription</Label>
 			<p className="text-xs text-muted-foreground mb-3">
 				Connect your Claude Pro/Max/Teams subscription to use it for agent sessions instead of an
 				API key.
@@ -232,7 +245,7 @@ function LLMKeysEditor({
 
 	return (
 		<div>
-			<Label className="mb-1 text-muted-foreground">LLM API Keys</Label>
+			<Label className="mb-1 text-bold">LLM API Keys</Label>
 			<p className="text-xs text-muted-foreground mb-3">
 				Set API keys per provider. All agents in this workspace will use these keys.
 			</p>
@@ -271,6 +284,131 @@ function LLMKeysEditor({
 						</div>
 					</div>
 				))}
+			</div>
+		</div>
+	)
+}
+
+interface CustomLlmConfig {
+	enabled?: boolean
+	base_url?: string | null
+	api_key?: string | null
+	model?: string | null
+	small_fast_model?: string | null
+}
+
+function CustomLlmEditor({
+	workspace,
+	workspaceId,
+}: {
+	workspace: import('@/lib/api').WorkspaceWithRole
+	workspaceId: string
+}) {
+	const updateWorkspace = useUpdateWorkspace(workspaceId)
+	const settings = workspace.settings as Record<string, unknown>
+	const saved = (settings?.custom_llm as CustomLlmConfig | undefined) ?? {}
+
+	const [enabled, setEnabled] = useState(Boolean(saved.enabled))
+	const [baseUrl, setBaseUrl] = useState(saved.base_url ?? '')
+	const [apiKey, setApiKey] = useState(saved.api_key ?? '')
+	const [model, setModel] = useState(saved.model ?? '')
+	const [smallModel, setSmallModel] = useState(saved.small_fast_model ?? '')
+	const [keyVisible, setKeyVisible] = useState(false)
+
+	const handleSave = () => {
+		const next: CustomLlmConfig = {
+			enabled,
+			base_url: baseUrl.trim() || null,
+			api_key: apiKey.trim() || null,
+			model: model.trim() || null,
+			small_fast_model: smallModel.trim() || null,
+		}
+		updateWorkspace.mutate({
+			settings: { ...settings, custom_llm: next },
+		})
+	}
+
+	const isDirty =
+		enabled !== Boolean(saved.enabled) ||
+		baseUrl !== (saved.base_url ?? '') ||
+		apiKey !== (saved.api_key ?? '') ||
+		model !== (saved.model ?? '') ||
+		smallModel !== (saved.small_fast_model ?? '')
+
+	const canEnable = baseUrl.trim() && apiKey.trim() && model.trim()
+
+	return (
+		<div>
+			<Label className="mb-1 text-bold">Custom Model Endpoint (beta)</Label>
+			<p className="text-xs text-muted-foreground mb-3">
+				Point Claude Code at any Anthropic-compatible endpoint — OpenRouter, a self-hosted
+				vLLM/Ollama instance, or LM Studio. Takes precedence over the Claude subscription and
+				Anthropic API key above. For OpenRouter, use{' '}
+				<code className="font-mono text-xs">https://openrouter.ai/api</code> (no <code>/v1</code>).
+			</p>
+
+			<div className="space-y-3">
+				<div className="flex items-center gap-2">
+					<Switch
+						checked={enabled}
+						onCheckedChange={setEnabled}
+						disabled={!canEnable && !enabled}
+					/>
+					<span className="text-sm text-foreground">
+						{enabled ? 'Enabled — used for all sessions' : 'Disabled'}
+					</span>
+				</div>
+
+				<div>
+					<Label className="mb-1 text-xs text-muted-foreground">Base URL</Label>
+					<Input
+						value={baseUrl}
+						onChange={(e) => setBaseUrl(e.target.value)}
+						placeholder="https://openrouter.ai/api"
+					/>
+				</div>
+
+				<div>
+					<Label className="mb-1 text-xs text-muted-foreground">API Key</Label>
+					<div className="relative">
+						<Input
+							type={keyVisible ? 'text' : 'password'}
+							value={apiKey}
+							onChange={(e) => setApiKey(e.target.value)}
+							placeholder="sk-or-..."
+							className="pr-9"
+						/>
+						<button
+							type="button"
+							className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+							onClick={() => setKeyVisible((v) => !v)}
+						>
+							{keyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+						</button>
+					</div>
+				</div>
+
+				<div>
+					<Label className="mb-1 text-xs text-muted-foreground">Model</Label>
+					<Input
+						value={model}
+						onChange={(e) => setModel(e.target.value)}
+						placeholder="deepseek/deepseek-v4-flash"
+					/>
+				</div>
+
+				<div>
+					<Label className="mb-1 text-xs text-muted-foreground">Small/fast model (optional)</Label>
+					<Input
+						value={smallModel}
+						onChange={(e) => setSmallModel(e.target.value)}
+						placeholder="Defaults to the model above"
+					/>
+				</div>
+
+				<Button onClick={handleSave} disabled={!isDirty || updateWorkspace.isPending}>
+					Save
+				</Button>
 			</div>
 		</div>
 	)

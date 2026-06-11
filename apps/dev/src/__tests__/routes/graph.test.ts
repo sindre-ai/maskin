@@ -22,8 +22,11 @@ describe('Graph Routes', () => {
 
 			// select: workspace lookup
 			mockResults.selectQueue = [[ws]]
-			// insert queue: node1 insert+returning, event insert, node2 insert+returning, event insert, edge insert+returning, event insert
-			mockResults.insertQueue = [[obj1], [{}], [obj2], [{}], [rel], [{}]]
+			// insert queue (in order):
+			//   node1 returning, node1 event, node2 returning, node2 event,
+			//   edge returning, edge event,
+			//   autoSubscribe for node1, autoSubscribe for node2
+			mockResults.insertQueue = [[obj1], [{}], [obj2], [{}], [rel], [{}], [], []]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/graph', buildCreateGraphBody(), {
@@ -35,6 +38,40 @@ describe('Graph Routes', () => {
 			const body = await res.json()
 			expect(body.nodes).toHaveLength(2)
 			expect(body.edges).toHaveLength(1)
+		})
+
+		it('auto-subscribes the creator to every created node', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const obj1 = buildObject({ workspaceId: wsId, type: 'bet' })
+			const obj2 = buildObject({ workspaceId: wsId, type: 'task' })
+			const rel = buildRelationship({
+				sourceId: obj1.id,
+				targetId: obj2.id,
+				type: 'breaks_into',
+			})
+
+			const { app, mockResults, calls } = createTestApp(graphRoutes, '/api/graph')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insertQueue = [[obj1], [{}], [obj2], [{}], [rel], [{}], [], []]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/graph', buildCreateGraphBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(201)
+
+			const subscriptionInserts = calls.inserts.filter(
+				(v): v is { source?: string; entityId?: string; actorId?: string } =>
+					typeof v === 'object' && v !== null && 'source' in v,
+			)
+			expect(subscriptionInserts).toHaveLength(2)
+			for (const sub of subscriptionInserts) {
+				expect(sub.source).toBe('author')
+				expect(sub.actorId).toBe('test-actor-id')
+			}
+			expect(subscriptionInserts.map((s) => s.entityId).sort()).toEqual([obj1.id, obj2.id].sort())
 		})
 
 		it('returns 404 when workspace not found', async () => {

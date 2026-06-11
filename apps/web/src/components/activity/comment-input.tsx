@@ -3,18 +3,40 @@ import { useActors } from '@/hooks/use-actors'
 import { useCreateComment } from '@/hooks/use-events'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { SendHorizontal } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { formatSize } from '@/lib/file-utils'
+import { useDraft } from '@/lib/pending-comments-context'
+import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
+import { ArrowUp, Paperclip, X } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
+import { MentionedText } from '../shared/mentioned-text'
+import { UploadProgress } from '../shared/upload-progress'
 
 interface CommentInputProps {
 	workspaceId: string
 	objectId: string
 	parentEventId?: number
-	compact?: boolean
+	onSubmitted?: () => void
 }
 
-export function CommentInput({ workspaceId, objectId, parentEventId, compact }: CommentInputProps) {
+function randomDraftId(): string {
+	if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+// ~6 lines at text-sm (line-height 20px) + py-1.5 (12px) + 2px border
+const MAX_INPUT_HEIGHT_PX = 134
+
+// Show the live character counter once the draft reaches this fraction of the
+// limit. Keeps the UI quiet for the common short-comment case.
+const COUNTER_VISIBILITY_THRESHOLD = 0.9
+
+export function CommentInput({
+	workspaceId,
+	objectId,
+	parentEventId,
+	onSubmitted,
+}: CommentInputProps) {
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
 	const { data: actors } = useActors(workspaceId)
@@ -24,14 +46,47 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 	const [showMentions, setShowMentions] = useState(false)
 	const [mentionFilter, setMentionFilter] = useState('')
 	const [selectedIndex, setSelectedIndex] = useState(0)
+	const [isDraggingFile, setIsDraggingFile] = useState(false)
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
-	const mentionListRef = useRef<HTMLDivElement>(null)
+	const overlayRef = useRef<HTMLDivElement>(null)
+	const fileInputRef = useRef<HTMLInputElement>(null)
 
-	const filteredActors =
-		actors?.filter(
-			(a) => a.id !== actor?.id && a.name.toLowerCase().includes(mentionFilter.toLowerCase()),
-		) ?? []
+	// Stable per-mount draft id. The id is also used as the optimistic comment
+	// entry id once submitted, so the activity feed can render its placeholder.
+	const draftIdRef = useRef<string>(randomDraftId())
+	const draftId = draftIdRef.current
+	const draft = useDraft({ draftId, workspaceId, objectId, parentEventId })
+	const attachments = draft.files
+	const hasAttachments = attachments.length > 0
+	const attachmentLimitReached = attachments.length >= COMMENT_MAX_ATTACHMENTS
+	const isUploadingAny = attachments.some((f) => f.status === 'uploading')
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: content drives the resize, including programmatic setContent (mention insert, post-submit reset)
+	useLayoutEffect(() => {
+		const ta = inputRef.current
+		if (!ta) return
+		ta.style.height = 'auto'
+		const overflows = ta.scrollHeight > MAX_INPUT_HEIGHT_PX
+		ta.style.height = `${Math.min(ta.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`
+		ta.style.overflowY = overflows ? 'auto' : 'hidden'
+	}, [content])
+
+	const handleScroll = useCallback(() => {
+		const overlay = overlayRef.current
+		const ta = inputRef.current
+		if (overlay && ta) overlay.scrollTop = ta.scrollTop
+	}, [])
+
+	const mentionableActors = useMemo(
+		() => actors?.filter((a) => a.id !== actor?.id && !a.isSystem) ?? [],
+		[actors, actor?.id],
+	)
+	const filteredActors = useMemo(
+		() =>
+			mentionableActors.filter((a) => a.name.toLowerCase().includes(mentionFilter.toLowerCase())),
+		[mentionableActors, mentionFilter],
+	)
 
 	const insertMention = useCallback(
 		(actorId: string, actorName: string) => {
@@ -92,15 +147,35 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 		setMentionFilter('')
 	}, [])
 
+	const overLimit = content.length > COMMENT_MAX_LENGTH
+	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
+
+	const resetComposer = useCallback(() => {
+		setContent('')
+		setMentions([])
+		draftIdRef.current = randomDraftId()
+	}, [])
+
 	const handleSubmit = useCallback(() => {
 		const trimmed = content.trim()
 		if (!trimmed) return
+		if (content.length > COMMENT_MAX_LENGTH) return
 
 		// Reconcile mentions: only include actors whose @Name is still in the text
 		const activeMentions = mentions.filter((id) => {
 			const actor = actors?.find((a) => a.id === id)
 			return actor && trimmed.includes(`@${actor.name}`)
 		})
+
+		if (hasAttachments) {
+			// Hand the submission to the pending-comments queue. Uploads (if still
+			// in flight) and the final POST will continue in the background even
+			// if the user navigates away from this page.
+			draft.submit({ content: trimmed, mentions: activeMentions })
+			resetComposer()
+			onSubmitted?.()
+			return
+		}
 
 		createComment.mutate(
 			{
@@ -111,12 +186,52 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 			},
 			{
 				onSuccess: () => {
-					setContent('')
-					setMentions([])
+					resetComposer()
+					onSubmitted?.()
 				},
 			},
 		)
-	}, [content, mentions, actors, objectId, parentEventId, createComment])
+	}, [
+		content,
+		mentions,
+		actors,
+		objectId,
+		parentEventId,
+		createComment,
+		onSubmitted,
+		hasAttachments,
+		draft,
+		resetComposer,
+	])
+
+	const handleFilesPicked = useCallback(
+		(files: FileList | File[] | null) => {
+			if (!files) return
+			const list = Array.from(files)
+			for (const file of list) {
+				if (draft.files.length >= COMMENT_MAX_ATTACHMENTS) break
+				draft.attach(file)
+			}
+		},
+		[draft],
+	)
+
+	const handleDrop = useCallback(
+		(e: React.DragEvent) => {
+			e.preventDefault()
+			setIsDraggingFile(false)
+			handleFilesPicked(e.dataTransfer.files)
+		},
+		[handleFilesPicked],
+	)
+
+	// If the composer unmounts before the user submits (e.g., page nav), drop
+	// the draft so we don't leak abandoned uploads. Submitted drafts are owned
+	// by the provider and survive — discardDraft is a no-op for non-'draft'
+	// status, so resubmission isn't affected.
+	const discardRef = useRef(draft.discard)
+	discardRef.current = draft.discard
+	useEffect(() => () => discardRef.current(), [])
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -155,46 +270,141 @@ export function CommentInput({ workspaceId, objectId, parentEventId, compact }: 
 	if (!actor) return null
 
 	return (
-		<div className="relative">
-			<div className={cn('flex items-start gap-2', compact ? 'gap-1.5' : 'gap-2')}>
-				<ActorAvatar
-					name={actor.name}
-					type={actor.type}
-					size={compact ? 'sm' : 'md'}
-					className="mt-1.5"
-				/>
-				<div className="flex-1 relative">
-					<textarea
-						ref={inputRef}
-						value={content}
-						onChange={handleInput}
-						onKeyDown={handleKeyDown}
-						placeholder="Comment or instruct an agent..."
-						rows={1}
+		<div
+			className={cn(
+				'relative rounded-md transition-colors',
+				isDraggingFile && 'bg-accent/5 ring-1 ring-accent/40',
+			)}
+			onDragOver={(e) => {
+				if (!e.dataTransfer.types.includes('Files')) return
+				e.preventDefault()
+				if (!isDraggingFile) setIsDraggingFile(true)
+			}}
+			onDragLeave={(e) => {
+				if (e.currentTarget.contains(e.relatedTarget as Node)) return
+				setIsDraggingFile(false)
+			}}
+			onDrop={handleDrop}
+		>
+			<div className="flex items-start gap-2">
+				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
+				<div className="flex-1">
+					<div
 						className={cn(
-							'w-full resize-none rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border-focus',
-							compact && 'text-xs py-1.5 px-2',
+							'rounded-md border transition-colors',
+							overLimit ? 'border-error' : 'border-border',
 						)}
-						style={{ minHeight: compact ? '32px' : '38px' }}
-					/>
+					>
+						{hasAttachments && (
+							<ul className="flex flex-wrap gap-1.5 p-1.5">
+								{attachments.map((file) => (
+									<li
+										key={file.tempId}
+										className="flex items-center gap-2 rounded-md border border-border bg-card px-2 py-1 text-xs"
+									>
+										<UploadProgress
+											progress={file.progress}
+											status={file.status}
+											error={file.error}
+										/>
+										<span className="max-w-[160px] truncate font-medium">{file.name}</span>
+										<span className="font-mono text-muted-foreground">
+											{formatSize(file.sizeBytes)}
+										</span>
+										<button
+											type="button"
+											onClick={() => draft.remove(file.tempId)}
+											aria-label={`Remove ${file.name}`}
+											className="text-muted-foreground hover:text-foreground"
+										>
+											<X size={12} />
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+						<div className="relative">
+							<div
+								ref={overlayRef}
+								aria-hidden
+								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-sm"
+								style={{ minHeight: '32px' }}
+							>
+								<MentionedText
+									content={content}
+									actors={mentionableActors}
+									mentionClassName="rounded bg-primary/10 text-primary"
+								/>
+								{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
+								{content.endsWith('\n') && '​'}
+							</div>
+							<textarea
+								ref={inputRef}
+								value={content}
+								onChange={handleInput}
+								onKeyDown={handleKeyDown}
+								onScroll={handleScroll}
+								placeholder="Write a comment... Use @ to mention an agent"
+								rows={1}
+								aria-invalid={overLimit || undefined}
+								className="relative w-full resize-none overflow-y-hidden border-0 bg-transparent px-2 py-1.5 text-sm text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
+								style={{ minHeight: '32px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
+							/>
+						</div>
+					</div>
+					{showCounter && (
+						<div
+							className={cn(
+								'mt-1 text-right text-xs tabular-nums',
+								overLimit ? 'text-error' : 'text-muted-foreground',
+							)}
+							aria-live="polite"
+						>
+							{content.length} / {COMMENT_MAX_LENGTH}
+						</div>
+					)}
 				</div>
+				<input
+					ref={fileInputRef}
+					type="file"
+					multiple
+					className="hidden"
+					onChange={(e) => {
+						handleFilesPicked(e.target.files)
+						e.target.value = ''
+					}}
+				/>
 				<Button
 					size="icon"
 					variant="ghost"
-					className={cn('shrink-0 mt-1', compact ? 'h-6 w-6' : 'h-8 w-8')}
-					disabled={!content.trim() || createComment.isPending}
+					className="shrink-0 h-8 w-8"
+					disabled={attachmentLimitReached}
+					title={
+						attachmentLimitReached
+							? `Maximum ${COMMENT_MAX_ATTACHMENTS} attachments`
+							: 'Attach file'
+					}
+					aria-label="Attach file"
+					onClick={() => fileInputRef.current?.click()}
+				>
+					<Paperclip size={14} />
+				</Button>
+				<Button
+					size="icon"
+					variant="ghost"
+					className="shrink-0 h-8 w-8"
+					disabled={!content.trim() || createComment.isPending || overLimit}
+					title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
+					aria-label="Send comment"
 					onClick={handleSubmit}
 				>
-					<SendHorizontal size={compact ? 14 : 16} />
+					<ArrowUp size={14} />
 				</Button>
 			</div>
 
 			{/* @mention autocomplete dropdown */}
 			{showMentions && filteredActors.length > 0 && (
-				<div
-					ref={mentionListRef}
-					className="absolute left-7 z-50 mt-1 max-h-48 w-56 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md"
-				>
+				<div className="absolute left-7 z-50 mt-1 max-h-48 w-56 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md">
 					{filteredActors.map((a, i) => (
 						<button
 							key={a.id}

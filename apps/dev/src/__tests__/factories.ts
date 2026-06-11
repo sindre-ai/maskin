@@ -27,6 +27,7 @@ export function buildActor(overrides?: Record<string, unknown>) {
 		name: `Actor ${n}`,
 		email: `actor-${n}@test.com`,
 		apiKey: `ank_test${n}`,
+		description: null,
 		systemPrompt: null,
 		tools: null,
 		memory: null,
@@ -56,6 +57,7 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 			field_definitions: {},
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
 		},
+		onboardingEnabled: true,
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),
@@ -138,6 +140,46 @@ export function buildWorkspaceMember(overrides?: Record<string, unknown>) {
 	}
 }
 
+export function buildSubscription(overrides?: Record<string, unknown>) {
+	return {
+		id: randomUUID(),
+		workspaceId: randomUUID(),
+		actorId: randomUUID(),
+		entityType: 'object',
+		entityId: randomUUID(),
+		source: 'manual' as const,
+		createdAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildReadState(overrides?: Record<string, unknown>) {
+	return {
+		id: randomUUID(),
+		workspaceId: randomUUID(),
+		actorId: randomUUID(),
+		entityType: 'object',
+		entityId: randomUUID(),
+		lastReadEventId: 1,
+		lastReadAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildUserDisplaySettings(overrides?: Record<string, unknown>) {
+	return {
+		id: randomUUID(),
+		workspaceId: randomUUID(),
+		actorId: randomUUID(),
+		objectType: 'task',
+		name: 'default',
+		settings: { sort: 'created', order: 'desc' } as Record<string, unknown>,
+		createdAt: new Date(),
+		updatedAt: new Date('2026-05-28T10:00:00.000Z'),
+		...overrides,
+	}
+}
+
 // ── API Request Body Builders ───────────────────────────────────────────────
 
 export function buildCreateActorBody(overrides?: Record<string, unknown>) {
@@ -214,6 +256,7 @@ export function buildSession(overrides?: Record<string, unknown>) {
 		interactive: false,
 		result: null,
 		snapshotPath: null,
+		currentActivity: null,
 		startedAt: new Date(),
 		completedAt: null,
 		timeoutAt: null,
@@ -324,6 +367,36 @@ export function buildWorkspaceSkill(overrides?: Record<string, unknown>) {
 		createdBy: randomUUID(),
 		createdAt: new Date(),
 		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildFile(overrides?: Record<string, unknown>) {
+	const n = next()
+	const workspaceId = randomUUID()
+	const id = randomUUID()
+	return {
+		id,
+		workspaceId,
+		name: `file-${n}.md`,
+		description: `Test file ${n}`,
+		mimeType: 'text/markdown',
+		sizeBytes: 16,
+		storageKey: `workspaces/${workspaceId}/files/${id}`,
+		createdBy: randomUUID(),
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		...overrides,
+	}
+}
+
+export function buildCreateFileBody(overrides?: Record<string, unknown>) {
+	const n = next()
+	return {
+		name: `file-${n}.md`,
+		description: `Test file ${n}`,
+		mime_type: 'text/markdown',
+		content: `# Hello ${n}`,
 		...overrides,
 	}
 }

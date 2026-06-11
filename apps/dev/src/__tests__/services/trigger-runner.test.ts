@@ -7,6 +7,7 @@ import {
 	evaluateCondition,
 	evaluateConditions,
 	getObjectFromData,
+	resolvePath,
 } from '../../services/trigger-runner'
 import { buildTrigger } from '../factories'
 import { createMockSessionManager, createTestContext } from '../setup'
@@ -115,6 +116,35 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(0) // flush microtasks
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('passes event.data through to the action prompt', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'gmail.message', action: 'received' },
+				actionPrompt: 'Read the gmail thread referenced in the event',
+			})
+			const eventData = { threadId: '19e410381018bd93', messageId: 'msg-abc' }
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				[{ data: eventData }], // fetchEventData
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', {
+				...baseEvent,
+				entity_type: 'gmail.message',
+				action: 'received',
+				entity_id: 'gmail-entity-1',
+			} satisfies PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(opts.actionPrompt).toContain('19e410381018bd93')
+			expect(opts.actionPrompt).toContain('msg-abc')
+			expect(opts.actionPrompt).toContain('"data":')
 		})
 
 		it('does not fire when entity_type mismatches', async () => {
@@ -899,6 +929,104 @@ describe('evaluateCondition()', () => {
 		expect(
 			evaluateCondition({ field: 'x', operator: 'unknown_op', value: 1 }, { metadata: { x: 1 } }),
 		).toBe(false)
+	})
+
+	it('in: matches when value is in the array', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'event.channel', operator: 'in', value: ['C1', 'C2'] },
+				{ event: { channel: 'C1' } },
+			),
+		).toBe(true)
+	})
+
+	it('in: does not match when value not in the array', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'event.channel', operator: 'in', value: ['C1', 'C2'] },
+				{ event: { channel: 'C3' } },
+			),
+		).toBe(false)
+	})
+
+	it('in: returns false when value is non-array', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'event.channel', operator: 'in', value: 'C1' },
+				{ event: { channel: 'C1' } },
+			),
+		).toBe(false)
+	})
+
+	it('in: returns false when field is undefined', () => {
+		expect(
+			evaluateCondition({ field: 'event.channel', operator: 'in', value: ['C1'] }, { event: {} }),
+		).toBe(false)
+	})
+
+	it('not_in: matches when value not in the array', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'event.channel', operator: 'not_in', value: ['C1', 'C2'] },
+				{ event: { channel: 'C3' } },
+			),
+		).toBe(true)
+	})
+
+	it('not_in: does not match when value is in the array', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'event.channel', operator: 'not_in', value: ['C1', 'C2'] },
+				{ event: { channel: 'C1' } },
+			),
+		).toBe(false)
+	})
+
+	it('not_in: returns true when field is undefined', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'event.channel', operator: 'not_in', value: ['C1'] },
+				{ event: {} },
+			),
+		).toBe(true)
+	})
+
+	it('resolves nested dotted paths (Slack reaction)', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'event.item.channel', operator: 'equals', value: 'C1' },
+				{ event: { item: { channel: 'C1' } } },
+			),
+		).toBe(true)
+	})
+
+	it('backward compat: bare field name resolves via metadata fallback', () => {
+		expect(
+			evaluateCondition(
+				{ field: 'priority', operator: 'equals', value: 'high' },
+				{ metadata: { priority: 'high' } },
+			),
+		).toBe(true)
+	})
+})
+
+describe('resolvePath()', () => {
+	it('returns undefined when root is nullish', () => {
+		expect(resolvePath(null, 'a')).toBeUndefined()
+		expect(resolvePath(undefined, 'a')).toBeUndefined()
+	})
+
+	it('resolves top-level keys', () => {
+		expect(resolvePath({ a: 1 }, 'a')).toBe(1)
+	})
+
+	it('resolves nested keys via dotted path', () => {
+		expect(resolvePath({ a: { b: { c: 'x' } } }, 'a.b.c')).toBe('x')
+	})
+
+	it('returns undefined when a segment is missing', () => {
+		expect(resolvePath({ a: { b: 1 } }, 'a.c')).toBeUndefined()
+		expect(resolvePath({ a: 1 }, 'a.b.c')).toBeUndefined()
 	})
 })
 

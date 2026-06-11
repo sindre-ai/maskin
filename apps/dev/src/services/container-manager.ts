@@ -302,7 +302,11 @@ export class ContainerManager {
 		}
 	}
 
-	async *logs(containerId: string, follow = true): AsyncGenerator<LogChunk> {
+	async *logs(
+		containerId: string,
+		follow = true,
+		opts: { tail?: number | 'all'; sinceUnixSec?: number } = {},
+	): AsyncGenerator<LogChunk> {
 		const container = this.docker.getContainer(containerId)
 		// biome-ignore lint/suspicious/noExplicitAny: dockerode overload types don't resolve cleanly
 		const stream: AsyncIterable<Buffer> = await (container as any).logs({
@@ -310,6 +314,8 @@ export class ContainerManager {
 			stdout: true,
 			stderr: true,
 			timestamps: false,
+			...(opts.tail !== undefined ? { tail: opts.tail } : {}),
+			...(opts.sinceUnixSec !== undefined ? { since: opts.sinceUnixSec } : {}),
 		})
 
 		// Docker multiplexes stdout/stderr with an 8-byte header per frame:

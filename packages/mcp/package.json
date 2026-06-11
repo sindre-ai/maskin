@@ -17,10 +17,15 @@
 		"test": "vitest"
 	},
 	"dependencies": {
+		"@maskin/ext-crm": "workspace:*",
+		"@maskin/ext-knowledge": "workspace:*",
+		"@maskin/ext-notetaker": "workspace:*",
+		"@maskin/ext-work": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",
 		"@modelcontextprotocol/ext-apps": "^1.6.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
+		"croner": "^10.0.1",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {

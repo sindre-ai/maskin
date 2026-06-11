@@ -40,6 +40,8 @@ function buildActorListItem(overrides: Partial<ActorListItem> & { id: string }):
 		type: 'human',
 		name: 'Test Actor',
 		email: null,
+		description: null,
+		isSystem: false,
 		...overrides,
 	}
 }
@@ -49,11 +51,12 @@ function buildActorResponse(overrides: Partial<ActorResponse> & { id: string }):
 		type: 'human',
 		name: 'Test Actor',
 		email: null,
-		systemPrompt: null,
+		description: null,
+		system_prompt: null,
 		tools: null,
 		memory: null,
-		llmProvider: null,
-		llmConfig: null,
+		llm_provider: null,
+		llm_config: null,
 		isSystem: false,
 		createdAt: null,
 		updatedAt: null,
@@ -175,7 +178,7 @@ describe('useUpdateActor', () => {
 
 		result.current.mutate({ id: 'actor-1', data: { name: 'Updated' } })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(api.actors.update).toHaveBeenCalledWith('actor-1', { name: 'Updated' })
+		expect(api.actors.update).toHaveBeenCalledWith('actor-1', { name: 'Updated' }, workspaceId)
 	})
 
 	it('exposes error when update fails', async () => {

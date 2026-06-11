@@ -9,6 +9,7 @@ const resetMutate = vi.fn()
 const navigateMock = vi.fn()
 
 vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: [] }),
 	useDeleteActor: () => ({ mutate: deleteMutate, isPending: false }),
 	useResetActor: () => ({ mutate: resetMutate, isPending: false }),
 	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
@@ -21,10 +22,14 @@ vi.mock('@/hooks/use-events', () => ({
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useActiveSessionsForActor: () => ({ data: [] }),
-	useActorSessions: () => ({ data: [] }),
+	useActorSessionsInfinite: () => ({
+		data: { pages: [[]] },
+		hasNextPage: false,
+		isFetchingNextPage: false,
+		fetchNextPage: vi.fn(),
+	}),
 	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
 	useSession: () => ({ data: null }),
-	useSessionLatestLog: () => ({ data: null }),
 	useSessionErrorLog: () => ({ data: null }),
 	useSessionLogs: () => ({ data: [], isLoading: false }),
 	useStopSession: () => ({ mutate: vi.fn(), isPending: false }),
@@ -48,6 +53,8 @@ vi.mock('@/components/agents/instruction-log', () => ({
 
 vi.mock('@/components/agents/session-detail-panel', () => ({
 	SessionDetailPanel: () => null,
+	FailureCard: () => null,
+	parseFailureReason: () => null,
 }))
 
 vi.mock('@/components/agents/mcp-servers', () => ({
@@ -56,6 +63,10 @@ vi.mock('@/components/agents/mcp-servers', () => ({
 
 vi.mock('@/components/agents/skills', () => ({
 	Skills: () => null,
+}))
+
+vi.mock('@/components/agents/agent-usage-chart', () => ({
+	AgentUsageChart: () => null,
 }))
 
 vi.mock('@/components/activity/activity-item', () => ({
@@ -87,6 +98,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 		agent: buildActorResponse({ name: 'Scout', type: 'agent' }),
 		workspaceId: 'ws-1',
 		onUpdateName: vi.fn(),
+		onUpdateDescription: vi.fn(),
 		onUpdateSystemPrompt: vi.fn(),
 		onUpdateLlmProvider: vi.fn(),
 		onUpdateLlmConfig: vi.fn(),
@@ -129,8 +141,8 @@ describe('AgentDocumentView', () => {
 		expect(screen.queryByText('Saved')).not.toBeInTheDocument()
 	})
 
-	it('shows llmProvider when set on agent', () => {
-		const agent = buildActorResponse({ name: 'Scout', type: 'agent', llmProvider: 'anthropic' })
+	it('shows llm_provider when set on agent', () => {
+		const agent = buildActorResponse({ name: 'Scout', type: 'agent', llm_provider: 'anthropic' })
 		render(<AgentDocumentView {...baseProps({ agent })} />)
 		expect(screen.getByText('anthropic')).toBeInTheDocument()
 	})

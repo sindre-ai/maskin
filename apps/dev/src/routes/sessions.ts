@@ -1,14 +1,16 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions } from '@maskin/db/schema'
+import { events, sessionLogs, sessions } from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	sessionInputSchema,
 	sessionLogQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionUsageQuerySchema,
+	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -124,6 +126,14 @@ app.openapi(listSessionsRoute, (async (c) => {
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
+	if (query.mention_object_id) {
+		// Match both @mention-triggered sessions and thread-reply auto-trigger
+		// sessions for this object so the UI can attach a live activity card
+		// under either kind of triggering comment in a single query.
+		conditions.push(
+			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
+		)
+	}
 
 	const results = await db
 		.select()
@@ -135,6 +145,127 @@ app.openapi(listSessionsRoute, (async (c) => {
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
 }) as RouteHandler<typeof listSessionsRoute, Env>)
+
+// GET /usage - Aggregated cost & token usage for an agent over time
+// Registered before /{id} so the static `usage` segment wins the match.
+const DAY_MS = 86_400_000
+const MAX_RANGE_DAYS = 366
+const MAX_HOURLY_RANGE_DAYS = 60
+
+const sessionUsageRoute = createRoute({
+	method: 'get',
+	path: '/usage',
+	tags: ['Sessions'],
+	summary: 'Aggregate session cost & token usage for an agent',
+	request: {
+		headers: workspaceIdHeader,
+		query: sessionUsageQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionUsageResponseSchema } },
+			description: 'Bucketed usage and totals',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid range or bucket',
+		},
+	},
+})
+
+app.openapi(sessionUsageRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { actor_id: actorId, from, to, bucket } = c.req.valid('query')
+
+	const fromDate = new Date(from)
+	const toDate = new Date(to)
+	const fromMs = fromDate.getTime()
+	const toMs = toDate.getTime()
+
+	if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+		return c.json(createApiError('VALIDATION_ERROR', '`to` must be after `from`'), 400)
+	}
+	const spanDays = (toMs - fromMs) / DAY_MS
+	if (spanDays > MAX_RANGE_DAYS) {
+		return c.json(
+			createApiError('VALIDATION_ERROR', `Range may not exceed ${MAX_RANGE_DAYS} days`),
+			400,
+		)
+	}
+	if (bucket === 'hour' && spanDays > MAX_HOURLY_RANGE_DAYS) {
+		return c.json(
+			createApiError(
+				'VALIDATION_ERROR',
+				`Hourly bucket only supported for ranges up to ${MAX_HOURLY_RANGE_DAYS} days`,
+			),
+			400,
+		)
+	}
+
+	// Pass timestamps as ISO strings + ::timestamptz cast — some poolers
+	// (e.g. Supabase pgbouncer in transaction mode) can't serialize JS Date
+	// values and throw `ERR_INVALID_ARG_TYPE`.
+	const fromIso = fromDate.toISOString()
+	const toIso = toDate.toISOString()
+
+	const rows = (await db.execute(sql`
+		SELECT
+			date_trunc(${bucket}, completed_at AT TIME ZONE 'UTC') AS bucket,
+			COUNT(*)::int AS session_count,
+			COALESCE(SUM(total_cost_usd), 0)::float8 AS total_cost_usd,
+			COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
+			COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
+			COALESCE(
+				SUM(COALESCE(cache_creation_input_tokens, 0) + COALESCE(cache_read_input_tokens, 0)),
+				0
+			)::int AS cache_tokens
+		FROM sessions
+		WHERE workspace_id = ${workspaceId}
+			AND actor_id = ${actorId}
+			AND completed_at IS NOT NULL
+			AND completed_at >= ${fromIso}::timestamptz
+			AND completed_at <  ${toIso}::timestamptz
+		GROUP BY 1
+		ORDER BY 1 ASC
+	`)) as unknown as Array<{
+		bucket: Date | string
+		session_count: number
+		total_cost_usd: number
+		input_tokens: number
+		output_tokens: number
+		cache_tokens: number
+	}>
+
+	const buckets = rows.map((r) => ({
+		bucket: r.bucket instanceof Date ? r.bucket.toISOString() : String(r.bucket),
+		session_count: Number(r.session_count),
+		total_cost_usd: Number(r.total_cost_usd),
+		input_tokens: Number(r.input_tokens),
+		output_tokens: Number(r.output_tokens),
+		cache_tokens: Number(r.cache_tokens),
+	}))
+
+	const totals = buckets.reduce(
+		(acc, b) => {
+			acc.session_count += b.session_count
+			acc.total_cost_usd += b.total_cost_usd
+			acc.input_tokens += b.input_tokens
+			acc.output_tokens += b.output_tokens
+			acc.cache_tokens += b.cache_tokens
+			return acc
+		},
+		{
+			session_count: 0,
+			total_cost_usd: 0,
+			input_tokens: 0,
+			output_tokens: 0,
+			cache_tokens: 0,
+		},
+	)
+
+	return c.json({ buckets, totals })
+}) as RouteHandler<typeof sessionUsageRoute, Env>)
 
 // GET /:id - Get session detail
 const getSessionRoute = createRoute({
@@ -168,6 +299,70 @@ app.openapi(getSessionRoute, (async (c) => {
 
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof getSessionRoute, Env>)
+
+// PATCH /:id - Update mutable session fields (agents call this to record active step)
+const updateSessionSchema = z.object({
+	current_activity: z.string().max(500).nullable(),
+})
+
+const patchSessionRoute = createRoute({
+	method: 'patch',
+	path: '/{id}',
+	tags: ['Sessions'],
+	summary: 'Update mutable session fields',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: {
+			content: { 'application/json': { schema: updateSessionSchema } },
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionResponseSchema } },
+			description: 'Session updated',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(patchSessionRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const [updated] = await db
+		.update(sessions)
+		.set({ currentActivity: body.current_activity, updatedAt: new Date() })
+		.where(eq(sessions.id, id))
+		.returning()
+
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId: session.actorId,
+		action: 'session_updated',
+		entityType: 'session',
+		entityId: id,
+		data: {},
+	})
+
+	logger.info('Session current_activity updated', { sessionId: id })
+
+	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
+}) as RouteHandler<typeof patchSessionRoute, Env>)
 
 // POST /:id/stop - Stop a running session
 const stopSessionRoute = createRoute({

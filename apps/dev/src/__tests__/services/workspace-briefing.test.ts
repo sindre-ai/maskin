@@ -1,8 +1,8 @@
 import type { StorageProvider } from '@maskin/storage'
 import { describe, expect, it, vi } from 'vitest'
 import {
-	WORKSPACE_STARTUP_BLOCK,
 	appendToLedger,
+	buildWorkspaceStartupBlock,
 	readLedgerTail,
 	renderWorkspaceBriefing,
 	workspaceLedgerKey,
@@ -124,19 +124,44 @@ describe('readLedgerTail', () => {
 	})
 })
 
-describe('WORKSPACE_STARTUP_BLOCK', () => {
+describe('buildWorkspaceStartupBlock', () => {
+	const args = {
+		workspaceId: 'ws-abc',
+		frontendUrl: 'https://maskin.sindre.ai',
+	}
+
 	it('describes the workspace terrain: briefing file, bets, tools, verdict, learning', () => {
-		expect(WORKSPACE_STARTUP_BLOCK).toContain('/agent/workspace/WORKSPACE.md')
-		expect(WORKSPACE_STARTUP_BLOCK).toContain('Active bets')
-		expect(WORKSPACE_STARTUP_BLOCK).toContain('metadata.verdict')
-		expect(WORKSPACE_STARTUP_BLOCK).toContain('SESSION_LEARNING.md')
+		const block = buildWorkspaceStartupBlock(args)
+		expect(block).toContain('/agent/workspace/WORKSPACE.md')
+		expect(block).toContain('Active bets')
+		expect(block).toContain('metadata.verdict')
+		expect(block).toContain('SESSION_LEARNING.md')
 	})
 
 	it('uses contextual framing rather than imperative step-by-step commands', () => {
 		// Outcome-oriented models push back on prescriptive checklists — the
 		// block should describe terrain, not dictate a sequence of actions.
-		expect(WORKSPACE_STARTUP_BLOCK).toContain('You decide how to achieve the goal')
-		expect(WORKSPACE_STARTUP_BLOCK).not.toMatch(/^\s*1\.\s+Read/m)
+		const block = buildWorkspaceStartupBlock(args)
+		expect(block).toContain('You decide how to achieve the goal')
+		expect(block).not.toMatch(/^\s*1\.\s+Read/m)
+	})
+
+	it('embeds the canonical object link format with the workspace id', () => {
+		// The reporter saw agents emit `app.maskin.ai/objects/<id>` (wrong host,
+		// no workspace segment). Pin the correct format into the briefing so
+		// agents don't have to guess.
+		const block = buildWorkspaceStartupBlock(args)
+		expect(block).toContain('[title](https://maskin.sindre.ai/ws-abc/objects/<id>)')
+		expect(block).not.toContain('app.maskin.ai')
+	})
+
+	it('strips a trailing slash from the frontend URL before embedding it', () => {
+		const block = buildWorkspaceStartupBlock({
+			workspaceId: 'ws-abc',
+			frontendUrl: 'https://maskin.sindre.ai/',
+		})
+		expect(block).toContain('https://maskin.sindre.ai/ws-abc/objects/<id>')
+		expect(block).not.toContain('maskin.sindre.ai//ws-abc')
 	})
 })
 

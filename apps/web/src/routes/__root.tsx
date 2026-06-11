@@ -22,9 +22,9 @@ function RootComponent() {
 				style={{ zIndex: 50 }}
 				toastOptions={{
 					style: {
-						background: 'var(--ui-card)',
-						border: '1px solid var(--clr-border)',
-						color: 'var(--clr-text)',
+						background: 'var(--popover)',
+						border: '1px solid var(--border)',
+						color: 'var(--popover-foreground)',
 					},
 				}}
 			/>

@@ -60,10 +60,14 @@ app.openapi(loginRoute, async (c) => {
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid credentials'), 401)
 	}
 
-	const { apiKey, passwordHash, ...actorWithoutSecrets } = actor
+	const { apiKey, passwordHash, systemPrompt, llmProvider, llmConfig, ...actorWithoutSecrets } =
+		actor
 	return c.json(
 		{
 			...serialize(actorWithoutSecrets),
+			system_prompt: systemPrompt,
+			llm_provider: llmProvider,
+			llm_config: llmConfig,
 			api_key: actor.apiKey ?? '',
 		} as z.infer<typeof actorWithKeySchema>,
 		200,

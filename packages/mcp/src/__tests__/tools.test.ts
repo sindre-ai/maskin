@@ -1,3 +1,4 @@
+import { COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ZodObject } from 'zod'
 import { tools } from '../tools'
@@ -10,7 +11,8 @@ vi.mock('@modelcontextprotocol/ext-apps/server', () => ({
 	RESOURCE_MIME_TYPE: 'text/html',
 }))
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-	McpServer: vi.fn().mockImplementation(() => ({})),
+	McpServer: vi.fn().mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() })),
+	ResourceTemplate: vi.fn().mockImplementation(() => ({})),
 }))
 vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
@@ -39,12 +41,24 @@ const ALL_TOOL_NAMES = [
 	'list_workspaces',
 	'get_workspace_schema',
 	'add_workspace_member',
+	'create_workspace_field',
+	'update_workspace_field',
+	'delete_workspace_field',
+	'add_workspace_enum_value',
+	'remove_workspace_enum_value',
 	'list_workspace_skills',
 	'get_workspace_skill',
 	'create_workspace_skill',
 	'update_workspace_skill',
 	'delete_workspace_skill',
+	'create_file',
+	'list_files',
+	'get_file',
+	'update_file',
+	'delete_file',
 	'get_events',
+	'get_comments',
+	'create_comment',
 	'create_trigger',
 	'update_trigger',
 	'delete_trigger',
@@ -61,6 +75,11 @@ const ALL_TOOL_NAMES = [
 	'get_notification',
 	'update_notification',
 	'delete_notification',
+	'subscribe',
+	'unsubscribe',
+	'list_subscribers',
+	'mark_read',
+	'list_unread',
 	'list_integrations',
 	'list_integration_providers',
 	'connect_integration',
@@ -75,6 +94,8 @@ const ALL_TOOL_NAMES = [
 	'create_extension',
 	'update_extension',
 	'delete_extension',
+	'record_widget_event',
+	'get_bet_widget_metrics',
 ]
 
 describe('tool definitions', () => {
@@ -249,6 +270,30 @@ describe('update_actor schema', () => {
 		})
 		expect(result.name).toBe('Updated')
 	})
+
+	it('accepts attach_skill_ids as an array of UUIDs', () => {
+		const result = schema.parse({ id: uuid, attach_skill_ids: [uuid2] })
+		expect(result.attach_skill_ids).toEqual([uuid2])
+	})
+
+	it('accepts detach_skill_ids as an array of UUIDs', () => {
+		const result = schema.parse({ id: uuid, detach_skill_ids: [uuid2] })
+		expect(result.detach_skill_ids).toEqual([uuid2])
+	})
+
+	it('rejects non-UUID entries in attach_skill_ids', () => {
+		expect(() => schema.parse({ id: uuid, attach_skill_ids: ['not-a-uuid'] })).toThrow()
+	})
+
+	it('rejects non-UUID entries in detach_skill_ids', () => {
+		expect(() => schema.parse({ id: uuid, detach_skill_ids: ['not-a-uuid'] })).toThrow()
+	})
+
+	it('defaults attach_skill_ids and detach_skill_ids to undefined when omitted', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.attach_skill_ids).toBeUndefined()
+		expect(result.detach_skill_ids).toBeUndefined()
+	})
 })
 
 describe('create_session schema', () => {
@@ -375,6 +420,86 @@ describe('list_notifications schema', () => {
 	it('accepts status filter', () => {
 		const result = schema.parse({ status: 'pending' })
 		expect(result.status).toBe('pending')
+	})
+})
+
+describe('get_comments schema', () => {
+	const schema = tools.get_comments.inputSchema
+
+	it('accepts entity_id', () => {
+		const result = schema.parse({ entity_id: uuid })
+		expect(result.entity_id).toBe(uuid)
+		expect(result.limit).toBe(50)
+		expect(result.offset).toBe(0)
+	})
+
+	it('rejects missing entity_id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects non-uuid entity_id', () => {
+		expect(() => schema.parse({ entity_id: 'not-uuid' })).toThrow()
+	})
+
+	it('rejects limit above 100', () => {
+		expect(() => schema.parse({ entity_id: uuid, limit: 200 })).toThrow()
+	})
+
+	it('rejects negative offset', () => {
+		expect(() => schema.parse({ entity_id: uuid, offset: -1 })).toThrow()
+	})
+})
+
+describe('create_comment schema', () => {
+	const schema = tools.create_comment.inputSchema
+
+	it('accepts minimal input', () => {
+		const result = schema.parse({ entity_id: uuid, content: 'hi' })
+		expect(result.entity_id).toBe(uuid)
+		expect(result.content).toBe('hi')
+	})
+
+	it('accepts full input', () => {
+		const result = schema.parse({
+			entity_id: uuid,
+			content: 'reply',
+			mentions: [uuid2],
+			parent_event_id: 42,
+		})
+		expect(result.mentions).toEqual([uuid2])
+		expect(result.parent_event_id).toBe(42)
+	})
+
+	it('rejects empty content', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: '' })).toThrow()
+	})
+
+	it(`accepts content at exactly ${COMMENT_MAX_LENGTH} chars`, () => {
+		const result = schema.parse({ entity_id: uuid, content: 'x'.repeat(COMMENT_MAX_LENGTH) })
+		expect(result.content.length).toBe(COMMENT_MAX_LENGTH)
+	})
+
+	it(`rejects content above ${COMMENT_MAX_LENGTH} chars with the documented message`, () => {
+		const tooLong = 'x'.repeat(COMMENT_MAX_LENGTH + 1)
+		const result = schema.safeParse({ entity_id: uuid, content: tooLong })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			const contentIssue = result.error.issues.find((i) => i.path[0] === 'content')
+			expect(contentIssue?.message).toContain(`${COMMENT_MAX_LENGTH} characters or fewer`)
+		}
+	})
+
+	it('rejects non-uuid mentions', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', mentions: ['not-uuid'] })).toThrow()
+	})
+
+	it('rejects more than 50 mentions', () => {
+		const mentions = Array.from({ length: 51 }, () => uuid)
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', mentions })).toThrow()
+	})
+
+	it('rejects non-positive parent_event_id', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', parent_event_id: 0 })).toThrow()
 	})
 })
 
@@ -697,11 +822,25 @@ describe('list_extensions schema', () => {
 	})
 })
 
-describe('empty input schema tools', () => {
-	it('list_actors accepts empty object', () => {
-		expect(tools.list_actors.inputSchema.parse({})).toEqual({})
+describe('list_actors schema', () => {
+	const schema = tools.list_actors.inputSchema
+
+	it('accepts empty object', () => {
+		const result = schema.parse({})
+		expect(result.workspace_id).toBeUndefined()
 	})
 
+	it('accepts optional workspace_id', () => {
+		const result = schema.parse({ workspace_id: uuid })
+		expect(result.workspace_id).toBe(uuid)
+	})
+
+	it('rejects invalid workspace_id', () => {
+		expect(() => schema.parse({ workspace_id: 'not-a-uuid' })).toThrow()
+	})
+})
+
+describe('empty input schema tools', () => {
 	it('list_workspaces accepts empty object', () => {
 		expect(tools.list_workspaces.inputSchema.parse({})).toEqual({})
 	})

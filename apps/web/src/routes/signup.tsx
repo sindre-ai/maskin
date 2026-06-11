@@ -2,8 +2,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
+import { api } from '@/lib/api'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/signup')({
 	component: SignupPage,
@@ -17,6 +18,31 @@ function SignupPage() {
 	const [confirmPassword, setConfirmPassword] = useState('')
 	const [error, setError] = useState('')
 	const [loading, setLoading] = useState(false)
+
+	useEffect(() => {
+		const url = new URL(window.location.href)
+		const pendingPrompt = url.searchParams.get('pending_prompt')
+		const anonId = url.searchParams.get('anon_id')
+		if (!pendingPrompt && !anonId) return
+
+		try {
+			if (pendingPrompt) {
+				console.info('[maskin] imported pending prompt from URL', {
+					promptChars: pendingPrompt.length,
+				})
+				localStorage.setItem('maskin_pending_prompt', pendingPrompt)
+			}
+			if (anonId) {
+				localStorage.setItem('maskin_anon_id', anonId)
+			}
+		} catch (err) {
+			console.error('[maskin] failed to import landing params from URL', err)
+		}
+
+		url.searchParams.delete('pending_prompt')
+		url.searchParams.delete('anon_id')
+		window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+	}, [])
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
@@ -38,12 +64,19 @@ function SignupPage() {
 		}
 		setLoading(true)
 		try {
+			const anonId = localStorage.getItem('maskin_anon_id')
 			await signup({
 				type: 'human',
 				name: name.trim(),
 				email: email.trim(),
 				password,
 			})
+			if (anonId) {
+				api.landingEvents
+					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
+					.catch(() => console.error('[maskin] failed to emit signup_complete'))
+			}
+			window.location.assign('/')
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {

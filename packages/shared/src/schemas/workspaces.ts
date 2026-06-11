@@ -7,6 +7,27 @@ const fieldDefinitionSchema = z.object({
 	values: z.array(z.string()).optional(),
 })
 
+// Per-type Hero Card render annotations. The MCP widget reads object metadata
+// from these to render any type without per-type widget code — a workspace can
+// expose a new object type as a Hero Card simply by adding an entry here.
+const heroCardMetaSchema = z.object({
+	label: z.string(),
+	field: z.string().optional(),
+})
+
+const heroCardPrimaryActionSchema = z.object({
+	label: z.string(),
+	kind: z.string(),
+})
+
+const heroCardTypeAnnotationSchema = z.object({
+	hero_card_context: z.string().optional(),
+	hero_card_metas: z.array(heroCardMetaSchema).optional(),
+	primary_action: heroCardPrimaryActionSchema.optional(),
+})
+
+export type HeroCardTypeAnnotation = z.infer<typeof heroCardTypeAnnotationSchema>
+
 const customExtensionEntrySchema = z.object({
 	name: z.string(),
 	types: z.array(z.string()),
@@ -28,6 +49,7 @@ export const workspaceSettingsSchema = z.object({
 		task: ['todo', 'in_progress', 'done', 'blocked'],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({}),
+	hero_card: z.record(heroCardTypeAnnotationSchema).default({}),
 	relationship_types: z
 		.array(z.string())
 		.default(['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']),
@@ -51,6 +73,30 @@ export const workspaceSettingsSchema = z.object({
 			scopes: z.array(z.string()).optional(),
 		})
 		.optional(),
+	// Privacy & data block surfaced in workspace Settings → General.
+	// `share_usage` toggles posthog opt-in capturing; `anonymize_workspace` swaps
+	// the distinct_id for a SHA-256 hash before identify so the Synthesizer's
+	// property-keyed joins keep working without raw IDs leaving the browser.
+	privacy: z
+		.object({
+			share_usage: z.boolean().default(true),
+			anonymize_workspace: z.boolean().default(false),
+		})
+		.default({ share_usage: true, anonymize_workspace: false }),
+	// Bring-your-own model: when enabled, sessions point Claude Code at this
+	// endpoint via ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL. Works for OpenRouter,
+	// self-hosted vLLM/Ollama, LM Studio — anything speaking the Anthropic
+	// Messages API. Takes precedence over Claude OAuth + workspace api keys.
+	// `null` on api_key signals deletion (mirrors llm_keys deep-merge convention).
+	custom_llm: z
+		.object({
+			enabled: z.boolean().default(false),
+			base_url: z.string().url().nullable().optional(),
+			api_key: z.string().nullable().optional(),
+			model: z.string().nullable().optional(),
+			small_fast_model: z.string().nullable().optional(),
+		})
+		.optional(),
 })
 
 export const createWorkspaceSchema = z.object({
@@ -61,6 +107,10 @@ export const createWorkspaceSchema = z.object({
 export const updateWorkspaceSchema = z.object({
 	name: z.string().min(1).optional(),
 	settings: workspaceSettingsSchema.partial().optional(),
+})
+
+export const updateWorkspaceAdminSchema = z.object({
+	onboarding_enabled: z.boolean(),
 })
 
 export const workspaceParamsSchema = z.object({

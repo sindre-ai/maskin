@@ -45,6 +45,29 @@ export const runtimeConfigSchema = z.object({
 	command: z.string().optional(),
 })
 
+// Set internally by the events route when a comment @mentions an agent.
+// Not user-supplied — the events route writes this into sessions.config so the
+// UI can find sessions linked to a specific comment thread.
+export const sessionMentionContextSchema = z.object({
+	object_id: z.string().uuid(),
+	comment_event_id: z.number().int().positive(),
+	commenter_actor_id: z.string().uuid(),
+	notification_id: z.string().uuid().optional(),
+})
+export type SessionMentionContext = z.infer<typeof sessionMentionContextSchema>
+
+// Set internally by the events route when a new comment lands in a thread an
+// agent previously participated in (commented or was @mentioned), without the
+// agent being explicitly @mentioned in the new comment. Lets the UI attach a
+// live activity card under the triggering comment, same as mention sessions.
+export const sessionThreadReplyContextSchema = z.object({
+	object_id: z.string().uuid(),
+	comment_event_id: z.number().int().positive(),
+	thread_root_event_id: z.number().int().positive(),
+	commenter_actor_id: z.string().uuid(),
+})
+export type SessionThreadReplyContext = z.infer<typeof sessionThreadReplyContextSchema>
+
 export const sessionConfigSchema = z.object({
 	base_image: z.string().default('agent-base:latest'),
 	runtime: sessionRuntimeSchema.default('claude-code'),
@@ -55,6 +78,8 @@ export const sessionConfigSchema = z.object({
 	mcps: z.array(mcpServerSchema).default([]),
 	env_vars: z.record(z.string()).default({}),
 	interactive: z.boolean().default(false),
+	mention: sessionMentionContextSchema.optional(),
+	thread_reply: sessionThreadReplyContextSchema.optional(),
 })
 
 export const createSessionSchema = z.object({
@@ -68,6 +93,7 @@ export const createSessionSchema = z.object({
 export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
+	mention_object_id: z.string().uuid().optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(20),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -91,3 +117,92 @@ export const sessionInputSchema = z.object({
 	content: z.string().min(1),
 	attachments: z.array(sessionInputAttachmentSchema).optional(),
 })
+
+export const sessionUsageBucketSchema = z.enum(['hour', 'day', 'week'])
+export type SessionUsageBucket = z.infer<typeof sessionUsageBucketSchema>
+
+export const sessionUsageQuerySchema = z.object({
+	actor_id: z.string().uuid(),
+	from: z.string().datetime(),
+	to: z.string().datetime(),
+	bucket: sessionUsageBucketSchema,
+})
+
+export const sessionUsageBucketResponseSchema = z.object({
+	bucket: z.string(),
+	session_count: z.number().int().min(0),
+	total_cost_usd: z.number(),
+	input_tokens: z.number().int().min(0),
+	output_tokens: z.number().int().min(0),
+	// Combined cache_creation_input_tokens + cache_read_input_tokens.
+	// Surfaced as a single series on the chart; the underlying DB
+	// columns remain split for future per-component reporting.
+	cache_tokens: z.number().int().min(0),
+})
+
+export const sessionUsageTotalsSchema = z.object({
+	session_count: z.number().int().min(0),
+	total_cost_usd: z.number(),
+	input_tokens: z.number().int().min(0),
+	output_tokens: z.number().int().min(0),
+	cache_tokens: z.number().int().min(0),
+})
+
+export const sessionUsageResponseSchema = z.object({
+	buckets: z.array(sessionUsageBucketResponseSchema),
+	totals: sessionUsageTotalsSchema,
+})
+export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
+
+/**
+ * Reason codes for classified session failures. All codes originate from
+ * credit-exhaustion or rate-limit signals detected in the session stdout tail.
+ *
+ * CLI banner codes (Claude Code exits with a user-visible banner):
+ * - session_limit         "You've hit your session limit"
+ * - weekly_limit          "You've hit your weekly limit"
+ * - opus_limit            "You've hit your Opus limit"
+ * - server_rate_limit     "Server is temporarily limiting requests"
+ * - request_rejected_429  "Request rejected (429)"
+ * - credit_balance_low    "Credit balance is too low"
+ * - not_logged_in         "Not logged in" — Claude Code credentials not connected
+ *
+ * Anthropic HTTP error codes (matched from stdout tail):
+ * - billing_error         402 — credit balance exhausted
+ * - max_plan_rate_limit   402 — Max plan temporary rate limit
+ * - rate_limit_error      429 — Anthropic rate limit
+ *
+ * OpenRouter HTTP error codes:
+ * - insufficient_credits  402 — OpenRouter credit balance exhausted
+ */
+export const failureReasonCodeSchema = z.enum([
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'server_rate_limit',
+	'request_rejected_429',
+	'credit_balance_low',
+	'not_logged_in',
+	'billing_error',
+	'max_plan_rate_limit',
+	'rate_limit_error',
+	'insufficient_credits',
+])
+export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
+
+export const sessionResultFailureReasonSchema = z.object({
+	provider: z.string(),
+	reason_code: failureReasonCodeSchema,
+	human_message: z.string(),
+	http_status: z.number().int().nullable(),
+	reset_at: z.string().nullable(),
+	verbatim_output: z.string().nullable(),
+})
+export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReasonSchema>
+
+export const sessionResultSchema = z.object({
+	exit_code: z.number().int().nullable().optional(),
+	error: z.string().optional(),
+	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
+})
+export type SessionResult = z.infer<typeof sessionResultSchema>

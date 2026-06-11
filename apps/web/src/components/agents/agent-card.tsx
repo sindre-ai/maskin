@@ -20,7 +20,7 @@ export function AgentCard({
 }) {
 	const { workspaceId } = useWorkspace()
 
-	const roleDescription = agent.systemPrompt?.split('\n')[0]?.trim()
+	const description = agent.description?.trim()
 
 	return (
 		<Link
@@ -33,17 +33,17 @@ export function AgentCard({
 				status === 'idle' && 'border-border',
 			)}
 		>
-			<div className="flex items-center justify-between mb-1">
-				<div className="flex items-center gap-2">
+			<div className="flex items-center justify-between gap-2 mb-1">
+				<div className="flex items-center gap-2 min-w-0">
 					<ActorAvatar name={agent.name} type="agent" size="md" />
-					<span className="text-sm font-medium text-foreground">{agent.name}</span>
+					<span className="text-sm font-medium text-foreground truncate min-w-0">{agent.name}</span>
 					<StatusIndicator status={status} />
 				</div>
 				<StatusLabel status={status} />
 			</div>
 
-			{roleDescription && (
-				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{roleDescription}</p>
+			{description && (
+				<p className="text-xs text-muted-foreground mb-3 ml-9 line-clamp-1">{description}</p>
 			)}
 
 			<div className="ml-9">

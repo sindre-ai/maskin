@@ -16,16 +16,21 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, count as countFn, desc, eq, lt, or } from 'drizzle-orm'
-import { getValidOAuthToken } from '../lib/claude-oauth'
+import { and, count as countFn, desc, eq, inArray, lt, or } from 'drizzle-orm'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { frontendBaseUrl } from '../lib/file-urls'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import { getProvider } from '../lib/integrations/registry'
+import { FallbackQuotaExceededError, type LlmRoute, resolveLlmRoute } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
-import type { WorkspaceSettings } from '../lib/types'
+import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
-import { WORKSPACE_STARTUP_BLOCK, renderWorkspaceBriefing } from './workspace-briefing'
+import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
+import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
 
 export interface CreateSessionParams {
 	actorId: string
@@ -45,6 +50,20 @@ export interface CreateSessionParams {
 	autoStart?: boolean
 }
 
+/**
+ * dockerode surfaces missing/stopped containers as either a 404 (not found)
+ * or a 409 with an "is not running" message. Either means the container is
+ * gone for our purposes and the session can't be snapshotted.
+ */
+function isContainerGoneError(err: unknown): boolean {
+	if (!err || typeof err !== 'object') return false
+	const statusCode = (err as { statusCode?: unknown }).statusCode
+	if (statusCode === 404) return true
+	const message = (err as { message?: unknown }).message
+	if (typeof message !== 'string') return false
+	return /HTTP code 404/.test(message) || /is not running/.test(message)
+}
+
 export interface SessionLogEvent extends LogChunk {
 	sessionId: string
 	logId: number
@@ -56,8 +75,36 @@ export class SessionManager extends EventEmitter {
 	private watchdogInterval: NodeJS.Timeout | null = null
 	private activeSessions: Map<
 		string,
-		{ tempDir: string; browserContainerId?: string; networkName?: string }
+		{
+			tempDir: string
+			browserContainerId?: string
+			networkName?: string
+			/**
+			 * Rolling tail of stdout (capped at STDOUT_TAIL_BYTES). Lets
+			 * `handleCompletion` parse the final stream-json `result` event from
+			 * memory, sidestepping any race with the DB log persistence pipeline.
+			 */
+			stdoutTail?: string
+			/** Resolves when `streamContainerLogs` has fully drained. */
+			logsDrained?: Promise<void>
+		}
 	> = new Map()
+	/**
+	 * Cap on the in-memory stdout tail per session. The usage parser only
+	 * scans the last 200 lines, so 64 KB is plenty even with verbose runs.
+	 */
+	private static readonly STDOUT_TAIL_BYTES = 64 * 1024
+	/** Max time to wait for the log stream to drain before parsing usage. */
+	private static readonly LOGS_DRAIN_TIMEOUT_MS = 5000
+	/**
+	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
+	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
+	 * `session_logs` stops growing and the idle watchdog ~10 min later mistakes
+	 * the silence for an idle agent and force-pauses a still-running container.
+	 * Reconnect a handful of times before giving up.
+	 */
+	private static readonly LOG_STREAM_MAX_RECONNECTS = 5
+	private static readonly LOG_STREAM_RECONNECT_DELAY_MS = 2000
 	private agentBaseBuildContext: string | null = null
 	private drainingWorkspaces: Set<string> = new Set()
 
@@ -244,6 +291,27 @@ export class SessionManager extends EventEmitter {
 	 */
 	async writeInput(sessionId: string, payload: StreamJsonUserMessage): Promise<void> {
 		await this.containers.write(sessionId, payload)
+		// The CLI does not echo the user turn back to stdout — only the
+		// assistant response. Persist the same JSON envelope we wrote to
+		// stdin as a stdout-stream log row so historical transcripts and the
+		// live SSE feed can render the user's turn alongside the agent's
+		// reply.
+		const [log] = await this.db
+			.insert(sessionLogs)
+			.values({
+				sessionId,
+				stream: 'stdout',
+				content: JSON.stringify(payload),
+			})
+			.returning()
+		if (log) {
+			this.emit('log', {
+				sessionId,
+				logId: log.id,
+				stream: 'stdout',
+				data: log.content,
+			} satisfies SessionLogEvent)
+		}
 	}
 
 	async stopSession(sessionId: string): Promise<void> {
@@ -273,24 +341,34 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in running state`)
 		}
 
+		// Self-heal: if the container disappeared (stopped or removed externally),
+		// the session can never be snapshotted. Mark it failed and exit so the
+		// auto-pause loop stops retrying every minute.
+		if (!(await this.isContainerAlive(session.containerId))) {
+			await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId)
+			return
+		}
+
 		await this.db
 			.update(sessions)
 			.set({ status: 'snapshotting', updatedAt: new Date() })
 			.where(eq(sessions.id, sessionId))
 
 		try {
-			// Tar the agent workspace
-			await this.containers.exec(session.containerId, [
-				'tar',
-				'-czf',
-				'/tmp/snapshot.tar.gz',
-				'/agent/',
-			])
+			// dockerode's getArchive (copyFrom) already returns a tar archive of
+			// the container path — entries are prefixed with `agent/`. Stream
+			// that straight to S3 with no extra packaging.
+			//
+			// The earlier implementation ran `tar -czf /tmp/snapshot.tar.gz
+			// /agent/` inside the container and then copied THAT file out,
+			// which wrapped the gzipped tar in a second (uncompressed) tar from
+			// dockerode. The bytes saved to S3 were `tar(snapshot.tar.gz)`, not
+			// `snapshot.tar.gz`, so `tar -xzf` on resume always failed with
+			// "not in gzip format" and the resume catch block silently marked
+			// the session failed — losing the workspace.
+			const tarStream = await this.containers.copyFrom(session.containerId, '/agent/')
 
-			const tarStream = await this.containers.copyFrom(session.containerId, '/tmp/snapshot.tar.gz')
-
-			// Stream snapshot directly to S3
-			const snapshotKey = `snapshots/${sessionId}.tar.gz`
+			const snapshotKey = `snapshots/${sessionId}.tar`
 			await this.storage.put(snapshotKey, tarStream as import('node:stream').Readable)
 
 			// Stop and remove container
@@ -304,6 +382,7 @@ export class SessionManager extends EventEmitter {
 					status: 'paused',
 					snapshotPath: snapshotKey,
 					containerId: null,
+					currentActivity: null,
 					updatedAt: new Date(),
 				})
 				.where(eq(sessions.id, sessionId))
@@ -320,13 +399,65 @@ export class SessionManager extends EventEmitter {
 				logger.error('Failed to drain queue after pause', { error: String(err) }),
 			)
 		} catch (err) {
-			// Revert status on failure
+			// If the container vanished mid-pause, route to terminal-failed state
+			// instead of reverting to 'running' (which would be re-retried forever).
+			if (isContainerGoneError(err)) {
+				await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId)
+				return
+			}
 			await this.db
 				.update(sessions)
 				.set({ status: 'running', updatedAt: new Date() })
 				.where(eq(sessions.id, sessionId))
 			throw err
 		}
+	}
+
+	private async isContainerAlive(containerId: string): Promise<boolean> {
+		try {
+			const status = await this.containers.inspect(containerId)
+			return status.running
+		} catch {
+			return false
+		}
+	}
+
+	private async markSessionFailedAfterContainerLoss(
+		sessionId: string,
+		workspaceId: string,
+	): Promise<void> {
+		await this.db
+			.update(sessions)
+			.set({
+				status: 'failed',
+				containerId: null,
+				completedAt: new Date(),
+				currentActivity: null,
+				updatedAt: new Date(),
+			})
+			.where(eq(sessions.id, sessionId))
+
+		await this.insertSystemLog(
+			sessionId,
+			'Container disappeared before pause could complete — session marked failed',
+		).catch((err) =>
+			logger.warn('Failed to insert system log for container-loss cleanup', {
+				sessionId,
+				error: String(err),
+			}),
+		)
+
+		await this.clearActiveSession(sessionId).catch(() => {})
+
+		this.containers.detachStdin(sessionId)
+		await this.cleanupBrowserSidecar(sessionId).catch(() => {})
+		await this.cleanupSession(sessionId).catch(() => {})
+
+		logger.warn('Session marked failed after container loss', { sessionId })
+
+		await this.drainQueue(workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after container-loss cleanup', { error: String(err) }),
+		)
 	}
 
 	async resumeSession(sessionId: string): Promise<void> {
@@ -352,9 +483,16 @@ export class SessionManager extends EventEmitter {
 			await chmod(tempDir, 0o777)
 			this.activeSessions.set(sessionId, { tempDir })
 
-			const snapshotPath = join(tempDir, 'snapshot.tar.gz')
+			const snapshotPath = join(tempDir, 'snapshot.tar')
 			await writeFile(snapshotPath, snapshotBuffer)
-			await execFileAsync('tar', ['-xzf', snapshotPath, '-C', tempDir])
+			// The snapshot is an uncompressed tar from dockerode's getArchive,
+			// rooted at `agent/...`. Strip that prefix so files land at
+			// tempDir/skills, tempDir/workspace, etc., which is what the
+			// `${tempDir}:/agent` bind mount expects. Remove the tarball
+			// afterwards so it doesn't appear as a stray `/agent/snapshot.tar`
+			// inside the resumed container.
+			await execFileAsync('tar', ['-xf', snapshotPath, '-C', tempDir, '--strip-components=1'])
+			await rm(snapshotPath, { force: true })
 
 			// Pull latest agent files AND workspace skills — between pause and resume
 			// the attachment set and skill content may have changed, so overwrite
@@ -435,7 +573,12 @@ export class SessionManager extends EventEmitter {
 		const [result] = await this.db
 			.select({ count: countFn() })
 			.from(sessions)
-			.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'running')))
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					inArray(sessions.status, ['starting', 'running']),
+				),
+			)
 
 		return !result || result.count < maxConcurrent
 	}
@@ -524,10 +667,21 @@ export class SessionManager extends EventEmitter {
 		if (session.interactive) {
 			envVars.INTERACTIVE = '1'
 		} else {
-			envVars.ACTION_PROMPT = `${WORKSPACE_STARTUP_BLOCK}${session.actionPrompt}`
+			// frontendBaseUrl falls back to the dev value outside production; it
+			// only throws on a missing FRONTEND_URL in prod, which is the same
+			// failure mode as fileViewerUrl and is intentional.
+			const startupBlock = buildWorkspaceStartupBlock({
+				workspaceId: session.workspaceId,
+				frontendUrl: frontendBaseUrl(),
+			})
+			envVars.ACTION_PROMPT = `${startupBlock}${session.actionPrompt}`
 		}
 
-		// Inject LLM API key: agent-level first, then workspace-level fallback
+		// Resolve LLM credentials in priority order:
+		//   agent override → workspace custom_llm → Claude OAuth → workspace api key → system fallback
+		// See lib/llm-routing.ts. The route taken is persisted on
+		// sessions.config.llm_route so we can attribute usage and enforce
+		// the system-fallback per-actor daily quota.
 		const [ws] = await this.db
 			.select()
 			.from(workspaces)
@@ -536,49 +690,67 @@ export class SessionManager extends EventEmitter {
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
 
-		if (llmConfig.api_key) {
-			if (agent.llmProvider === 'anthropic') {
-				envVars.ANTHROPIC_API_KEY = llmConfig.api_key as string
-			} else if (agent.llmProvider === 'openai') {
-				envVars.OPENAI_API_KEY = llmConfig.api_key as string
+		let routeTaken: LlmRoute | null = null
+		try {
+			const resolved = await resolveLlmRoute({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				wsSettings,
+				agent: {
+					provider: agent.llmProvider,
+					apiKey: (llmConfig.api_key as string | undefined) ?? null,
+				},
+			})
+			if (resolved) {
+				routeTaken = resolved.route
+				Object.assign(envVars, resolved.envVars)
 			}
-		} else {
-			// Check for Claude OAuth tokens (subscription auth) before API key fallback
-			try {
-				const oauthResult = await getValidOAuthToken(this.db, session.workspaceId)
-				if (oauthResult) {
-					// Claude Code reads OAuth from ~/.claude/.credentials.json, not env vars.
-					// Pass full token set so agent-run.sh can write the credentials file.
-					envVars.CLAUDE_OAUTH_ACCESS_TOKEN = oauthResult.tokens.accessToken
-					envVars.CLAUDE_OAUTH_REFRESH_TOKEN = oauthResult.tokens.refreshToken
-					envVars.CLAUDE_OAUTH_EXPIRES_AT = String(oauthResult.tokens.expiresAt)
-					if (oauthResult.tokens.scopes) {
-						envVars.CLAUDE_OAUTH_SCOPES = JSON.stringify(oauthResult.tokens.scopes)
-					}
-					if (oauthResult.tokens.subscriptionType) {
-						envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
-					}
-				} else if (wsLlmKeys.anthropic) {
-					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
-				}
-			} catch (err) {
-				logger.warn('Failed to use Claude OAuth tokens, falling back to API key', {
+		} catch (err) {
+			if (err instanceof FallbackQuotaExceededError) {
+				logger.warn('System LLM fallback quota exceeded', {
 					sessionId: session.id,
-					error: String(err),
+					actorId: session.actorId,
+					used: err.used,
+					limit: err.limit,
 				})
-				if (wsLlmKeys.anthropic) {
-					envVars.ANTHROPIC_API_KEY = wsLlmKeys.anthropic
-				}
 			}
-			if (wsLlmKeys.openai) {
-				envVars.OPENAI_API_KEY = wsLlmKeys.openai
+			throw err
+		}
+
+		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY).
+		if (llmConfig.api_key && agent.llmProvider === 'openai') {
+			envVars.OPENAI_API_KEY = llmConfig.api_key as string
+		}
+		// Workspace OpenAI key — independent of the anthropic-side routing above.
+		if (!llmConfig.api_key && wsLlmKeys.openai) {
+			envVars.OPENAI_API_KEY = wsLlmKeys.openai
+		}
+
+		// Persist the chosen route on the session config so cron-based quota
+		// queries (and later analytics) can find fallback sessions cheaply.
+		if (routeTaken) {
+			const existingConfig = (session.config as Record<string, unknown>) ?? {}
+			if (existingConfig.llm_route !== routeTaken) {
+				const updatedConfig = { ...existingConfig, llm_route: routeTaken }
+				await this.db
+					.update(sessions)
+					.set({ config: updatedConfig })
+					.where(eq(sessions.id, session.id))
+				;(session as { config: Record<string, unknown> }).config = updatedConfig
 			}
 		}
 
-		// Inject agent's API key for Maskin MCP access
-		if (agent.apiKey) {
-			envVars.MASKIN_API_KEY = agent.apiKey
+		// Inject agent's API key for Maskin MCP access. Refuse to launch without
+		// one — an empty Bearer token causes MCP writes to either fail outright
+		// or, when a fallback key is present in the env, get attributed to the
+		// wrong actor (the original "agent comments posted as a human" bug).
+		if (!agent.apiKey) {
+			throw new Error(
+				`Cannot launch session for agent ${agent.id} (${agent.name ?? 'unnamed'}): apiKey is null. Backfill the actor row before retrying.`,
+			)
 		}
+		envVars.MASKIN_API_KEY = agent.apiKey
 
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } })
 		const agentTools = agent.tools as Record<string, unknown> | null
@@ -603,13 +775,40 @@ export class SessionManager extends EventEmitter {
 			)
 
 		const tokenManager = new TokenManager()
+		// MCP servers injected by virtue of a workspace having an active
+		// integration with `mcp.autoInject = true`. Workspace-scoped data pipes
+		// (e.g. PostHog → Synthesizer) belong here; tools an agent opts into
+		// per-config still go through the agent/session MCP paths.
+		//
+		// GitHub installations only get a per-owner env var here; the MCP server
+		// entry is not auto-injected — agents opt in per their tools.mcpServers
+		// config (github-{owner} key). The env var is available for envsubst
+		// substitution when the container resolves the agent's configured entry.
+		const autoInjectedMcpServers: Record<string, unknown> = {}
 		for (const integration of activeIntegrations) {
 			try {
 				const resolved = getProvider(integration.provider)
 				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
-				const envVarName =
-					resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
-				envVars[envVarName] = accessToken
+
+				if (integration.provider === 'github') {
+					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
+					if (!ownerLogin) continue
+
+					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
+				} else {
+					const envVarName =
+						resolved.config.mcp?.envKey ?? `${integration.provider.toUpperCase()}_TOKEN`
+					envVars[envVarName] = accessToken
+					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
+						autoInjectedMcpServers[`integration-${integration.provider}`] =
+							resolved.config.mcp.server
+						logger.info('Auto-injected MCP server for active integration', {
+							sessionId: session.id,
+							workspaceId: session.workspaceId,
+							provider: integration.provider,
+						})
+					}
+				}
 			} catch (err) {
 				logger.warn(`Failed to load credentials for ${integration.provider}`, {
 					error: String(err),
@@ -627,6 +826,10 @@ export class SessionManager extends EventEmitter {
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
 			'ANTHROPIC_API_KEY',
+			'ANTHROPIC_AUTH_TOKEN',
+			'ANTHROPIC_BASE_URL',
+			'ANTHROPIC_MODEL',
+			'ANTHROPIC_SMALL_FAST_MODEL',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
@@ -652,13 +855,17 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Session-level MCP config (convert array → { mcpServers: { ... } } format)
+		// Session-level MCP config (convert array → { mcpServers: { ... } } format),
+		// merged with any auto-injected workspace MCPs and GitHub installation MCPs.
+		// Keys are namespaced so the sources can't collide.
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		const mcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
-			const mcpServers: Record<string, unknown> = {}
 			for (const [i, mcp] of mcps.entries()) {
 				mcpServers[`session-mcp-${i}`] = mcp
 			}
+		}
+		if (Object.keys(mcpServers).length > 0) {
 			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers })
 		}
 
@@ -701,52 +908,142 @@ export class SessionManager extends EventEmitter {
 		return containerId
 	}
 
+	/**
+	 * Return the GitHub owner_login for an integration row, lazily backfilling it
+	 * via the GitHub API and persisting back to the row when missing. Returns
+	 * undefined (and logs) if the backfill cannot complete — the caller skips that
+	 * integration rather than failing the whole session.
+	 */
+	private async resolveGithubOwnerLogin(
+		integration: typeof integrations.$inferSelect,
+	): Promise<string | undefined> {
+		const config = (integration.config as IntegrationConfig | null) ?? {}
+		if (config.owner_login) return config.owner_login
+
+		const installationId = integration.externalId
+		if (!installationId) {
+			logger.warn('GitHub integration has no externalId; cannot backfill owner_login', {
+				integrationId: integration.id,
+			})
+			return undefined
+		}
+
+		try {
+			const ownerLogin = await fetchInstallationOwnerLogin(installationId)
+			await this.db
+				.update(integrations)
+				.set({
+					config: { ...config, owner_login: ownerLogin },
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, integration.id))
+			logger.info('Backfilled owner_login for GitHub integration', {
+				integrationId: integration.id,
+				ownerLogin,
+			})
+			return ownerLogin
+		} catch (err) {
+			logger.warn('Failed to backfill owner_login for GitHub integration; skipping', {
+				integrationId: integration.id,
+				installationId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return undefined
+		}
+	}
+
 	private computeTimeout(session: typeof sessions.$inferSelect): Date {
 		const sessionConfig = session.config as Record<string, unknown>
-		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 3600
+		const timeoutSeconds = (sessionConfig.timeout_seconds as number) ?? 7200
 		return new Date(Date.now() + timeoutSeconds * 1000)
 	}
 
 	private streamContainerLogs(sessionId: string, containerId: string) {
-		;(async () => {
-			try {
-				for await (const chunk of this.containers.logs(containerId)) {
-					const [log] = await this.db
-						.insert(sessionLogs)
-						.values({
-							sessionId,
-							stream: chunk.stream,
-							content: chunk.data,
-						})
-						.returning()
+		const drained = (async () => {
+			// First connect replays history (`tail: 'all'`); reconnects after a
+			// transient drop pick up from "now" (`tail: 0`) so we don't duplicate
+			// every prior log row. A few seconds of missed output is acceptable —
+			// the goal is just to keep the stream alive so the idle watchdog
+			// doesn't mistake stream silence for agent inactivity.
+			let attempt = 0
+			let firstConnect = true
+			while (true) {
+				try {
+					const logOpts = firstConnect ? {} : { tail: 0 as const }
+					firstConnect = false
+					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
+						attempt = 0
+						const [log] = await this.db
+							.insert(sessionLogs)
+							.values({
+								sessionId,
+								stream: chunk.stream,
+								content: chunk.data,
+							})
+							.returning()
 
-					if (log) {
-						this.emit('log', {
-							sessionId,
-							logId: log.id,
-							stream: chunk.stream,
-							data: chunk.data,
-						} satisfies SessionLogEvent)
+						if (log) {
+							this.emit('log', {
+								sessionId,
+								logId: log.id,
+								stream: chunk.stream,
+								data: chunk.data,
+							} satisfies SessionLogEvent)
+						}
+
+						if (chunk.stream === 'stdout') {
+							const sessionData = this.activeSessions.get(sessionId)
+							if (sessionData) {
+								const next = (sessionData.stdoutTail ?? '') + chunk.data
+								sessionData.stdoutTail =
+									next.length > SessionManager.STDOUT_TAIL_BYTES
+										? next.slice(next.length - SessionManager.STDOUT_TAIL_BYTES)
+										: next
+							}
+						}
 					}
-				}
-			} catch (err) {
-				logger.error('Log streaming failed', {
-					sessionId,
-					error: String(err),
-				})
-				// Surface the interruption so SSE clients don't hang on a blank
-				// spinner while the container keeps running without logs.
-				await this.insertSystemLog(
-					sessionId,
-					'Log stream interrupted — session may still be running',
-				).catch((logErr) =>
-					logger.error('Failed to write log-stream-interrupted system log', {
+					// Stream ended naturally — container exited and Docker closed the
+					// connection. `watchContainerExit` will handle terminal cleanup.
+					return
+				} catch (err) {
+					attempt++
+					logger.warn('Log stream errored', {
 						sessionId,
-						error: String(logErr),
-					}),
-				)
+						error: String(err),
+						attempt,
+					})
+
+					// If the container is gone we can't recover the stream. Let the
+					// exit watcher take it from here.
+					if (!(await this.isContainerAlive(containerId))) {
+						logger.info('Log stream ended; container no longer running', { sessionId })
+						return
+					}
+
+					if (attempt >= SessionManager.LOG_STREAM_MAX_RECONNECTS) {
+						// Genuinely cannot reattach. Surface to SSE clients so they
+						// don't sit on a blank spinner indefinitely.
+						await this.insertSystemLog(
+							sessionId,
+							'Log stream interrupted — session may still be running',
+						).catch((logErr) =>
+							logger.error('Failed to write log-stream-interrupted system log', {
+								sessionId,
+								error: String(logErr),
+							}),
+						)
+						return
+					}
+
+					await new Promise((resolve) =>
+						setTimeout(resolve, SessionManager.LOG_STREAM_RECONNECT_DELAY_MS),
+					)
+				}
 			}
 		})()
+
+		const sessionData = this.activeSessions.get(sessionId)
+		if (sessionData) sessionData.logsDrained = drained
 	}
 
 	private watchContainerExit(sessionId: string, containerId: string) {
@@ -761,7 +1058,7 @@ export class SessionManager extends EventEmitter {
 				const status = await this.containers.inspect(containerId)
 				consecutiveFailures = 0
 				if (!status.running) {
-					await this.handleCompletion(sessionId, containerId, status.exitCode ?? 1)
+					await this.handleCompletion(sessionId, containerId, status.exitCode)
 					return
 				}
 			} catch (err) {
@@ -794,7 +1091,7 @@ export class SessionManager extends EventEmitter {
 	private async handleCompletion(
 		sessionId: string,
 		containerId: string,
-		exitCode: number,
+		exitCode: number | null,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -826,6 +1123,53 @@ export class SessionManager extends EventEmitter {
 
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
+		// Extract token / cost usage from the tail of stdout. Codex and custom
+		// runtimes don't emit structured usage — extractor returns null and the
+		// columns stay NULL. Parser failures must never block the status update,
+		// so this is wrapped in its own try/catch.
+		//
+		// Prefer the in-memory stdout tail captured by `streamContainerLogs`:
+		// the container exit poll can fire before the final `result` chunk has
+		// been persisted to `session_logs`, so a DB-only read can race and
+		// silently miss usage. We wait briefly for the log stream to drain so
+		// the in-memory buffer contains the final chunk, then parse from it.
+		// The DB path is kept as a fallback for the resume-from-snapshot case
+		// where the tail buffer may be empty.
+		let usage: SessionUsage | null = null
+		try {
+			const drained = this.activeSessions.get(sessionId)?.logsDrained
+			if (drained) {
+				await Promise.race([
+					drained,
+					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
+				])
+			}
+			const tail = this.activeSessions.get(sessionId)?.stdoutTail
+			if (tail) {
+				usage = parseUsageFromLogChunks([tail])
+			}
+			if (!usage) {
+				usage = await extractSessionUsage(this.db, sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to parse usage from session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		const failureReason =
+			exitCode !== null && exitCode !== 0
+				? classifyCreditExhaustion(this.activeSessions.get(sessionId)?.stdoutTail ?? '')
+				: null
+		if (failureReason) {
+			logger.info('Session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+			})
+		}
+
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
 		// event and close. If any DB write below throws, subscribers would sit
@@ -836,9 +1180,23 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status,
-					result: { exit_code: exitCode },
+					result: {
+						exit_code: exitCode,
+						...(failureReason ? { failure_reason: failureReason } : {}),
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
+					currentActivity: null,
+					...(usage
+						? {
+								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+								inputTokens: usage.inputTokens,
+								outputTokens: usage.outputTokens,
+								cacheCreationInputTokens: usage.cacheCreationInputTokens,
+								cacheReadInputTokens: usage.cacheReadInputTokens,
+								durationMs: usage.durationMs,
+							}
+						: {}),
 				})
 				.where(eq(sessions.id, sessionId))
 		} catch (err) {
@@ -856,7 +1214,7 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) },
 			})
 		} catch (err) {
 			logger.error('Failed to insert completion event in handleCompletion', {
@@ -958,6 +1316,7 @@ export class SessionManager extends EventEmitter {
 					status: 'timeout',
 					result: { error: 'Session timed out' },
 					completedAt: now,
+					currentActivity: null,
 					updatedAt: now,
 				})
 				.where(eq(sessions.id, session.id))
@@ -1005,12 +1364,46 @@ export class SessionManager extends EventEmitter {
 				.limit(1)
 
 			const lastActivity = lastLog?.createdAt ?? session.startedAt
-			if (lastActivity && lastActivity < tenMinutesAgo) {
-				logger.info(`Auto-pausing idle session: ${session.id}`)
-				this.pauseSession(session.id).catch((err) =>
-					logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+			if (!lastActivity || lastActivity >= tenMinutesAgo) continue
+
+			// The "no logs in 10 min" heuristic gives a false positive whenever
+			// dockerode's log stream drops mid-session — the session_logs table
+			// stops growing even though the container is happily working. Before
+			// pausing, confirm the container is actually gone *or* genuinely
+			// idle; if it's still running, leave the reattach loop in
+			// streamContainerLogs to recover and try again next tick.
+			if (!session.containerId) {
+				// A `running` row with no containerId is unrecoverable — pauseSession
+				// would reject on the same guard and the watchdog would log-spam
+				// every minute forever. Route to terminal-failed instead.
+				logger.warn('Marking session failed: running with no containerId', {
+					sessionId: session.id,
+				})
+				await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
+					(err) =>
+						logger.error('Failed to mark session failed after container loss', {
+							sessionId: session.id,
+							error: String(err),
+						}),
 				)
+				continue
 			}
+
+			if (!(await this.isContainerAlive(session.containerId))) {
+				// Container died but the exit watcher hasn't noticed (e.g.,
+				// inspect calls were transiently failing). Skip this tick;
+				// watchContainerExit will route it to terminal-failed once it
+				// recovers, or the timeout reaper will catch it.
+				logger.warn('Skipping auto-pause: container is no longer running', {
+					sessionId: session.id,
+				})
+				continue
+			}
+
+			logger.info(`Auto-pausing idle session: ${session.id}`)
+			this.pauseSession(session.id).catch((err) =>
+				logger.error('Auto-pause failed', { sessionId: session.id, error: String(err) }),
+			)
 		}
 
 		// 3. Archive old paused sessions (7 days)
@@ -1098,6 +1491,7 @@ export class SessionManager extends EventEmitter {
 				data: { error: 'Session stuck in starting state' },
 			})
 
+			await this.cleanupBrowserSidecar(session.id).catch(() => {})
 			await this.clearActiveSession(session.id)
 			await this.cleanupSession(session.id)
 

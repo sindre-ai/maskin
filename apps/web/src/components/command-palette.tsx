@@ -31,10 +31,6 @@ export function CommandPalette() {
 				e.preventDefault()
 				setOpen((o) => !o)
 			}
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
-				e.preventDefault()
-				setOpen(true)
-			}
 			if (e.key === 'j' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
 				setSindreOpen(true)
@@ -65,7 +61,7 @@ export function CommandPalette() {
 				role="button"
 				tabIndex={0}
 			/>
-			<div className="relative w-full max-w-lg bg-popover rounded-xl shadow-2xl">
+			<div className="relative w-[calc(100%-2rem)] max-w-lg mx-auto bg-popover rounded-xl shadow-2xl">
 				<Command className="w-full">
 					<Command.Input
 						placeholder="Search objects, navigate..."
@@ -137,9 +133,6 @@ export function CommandPalette() {
 						)}
 					</Command.List>
 					<div className="flex items-center gap-3 border-t border-border px-4 py-2 text-xs text-muted-foreground">
-						<span>
-							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘F</kbd> Search
-						</span>
 						<span>
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd> Toggle
 						</span>

@@ -200,11 +200,15 @@ export class TriggerRunner {
 				if (config.to_status && current?.status !== config.to_status) continue
 			}
 
-			// Check metadata conditions
+			// Check conditions — resolves against the full event payload with a `metadata`
+			// fallback for legacy internal-object triggers. For updated/status_changed events
+			// the "current" object (i.e. NEW.updated) is the natural root.
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
 				const data = await getEventData()
+				if (!data) continue
 				const { current } = getObjectFromData(data)
-				if (!current || !evaluateConditions(config.conditions, current)) continue
+				const conditionRoot = (current ?? data) as Record<string, unknown>
+				if (!evaluateConditions(config.conditions, conditionRoot)) continue
 			}
 
 			// Check backoff before firing
@@ -221,6 +225,12 @@ export class TriggerRunner {
 				`Trigger '${trigger.name}' fired for event ${event.action} on ${event.entity_type}`,
 			)
 
+			// Enrich the event payload with the `data` column (stripped from NOTIFY for the 8KB
+			// limit) so the agent can act directly on integration IDs like Gmail threadId / messageId
+			// without round-tripping through get_events.
+			const dataForPrompt = await getEventData()
+			const eventForPrompt = { ...event, data: dataForPrompt ?? null }
+
 			// Log trigger fired event
 			await this.db.insert(events).values({
 				workspaceId: event.workspace_id,
@@ -236,7 +246,7 @@ export class TriggerRunner {
 				},
 			})
 
-			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(event)}`
+			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(eventForPrompt)}`
 			this.sessionManager
 				.createSession(event.workspace_id, {
 					actorId: trigger.targetActorId,
@@ -460,13 +470,57 @@ export interface TriggerCondition {
 	value?: unknown
 }
 
-export function evaluateConditions(conditions: TriggerCondition[], obj: ObjectData): boolean {
-	return conditions.every((c) => evaluateCondition(c, obj))
+/**
+ * Resolve a dotted field path against a record. Returns undefined if any step is missing.
+ * Example: resolvePath({ event: { channel: 'C1' } }, 'event.channel') === 'C1'
+ */
+export function resolvePath(
+	root: Record<string, unknown> | null | undefined,
+	path: string,
+): unknown {
+	if (!root) return undefined
+	const parts = path.split('.')
+	let cur: unknown = root
+	for (const part of parts) {
+		if (cur === null || cur === undefined) return undefined
+		if (typeof cur !== 'object') return undefined
+		cur = (cur as Record<string, unknown>)[part]
+	}
+	return cur
 }
 
-export function evaluateCondition(condition: TriggerCondition, obj: ObjectData): boolean {
-	const metadata = obj.metadata ?? {}
-	const fieldValue = metadata[condition.field]
+/**
+ * Resolve a condition field against the data root. Tries the literal/dotted path first;
+ * if it doesn't resolve, falls back to `root.metadata[field]` so existing internal-object
+ * triggers (which assumed an implicit metadata lookup) keep working.
+ */
+function resolveConditionField(
+	root: Record<string, unknown> | null | undefined,
+	field: string,
+): unknown {
+	const direct = resolvePath(root, field)
+	if (direct !== undefined) return direct
+	if (root && typeof root === 'object' && 'metadata' in root) {
+		const metadata = (root as { metadata?: Record<string, unknown> }).metadata
+		if (metadata && typeof metadata === 'object') {
+			return metadata[field]
+		}
+	}
+	return undefined
+}
+
+export function evaluateConditions(
+	conditions: TriggerCondition[],
+	data: Record<string, unknown> | null | undefined,
+): boolean {
+	return conditions.every((c) => evaluateCondition(c, data))
+}
+
+export function evaluateCondition(
+	condition: TriggerCondition,
+	data: Record<string, unknown> | null | undefined,
+): boolean {
+	const fieldValue = resolveConditionField(data, condition.field)
 	const condValue = condition.value
 
 	switch (condition.operator) {
@@ -507,6 +561,16 @@ export function evaluateCondition(condition: TriggerCondition, obj: ObjectData):
 				return fieldValue.includes(condValue)
 			}
 			return String(fieldValue ?? '').includes(String(condValue ?? ''))
+		case 'in': {
+			if (!Array.isArray(condValue)) return false
+			if (fieldValue === null || fieldValue === undefined) return false
+			return condValue.includes(fieldValue)
+		}
+		case 'not_in': {
+			if (!Array.isArray(condValue)) return true
+			if (fieldValue === null || fieldValue === undefined) return true
+			return !condValue.includes(fieldValue)
+		}
 		default:
 			return false
 	}

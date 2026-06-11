@@ -11,18 +11,19 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
+import { useActors, useDeleteActor, useResetActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import {
 	useActiveSessionsForActor,
-	useActorSessions,
+	useActorSessionsInfinite,
 	useCreateSession,
 	useSession,
 	useSessionErrorLog,
-	useSessionLatestLog,
+	useSessionLogs,
 } from '@/hooks/use-sessions'
-import type { ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -33,6 +34,7 @@ import {
 	ChevronRight,
 	Clock,
 	MinusCircle,
+	PauseCircle,
 	RotateCcw,
 	Trash2,
 	XCircle,
@@ -42,9 +44,11 @@ import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
+import { AgentUsageChart } from './agent-usage-chart'
 import { InstructionLog } from './instruction-log'
 import { McpServers } from './mcp-servers'
-import { SessionDetailPanel } from './session-detail-panel'
+import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
+import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
 
 interface AgentDocumentViewProps {
@@ -53,7 +57,11 @@ interface AgentDocumentViewProps {
 	events?: EventResponse[]
 	activeSessions?: SessionResponse[]
 	recentSessions?: SessionResponse[]
+	hasMoreSessions?: boolean
+	isLoadingMoreSessions?: boolean
+	onLoadMoreSessions?: () => void
 	onUpdateName: (name: string) => void
+	onUpdateDescription: (description: string) => void
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
@@ -85,7 +93,11 @@ export function AgentDocumentView({
 	events,
 	activeSessions,
 	recentSessions,
+	hasMoreSessions = false,
+	isLoadingMoreSessions = false,
+	onLoadMoreSessions,
 	onUpdateName,
+	onUpdateDescription,
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
 	onUpdateLlmConfig,
@@ -94,10 +106,11 @@ export function AgentDocumentView({
 	showSaved = false,
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
-	const [systemPromptDraft, setSystemPromptDraft] = useState(agent.systemPrompt ?? '')
+	const [descriptionDraft, setDescriptionDraft] = useState(agent.description ?? '')
+	const [systemPromptDraft, setSystemPromptDraft] = useState(agent.system_prompt ?? '')
 	const [systemPromptDirty, setSystemPromptDirty] = useState(false)
 	const [modelDraft, setModelDraft] = useState(
-		((agent.llmConfig as Record<string, unknown>)?.model as string) ?? '',
+		((agent.llm_config as Record<string, unknown>)?.model as string) ?? '',
 	)
 	const [memoryDraft, setMemoryDraft] = useState(
 		agent.memory ? JSON.stringify(agent.memory, null, 2) : '{}',
@@ -114,19 +127,26 @@ export function AgentDocumentView({
 		}
 	}, [nameDraft, agent.name, onUpdateName])
 
+	const handleDescriptionBlur = useCallback(() => {
+		const next = descriptionDraft.trim()
+		if (next !== (agent.description ?? '')) {
+			onUpdateDescription(next)
+		}
+	}, [descriptionDraft, agent.description, onUpdateDescription])
+
 	const handleSystemPromptBlur = useCallback(() => {
-		if (systemPromptDirty && systemPromptDraft !== (agent.systemPrompt ?? '')) {
+		if (systemPromptDirty && systemPromptDraft !== (agent.system_prompt ?? '')) {
 			onUpdateSystemPrompt(systemPromptDraft)
 		}
 		setSystemPromptDirty(false)
-	}, [systemPromptDraft, systemPromptDirty, agent.systemPrompt, onUpdateSystemPrompt])
+	}, [systemPromptDraft, systemPromptDirty, agent.system_prompt, onUpdateSystemPrompt])
 
 	const handleModelBlur = useCallback(() => {
-		const currentModel = ((agent.llmConfig as Record<string, unknown>)?.model as string) ?? ''
+		const currentModel = ((agent.llm_config as Record<string, unknown>)?.model as string) ?? ''
 		if (modelDraft !== currentModel) {
-			onUpdateLlmConfig({ ...(agent.llmConfig ?? {}), model: modelDraft || undefined })
+			onUpdateLlmConfig({ ...(agent.llm_config ?? {}), model: modelDraft || undefined })
 		}
-	}, [modelDraft, agent.llmConfig, onUpdateLlmConfig])
+	}, [modelDraft, agent.llm_config, onUpdateLlmConfig])
 
 	const handleMemorySave = useCallback(() => {
 		try {
@@ -142,6 +162,13 @@ export function AgentDocumentView({
 	const [selectedSession, setSelectedSession] = useState<SessionResponse | null>(null)
 	const [viewSessionId, setViewSessionId] = useState<string | null>(null)
 	const { data: fetchedSession } = useSession(viewSessionId, workspaceId)
+
+	const { data: actors } = useActors(workspaceId)
+	const actorsById = useMemo(() => {
+		const map = new Map<string, ActorListItem>()
+		for (const actor of actors ?? []) map.set(actor.id, actor)
+		return map
+	}, [actors])
 
 	// When a session is fetched by ID (from instruction log), select it
 	useEffect(() => {
@@ -206,6 +233,18 @@ export function AgentDocumentView({
 				)}
 			</div>
 
+			{/* Description (short one-liner shown on the Agents page card) */}
+			<Input
+				type="text"
+				value={descriptionDraft}
+				onChange={(e) => setDescriptionDraft(e.target.value)}
+				onBlur={handleDescriptionBlur}
+				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+				placeholder="Short description shown on the Agents page"
+				maxLength={80}
+				className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
+			/>
+
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
 				<TypeBadge type="agent" />
@@ -215,8 +254,8 @@ export function AgentDocumentView({
 					/>
 					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
 				</span>
-				{agent.llmProvider && (
-					<span className="text-[11px] text-muted-foreground">{agent.llmProvider}</span>
+				{agent.llm_provider && (
+					<span className="text-[11px] text-muted-foreground">{agent.llm_provider}</span>
 				)}
 				<RelativeTime date={agent.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
@@ -229,7 +268,12 @@ export function AgentDocumentView({
 				<Section title="Currently Working On">
 					<div className="space-y-2">
 						{activeSessions.map((session) => (
-							<ActiveSessionCard key={session.id} session={session} workspaceId={workspaceId} />
+							<ActiveSessionCard
+								key={session.id}
+								session={session}
+								workspaceId={workspaceId}
+								onSelect={setSelectedSession}
+							/>
 						))}
 					</div>
 				</Section>
@@ -238,7 +282,9 @@ export function AgentDocumentView({
 			{/* Recent Sessions */}
 			{pastSessions.length > 0 && (
 				<Section title="Sessions">
-					<div className="space-y-1">
+					<div
+						className={cn('space-y-1', pastSessions.length > 10 && 'max-h-[400px] overflow-y-auto')}
+					>
 						{pastSessions.map((session) => (
 							<SessionRow
 								key={session.id}
@@ -249,6 +295,17 @@ export function AgentDocumentView({
 							/>
 						))}
 					</div>
+					{hasMoreSessions && (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="mt-2"
+							disabled={isLoadingMoreSessions}
+							onClick={() => onLoadMoreSessions?.()}
+						>
+							<ChevronDown size={14} /> {isLoadingMoreSessions ? 'Loading…' : 'Show more'}
+						</Button>
+					)}
 				</Section>
 			)}
 
@@ -260,6 +317,9 @@ export function AgentDocumentView({
 					if (!open) setSelectedSession(null)
 				}}
 			/>
+
+			{/* Usage chart */}
+			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>
@@ -285,11 +345,11 @@ export function AgentDocumentView({
 
 					{/* LLM Configuration */}
 					<Section title="LLM Configuration">
-						<div className="flex gap-3">
+						<div className="flex flex-col sm:flex-row gap-3">
 							<div className="flex-1">
 								<Label>Provider</Label>
 								<Select
-									value={agent.llmProvider ?? 'anthropic'}
+									value={agent.llm_provider ?? 'anthropic'}
 									onValueChange={onUpdateLlmProvider}
 								>
 									<SelectTrigger>
@@ -359,7 +419,7 @@ export function AgentDocumentView({
 					</h3>
 					<div className="space-y-2">
 						{events.map((event) => (
-							<ActivityItem key={event.id} event={event} compact />
+							<ActivityItem key={event.id} event={event} compact actorsById={actorsById} />
 						))}
 					</div>
 				</div>
@@ -388,24 +448,32 @@ function Section({
 function ActiveSessionCard({
 	session,
 	workspaceId,
+	onSelect,
 }: {
 	session: SessionResponse
 	workspaceId: string
+	onSelect?: (session: SessionResponse) => void
 }) {
-	const { data: latestLog } = useSessionLatestLog(session.id, workspaceId)
+	const { data: logs } = useSessionLogs(session.id, workspaceId, true, { live: true })
 	const duration = useDuration(session.startedAt)
+	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
+	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2">
-			<Spinner />
-			<span className="text-sm truncate flex-1">{session.actionPrompt}</span>
-			{latestLog && (
-				<span className="text-xs text-muted-foreground truncate max-w-[200px]">
-					{latestLog.content}
+		<button
+			type="button"
+			className="flex w-full items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
+			onClick={() => onSelect?.(session)}
+		>
+			{idle ? <PauseCircle size={14} className="shrink-0 text-muted-foreground" /> : <Spinner />}
+			<span className="text-sm truncate flex-1 min-w-0">{session.actionPrompt}</span>
+			{preview && (
+				<span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[200px]">
+					{preview}
 				</span>
 			)}
 			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
-		</div>
+		</button>
 	)
 }
 
@@ -445,28 +513,36 @@ function SessionRow({
 
 	const result = session.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
-	const exitCode = typeof result?.exit_code === 'number' ? result.exit_code : undefined
+	const rawExitCode = result?.exit_code
+	const exitCode: number | null | undefined =
+		typeof rawExitCode === 'number' || rawExitCode === null ? rawExitCode : undefined
 	const hasResultError = !!errorMessage || (exitCode !== undefined && exitCode !== 0)
+	const failureReason = parseFailureReason(result)
 
 	const { data: stderrLog } = useSessionErrorLog(
 		session.id,
 		workspaceId,
-		showError && !hasResultError,
+		showError && !hasResultError && !failureReason,
 	)
 
 	const errorDetail =
-		errorMessage ?? (exitCode !== undefined ? `Process exited with code ${exitCode}` : null)
+		errorMessage ??
+		(exitCode !== undefined
+			? exitCode !== null
+				? `Process exited with code ${exitCode}`
+				: 'Container process was killed'
+			: null)
 	const displayError = errorDetail ?? stderrLog
 
 	return (
 		<div>
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements inner button actions */}
 			<div
-				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 hover:bg-secondary/50 transition-colors cursor-pointer"
+				className="flex items-center gap-2.5 rounded-md px-3 py-1.5 min-w-0 hover:bg-secondary/50 transition-colors cursor-pointer"
 				onClick={() => onSelect?.(session)}
 			>
 				<SessionStatusIcon status={session.status} />
-				<span className={`text-sm truncate flex-1 ${isFailed ? 'text-error' : ''}`}>
+				<span className={`text-sm truncate flex-1 min-w-0 ${isFailed ? 'text-error' : ''}`}>
 					{session.actionPrompt || 'Untitled session'}
 				</span>
 				{isFailed && (
@@ -483,7 +559,7 @@ function SessionRow({
 						</button>
 						<button
 							type="button"
-							className="text-xs text-accent hover:text-accent-hover transition-colors shrink-0 cursor-pointer"
+							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
 							onClick={(e) => {
 								e.stopPropagation()
 								createSession.mutate({
@@ -503,11 +579,18 @@ function SessionRow({
 					className="text-xs text-muted-foreground shrink-0"
 				/>
 			</div>
-			{showError && displayError && (
-				<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
-					{displayError}
-				</pre>
-			)}
+			{showError &&
+				(failureReason ? (
+					<div className="mx-3 mt-1">
+						<FailureCard failureReason={failureReason} workspaceId={workspaceId} />
+					</div>
+				) : (
+					displayError && (
+						<pre className="text-xs font-mono text-error bg-error/10 rounded p-2 mx-3 mt-1 whitespace-pre-wrap">
+							{displayError}
+						</pre>
+					)
+				))}
 		</div>
 	)
 }
@@ -520,7 +603,13 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
-	const { data: recentSessions } = useActorSessions(agent.id, workspaceId)
+	const {
+		data: recentSessionPages,
+		hasNextPage: hasMoreSessions,
+		isFetchingNextPage: isLoadingMoreSessions,
+		fetchNextPage,
+	} = useActorSessionsInfinite(agent.id, workspaceId)
+	const recentSessions = useMemo(() => recentSessionPages?.pages.flat() ?? [], [recentSessionPages])
 	// Filter events by this agent's actorId
 	const agentEvents = useMemo(
 		() => (allEvents ?? []).filter((e) => e.actorId === agent.id),
@@ -607,6 +696,13 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[agent.id, updateActor],
 	)
 
+	const handleUpdateDescription = useCallback(
+		(description: string) => {
+			updateActor.mutate({ id: agent.id, data: { description } })
+		},
+		[agent.id, updateActor],
+	)
+
 	const handleUpdateSystemPrompt = useCallback(
 		(system_prompt: string) => {
 			updateActor.mutate({ id: agent.id, data: { system_prompt } })
@@ -651,7 +747,11 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				events={agentEvents}
 				activeSessions={activeSessions}
 				recentSessions={recentSessions}
+				hasMoreSessions={hasMoreSessions}
+				isLoadingMoreSessions={isLoadingMoreSessions}
+				onLoadMoreSessions={() => fetchNextPage()}
 				onUpdateName={handleUpdateName}
+				onUpdateDescription={handleUpdateDescription}
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
 				onUpdateLlmConfig={handleUpdateLlmConfig}
