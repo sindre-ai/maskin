@@ -53,6 +53,11 @@ export const sendMessageSchema = z.object({
 })
 export type SendMessageInput = z.infer<typeof sendMessageSchema>
 
+export const updateConversationSchema = z.object({
+	title: z.string().min(1).max(255).nullable(),
+})
+export type UpdateConversationInput = z.infer<typeof updateConversationSchema>
+
 export const addParticipantSchema = z.object({
 	actor_id: z.string().uuid(),
 })

@@ -48,11 +48,13 @@ const mockConversation: ConversationResponse = {
 let mockConversationList: ConversationResponse[] = []
 const mockMarkRead = { mutate: vi.fn() }
 const mockCreateConversation = { mutate: vi.fn(), isPending: false }
+const mockUpdateTitle = { mutate: vi.fn() }
 
 vi.mock('@/hooks/use-conversations', () => ({
 	useConversations: () => ({ data: mockConversationList, isLoading: false }),
 	useCreateConversation: () => mockCreateConversation,
 	useMarkConversationRead: () => mockMarkRead,
+	useUpdateConversationTitle: () => mockUpdateTitle,
 	useConversationMessages: () => ({ data: null }),
 }))
 

@@ -19,6 +19,7 @@ import {
 	type participantActorSchema,
 	participantResponseSchema,
 	sendMessageSchema,
+	updateConversationSchema,
 } from '@maskin/shared'
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
@@ -474,6 +475,143 @@ app.openapi(sendMessageRoute, (async (c) => {
 
 	return c.json(serialize(message) as z.infer<typeof messageResponseSchema>, 201)
 }) as RouteHandler<typeof sendMessageRoute, Env>)
+
+// PATCH /:id — update conversation title
+const updateConversationRoute = createRoute({
+	method: 'patch',
+	path: '/:id',
+	tags: ['Conversations'],
+	summary: 'Update a conversation',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: updateConversationSchema } } },
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: conversationResponseSchema } },
+			description: 'Updated conversation',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a participant in this conversation',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Conversation not found',
+		},
+	},
+})
+
+app.openapi(updateConversationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	const conversation = await loadConversationWithAuth(db, id, workspaceId)
+	if (!conversation) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [participant] = await db
+		.select()
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, id),
+				eq(conversationParticipants.actorId, actorId),
+			),
+		)
+		.limit(1)
+
+	if (!participant) {
+		return c.json(createApiError('FORBIDDEN', 'Not a participant in this conversation'), 403)
+	}
+
+	await db.update(conversations).set({ title: body.title }).where(eq(conversations.id, id))
+
+	logger.info('conversation updated', { conversationId: id, actorId })
+
+	// Re-fetch the full conversation response the same way the list endpoint does
+	const [updated] = await db
+		.select({
+			id: conversations.id,
+			workspaceId: conversations.workspaceId,
+			title: conversations.title,
+			type: conversations.type,
+			lastMessagePreview: conversations.lastMessagePreview,
+			lastActivityAt: conversations.lastActivityAt,
+			createdAt: conversations.createdAt,
+		})
+		.from(conversations)
+		.where(eq(conversations.id, id))
+		.limit(1)
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [counts] = await db
+		.select({
+			participantCount: count(conversationParticipants.actorId),
+		})
+		.from(conversationParticipants)
+		.where(eq(conversationParticipants.conversationId, id))
+
+	const [myParticipant] = await db
+		.select({ unreadCount: conversationParticipants.unreadCount })
+		.from(conversationParticipants)
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, id),
+				eq(conversationParticipants.actorId, actorId),
+			),
+		)
+		.limit(1)
+
+	const participantActors = await db
+		.select({
+			actorId: actors.id,
+			name: actors.name,
+			type: actors.type,
+		})
+		.from(conversationParticipants)
+		.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
+		.where(eq(conversationParticipants.conversationId, id))
+
+	const activeSessions = await db
+		.select({ actorId: sessions.actorId })
+		.from(sessions)
+		.where(
+			and(
+				inArray(
+					sessions.actorId,
+					participantActors.map((p) => p.actorId),
+				),
+				eq(sessions.status, 'running'),
+			),
+		)
+	const onlineActorIds = new Set(activeSessions.map((s) => s.actorId))
+
+	return c.json(
+		{
+			...updated,
+			lastActivityAt: updated.lastActivityAt?.toISOString() ?? null,
+			createdAt: updated.createdAt.toISOString(),
+			participantCount: counts?.participantCount ?? 0,
+			unreadCount: myParticipant?.unreadCount ?? 0,
+			participants: participantActors.map((p) => ({
+				actorId: p.actorId,
+				name: p.name,
+				type: p.type,
+				isOnline: onlineActorIds.has(p.actorId),
+			})),
+		} as z.infer<typeof conversationResponseSchema>,
+		200,
+	)
+}) as RouteHandler<typeof updateConversationRoute, Env>)
 
 // POST /:id/read — mark conversation as read for the current actor
 const markReadRoute = createRoute({

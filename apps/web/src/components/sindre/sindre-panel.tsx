@@ -15,6 +15,7 @@ import {
 	useConversations,
 	useCreateConversation,
 	useMarkConversationRead,
+	useUpdateConversationTitle,
 } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { ConversationResponse } from '@/lib/api'
@@ -75,6 +76,11 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const { data: conversations = [], isLoading } = useConversations(workspaceId)
 	const createConversation = useCreateConversation(workspaceId)
 	const markRead = useMarkConversationRead(workspaceId)
+	const updateTitle = useUpdateConversationTitle(workspaceId)
+
+	const [editingTitle, setEditingTitle] = useState(false)
+	const [titleDraft, setTitleDraft] = useState('')
+	const titleInputRef = useRef<HTMLInputElement | null>(null)
 
 	const dms = conversations.filter((c) => c.type === 'dm')
 	const rooms = conversations.filter((c) => c.type === 'room')
@@ -89,6 +95,7 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 		(c: ConversationResponse) => {
 			markRead.mutate(c.id)
 			setActiveConversation(c)
+			setEditingTitle(false)
 		},
 		[markRead],
 	)
@@ -108,6 +115,26 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 	const handleNewChat = useCallback(() => {
 		chatRef.current?.newChat()
 	}, [])
+
+	const handleTitleDoubleClick = useCallback(() => {
+		if (!activeConversation) return
+		setTitleDraft(activeConversation.title ?? '')
+		setEditingTitle(true)
+		setTimeout(() => titleInputRef.current?.select(), 0)
+	}, [activeConversation])
+
+	const handleTitleSave = useCallback(() => {
+		if (!activeConversation) return
+		setEditingTitle(false)
+		const trimmed = titleDraft.trim() || null
+		if (trimmed === (activeConversation.title ?? null)) return
+		updateTitle.mutate(
+			{ id: activeConversation.id, title: trimmed },
+			{
+				onSuccess: (updated) => setActiveConversation(updated),
+			},
+		)
+	}, [activeConversation, titleDraft, updateTitle])
 
 	const buildExportMarkdown = useCallback(() => {
 		const actor = getStoredActor()
@@ -201,9 +228,30 @@ export function SindrePanel({ workspaceId, sindreActorId }: SindrePanelProps) {
 									</TooltipTrigger>
 									<TooltipContent>Back to conversations</TooltipContent>
 								</Tooltip>
-								<span className="truncate text-sm font-semibold">
-									{activeConversation.title ?? 'Conversation'}
-								</span>
+								{editingTitle ? (
+									<input
+										ref={titleInputRef}
+										type="text"
+										value={titleDraft}
+										onChange={(e) => setTitleDraft(e.target.value)}
+										onBlur={handleTitleSave}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter') handleTitleSave()
+											if (e.key === 'Escape') setEditingTitle(false)
+										}}
+										className="min-w-0 flex-1 truncate bg-transparent text-sm font-semibold outline-none"
+										placeholder="Untitled"
+										aria-label="Conversation title"
+									/>
+								) : (
+									<span
+										className="truncate text-sm font-semibold cursor-text"
+										onDoubleClick={handleTitleDoubleClick}
+										title="Double-click to rename"
+									>
+										{activeConversation.title || 'Untitled'}
+									</span>
+								)}
 							</div>
 							<div className="flex items-center gap-1">
 								<DropdownMenu>
