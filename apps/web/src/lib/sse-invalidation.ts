@@ -16,7 +16,9 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 
 	// New comments may change unread counts for any subscriber in this workspace
 	// and the subscriber list for the entity that was commented on (the latter
-	// because the commenter auto-subscribes server-side).
+	// because the commenter auto-subscribes server-side). Edits (comment_edited)
+	// don't change unread/subscriber state — the blanket events.byEntity
+	// invalidation above is enough to refresh the bubble.
 	if (event.action === 'commented') {
 		queryClient.invalidateQueries({
 			queryKey: ['subscriptions', 'unread', workspaceId],
