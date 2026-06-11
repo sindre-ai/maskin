@@ -105,14 +105,15 @@ export function AgentUsageChart({
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Usage
 				</h3>
-				<div
-					role="group"
-					aria-label="Chart view"
-					className="inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground"
-				>
-					<ViewToggle active={view === 'tokens'} onSelect={() => setView('tokens')} label="Tokens" />
+				<fieldset className="m-0 inline-flex h-10 items-center justify-center rounded-md border-0 bg-muted p-1 text-muted-foreground">
+					<legend className="sr-only">Chart view</legend>
+					<ViewToggle
+						active={view === 'tokens'}
+						onSelect={() => setView('tokens')}
+						label="Tokens"
+					/>
 					<ViewToggle active={view === 'cost'} onSelect={() => setView('cost')} label="Cost" />
-				</div>
+				</fieldset>
 			</div>
 
 			<div className="flex flex-wrap items-center gap-2 mb-4">
