@@ -11,6 +11,8 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 const stopMutate = vi.fn()
+const restartMutate = vi.fn()
+let restartIsPending = false
 
 vi.mock('@/hooks/use-sessions', async () => {
 	const actual =
@@ -32,6 +34,10 @@ vi.mock('@/hooks/use-sessions', async () => {
 		useStopSession: () => ({
 			mutate: stopMutate,
 			isPending: false,
+		}),
+		useRestartSession: () => ({
+			mutate: restartMutate,
+			isPending: restartIsPending,
 		}),
 	}
 })
@@ -191,6 +197,53 @@ describe('MentionSessionCard', () => {
 
 			expect(screen.getByText('Failed')).toBeInTheDocument()
 			expect(screen.getByRole('button', { name: /Restart session/i })).toBeInTheDocument()
+		})
+
+		it('fires the restart mutation when the Restart chip is tapped on a stopped session', async () => {
+			restartMutate.mockClear()
+			restartIsPending = false
+			const session = buildSession({
+				id: 'session-prior',
+				status: 'stopped',
+				startedAt: new Date(Date.now() - 3000).toISOString(),
+				completedAt: new Date().toISOString(),
+			})
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			const chip = screen.getByRole('button', { name: /Restart session/i })
+			expect(chip).not.toBeDisabled()
+			await userEvent.click(chip)
+
+			expect(restartMutate).toHaveBeenCalledWith('session-prior')
+		})
+
+		it('also offers Restart for a timed-out session', () => {
+			const session = buildSession({
+				status: 'timeout',
+				startedAt: new Date(Date.now() - 3000).toISOString(),
+				completedAt: new Date().toISOString(),
+			})
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			expect(screen.getByRole('button', { name: /Restart session/i })).toBeInTheDocument()
+		})
+
+		it('shows a Restarting… label and disables the chip while the mutation is pending', () => {
+			restartIsPending = true
+			const session = buildSession({
+				status: 'stopped',
+				startedAt: new Date(Date.now() - 3000).toISOString(),
+				completedAt: new Date().toISOString(),
+			})
+
+			render(<MentionSessionCard session={session} workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			const chip = screen.getByRole('button', { name: /Restart session/i })
+			expect(chip).toBeDisabled()
+			expect(screen.getByText(/Restarting…/)).toBeInTheDocument()
+			restartIsPending = false
 		})
 	})
 })

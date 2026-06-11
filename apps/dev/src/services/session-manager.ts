@@ -371,6 +371,90 @@ export class SessionManager extends EventEmitter {
 		// `stopping` state — see the branch in handleCompletion.
 	}
 
+	/**
+	 * Relaunch a terminal (stopped/failed/timeout) session against the latest
+	 * message state. Spawns a new session row inheriting the prior actor,
+	 * prompt, and config (so it lands in the same mention thread); records the
+	 * supersession on both rows; repoints any object whose activeSessionId
+	 * still pointed at the prior session; and auto-starts the new run.
+	 *
+	 * Idempotency is intentionally light: callers should not double-tap; the
+	 * status guard rejects calls against an already-superseded prior so a
+	 * second tap fails fast with a clear error instead of silently spawning
+	 * a third session.
+	 */
+	async restartSession(
+		priorSessionId: string,
+		createdBy: string,
+	): Promise<typeof sessions.$inferSelect> {
+		const [prior] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, priorSessionId))
+			.limit(1)
+
+		if (!prior) {
+			throw new Error(`Session ${priorSessionId} not found`)
+		}
+
+		if (prior.status !== 'stopped' && prior.status !== 'failed' && prior.status !== 'timeout') {
+			throw new Error(
+				`Session ${priorSessionId} cannot be restarted from status '${prior.status}' (expected stopped, failed, or timeout)`,
+			)
+		}
+
+		const priorConfig = (prior.config as Record<string, unknown>) ?? {}
+		const newConfig: Record<string, unknown> = { ...priorConfig, supersedes: prior.id }
+
+		const newSession = await this.createSession(prior.workspaceId, {
+			actorId: prior.actorId,
+			actionPrompt: prior.actionPrompt,
+			config: newConfig,
+			triggerId: prior.triggerId ?? undefined,
+			createdBy,
+			autoStart: true,
+		})
+
+		const priorResult = (prior.result as Record<string, unknown> | null) ?? {}
+		await this.db
+			.update(sessions)
+			.set({
+				status: 'superseded',
+				result: { ...priorResult, superseded_by: newSession.id },
+				updatedAt: new Date(),
+			})
+			.where(eq(sessions.id, prior.id))
+
+		await this.db
+			.update(objects)
+			.set({ activeSessionId: newSession.id, updatedAt: new Date() })
+			.where(eq(objects.activeSessionId, prior.id))
+			.catch((err) =>
+				logger.warn('Failed to repoint activeSessionId during restart', {
+					priorSessionId: prior.id,
+					newSessionId: newSession.id,
+					error: String(err),
+				}),
+			)
+
+		await this.db.insert(events).values({
+			workspaceId: prior.workspaceId,
+			actorId: prior.actorId,
+			action: 'session_restarted',
+			entityType: 'session',
+			entityId: newSession.id,
+			data: { supersedes: prior.id },
+		})
+
+		logger.info('Session restarted', {
+			priorSessionId: prior.id,
+			newSessionId: newSession.id,
+			workspaceId: prior.workspaceId,
+		})
+
+		return newSession
+	}
+
 	async pauseSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()

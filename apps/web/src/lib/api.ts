@@ -369,6 +369,8 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		restart: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/restart`, { method: 'POST', workspaceId }),
 		usage: (
 			workspaceId: string,
 			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },

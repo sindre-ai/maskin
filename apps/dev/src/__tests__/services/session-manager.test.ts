@@ -689,6 +689,119 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('restartSession()', () => {
+		it('spawns a new session inheriting actor/prompt with config.supersedes', async () => {
+			const prior = buildSession({
+				status: 'stopped',
+				actorId: 'actor-prior',
+				actionPrompt: 'Reply to comment',
+				config: { mention: { object_id: 'obj-1', comment_event_id: 7 } },
+				triggerId: null,
+			})
+			const newSession = buildSession({
+				status: 'pending',
+				workspaceId: prior.workspaceId,
+				actorId: prior.actorId,
+				actionPrompt: prior.actionPrompt,
+			})
+			mockResults.select = [prior]
+			// createSession insert (sessions), session_created event insert, session_restarted insert
+			mockResults.insertQueue = [[newSession], [], []]
+
+			const result = await manager.restartSession(prior.id, 'restarter-actor')
+
+			expect(result.id).toBe(newSession.id)
+			const sessionInsert = calls.inserts.find(
+				(v) =>
+					typeof v === 'object' &&
+					v !== null &&
+					'actionPrompt' in v &&
+					(v as { actionPrompt: unknown }).actionPrompt === prior.actionPrompt,
+			) as { actorId: string; config: Record<string, unknown>; createdBy: string } | undefined
+			expect(sessionInsert).toBeDefined()
+			expect(sessionInsert?.actorId).toBe(prior.actorId)
+			expect(sessionInsert?.createdBy).toBe('restarter-actor')
+			expect(sessionInsert?.config.supersedes).toBe(prior.id)
+			expect(sessionInsert?.config.mention).toEqual({
+				object_id: 'obj-1',
+				comment_event_id: 7,
+			})
+		})
+
+		it('flips the prior session to `superseded` and records superseded_by', async () => {
+			const prior = buildSession({ status: 'failed' })
+			const newSession = buildSession({ status: 'pending' })
+			mockResults.select = [prior]
+			mockResults.insertQueue = [[newSession], [], []]
+
+			await manager.restartSession(prior.id, 'restarter-actor')
+
+			const supersedeUpdate = calls.updates.find(
+				(v) =>
+					typeof v === 'object' &&
+					v !== null &&
+					'status' in v &&
+					(v as { status: unknown }).status === 'superseded',
+			) as { result: { superseded_by: string } } | undefined
+			expect(supersedeUpdate).toBeDefined()
+			expect(supersedeUpdate?.result.superseded_by).toBe(newSession.id)
+		})
+
+		it('repoints objects.activeSessionId from prior to new session', async () => {
+			const prior = buildSession({ status: 'stopped' })
+			const newSession = buildSession({ status: 'pending' })
+			mockResults.select = [prior]
+			mockResults.insertQueue = [[newSession], [], []]
+
+			await manager.restartSession(prior.id, 'restarter-actor')
+
+			const repoint = calls.updates.find(
+				(v) =>
+					typeof v === 'object' &&
+					v !== null &&
+					'activeSessionId' in v &&
+					(v as { activeSessionId: unknown }).activeSessionId === newSession.id,
+			)
+			expect(repoint).toBeDefined()
+		})
+
+		it('emits a `session_restarted` event linked to the new session', async () => {
+			const prior = buildSession({ status: 'timeout' })
+			const newSession = buildSession({ status: 'pending' })
+			mockResults.select = [prior]
+			mockResults.insertQueue = [[newSession], [], []]
+
+			await manager.restartSession(prior.id, 'restarter-actor')
+
+			expect(calls.inserts).toContainEqual(
+				expect.objectContaining({
+					action: 'session_restarted',
+					entityType: 'session',
+					entityId: newSession.id,
+					data: expect.objectContaining({ supersedes: prior.id }),
+				}),
+			)
+		})
+
+		it('throws when the prior session is not found', async () => {
+			mockResults.select = []
+
+			await expect(manager.restartSession('nonexistent', 'restarter')).rejects.toThrow('not found')
+		})
+
+		it.each(['running', 'pending', 'starting', 'completed', 'paused', 'superseded'])(
+			'throws when the prior session is in non-restartable status %s',
+			async (status) => {
+				const prior = buildSession({ status })
+				mockResults.select = [prior]
+
+				await expect(manager.restartSession(prior.id, 'restarter')).rejects.toThrow(
+					/cannot be restarted/,
+				)
+			},
+		)
+	})
+
 	describe('pauseSession()', () => {
 		it('snapshots and pauses a running session', async () => {
 			const session = buildSession({

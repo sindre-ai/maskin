@@ -412,6 +412,51 @@ app.openapi(stopSessionRoute, (async (c) => {
 	return c.json(serialize(updated) as z.infer<typeof sessionResponseSchema>)
 }) as RouteHandler<typeof stopSessionRoute, Env>)
 
+// POST /:id/restart - Restart a terminal session against the latest message state
+const restartSessionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/restart',
+	tags: ['Sessions'],
+	summary: 'Restart a stopped, failed, or timed-out session',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+	},
+	responses: {
+		201: {
+			content: { 'application/json': { schema: sessionResponseSchema } },
+			description: 'New session spawned to supersede the prior one',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Prior session is not in a restartable state',
+		},
+	},
+})
+
+app.openapi(restartSessionRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const prior = await loadSessionWithAuth(db, id, workspaceId)
+	if (!prior) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	try {
+		const newSession = await sessionManager.restartSession(id, actorId)
+		return c.json(serialize(newSession) as z.infer<typeof sessionResponseSchema>, 201)
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		return c.json(createApiError('CONFLICT', message), 409)
+	}
+}) as RouteHandler<typeof restartSessionRoute, Env>)
+
 // POST /:id/pause - Pause and snapshot a session
 const pauseSessionRoute = createRoute({
 	method: 'post',

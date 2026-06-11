@@ -228,6 +228,7 @@ export function createMockSessionManager(overrides?: Record<string, unknown>) {
 	return {
 		createSession: vi.fn(),
 		stopSession: vi.fn(),
+		restartSession: vi.fn(),
 		pauseSession: vi.fn(),
 		resumeSession: vi.fn(),
 		writeInput: vi.fn(),

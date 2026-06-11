@@ -227,6 +227,21 @@ function SessionStatusBadge({ status }: { status: string }) {
 			label: 'Snapshotting',
 			className: 'bg-status-processing-bg text-status-processing-text',
 		},
+		stopping: {
+			icon: Spinner,
+			label: 'Stopping',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		stopped: {
+			icon: MinusCircle,
+			label: 'Stopped',
+			className: 'bg-muted text-muted-foreground',
+		},
+		superseded: {
+			icon: CheckCircle2,
+			label: 'Superseded',
+			className: 'bg-muted text-muted-foreground',
+		},
 		idle: {
 			icon: PauseCircle,
 			label: 'Idle',
