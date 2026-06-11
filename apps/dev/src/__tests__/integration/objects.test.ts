@@ -205,7 +205,7 @@ describe('Objects Integration', () => {
 					'/api/objects/bulk-update',
 					{
 						ids: [task.id, bet.id],
-						patch: { owner: ownerId },
+						patch: { driver: ownerId },
 					},
 					{ 'x-workspace-id': workspaceId },
 				),
