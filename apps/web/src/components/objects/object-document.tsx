@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import {
 	Dialog,
 	DialogContent,
@@ -177,7 +178,6 @@ export function ObjectDocumentView({
 				<RelativeTime date={object.createdAt} className="text-[11px] text-muted-foreground" />
 			</div>
 
-			{/* Viewport checklist — shown to reviewers when a task is in_review */}
 			{object.type === 'task' && object.status === 'in_review' && (
 				<ViewportChecklist />
 			)}
@@ -441,21 +441,21 @@ const VIEWPORT_ITEMS = [
 function ViewportChecklist() {
 	const [checked, setChecked] = useState<Record<string, boolean>>({})
 
-	const toggle = (id: string) =>
-		setChecked((prev) => ({ ...prev, [id]: !prev[id] }))
-
 	return (
 		<div className="mb-6 rounded-md border border-border bg-bg-surface p-4">
 			<p className="text-sm font-medium text-foreground mb-3">Verify at all breakpoints before approving</p>
 			<div className="flex flex-col gap-2">
 				{VIEWPORT_ITEMS.map(({ id, label }) => (
-					<label key={id} className="flex items-center gap-2 cursor-pointer select-none">
+					<div key={id} className="flex items-center gap-2">
 						<Checkbox
+							id={id}
 							checked={!!checked[id]}
-							onCheckedChange={() => toggle(id)}
+							onCheckedChange={(val) => setChecked((prev) => ({ ...prev, [id]: val === true }))}
 						/>
-						<span className="text-sm text-foreground">{label}</span>
-					</label>
+						<Label htmlFor={id} className="text-sm font-normal cursor-pointer select-none">
+							{label}
+						</Label>
+					</div>
 				))}
 			</div>
 		</div>
