@@ -1030,7 +1030,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		)
 		.orderBy(desc(sessions.createdAt))
 
-	const sessionErrors: string[] = []
+	const failedSessionIds: string[] = []
 	for (const s of liveSessions) {
 		try {
 			if (s.status === 'running') {
@@ -1039,11 +1039,12 @@ app.openapi(pauseAgentRoute, (async (c) => {
 				await sessionManager.stopSession(s.id)
 			}
 		} catch (err) {
-			sessionErrors.push(err instanceof Error ? err.message : String(err))
+			failedSessionIds.push(s.id)
+			logger.warn('Failed to pause/stop session during agent pause', {
+				sessionId: s.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
 		}
-	}
-	if (sessionErrors.length > 0) {
-		return c.json(createApiError('BAD_REQUEST', sessionErrors.join('; ')), 400)
 	}
 
 	const [updated] = await db
@@ -1066,7 +1067,10 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		action: 'agent_paused',
 		entityType: 'actor',
 		entityId: id,
-		data: { paused_session_ids: liveSessions.map((s) => s.id) },
+		data: {
+			paused_session_ids: liveSessions.map((s) => s.id),
+			failed_session_ids: failedSessionIds,
+		},
 	})
 
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)

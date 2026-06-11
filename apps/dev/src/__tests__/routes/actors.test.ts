@@ -916,13 +916,14 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		it('returns 400 when sessionManager.pauseSession fails', async () => {
+		it('still pauses the agent even when sessionManager.pauseSession fails', async () => {
 			const agent = buildActor({ type: 'agent', agentState: 'running' })
 			const runningSession = buildSession({
 				actorId: agent.id,
 				workspaceId: wsId,
 				status: 'running',
 			})
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
 			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
@@ -930,6 +931,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[runningSession],
 			]
+			mockResults.update = [updated]
 			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
 				new Error('snapshot failed'),
 			)
@@ -940,15 +942,16 @@ describe('Actors Routes', () => {
 				}),
 			)
 
-			expect(res.status).toBe(400)
+			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.error.message).toContain('snapshot failed')
+			expect(body.agentState).toBe('paused')
 		})
 
-		it('attempts all sessions before returning an error when multiple sessions fail', async () => {
+		it('attempts all sessions and still pauses the agent when multiple sessions fail', async () => {
 			const agent = buildActor({ type: 'agent', agentState: 'running' })
 			const session1 = buildSession({ actorId: agent.id, workspaceId: wsId, status: 'running' })
 			const session2 = buildSession({ actorId: agent.id, workspaceId: wsId, status: 'running' })
+			const updated = { ...agent, agentState: 'paused', agentStateUpdatedAt: new Date() }
 			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
@@ -956,6 +959,7 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[session1, session2],
 			]
+			mockResults.update = [updated]
 			;(sessionManager.pauseSession as ReturnType<typeof vi.fn>)
 				.mockRejectedValueOnce(new Error('first failed'))
 				.mockRejectedValueOnce(new Error('second failed'))
@@ -966,13 +970,12 @@ describe('Actors Routes', () => {
 				}),
 			)
 
-			expect(res.status).toBe(400)
-			const body = await res.json()
-			// Both sessions were attempted
+			// Both sessions were attempted despite failures
 			expect(sessionManager.pauseSession).toHaveBeenCalledTimes(2)
-			// Both error messages appear in the response
-			expect(body.error.message).toContain('first failed')
-			expect(body.error.message).toContain('second failed')
+			// Actor is still marked paused
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.agentState).toBe('paused')
 		})
 	})
 
