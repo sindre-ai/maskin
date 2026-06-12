@@ -10,6 +10,7 @@ import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionManager } from './services/session-manager'
 import { TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
@@ -84,6 +85,15 @@ logger.info('Webhook deliveries cleaner started')
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
+
+// Session dispatch queue absorbs backpressure when no agent-server has
+// capacity and retries failed dispatches. The SessionDispatcher (T6) plugs
+// the real dispatch callback in once it lands; until then the queue parks
+// every claimed row at the no-capacity backoff, so it is safe to start with
+// no enqueued rows.
+const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: 'no_capacity' }))
+sessionDispatchQueue.start()
+logger.info('Session dispatch queue started')
 
 logger.info(`Starting server on port ${port}`)
 
