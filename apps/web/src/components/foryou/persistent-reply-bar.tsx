@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { useSidebar } from '@/components/ui/sidebar'
+import { Textarea } from '@/components/ui/textarea'
 import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
@@ -29,6 +30,7 @@ export function PersistentReplyBar({
 
 	const createComment = useCreateComment(workspaceId, activeId ?? '')
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure height when content changes
 	useLayoutEffect(() => {
 		const ta = textareaRef.current
 		if (!ta) return
@@ -37,6 +39,7 @@ export function PersistentReplyBar({
 	}, [content])
 
 	// Clear the draft whenever the active card changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: activeId is the trigger, not read in the body
 	useLayoutEffect(() => {
 		setContent('')
 	}, [activeId])
@@ -104,15 +107,16 @@ export function PersistentReplyBar({
 				</div>
 				{/* Input row */}
 				<div className="flex items-end gap-2">
-					<textarea
+					<Textarea
 						ref={textareaRef}
 						rows={1}
+						aria-label="Reply message"
 						disabled={!activeId || createComment.isPending}
 						value={content}
 						onChange={(e) => setContent(e.target.value)}
 						onKeyDown={handleKeyDown}
 						placeholder={activeId ? 'Write a message…' : 'Select a thread above to reply…'}
-						className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+						className="min-h-0 flex-1 resize-none text-sm"
 						style={{ minHeight: '38px', maxHeight: `${MAX_TEXTAREA_HEIGHT}px` }}
 					/>
 					<Button

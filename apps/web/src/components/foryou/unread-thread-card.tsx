@@ -72,14 +72,13 @@ export function UnreadThreadCard({
 	})
 	const currentActorId = getStoredActor()?.id ?? null
 
-	const { nodes, firstUnreadRootId, firstUnreadEventId, latestRootId, latestEventId } =
+	const { nodes, firstUnreadRootId, firstUnreadEventId, latestEventId } =
 		useMemo(() => {
 			if (!events) {
 				return {
 					nodes: [] as CommentNode[],
 					firstUnreadRootId: null as number | null,
 					firstUnreadEventId: null as number | null,
-					latestRootId: null as number | null,
 					latestEventId: 0,
 				}
 			}
@@ -150,13 +149,10 @@ export function UnreadThreadCard({
 				boundaryEventId = oldestUnreadEventId
 			}
 
-			const lastNode = built.length > 0 ? built[built.length - 1] : null
-
 			return {
 				nodes: built,
 				firstUnreadRootId: boundaryRootId,
 				firstUnreadEventId: boundaryEventId,
-				latestRootId: lastNode?.root.id ?? null,
 				latestEventId: maxId,
 			}
 		}, [events, item.unread_count, currentActorId])
@@ -206,7 +202,7 @@ export function UnreadThreadCard({
 			{/* Green background revealed on swipe-right */}
 			<div
 				aria-hidden
-				className="pointer-events-none absolute inset-0 flex items-center gap-2 bg-[#dcfce7] px-5 text-xs font-medium text-[#166534]"
+				className="pointer-events-none absolute inset-0 flex items-center gap-2 bg-status-active-bg px-5 text-xs font-medium text-status-active-text"
 				style={{ opacity: isDragging ? swipeBgOpacity : 0 }}
 			>
 				<CheckIcon size={14} />
@@ -239,7 +235,7 @@ export function UnreadThreadCard({
 							<TooltipProvider>
 								<Tooltip>
 									<TooltipTrigger asChild>
-										<span className="inline-flex shrink-0 items-center rounded bg-[var(--tp-bet-bg)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--tp-bet-text)]">
+										<span className="inline-flex shrink-0 items-center rounded bg-type-bet-bg px-1.5 py-0.5 text-[10px] font-semibold text-type-bet-text">
 											B
 										</span>
 									</TooltipTrigger>
