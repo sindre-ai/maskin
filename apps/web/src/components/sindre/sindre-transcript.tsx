@@ -1,34 +1,46 @@
-import { AgentOutput } from '@/components/shared/agent-output'
+import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Spinner } from '@/components/ui/spinner'
-import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
+import type { SindreEvent, UserAttachmentView } from '@/lib/sindre-stream'
 import { Bell, Bot, Box, ChevronDown, ChevronRight, FileText, Wrench } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-interface ChatTranscriptProps {
-	events: ChatEvent[]
+interface SindreTranscriptProps {
+	events: SindreEvent[]
 	starting: boolean
+	/**
+	 * A user turn has been sent and we're waiting for the agent's first
+	 * response event. Renders a "Waiting for response…" placeholder on the
+	 * assistant side until that event lands (or the turn errors out).
+	 */
+	pending?: boolean
 	error: Error | null
 	className?: string
 }
 
 /**
- * Renders the chat transcript — assistant text as markdown, tool_use as a
+ * Renders the Sindre transcript — assistant text as markdown, tool_use as a
  * collapsible block (closed by default, click to inspect input), and thinking
  * as a collapsed expander. Non-renderable envelopes (user echoes, success
  * results, system, debug) fall through to nothing so the surface stays quiet.
  */
-export function ChatTranscript({ events, starting, error, className }: ChatTranscriptProps) {
+export function SindreTranscript({
+	events,
+	starting,
+	pending = false,
+	error,
+	className,
+}: SindreTranscriptProps) {
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom on every new event
+	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom on every new event or while the waiting placeholder appears
 	useEffect(() => {
 		const el = scrollerRef.current
 		if (!el) return
 		el.scrollTop = el.scrollHeight
-	}, [events])
+	}, [events, pending])
 
-	const isEmpty = events.length === 0 && !error
+	const isEmpty = events.length === 0 && !error && !pending
 
 	return (
 		<div ref={scrollerRef} className={cn('overflow-y-auto p-3 text-sm', className)}>
@@ -39,9 +51,19 @@ export function ChatTranscript({ events, starting, error, className }: ChatTrans
 					{events.map((event, index) => (
 						<TranscriptRow key={`${event.kind}-${index}`} event={event} />
 					))}
+					{pending && !error && <WaitingForResponse />}
 					{error && <TranscriptError error={error} />}
 				</div>
 			)}
+		</div>
+	)
+}
+
+function WaitingForResponse() {
+	return (
+		<div className="flex items-center gap-2 text-text-muted text-xs" aria-live="polite">
+			<Spinner />
+			<span>Waiting for response…</span>
 		</div>
 	)
 }
@@ -51,13 +73,13 @@ function EmptyTranscript({ starting }: { starting: boolean }) {
 		return (
 			<div className="flex h-full items-center justify-center gap-2 text-text-muted">
 				<Spinner />
-				<span>Connecting to agent…</span>
+				<span>Connecting to Sindre…</span>
 			</div>
 		)
 	}
 	return (
 		<div className="flex h-full items-center justify-center text-center text-text-muted">
-			Ask the agents about your workspace — notifications, objects, bets, or how to get started.
+			Ask Sindre about your workspace — notifications, objects, bets, or how to get started.
 		</div>
 	)
 }
@@ -70,7 +92,7 @@ function TranscriptError({ error }: { error: Error }) {
 	)
 }
 
-function TranscriptRow({ event }: { event: ChatEvent }) {
+function TranscriptRow({ event }: { event: SindreEvent }) {
 	switch (event.kind) {
 		case 'user':
 			return <UserMessageBlock text={event.text} attachments={event.attachments} />
@@ -144,7 +166,17 @@ function userAttachmentLabel(a: UserAttachmentView): string {
 }
 
 function AssistantTextBlock({ text }: { text: string }) {
-	return <AgentOutput content={text} size="sm" />
+	// MarkdownContent applies `prose-p:text-muted-foreground` internally, which
+	// overrides plain text-color classes on the outer wrapper. Target the
+	// rendered <p>/<li> nodes directly so the body text matches the user
+	// bubble's text-accent-foreground.
+	return (
+		<MarkdownContent
+			content={text}
+			className="[&_li]:!text-accent-foreground [&_p]:!text-accent-foreground"
+			size="sm"
+		/>
+	)
 }
 
 function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
@@ -180,7 +212,7 @@ function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean })
 	const [open, setOpen] = useState(false)
 	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
 	const body = redacted
-		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
+		? 'Anthropic withheld the internal reasoning for this turn. Sindre still thought about the problem — the content just isn’t available here.'
 		: text
 	return (
 		<div className="rounded-md border border-border bg-bg text-xs">
