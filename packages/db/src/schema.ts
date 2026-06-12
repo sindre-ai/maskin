@@ -642,3 +642,105 @@ export const workspaceOnboardingPrompts = pgTable(
 
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
+
+// ── Catalog Packages ──────────────────────────────────────────────────────────
+//
+// Vetted, installable loops (formerly "bundles") of actors, triggers, skills,
+// and integrations. Any workspace can install a package and Maskin pushes
+// version updates to locked installs via the cron in T5. A package is a single
+// row here; the elements it ships with live in `catalog_package_items` as
+// frozen snapshots, one per published version.
+//
+// Re-provisioning convention — every actor/trigger/skill/integration row
+// created by an install must carry `metadata.installed_package_id` (the
+// `installed_packages.id` row) and `metadata.source_item_id` (the
+// `catalog_package_items.source_item_id` it was provisioned from). The
+// version-push cron uses both keys to find what to update and to resolve
+// intra-package wiring (e.g. a trigger whose `target_actor_id` points at an
+// agent in the same loop) against the snapshot graph instead of the live
+// publisher workspace. The convention lives in element-row metadata rather
+// than as columns on `actors` / `triggers` / `workspace_skills` /
+// `integrations` because only the install path and the cron read it, and we
+// don't want a feature-specific column on four hot-ish element tables.
+
+export const catalogPackages = pgTable('catalog_packages', {
+	id: uuid('id').defaultRandom().primaryKey(),
+	name: text('name').notNull(),
+	slug: text('slug').notNull().unique(),
+	description: text('description').notNull(),
+	version: text('version').notNull(),
+	useCase: text('use_case'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type CatalogPackage = typeof catalogPackages.$inferSelect
+export type NewCatalogPackage = typeof catalogPackages.$inferInsert
+
+// ── Catalog Package Items ─────────────────────────────────────────────────────
+//
+// Frozen snapshots of each element that ships with a published package.
+// `source_item_id` is the original actor/trigger/skill/integration id in the
+// publishing workspace — kept so intra-package wiring inside `item_snapshot`
+// (e.g. a `target_actor_id` referencing another item in the same package) can
+// be resolved against this set of rows during install and re-provisioning.
+
+export const catalogPackageItems = pgTable(
+	'catalog_package_items',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		packageId: uuid('package_id')
+			.notNull()
+			.references(() => catalogPackages.id, { onDelete: 'cascade' }),
+		itemType: text('item_type').notNull(),
+		sourceItemId: uuid('source_item_id').notNull(),
+		itemSnapshot: jsonb('item_snapshot').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('catalog_package_items_package_idx').on(t.packageId),
+		index('catalog_package_items_package_source_idx').on(t.packageId, t.sourceItemId),
+		check(
+			'catalog_package_items_item_type_check',
+			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
+		),
+	],
+)
+
+export type CatalogPackageItem = typeof catalogPackageItems.$inferSelect
+export type NewCatalogPackageItem = typeof catalogPackageItems.$inferInsert
+
+// ── Installed Packages ────────────────────────────────────────────────────────
+//
+// One row per package installed into a workspace. `is_locked` defaults to true
+// — Maskin owns the install and pushes version updates via the cron in T5
+// until the workspace explicitly forks. Forking sets `forked_at` and flips
+// `is_locked` to false; the row is preserved so install lineage survives the
+// fork. The `source_locked_idx` keys the cron's "all locked installs of this
+// package" lookup; the `(workspace_id, source_package_id)` unique key prevents
+// double-installs of the same catalog package into one workspace.
+
+export const installedPackages = pgTable(
+	'installed_packages',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		sourcePackageId: uuid('source_package_id')
+			.notNull()
+			.references(() => catalogPackages.id),
+		installedVersion: text('installed_version').notNull(),
+		isLocked: boolean('is_locked').notNull().default(true),
+		forkedAt: timestamp('forked_at', { withTimezone: true }),
+		installedAt: timestamp('installed_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('installed_packages_ws_source_uniq').on(t.workspaceId, t.sourcePackageId),
+		index('installed_packages_source_locked_idx').on(t.sourcePackageId, t.isLocked),
+	],
+)
+
+export type InstalledPackage = typeof installedPackages.$inferSelect
+export type NewInstalledPackage = typeof installedPackages.$inferInsert
