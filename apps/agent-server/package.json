@@ -1,0 +1,19 @@
+{
+	"name": "@maskin/agent-server",
+	"version": "0.0.1",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"scripts": {
+		"test": "vitest",
+		"type-check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@maskin/storage": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^25.6.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}
