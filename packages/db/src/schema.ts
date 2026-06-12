@@ -572,6 +572,35 @@ export const webhookDeliveries = pgTable(
 	],
 )
 
+// ── Idempotency Records ─────────────────────────────────────────────────────
+// Outbound-side idempotency ledger for the API's `Idempotency-Key` header.
+// Replaces the previous in-memory cache so that a session snapshot + replay
+// (T11/T12 of the session-infra-scale bet) does NOT double-fire side effects:
+// the snapshotted agent re-emits the same tool call with the same derived key,
+// the ledger short-circuits the duplicate and returns the original response.
+//
+// `key` is the cache key (`{actorId|anon}:{idempotency-key-header}`).
+// `actorId` is stored separately so cleanup queries can scope by actor and
+// so the row is interpretable in audit. Anonymous calls (signup) carry NULL.
+// `status` + `response` mirror what the original handler returned; replays
+// re-emit them as-is.
+// `createdAt` drives the 24h sliding TTL — see webhook-deliveries-cleaner.ts
+// for the established cleanup pattern.
+
+export const idempotencyRecords = pgTable(
+	'idempotency_records',
+	{
+		key: text('key').primaryKey(),
+		actorId: uuid('actor_id'),
+		method: text('method').notNull(),
+		path: text('path').notNull(),
+		status: integer('status').notNull(),
+		response: jsonb('response').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('idempotency_records_created_at_idx').on(t.createdAt)],
+)
+
 // ── User Display Settings ───────────────────────────────────────────────────
 //
 // Per-actor, per-workspace, per-object-type display preferences for the

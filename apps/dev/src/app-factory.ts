@@ -11,7 +11,7 @@ import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
-import { idempotencyMiddleware } from './middleware/idempotency'
+import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
@@ -193,7 +193,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		return auth(c, next)
 	})
 
-	app.use('/api/*', idempotencyMiddleware)
+	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
