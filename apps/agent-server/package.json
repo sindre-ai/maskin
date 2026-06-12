@@ -5,14 +5,22 @@
 	"license": "Apache-2.0",
 	"type": "module",
 	"scripts": {
+		"dev": "tsx watch src/index.ts",
+		"build": "node build.mjs",
+		"start": "node dist/index.js",
 		"test": "vitest",
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@maskin/storage": "workspace:*"
+		"@hono/node-server": "^1.19.13",
+		"@maskin/storage": "workspace:*",
+		"hono": "^4.12.14",
+		"zod": "^3.24.0"
 	},
 	"devDependencies": {
 		"@types/node": "^25.6.0",
+		"esbuild": "^0.28.0",
+		"tsx": "^4.19.0",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"
 	}
