@@ -34,6 +34,7 @@ function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUr
 		...serialize(row),
 		content: bytes.toString(encoding),
 		encoding,
+		annotations: row.annotations ?? [],
 		url: fileViewerUrl(frontendUrl, row.workspaceId, row.id),
 	}
 }
@@ -357,6 +358,7 @@ app.openapi(updateFileRoute, (async (c) => {
 				name: body.name ?? locked.name,
 				description: body.description !== undefined ? body.description : locked.description,
 				mimeType: body.mime_type ?? locked.mimeType,
+				annotations: body.annotations ?? locked.annotations,
 				sizeBytes: newSize,
 				updatedAt: new Date(),
 			})

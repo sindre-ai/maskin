@@ -935,10 +935,20 @@ export interface FileListItem {
 	updatedAt: string
 }
 
+export interface FileAnnotation {
+	id: string
+	pinNumber?: number
+	selector: string
+	bounds: { x: number; y: number; w: number; h: number }
+	comment: string
+	position?: { x: number; y: number }
+}
+
 export interface FileDetail extends FileListItem {
 	content: string
 	encoding: 'base64' | 'utf8'
 	url: string
+	annotations: FileAnnotation[]
 }
 
 export interface CreateFileInput {
@@ -955,6 +965,7 @@ export interface UpdateFileInput {
 	mime_type?: string
 	content?: string
 	encoding?: 'base64' | 'utf8'
+	annotations?: FileAnnotation[]
 }
 
 export interface SessionConfigInput {
