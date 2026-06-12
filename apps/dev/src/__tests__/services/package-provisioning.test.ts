@@ -65,9 +65,21 @@ describe('buildActorInsert', () => {
 		expect(snake.llmProvider).toBe('anthropic')
 	})
 
-	it('falls back to a generated apiKey when the snapshot has none', () => {
-		const out = buildActorInsert({ name: 'A' }, { installed_package_id: 'i' }, null)
-		expect(out.apiKey).toMatch(/^pkg_/)
+	it('always mints a fresh apiKey, ignoring any value in the snapshot', () => {
+		// Snapshot has no apiKey → mints a fresh one.
+		const fromEmpty = buildActorInsert({ name: 'A' }, { installed_package_id: 'i' }, null)
+		expect(fromEmpty.apiKey).toMatch(/^ank_/)
+
+		// Snapshot carries a publisher apiKey → ignored. Honoring it would
+		// either leak the publisher's bearer token into the installer workspace
+		// or collide on the actors.api_key unique index.
+		const fromPublisherKey = buildActorInsert(
+			{ name: 'A', apiKey: 'ank_publisherleak' },
+			{ installed_package_id: 'i' },
+			null,
+		)
+		expect(fromPublisherKey.apiKey).toMatch(/^ank_/)
+		expect(fromPublisherKey.apiKey).not.toBe('ank_publisherleak')
 	})
 })
 

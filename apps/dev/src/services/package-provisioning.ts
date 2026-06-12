@@ -1,3 +1,4 @@
+import { generateApiKey } from '@maskin/auth'
 import type { actors, integrations, triggers, workspaceSkills } from '@maskin/db/schema'
 
 /**
@@ -72,8 +73,11 @@ export function buildActorInsert(
 	metadata: Record<string, unknown>,
 	createdBy: string | null,
 ): typeof actors.$inferInsert {
-	const apiKey =
-		(snapshot.apiKey as string) ?? (snapshot.api_key as string) ?? `pkg_${randomToken()}`
+	// Always mint a fresh apiKey. The snapshot is untrusted input from the
+	// publishing workspace — honoring `snapshot.apiKey` would either copy the
+	// publisher's bearer token into the installer's workspace (auth leak) or
+	// collide on the unique index. apiKey is a real auth credential; it must
+	// be generated locally via the cryptographically-secure helper.
 	return {
 		type: (snapshot.type as string) ?? 'agent',
 		name: (snapshot.name as string) ?? 'Untitled agent',
@@ -85,7 +89,7 @@ export function buildActorInsert(
 			(snapshot.llm_config as Record<string, unknown>) ??
 			null,
 		tools: (snapshot.tools as Record<string, unknown>) ?? null,
-		apiKey,
+		apiKey: generateApiKey().key,
 		metadata,
 		createdBy,
 	}
@@ -140,18 +144,20 @@ export function buildIntegrationInsert(
 	metadata: Record<string, unknown>,
 	createdBy: string,
 ): typeof integrations.$inferInsert {
+	// Always force status='inactive' on install. Snapshots cannot carry real
+	// credentials (those are workspace-scoped encrypted tokens), so the only
+	// usable post-install state is "needs reconnect" — the user re-runs OAuth
+	// from the installer workspace. Honoring snapshot.status could leave a
+	// fresh install marked 'active' with an empty credentials string, which
+	// would 500 the first decrypt() the moment anything reads it.
 	return {
 		workspaceId,
 		provider: (snapshot.provider as string) ?? 'unknown',
-		status: (snapshot.status as string) ?? 'inactive',
+		status: 'inactive',
 		externalId: (snapshot.externalId as string) ?? (snapshot.external_id as string) ?? null,
-		credentials: (snapshot.credentials as string) ?? '',
+		credentials: '',
 		config: (snapshot.config as Record<string, unknown>) ?? {},
 		createdBy,
 		metadata,
 	}
-}
-
-function randomToken(): string {
-	return Math.random().toString(36).slice(2) + Date.now().toString(36)
 }
