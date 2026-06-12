@@ -642,3 +642,40 @@ export const workspaceOnboardingPrompts = pgTable(
 
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
+
+// ── Session Dispatch Attempts ───────────────────────────────────────────────
+//
+// Postgres-backed dispatch queue for session-start calls from apps/dev to
+// apps/agent-server. Absorbs backpressure when no agent-server has capacity
+// and retries failed dispatches with exponential backoff. The same
+// `idempotency_key` is reused across every retry of a given session — the
+// receiver and downstream side-effect layer (per the idempotency middleware)
+// dedupe any double-fire.
+//
+// One row per session_id (UNIQUE). Re-enqueueing the same session is an
+// UPSERT. Status moves pending → row deleted on dispatch, or pending →
+// failed on permanent failure or after max_attempts is exhausted.
+
+export const sessionDispatchAttempts = pgTable(
+	'session_dispatch_attempts',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		sessionId: uuid('session_id').notNull(),
+		idempotencyKey: text('idempotency_key').notNull(),
+		attempt: integer('attempt').notNull().default(0),
+		maxAttempts: integer('max_attempts').notNull().default(5),
+		status: text('status').notNull().default('pending'),
+		nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+		lastError: text('last_error'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('session_dispatch_attempts_session_id_uniq').on(t.sessionId),
+		check('session_dispatch_attempts_status_check', sql`${t.status} IN ('pending','failed')`),
+		index('session_dispatch_attempts_ready_idx').on(t.status, t.nextAttemptAt),
+	],
+)
+
+export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
+export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
