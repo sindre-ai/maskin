@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { capturePosthogEvent } from '../../../analytics/posthog'
 import { logger } from '../../../logger'
 
 const SLACK_API_BASE = 'https://slack.com/api'
@@ -23,6 +24,14 @@ export interface SlackPostContext {
 	workspaceId: string
 	/** For logs only — tells us which actor in that workspace sent it. */
 	actorId: string
+	/**
+	 * Slack `team_id` for the workspace integration — drives the bet's ship
+	 * metric breakdown by Slack workspace. Sourced from `integration.externalId`,
+	 * which is populated by `parseTokenResponse` / `resolveExternalId` on the
+	 * provider config. Undefined when an older integration row predates that
+	 * stash and `resolveExternalId` hasn't backfilled yet.
+	 */
+	slackTeamId?: string
 }
 
 interface SlackPostMessageResponse {
@@ -129,6 +138,15 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 				channel: result.channel ?? args.channel,
 				ts: result.ts,
 				agentLabel: ctx.agentLabel,
+			})
+			// Drives the bet's ≥80% ship metric — we only get here on a 2xx +
+			// `ok: true` Slack response, so a successful send maps 1:1 to an event.
+			void capturePosthogEvent('slack.message.posted', ctx.workspaceId, {
+				workspace_id: ctx.workspaceId,
+				slack_team_id: ctx.slackTeamId ?? null,
+				posted_as_machine: isSlackBotToken(ctx.botToken),
+				has_agent_subscript: Boolean(ctx.agentLabel?.trim()),
+				agent_actor_id: ctx.actorId,
 			})
 			return {
 				content: [

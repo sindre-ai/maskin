@@ -1,4 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { capturePosthogEventMock } = vi.hoisted(() => ({
+	capturePosthogEventMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: capturePosthogEventMock,
+}))
+
 import {
 	createSlackMcpServer,
 	isSlackBotToken,
@@ -28,6 +36,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		machineIconUrl: 'https://maskin.example.com/machine.png',
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
+		slackTeamId: 'T123ABC',
 	}
 
 	let fetchMock: ReturnType<typeof vi.fn>
@@ -38,6 +47,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 			json: async () => ({ ok: true, ts: '1717000000.000100', channel: 'C123' }),
 		} as Response)
 		vi.stubGlobal('fetch', fetchMock)
+		capturePosthogEventMock.mockClear()
 	})
 
 	afterEach(() => {
@@ -123,5 +133,49 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		await expect(callSendMessage({ channel: 'C123', text: 'hi' })).rejects.toThrow(
 			/channel_not_found/,
 		)
+	})
+
+	it('emits slack.message.posted to PostHog after a successful send — drives the bet ship metric', async () => {
+		await callSendMessage({ channel: 'C123', text: 'hello' })
+
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		const [event, distinctId, props] = capturePosthogEventMock.mock.calls[0] as [
+			string,
+			string,
+			Record<string, unknown>,
+		]
+		expect(event).toBe('slack.message.posted')
+		expect(distinctId).toBe('ws-1')
+		expect(props).toEqual({
+			workspace_id: 'ws-1',
+			slack_team_id: 'T123ABC',
+			posted_as_machine: true,
+			has_agent_subscript: true,
+			agent_actor_id: 'actor-1',
+		})
+	})
+
+	it('records slack_team_id as null when the integration row predates externalId backfill', async () => {
+		const server = createSlackMcpServer({ ...ctx, slackTeamId: undefined })
+		const tool = (
+			server as unknown as {
+				_registeredTools: Record<
+					string,
+					{ handler: (args: unknown, extra: unknown) => Promise<unknown> }
+				>
+			}
+		)._registeredTools.slack_send_message
+		await tool.handler({ channel: 'C123', text: 'hi' }, {})
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.slack_team_id).toBeNull()
+	})
+
+	it('does NOT emit slack.message.posted when the post fails', async () => {
+		fetchMock.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({ ok: false, error: 'channel_not_found' }),
+		} as Response)
+		await expect(callSendMessage({ channel: 'C123', text: 'hi' })).rejects.toThrow()
+		expect(capturePosthogEventMock).not.toHaveBeenCalled()
 	})
 })
