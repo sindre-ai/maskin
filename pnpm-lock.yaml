@@ -32,6 +32,9 @@ importers:
       '@maskin/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      hono:
+        specifier: ^4.12.12
+        version: 4.12.14
     devDependencies:
       '@types/node':
         specifier: ^25.6.0

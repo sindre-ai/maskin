@@ -9,7 +9,8 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@maskin/storage": "workspace:*"
+		"@maskin/storage": "workspace:*",
+		"hono": "^4.12.12"
 	},
 	"devDependencies": {
 		"@types/node": "^25.6.0",
