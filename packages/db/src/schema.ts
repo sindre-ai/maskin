@@ -663,10 +663,7 @@ export const agentServers = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		check(
-			'agent_servers_status_check',
-			sql`${t.status} IN ('active', 'draining', 'disabled')`,
-		),
+		check('agent_servers_status_check', sql`${t.status} IN ('active', 'draining', 'disabled')`),
 	],
 )
 

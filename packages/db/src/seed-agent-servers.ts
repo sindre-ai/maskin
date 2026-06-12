@@ -9,9 +9,7 @@ import { agentServers } from './schema'
 
 const url = process.env.AGENT_SERVER_FINLAND_URL
 const secret = process.env.AGENT_SERVER_FINLAND_SECRET
-const maxConcurrentSessions = Number(
-	process.env.AGENT_SERVER_FINLAND_MAX_SESSIONS ?? '50',
-)
+const maxConcurrentSessions = Number(process.env.AGENT_SERVER_FINLAND_MAX_SESSIONS ?? '50')
 
 if (!url) {
 	throw new Error('AGENT_SERVER_FINLAND_URL is required')
