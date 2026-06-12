@@ -224,6 +224,9 @@ When you do notify, \`metadata.actions\` MUST be a native JSON array, not a stri
 		$id: 'workspace_observer',
 		name: 'Workspace Observer',
 		tools: maskinOnlyTools,
+		// Keep the `workspace-observer-onboarding` skill content below in sync with
+		// .agents/skills/workspace-observer-onboarding/SKILL.md — both are the source
+		// of truth and must match.
 		skills: [
 			{
 				name: 'workspace-observer-onboarding',
