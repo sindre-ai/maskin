@@ -485,14 +485,14 @@ function ActiveSessionCard({
 			className="flex w-full items-center gap-2.5 rounded-md border border-border bg-secondary/50 px-3 py-2 min-h-[44px] min-w-0 text-left hover:bg-secondary transition-colors cursor-pointer"
 			onClick={() => onSelect?.(session)}
 		>
-			{idle ? <PauseCircle size={14} className="shrink-0 text-muted-foreground" /> : <Spinner />}
+			{idle ? <PauseCircle size={14} className="shrink-0 text-foreground/60" /> : <Spinner />}
 			<span className="text-sm truncate flex-1 min-w-0">{session.actionPrompt}</span>
 			{preview && (
-				<span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[200px]">
+				<span className="text-xs text-foreground/60 truncate max-w-[120px] sm:max-w-[200px]">
 					{preview}
 				</span>
 			)}
-			{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
+			{duration && <span className="text-xs text-foreground/60 shrink-0">{duration}</span>}
 		</button>
 	)
 }
