@@ -229,7 +229,10 @@ describe('McpServers', () => {
 
 		expect(onUpdate).toHaveBeenCalledWith({
 			mcpServers: expect.objectContaining({
-				slack: expect.objectContaining({ command: 'npx' }),
+				slack: expect.objectContaining({
+					type: 'http',
+					url: expect.stringContaining('/api/integrations/slack/mcp'),
+				}),
 			}),
 		})
 	})

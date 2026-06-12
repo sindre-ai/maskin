@@ -48,10 +48,12 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' },
 	},
 	slack: {
-		type: 'stdio',
-		command: 'npx',
-		args: ['-y', '@modelcontextprotocol/server-slack'],
-		env: { SLACK_BOT_TOKEN: '${SLACK_TOKEN}' },
+		type: 'http',
+		url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+		headers: {
+			Authorization: 'Bearer ${MASKIN_API_KEY}',
+			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		},
 	},
 	gmail: {
 		type: 'http',
