@@ -15,6 +15,7 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 	component: AgentsPage,
@@ -127,8 +128,17 @@ function AgentsPage() {
 									agent={agent as ActorResponse}
 									status={status}
 									latestSession={getLatestSession(agent.id, sessionsByAgent)}
-									onRun={() => runMutation.mutate({ id: agent.id })}
-									onPause={() => pauseMutation.mutate(agent.id)}
+									onRun={() =>
+										runMutation.mutate(
+											{ id: agent.id },
+											{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
+										)
+									}
+									onPause={() =>
+										pauseMutation.mutate(agent.id, {
+											onError: () => toast.error(`Couldn't pause ${agent.name}`),
+										})
+									}
 									isRunPending={runMutation.isPending && runVars?.id === agent.id}
 									isPausePending={pauseMutation.isPending && pauseVars === agent.id}
 								/>
