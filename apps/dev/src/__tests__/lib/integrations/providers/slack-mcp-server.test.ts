@@ -178,4 +178,17 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		await expect(callSendMessage({ channel: 'C123', text: 'hi' })).rejects.toThrow()
 		expect(capturePosthogEventMock).not.toHaveBeenCalled()
 	})
+
+	it('surfaces the HTTP status when Slack returns a non-2xx HTML body instead of throwing SyntaxError from res.json()', async () => {
+		const htmlBody = '<html><body>503 Service Unavailable</body></html>'
+		fetchMock.mockResolvedValueOnce({
+			ok: false,
+			status: 503,
+			json: async () => {
+				throw new SyntaxError('Unexpected token < in JSON at position 0')
+			},
+			text: async () => htmlBody,
+		} as unknown as Response)
+		await expect(callSendMessage({ channel: 'C123', text: 'hi' })).rejects.toThrow(/HTTP 503/)
+	})
 })
