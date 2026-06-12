@@ -176,9 +176,10 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 	// Lazy bootstrap: the composer is usable whenever the Sindre actor is
 	// present — the first send() call creates the container. Only disable
 	// while the Sindre session is actively booting (post-create, pre-
-	// running), in an error state, or finished.
-	const sindreBlocked =
-		sindre.status === 'starting' || sindre.status === 'error' || sindre.status === 'closed'
+	// running) or finished. An error (e.g. the container failed to start in
+	// time) keeps the composer enabled so the user can retry — the hook drops
+	// the dead session, so the next send re-bootstraps a fresh one.
+	const sindreBlocked = sindre.status === 'starting' || sindre.status === 'closed'
 	const oneShotBusy = oneShot.status === 'starting'
 	const disabled = selectedAgent ? oneShotBusy : sindreBlocked || !sindreActorId
 	// Show the "Connecting to Sindre…" empty-state only while we're actively
@@ -348,6 +349,7 @@ export const SindreChat = forwardRef<SindreChatHandle, SindreChatProps>(function
 				<SindreTranscript
 					events={events}
 					starting={starting}
+					pending={pendingTurn}
 					error={error}
 					className="min-h-0 flex-1"
 				/>

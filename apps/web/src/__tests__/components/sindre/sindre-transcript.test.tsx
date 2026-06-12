@@ -82,6 +82,32 @@ describe('SindreTranscript', () => {
 		expect(screen.getByText(/Connecting to Sindre/i)).toBeInTheDocument()
 	})
 
+	it('renders a waiting-for-response placeholder after the user turn while pending', () => {
+		const events: SindreEvent[] = [{ kind: 'user', text: 'hello sindre' }]
+		render(<SindreTranscript events={events} starting={false} pending error={null} />)
+
+		// The sent user turn is visible (and copyable) alongside the placeholder.
+		expect(screen.getByText('hello sindre')).toBeInTheDocument()
+		expect(screen.getByText(/Waiting for response/i)).toBeInTheDocument()
+	})
+
+	it('drops the waiting placeholder once an error replaces it', () => {
+		const events: SindreEvent[] = [{ kind: 'user', text: 'hello sindre' }]
+		render(
+			<SindreTranscript
+				events={events}
+				starting={false}
+				pending
+				error={new Error('Sindre session did not start in time')}
+			/>,
+		)
+
+		expect(screen.queryByText(/Waiting for response/i)).not.toBeInTheDocument()
+		expect(screen.getByText(/did not start in time/i)).toBeInTheDocument()
+		// The user's message is still on screen so it isn't lost.
+		expect(screen.getByText('hello sindre')).toBeInTheDocument()
+	})
+
 	it('renders errors and error results without crashing', () => {
 		const events: SindreEvent[] = [
 			{ kind: 'error', message: 'Socket closed', data: {} },

@@ -180,6 +180,16 @@ describe('SindreChat', () => {
 		expect(screen.getByText(/Connecting to Sindre/i)).toBeInTheDocument()
 	})
 
+	it('keeps the composer enabled when the session errored so the user can retry', () => {
+		setHookResult({ status: 'error', error: new Error('Sindre session did not start in time') })
+		render(<SindreChat workspaceId="ws-1" sindreActorId="actor-sindre" surface="sheet" />)
+
+		const textarea = screen.getByPlaceholderText('Message Sindre') as HTMLTextAreaElement
+		expect(textarea).not.toBeDisabled()
+		// The error is surfaced in the transcript so the user sees what happened.
+		expect(screen.getByText(/did not start in time/i)).toBeInTheDocument()
+	})
+
 	it('submits on Enter and leaves the textarea clean', async () => {
 		mockSend.mockClear()
 		setHookResult({ status: 'ready' })

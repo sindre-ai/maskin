@@ -198,6 +198,21 @@ export function useSindreSession({
 			if (!workspaceId) throw new Error('No workspace selected')
 			if (!sindreActorId) throw new Error('Sindre agent not available')
 
+			// Echo the user's turn immediately — before the (possibly slow)
+			// container bootstrap — so the message is visible the instant they
+			// hit send, and stays visible (copyable) in the transcript even if
+			// the session never starts. Mirrors the one-shot path's optimistic
+			// echo.
+			setEvents((prev) =>
+				prev.concat({
+					kind: 'user',
+					text: displayText ?? content,
+					...(displayAttachments && displayAttachments.length > 0
+						? { attachments: displayAttachments }
+						: {}),
+				}),
+			)
+
 			// Lazy bootstrap — only create the container on the user's first
 			// turn, so opening the panel (or re-mounting the app) never spawns
 			// a session.
@@ -233,6 +248,11 @@ export function useSindreSession({
 					}
 				} catch (err) {
 					if (generationRef.current === generation) {
+						// Drop the half-started session so the next send re-bootstraps
+						// a fresh container instead of POSTing the turn into one that
+						// never reached `running` (which 409s). The optimistic user
+						// echo above stays in the transcript so the message isn't lost.
+						setSessionId(null)
 						setStatus('error')
 						const wrapped = err instanceof Error ? err : new Error(String(err))
 						setError(wrapped)
@@ -250,15 +270,6 @@ export function useSindreSession({
 				throw new Error('Sindre session was reset during bootstrap')
 			}
 
-			setEvents((prev) =>
-				prev.concat({
-					kind: 'user',
-					text: displayText ?? content,
-					...(displayAttachments && displayAttachments.length > 0
-						? { attachments: displayAttachments }
-						: {}),
-				}),
-			)
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
 			await api.sessions.input(currentSessionId, body, workspaceId)
 		},

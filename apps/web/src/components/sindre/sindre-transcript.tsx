@@ -8,6 +8,12 @@ import { useEffect, useRef, useState } from 'react'
 interface SindreTranscriptProps {
 	events: SindreEvent[]
 	starting: boolean
+	/**
+	 * A user turn has been sent and we're waiting for the agent's first
+	 * response event. Renders a "Waiting for response…" placeholder on the
+	 * assistant side until that event lands (or the turn errors out).
+	 */
+	pending?: boolean
 	error: Error | null
 	className?: string
 }
@@ -18,17 +24,23 @@ interface SindreTranscriptProps {
  * as a collapsed expander. Non-renderable envelopes (user echoes, success
  * results, system, debug) fall through to nothing so the surface stays quiet.
  */
-export function SindreTranscript({ events, starting, error, className }: SindreTranscriptProps) {
+export function SindreTranscript({
+	events,
+	starting,
+	pending = false,
+	error,
+	className,
+}: SindreTranscriptProps) {
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom on every new event
+	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom on every new event or while the waiting placeholder appears
 	useEffect(() => {
 		const el = scrollerRef.current
 		if (!el) return
 		el.scrollTop = el.scrollHeight
-	}, [events])
+	}, [events, pending])
 
-	const isEmpty = events.length === 0 && !error
+	const isEmpty = events.length === 0 && !error && !pending
 
 	return (
 		<div ref={scrollerRef} className={cn('overflow-y-auto p-3 text-sm', className)}>
@@ -39,9 +51,19 @@ export function SindreTranscript({ events, starting, error, className }: SindreT
 					{events.map((event, index) => (
 						<TranscriptRow key={`${event.kind}-${index}`} event={event} />
 					))}
+					{pending && !error && <WaitingForResponse />}
 					{error && <TranscriptError error={error} />}
 				</div>
 			)}
+		</div>
+	)
+}
+
+function WaitingForResponse() {
+	return (
+		<div className="flex items-center gap-2 text-text-muted text-xs" aria-live="polite">
+			<Spinner />
+			<span>Waiting for response…</span>
 		</div>
 	)
 }
