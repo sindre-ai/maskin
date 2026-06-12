@@ -11,6 +11,7 @@ import {
 } from '../lib/integrations/providers/slack/mcp-server'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -100,6 +101,10 @@ app.post('/', async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
+	}
+
 	const resolved = await resolveSlackBotToken(db, workspaceId)
 	if (!resolved) {
 		return c.json(
@@ -124,6 +129,9 @@ app.post('/', async (c) => {
 		actorId,
 	})
 
+	// sessionIdGenerator: undefined = stateless mode. Each POST is self-contained:
+	// tools are registered synchronously before connect(), so initialize/tools-list/
+	// tools-call all work without cross-request state. Matches the /mcp pattern.
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
 		enableJsonResponse: true,
