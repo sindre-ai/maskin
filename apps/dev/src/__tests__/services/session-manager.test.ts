@@ -78,6 +78,14 @@ vi.mock('../../services/workspace-briefing', () => ({
 	workspaceLedgerKey: vi.fn().mockReturnValue('agents/ws/_workspace/learnings.md'),
 }))
 
+const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
+	mockClassifyCreditExhaustion: vi.fn(),
+}))
+
+vi.mock('../../lib/credit-classifier', () => ({
+	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+}))
+
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
@@ -632,6 +640,24 @@ describe('SessionManager', () => {
 
 			await expect(manager.pauseSession(session.id)).rejects.toThrow('copy failed')
 			// Status should be reverted to running (via the catch block's db.update call)
+		})
+
+		it('clears currentActivity to null on successful pause', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'container-abc',
+				currentActivity: 'Searching codebase',
+			})
+			mockResults.select = [session]
+			mockResults.insert = []
+			mockContainerManager.inspect.mockResolvedValueOnce({ running: true, exitCode: null })
+
+			await manager.pauseSession(session.id)
+
+			const pauseUpdate = calls.updates.find(
+				(u) => (u as Record<string, unknown>).status === 'paused',
+			)
+			expect(pauseUpdate).toMatchObject({ currentActivity: null })
 		})
 
 		it('marks session failed when container is already gone (no snapshot attempt)', async () => {
@@ -1193,6 +1219,199 @@ describe('SessionManager', () => {
 					(i as { content?: string }).content === 'recovered-chunk',
 			)
 			expect(recovered).toBeDefined()
+		})
+	})
+
+	describe('handleCompletion() — agentState sync', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it('sets agentState to idle when session completes (exitCode 0)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('idle')
+		})
+
+		it('sets agentState to failed when session fails (exitCode non-zero)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate?.agentState).toBe('failed')
+		})
+
+		it('does not touch agentState when the agent has another active session', async () => {
+			const session = buildSession({ status: 'running' })
+			const otherSession = buildSession({ actorId: session.actorId, status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[otherSession], // hasOtherActiveSessions: agent still has live work
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const actorUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
+			)
+			expect(actorUpdate).toBeUndefined()
+		})
+	})
+
+	describe('handleCompletion() — credit-exhaustion classification', () => {
+		const knownReason = {
+			provider: 'anthropic',
+			reason_code: 'billing_error',
+			human_message: 'Anthropic billing error — credit balance may be exhausted',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		}
+
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(knownReason)
+		})
+
+		it('writes failure_reason to both the DB result payload and the event data payload', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: 'billing_error',
+			})
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			// DB sessions.result must contain failure_reason
+			const sessionUpdate = calls.updates.find(
+				(u): u is { result: { exit_code: number; failure_reason: unknown } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.result).toMatchObject({ failure_reason: knownReason })
+
+			// Event insert data must contain failure_reason
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: { exit_code: number; failure_reason: unknown } } =>
+					typeof i === 'object' &&
+					i !== null &&
+					typeof (i as Record<string, unknown>).action === 'string' &&
+					(i as { action: string }).action.startsWith('session_'),
+			)
+			expect(eventInsert?.data).toMatchObject({ failure_reason: knownReason })
+		})
+
+		it('does not call classifier and omits failure_reason when exitCode is 0', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+			const sessionUpdate = calls.updates.find(
+				(u): u is Record<string, unknown> =>
+					typeof u === 'object' && u !== null && 'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate?.result as Record<string, unknown>).not.toHaveProperty('failure_reason')
+		})
+
+		it('does not call classifier when exitCode is null (OOM kill)', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(
+						sessionId: string,
+						containerId: string,
+						exitCode: number | null,
+					): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', null)
+
+			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
 		})
 	})
 })

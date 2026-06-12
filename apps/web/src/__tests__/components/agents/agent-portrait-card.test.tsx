@@ -23,7 +23,7 @@ vi.mock('@/hooks/use-duration', () => ({
 describe('AgentPortraitCard', () => {
 	const noop = () => {}
 
-	it('renders agent name and role from systemPrompt first line', () => {
+	it('renders agent name and role from system_prompt first line', () => {
 		const agent = buildActorResponse({
 			name: 'Scout',
 			type: 'agent',

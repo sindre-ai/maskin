@@ -10,7 +10,7 @@ import {
 	updateFileSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, desc, eq, ilike } from 'drizzle-orm'
+import { and, desc, eq, ilike, inArray } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
@@ -38,8 +38,11 @@ function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUr
 	}
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 const listQuerySchema = z.object({
 	q: z.string().trim().min(1).max(255).optional(),
+	ids: z.string().optional(),
 	limit: z.coerce.number().int().positive().max(200).optional(),
 	offset: z.coerce.number().int().nonnegative().optional(),
 })
@@ -178,6 +181,10 @@ const listFilesRoute = createRoute({
 			content: { 'application/json': { schema: z.array(fileListItemSchema) } },
 			description: 'Files list',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
 	},
 })
 
@@ -186,11 +193,22 @@ app.openapi(listFilesRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
-	const limit = Number.isFinite(query.limit) && query.limit ? Math.min(query.limit, 200) : 50
+	const rawIds = query.ids ? query.ids.split(',') : null
+	if (rawIds?.some((id) => !UUID_RE.test(id))) {
+		return c.json(createApiError('VALIDATION_ERROR', 'ids must be comma-separated UUIDs'), 400)
+	}
+	const ids = rawIds
+
+	const limit = ids?.length
+		? ids.length
+		: Number.isFinite(query.limit) && query.limit
+			? Math.min(query.limit, 200)
+			: 50
 	const offset = Number.isFinite(query.offset) && query.offset ? query.offset : 0
 
 	const conditions = [eq(files.workspaceId, workspaceId)]
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
+	if (ids?.length) conditions.push(inArray(files.id, ids))
 
 	const rows = await db
 		.select({

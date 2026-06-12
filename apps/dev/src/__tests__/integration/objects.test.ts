@@ -205,7 +205,7 @@ describe('Objects Integration', () => {
 					'/api/objects/bulk-update',
 					{
 						ids: [task.id, bet.id],
-						patch: { owner: ownerId },
+						patch: { driver: ownerId },
 					},
 					{ 'x-workspace-id': workspaceId },
 				),
@@ -219,7 +219,7 @@ describe('Objects Integration', () => {
 				.select()
 				.from(objects)
 				.where(inArray(objects.id, [task.id, bet.id]))
-			expect(rows.every((row) => row.owner === ownerId)).toBe(true)
+			expect(rows.every((row) => row.driver === ownerId)).toBe(true)
 		})
 
 		it('reports per-id failure when status is invalid for the type, leaving siblings updated', async () => {
