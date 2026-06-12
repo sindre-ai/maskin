@@ -71,7 +71,11 @@ export function PersistentReplyBar({
 	return (
 		<div
 			className="fixed bottom-0 right-0 z-40 border-t border-border bg-background"
-			style={{ left: leftOffset, transition: 'left 200ms ease-linear' }}
+			style={{
+				left: leftOffset,
+				paddingBottom: 'env(safe-area-inset-bottom)',
+				transition: 'left 200ms ease-linear',
+			}}
 		>
 			<div className="px-4 py-2.5 md:px-8">
 				{/* Context line */}
