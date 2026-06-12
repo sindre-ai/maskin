@@ -511,6 +511,83 @@ describe('SessionManager', () => {
 			expect(createArgs.env.MCP_SERVERS_JSON).toBeUndefined()
 		})
 
+		describe('Slack auto-inject + xoxb- guard', () => {
+			const slackProviderConfig = {
+				config: {
+					name: 'slack',
+					mcp: {
+						envKey: 'SLACK_BOT_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+
+			it('injects SLACK_BOT_TOKEN and the auto-inject MCP server when the stored token is a bot token', async () => {
+				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('xoxb-real-bot-token')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBe('xoxb-real-bot-token')
+				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; url: string }>
+				}
+				expect(parsed.mcpServers['integration-slack']).toEqual({
+					type: 'http',
+					url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				})
+			})
+
+			it('refuses to inject when the stored Slack token is not a bot (xoxb-) token — guards against posting as a user', async () => {
+				const integration = buildIntegration({ provider: 'slack', externalId: 'T-abc' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(slackProviderConfig as never)
+				// The stored credential is a user token — wrong scopes, do not inject
+				mockGetValidToken.mockResolvedValueOnce('xoxp-user-token')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.SLACK_BOT_TOKEN).toBeUndefined()
+				const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+					? Object.keys(
+							(
+								JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+									mcpServers: Record<string, unknown>
+								}
+							).mcpServers,
+						)
+					: []
+				expect(mcpKeys).not.toContain('integration-slack')
+			})
+		})
+
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
 			const integration = buildIntegration({
 				provider: 'github',
