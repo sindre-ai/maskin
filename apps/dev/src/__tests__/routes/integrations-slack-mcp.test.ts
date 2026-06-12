@@ -25,8 +25,8 @@ vi.mock('../../lib/crypto', () => ({
 	decrypt: mockDecrypt,
 }))
 
-import { createTestApp } from '../setup'
 import { buildActor, buildIntegration, buildWorkspace, buildWorkspaceMember } from '../factories'
+import { createTestApp } from '../setup'
 
 function createApp(actorId = 'test-actor-id') {
 	return import('../../routes/integrations-slack-mcp').then((mod) => {
@@ -122,7 +122,11 @@ describe('POST /api/integrations/slack/mcp', () => {
 		const actor = buildActor({ id: actorId })
 		const workspace = buildWorkspace()
 		const member = buildWorkspaceMember({ actorId, workspaceId: workspace.id })
-		const integration = buildIntegration({ provider: 'slack', status: 'active', workspaceId: workspace.id })
+		const integration = buildIntegration({
+			provider: 'slack',
+			status: 'active',
+			workspaceId: workspace.id,
+		})
 
 		mockDecrypt.mockReturnValue(JSON.stringify({ accessToken: 'xoxp-user-token' }))
 		mockResults.selectQueue = [[actor], [workspace], [member], [integration]]
@@ -146,7 +150,11 @@ describe('POST /api/integrations/slack/mcp', () => {
 		const actor = buildActor({ id: actorId, name: 'Synthesizer' })
 		const workspace = buildWorkspace({ name: 'mesh-firm' })
 		const member = buildWorkspaceMember({ actorId, workspaceId: workspace.id })
-		const integration = buildIntegration({ provider: 'slack', status: 'active', workspaceId: workspace.id })
+		const integration = buildIntegration({
+			provider: 'slack',
+			status: 'active',
+			workspaceId: workspace.id,
+		})
 
 		mockDecrypt.mockReturnValue(JSON.stringify({ accessToken: 'xoxb-real-bot-token' }))
 		mockResults.selectQueue = [[actor], [workspace], [member], [integration]]
@@ -178,7 +186,11 @@ describe('POST /api/integrations/slack/mcp', () => {
 		const actor = buildActor({ id: actorId })
 		const workspace = buildWorkspace()
 		const member = buildWorkspaceMember({ actorId, workspaceId: workspace.id })
-		const integration = buildIntegration({ provider: 'slack', status: 'active', workspaceId: workspace.id })
+		const integration = buildIntegration({
+			provider: 'slack',
+			status: 'active',
+			workspaceId: workspace.id,
+		})
 
 		mockDecrypt.mockReturnValue(JSON.stringify({ accessToken: 'xoxb-bot-token' }))
 		// actor → workspace → membership → integration (all pass, then body parse fails)
