@@ -10,10 +10,10 @@ import {
 	triggers,
 	workspaceSkills,
 } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { errorSchema, jsonbField } from '../lib/openapi-schemas'
+import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import {
@@ -259,6 +259,184 @@ app.openapi(installPackageRoute, async (c) => {
 			provisioned,
 		},
 		201,
+	)
+})
+
+// ── POST /api/installed-packages/:id/fork ────────────────────────────────────
+//
+// Detach a locked install so the workspace owns the provisioned elements. The
+// install row is preserved (lineage) but flipped to `is_locked = false` with
+// `forked_at = now()`; every actor/trigger/skill/integration row provisioned
+// by the install has `metadata.installed_package_id` removed so the T5 cron
+// no longer treats them as managed. `metadata.source_item_id` (and the
+// frozen `metadata.snapshot`) stay in place so the lineage from element back
+// to catalog item is still readable.
+//
+// Idempotency: a 409 on an already-forked install. We intentionally do not
+// silently no-op — the caller asked to fork something that is already forked,
+// which usually means a stale UI state.
+
+const forkResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	sourcePackageId: z.string().uuid(),
+	installedVersion: z.string(),
+	isLocked: z.boolean(),
+	forkedAt: z.string().nullable(),
+	installedAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+	detached: z.object({
+		actors: z.number(),
+		triggers: z.number(),
+		skills: z.number(),
+		integrations: z.number(),
+	}),
+	metadata: jsonbField.optional(),
+})
+
+const forkPackageRoute = createRoute({
+	method: 'post',
+	path: '/{id}/fork',
+	tags: ['installed-packages'],
+	summary: 'Fork an installed package so the workspace owns its elements',
+	request: {
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			description: 'Package forked',
+			content: { 'application/json': { schema: forkResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not a member of the install workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Installed package not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Install is already forked',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Internal server error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(forkPackageRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+
+	// 1. Look up the install. By-id route so the workspace comes off the row,
+	//    not the header — we check membership against it next.
+	const [install] = await db
+		.select()
+		.from(installedPackages)
+		.where(eq(installedPackages.id, id))
+		.limit(1)
+
+	if (!install) {
+		return c.json(createApiError('NOT_FOUND', 'Installed package not found'), 404)
+	}
+
+	if (!(await isWorkspaceMember(db, actorId, install.workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
+	}
+
+	// 2. A second fork is a no-op the caller probably didn't intend. Surface
+	//    the stale state explicitly rather than silently re-stamping forked_at.
+	if (!install.isLocked) {
+		return c.json(createApiError('CONFLICT', 'Install is already forked'), 409)
+	}
+
+	const detached = { actors: 0, triggers: 0, skills: 0, integrations: 0 }
+
+	const forked = await db.transaction(async (tx) => {
+		const now = new Date()
+
+		// 3. Flip the install row. Lineage (source_package_id, installed_version)
+		//    stays on the row — that's how the UI shows "forked from v1.4".
+		const [row] = await tx
+			.update(installedPackages)
+			.set({ isLocked: false, forkedAt: now, updatedAt: now })
+			.where(eq(installedPackages.id, install.id))
+			.returning()
+
+		if (!row) throw new Error('Failed to update installed_packages row on fork')
+
+		// 4. Drop `installed_package_id` from each provisioned element's metadata.
+		//    Postgres `jsonb - 'key'` removes the top-level key in place; the
+		//    `source_item_id` and frozen `snapshot` keys stay so element → catalog
+		//    item lineage remains queryable post-fork. The T5 cron's locked-install
+		//    join keys on `installed_package_id`, so clearing it here is what
+		//    actually unmanages these rows.
+		const detachClause = sql`${actors.metadata} - 'installed_package_id'`
+		const actorRes = await tx
+			.update(actors)
+			.set({ metadata: detachClause })
+			.where(sql`${actors.metadata}->>'installed_package_id' = ${install.id}`)
+			.returning({ id: actors.id })
+		detached.actors = actorRes.length
+
+		const triggerRes = await tx
+			.update(triggers)
+			.set({ metadata: sql`${triggers.metadata} - 'installed_package_id'` })
+			.where(sql`${triggers.metadata}->>'installed_package_id' = ${install.id}`)
+			.returning({ id: triggers.id })
+		detached.triggers = triggerRes.length
+
+		const skillRes = await tx
+			.update(workspaceSkills)
+			.set({ metadata: sql`${workspaceSkills.metadata} - 'installed_package_id'` })
+			.where(sql`${workspaceSkills.metadata}->>'installed_package_id' = ${install.id}`)
+			.returning({ id: workspaceSkills.id })
+		detached.skills = skillRes.length
+
+		const integrationRes = await tx
+			.update(integrations)
+			.set({ metadata: sql`${integrations.metadata} - 'installed_package_id'` })
+			.where(sql`${integrations.metadata}->>'installed_package_id' = ${install.id}`)
+			.returning({ id: integrations.id })
+		detached.integrations = integrationRes.length
+
+		await tx.insert(events).values({
+			workspaceId: row.workspaceId,
+			actorId,
+			action: 'forked',
+			entityType: 'installed_package',
+			entityId: row.id,
+			data: {
+				source_package_id: row.sourcePackageId,
+				installed_version: row.installedVersion,
+				detached,
+			},
+		})
+
+		return row
+	})
+
+	logger.info('Installed package forked', {
+		installedPackageId: forked.id,
+		workspaceId: forked.workspaceId,
+		sourcePackageId: forked.sourcePackageId,
+		installedVersion: forked.installedVersion,
+		detached,
+	})
+
+	return c.json(
+		{
+			...serialize(forked),
+			detached,
+		},
+		200,
 	)
 })
 

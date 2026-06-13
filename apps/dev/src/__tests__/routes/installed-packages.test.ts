@@ -207,3 +207,90 @@ describe('POST /api/installed-packages', () => {
 		expect(res.status).toBe(400)
 	})
 })
+
+describe('POST /api/installed-packages/:id/fork', () => {
+	it('flips the install row and detaches every matching element row', async () => {
+		const { app, mockResults, calls } = setup()
+		const install = installRow({ isLocked: true, forkedAt: null })
+		const forked = { ...install, isLocked: false, forkedAt: new Date() }
+
+		mockResults.selectQueue = [
+			// installedPackages lookup
+			[install],
+			// isWorkspaceMember
+			[buildWorkspaceMember({ workspaceId: install.workspaceId, actorId: ACTOR_ID })],
+		]
+		mockResults.updateQueue = [
+			// installedPackages flip
+			[forked],
+			// actors detach
+			[{ id: 'a1' }, { id: 'a2' }],
+			// triggers detach
+			[{ id: 't1' }],
+			// workspace_skills detach
+			[],
+			// integrations detach
+			[{ id: 'i1' }],
+		]
+
+		const res = await app.request(jsonRequest('POST', `/api/installed-packages/${install.id}/fork`))
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.id).toBe(install.id)
+		expect(body.isLocked).toBe(false)
+		expect(body.forkedAt).not.toBeNull()
+		expect(body.detached).toEqual({ actors: 2, triggers: 1, skills: 0, integrations: 1 })
+
+		// 5 updates land: install row + four element tables.
+		expect(calls.updates).toHaveLength(5)
+		const installUpdate = calls.updates[0] as Record<string, unknown>
+		expect(installUpdate.isLocked).toBe(false)
+		expect(installUpdate.forkedAt).toBeInstanceOf(Date)
+		expect(installUpdate.updatedAt).toBeInstanceOf(Date)
+	})
+
+	it('returns 404 when the install row is missing', async () => {
+		const { app, mockResults } = setup()
+		mockResults.selectQueue = [[]]
+		const res = await app.request(
+			jsonRequest('POST', `/api/installed-packages/${randomUUID()}/fork`),
+		)
+		expect(res.status).toBe(404)
+		const body = await res.json()
+		expect(body.error.code).toBe('NOT_FOUND')
+	})
+
+	it('returns 403 when the caller is not a member of the install workspace', async () => {
+		const { app, mockResults } = setup()
+		const install = installRow({ isLocked: true })
+		mockResults.selectQueue = [
+			[install],
+			// isWorkspaceMember — empty
+			[],
+		]
+		const res = await app.request(jsonRequest('POST', `/api/installed-packages/${install.id}/fork`))
+		expect(res.status).toBe(403)
+		const body = await res.json()
+		expect(body.error.code).toBe('FORBIDDEN')
+	})
+
+	it('returns 409 when the install is already forked', async () => {
+		const { app, mockResults } = setup()
+		const install = installRow({ isLocked: false, forkedAt: new Date() })
+		mockResults.selectQueue = [
+			[install],
+			[buildWorkspaceMember({ workspaceId: install.workspaceId, actorId: ACTOR_ID })],
+		]
+		const res = await app.request(jsonRequest('POST', `/api/installed-packages/${install.id}/fork`))
+		expect(res.status).toBe(409)
+		const body = await res.json()
+		expect(body.error.code).toBe('CONFLICT')
+	})
+
+	it('returns 400 for a non-UUID id', async () => {
+		const { app } = setup()
+		const res = await app.request(jsonRequest('POST', '/api/installed-packages/not-a-uuid/fork'))
+		expect(res.status).toBe(400)
+	})
+})
