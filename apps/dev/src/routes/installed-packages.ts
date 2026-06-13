@@ -11,6 +11,7 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { trackPackageInstalled } from '../lib/analytics/catalog-events'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, jsonbField } from '../lib/openapi-schemas'
@@ -251,6 +252,16 @@ app.openapi(installPackageRoute, async (c) => {
 		sourcePackageId: packageId,
 		installedVersion: pkg.version,
 		provisioned,
+	})
+
+	// Fire-and-forget the ship-metric emit. `trackPackageInstalled` swallows
+	// failures internally — analytics gaps must never break the install.
+	void trackPackageInstalled({
+		packageId,
+		packageSlug: pkg.slug,
+		packageVersion: pkg.version,
+		workspaceId,
+		actorId,
 	})
 
 	return c.json(
