@@ -42,6 +42,27 @@ const installPackageBodySchema = z.object({
 	workspaceId: z.string().uuid(),
 })
 
+const listInstalledPackagesQuerySchema = z.object({
+	workspaceId: z.string().uuid(),
+})
+
+const installedPackageRowSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	sourcePackageId: z.string().uuid(),
+	installedVersion: z.string(),
+	isLocked: z.boolean(),
+	forkedAt: z.string().nullable(),
+	installedAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+	availableVersion: z.string(),
+	hasUpdate: z.boolean(),
+})
+
+const listInstalledPackagesResponseSchema = z.object({
+	installs: z.array(installedPackageRowSchema),
+})
+
 const installedPackageResponseSchema = z.object({
 	id: z.string().uuid(),
 	workspaceId: z.string().uuid(),
@@ -58,6 +79,75 @@ const installedPackageResponseSchema = z.object({
 		integrations: z.number(),
 	}),
 	metadata: jsonbField.optional(),
+})
+
+// GET /api/installed-packages?workspaceId=… — list the workspace's installs.
+//
+// Joins on catalog_packages so each row carries the current published version
+// alongside the installed version, plus a derived `hasUpdate` flag. The
+// marketplace UI uses this to render the badge state (managed / forked) and
+// the amber update banner on locked rows whose installed_version trails the
+// catalog version (the T5 cron normally closes this gap within an hour, but
+// the gap is real between cron ticks and we want the user to see it).
+const listInstalledPackagesRoute = createRoute({
+	method: 'get',
+	path: '/',
+	tags: ['installed-packages'],
+	summary: 'List installed packages for a workspace',
+	request: {
+		query: listInstalledPackagesQuerySchema,
+	},
+	responses: {
+		200: {
+			description: 'Installed packages with current catalog version',
+			content: { 'application/json': { schema: listInstalledPackagesResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not a member of the target workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(listInstalledPackagesRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { workspaceId } = c.req.valid('query')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'You are not a member of the target workspace'), 403)
+	}
+
+	const rows = await db
+		.select({
+			id: installedPackages.id,
+			workspaceId: installedPackages.workspaceId,
+			sourcePackageId: installedPackages.sourcePackageId,
+			installedVersion: installedPackages.installedVersion,
+			isLocked: installedPackages.isLocked,
+			forkedAt: installedPackages.forkedAt,
+			installedAt: installedPackages.installedAt,
+			updatedAt: installedPackages.updatedAt,
+			availableVersion: catalogPackages.version,
+		})
+		.from(installedPackages)
+		.innerJoin(catalogPackages, eq(catalogPackages.id, installedPackages.sourcePackageId))
+		.where(eq(installedPackages.workspaceId, workspaceId))
+
+	return c.json(
+		{
+			installs: rows.map((row) => ({
+				...serialize(row),
+				availableVersion: row.availableVersion,
+				hasUpdate: row.installedVersion !== row.availableVersion,
+			})),
+		},
+		200,
+	)
 })
 
 // POST /api/installed-packages — provision a catalog package into a workspace.

@@ -352,3 +352,76 @@ describe('POST /api/installed-packages/:id/fork', () => {
 		expect(res.status).toBe(400)
 	})
 })
+
+describe('GET /api/installed-packages', () => {
+	it('returns installs joined with the current catalog version and a hasUpdate flag', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		const pkgIdA = randomUUID()
+		const pkgIdB = randomUUID()
+		const installA = installRow({
+			workspaceId,
+			sourcePackageId: pkgIdA,
+			installedVersion: '1.0.0',
+		})
+		const installB = installRow({
+			workspaceId,
+			sourcePackageId: pkgIdB,
+			installedVersion: '1.0.0',
+			isLocked: false,
+			forkedAt: new Date(),
+		})
+
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[
+				{ ...installA, availableVersion: '1.1.0' },
+				{ ...installB, availableVersion: '1.0.0' },
+			],
+		]
+
+		const res = await app.request(
+			new Request(`http://x/api/installed-packages?workspaceId=${workspaceId}`),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.installs).toHaveLength(2)
+		expect(body.installs[0]).toMatchObject({
+			id: installA.id,
+			installedVersion: '1.0.0',
+			availableVersion: '1.1.0',
+			isLocked: true,
+			hasUpdate: true,
+		})
+		expect(body.installs[1]).toMatchObject({
+			id: installB.id,
+			isLocked: false,
+			hasUpdate: false,
+		})
+	})
+
+	it('returns 403 when the caller is not a member of the target workspace', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[]]
+		const res = await app.request(
+			new Request(`http://x/api/installed-packages?workspaceId=${workspaceId}`),
+		)
+		expect(res.status).toBe(403)
+	})
+
+	it('returns 400 when workspaceId is missing', async () => {
+		const { app } = setup()
+		const res = await app.request(new Request('http://x/api/installed-packages'))
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when workspaceId is not a UUID', async () => {
+		const { app } = setup()
+		const res = await app.request(
+			new Request('http://x/api/installed-packages?workspaceId=not-a-uuid'),
+		)
+		expect(res.status).toBe(400)
+	})
+})

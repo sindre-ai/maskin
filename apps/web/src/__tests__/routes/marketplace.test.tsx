@@ -19,6 +19,12 @@ vi.mock('@/hooks/use-catalog-packages', () => ({
 	useCatalogPackages: () => mockUseCatalogPackages(),
 }))
 
+vi.mock('@/hooks/use-installed-packages', () => ({
+	useInstalledPackages: () => ({ data: { installs: [] }, isLoading: false, isError: false }),
+	useInstallPackage: () => ({ mutate: vi.fn(), isPending: false }),
+	useForkInstalledPackage: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/marketplace'
 
 const MarketplacePage = (Route as unknown as { component: React.FC }).component
@@ -56,9 +62,7 @@ describe('MarketplacePage', () => {
 		// (Type + Use case groups).
 		expect(screen.getAllByRole('button', { name: /^All\s/ }).length).toBeGreaterThanOrEqual(2)
 		expect(screen.getAllByRole('button', { name: /^Agents\s5/ }).length).toBeGreaterThanOrEqual(1)
-		expect(screen.getAllByRole('button', { name: /^Triggers\s2/ }).length).toBeGreaterThanOrEqual(
-			1,
-		)
+		expect(screen.getAllByRole('button', { name: /^Triggers\s2/ }).length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByRole('button', { name: /^Skills\s6/ }).length).toBeGreaterThanOrEqual(1)
 		expect(
 			screen.getAllByRole('button', { name: /^Integrations\s3/ }).length,
@@ -93,9 +97,9 @@ describe('MarketplacePage', () => {
 		expect(screen.getByText(/Couldn't load the catalog/i)).toBeInTheDocument()
 	})
 
-	it('shows a content placeholder while the grid lands in T8', () => {
+	it('shows the empty-state copy when the catalog has no packages', () => {
 		render(<MarketplacePage />)
-		expect(screen.getByText(/Marketplace items will appear here/i)).toBeInTheDocument()
+		expect(screen.getByText(/No packages yet/i)).toBeInTheDocument()
 	})
 
 	it('hides the desktop sidebar via the md:hidden / hidden md:block split', () => {

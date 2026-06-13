@@ -1,10 +1,12 @@
+import { PackageCard } from '@/components/marketplace/package-card'
 import { RouteError } from '@/components/shared/route-error'
 import { useCatalogPackages } from '@/hooks/use-catalog-packages'
-import type { CatalogItemType, CatalogPackageCounts } from '@/lib/api'
+import { useInstalledPackages } from '@/hooks/use-installed-packages'
+import type { CatalogItemType, CatalogPackageCounts, InstalledPackageRow } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace')({
 	component: MarketplacePage,
@@ -45,12 +47,22 @@ const SUBHEAD =
 	'Vetted agents, triggers, skills, and integrations — install them on their own, or as packages wired end-to-end.'
 
 function MarketplacePage() {
-	useWorkspace()
+	const { workspaceId } = useWorkspace()
 	const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
 	const [useCaseFilter, setUseCaseFilter] = useState<UseCaseFilter>('all')
 
 	const { data, isLoading, isError } = useCatalogPackages()
 	const counts = data?.counts
+	const packages = data?.packages ?? []
+
+	const { data: installsData } = useInstalledPackages(workspaceId)
+	const installsByPackage = useMemo(() => {
+		const map = new Map<string, InstalledPackageRow>()
+		for (const row of installsData?.installs ?? []) {
+			map.set(row.sourcePackageId, row)
+		}
+		return map
+	}, [installsData])
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
@@ -111,10 +123,21 @@ function MarketplacePage() {
 						</p>
 					) : isLoading ? (
 						<p className="text-sm text-muted-foreground">Loading catalog…</p>
-					) : (
+					) : packages.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
-							Marketplace items will appear here once the card grid lands.
+							No packages yet — check back once Maskin publishes the first one.
 						</p>
+					) : (
+						<div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+							{packages.map((pkg) => (
+								<PackageCard
+									key={pkg.id}
+									workspaceId={workspaceId}
+									pkg={pkg}
+									install={installsByPackage.get(pkg.id)}
+								/>
+							))}
+						</div>
 					)}
 				</section>
 			</div>
