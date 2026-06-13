@@ -4,11 +4,13 @@ import { buildWorkspaceMember } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
-const { trackPackageInstalledMock } = vi.hoisted(() => ({
+const { trackPackageInstalledMock, trackPackageForkedMock } = vi.hoisted(() => ({
 	trackPackageInstalledMock: vi.fn().mockResolvedValue(undefined),
+	trackPackageForkedMock: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('../../lib/analytics/catalog-events', () => ({
 	trackPackageInstalled: trackPackageInstalledMock,
+	trackPackageForked: trackPackageForkedMock,
 }))
 
 const { default: installedPackagesRoutes } = await import('../../routes/installed-packages')
@@ -267,6 +269,10 @@ describe('POST /api/installed-packages', () => {
 })
 
 describe('POST /api/installed-packages/:id/fork', () => {
+	beforeEach(() => {
+		trackPackageForkedMock.mockClear()
+	})
+
 	it('flips the install row and detaches every matching element row', async () => {
 		const { app, mockResults, calls } = setup()
 		const install = installRow({ isLocked: true, forkedAt: null })
@@ -306,6 +312,15 @@ describe('POST /api/installed-packages/:id/fork', () => {
 		expect(installUpdate.isLocked).toBe(false)
 		expect(installUpdate.forkedAt).toBeInstanceOf(Date)
 		expect(installUpdate.updatedAt).toBeInstanceOf(Date)
+
+		expect(trackPackageForkedMock).toHaveBeenCalledOnce()
+		expect(trackPackageForkedMock).toHaveBeenCalledWith({
+			packageId: forked.sourcePackageId,
+			installedPackageId: forked.id,
+			versionAtFork: forked.installedVersion,
+			workspaceId: forked.workspaceId,
+			actorId: ACTOR_ID,
+		})
 	})
 
 	it('returns 404 when the install row is missing', async () => {

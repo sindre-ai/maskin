@@ -11,7 +11,7 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
-import { trackPackageInstalled } from '../lib/analytics/catalog-events'
+import { trackPackageForked, trackPackageInstalled } from '../lib/analytics/catalog-events'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
@@ -530,6 +530,14 @@ app.openapi(forkPackageRoute, async (c) => {
 		sourcePackageId: forked.sourcePackageId,
 		installedVersion: forked.installedVersion,
 		detached,
+	})
+
+	void trackPackageForked({
+		packageId: forked.sourcePackageId,
+		installedPackageId: forked.id,
+		versionAtFork: forked.installedVersion,
+		workspaceId: forked.workspaceId,
+		actorId,
 	})
 
 	return c.json(
