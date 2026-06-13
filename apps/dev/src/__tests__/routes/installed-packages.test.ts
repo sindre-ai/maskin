@@ -1,8 +1,15 @@
 import { randomUUID } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildWorkspaceMember } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
+
+const { trackPackageInstalledMock } = vi.hoisted(() => ({
+	trackPackageInstalledMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/catalog-events', () => ({
+	trackPackageInstalled: trackPackageInstalledMock,
+}))
 
 const { default: installedPackagesRoutes } = await import('../../routes/installed-packages')
 
@@ -41,6 +48,10 @@ function installRow(overrides?: Record<string, unknown>) {
 }
 
 describe('POST /api/installed-packages', () => {
+	beforeEach(() => {
+		trackPackageInstalledMock.mockClear()
+	})
+
 	it('installs a package with no items and returns 201', async () => {
 		const { app, mockResults, calls } = setup()
 		const workspaceId = randomUUID()
@@ -197,6 +208,53 @@ describe('POST /api/installed-packages', () => {
 		expect(res.status).toBe(409)
 		const body = await res.json()
 		expect(body.error.code).toBe('CONFLICT')
+	})
+
+	it('emits package_installed to PostHog after a successful install', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		const packageId = randomUUID()
+		const install = installRow({ workspaceId, sourcePackageId: packageId })
+
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[pkg({ id: packageId, slug: 'customer-continuous-discovery', version: '1.4.2' })],
+			[],
+			[],
+		]
+		mockResults.insert = [install]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-packages', { packageId, workspaceId }),
+		)
+
+		expect(res.status).toBe(201)
+		// Fire-and-forget — give the microtask queue a tick to drain.
+		await Promise.resolve()
+		expect(trackPackageInstalledMock).toHaveBeenCalledOnce()
+		expect(trackPackageInstalledMock).toHaveBeenCalledWith({
+			packageId,
+			packageSlug: 'customer-continuous-discovery',
+			packageVersion: '1.4.2',
+			workspaceId,
+			actorId: ACTOR_ID,
+		})
+	})
+
+	it('does not emit package_installed when the install fails', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		const packageId = randomUUID()
+		// Missing package → 404 path, no emit.
+		mockResults.selectQueue = [[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })], []]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-packages', { packageId, workspaceId }),
+		)
+
+		expect(res.status).toBe(404)
+		await Promise.resolve()
+		expect(trackPackageInstalledMock).not.toHaveBeenCalled()
 	})
 
 	it('returns 400 for an invalid body', async () => {
